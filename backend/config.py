@@ -4,7 +4,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 
 
 def _env_bool(name: str, default: bool) -> bool:
