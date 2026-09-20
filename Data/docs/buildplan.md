@@ -6,6 +6,87 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-20 — Phase 1 — Frontend Application Foundation — PASS
+
+### Objective
+
+Migrate the static HTML/CSS/JS frontend to React + TypeScript + Vite while preserving LEVIATHAN visual identity and chat/backend connectivity.
+
+### Implementation
+
+- Replaced static `index.html` / `chat.html` / `js/*` shell with a Vite React/TS SPA under `Data/frontend/`.
+- Preserved `tokens.css`, `leviathan.css`, `chat.css` and image assets.
+- Added typed API client (`src/api/client.ts`) for health/conversations/chat.
+- Routes: `/` Command dashboard, `/chat` real chat, `/chat.html` → `/chat`.
+- Backend serves `Data/frontend/dist` (SPA + `/assets`); health reports `frontend.dist_ready`.
+- Vite dev proxy: `/api` → `http://127.0.0.1:8765`.
+
+### Files changed (primary)
+
+- `Data/frontend/**` (new Vite app)
+- `Data/backend/main.py` (SPA serving)
+- `Data/backend/config.py` (`FRONTEND_DIST`)
+- `.gitignore` (node_modules/dist)
+- docs: `buildplan.md`, `leviathan_system.md`, `cursor.md`, `README.md`
+
+### Tests executed
+
+- Backend: `python3 -m unittest Data.backend.tests.test_foundation -v` → PASS (4 tests)
+- Frontend: `npm run typecheck` → PASS
+- Frontend: `npm run lint` → PASS (0 errors)
+- Frontend: `npm run test` → PASS (1 test)
+- Frontend: `npm run build` → PASS
+- Manual HTTP: `/api/health`, `/`, `/chat`, `/assets/hero.jpg`, `POST /api/conversations` → PASS
+- Live LLM chat completion: NOT TESTED (no local model server at `127.0.0.1:1234`; health correctly reports `llm.available=false`)
+
+### Verification
+
+- UI loads from Vite dist through FastAPI.
+- Chat page bootstraps conversations against real backend APIs.
+- Honest LLM offline semantics preserved.
+
+### Known limitations
+
+- Dashboard agent/project panels remain visual shell (not backend-backed).
+- Context assembly still lives in `llm.py` (Phase 14 target).
+- No streaming SSE yet.
+
+### Status
+
+**PASS**
+
+---
+
+## 2026-09-20 — Phase 0 — Current-State Audit — PASS
+
+### Objective
+
+Map the repository, identify documentation drift, and produce a safe migration plan before structural work.
+
+### Findings
+
+- Step 1 foundation is real: FastAPI, SQLite chat/Knowledge, ReasoningEngine, OpenAI-compatible LLM client, static UI (pre-Phase 1).
+- Major doc drift: `leviathan_system.md` described HADES, not current LEVIATHAN.
+- `Data/modules/` and `Data/functions/` were empty placeholders only.
+- No Run/Event model, migrations framework, Execution Gateway, Memory, Evidence, Neuro.
+- Context injection was embedded in `llm.py`.
+- Configuration was a small typed `Settings` dataclass (acceptable Phase 0 baseline; Phase 2 expands).
+
+### Migration plan (ordered)
+
+Follow Master Engineering Program Phases 1→… without jumping to Neuro. Preserve working chat. Prefer module ownership over `main.py` growth. Rewrite `leviathan_system.md` as current-system truth; keep HADES as appendix lessons only.
+
+### Tests executed
+
+- Foundation unit tests → PASS
+- No code behavior changes in Phase 0 itself beyond audit documentation (Phase 1 implements frontend).
+
+### Status
+
+**PASS**
+
+---
+
 # 1. Project goal
 
 Build LEVIATHAN as a cleaner, smaller and more coherent successor architecture to HADES.

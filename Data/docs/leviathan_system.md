@@ -1,717 +1,331 @@
-# LEVIATHAN System Reference — HADES Architecture
+# LEVIATHAN System Reference — Current Architecture
 
-> Purpose: preserve the useful architectural knowledge from HADES as a reference while LEVIATHAN is rebuilt from the ground up.
+> Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is **not** an instruction to copy HADES file-for-file. It documents how HADES works today, which invariants proved important, where complexity accumulated, and which ideas should inform LEVIATHAN.
+> This is the implementation truth for the repository as of Phase 0 (audit) and Phase 1 (React/TypeScript/Vite frontend foundation).
+>
+> HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
-## Reference snapshot
-
-This document was prepared against the current `syneyexx/HADES` main line around commit:
-
-`f143707ddc4bf0d613e07b727427c4be8bc054b6`
-
-Important recent architectural work before that snapshot included:
-
-- Tool Kernel + Capability Broker.
-- approval and execution-truth hardening.
-- linked Work completion truth.
-- container/native isolation truth.
-- Coding Agent cancellation and model-call lifecycle hardening.
-- call-id based tool/event reconciliation.
-- research/network policy hardening.
-- Neural V2 associative retrieval work.
-- central trace/logging and release-gate honesty.
-
-HADES remains the behavioral reference. LEVIATHAN should preserve proven invariants but redesign the structure cleanly.
+When this document disagrees with executable code and tests, **code and tests win**.
 
 ---
 
-# 1. What HADES is
+# 1. What LEVIATHAN is today
 
-HADES evolved into a local-first AI operating framework rather than a simple chat application.
+LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 
-At a high level it combines:
+**Implemented and real:**
 
-- chat and model orchestration;
-- reasoning and request understanding;
-- tools and capability discovery;
-- plugins and MCP integrations;
-- execution policy and approvals;
-- persistent Work tasks;
-- agents such as Coding and Research;
-- Knowledge, Memory, Evidence and Artifacts;
-- optional Neural associative memory;
-- native/C++ execution support;
-- workflows, schedules and mission-style orchestration;
-- observability, evaluations and release gates;
-- multiple frontend shells/pages.
+- FastAPI backend composition root;
+- OpenAI-compatible LLM client (LM Studio–friendly);
+- SQLite persistence for conversations, messages, and Knowledge documents;
+- lightweight deterministic ReasoningEngine;
+- Knowledge FTS5 search with LIKE fallback;
+- React + TypeScript + Vite frontend preserving the LEVIATHAN visual identity;
+- typed frontend API client;
+- honest LLM failure semantics (no fabricated assistant success).
 
-The main architectural lesson is that these systems must share the same truth about execution, authorization, lifecycle and evidence.
+**Not implemented (do not treat UI shell labels as capability):**
+
+- Canonical Run / Event model;
+- Execution Gateway / approvals / policy;
+- Function Registry / on-demand functions;
+- Job runtime / Resource Manager;
+- Context Engine (context is still assembled inside the LLM client);
+- Memory / Evidence / Artifacts domains;
+- Agents / Neuro / Training / Evaluation frameworks;
+- schema migrations beyond `CREATE TABLE IF NOT EXISTS`;
+- native model runtime / residual-stream research.
 
 ---
 
-# 2. Simplified HADES architecture
+# 2. Repository layout
 
 ```text
-USER / UI
-   │
-   ▼
-API / Chat entry
-   │
-   ▼
-Request understanding / routing
-   │
-   ├───────────────► direct model response
-   │
-   ├───────────────► research / knowledge / memory context
-   │
-   └───────────────► tool-capable loop
-                         │
-                         ▼
-                 HADES Tool Kernel
-                         │
-             capability search/inspect/invoke
-                         │
-                         ▼
-                 Capability Broker
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-   Core tools        Plugins/MCP      Native runtime
-        │                │                │
-        └────────────────┼────────────────┘
-                         ▼
-                 Execution authority
-                         │
-                 Policy / Approval
-                         │
-                 Isolation / timeout
-                         │
-                         ▼
-                   ToolObservation
-                         │
-                         ▼
-                 Context / evidence
-                         │
-                         ▼
-                    Model answer
+LEVIATHAN/
+├── Data/
+│   ├── backend/          # Python control plane (FastAPI, DB, LLM, reasoning)
+│   ├── frontend/         # React/TypeScript/Vite UI
+│   ├── modules/          # Reserved for future stateful domain modules
+│   ├── functions/        # Reserved for on-demand cold-path helpers
+│   └── docs/             # buildplan.md, leviathan_system.md, cursor.md
+├── leviathan.py          # Uvicorn launcher helper
+├── requirements.txt
+├── .env.example
+├── RUN_LEVIATHAN.bat
+└── README.md
 ```
 
-Long-running work adds another owner:
+Ownership rule: one responsibility → one clear owner. Do not invent parallel databases, model clients, or approval systems.
+
+---
+
+# 3. Backend
+
+## 3.1 Composition root — `Data/backend/main.py`
+
+FastAPI application (`version=0.2.0-phase1`).
+
+Responsibilities:
+
+- lifespan DB initialize;
+- `/api/*` route registration;
+- wire `Database`, `ReasoningEngine`, `OpenAICompatibleLLM`;
+- serve the Vite production build from `Data/frontend/dist`.
+
+`main.py` must remain composition-oriented. Domain logic belongs in dedicated modules/services as the system grows.
+
+## 3.2 Configuration — `Data/backend/config.py`
+
+`Settings` dataclass loaded from environment / `.env`:
+
+| Setting | Env var | Default |
+|---|---|---|
+| LLM base URL | `LEVIATHAN_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` |
+| Model id | `LEVIATHAN_LLM_MODEL` | empty → discover first `/v1/models` entry |
+| API key | `LEVIATHAN_LLM_API_KEY` | `not-needed` |
+| Timeout | `LEVIATHAN_LLM_TIMEOUT_SECONDS` | `90` |
+| Database path | `LEVIATHAN_DATABASE_PATH` | `Data/backend/data/leviathan.db` |
+| Knowledge top-k | `LEVIATHAN_KNOWLEDGE_TOP_K` | `5` |
+| History window | `LEVIATHAN_MAX_HISTORY_MESSAGES` | `24` |
+| Reasoning | `LEVIATHAN_REASONING_ENABLED` | `true` |
+
+Path constants: `PROJECT_ROOT`, `DATA_ROOT`, `BACKEND_ROOT`, `FRONTEND_ROOT`, `FRONTEND_DIST`.
+
+## 3.3 Persistence — `Data/backend/database.py`
+
+SQLite with WAL + foreign keys.
+
+Tables:
+
+- `conversations` — id, title, created_at, updated_at;
+- `messages` — id, conversation_id, role, content, created_at;
+- `knowledge_documents` — id, title, content, source, created_at, updated_at;
+- `knowledge_fts` — FTS5 virtual table when available.
+
+No migration version table yet (Phase 5 target). Schema is created with `CREATE TABLE IF NOT EXISTS`.
+
+## 3.4 Reasoning — `Data/backend/reasoning.py`
+
+`ReasoningEngine.analyze(message, has_knowledge) → ReasoningPlan`.
+
+`ReasoningPlan` fields: `intent`, `complexity`, `use_knowledge`, `steps`.
+
+Public summary only — **no private chain-of-thought persistence**.
+
+Deterministic keyword/heuristic classification. Not authoritative for security or side effects.
+
+## 3.5 Model client — `Data/backend/llm.py`
+
+`OpenAICompatibleLLM`:
+
+- resolve model (pinned or `/v1/models`);
+- `health()`;
+- `chat(history, knowledge, plan)` → `(answer, model_id)`;
+- raises `LLMUnavailable` on provider failure.
+
+Knowledge is injected into the system prompt as **untrusted context data**, labeled as such.
+
+Context assembly currently lives here. Future Context Engine should own this.
+
+## 3.6 Chat orchestration flow
 
 ```text
-Chat / Agent / Mission
-        │
-        ▼
-     Work Runtime
-        │
-        ▼
-   persisted task state
-        │
-        ├── steps
-        ├── tool calls
-        ├── checkpoints
-        ├── artifacts
-        └── verification
-        │
-        ▼
- authoritative completion decision
+POST /api/chat
+  → ensure/create conversation
+  → persist user message
+  → ReasoningEngine.analyze
+  → optional Knowledge search
+  → load history window
+  → LLM.chat
+  → persist assistant message OR HTTP 503 on LLMUnavailable
+  → return reasoning summary + knowledge source metadata
 ```
 
+Completion of a chat turn means: model returned usable text and the assistant message was persisted. There is not yet a canonical Run completion contract.
+
+## 3.7 Knowledge API
+
+- `GET/POST /api/knowledge`
+- `GET /api/knowledge/search?q=`
+- `DELETE /api/knowledge/{id}`
+
+Documents are manually upserted. No D:/ModelData ingest pipeline yet.
+
+## 3.8 Health
+
+`GET /api/health` returns:
+
+- process ok / version;
+- database path;
+- reasoning flag;
+- frontend dist readiness;
+- LLM availability (honest unavailable state).
+
+## 3.9 Frontend serving
+
+Production UI is the Vite build at `Data/frontend/dist`.
+
+- `/` and `/chat` (+ `/chat.html` compatibility) serve `dist/index.html`;
+- `/assets` mounts `dist/assets` when present;
+- SPA fallback returns `index.html` for non-API paths;
+- missing build → HTTP 503 with build instructions.
+
+Dev alternative: `npm run dev` in `Data/frontend` (Vite proxies `/api` → `:8765`).
+
 ---
 
-# 3. Chat and request understanding
+# 4. Frontend
 
-HADES receives a user turn and builds a structured understanding of what the request appears to require.
+## 4.1 Stack
 
-Historically this area accumulated keyword-based routing and intent heuristics. Later hardening made an important distinction:
+React 19 · TypeScript · Vite 7 · React Router · oxlint · Vitest
 
-- trivial, self-contained conversation can remain `direct_chat` with no tool schemas;
-- actionable requests involving files, attachments, workspace state, fresh information or explicit actions must not lose access to the tool plane merely because a classifier misses one keyword;
-- explicit no-tool instructions can suppress execution.
-
-The important LEVIATHAN lesson is:
-
-> Classification may influence routing, but a cheap intent classifier should never become the sole authority that makes execution capability disappear for an obviously actionable request.
-
----
-
-# 4. Model layer
-
-HADES uses a model gateway/provider abstraction so local models such as LM Studio can be used without coupling the rest of the application to one concrete provider.
-
-The model layer is responsible for model calls and provider-facing message formatting, but it is **not** the source of truth for whether work actually completed.
-
-Important invariant:
+## 4.2 Layout
 
 ```text
-model output != execution evidence
+Data/frontend/
+├── package.json
+├── vite.config.ts
+├── tsconfig*.json
+├── index.html
+├── public/assets/          # static imagery
+├── dist/                   # production build (gitignored)
+└── src/
+    ├── main.tsx
+    ├── App.tsx
+    ├── api/client.ts       # typed API client
+    ├── types/api.ts
+    ├── components/         # Header, Sidebar, Footer, Toast, BrandMark
+    ├── layouts/AppShell.tsx
+    ├── pages/CommandPage.tsx
+    ├── pages/ChatPage.tsx
+    ├── hooks/
+    ├── state/
+    └── styles/             # tokens.css, leviathan.css, chat.css
 ```
 
-A model can propose, plan and describe. Completion must come from actual state, tool observations, persisted work status and verification.
+## 4.3 Visual identity
+
+Design tokens in `src/styles/tokens.css` preserve the LEVIATHAN gold/dark shell:
+
+- Cinzel display + Inter UI fonts;
+- gold accents (`--lv-gold*`);
+- existing layout class names (`lv-*`).
+
+Phase 1 is a **framework migration**, not a visual redesign.
+
+## 4.4 Routes
+
+| Path | Page | Backend truth |
+|---|---|---|
+| `/` | Command dashboard shell | Visual + navigation; prompt can hand off draft to chat |
+| `/chat` | Chat | Real conversations / messages / LLM / reasoning metadata |
+| `/chat.html` | redirect → `/chat` | Compatibility |
+
+Reserved nav items (Research, Agents, Memory, …) toast as future steps — they are **not** fake backend pages.
+
+## 4.5 Typed API client
+
+`src/api/client.ts` owns fetch against:
+
+- `/api/health`
+- `/api/conversations`
+- `/api/chat`
+
+Components must not scatter raw `fetch` for these contracts.
+
+## 4.6 Frontend state rule
+
+Frontend state is a projection. Canonical conversation/message/knowledge state lives in SQLite via the backend.
 
 ---
 
-# 5. HADES Tool Kernel
+# 5. Modules and functions
 
-Modern HADES introduced a deliberately small stable model-facing Tool Kernel under `backend/core_tools/`.
+`Data/modules/` and `Data/functions/` exist as reserved namespaces with README placeholders only.
 
-Representative capabilities include:
-
-- filesystem listing;
-- filesystem reading;
-- filesystem writing;
-- terminal execution;
-- knowledge search;
-- memory proposal;
-- web fetch when network policy allows it;
-- capability search;
-- capability inspection;
-- capability invocation.
-
-The key design is that HADES does **not** need to inject every plugin or MCP schema directly into every model request.
-
-Instead the model gets a small stable kernel and can discover dynamic functionality through the capability broker.
-
-This reduces prompt/tool-schema bloat and keeps external integrations dynamic.
+No domain modules or on-demand function runtime are implemented yet.
 
 ---
 
-# 6. Capability Broker
+# 6. Security / trust (current)
 
-The Capability Broker is the bridge between model-facing core tools and the larger dynamic ecosystem.
-
-Conceptually:
-
-```text
-Model
-  │
-  ├── hades.capabilities.search
-  ├── hades.capabilities.inspect
-  └── hades.capabilities.invoke
-            │
-            ▼
-      Capability Broker
-            │
-     eligible providers only
-            │
-    ┌───────┼────────┐
-    ▼       ▼        ▼
- plugin     MCP     other provider
-```
-
-Important distinction:
-
-```text
-discoverable != authorized
-```
-
-A capability may exist and be visible without being allowed to execute.
-
-LEVIATHAN should preserve this separation between:
-
-- capability metadata;
-- eligibility;
-- policy;
-- authorization;
-- approval;
-- execution.
+- Default bind: loopback (`127.0.0.1:8765`);
+- no authentication layer (local-operator assumption);
+- no tool/execution plane yet;
+- Knowledge text is labeled as data, not system policy, in the model prompt;
+- secrets belong in `.env` (gitignored), never in docs or frontend bundles.
 
 ---
 
-# 7. Plugins and MCP
+# 7. Tests currently present
 
-HADES supports both plugins and MCP integrations.
+Backend (`python3 -m unittest Data.backend.tests.test_foundation -v`):
 
-Over time many integrations accumulated custom wrappers and compatibility code. This is one of the areas LEVIATHAN intends to redesign rather than reproduce structurally.
+- conversation/message persistence;
+- Knowledge retrieval;
+- reasoning intent / knowledge gating.
 
-The useful HADES behavior to retain is:
+Frontend:
 
-- integrations expose typed capabilities;
-- dynamic capabilities are discovered rather than blindly injected into every prompt;
-- policy applies before execution;
-- approval is server-authoritative;
-- tool output is treated as untrusted input when returned to the model;
-- network and filesystem effects are explicitly classified.
+- `npm run typecheck`
+- `npm run lint`
+- `npm run build`
+- `npm run test` (ApiError unit test)
 
-For LEVIATHAN, plugins/MCP should eventually converge on one normalized capability contract instead of being separate reasoning worlds.
-
----
-
-# 8. Execution path
-
-HADES hardened execution around a shared authority boundary.
-
-A generic execution path should conceptually look like:
-
-```text
-Capability request
-   ↓
-Schema validation
-   ↓
-Policy evaluation
-   ↓
-Authorization
-   ↓
-Approval if required
-   ↓
-Isolation selection
-   ↓
-Execution
-   ↓
-Timeout / cancellation handling
-   ↓
-Effect recording
-   ↓
-Output validation
-   ↓
-ToolObservation
-```
-
-This prevents individual agents or plugins from inventing their own security rules.
-
-A major lesson from HADES is to avoid parallel generic executors. Coding, Research, Work and integrations should not each own a separate version of subprocess/network/approval logic.
+Live LLM integration is **NOT** claimed by unit tests. When no model server is available, chat returns 503.
 
 ---
 
-# 9. Approval and authorization
+# 8. Important classes / symbols
 
-HADES previously had call paths where client-provided booleans such as `approved_by_user` or `preapproved` could become too authoritative.
-
-That was hardened so persisted server-side approval state is the real authority.
-
-Core invariant:
-
-```text
-request boolean != authorization
-```
-
-A durable approval must be scoped to the operation/effect being approved.
-
-Examples of effect kinds include:
-
-- subprocess/process execution;
-- network access;
-- file reads;
-- file writes;
-- other side effects defined by capability policy.
-
-LEVIATHAN should start with this rule rather than retrofit it later.
+| Symbol | File | Role |
+|---|---|---|
+| `Settings` | `config.py` | Typed env settings |
+| `Database` | `database.py` | SQLite persistence |
+| `ReasoningEngine` / `ReasoningPlan` | `reasoning.py` | Deterministic plan seam |
+| `OpenAICompatibleLLM` / `LLMUnavailable` | `llm.py` | Model gateway (v0) |
+| `app` | `main.py` | FastAPI composition |
+| `api` | `frontend/src/api/client.ts` | Typed UI client |
 
 ---
 
-# 10. Isolation and native execution
+# 9. Current system invariants
 
-HADES supports multiple execution modes, including host process execution, native runtime support and stronger isolation modes.
-
-Important honesty rules that emerged:
-
-- requested isolation and effective isolation must be separate fields;
-- container/secured modes may not silently downgrade to ordinary host subprocess execution;
-- required native execution may not silently pretend native execution succeeded when it fell back;
-- optional/auto native fallback, when allowed, must be explicit and observable;
-- isolation claims must describe what actually happened, not what was requested.
-
-Core invariant:
-
-```text
-requested isolation != effective isolation
-```
-
-unless the runtime verified they are the same.
+1. Backend owns conversation/knowledge truth.
+2. Model unavailability is reported as failure, not fake success.
+3. Reasoning output is public structured metadata, not private CoT storage.
+4. Retrieved Knowledge is context data, not elevated authority.
+5. `main.py` is composition; keep domain growth out of it.
+6. Optional future capabilities must not be claimed by UI chrome alone.
+7. Bulk corpora belong outside Git (`D:/ModelData/` when Knowledge V2 arrives).
 
 ---
 
-# 11. Work Runtime
+# 10. Phase status snapshot
 
-HADES has a persistent Work runtime for long-running or multi-step tasks.
-
-The Work runtime owns authoritative task lifecycle and persisted task state.
-
-Typical concepts include:
-
-- task/run identity;
-- queued/dispatched/running states;
-- steps;
-- task events;
-- tool calls;
-- cancellation;
-- verification checkpoints;
-- artifacts;
-- failure state;
-- completion state.
-
-A crucial invariant is:
-
-```text
-chat completed != Work completed
-```
-
-The chat layer may report on a task, but it must not mark a linked Work task completed simply because a conversational response was generated.
-
-The same principle applies to schedules and missions:
-
-```text
-dispatch != completion
-```
+| Phase | Status | Notes |
+|---|---|---|
+| Phase 0 — Current-state audit | PASS | Map + drift correction + migration plan documented |
+| Phase 1 — Frontend foundation | PASS (verified gates below) | React/TS/Vite; visual tokens preserved; chat wired |
+| Phase 2+ | NOT STARTED | Typed config expansion, module ownership, Run model, … |
 
 ---
 
-# 12. Verification and completion truth
+# 11. Appendix — HADES lessons (reference only)
 
-HADES has progressively separated generation from verification.
-
-Completion should require evidence appropriate to the task.
-
-Examples:
-
-- a requested file should actually exist;
-- a produced artifact should resolve to a real stored artifact;
-- tests claimed as passed should have an executed result;
-- a failed deterministic check cannot be overridden by a model critic saying the work looks good;
-- a rejecting critic cannot result in `completed`;
-- sourced claims can be checked against evidence/citations.
-
-Useful truth model:
-
-```text
-requested
-executed
-persisted
-verified
-completed
-```
-
-These are different states and should not be collapsed into one boolean.
-
----
-
-# 13. Coding Agent
-
-HADES contains a specialized Coding Agent with its own planning and verification behavior.
-
-Recent hardening focused on:
-
-- real ownership of model-call cancellation;
-- no stranded asynchronous model tasks;
-- tool execution through shared authority boundaries;
-- verification before success;
-- explicit failure instead of fabricated green status.
-
-The architectural lesson for LEVIATHAN is that an agent should own **strategy**, not infrastructure.
-
-A Coding Agent may decide what files to inspect, edits to make and checks to run, but should rely on shared filesystem, terminal, policy, approval, persistence and lifecycle services.
-
----
-
-# 14. Research
-
-HADES research combines retrieval, network policy, source evidence and model synthesis.
-
-Network policy is important:
-
-- if web/network access is blocked, HADES must not claim fresh web research happened;
-- local Knowledge, cached evidence, uploaded documents and existing sources may still support a local research answer;
-- network allow/deny rules and redirect security are enforced independently of model intent.
-
-Important distinction:
-
-```text
-web research blocked != all research impossible
-```
-
-but the answer must accurately describe which source classes were available.
-
----
-
-# 15. Knowledge
-
-HADES Knowledge is persistent retrievable information, distinct from conversational Memory.
-
-The system has included:
-
-- knowledge sources;
-- chunking/indexing;
-- retrieval;
-- project/source metadata;
-- atomic ingest improvements;
-- retention and indexing work.
-
-One hardening pass made source + chunks commit atomically so a source is not presented as ready when chunk ingest failed halfway.
-
-LEVIATHAN should retain this concept of ingest truth.
-
----
-
-# 16. Memory
-
-HADES Memory stores persistent remembered context/preferences/history separate from the normal Knowledge corpus.
-
-A useful design principle is that memory writes should be deliberate proposals/controlled persistence rather than arbitrary model text becoming durable truth automatically.
-
-Memory deletion should also invalidate associated search/index state.
-
-LEVIATHAN currently has no full memory subsystem yet.
-
----
-
-# 17. Evidence and Artifacts
-
-HADES increasingly treats Evidence and Artifacts as first-class concepts.
-
-- **Evidence** supports claims and completion decisions.
-- **Artifacts** are concrete outputs such as files/documents/results.
-
-The model response itself is not sufficient evidence that an artifact was created.
-
-A robust system should store references that can be resolved and verified.
-
----
-
-# 18. Neural V2
-
-HADES Neural V2 is not a replacement LLM.
-
-It is an experimental associative memory/retrieval layer using embeddings.
-
-At the current reference point:
-
-- production embeddings are intended to come from LM Studio;
-- exact retrieval and neural/associative retrieval can be combined;
-- SHADOW mode can score without injecting neural associations;
-- READ mode can inject bounded untrusted associations when enabled;
-- verified outcomes can feed experience data;
-- defaults remain conservative/off;
-- evaluations remain explicitly unmeasured when the required embedding provider is unavailable.
-
-Most important architectural rule:
-
-> Neural may provide signals and retrieval hints, but must never become authority for permissions, approvals, tool execution or completion truth.
-
-This is especially relevant for LEVIATHAN because its Neural system will likely be redesigned from scratch later.
-
----
-
-# 19. Native runtime
-
-HADES contains native/C++ runtime work intended for cases where a native implementation is justified.
-
-Possible roles include:
-
-- process supervision;
-- lower-level execution helpers;
-- performance-sensitive operations;
-- host/resource interaction.
-
-The lesson for LEVIATHAN is not to move orchestration into C++ by default.
-
-Python remains appropriate for control-plane/business logic, with native code behind explicit interfaces only where it provides measurable value.
-
----
-
-# 20. Frontend
-
-HADES has gone through multiple frontend generations and shells.
-
-The frontend presents Chat, Work, agents, workflows, settings, knowledge and other surfaces.
-
-One recurring problem in large AI applications is frontend state becoming a second source of truth.
-
-The preferred rule is:
-
-```text
-backend authoritative state
-        ↓
-API/events
-        ↓
-frontend projection
-```
-
-rather than optimistic UI state inventing completion or health independently.
-
-LEVIATHAN should keep this rule from the beginning.
-
----
-
-# 21. Storage and database behavior
-
-HADES uses persistent local storage heavily for conversations, tasks, knowledge, memory, events, tool calls and related state.
-
-As HADES grew, many parts of the system touched storage directly. For LEVIATHAN, the cleaner target is repository/service boundaries around persistence.
-
-Desired future concepts include:
-
-- ConversationRepository;
-- RunRepository;
-- ToolCallRepository;
-- ArtifactRepository;
-- EvidenceRepository;
-- KnowledgeRepository;
-- MemoryRepository;
-- ApprovalRepository;
-- CapabilityRepository.
-
-The exact implementation can evolve, but transaction boundaries and ownership should be explicit.
-
----
-
-# 22. Observability
-
-HADES added stronger observability over time, including:
-
-- trace IDs;
-- durable rotating logs;
-- tool-call/event tracking;
-- task events;
-- requested-vs-effective execution metadata;
-- evaluation artifacts;
-- release gates that can report `UNMEASURED` instead of fabricating PASS.
-
-Important principle:
-
-```text
-not measured != passed
-```
-
-LEVIATHAN should preserve this standard.
-
----
-
-# 23. Security/trust boundaries
-
-Important HADES security rules include:
-
-- local API trust checks;
-- guarded non-loopback binding;
-- URL/redirect validation;
-- domain allow/deny policy;
-- loopback/SSRF protections;
-- tool outputs marked as untrusted before they are fed back to the model;
-- approval enforcement at execution boundaries;
-- stronger isolation modes fail closed.
-
-These should be considered architectural requirements, not optional later polish.
-
----
-
-# 24. HADES architectural debt LEVIATHAN should avoid
-
-HADES is valuable precisely because it shows where an organically grown AI system accumulates complexity.
-
-Areas to avoid reproducing mechanically:
-
-- a very large central `main.py` acting as orchestration, API and integration layer;
-- duplicate lifecycle semantics across Chat, Work, Missions, Workflows and schedules;
-- multiple execution paths that each partially implement policy/approval;
-- many custom plugin wrappers where declarative or standardized adapters could work;
-- keyword routing becoming control-plane authority;
-- frontend and backend independently inferring completion;
-- direct database access scattered through business logic;
-- compatibility layers becoming permanent architecture;
-- subsystem-specific result schemas instead of one canonical observation/result contract.
-
-LEVIATHAN should use HADES as an executable specification and lesson library, not as a folder template.
-
----
-
-# 25. Recommended LEVIATHAN target concepts derived from HADES
-
-These are concepts worth preserving at a cleaner level:
-
-```text
-LEVIATHAN Core
-├── Run / lifecycle
-├── Context engine
-├── Model gateway
-├── Reasoning / planner
-├── Capability registry
-├── Execution gateway
-├── Policy
-├── Approval
-├── Verification
-├── Knowledge
-├── Memory
-├── Evidence
-├── Artifacts
-├── Storage repositories
-└── Observability
-```
-
-Extensions can then sit above the core:
-
-```text
-Extensions
-├── Coding
-├── Research
-├── Neural
-├── Plugins
-├── MCP
-├── Browser
-├── Trading
-├── Media
-├── Voice
-└── Automation
-```
-
-The core should not depend on any one extension.
-
----
-
-# 26. Truth invariants to carry into LEVIATHAN
-
-These are among the most important lessons from HADES:
+HADES proved invariants LEVIATHAN should preserve when those subsystems are built:
 
 ```text
 model output != evidence
 request boolean != authority
 discoverable capability != authorized capability
-chat completed != Work completed
 dispatch != completion
 requested isolation != effective isolation
-persist attempt != persisted state
 unmeasured != passed
 retrieved context != trusted fact
 neural signal != authority
 ```
 
-When LEVIATHAN grows, these invariants should be protected by tests.
-
----
-
-# 27. Current LEVIATHAN relationship to HADES
-
-LEVIATHAN is a new Python-first project.
-
-Current LEVIATHAN does **not** yet reproduce the full HADES architecture. Step 1 intentionally contains only:
-
-- Python/FastAPI backend;
-- working persistent chat;
-- OpenAI-compatible LLM connection;
-- lightweight reasoning layer;
-- SQLite conversation storage;
-- SQLite Knowledge + FTS retrieval;
-- existing dashboard/chat frontend.
-
-Future systems should be added deliberately using the lessons above rather than copied wholesale.
-
----
-
-# 28. Source-of-truth rule for this document
-
-When this document disagrees with current executable code, current executable code and tests win.
-
-For HADES, useful source files/documents to inspect before porting a concept include:
-
-- `docs/CURRENT_STATUS.md`;
-- `backend/core_tools/`;
-- reasoning/understanding and routing code;
-- PluginManager and execution gateway code;
-- ApprovalService;
-- Work runtime and completion gates;
-- coding runtime/verification code;
-- Knowledge/Memory/Evidence code;
-- Neural status/implementation;
-- isolation/native runtime tests;
-- trust-boundary and release-gate tests.
-
-Before implementing a large LEVIATHAN subsystem, inspect the corresponding HADES behavior and tests first, then redesign it for LEVIATHAN instead of directly transplanting obsolete structure.
+Do not copy HADES structure wholesale. Extract invariants, design smaller LEVIATHAN contracts, implement and test.

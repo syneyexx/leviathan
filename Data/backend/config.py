@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "Data"
 BACKEND_ROOT = DATA_ROOT / "backend"
 FRONTEND_ROOT = DATA_ROOT / "frontend"
+FRONTEND_DIST = FRONTEND_ROOT / "dist"
 
 load_dotenv(PROJECT_ROOT / ".env")
 

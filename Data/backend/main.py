@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import FRONTEND_ROOT, settings
+from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .llm import LLMUnavailable, OpenAICompatibleLLM
 from .reasoning import ReasoningEngine
@@ -25,7 +25,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Leviathan", version="0.1.0-step1", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.2.0-phase1", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -44,6 +44,19 @@ class KnowledgeWrite(BaseModel):
     source: str = Field(default="manual", min_length=1, max_length=240)
 
 
+def _frontend_index() -> FileResponse:
+    index = FRONTEND_DIST / "index.html"
+    if not index.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Frontend build missing. Run `npm install && npm run build` "
+                f"in {FRONTEND_ROOT} before starting LEVIATHAN."
+            ),
+        )
+    return FileResponse(index)
+
+
 @app.get("/api/health")
 async def health() -> dict:
     model = await llm.health()
@@ -52,6 +65,10 @@ async def health() -> dict:
         "version": app.version,
         "database": str(settings.database_path),
         "reasoning_enabled": settings.reasoning_enabled,
+        "frontend": {
+            "dist_ready": (FRONTEND_DIST / "index.html").is_file(),
+            "dist_path": str(FRONTEND_DIST),
+        },
         "llm": model,
     }
 
@@ -154,13 +171,25 @@ def delete_knowledge(document_id: str) -> dict:
 
 @app.get("/")
 def dashboard() -> FileResponse:
-    return FileResponse(FRONTEND_ROOT / "index.html")
+    return _frontend_index()
 
 
+@app.get("/chat")
 @app.get("/chat.html")
 def chat_page() -> FileResponse:
-    return FileResponse(FRONTEND_ROOT / "chat.html")
+    return _frontend_index()
 
 
-for route, folder in (("/assets", "assets"), ("/css", "css"), ("/js", "js")):
-    app.mount(route, StaticFiles(directory=FRONTEND_ROOT / folder), name=folder)
+_assets_dir = FRONTEND_DIST / "assets"
+if _assets_dir.is_dir():
+    app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+
+@app.get("/{spa_path:path}")
+def spa_fallback(spa_path: str) -> FileResponse:
+    if spa_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    candidate = FRONTEND_DIST / spa_path
+    if candidate.is_file() and FRONTEND_DIST in candidate.resolve().parents:
+        return FileResponse(candidate)
+    return _frontend_index()
