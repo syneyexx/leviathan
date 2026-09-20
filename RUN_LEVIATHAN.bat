@@ -15,4 +15,4 @@ if not exist ".env" (
 )
 
 echo [LEVIATHAN] Starting on http://127.0.0.1:8765
-".venv\Scripts\python.exe" -m uvicorn backend.main:app --host 127.0.0.1 --port 8765
+".venv\Scripts\python.exe" -m uvicorn Data.backend.main:app --host 127.0.0.1 --port 8765
