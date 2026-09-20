@@ -63,7 +63,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.6.0-phase5`).
+FastAPI application (`version=0.7.0-phase6`).
 
 Responsibilities:
 
@@ -248,6 +248,7 @@ Frontend state is a projection. Canonical conversation/message/knowledge state l
 - `context/` — ContextBuilder / ContextPack
 - `model_runtime/` — OpenAICompatibleLLM
 - `run/` — RunStore, RunState, events
+- `artifacts/` — ArtifactStore + content hashing
 
 `Data/functions/` remains reserved for on-demand cold-path capabilities (not yet implemented).
 
@@ -317,7 +318,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 3 — Core module ownership | PASS | reasoning / context / model_runtime modules |
 | Phase 4 — Run + Event model | PASS | Canonical RunStore wired into `/api/chat` |
 | Phase 5 — Migration foundation | PASS | `schema_migrations` + baseline v1 |
-| Phase 6+ | NOT STARTED | Artifacts, Knowledge V2, functions, … |
+| Phase 6 — Artifact system | PASS | Metadata DB + filesystem bytes + hash verify |
+| Phase 7+ | NOT STARTED | Knowledge V2, function runtime, … |
 
 ---
 

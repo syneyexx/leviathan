@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
+from Data.modules.artifacts import ArtifactStore
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
@@ -18,6 +19,7 @@ from Data.modules.run import EventType, RunState, RunStore
 
 db = Database(settings.database_path)
 runs = RunStore(settings.database_path)
+artifacts = ArtifactStore(settings.database_path, settings.artifacts.root)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -28,10 +30,11 @@ async def lifespan(_: FastAPI):
     migrations.apply_all()
     db.initialize()
     runs.initialize()
+    artifacts.initialize()
     yield
 
 
-app = FastAPI(title="Leviathan", version="0.6.0-phase5", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.7.0-phase6", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -198,6 +201,49 @@ def get_run(run_id: str) -> dict:
         }
         for event in runs.list_events(run_id)
     ]}
+
+
+class ArtifactWrite(BaseModel):
+    content: str = Field(min_length=1, max_length=2_000_000)
+    filename: str = Field(min_length=1, max_length=180)
+    artifact_type: str = Field(default="text", min_length=1, max_length=80)
+    run_id: str | None = None
+    producer: str = Field(default="api", min_length=1, max_length=120)
+
+
+@app.post("/api/artifacts")
+def create_artifact(payload: ArtifactWrite) -> dict:
+    if "/" in payload.filename or "\\" in payload.filename:
+        raise HTTPException(status_code=422, detail="filename must be a basename")
+    if payload.run_id and not runs.get_run(payload.run_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+    record = artifacts.create_from_bytes(
+        data=payload.content.encode("utf-8"),
+        artifact_type=payload.artifact_type.strip(),
+        producer=payload.producer.strip(),
+        filename=payload.filename.strip(),
+        run_id=payload.run_id,
+    )
+    return {"artifact": record.public_dict()}
+
+
+@app.get("/api/artifacts/{artifact_id}")
+def get_artifact(artifact_id: str) -> dict:
+    record = artifacts.get(artifact_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return {"artifact": record.public_dict()}
+
+
+@app.post("/api/artifacts/{artifact_id}/verify")
+def verify_artifact(artifact_id: str) -> dict:
+    try:
+        ok = artifacts.verify_hash(artifact_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found") from exc
+    record = artifacts.get(artifact_id)
+    assert record is not None
+    return {"ok": ok, "artifact": record.public_dict()}
 
 
 @app.get("/api/knowledge")

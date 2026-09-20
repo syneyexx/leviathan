@@ -151,6 +151,11 @@ class NetworkSettings:
 
 
 @dataclass(frozen=True)
+class ArtifactSettings:
+    root: Path
+
+
+@dataclass(frozen=True)
 class Settings:
     """Canonical LEVIATHAN settings.
 
@@ -168,6 +173,7 @@ class Settings:
     features: FeatureFlags
     resources: ResourceLimits
     network: NetworkSettings
+    artifacts: ArtifactSettings
     database_path: Path
 
     # --- Compatibility accessors (Step 1 call sites) ---
@@ -234,6 +240,7 @@ class Settings:
                 "max_history_messages": self.resources.max_history_messages,
             },
             "network": {"allow_outbound": self.network.allow_outbound},
+            "artifacts": {"root": str(self.artifacts.root)},
             "database_path": str(self.database_path),
         }
 
@@ -267,6 +274,9 @@ class Settings:
         knowledge_top_k = _env_int("LEVIATHAN_KNOWLEDGE_TOP_K", 5, minimum=1, maximum=100)
         max_history = _env_int("LEVIATHAN_MAX_HISTORY_MESSAGES", 24, minimum=4, maximum=500)
 
+        artifacts_raw = _env_raw("LEVIATHAN_ARTIFACTS_ROOT", "Data/backend/data/artifacts") or "Data/backend/data/artifacts"
+        artifacts_root = _resolve_path(artifacts_raw)
+
         settings = cls(
             runtime=RuntimeSettings(host=host, port=port, loopback_only=loopback_only),
             model=ModelSettings(
@@ -293,6 +303,7 @@ class Settings:
                 max_history_messages=max_history,
             ),
             network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", False)),
+            artifacts=ArtifactSettings(root=artifacts_root),
             database_path=database_path,
         )
         settings.validate()

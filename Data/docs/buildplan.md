@@ -6,6 +6,30 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-20 — Phase 6 — Artifact System — PASS
+
+### Objective
+
+Canonical Artifacts with DB metadata + filesystem content + hash provenance.
+
+### Implementation
+
+- `Data/modules/artifacts/` (`ArtifactStore`, `ArtifactRecord`)
+- Content under `LEVIATHAN_ARTIFACTS_ROOT` (default `Data/backend/data/artifacts`)
+- Migration v2 creates `artifacts` table
+- API: `POST/GET /api/artifacts`, `POST /api/artifacts/{id}/verify`
+- Path-traversal filename rejected
+
+### Tests executed
+
+- Full backend suite → PASS (21)
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-20 — Phase 5 — Database Migration Foundation — PASS
 
 ### Objective

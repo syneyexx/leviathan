@@ -28,8 +28,29 @@ def _m1_baseline_marker(conn: sqlite3.Connection) -> None:
     conn.execute("SELECT 1")
 
 
+def _m2_artifacts_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifacts (
+            artifact_id TEXT PRIMARY KEY,
+            run_id TEXT,
+            job_id TEXT,
+            artifact_type TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            producer TEXT NOT NULL,
+            verification_status TEXT NOT NULL DEFAULT 'unverified',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
+    Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
 )
 
 
