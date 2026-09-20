@@ -27,7 +27,10 @@
   function wireToggleGroup(selector) {
     const items = Array.from(document.querySelectorAll(selector));
     items.forEach((item) => {
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (event) => {
+        // Allow real navigation for links between pages
+        if (item.tagName === "A" && item.getAttribute("href")) return;
+        event.preventDefault();
         items.forEach((el) => el.classList.remove("is-active"));
         item.classList.add("is-active");
         const label = item.textContent.trim().replace(/\s+/g, " ");
