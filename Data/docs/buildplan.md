@@ -6,6 +6,119 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-20 — Phase 5 — Database Migration Foundation — PASS
+
+### Objective
+
+Introduce ordered, restart-safe schema versioning without destroying existing SQLite data.
+
+### Implementation
+
+- `Data/backend/migrations.py` with `schema_migrations` table and contiguous version validation.
+- Baseline migration v1 is a no-op marker so existing DBs adopt versioning safely.
+- Applied during application lifespan before DB/run initialize.
+
+### Tests executed
+
+- `test_migrations` + full backend suite → PASS (19)
+
+### Status
+
+**PASS**
+
+---
+
+## 2026-09-20 — Phase 4 — Canonical Run + Event Model — PASS
+
+### Objective
+
+Introduce canonical Run lifecycle, validated transitions, structured events, and honest completion/failure semantics wired into `/api/chat`.
+
+### Implementation
+
+- New module `Data/modules/run/` with `RunState`, `validate_transition`, `RunRecord`, `EventType`, `EventRecord`, `RunStore`.
+- SQLite tables `runs` + `run_events` in the existing DB file.
+- Chat orchestration creates a Run and transitions: CREATED → PLANNING → RETRIEVING?/EXECUTING → COMPLETED or FAILED.
+- `FAILED → COMPLETED` is illegal (tested).
+- COMPLETED only after assistant message persistence.
+- `GET /api/runs/{run_id}` returns run + events.
+
+### Tests executed
+
+- `python3 -m unittest discover -s Data/backend/tests -v` → PASS (17)
+- Includes transition + store tests
+
+### Status
+
+**PASS**
+
+---
+
+## 2026-09-20 — Phase 3 — Core Module Ownership — PASS
+
+### Objective
+
+Separate reasoning, context, and model-runtime ownership into `Data/modules/` without breaking Step 1 callers.
+
+### Implementation
+
+- `Data/modules/reasoning/` owns `ReasoningEngine` / `ReasoningPlan`
+- `Data/modules/context/` owns `ContextBuilder` / `ContextPack` (extracted from LLM prompt assembly)
+- `Data/modules/model_runtime/` owns `OpenAICompatibleLLM`
+- Backend shims `Data/backend/reasoning.py` and `llm.py` re-export for compatibility
+- `main.py` imports from modules
+
+### Tests executed
+
+- Context builder tests + full backend suite → PASS
+
+### Status
+
+**PASS**
+
+---
+
+## 2026-09-20 — Phase 2 — Typed Configuration Foundation — PASS
+
+### Objective
+
+Centralize configuration into typed nested domains with validation, data-root, feature flags, and resource ceilings while preserving Step 1 compatibility accessors.
+
+### Implementation
+
+- Expanded `Data/backend/config.py` with domains: `runtime`, `model`, `knowledge`, `reasoning`, `features`, `resources`, `network`.
+- Added `ConfigurationError` for invalid booleans/ints/paths/conflicting feature flags.
+- Added `LEVIATHAN_DATA_ROOT` (default `D:/ModelData`, preserved on POSIX).
+- Added resource concurrency limits and experimental feature flags (all default OFF).
+- Loopback-only host guard.
+- `Settings.public_summary()` exposed on `/api/health` (no secrets).
+- Compatibility properties: `llm_*`, `knowledge_top_k`, `max_history_messages`, `reasoning_enabled`.
+
+### Files changed
+
+- `Data/backend/config.py`
+- `Data/backend/main.py` (health config summary; version `0.3.0-phase2`)
+- `Data/backend/tests/test_config.py`
+- `.env.example`
+- docs
+
+### Tests executed
+
+- `python3 -m unittest Data.backend.tests.test_config -v` → PASS (6)
+- `python3 -m unittest Data.backend.tests.test_foundation -v` → PASS (4)
+- Manual `/api/health` includes `config` object → PASS
+
+### Known limitations
+
+- No config file layer yet (env-only precedence).
+- Resource limits are declared but not yet enforced by a Resource Manager (Phase 12).
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-20 — Phase 1 — Frontend Application Foundation — PASS
 
 ### Objective

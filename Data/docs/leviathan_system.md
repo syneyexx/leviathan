@@ -27,11 +27,10 @@ LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 
 **Not implemented (do not treat UI shell labels as capability):**
 
-- Canonical Run / Event model;
 - Execution Gateway / approvals / policy;
 - Function Registry / on-demand functions;
 - Job runtime / Resource Manager;
-- Context Engine (context is still assembled inside the LLM client);
+- Full Context Engine token budgeting (basic ContextBuilder exists);
 - Memory / Evidence / Artifacts domains;
 - Agents / Neuro / Training / Evaluation frameworks;
 - schema migrations beyond `CREATE TABLE IF NOT EXISTS`;
@@ -64,7 +63,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.2.0-phase1`).
+FastAPI application (`version=0.6.0-phase5`).
 
 Responsibilities:
 
@@ -243,9 +242,14 @@ Frontend state is a projection. Canonical conversation/message/knowledge state l
 
 # 5. Modules and functions
 
-`Data/modules/` and `Data/functions/` exist as reserved namespaces with README placeholders only.
+`Data/modules/` now owns:
 
-No domain modules or on-demand function runtime are implemented yet.
+- `reasoning/` — ReasoningEngine
+- `context/` — ContextBuilder / ContextPack
+- `model_runtime/` — OpenAICompatibleLLM
+- `run/` — RunStore, RunState, events
+
+`Data/functions/` remains reserved for on-demand cold-path capabilities (not yet implemented).
 
 ---
 
@@ -308,8 +312,12 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase | Status | Notes |
 |---|---|---|
 | Phase 0 — Current-state audit | PASS | Map + drift correction + migration plan documented |
-| Phase 1 — Frontend foundation | PASS (verified gates below) | React/TS/Vite; visual tokens preserved; chat wired |
-| Phase 2+ | NOT STARTED | Typed config expansion, module ownership, Run model, … |
+| Phase 1 — Frontend foundation | PASS | React/TS/Vite; visual tokens preserved; chat wired |
+| Phase 2 — Typed configuration | PASS | Nested Settings domains + validation + feature flags |
+| Phase 3 — Core module ownership | PASS | reasoning / context / model_runtime modules |
+| Phase 4 — Run + Event model | PASS | Canonical RunStore wired into `/api/chat` |
+| Phase 5 — Migration foundation | PASS | `schema_migrations` + baseline v1 |
+| Phase 6+ | NOT STARTED | Artifacts, Knowledge V2, functions, … |
 
 ---
 

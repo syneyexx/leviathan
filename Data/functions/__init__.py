@@ -1,5 +1,5 @@
-"""Reusable LEVIATHAN Python functions.
+"""On-demand / cold-path functions.
 
-Small stateless helpers and shared function-level utilities belong here.
-Larger stateful features should live in Data.modules instead.
+Heavy optional capabilities belong here so they remain dormant until invoked.
+Do not place long-lived stateful managers in this package.
 """

@@ -10,22 +10,28 @@ from pydantic import BaseModel, Field
 
 from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
-from .llm import LLMUnavailable, OpenAICompatibleLLM
-from .reasoning import ReasoningEngine
+from .migrations import MigrationRunner
+from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
+from Data.modules.reasoning import ReasoningEngine
+from Data.modules.run import EventType, RunState, RunStore
 
 
 db = Database(settings.database_path)
+runs = RunStore(settings.database_path)
+migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    migrations.apply_all()
     db.initialize()
+    runs.initialize()
     yield
 
 
-app = FastAPI(title="Leviathan", version="0.2.0-phase1", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.6.0-phase5", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -69,6 +75,7 @@ async def health() -> dict:
             "dist_ready": (FRONTEND_DIST / "index.html").is_file(),
             "dist_path": str(FRONTEND_DIST),
         },
+        "config": settings.public_summary(),
         "llm": model,
     }
 
@@ -114,21 +121,58 @@ async def chat(payload: ChatRequest) -> dict:
         title = " ".join(message.split())[:72] or "New conversation"
         db.set_conversation_title(conversation_id, title)
 
+    run = runs.create_run(user_request=message, conversation_id=conversation_id)
+    runs.transition(run.run_id, RunState.PLANNING)
+    runs.append_event(run.run_id, EventType.REASONING_STARTED, {})
+
     has_knowledge = bool(db.list_knowledge(limit=1))
     plan = reasoner.analyze(message, has_knowledge) if settings.reasoning_enabled else ReasoningEngine().analyze(message, False)
-    knowledge = db.search_knowledge(message, settings.knowledge_top_k) if plan.use_knowledge else []
+    runs.append_event(
+        run.run_id,
+        EventType.REASONING_COMPLETED,
+        plan.public_summary(),
+    )
+    runs.transition(
+        run.run_id,
+        RunState.RETRIEVING if plan.use_knowledge else RunState.EXECUTING,
+        intent=plan.intent,
+        complexity=plan.complexity,
+    )
+
+    knowledge: list[dict] = []
+    if plan.use_knowledge:
+        runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
+        knowledge = db.search_knowledge(message, settings.knowledge_top_k)
+        runs.append_event(
+            run.run_id,
+            EventType.RETRIEVAL_COMPLETED,
+            {"count": len(knowledge)},
+        )
+        runs.transition(run.run_id, RunState.EXECUTING)
 
     history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
 
+    runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     try:
         answer, model = await llm.chat(history=history, knowledge=knowledge, plan=plan)
     except LLMUnavailable as exc:
+        runs.transition(run.run_id, RunState.FAILED, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    runs.append_event(run.run_id, EventType.MODEL_COMPLETED, {"model": model})
     assistant_message = db.add_message(conversation_id, "assistant", answer)
+    # Chat completion contract: model returned usable text AND assistant message persisted.
+    completed = runs.transition(
+        run.run_id,
+        RunState.COMPLETED,
+        selected_model=model,
+        output=answer,
+    )
     return {
         "conversation_id": conversation_id,
+        "run_id": completed.run_id,
+        "run_state": completed.state.value,
         "user_message": user_message,
         "assistant_message": assistant_message,
         "model": model,
@@ -138,6 +182,22 @@ async def chat(payload: ChatRequest) -> dict:
             for item in knowledge
         ],
     }
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str) -> dict:
+    run = runs.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {"run": run.public_dict(), "events": [
+        {
+            "event_id": event.event_id,
+            "event_type": event.event_type.value,
+            "created_at": event.created_at,
+            "payload": event.payload,
+        }
+        for event in runs.list_events(run_id)
+    ]}
 
 
 @app.get("/api/knowledge")

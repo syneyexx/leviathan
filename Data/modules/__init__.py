@@ -1,5 +1,5 @@
-"""LEVIATHAN optional modules namespace.
+"""Stateful / domain modules for LEVIATHAN.
 
-Future feature modules live here and must depend on the core runtime through
-explicit contracts instead of importing frontend code directly.
+Each subdirectory owns a coherent domain. Prefer importing from these packages
+rather than growing ``Data/backend/main.py``.
 """

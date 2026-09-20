@@ -1,5 +1,15 @@
-# LEVIATHAN Modules
+# Data/modules
 
-`Data/modules/` is reserved for optional LEVIATHAN subsystems and future feature modules.
+Long-lived / stateful domain systems for LEVIATHAN.
 
-Core runtime code belongs in `Data/backend/`. Static browser UI belongs in `Data/frontend/`. Modules added here should expose explicit Python contracts and should not become alternate execution or persistence layers.
+## Current modules
+
+| Module | Ownership |
+|---|---|
+| `reasoning/` | `ReasoningEngine`, `ReasoningPlan` |
+| `context/` | `ContextBuilder`, `ContextPack` |
+| `model_runtime/` | `OpenAICompatibleLLM`, `LLMUnavailable` |
+
+Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
+
+Create a new module only when real functionality requires persistent/domain ownership.

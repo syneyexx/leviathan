@@ -67,29 +67,38 @@ LEVIATHAN/
 
 ## `Data/backend/main.py`
 
-FastAPI composition root: lifespan, API routes, SPA serving from `FRONTEND_DIST`.
+FastAPI composition root: lifespan (migrations + DB + runs), API routes, SPA serving from `FRONTEND_DIST`.
 
 Avoid growing domain logic here.
 
 ## `Data/backend/config.py`
 
-Typed `Settings` + path constants (`FRONTEND_DIST`, etc.).
+Nested typed `Settings` domains + `ConfigurationError` + path constants (`FRONTEND_DIST`, etc.).
 
 ## `Data/backend/database.py`
 
 SQLite conversations, messages, Knowledge (+ FTS5).
 
-## `Data/backend/llm.py`
+## `Data/backend/migrations.py`
 
-OpenAI-compatible provider client. Provider-facing only.
+Ordered schema migration runner (`schema_migrations` table).
 
-## `Data/backend/reasoning.py`
+## `Data/backend/llm.py` / `reasoning.py`
 
-Deterministic `ReasoningEngine` / `ReasoningPlan` seam.
+Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 
-## `Data/backend/tests/test_foundation.py`
+## Modules (preferred owners)
 
-Step 1 / foundation regression tests.
+| Package | Owns |
+|---|---|
+| `Data/modules/reasoning/` | ReasoningEngine |
+| `Data/modules/context/` | ContextBuilder |
+| `Data/modules/model_runtime/` | OpenAICompatibleLLM |
+| `Data/modules/run/` | RunStore / events / transitions |
+
+## Tests
+
+`Data/backend/tests/` — foundation, config, context, run, migrations.
 
 ---
 
