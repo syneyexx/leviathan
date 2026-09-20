@@ -14,13 +14,13 @@ class MigrationRunnerTests(unittest.TestCase):
             runner = MigrationRunner(path)
             first = runner.apply_all()
             second = runner.apply_all()
-            self.assertEqual(first, [1, 2])
+            self.assertEqual(first, [1, 2, 3])
             self.assertEqual(second, [])
             conn_version = MigrationRunner(path)
             import sqlite3
 
             with sqlite3.connect(path) as conn:
-                self.assertEqual(conn_version.current_version(conn), 2)
+                self.assertEqual(conn_version.current_version(conn), 3)
 
     def test_rejects_non_contiguous_versions(self) -> None:
         with self.assertRaises(MigrationError):

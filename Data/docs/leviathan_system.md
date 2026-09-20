@@ -63,7 +63,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.7.0-phase6`).
+FastAPI application (`version=0.8.0-phase7`).
 
 Responsibilities:
 
@@ -143,13 +143,17 @@ POST /api/chat
 
 Completion of a chat turn means: model returned usable text and the assistant message was persisted. There is not yet a canonical Run completion contract.
 
-## 3.7 Knowledge API
+## 3.7 Knowledge V2
 
-- `GET/POST /api/knowledge`
-- `GET /api/knowledge/search?q=`
-- `DELETE /api/knowledge/{id}`
+Owner: `Data/modules/knowledge/`.
 
-Documents are manually upserted. No D:/ModelData ingest pipeline yet.
+- Documents with ingest status (`DISCOVERED`…`READY`/`FAILED`/…), content hash, provenance path/mtime, parser metadata
+- Chunks with hashes; document becomes READY only after successful chunk/index write
+- Lexical chunk FTS (LIKE fallback); metadata `source` filter
+- `EmbeddingProvider` interface + `NullEmbeddingProvider` (no fabricated vectors)
+- `HybridRetriever` — lexical now; vector fusion only when a real provider is available
+- Incremental file ingest under `LEVIATHAN_DATA_ROOT` with change detection
+- API: CRUD, search (`hits`+`documents`), document+chunks, `ingest/path`, `ingest/scan`
 
 ## 3.8 Health
 
@@ -249,6 +253,7 @@ Frontend state is a projection. Canonical conversation/message/knowledge state l
 - `model_runtime/` — OpenAICompatibleLLM
 - `run/` — RunStore, RunState, events
 - `artifacts/` — ArtifactStore + content hashing
+- `knowledge/` — KnowledgeStore V2 + HybridRetriever
 
 `Data/functions/` remains reserved for on-demand cold-path capabilities (not yet implemented).
 
@@ -319,7 +324,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 4 — Run + Event model | PASS | Canonical RunStore wired into `/api/chat` |
 | Phase 5 — Migration foundation | PASS | `schema_migrations` + baseline v1 |
 | Phase 6 — Artifact system | PASS | Metadata DB + filesystem bytes + hash verify |
-| Phase 7+ | NOT STARTED | Knowledge V2, function runtime, … |
+| Phase 7 — Knowledge V2 | PASS | Chunks, provenance, ingest states, hybrid retrieval |
+| Phase 8+ | NOT STARTED | Function runtime, execution gateway, … |
 
 ---
 

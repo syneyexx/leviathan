@@ -48,9 +48,88 @@ def _m2_artifacts_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m3_knowledge_v2(conn: sqlite3.Connection) -> None:
+    """Add Knowledge V2 columns/tables. Safe on existing Step-1 knowledge_documents."""
+
+    def columns(table: str) -> set[str]:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_documents (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    existing = columns("knowledge_documents")
+    for name, ddl in {
+        "status": "TEXT NOT NULL DEFAULT 'READY'",
+        "content_hash": "TEXT",
+        "original_path": "TEXT",
+        "source_mtime": "TEXT",
+        "size_bytes": "INTEGER",
+        "parser": "TEXT NOT NULL DEFAULT 'plain_text'",
+        "parser_version": "TEXT NOT NULL DEFAULT '1.0.0'",
+        "ingest_version": "INTEGER NOT NULL DEFAULT 1",
+        "trust_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
+        "error": "TEXT",
+    }.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE knowledge_documents ADD COLUMN {name} {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            chunk_id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            token_estimate INTEGER NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(document_id, chunk_index),
+            FOREIGN KEY(document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks(document_id, chunk_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_ingest_files (
+            path TEXT PRIMARY KEY,
+            size_bytes INTEGER NOT NULL,
+            mtime TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            document_id TEXT,
+            status TEXT NOT NULL,
+            parser_version TEXT NOT NULL,
+            ingest_version INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunk_fts
+            USING fts5(chunk_id UNINDEXED, document_id UNINDEXED, title, content)
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
+    Migration(version=3, name="knowledge_v2", apply=_m3_knowledge_v2),
 )
 
 

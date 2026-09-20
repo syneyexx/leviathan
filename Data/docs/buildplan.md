@@ -6,6 +6,47 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-20 — Phase 7 — Knowledge V2 — PASS
+
+### Objective
+
+Upgrade Knowledge with documents, chunks, provenance, hashes, ingest states, incremental ingest, atomic readiness, lexical retrieval, embedding interface, metadata filters, and hybrid retrieval interface. Bulk corpus root remains `LEVIATHAN_DATA_ROOT` (default `D:/ModelData`).
+
+### Implementation
+
+- New module `Data/modules/knowledge/`:
+  - `KnowledgeStore` — documents/chunks/ingest_files, atomic READY/FAILED
+  - `chunk_text` — overlapping plain-text chunking
+  - `HybridRetriever` + `RetrievalQuery`/`RetrievalHit`
+  - `EmbeddingProvider` protocol + `NullEmbeddingProvider` (no fabricated vectors)
+- Migration v3: Knowledge V2 columns + `knowledge_chunks` + `knowledge_chunk_fts` + `knowledge_ingest_files`
+- `Database` knowledge methods delegate to KnowledgeStore (Step-1 compat)
+- Chat uses HybridRetriever (chunk-level context)
+- API:
+  - existing CRUD/search enriched (`hits` + `documents`)
+  - `GET /api/knowledge/{id}` with chunks
+  - `POST /api/knowledge/ingest/path`
+  - `POST /api/knowledge/ingest/scan`
+- Path escape outside data_root rejected
+- FAILED documents excluded from READY search
+
+### Tests executed
+
+- `python3 -m unittest discover -s Data/backend/tests -v` → **PASS (30)**
+- Embedding quality: **UNMEASURED** (null provider; no model embeddings wired)
+
+### Known limitations
+
+- Plain-text parsers only (`.txt/.md/.csv/.json/.log`); heavy parsers remain future Functions
+- No real embedding backend yet — hybrid interface is lexical-only until a provider is available
+- Scan skips files > 5 MiB
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-20 — Phase 6 — Artifact System — PASS
 
 ### Objective

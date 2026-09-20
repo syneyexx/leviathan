@@ -12,6 +12,7 @@ from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.modules.artifacts import ArtifactStore
+from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
@@ -20,6 +21,13 @@ from Data.modules.run import EventType, RunState, RunStore
 db = Database(settings.database_path)
 runs = RunStore(settings.database_path)
 artifacts = ArtifactStore(settings.database_path, settings.artifacts.root)
+knowledge = KnowledgeStore(
+    settings.database_path,
+    data_root=settings.knowledge.data_root,
+    chunk_max_chars=settings.knowledge.chunk_max_chars,
+    chunk_overlap=settings.knowledge.chunk_overlap,
+)
+retriever = HybridRetriever(knowledge)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -29,12 +37,13 @@ llm = OpenAICompatibleLLM(settings)
 async def lifespan(_: FastAPI):
     migrations.apply_all()
     db.initialize()
+    knowledge.initialize()
     runs.initialize()
     artifacts.initialize()
     yield
 
 
-app = FastAPI(title="Leviathan", version="0.7.0-phase6", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.8.0-phase7", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -79,6 +88,12 @@ async def health() -> dict:
             "dist_path": str(FRONTEND_DIST),
         },
         "config": settings.public_summary(),
+        "knowledge": {
+            "data_root": str(settings.knowledge.data_root),
+            "documents": len(knowledge.list_documents(limit=10_000)),
+            "embedding_provider": retriever.embeddings.provider_id,
+            "embedding_available": retriever.embeddings.available(),
+        },
         "llm": model,
     }
 
@@ -128,7 +143,7 @@ async def chat(payload: ChatRequest) -> dict:
     runs.transition(run.run_id, RunState.PLANNING)
     runs.append_event(run.run_id, EventType.REASONING_STARTED, {})
 
-    has_knowledge = bool(db.list_knowledge(limit=1))
+    has_knowledge = bool(knowledge.list_documents(limit=1))
     plan = reasoner.analyze(message, has_knowledge) if settings.reasoning_enabled else ReasoningEngine().analyze(message, False)
     runs.append_event(
         run.run_id,
@@ -142,14 +157,17 @@ async def chat(payload: ChatRequest) -> dict:
         complexity=plan.complexity,
     )
 
-    knowledge: list[dict] = []
+    knowledge_hits: list[dict] = []
     if plan.use_knowledge:
         runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
-        knowledge = db.search_knowledge(message, settings.knowledge_top_k)
+        hits = retriever.search(
+            RetrievalQuery(text=message, limit=settings.knowledge_top_k)
+        )
+        knowledge_hits = [hit.as_context_document() for hit in hits]
         runs.append_event(
             run.run_id,
             EventType.RETRIEVAL_COMPLETED,
-            {"count": len(knowledge)},
+            {"count": len(knowledge_hits)},
         )
         runs.transition(run.run_id, RunState.EXECUTING)
 
@@ -158,7 +176,7 @@ async def chat(payload: ChatRequest) -> dict:
 
     runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     try:
-        answer, model = await llm.chat(history=history, knowledge=knowledge, plan=plan)
+        answer, model = await llm.chat(history=history, knowledge=knowledge_hits, plan=plan)
     except LLMUnavailable as exc:
         runs.transition(run.run_id, RunState.FAILED, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -181,8 +199,13 @@ async def chat(payload: ChatRequest) -> dict:
         "model": model,
         "reasoning": plan.public_summary(),
         "knowledge_sources": [
-            {"id": item["id"], "title": item["title"], "source": item["source"]}
-            for item in knowledge
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "source": item["source"],
+                "chunk_id": item.get("chunk_id"),
+            }
+            for item in knowledge_hits
         ],
     }
 
@@ -248,31 +271,87 @@ def verify_artifact(artifact_id: str) -> dict:
 
 @app.get("/api/knowledge")
 def list_knowledge() -> dict:
-    return {"documents": db.list_knowledge()}
+    return {"documents": [doc.public_dict() for doc in knowledge.list_documents()]}
 
 
 @app.post("/api/knowledge")
 def write_knowledge(payload: KnowledgeWrite) -> dict:
-    document = db.upsert_knowledge(
+    document = knowledge.upsert_document(
         document_id=payload.id,
         title=payload.title.strip(),
         content=payload.content.strip(),
         source=payload.source.strip(),
     )
-    return {"document": document}
+    return {"document": document.public_dict()}
 
 
 @app.get("/api/knowledge/search")
-def search_knowledge(q: Annotated[str, Query(min_length=1, max_length=4000)], limit: int = 5) -> dict:
+def search_knowledge(
+    q: Annotated[str, Query(min_length=1, max_length=4000)],
+    limit: int = 5,
+    source: str | None = None,
+) -> dict:
     safe_limit = min(max(limit, 1), 20)
-    return {"documents": db.search_knowledge(q, safe_limit)}
+    hits = retriever.search(RetrievalQuery(text=q, limit=safe_limit, source=source))
+    return {
+        "hits": [hit.public_dict() for hit in hits],
+        # Backward-compatible document projection for older clients.
+        "documents": [hit.as_context_document() for hit in hits],
+    }
+
+
+@app.get("/api/knowledge/{document_id}")
+def get_knowledge_document(document_id: str) -> dict:
+    document = knowledge.get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+    return {
+        "document": document.public_dict(),
+        "chunks": [chunk.public_dict() for chunk in knowledge.list_chunks(document_id)],
+    }
 
 
 @app.delete("/api/knowledge/{document_id}")
 def delete_knowledge(document_id: str) -> dict:
-    if not db.delete_knowledge(document_id):
+    if not knowledge.delete_document(document_id):
         raise HTTPException(status_code=404, detail="Knowledge document not found")
     return {"deleted": True, "id": document_id}
+
+
+class KnowledgeIngestPath(BaseModel):
+    path: str = Field(min_length=1, max_length=4000)
+
+
+@app.post("/api/knowledge/ingest/path")
+def ingest_knowledge_path(payload: KnowledgeIngestPath) -> dict:
+    try:
+        resolved = knowledge.resolve_under_data_root(payload.path.strip())
+        record = knowledge.ingest_file(resolved)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if record is None:
+        return {"ingested": False, "reason": "unchanged"}
+    return {
+        "ingested": True,
+        "document": record.public_dict(),
+        "chunks": [chunk.public_dict() for chunk in knowledge.list_chunks(record.document_id)],
+    }
+
+
+@app.post("/api/knowledge/ingest/scan")
+def ingest_knowledge_scan(limit: int = 50) -> dict:
+    safe_limit = min(max(limit, 1), 500)
+    try:
+        docs = knowledge.scan_data_root(limit=safe_limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "scanned": len(docs),
+        "data_root": str(settings.knowledge.data_root),
+        "documents": [doc.public_dict() for doc in docs],
+    }
 
 
 @app.get("/")

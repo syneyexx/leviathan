@@ -178,7 +178,8 @@ SQLite persistence
 | Typed config expansion | `Data/backend/config.py` → later configuration module |
 | Run + events | new `Data/modules/run/` (or backend package first) |
 | Context Engine | new module; migrate out of `llm.py` |
-| Knowledge V2 / ModelData | `Data/modules/knowledge/` + functions for parsers |
+| Knowledge ingest parsers (PDF/OCR) | `Data/functions/` called by Knowledge |
+| Knowledge store / retrieval | `Data/modules/knowledge/` |
 | Function runtime | `Data/functions/*` + registry |
 | Execution / approvals | modules + gateway — never agent-local |
 | Frontend pages | only when backend truth exists |

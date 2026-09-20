@@ -117,6 +117,8 @@ class ModelSettings:
 class KnowledgeSettings:
     top_k: int
     data_root: Path
+    chunk_max_chars: int = 1200
+    chunk_overlap: int = 120
 
 
 @dataclass(frozen=True)
@@ -222,6 +224,8 @@ class Settings:
             "knowledge": {
                 "top_k": self.knowledge.top_k,
                 "data_root": str(self.knowledge.data_root),
+                "chunk_max_chars": self.knowledge.chunk_max_chars,
+                "chunk_overlap": self.knowledge.chunk_overlap,
             },
             "reasoning": {"enabled": self.reasoning.enabled},
             "features": {
@@ -272,6 +276,10 @@ class Settings:
         data_root = _resolve_data_root(data_root_raw)
 
         knowledge_top_k = _env_int("LEVIATHAN_KNOWLEDGE_TOP_K", 5, minimum=1, maximum=100)
+        chunk_max = _env_int("LEVIATHAN_KNOWLEDGE_CHUNK_MAX_CHARS", 1200, minimum=200, maximum=20_000)
+        chunk_overlap = _env_int("LEVIATHAN_KNOWLEDGE_CHUNK_OVERLAP", 120, minimum=0, maximum=2000)
+        if chunk_overlap >= chunk_max:
+            raise ConfigurationError("LEVIATHAN_KNOWLEDGE_CHUNK_OVERLAP must be < CHUNK_MAX_CHARS")
         max_history = _env_int("LEVIATHAN_MAX_HISTORY_MESSAGES", 24, minimum=4, maximum=500)
 
         artifacts_raw = _env_raw("LEVIATHAN_ARTIFACTS_ROOT", "Data/backend/data/artifacts") or "Data/backend/data/artifacts"
