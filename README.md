@@ -48,7 +48,7 @@ Windows:
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8765 --reload
+RUN_LEVIATHAN.bat
 ```
 
 macOS/Linux:
@@ -66,7 +66,7 @@ Open:
 - Chat: `http://127.0.0.1:8765/chat.html`
 - API docs: `http://127.0.0.1:8765/docs`
 
-> `.env` is an example contract. The Step 1 backend reads environment variables directly, so load them through your shell/IDE or copy the values into your process environment. LM Studio's default OpenAI-compatible URL is already the default in code.
+`backend/config.py` automatically loads the repository-root `.env` file when it exists.
 
 ## LLM configuration
 
@@ -108,6 +108,14 @@ GET /api/knowledge/search?q=architecture
 ```
 
 The database is created automatically at `data/leviathan.db` by default.
+
+## Tests
+
+```bash
+python -m unittest backend.tests.test_foundation -v
+```
+
+The foundation tests cover conversation persistence, knowledge retrieval, and the deterministic reasoning seam. Live LLM behavior requires an actual configured model server and is therefore not represented as a fake passing unit test.
 
 ## Current boundary
 
