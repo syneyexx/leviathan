@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.database import Database
-from backend.reasoning import ReasoningEngine
+from Data.backend.database import Database
+from Data.backend.reasoning import ReasoningEngine
 
 
 class DatabaseTests(unittest.TestCase):
