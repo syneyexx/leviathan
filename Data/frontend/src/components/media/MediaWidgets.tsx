@@ -185,6 +185,7 @@ export type ChartSeries = {
   id: string;
   color: string;
   values: number[];
+  fill?: string;
 };
 
 export function LineChart({
@@ -192,11 +193,13 @@ export function LineChart({
   labels,
   height = 180,
   className = "",
+  marker,
 }: {
   series: ChartSeries[];
   labels?: string[];
   height?: number;
   className?: string;
+  marker?: { index: number; label: string };
 }) {
   const width = 640;
   const pad = { top: 12, right: 12, bottom: 24, left: 36 };
@@ -233,14 +236,33 @@ export function LineChart({
         );
       })}
       {series.map((s) => {
-        const d = s.values
-          .map((value, index) => {
-            const { x, y } = toPoint(value, index);
-            return `${index === 0 ? "M" : "L"}${x} ${y}`;
-          })
-          .join(" ");
-        return <path key={s.id} d={d} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" />;
+        const points = s.values.map((value, index) => toPoint(value, index));
+        const line = points.map((p, index) => `${index === 0 ? "M" : "L"}${p.x} ${p.y}`).join(" ");
+        const area =
+          points.length > 0
+            ? `${line} L${points[points.length - 1].x} ${pad.top + innerH} L${points[0].x} ${pad.top + innerH} Z`
+            : "";
+        return (
+          <g key={s.id}>
+            {s.fill && area ? <path d={area} fill={s.fill} stroke="none" /> : null}
+            <path d={line} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" />
+          </g>
+        );
       })}
+      {marker && series[0] ? (() => {
+        const value = series[0].values[marker.index];
+        if (value == null) return null;
+        const { x, y } = toPoint(value, marker.index);
+        return (
+          <g>
+            <circle cx={x} cy={y} r="4" fill={series[0].color} stroke="#111" strokeWidth="1.5" />
+            <rect x={x - 42} y={y - 28} width="84" height="18" rx="4" fill="rgba(8,8,8,0.92)" stroke="rgba(214,169,87,0.35)" />
+            <text x={x} y={y - 15} textAnchor="middle" fill="#e8e4dc" fontSize="9">
+              {marker.label}
+            </text>
+          </g>
+        );
+      })() : null}
       {labels?.map((label, index) => {
         const x = pad.left + (index / Math.max(labels.length - 1, 1)) * innerW;
         return (
