@@ -804,3 +804,98 @@ export type ResearchProjectCreate = {
   seedSources?: string[];
 };
 
+/* ---------- Coding Agent ---------- */
+
+export type CodingMission = "SCAFFOLD" | "REVIEW" | "TEST" | "FIX" | "GENERIC";
+
+export type CodingSessionStatus =
+  | "CREATED"
+  | "RUNNING"
+  | "WAITING_APPROVAL"
+  | "COMPLETED"
+  | "FAILED"
+  | "UNVERIFIED"
+  | "CANCELLED"
+  | "DISABLED";
+
+export type CodingStatusResponse = {
+  enabled: boolean;
+  agents_enabled: boolean;
+  workspace_configured: boolean;
+  residual_supported: boolean;
+  catalog_ids: string[];
+  truth: {
+    gateway_only: boolean;
+    hades_excluded: boolean;
+  };
+  error?: string | null;
+};
+
+export type CodingSession = {
+  session_id: string;
+  mission: CodingMission;
+  status: CodingSessionStatus;
+  workspace_root: string;
+  title: string;
+  user_goal: string;
+  model_id: string | null;
+  error: string | null;
+  verification_id: string | null;
+  created_at: string;
+  updated_at: string;
+  run_id?: string | null;
+};
+
+export type CodingStep = {
+  step_id: string;
+  session_id: string;
+  kind: string;
+  capability_id: string | null;
+  status: string;
+  output_json?: Record<string, unknown> | null;
+  error?: string | null;
+  created_at?: string;
+  observation_id?: string | null;
+  artifact_id?: string | null;
+  approval_id?: string | null;
+};
+
+export type CodingPatch = {
+  patch_id: string;
+  session_id: string;
+  path: string;
+  diff_unified: string;
+  applied: boolean;
+  artifact_id?: string | null;
+  approval_id?: string | null;
+};
+
+export type CodingVerification = {
+  report_id: string;
+  outcome: "PASSED" | "FAILED" | "UNMEASURED";
+  requirements?: Array<{ requirement_id: string; outcome: string; detail?: string | null }>;
+};
+
+export type CodingNeuroSnapshot = {
+  enabled: boolean;
+  consistency?: number | null;
+  progress?: number | null;
+  grounding?: number | null;
+  residual_supported?: boolean;
+  notes?: string[];
+};
+
+export type CodingSessionDetail = {
+  session: CodingSession;
+  turns: Array<{ turn_id: string; role: string; content: string; created_at: string }>;
+  steps: CodingStep[];
+  patches: CodingPatch[];
+  verification: CodingVerification | null;
+  neuro: CodingNeuroSnapshot | null;
+};
+
+export type CodingWorkspaceTreeResponse = {
+  entries: Array<{ path: string; type: "file" | "dir"; size?: number; mark?: "M" | "A" | null }>;
+  root?: string;
+};
+

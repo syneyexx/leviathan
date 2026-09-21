@@ -11,6 +11,7 @@ import "./styles/pages.css";
 import "./styles/analytics.css";
 import "./styles/trading.css";
 import "./styles/training.css";
+import "./styles/coding.css";
 
 const root = document.getElementById("root");
 if (!root) {

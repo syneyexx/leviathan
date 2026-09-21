@@ -860,6 +860,112 @@ def _m14_datasets_training_research(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m15_coding_agent(conn: sqlite3.Connection) -> None:
+    """Coding Agent control-plane sessions, turns, steps, and patches."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_sessions (
+            session_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            mission TEXT NOT NULL,
+            status TEXT NOT NULL,
+            workspace_root TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            user_goal TEXT NOT NULL DEFAULT '',
+            conversation_id TEXT,
+            run_id TEXT,
+            model_id TEXT,
+            error TEXT,
+            verification_id TEXT,
+            feature_truth_json TEXT NOT NULL DEFAULT '{}',
+            neuro_json TEXT NOT NULL DEFAULT '{}',
+            pending_capability_json TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            worker_pid INTEGER,
+            round_count INTEGER NOT NULL DEFAULT 0,
+            read_paths_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_sessions_status "
+        "ON coding_sessions(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_turns (
+            turn_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            content_raw TEXT,
+            created_at TEXT NOT NULL,
+            neuro_assessment_json TEXT,
+            token_estimate INTEGER,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(session_id) REFERENCES coding_sessions(session_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_turns_session "
+        "ON coding_turns(session_id, seq)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_steps (
+            step_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            turn_id TEXT,
+            seq INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            capability_id TEXT,
+            arguments_json TEXT NOT NULL DEFAULT '{}',
+            approval_id TEXT,
+            status TEXT NOT NULL,
+            observation_id TEXT,
+            effect_id TEXT,
+            artifact_id TEXT,
+            output_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            requested_by TEXT NOT NULL DEFAULT 'agent:coding',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES coding_sessions(session_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_steps_session "
+        "ON coding_steps(session_id, seq)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_patches (
+            patch_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            artifact_id TEXT,
+            path TEXT NOT NULL,
+            diff_unified TEXT NOT NULL,
+            hash_before TEXT,
+            hash_after TEXT,
+            applied INTEGER NOT NULL DEFAULT 0,
+            approval_id TEXT,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(session_id) REFERENCES coding_sessions(session_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_patches_session "
+        "ON coding_patches(session_id, created_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -875,6 +981,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=12, name="neuro_memory_snapshots", apply=_m12_neuro_memory_snapshots),
     Migration(version=13, name="model_control_plane", apply=_m13_model_control_plane),
     Migration(version=14, name="datasets_training_research", apply=_m14_datasets_training_research),
+    Migration(version=15, name="coding_agent", apply=_m15_coding_agent),
 )
 
 

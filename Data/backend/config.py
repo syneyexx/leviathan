@@ -141,6 +141,27 @@ class FeatureFlags:
     module_manager_enabled: bool
     module_manager_subprocess: bool
     agents_enabled: bool
+    coding_enabled: bool
+
+
+@dataclass(frozen=True)
+class CodingSettings:
+    """Coding Agent control-plane settings (workspace + loop bounds)."""
+
+    workspace: Path
+    max_rounds: int = 12
+    max_file_bytes: int = 1_000_000
+    command_allowlist: tuple[str, ...] = (
+        "python",
+        "python3",
+        "pytest",
+        "npm",
+        "npx",
+        "node",
+        "git",
+    )
+    temperature: float = 0.1
+    token_budget: int = 8000
 
 
 @dataclass(frozen=True)
@@ -204,6 +225,7 @@ class Settings:
     knowledge: KnowledgeSettings
     reasoning: ReasoningSettings
     features: FeatureFlags
+    coding: CodingSettings
     neuro_runtime: NeuroRuntimeSettings
     resources: ResourceLimits
     context: ContextSettings
@@ -275,6 +297,15 @@ class Settings:
                 "module_manager_enabled": self.features.module_manager_enabled,
                 "module_manager_subprocess": self.features.module_manager_subprocess,
                 "agents_enabled": self.features.agents_enabled,
+                "coding_enabled": self.features.coding_enabled,
+            },
+            "coding": {
+                "enabled": self.features.coding_enabled,
+                "max_rounds": self.coding.max_rounds,
+                "max_file_bytes": self.coding.max_file_bytes,
+                "temperature": self.coding.temperature,
+                # Workspace path omitted from public summary (operator-local root).
+                "workspace_configured": bool(str(self.coding.workspace).strip()),
             },
             "neuro_runtime": {
                 "residual_kind": self.neuro_runtime.residual_kind,
@@ -348,6 +379,23 @@ class Settings:
         if chaos_error_rate > 1.0:
             raise ConfigurationError("LEVIATHAN_CHAOS_ERROR_RATE must be <= 1.0")
 
+        coding_enabled = _env_bool("LEVIATHAN_FEATURE_CODING", False)
+        coding_workspace_raw = (
+            _env_raw("LEVIATHAN_CODING_WORKSPACE", "D:/leviathan/codingworkspace")
+            or "D:/leviathan/codingworkspace"
+        )
+        coding_workspace = _resolve_data_root(coding_workspace_raw)
+        allowlist_raw = (
+            _env_raw(
+                "LEVIATHAN_CODING_COMMAND_ALLOWLIST",
+                "python,python3,pytest,npm,npx,node,git",
+            )
+            or "python,python3,pytest,npm,npx,node,git"
+        )
+        command_allowlist = tuple(
+            part.strip() for part in allowlist_raw.split(",") if part.strip()
+        )
+
         settings = cls(
             runtime=RuntimeSettings(host=host, port=port, loopback_only=loopback_only),
             model=ModelSettings(
@@ -375,6 +423,17 @@ class Settings:
                 module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
+                coding_enabled=coding_enabled,
+            ),
+            coding=CodingSettings(
+                workspace=coding_workspace,
+                max_rounds=_env_int("LEVIATHAN_CODING_MAX_ROUNDS", 12, minimum=1, maximum=64),
+                max_file_bytes=_env_int(
+                    "LEVIATHAN_CODING_MAX_FILE_BYTES", 1_000_000, minimum=1024, maximum=50_000_000
+                ),
+                command_allowlist=command_allowlist or ("python", "python3", "pytest"),
+                temperature=_env_float("LEVIATHAN_CODING_TEMPERATURE", 0.1, minimum=0.0),
+                token_budget=_env_int("LEVIATHAN_CODING_TOKEN_BUDGET", 8000, minimum=512, maximum=200_000),
             ),
             neuro_runtime=NeuroRuntimeSettings(
                 residual_kind=(
@@ -440,6 +499,10 @@ class Settings:
         if self.features.module_manager_subprocess and not self.features.module_manager_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS requires LEVIATHAN_FEATURE_MODULE_MANAGER=true"
+            )
+        if self.features.coding_enabled and not self.features.agents_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_CODING requires LEVIATHAN_FEATURE_AGENTS=true"
             )
         kind = self.neuro_runtime.residual_kind
         if kind not in {
