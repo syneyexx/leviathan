@@ -189,15 +189,74 @@
     return lv ? `.${lv}` : el.tagName.toLowerCase();
   }
 
-  function pickEditable(target) {
+  function findDescendantImage(el) {
+    if (!(el instanceof Element)) return null;
+    if (el.tagName === "IMG") return el;
+    // Common wrappers / single-image containers
+    const preferred = el.querySelector(
+      "img.lv-sidebar-footer-mark, img.lv-thumb, img.lv-avatar, img.lv-ornament-img, img.lv-msg-avatar, .lv-earth-mini img, .lv-hero-media img, .lv-world-view img, .lv-brand-mark img, img.lvb-image",
+    );
+    if (preferred && !isBuilderNode(preferred)) return preferred;
+    const directImgs = [...el.children].filter((c) => c.tagName === "IMG" && !isBuilderNode(c));
+    if (directImgs.length === 1) return directImgs[0];
+    const all = [...el.querySelectorAll("img")].filter((img) => !isBuilderNode(img));
+    if (all.length === 1) return all[0];
+    return null;
+  }
+
+  function resolveImageEl(el) {
+    if (!el) return null;
+    if (el.tagName === "IMG") return el;
+    return findDescendantImage(el);
+  }
+
+  function hasReplaceableBackground(el) {
+    if (!(el instanceof Element)) return false;
+    try {
+      const bg = getComputedStyle(el).backgroundImage || "";
+      return /url\(/i.test(bg) && bg !== "none";
+    } catch {
+      return false;
+    }
+  }
+
+  function pickEditable(target, clientX, clientY) {
     if (!(target instanceof Element) || isBuilderNode(target)) return null;
-    let el = target;
-    if (el.closest("img")) {
-      const img = el.closest("img");
-      if (img && !isBuilderNode(img)) {
-        return { el: img, region: regionFor(img), selector: selectorFor(img), kind: "img" };
+
+    // Prefer a real <img> near the click — even when the image has pointer-events: none
+    // (clicks then land on the wrapper, e.g. sidebar footer lockup).
+    let imgHit = target.tagName === "IMG" ? target : target.closest?.("img");
+    if (!imgHit) imgHit = findDescendantImage(target);
+    if (!imgHit && clientX != null && clientY != null) {
+      // Peek under overlay/selection chrome
+      const prev = ui.select?.style.pointerEvents;
+      const prevHover = ui.hover?.style.pointerEvents;
+      if (ui.select) ui.select.style.pointerEvents = "none";
+      if (ui.hover) ui.hover.style.pointerEvents = "none";
+      try {
+        const stack = document.elementsFromPoint(clientX, clientY);
+        for (const node of stack) {
+          if (!(node instanceof Element) || isBuilderNode(node)) continue;
+          if (node.tagName === "IMG") {
+            imgHit = node;
+            break;
+          }
+          const nested = findDescendantImage(node);
+          if (nested) {
+            imgHit = nested;
+            break;
+          }
+        }
+      } finally {
+        if (ui.select) ui.select.style.pointerEvents = prev || "";
+        if (ui.hover) ui.hover.style.pointerEvents = prevHover || "";
       }
     }
+    if (imgHit && !isBuilderNode(imgHit)) {
+      return { el: imgHit, region: regionFor(imgHit), selector: selectorFor(imgHit), kind: "img" };
+    }
+
+    let el = target;
     while (el && el !== document.body && el.id !== "root") {
       if (isBuilderNode(el)) return null;
       if (el.dataset?.lvbId) return { el, region: regionFor(el), selector: selectorFor(el), kind: "widget" };
@@ -783,8 +842,14 @@
     const decls = currentDecls();
     let html = `<h3>${escapeHtml(selector)}</h3>`;
 
-    if (el.tagName === "IMG") {
-      const src = el.getAttribute("src") || "";
+    if (el.tagName === "IMG" || resolveImageEl(el)) {
+      const img = resolveImageEl(el) || el;
+      if (img !== el) {
+        // Promote selection so replace/upload always hit the real <img>
+        selectTarget({ el: img, region: regionFor(img), selector: selectorFor(img), kind: "img" });
+        return; // selectTarget re-renders dock
+      }
+      const src = img.getAttribute("src") || "";
       html += `
         <div class="lvb-section">Image</div>
         <div class="lvb-field"><label>Bron (URL)</label>
@@ -796,7 +861,7 @@
           </div>
         </div>
         <div class="lvb-field"><label>Alt</label>
-          <input type="text" data-role="img-alt" value="${escapeHtml(el.getAttribute("alt") || "")}" /></div>`;
+          <input type="text" data-role="img-alt" value="${escapeHtml(img.getAttribute("alt") || "")}" /></div>`;
     } else {
       const text = hasDirectText(el) || el.childElementCount === 0 ? el.textContent || "" : "";
       html += `
@@ -1414,15 +1479,15 @@
       reader.readAsDataURL(file);
     });
     const uploaded = await apiUpload(file.name, dataUrl);
-    insertImageAtUrl(uploaded.url, file.name);
-    hideImageLibrary();
+    await applyPickedImageUrl(uploaded.url, file.name);
   }
 
   async function openImageLibrary({ mode = "insert" } = {}) {
-    state.imagePickerMode = mode; // insert | replace
+    state.imagePickerMode = mode; // insert | replace | replace-bg
     if (!ui.media) return;
     ui.media.hidden = false;
-    ui.mediaTitle.textContent = mode === "replace" ? "Image vervangen" : "Image toevoegen";
+    ui.mediaTitle.textContent =
+      mode === "replace" || mode === "replace-bg" ? "Image vervangen" : "Image toevoegen";
     ui.mediaGrid.innerHTML = `<p class="lvb-muted">Assets laden…</p>`;
     try {
       const data = await apiListAssets();
@@ -1444,6 +1509,32 @@
     }
   }
 
+  async function applyPickedImageUrl(url, name = "Image") {
+    if (state.imagePickerMode === "replace-bg" && state.selectedEl) {
+      pushHistory("bg-image");
+      updateDecl("background-image", `url("${url}")`);
+      updateDecl("background-size", "cover");
+      updateDecl("background-position", "center");
+      setStatus("Achtergrond-image vervangen", "ok");
+      hideImageLibrary();
+      return;
+    }
+    if (state.imagePickerMode === "replace") {
+      const img = resolveImageEl(state.selectedEl);
+      if (img) {
+        if (state.selectedEl !== img) {
+          selectTarget({ el: img, region: regionFor(img), selector: selectorFor(img), kind: "img" });
+        }
+        const oldSrc = img.getAttribute("src") || "";
+        await commitImageSrc(img, state.selectedSelector || selectorFor(img), url, oldSrc);
+        hideImageLibrary();
+        return;
+      }
+    }
+    insertImageAtUrl(url, name);
+    hideImageLibrary();
+  }
+
   function hideImageLibrary() {
     if (ui.media) ui.media.hidden = true;
   }
@@ -1459,16 +1550,24 @@
   function showContextMenu(x, y, picked) {
     if (picked) selectTarget(picked);
     const el = state.selectedEl;
+    const imgEl = resolveImageEl(el);
+    // If user right-clicked an image wrapper, promote selection to the real <img>
+    if (imgEl && el && imgEl !== el) {
+      selectTarget({ el: imgEl, region: regionFor(imgEl), selector: selectorFor(imgEl), kind: "img" });
+    }
+    const active = state.selectedEl;
+    const canReplaceImg = Boolean(resolveImageEl(active));
+    const canReplaceBg = Boolean(active && !canReplaceImg && hasReplaceableBackground(active));
     const items = [
       { label: "Kopiëren", k: "⌘C", act: "copy" },
       { label: "Plakken", k: "⌘V", act: "paste" },
       { label: "Dupliceren", k: "⌘D", act: "duplicate" },
       { sep: true },
       { label: "Verwijderen", k: "Del", act: "delete" },
-      { label: isLocked(el) ? "Unlock" : "Lock", act: "lock" },
+      { label: isLocked(active) ? "Unlock" : "Lock", act: "lock" },
       { sep: true },
-      { label: "Tekst bewerken", act: "edit-text", disabled: !el || el.tagName === "IMG" },
-      { label: "Image vervangen…", act: "replace-image", disabled: !el || el.tagName !== "IMG" },
+      { label: "Tekst bewerken", act: "edit-text", disabled: !active || active.tagName === "IMG" },
+      { label: "Image vervangen…", act: "replace-image", disabled: !canReplaceImg && !canReplaceBg },
       { label: "Image toevoegen…", act: "insert-image" },
       { sep: true },
       { label: "Naar voren", act: "front" },
@@ -1510,8 +1609,17 @@
         return toggleLock();
       case "edit-text":
         return state.selectedEl && startInlineEdit(state.selectedEl);
-      case "replace-image":
-        return openImageLibrary({ mode: "replace" });
+      case "replace-image": {
+        const img = resolveImageEl(state.selectedEl);
+        if (img) {
+          selectTarget({ el: img, region: regionFor(img), selector: selectorFor(img), kind: "img" });
+          return openImageLibrary({ mode: "replace" });
+        }
+        if (state.selectedEl && hasReplaceableBackground(state.selectedEl)) {
+          return openImageLibrary({ mode: "replace-bg" });
+        }
+        return setStatus("Geen image geselecteerd — klik eerst op een image", "dirty");
+      }
       case "front":
         return bringForward();
       case "back":
@@ -1736,29 +1844,16 @@
     ui.hiddenFile.addEventListener("change", () => {
       const file = ui.hiddenFile.files?.[0];
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          setStatus("Uploaden…");
-          const uploaded = await apiUpload(file.name, String(reader.result));
-          if (state.selectedEl?.tagName === "IMG") {
-            const oldSrc = state.selectedEl.getAttribute("src") || "";
-            await commitImageSrc(state.selectedEl, state.selectedSelector, uploaded.url, oldSrc);
-          } else {
-            insertImageAtUrl(uploaded.url, file.name);
-          }
-          hideImageLibrary();
-        } catch (err) {
-          setStatus(String(err), "dirty");
-        }
-      };
-      reader.readAsDataURL(file);
+      state.imagePickerMode = state.imagePickerMode || "replace";
+      uploadAndInsertImage(file).catch((err) => setStatus(String(err), "dirty"));
       ui.hiddenFile.value = "";
     });
 
     ui.addFile.addEventListener("change", () => {
       const file = ui.addFile.files?.[0];
       if (!file) return;
+      // Upload button in media dialog keeps current mode (insert/replace/replace-bg)
+      if (!state.imagePickerMode) state.imagePickerMode = "insert";
       uploadAndInsertImage(file).catch((err) => setStatus(String(err), "dirty"));
       ui.addFile.value = "";
     });
@@ -1769,13 +1864,7 @@
       const url = item.dataset.assetUrl;
       if (!url) return;
       try {
-        if (state.imagePickerMode === "replace" && state.selectedEl?.tagName === "IMG") {
-          const oldSrc = state.selectedEl.getAttribute("src") || "";
-          await commitImageSrc(state.selectedEl, state.selectedSelector, url, oldSrc);
-        } else {
-          insertImageAtUrl(url, item.title || "Image");
-        }
-        hideImageLibrary();
+        await applyPickedImageUrl(url, item.title || "Image");
       } catch (err) {
         setStatus(String(err), "dirty");
       }
@@ -1871,7 +1960,7 @@
           refreshSelectionChrome();
           return;
         }
-        const picked = pickEditable(event.target);
+        const picked = pickEditable(event.target, event.clientX, event.clientY);
         state.hoverEl = picked?.el || null;
         refreshSelectionChrome();
       },
@@ -1884,7 +1973,7 @@
         if (!state.enabled || state.inlineEditing) return;
         if (isBuilderNode(event.target)) return;
         hideContextMenu();
-        const picked = pickEditable(event.target);
+        const picked = pickEditable(event.target, event.clientX, event.clientY);
         if (!picked) return;
         event.preventDefault();
         event.stopPropagation();
@@ -1898,7 +1987,7 @@
       (event) => {
         if (!state.enabled) return;
         if (isBuilderNode(event.target)) return;
-        const picked = pickEditable(event.target);
+        const picked = pickEditable(event.target, event.clientX, event.clientY);
         if (!picked || picked.el.tagName === "IMG") return;
         event.preventDefault();
         event.stopPropagation();
@@ -1913,7 +2002,16 @@
       (event) => {
         if (!state.enabled) return;
         if (isBuilderNode(event.target) && !event.target.closest(".lvb-select")) return;
-        const picked = isBuilderNode(event.target) ? (state.selectedEl ? { el: state.selectedEl, region: state.selectedRegion, selector: state.selectedSelector, kind: "element" } : null) : pickEditable(event.target);
+        const picked = isBuilderNode(event.target)
+          ? state.selectedEl
+            ? {
+                el: resolveImageEl(state.selectedEl) || state.selectedEl,
+                region: state.selectedRegion,
+                selector: selectorFor(resolveImageEl(state.selectedEl) || state.selectedEl),
+                kind: resolveImageEl(state.selectedEl) ? "img" : "element",
+              }
+            : null
+          : pickEditable(event.target, event.clientX, event.clientY);
         if (!picked && !state.selectedEl) return;
         event.preventDefault();
         event.stopPropagation();
@@ -1929,7 +2027,7 @@
         if (!state.enabled || state.inlineEditing) return;
         if (isBuilderNode(event.target)) return;
         if (!(event.altKey || event.button === 1)) return;
-        const picked = pickEditable(event.target);
+        const picked = pickEditable(event.target, event.clientX, event.clientY);
         if (!picked || isShellLocked(picked.el) || isLocked(picked.el)) return;
         selectTarget(picked);
         startMove(event);
