@@ -51,7 +51,7 @@ vite_proc: subprocess.Popen | None = None
 
 
 def default_content() -> dict:
-    return {"version": 2, "entries": {}, "nodes": []}
+    return {"version": 2, "entries": {}, "nodes": [], "components": []}
 
 
 def read_content() -> dict:
@@ -66,10 +66,13 @@ def read_content() -> dict:
     data.setdefault("version", 2)
     data.setdefault("entries", {})
     data.setdefault("nodes", [])
+    data.setdefault("components", [])
     if not isinstance(data["entries"], dict):
         data["entries"] = {}
     if not isinstance(data["nodes"], list):
         data["nodes"] = []
+    if not isinstance(data["components"], list):
+        data["components"] = []
     return data
 
 
@@ -317,11 +320,15 @@ class Handler(BaseHTTPRequestHandler):
             content.setdefault("version", 2)
             content.setdefault("entries", {})
             content.setdefault("nodes", [])
+            content.setdefault("components", [])
             if not isinstance(content["entries"], dict):
                 self._json(400, {"error": "entries must be an object"})
                 return
             if not isinstance(content.get("nodes"), list):
                 self._json(400, {"error": "nodes must be a list"})
+                return
+            if not isinstance(content.get("components"), list):
+                self._json(400, {"error": "components must be a list"})
                 return
             write_content(content)
             self._json(
@@ -339,6 +346,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+
+        if parsed.path == "/api/editor-ai":
+            payload = self._read_json()
+            if payload is None:
+                self._json(400, {"error": "Expected JSON body"})
+                return
+            instruction = payload.get("instruction")
+            if not isinstance(instruction, str) or not instruction.strip():
+                self._json(400, {"error": "instruction is verplicht"})
+                return
+            self._json(
+                501,
+                {
+                    "error": "AI nog niet aangesloten",
+                    "notes": "Endpoint /api/editor-ai staat klaar. Koppel een Leviathan-model; tot die tijd wordt er niets geschreven.",
+                    "contract": {
+                        "request": ["selectionHtml", "selectionCss", "instruction"],
+                        "response": ["html", "cssDecls", "notes"],
+                    },
+                },
+            )
+            return
 
         if parsed.path == "/api/replace-text":
             payload = self._read_json()

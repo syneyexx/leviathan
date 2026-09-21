@@ -2,6 +2,8 @@
  * Applies saved visual-editor content in normal Leviathan runs.
  * No editor UI — admin tool stays separate (EDIT_LAYOUT.bat only).
  */
+export type EditorBreakpoint = "desktop" | "tablet" | "mobile";
+
 export type EditorContentEntry = {
   text?: string;
   html?: string;
@@ -16,6 +18,7 @@ export type EditorContentEntry = {
   height?: string;
   zIndex?: string | number;
   styles?: Record<string, string>;
+  breakpoints?: Partial<Record<EditorBreakpoint, Record<string, string>>>;
 };
 
 export type EditorContentNode = {
@@ -23,16 +26,35 @@ export type EditorContentNode = {
   label?: string;
   parent?: string;
   html: string;
+  componentId?: string;
+  variant?: string;
   styles?: Record<string, string | undefined>;
+};
+
+export type EditorComponent = {
+  id: string;
+  name?: string;
+  html: string;
+  variant?: string;
+  defaultStyles?: Record<string, string | undefined>;
 };
 
 export type EditorContentFile = {
   version?: number;
   entries?: Record<string, EditorContentEntry>;
   nodes?: EditorContentNode[];
+  components?: EditorComponent[];
 };
 
 const CONTENT_URL = "/lv-editor-content.json";
+const breakpointProps = new WeakMap<HTMLElement, string[]>();
+
+function activeBreakpoint(): EditorBreakpoint {
+  const width = window.innerWidth;
+  if (width <= 640) return "mobile";
+  if (width <= 1024) return "tablet";
+  return "desktop";
+}
 
 function hasDirectText(el: Element): boolean {
   return [...el.childNodes].some(
@@ -67,6 +89,25 @@ function applyEntry(el: Element, entry: EditorContentEntry): void {
   if (entry.height != null) htmlEl.style.height = entry.height;
   if (entry.zIndex != null) htmlEl.style.zIndex = String(entry.zIndex);
   if (entry.hide) htmlEl.style.display = "none";
+
+  const previous = breakpointProps.get(htmlEl) ?? [];
+  for (const prop of previous) {
+    const base = entry.styles?.[prop];
+    if (base) htmlEl.style.setProperty(prop, base);
+    else htmlEl.style.removeProperty(prop);
+  }
+  breakpointProps.delete(htmlEl);
+
+  const bp = activeBreakpoint();
+  const overrides = bp === "desktop" ? undefined : entry.breakpoints?.[bp];
+  if (!overrides) return;
+  const applied: string[] = [];
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value == null || value === "") continue;
+    htmlEl.style.setProperty(key, value);
+    applied.push(key);
+  }
+  if (applied.length) breakpointProps.set(htmlEl, applied);
 }
 
 function applyEntries(content: EditorContentFile): void {
@@ -100,6 +141,8 @@ function mountNodes(content: EditorContentFile): void {
       if (!el) continue;
       el.dataset.lvbId = node.id;
       if (node.label) el.dataset.lvbLabel = node.label;
+      if (node.componentId) el.dataset.lvbComponentId = node.componentId;
+      if (node.variant) el.dataset.lvbVariant = node.variant;
       const parent =
         (node.parent ? document.querySelector(node.parent) : null) ||
         document.querySelector(".lv-main") ||
@@ -170,6 +213,9 @@ export function startEditorContentRuntime(): void {
 
     window.addEventListener("popstate", () => {
       window.setTimeout(apply, 50);
+    });
+    window.addEventListener("resize", () => {
+      window.setTimeout(apply, 80);
     });
   };
 
