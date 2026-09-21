@@ -30,6 +30,7 @@ from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
 from Data.modules.verification import VerificationEngine, VerificationRequirement
+from Data.modules.workflows import WorkflowRuntime, WorkflowStepDef, WorkflowStore
 
 
 db = Database(settings.database_path)
@@ -78,6 +79,8 @@ agent_runtime = AgentRuntime(
     runs=runs,
     agents_enabled=settings.features.agents_enabled,
 )
+workflow_store = WorkflowStore(settings.database_path)
+workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -95,6 +98,7 @@ async def lifespan(_: FastAPI):
     observation_store.initialize()
     evidence_store.initialize()
     memory_store.initialize()
+    workflow_store.initialize()
     job_runtime.start_background_worker()
     try:
         yield
@@ -103,7 +107,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.18.0-phase17", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.19.0-phase18", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -982,6 +986,67 @@ def execute_agent(payload: AgentExecuteRequest) -> dict:
     if result.status == "DISABLED":
         raise HTTPException(status_code=403, detail=result.public_dict())
     return {"agent": result.public_dict()}
+
+
+class WorkflowCreateRequest(BaseModel):
+    name: str = Field(default="workflow", min_length=1, max_length=120)
+    run_id: str | None = None
+    steps: list[dict] = Field(default_factory=list)
+
+
+@app.get("/api/workflows")
+def list_workflows(limit: Annotated[int, Query(ge=1, le=500)] = 100) -> dict:
+    return {"workflows": [item.public_dict() for item in workflow_store.list(limit=limit)]}
+
+
+@app.post("/api/workflows")
+def create_workflow(payload: WorkflowCreateRequest) -> dict:
+    steps: list[WorkflowStepDef] = []
+    for idx, raw in enumerate(payload.steps):
+        capability_id = raw.get("capability_id")
+        if not capability_id:
+            raise HTTPException(status_code=422, detail=f"Step {idx} missing capability_id")
+        steps.append(
+            WorkflowStepDef(
+                step_id=str(raw.get("step_id") or f"step-{idx}"),
+                capability_id=str(capability_id),
+                arguments=dict(raw.get("arguments") or {}),
+                approval_id=raw.get("approval_id"),
+            )
+        )
+    try:
+        record = workflow_runtime.create(name=payload.name, steps=steps, run_id=payload.run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"workflow": record.public_dict()}
+
+
+@app.get("/api/workflows/{workflow_id}")
+def get_workflow(workflow_id: str) -> dict:
+    record = workflow_store.get(workflow_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {"workflow": record.public_dict()}
+
+
+@app.post("/api/workflows/{workflow_id}/run")
+def run_workflow(workflow_id: str) -> dict:
+    try:
+        record = workflow_runtime.run(workflow_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Workflow not found") from exc
+    return {"workflow": record.public_dict()}
+
+
+@app.post("/api/workflows/{workflow_id}/cancel")
+def cancel_workflow(workflow_id: str) -> dict:
+    try:
+        record = workflow_runtime.cancel(workflow_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Workflow not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"workflow": record.public_dict()}
 
 
 @app.get("/")

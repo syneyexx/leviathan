@@ -106,6 +106,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/memory/` | MemoryStore |
 | `Data/modules/verification/` | VerificationEngine |
 | `Data/modules/agents/` | AgentRuntime (feature-flagged) |
+| `Data/modules/workflows/` | WorkflowStore / WorkflowRuntime |
 
 ## Tests
 
@@ -200,6 +201,7 @@ SQLite persistence
 | Evidence | `Data/modules/evidence/` |
 | Memory | `Data/modules/memory/` |
 | Verification | `Data/modules/verification/` |
+| Agents | `Data/modules/agents/` (requires feature flag) |
 | Frontend pages | only when backend truth exists |
 
 ---

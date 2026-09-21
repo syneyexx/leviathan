@@ -286,6 +286,26 @@ def _m8_memory_table(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _m9_workflows_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflows (
+            workflow_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            state TEXT NOT NULL,
+            steps_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            current_step INTEGER NOT NULL DEFAULT 0,
+            run_id TEXT,
+            step_results_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -295,6 +315,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=6, name="observations_and_effects", apply=_m6_observations_and_effects),
     Migration(version=7, name="evidence_table", apply=_m7_evidence_table),
     Migration(version=8, name="memory_table", apply=_m8_memory_table),
+    Migration(version=9, name="workflows_table", apply=_m9_workflows_table),
 )
 
 
