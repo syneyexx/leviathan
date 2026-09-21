@@ -28,6 +28,7 @@ from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
+from Data.modules.verification import VerificationEngine, VerificationRequirement
 
 
 db = Database(settings.database_path)
@@ -68,6 +69,7 @@ evidence_service = EvidenceService(
     observations=observation_store,
 )
 memory_store = MemoryStore(settings.database_path)
+verification_engine = VerificationEngine(evidence_store)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -93,7 +95,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.16.0-phase15", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.17.0-phase16", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -911,6 +913,38 @@ def revoke_memory(memory_id: str) -> dict:
     if item is None:
         raise HTTPException(status_code=404, detail="Memory not found")
     return {"memory": item.public_dict()}
+
+
+class VerifyRequest(BaseModel):
+    run_id: str | None = None
+    job_id: str | None = None
+    requirements: list[dict] = Field(default_factory=list)
+
+
+@app.post("/api/verification/evaluate")
+def evaluate_verification(payload: VerifyRequest) -> dict:
+    reqs: list[VerificationRequirement] = []
+    for raw in payload.requirements:
+        try:
+            reqs.append(
+                VerificationRequirement(
+                    requirement_id=str(raw.get("requirement_id") or raw.get("id") or f"req-{len(reqs)}"),
+                    description=str(raw.get("description") or "requirement"),
+                    evidence_kind=raw.get("evidence_kind"),
+                    min_verified=int(raw.get("min_verified") or 1),
+                    artifact_id=raw.get("artifact_id"),
+                    path=raw.get("path"),
+                    observation_id=raw.get("observation_id"),
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid requirement: {exc}") from exc
+    report = verification_engine.verify(
+        reqs,
+        run_id=payload.run_id,
+        job_id=payload.job_id,
+    )
+    return {"report": report.public_dict()}
 
 
 @app.get("/")

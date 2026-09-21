@@ -104,6 +104,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/observations/` | ToolObservation / Effect ledger |
 | `Data/modules/evidence/` | EvidenceStore / EvidenceService |
 | `Data/modules/memory/` | MemoryStore |
+| `Data/modules/verification/` | VerificationEngine |
 
 ## Tests
 
@@ -196,6 +197,7 @@ SQLite persistence
 | Jobs / resources | `Data/modules/jobs/` |
 | Observations / effects | `Data/modules/observations/` |
 | Evidence | `Data/modules/evidence/` |
+| Memory | `Data/modules/memory/` |
 | Frontend pages | only when backend truth exists |
 
 ---
