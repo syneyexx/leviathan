@@ -3,17 +3,54 @@ import type {
   BackupManifest,
   ChatResponse,
   Conversation,
+  DatasetFile,
+  DatasetIndex,
+  DatasetJob,
+  DatasetPreviewRow,
+  DatasetRecord,
+  DatasetVersion,
+  DownloadJob,
+  GatewaySnapshot,
+  HardwareSnapshot,
   HealthResponse,
+  HfDatasetFile,
   MasterGateReport,
   Message,
   MetricsSnapshot,
+  ModelDescriptor,
+  ModelInferenceTestResult,
+  ModelProfile,
+  ModelProvider,
+  ModelsStatus,
   NeuroAssessmentResponse,
   NeuroResidualStatus,
+  PreflightResult,
   ReleaseGateReport,
+  ResearchClaim,
+  ResearchConflict,
+  ResearchCoverage,
+  ResearchEvent,
+  ResearchEvidence,
+  ResearchPlan,
+  ResearchProject,
+  ResearchProjectCreate,
+  ResearchReport,
+  ResearchSource,
+  ResearchBudget,
+  RouterConfig,
   SecurityAuditReport,
   SoakReport,
+  TrainingCapabilities,
+  TrainingCheckpoint,
+  TrainingJob,
+  TrainingJobCreatePayload,
+  TrainingLogs,
+  TrainingMetric,
+  TrainingPlan,
+  TrainingPreflightPayload,
   TrainingRecipe,
   VerificationReport,
+  VerifiedCapability,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -40,16 +77,29 @@ function detailMessage(data: ApiErrorBody | null, status: number): string {
     const body = data.detail as { code?: string; message?: string };
     return body.code ? `${body.code}: ${body.message ?? ""}` : String(body.message ?? `Request failed (${status})`);
   }
+  if (typeof data.detail === "object" && data.detail !== null && "error" in data.detail) {
+    const nested = (data.detail as { error?: { code?: string; message?: string } }).error;
+    if (nested?.message) {
+      return nested.code ? `${nested.code}: ${nested.message}` : nested.message;
+    }
+  }
   return `Request failed (${status})`;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const headers = new Headers(options.headers ?? undefined);
+  if (!isFormData && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (isFormData) {
+    // Browser must set multipart boundary — never force application/json.
+    headers.delete("Content-Type");
+  }
+
   const response = await fetch(path, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers ?? {}),
-    },
+    headers,
   });
 
   let data: ApiErrorBody | null = null;
@@ -190,15 +240,15 @@ export const api = {
   },
 
   listModels(): Promise<{
-    models: import("../types/api").ModelDescriptor[];
-    status: import("../types/api").ModelsStatus;
+    models: ModelDescriptor[];
+    status: ModelsStatus;
     discoveryLatencyMs?: number | null;
   }> {
     return request("/api/models");
   },
 
   modelsStatus(): Promise<{
-    status: import("../types/api").ModelsStatus;
+    status: ModelsStatus;
     telemetry: Record<string, unknown>;
   }> {
     return request("/api/models/status");
@@ -206,30 +256,30 @@ export const api = {
 
   refreshModels(): Promise<{
     summary: unknown;
-    models: import("../types/api").ModelDescriptor[];
-    status: import("../types/api").ModelsStatus;
+    models: ModelDescriptor[];
+    status: ModelsStatus;
   }> {
     return request("/api/models/refresh", { method: "POST" });
   },
 
   getModel(modelId: string): Promise<{
-    model: import("../types/api").ModelDescriptor;
-    profile: import("../types/api").ModelProfile;
-    capabilities: import("../types/api").VerifiedCapability[];
-    provider: import("../types/api").ModelProvider | null;
+    model: ModelDescriptor;
+    profile: ModelProfile;
+    capabilities: VerifiedCapability[];
+    provider: ModelProvider | null;
     preflight: Record<string, unknown>;
   }> {
     return request(`/api/models/${encodeURIComponent(modelId)}`);
   },
 
-  getModelProfile(modelId: string): Promise<{ profile: import("../types/api").ModelProfile }> {
+  getModelProfile(modelId: string): Promise<{ profile: ModelProfile }> {
     return request(`/api/models/${encodeURIComponent(modelId)}/profile`);
   },
 
   saveModelProfile(
     modelId: string,
-    profile: Partial<import("../types/api").ModelProfile> & { activate?: boolean },
-  ): Promise<{ profile: import("../types/api").ModelProfile; activeModelId: string | null }> {
+    profile: Partial<ModelProfile> & { activate?: boolean },
+  ): Promise<{ profile: ModelProfile; activeModelId: string | null }> {
     return request(`/api/models/${encodeURIComponent(modelId)}/profile`, {
       method: "PUT",
       body: JSON.stringify(profile),
@@ -237,7 +287,7 @@ export const api = {
   },
 
   activateModel(modelId: string): Promise<{
-    model: import("../types/api").ModelDescriptor;
+    model: ModelDescriptor;
     activeModelId: string;
   }> {
     return request(`/api/models/${encodeURIComponent(modelId)}/activate`, { method: "POST" });
@@ -258,10 +308,7 @@ export const api = {
     return request(`/api/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
   },
 
-  probeModel(
-    modelId: string,
-    capabilities?: string[],
-  ): Promise<{ results: import("../types/api").VerifiedCapability[] }> {
+  probeModel(modelId: string, capabilities?: string[]): Promise<{ results: VerifiedCapability[] }> {
     return request(`/api/models/${encodeURIComponent(modelId)}/probe`, {
       method: "POST",
       body: JSON.stringify({ capabilities }),
@@ -272,29 +319,37 @@ export const api = {
     return request(`/api/models/${encodeURIComponent(modelId)}/benchmark`, { method: "POST" });
   },
 
-  getGateway(): Promise<{ gateway: import("../types/api").GatewaySnapshot }> {
+  testModel(
+    modelId: string,
+    payload: { prompt: string; maxTokens?: number; stream?: boolean },
+  ): Promise<{ result: ModelInferenceTestResult }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/test`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getGateway(): Promise<{ gateway: GatewaySnapshot }> {
     return request("/api/models/gateway");
   },
 
-  getRouter(): Promise<{ router: import("../types/api").RouterConfig }> {
+  getRouter(): Promise<{ router: RouterConfig }> {
     return request("/api/models/router");
   },
 
-  saveRouter(
-    config: Partial<import("../types/api").RouterConfig>,
-  ): Promise<{ router: import("../types/api").RouterConfig }> {
+  saveRouter(config: Partial<RouterConfig>): Promise<{ router: RouterConfig }> {
     return request("/api/models/router", {
       method: "PUT",
       body: JSON.stringify(config),
     });
   },
 
-  listModelProviders(): Promise<{ providers: import("../types/api").ModelProvider[] }> {
+  listModelProviders(): Promise<{ providers: ModelProvider[] }> {
     return request("/api/model-providers");
   },
 
   createModelProvider(payload: Record<string, unknown>): Promise<{
-    provider: import("../types/api").ModelProvider;
+    provider: ModelProvider;
   }> {
     return request("/api/model-providers", {
       method: "POST",
@@ -305,7 +360,7 @@ export const api = {
   updateModelProvider(
     providerId: string,
     payload: Record<string, unknown>,
-  ): Promise<{ provider: import("../types/api").ModelProvider }> {
+  ): Promise<{ provider: ModelProvider }> {
     return request(`/api/model-providers/${encodeURIComponent(providerId)}`, {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -338,7 +393,7 @@ export const api = {
   },
 
   downloadModel(payload: Record<string, unknown>): Promise<{
-    download: import("../types/api").DownloadJob;
+    download: DownloadJob;
   }> {
     return request("/api/models/download", {
       method: "POST",
@@ -346,13 +401,412 @@ export const api = {
     });
   },
 
-  listModelDownloads(): Promise<{ downloads: import("../types/api").DownloadJob[] }> {
+  listModelDownloads(): Promise<{ downloads: DownloadJob[] }> {
     return request("/api/model-downloads");
   },
 
-  cancelModelDownload(downloadId: string): Promise<{ download: import("../types/api").DownloadJob }> {
+  cancelModelDownload(downloadId: string): Promise<{ download: DownloadJob }> {
     return request(`/api/model-downloads/${encodeURIComponent(downloadId)}/cancel`, {
       method: "POST",
     });
+  },
+
+  /* ---------- Datasets ---------- */
+
+  listDatasets(limit = 100): Promise<{ datasets: DatasetRecord[] }> {
+    return request(`/api/datasets?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createDataset(payload: {
+    name: string;
+    description?: string;
+    license?: string | null;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ dataset: DatasetRecord }> {
+    return request("/api/datasets", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  uploadDataset(form: FormData): Promise<{ job: DatasetJob; bytes: number; filename: string }> {
+    return request("/api/datasets/upload", {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  getDataset(datasetId: string): Promise<{
+    dataset: DatasetRecord;
+    versions: DatasetVersion[];
+    files: DatasetFile[];
+    indexes: DatasetIndex[];
+  }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}`);
+  },
+
+  deleteDataset(datasetId: string): Promise<{ deleted: boolean; datasetId: string }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}`, { method: "DELETE" });
+  },
+
+  inspectDatasetPath(path: string): Promise<{ inspection: Record<string, unknown> }> {
+    return request("/api/datasets/inspect", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  },
+
+  importDatasetLocal(payload: {
+    path: string;
+    name?: string | null;
+    description?: string;
+    license?: string | null;
+    materialize?: boolean;
+    datasetId?: string | null;
+  }): Promise<{ job: DatasetJob }> {
+    return request("/api/datasets/import/local", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  importDatasetHuggingFace(payload: {
+    repositoryId: string;
+    filename: string;
+    revision?: string;
+    name?: string | null;
+    description?: string;
+    license?: string | null;
+    token?: string | null;
+    materialize?: boolean;
+    datasetId?: string | null;
+  }): Promise<{ job: DatasetJob }> {
+    return request("/api/datasets/import/huggingface", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listHuggingFaceDatasetFiles(payload: {
+    repositoryId: string;
+    revision?: string;
+    token?: string | null;
+  }): Promise<{ files: HfDatasetFile[] }> {
+    return request("/api/datasets/huggingface/list", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listDatasetVersions(datasetId: string): Promise<{ versions: DatasetVersion[] }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/versions`);
+  },
+
+  getDatasetVersion(versionId: string): Promise<{ version: DatasetVersion }> {
+    return request(`/api/datasets/versions/${encodeURIComponent(versionId)}`);
+  },
+
+  previewDatasetVersion(
+    versionId: string,
+    limit = 20,
+  ): Promise<{ rows: DatasetPreviewRow[]; limit: number }> {
+    return request(
+      `/api/datasets/versions/${encodeURIComponent(versionId)}/preview?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  scanDatasetPii(versionId: string): Promise<{ pii: Record<string, unknown> }> {
+    return request(`/api/datasets/versions/${encodeURIComponent(versionId)}/pii`);
+  },
+
+  materializeDataset(datasetId: string): Promise<{ job: DatasetJob }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/materialize`, {
+      method: "POST",
+    });
+  },
+
+  validateDatasetVersion(datasetId: string, versionId: string): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/validate`,
+      { method: "POST" },
+    );
+  },
+
+  dedupeDatasetVersion(datasetId: string, versionId: string): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/dedupe`,
+      { method: "POST" },
+    );
+  },
+
+  transformDatasetVersion(
+    datasetId: string,
+    versionId: string,
+    transforms: Record<string, unknown>[] = [],
+  ): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/transform`,
+      { method: "POST", body: JSON.stringify({ transforms }) },
+    );
+  },
+
+  splitDatasetVersion(
+    datasetId: string,
+    versionId: string,
+    payload: { seed?: number; trainRatio?: number; valRatio?: number; testRatio?: number } = {},
+  ): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/split`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
+  tokenizeStatsDatasetVersion(datasetId: string, versionId: string): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/tokenize-stats`,
+      { method: "POST" },
+    );
+  },
+
+  exportDatasetVersion(
+    datasetId: string,
+    versionId: string,
+    payload: { split?: string | null } = {},
+  ): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/export`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
+  indexDatasetVersion(
+    datasetId: string,
+    versionId: string,
+    payload: { scope?: string; maxRecords?: number | null } = {},
+  ): Promise<{ job: DatasetJob }> {
+    return request(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/index`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
+  listDatasetJobs(datasetId?: string, limit = 100): Promise<{ jobs: DatasetJob[] }> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (datasetId) params.set("datasetId", datasetId);
+    return request(`/api/datasets/jobs?${params.toString()}`);
+  },
+
+  getDatasetJob(jobId: string): Promise<{ job: DatasetJob }> {
+    return request(`/api/datasets/jobs/${encodeURIComponent(jobId)}`);
+  },
+
+  cancelDatasetJob(jobId: string): Promise<{ job: DatasetJob }> {
+    return request(`/api/datasets/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+  },
+
+  processDatasetJobs(maxJobs = 10): Promise<{ processed: DatasetJob[] }> {
+    return request(`/api/datasets/jobs/process?maxJobs=${encodeURIComponent(String(maxJobs))}`, {
+      method: "POST",
+    });
+  },
+
+  reconcileDatasetJobs(): Promise<{ updated: DatasetJob[] }> {
+    return request("/api/datasets/jobs/reconcile", { method: "POST" });
+  },
+
+  /* ---------- Training ---------- */
+
+  trainingCapabilities(): Promise<{ capabilities: TrainingCapabilities }> {
+    return request("/api/training/capabilities");
+  },
+
+  trainingHardware(): Promise<{ hardware: HardwareSnapshot }> {
+    return request("/api/training/hardware");
+  },
+
+  trainingPreflight(payload: TrainingPreflightPayload): Promise<{ preflight: PreflightResult }> {
+    return request("/api/training/preflight", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  trainingPlan(payload: TrainingPreflightPayload): Promise<{ plan: TrainingPlan }> {
+    return request("/api/training/plan", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listTrainingJobs(status?: string, limit = 100): Promise<{ jobs: TrainingJob[] }> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (status) params.set("status", status);
+    return request(`/api/training/jobs?${params.toString()}`);
+  },
+
+  createTrainingJob(payload: TrainingJobCreatePayload): Promise<{ job: TrainingJob }> {
+    return request("/api/training/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getTrainingJob(jobId: string): Promise<{ job: TrainingJob }> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}`);
+  },
+
+  startTrainingJob(jobId: string): Promise<{ job: TrainingJob }> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}/start`, { method: "POST" });
+  },
+
+  cancelTrainingJob(jobId: string): Promise<{ job: TrainingJob }> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+  },
+
+  resumeTrainingJob(jobId: string): Promise<{ job: TrainingJob }> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}/resume`, { method: "POST" });
+  },
+
+  listTrainingCheckpoints(jobId: string): Promise<{ checkpoints: TrainingCheckpoint[] }> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}/checkpoints`);
+  },
+
+  listTrainingMetrics(jobId: string, limit = 500): Promise<{ metrics: TrainingMetric[] }> {
+    return request(
+      `/api/training/jobs/${encodeURIComponent(jobId)}/metrics?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  getTrainingLogs(jobId: string): Promise<TrainingLogs> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}/logs`);
+  },
+
+  evaluateTrainingJob(jobId: string): Promise<{ evaluation: Record<string, unknown> }> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}/evaluate`, { method: "POST" });
+  },
+
+  exportTrainingJob(jobId: string): Promise<{ export: Record<string, unknown> }> {
+    return request(`/api/training/jobs/${encodeURIComponent(jobId)}/export`, { method: "POST" });
+  },
+
+  reconcileTrainingJobs(): Promise<{ reconciled: number }> {
+    return request("/api/training/reconcile", { method: "POST" });
+  },
+
+  /* ---------- Research ---------- */
+
+  researchBudgets(): Promise<{ presets: Record<string, ResearchBudget> }> {
+    return request("/api/research/budgets");
+  },
+
+  listResearchProjects(limit = 100): Promise<{ projects: ResearchProject[] }> {
+    return request(`/api/research?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createResearchProject(payload: ResearchProjectCreate): Promise<{ project: ResearchProject }> {
+    return request("/api/research", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getResearchProject(projectId: string): Promise<{ project: ResearchProject }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}`);
+  },
+
+  updateResearchProject(
+    projectId: string,
+    payload: Partial<ResearchProjectCreate>,
+  ): Promise<{ project: ResearchProject }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  planResearchProject(
+    projectId: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<{ project: ResearchProject; plan: ResearchPlan | null }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/plan`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  runResearchProject(projectId: string): Promise<{ project: ResearchProject }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/run`, { method: "POST" });
+  },
+
+  cancelResearchProject(projectId: string): Promise<{ project: ResearchProject }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/cancel`, { method: "POST" });
+  },
+
+  resumeResearchProject(projectId: string): Promise<{ project: ResearchProject }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/resume`, { method: "POST" });
+  },
+
+  deepenResearchProject(
+    projectId: string,
+    extraRounds = 1,
+  ): Promise<{ project: ResearchProject }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/deepen`, {
+      method: "POST",
+      body: JSON.stringify({ extraRounds }),
+    });
+  },
+
+  listResearchEvents(projectId: string, limit = 200): Promise<{ events: ResearchEvent[] }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/events?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  listResearchSources(projectId: string, limit = 200): Promise<{ sources: ResearchSource[] }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/sources?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  listResearchEvidence(projectId: string, limit = 500): Promise<{ evidence: ResearchEvidence[] }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/evidence?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  listResearchClaims(projectId: string, limit = 500): Promise<{ claims: ResearchClaim[] }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/claims?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  listResearchConflicts(
+    projectId: string,
+    limit = 200,
+  ): Promise<{ conflicts: ResearchConflict[] }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/conflicts?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  getResearchCoverage(projectId: string): Promise<{ coverage: ResearchCoverage }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/coverage`);
+  },
+
+  getResearchReport(projectId: string): Promise<{ report: ResearchReport }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/report`);
+  },
+
+  regenerateResearchReport(projectId: string): Promise<{ report: ResearchReport }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/report`, { method: "POST" });
+  },
+
+  exportResearchProject(
+    projectId: string,
+    format: "markdown" | "md" | "html" | "json" = "markdown",
+  ): Promise<{ export: Record<string, unknown> }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/export?format=${encodeURIComponent(format)}`,
+    );
   },
 };

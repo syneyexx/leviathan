@@ -6,6 +6,7 @@ import type {
   ModelProvider,
   VerifiedCapability,
 } from "../../types/api";
+import { ModelTestConsole } from "./ModelTestConsole";
 
 function dash(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") return "—";
@@ -25,7 +26,8 @@ type Tab =
   | "runtime"
   | "resources"
   | "benchmarks"
-  | "diagnostics";
+  | "diagnostics"
+  | "test";
 
 export function ModelInspector({
   model,
@@ -117,6 +119,7 @@ export function ModelInspector({
             ["runtime", "Runtime"],
             ["resources", "Resources"],
             ["benchmarks", "Benchmarks"],
+            ["test", "Test"],
             ["diagnostics", "Diagnostics"],
           ] as const
         ).map(([id, label]) => (
@@ -366,6 +369,10 @@ export function ModelInspector({
           </Link>
           <p className="lv-muted">Raw metrics only — no automatic “best model” ranking.</p>
         </div>
+      ) : null}
+
+      {tab === "test" ? (
+        <ModelTestConsole modelId={model.id} displayName={model.displayName} busy={busy} />
       ) : null}
 
       {tab === "diagnostics" ? (
