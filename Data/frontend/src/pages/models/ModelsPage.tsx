@@ -52,7 +52,14 @@ export function ModelsPage() {
   const [busy, setBusy] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<
-    "overview" | "capabilities" | "profile" | "runtime" | "resources" | "benchmarks" | "diagnostics"
+    | "overview"
+    | "capabilities"
+    | "profile"
+    | "runtime"
+    | "resources"
+    | "benchmarks"
+    | "diagnostics"
+    | "test"
   >("overview");
 
   const selected = useMemo(

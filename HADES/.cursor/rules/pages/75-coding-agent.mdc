@@ -1,0 +1,15 @@
+---
+description: HADES Coding Agent page context
+globs:
+  - "components/hades/pages/coding-agent-page.tsx"
+  - "components/hades/coding-agent-helpers.ts"
+  - "components/hades/features/agent-ux/**/*.ts"
+  - "components/hades/features/agent-ux/**/*.tsx"
+  - "components/hades/obsidian/pages/coding-agent-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `coding-agent`.
+UI owner: `pages/coding-agent-page.tsx`; page helpers: `coding-agent-helpers.ts`; observable execution UI: `features/agent-ux/`; Obsidian: `obsidian/pages/coding-agent-obsidian.tsx`.
+API contract: coding job/investigation/control/delivery methods in `lib/hades-api.ts`.
+Backend owners: `backend/coding_agent.py`, `coding_jobs.py`, `coding_job_control.py`, `coding_investigate.py`, `coding_requirement_map.py`, `coding_delivery.py`, `coding_autonomy.py`; symbol/LSP support in `workspace_symbols.py`, `lsp_light.py`, `language_servers.py`, `investigate_selector.py`.
+Do not scan unrelated pages for a Coding Agent-only change.

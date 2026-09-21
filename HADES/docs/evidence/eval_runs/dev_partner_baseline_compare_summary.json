@@ -1,0 +1,48 @@
+{
+  "dataset": "dev_partner_v1",
+  "mode": "baseline_compare",
+  "split": "development",
+  "task_fingerprint_sha256": "4b66ccfdb501e33b9e3dc78853ab409e1d90226527ef737be25e854f28df8d64",
+  "start_commit": "dbc7da87ba603ba34e62fca7c00666a04aa018ad",
+  "baseline": {
+    "label": "existing_heuristic_no_fix",
+    "passed": 0,
+    "total": 12,
+    "pass_rate": 0.0
+  },
+  "improved": {
+    "label": "workflow_with_delivery_and_report_path",
+    "passed": 10,
+    "total": 12,
+    "pass_rate": 0.8333
+  },
+  "delta_pass_rate": 0.8333,
+  "equal_conditions": {
+    "same_task_version": "dev_partner_v1",
+    "same_fixtures": true,
+    "same_budgets": true,
+    "same_judges": "dev_partner_judge_v1",
+    "isolated_workspaces": true,
+    "cache_policy": "no_cross_run_solution_cache; each task gets a fresh tempfile fixture"
+  },
+  "live_agent_quality": "UNMEASURED",
+  "failures_baseline_top": "INSUFFICIENT_EVIDENCE",
+  "failures_improved": {
+    "TASK_MISUNDERSTOOD": 0,
+    "RELEVANT_CODE_NOT_FOUND": 0,
+    "INCORRECT_CHANGE": 2,
+    "INSUFFICIENT_TEST_COVERAGE": 0,
+    "TOOL_OR_INFRA_ERROR": 0,
+    "CONTEXT_PROBLEM": 0,
+    "BAD_RECOVERY_BEHAVIOR": 0,
+    "FALSE_SUCCESS_CLAIM": 0,
+    "MISSING_REQUIRED_OUTPUT": 0,
+    "SCOPE_VIOLATION": 0,
+    "PROVIDER_UNAVAILABLE": 0,
+    "JUDGE_ENV_ERROR": 0,
+    "INSUFFICIENT_EVIDENCE": 0,
+    "PASSED": 10
+  },
+  "host_command": "python -m evals.dev_partner_harness --mode baseline_compare --split development --seed 42",
+  "claimed_agent_quality_pass": false
+}

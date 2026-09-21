@@ -13,6 +13,7 @@ class ModelSource(str, Enum):
     API = "api"
     DOWNLOADED = "downloaded"
     IMPORTED = "imported"
+    TRAINED = "trained"
 
 
 class ModelLifecycleState(str, Enum):

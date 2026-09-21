@@ -1,0 +1,7 @@
+{
+  "name": "gpt-crawler",
+  "private": true,
+  "scripts": {
+    "start": "node -e \"console.log('pack upstream to run real UI')\""
+  }
+}

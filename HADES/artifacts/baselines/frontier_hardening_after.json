@@ -1,0 +1,333 @@
+{
+  "kind": "hades_frontier_hardening_baseline",
+  "label": "after",
+  "honesty": {
+    "do_not_mutate_historical_baselines": true,
+    "unknown_stays_unknown": true,
+    "live_lm_studio_not_required_for_software_gate": true
+  },
+  "fingerprint": {
+    "git_commit_sha": "f5ea5a3226ad37caeb515f2cc067ce17ecff764f",
+    "python_version": "3.12.3",
+    "node_version": "v22.14.0",
+    "npm_version": "10.9.7",
+    "os": "Linux-6.12.94+-x86_64-with-glibc2.39",
+    "system": "Linux",
+    "machine": "x86_64",
+    "measured_at_unix": 1788962669
+  },
+  "repository_size": {
+    "python_loc": 102322,
+    "python_files": 282,
+    "typescript_loc": 30385,
+    "typescript_files": 140,
+    "largest_python_files": [
+      {
+        "path": "backend/main.py",
+        "loc": 5940
+      },
+      {
+        "path": "backend/platform_services_core.py",
+        "loc": 3116
+      },
+      {
+        "path": "backend/gen2/mission_control.py",
+        "loc": 2305
+      },
+      {
+        "path": "backend/gen2/store.py",
+        "loc": 2138
+      },
+      {
+        "path": "backend/platform_db.py",
+        "loc": 2034
+      },
+      {
+        "path": "backend/gen2/workflows.py",
+        "loc": 1687
+      },
+      {
+        "path": "backend/database.py",
+        "loc": 1678
+      },
+      {
+        "path": "backend/tests/test_tool_engine_p0.py",
+        "loc": 1601
+      },
+      {
+        "path": "backend/capability_routes.py",
+        "loc": 1512
+      },
+      {
+        "path": "backend/gen2/routes.py",
+        "loc": 1485
+      },
+      {
+        "path": "backend/gen2/eval_lab.py",
+        "loc": 1422
+      },
+      {
+        "path": "backend/evals/adversarial_corpus.py",
+        "loc": 1405
+      },
+      {
+        "path": "backend/gen2/services.py",
+        "loc": 1366
+      },
+      {
+        "path": "backend/gen2/compute_fabric.py",
+        "loc": 1159
+      },
+      {
+        "path": "backend/gen2/flight_recorder.py",
+        "loc": 1153
+      },
+      {
+        "path": "backend/coding_agent.py",
+        "loc": 1065
+      },
+      {
+        "path": "backend/trading_service.py",
+        "loc": 1054
+      },
+      {
+        "path": "backend/coding_investigate.py",
+        "loc": 1037
+      },
+      {
+        "path": "backend/evals/generalization_dataset.py",
+        "loc": 985
+      },
+      {
+        "path": "backend/gen2/workflow_executor.py",
+        "loc": 975
+      }
+    ],
+    "largest_typescript_files": [
+      {
+        "path": "lib/hades-api.ts",
+        "loc": 2693
+      },
+      {
+        "path": "components/hades/pages/mission-control-page.tsx",
+        "loc": 2132
+      },
+      {
+        "path": "components/hades/pages/coding-agent-page.tsx",
+        "loc": 1999
+      },
+      {
+        "path": "components/hades/pages/chat-page.tsx",
+        "loc": 1516
+      },
+      {
+        "path": "components/hades/pages/workflows-page.tsx",
+        "loc": 791
+      },
+      {
+        "path": "components/hades/pages/agents-page.tsx",
+        "loc": 735
+      },
+      {
+        "path": "components/hades/pages/plugins-page-core.tsx",
+        "loc": 729
+      },
+      {
+        "path": "components/ui/sidebar.tsx",
+        "loc": 723
+      },
+      {
+        "path": "components/hades/pages/files-page.tsx",
+        "loc": 694
+      },
+      {
+        "path": "components/hades/pages/brain-page.tsx",
+        "loc": 631
+      },
+      {
+        "path": "components/hades/pages/trading-page.tsx",
+        "loc": 609
+      },
+      {
+        "path": "hooks/use-voice-session.ts",
+        "loc": 595
+      },
+      {
+        "path": "components/hades/hades-app.tsx",
+        "loc": 595
+      },
+      {
+        "path": "components/hades/pages/tasks-page.tsx",
+        "loc": 549
+      },
+      {
+        "path": "components/hades/pages/memory-page.tsx",
+        "loc": 508
+      }
+    ]
+  },
+  "risk_symbol_counts": {
+    "subprocess_execution_sites_approx": 87,
+    "tool_execution_symbol_refs_approx": 64,
+    "policy_enforcement_symbol_refs_approx": 59,
+    "completion_terminal_state_writers_approx": 19,
+    "note": "Approximate symbol/string counts \u2014 not unique call-graph edges."
+  },
+  "imports_ms": {
+    "run_lifecycle": 5.161,
+    "policy_enforcement": 0.13,
+    "execution_isolation": 2.484,
+    "artifacts": 4.073,
+    "approvals": 0.143
+  },
+  "dependencies": {
+    "python_requirements": [
+      "fastapi==0.116.1",
+      "httpx==0.28.1",
+      "pydantic-settings==2.10.1",
+      "uvicorn[standard]==0.35.0",
+      "beautifulsoup4==4.14.3",
+      "pypdf==5.9.0",
+      "python-docx==1.2.0",
+      "python-multipart==0.0.29",
+      "python-pptx==1.0.2",
+      "openpyxl==3.1.5",
+      "tzdata==2026.3",
+      "ruff>=0.11.0"
+    ],
+    "node_dependencies": [
+      "@base-ui/react",
+      "@shadcn/react",
+      "class-variance-authority",
+      "clsx",
+      "cmdk",
+      "date-fns",
+      "embla-carousel-react",
+      "input-otp",
+      "lucide-react",
+      "radix-ui",
+      "react",
+      "react-day-picker",
+      "react-dom",
+      "react-hook-form",
+      "react-resizable-panels",
+      "recharts",
+      "sonner",
+      "tailwind-merge",
+      "vaul"
+    ],
+    "node_devDependencies": [
+      "@eslint/js",
+      "@tailwindcss/postcss",
+      "@types/node",
+      "@types/react",
+      "@types/react-dom",
+      "@vitejs/plugin-react",
+      "eslint",
+      "eslint-plugin-react-hooks",
+      "tailwindcss",
+      "typescript",
+      "typescript-eslint",
+      "vite"
+    ]
+  },
+  "live_provider": {
+    "lm_studio": {
+      "status": "UNAVAILABLE",
+      "reason": "[Errno 111] Connection refused",
+      "endpoint": "http://127.0.0.1:1234/v1"
+    }
+  },
+  "windows_secured_isolation": {
+    "status": "UNVERIFIED_ON_HOST",
+    "note": "Job Objects alone are not full FS/network isolation; claim only with operational host evidence."
+  },
+  "backend_tests": {
+    "count": 921,
+    "load_ms": 706.314,
+    "pattern": "test_*.py"
+  },
+  "gen2_tests": {
+    "count": 248,
+    "load_ms": 2.922,
+    "pattern": "test_gen2*.py"
+  },
+  "frontend_tests_approx": {
+    "note": "Approximate count of test()/it() calls in tests/*.test.mjs",
+    "count": 46
+  },
+  "evals": {
+    "reasoning_core": 10,
+    "red_team_v1": 3,
+    "domain_quality_v1": 3,
+    "quality_suite_total": 42,
+    "quality_suite_by_layer": {
+      "agent_task": 7,
+      "model_answer": 3,
+      "software": 30,
+      "host": 2
+    },
+    "hard_benchmark": 3,
+    "generalization_v1": {
+      "symbols": [
+        "list_holdout_tasks"
+      ]
+    },
+    "agent_tasks_v1": 42,
+    "gen2_release_gate_run": {
+      "returncode": 0,
+      "duration_ms": 997.686
+    },
+    "gen2_release_gate": {
+      "passed": null,
+      "suites": {
+        "reasoning": {
+          "pass_rate": 1.0,
+          "total": 10,
+          "passed": 10,
+          "run_id": "eval_b142845ed7104daa"
+        },
+        "red_team_v1": {
+          "pass_rate": 1.0,
+          "total": 3,
+          "passed": 3,
+          "run_id": "eval_8b30703121b64c49"
+        },
+        "frontier_adversarial_v1": {
+          "pass_rate": 1.0,
+          "total": 109,
+          "passed": 109,
+          "failed": 0,
+          "not_model_quality": true
+        }
+      },
+      "summary": null
+    }
+  },
+  "frontend": {
+    "typecheck": {
+      "returncode": 0,
+      "duration_ms": 5172.264,
+      "status": "PASS"
+    },
+    "lint_script": "eslint . --max-warnings 0",
+    "typecheck_script": "tsc --noEmit",
+    "lint_equals_typecheck": false,
+    "lint_is_eslint": true,
+    "note": "npm run lint uses ESLint"
+  },
+  "production_build": {
+    "status": "UNMEASURED",
+    "note": "Run npm run build separately for full release evidence; omitted from cheap baseline by default."
+  },
+  "portfolio_demos": {
+    "returncode": 0,
+    "duration_ms": 937.496,
+    "counts": {
+      "passed": 6,
+      "total": 6
+    },
+    "status": "PASS",
+    "stdout_tail": "_pass\"\n  },\n  \"note\": \"Blocked path is the intended outcome; clean query remains allowed.\"\n}\n{\n  \"demo\": \"03_recovery_after_failure\",\n  \"ok\": true,\n  \"mission_id\": \"msn_864ee7c3b0bc471d\",\n  \"replan_kind\": \"contentful\",\n  \"before_tools\": [\n    \"financial-news-intelligence\"\n  ],\n  \"after_tools\": [\n    \"fincept-data\"\n  ],\n  \"wave_diff_keys\": [\n    \"changed_steps\",\n    \"invalidated_approvals\",\n    \"invalidated_step_ids\",\n    \"operational_reason\",\n    \"plan_version_after\",\n    \"plan_version_before\",\n    \"preserved_step_ids\",\n    \"replan_kind\"\n  ],\n  \"no_valid_alternative\": false,\n  \"note\": \"Recovery changes the plan; it does not claim the original failure succeeded.\"\n}\nPASS demo_04_false_success_defense\n  empty_artifact_ok=False\n  may_complete=False reason=completion_blocked:checkpoint_phase:executed\nPASS demo_05_crash_resume_effects\n  mid=REQUIRES_RECONCILIATION after=ALREADY_COMMITTED args_hash=24d424133d21\nPASS demo_06_context_quality\n  legacy_cov=0.2 compiler_cov=0.4 delta=0.2\n  note=lexical_proxy_only_not_live_model_quality\n\n=== demo_01_successful_task.py ===\nPASS demo_01_successful_task.py\n\n=== demo_02_blocked_action.py ===\nPASS demo_02_blocked_action.py\n\n=== demo_03_recovery_after_failure.py ===\nPASS demo_03_recovery_after_failure.py\n\n=== demo_04_false_success_defense.py ===\nPASS demo_04_false_success_defense.py\n\n=== demo_05_crash_resume_effects.py ===\nPASS demo_05_crash_resume_effects.py\n\n=== demo_06_context_quality.py ===\nPASS demo_06_context_quality.py\n\n6/6 demos passed\n"
+  }
+}

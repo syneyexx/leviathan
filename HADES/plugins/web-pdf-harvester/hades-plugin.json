@@ -1,0 +1,431 @@
+{
+  "format": 1,
+  "id": "web-pdf-harvester",
+  "name": "Web PDF Harvester",
+  "version": "1.0.0",
+  "description": "Multi-hop crawler that discovers public PDF/document resources into a persistent index, then downloads selected or all resources as a separate explicit action.",
+  "runtime_type": "python",
+  "entrypoint": "harvester_cli.py",
+  "plugin_type": "tool",
+  "category": "Research",
+  "labels": [
+    "crawler",
+    "pdf",
+    "harvester",
+    "documents",
+    "multi-hop",
+    "download"
+  ],
+  "permissions": [
+    "subprocess",
+    "network",
+    "filesystem"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "dependency_install": {
+    "timeout_seconds": 900,
+    "stall_timeout_seconds": 600
+  },
+  "tools": [
+    {
+      "name": "discover",
+      "action": "download",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "discover",
+        "--start-urls",
+        "{start_urls}",
+        "--max-depth",
+        "{max_depth}",
+        "--max-pages",
+        "{max_pages}",
+        "--max-external-hops",
+        "{max_external_hops}",
+        "--max-concurrent-requests",
+        "{max_concurrent_requests}",
+        "--rate-limit-ms",
+        "{rate_limit_ms}",
+        "--respect-robots-txt",
+        "{respect_robots_txt}",
+        "--same-domain-first",
+        "{same_domain_first}",
+        "--allow-external-resource-hosts",
+        "{allow_external_resource_hosts}",
+        "--resume",
+        "{resume}",
+        "--use-browser",
+        "{use_browser}",
+        "--data-dir",
+        "{data_dir}",
+        "--allow-private-hosts",
+        "{allow_private_hosts}",
+        "--request-timeout-seconds",
+        "{request_timeout_seconds}"
+      ],
+      "description": "Crawl start URLs with multi-hop discovery and persist PDF candidates/confirmed resources. Does not download PDF bodies.",
+      "input_schema": {
+        "type": "object",
+        "required": ["start_urls"],
+        "properties": {
+          "start_urls": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 8},
+            "description": "Seed URL list."
+          },
+          "max_depth": {"type": "integer", "default": 6, "minimum": 1, "maximum": 20},
+          "max_pages": {"type": "integer", "default": 5000, "minimum": 1, "maximum": 100000},
+          "max_external_hops": {"type": "integer", "default": 3, "minimum": 0, "maximum": 10},
+          "max_concurrent_requests": {"type": "integer", "default": 8, "minimum": 1, "maximum": 32},
+          "rate_limit_ms": {"type": "integer", "default": 750, "minimum": 0, "maximum": 60000},
+          "respect_robots_txt": {"type": "boolean", "default": true},
+          "same_domain_first": {"type": "boolean", "default": true},
+          "allow_external_resource_hosts": {"type": "boolean", "default": true},
+          "resume": {"type": "boolean", "default": false},
+          "use_browser": {"type": "boolean", "default": true},
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"},
+          "allow_private_hosts": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only enable for local fixture/testing. Blocks RFC1918/localhost by default."
+          },
+          "request_timeout_seconds": {"type": "number", "default": 30, "minimum": 1, "maximum": 300}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": ["dependency", "network", "schema", "timeout"]
+      }
+    },
+    {
+      "name": "status",
+      "action": "inspect",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "status",
+        "--data-dir",
+        "{data_dir}"
+      ],
+      "description": "Return last crawl session stats, queue sizes, and index counts.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": ["dependency", "schema"]
+      }
+    },
+    {
+      "name": "list_resources",
+      "action": "inspect",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "list",
+        "--filter",
+        "{filter}",
+        "--status",
+        "{status}",
+        "--download-status",
+        "{download_status}",
+        "--hostname",
+        "{hostname}",
+        "--category",
+        "{category}",
+        "--search",
+        "{search}",
+        "--offset",
+        "{offset}",
+        "--limit",
+        "{limit}",
+        "--data-dir",
+        "{data_dir}"
+      ],
+      "description": "List discovered resources with filters and pagination.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "string",
+            "default": "",
+            "description": "Convenience: confirmed|candidates|downloaded|not_downloaded|failed"
+          },
+          "status": {"type": "string", "default": ""},
+          "download_status": {"type": "string", "default": ""},
+          "hostname": {"type": "string", "default": ""},
+          "category": {"type": "string", "default": ""},
+          "search": {"type": "string", "default": ""},
+          "offset": {"type": "integer", "default": 0, "minimum": 0},
+          "limit": {"type": "integer", "default": 100, "minimum": 1, "maximum": 1000},
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": ["dependency", "schema"]
+      }
+    },
+    {
+      "name": "download_selected",
+      "action": "download",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "download_selected",
+        "--resource-ids",
+        "{resource_ids}",
+        "--download-concurrency",
+        "{download_concurrency}",
+        "--data-dir",
+        "{data_dir}",
+        "--allow-private-hosts",
+        "{allow_private_hosts}"
+      ],
+      "description": "Stream-download specific confirmed resources by id. Never implied by discover.",
+      "input_schema": {
+        "type": "object",
+        "required": ["resource_ids"],
+        "properties": {
+          "resource_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          },
+          "download_concurrency": {"type": "integer", "default": 3, "minimum": 1, "maximum": 16},
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"},
+          "allow_private_hosts": {"type": "boolean", "default": false}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": ["dependency", "network", "schema", "timeout"]
+      }
+    },
+    {
+      "name": "download_all",
+      "action": "download",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "download_all",
+        "--download-concurrency",
+        "{download_concurrency}",
+        "--estimate-only",
+        "{estimate_only}",
+        "--data-dir",
+        "{data_dir}",
+        "--allow-private-hosts",
+        "{allow_private_hosts}"
+      ],
+      "description": "Download every confirmed not-yet-downloaded resource, or return size estimate when estimate_only=true.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "download_concurrency": {"type": "integer", "default": 3, "minimum": 1, "maximum": 16},
+          "estimate_only": {"type": "boolean", "default": false},
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"},
+          "allow_private_hosts": {"type": "boolean", "default": false}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": ["dependency", "network", "schema", "timeout"]
+      }
+    },
+    {
+      "name": "resume_downloads",
+      "action": "download",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "resume_downloads",
+        "--download-concurrency",
+        "{download_concurrency}",
+        "--data-dir",
+        "{data_dir}",
+        "--allow-private-hosts",
+        "{allow_private_hosts}"
+      ],
+      "description": "Resume interrupted or failed downloads using .part files and HTTP Range when supported.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "download_concurrency": {"type": "integer", "default": 3, "minimum": 1, "maximum": 16},
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"},
+          "allow_private_hosts": {"type": "boolean", "default": false}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": ["dependency", "network", "schema", "timeout"]
+      }
+    },
+    {
+      "name": "verify",
+      "action": "inspect",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "verify",
+        "--resource-ids",
+        "{resource_ids}",
+        "--include-candidates",
+        "{include_candidates}",
+        "--data-dir",
+        "{data_dir}",
+        "--allow-private-hosts",
+        "{allow_private_hosts}"
+      ],
+      "description": "Revalidate discovered URLs with lightweight probes (headers/magic) without storing full documents.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "resource_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "default": []
+          },
+          "include_candidates": {"type": "boolean", "default": false},
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"},
+          "allow_private_hosts": {"type": "boolean", "default": false}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": ["dependency", "network", "schema", "timeout"]
+      }
+    },
+    {
+      "name": "cancel",
+      "action": "stop",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "cancel",
+        "--reason",
+        "{reason}",
+        "--data-dir",
+        "{data_dir}"
+      ],
+      "description": "Request cooperative cancellation of an active crawl or download session.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reason": {"type": "string", "default": "user_cancel"},
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": ["schema"]
+      }
+    },
+    {
+      "name": "health",
+      "action": "health",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "health",
+        "--data-dir",
+        "{data_dir}"
+      ],
+      "description": "Check plugin dependencies and writable data directory.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "data_dir": {"type": "string", "default": "data/pdf_harvester"}
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": ["dependency"]
+      }
+    },
+    {
+      "name": "run",
+      "action": "download",
+      "command": [
+        "{python}",
+        "harvester_cli.py",
+        "run",
+        "--payload",
+        "{payload}"
+      ],
+      "description": "Dispatch any harvester action via a single JSON payload containing an action field.",
+      "input_schema": {
+        "type": "object",
+        "required": ["payload"],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "description": "Must include action plus action-specific fields."
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": ["network", "read_files", "subprocess", "write_files"],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": ["dependency", "network", "schema", "timeout"]
+      }
+    }
+  ],
+  "isolation": "restricted_env",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": ["network", "read_files", "subprocess", "write_files"],
+    "side_effect_class": "process",
+    "cost_class": "expensive",
+    "latency_class": "slow",
+    "failure_modes": ["dependency", "network", "schema", "timeout"]
+  },
+  "marketplace": {
+    "pinned_version": "1.0.0",
+    "signed": false
+  }
+}

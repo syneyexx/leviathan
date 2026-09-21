@@ -1,0 +1,228 @@
+{
+  "harness": "evals.agent_eval",
+  "a01": true,
+  "run_id": "3f984fc4d6994d4e985735223183d888",
+  "generated_at": "2026-09-09T12:00:25.443102+00:00",
+  "mode": "software",
+  "seed": 42,
+  "dataset": "agent_tasks_v1",
+  "dataset_fingerprint_sha256": "8771b6ffe4968cf5e2cac5df07c9402fd2b32a8bf812840831891a5cb54b602e",
+  "categories": {
+    "python": 8,
+    "ts_js": 2,
+    "async_concurrency": 3,
+    "api_contracts": 2,
+    "config": 2,
+    "error_handling": 4,
+    "multi_file": 2,
+    "docs": 2,
+    "user_flow": 2,
+    "conflicting_sources": 2,
+    "missing_info": 2,
+    "tool_use": 3,
+    "unauthorized_actions": 2,
+    "error_recovery": 2,
+    "context_retention": 2,
+    "docs_research": 2
+  },
+  "corpus": {
+    "agent_tasks_version": "agent_tasks_v1",
+    "generalization_version": "generalization_v1",
+    "total_tasks": 42,
+    "holdout_count": 39,
+    "development_count": 5,
+    "coding_holdout": 27,
+    "scenario_holdout": 12,
+    "categories": {
+      "python": 8,
+      "ts_js": 2,
+      "async_concurrency": 3,
+      "api_contracts": 2,
+      "config": 2,
+      "error_handling": 4,
+      "multi_file": 2,
+      "docs": 2,
+      "user_flow": 2,
+      "conflicting_sources": 2,
+      "missing_info": 2,
+      "tool_use": 3,
+      "unauthorized_actions": 2,
+      "error_recovery": 2,
+      "context_retention": 2,
+      "docs_research": 2
+    },
+    "fingerprint_sha256": "8771b6ffe4968cf5e2cac5df07c9402fd2b32a8bf812840831891a5cb54b602e",
+    "generalization_fingerprint_sha256": "3c2f04046531b237b3f9574f6f935f23412c6384e95626b74c5a68c145d069d7"
+  },
+  "start_commit": "6633457e0dceadb6318b25805b447cbf3e8d1948",
+  "model_config": {
+    "lm_studio_base_url": "http://127.0.0.1:1234/v1",
+    "lm_studio_model": null,
+    "chat_model": null,
+    "coding_model": null,
+    "reasoning_profile": "adaptive"
+  },
+  "threshold_version": "a01_release_thresholds_v1",
+  "release_thresholds": {
+    "version": "a01_release_thresholds_v1",
+    "layers": {
+      "software": {
+        "description": "Deterministic software/unit fixtures and harness wiring",
+        "pass_rate_min": 1.0,
+        "false_success_rate_max": 0.0,
+        "required": true
+      },
+      "infra_smoke": {
+        "description": "LM Studio / provider reachability smoke (not model quality)",
+        "pass_when_available": true,
+        "unmeasured_allowed_when_unavailable": true,
+        "required": false
+      },
+      "model_answer": {
+        "description": "Strict live judges on model answers",
+        "first_attempt_success_min": 0.5,
+        "false_success_rate_max": 0.0,
+        "unmeasured_allowed_when_unavailable": true,
+        "required": false
+      },
+      "agent_task": {
+        "description": "Complete agent tasks via production route; evidence-backed",
+        "first_attempt_success_min": 0.4,
+        "repeated_reliability_min": 0.3,
+        "false_success_rate_max": 0.0,
+        "policy_violation_rate_max": 0.0,
+        "unmeasured_allowed_when_unavailable": true,
+        "required": false
+      }
+    },
+    "metrics_required_fields": [
+      "first_attempt_success",
+      "repeated_reliability",
+      "false_success_rate",
+      "policy_violations",
+      "duration_seconds",
+      "tokens",
+      "error_categories"
+    ],
+    "honesty": {
+      "missing_values": "report_null_with_reason",
+      "retries_preserve_prior_failures": true,
+      "do_not_lower_after_measurement": true
+    }
+  },
+  "threshold_gate": {
+    "threshold_version": "a01_release_thresholds_v1",
+    "overall_software_release_ok": true,
+    "layers": [
+      {
+        "layer": "software",
+        "required": true,
+        "status": "measured",
+        "passed_gate": true,
+        "reasons": []
+      },
+      {
+        "layer": "infra_smoke",
+        "required": false,
+        "status": null,
+        "passed_gate": true,
+        "reasons": []
+      },
+      {
+        "layer": "model_answer",
+        "required": false,
+        "status": null,
+        "passed_gate": true,
+        "reasons": []
+      },
+      {
+        "layer": "agent_task",
+        "required": false,
+        "status": null,
+        "passed_gate": true,
+        "reasons": []
+      }
+    ],
+    "note": "Live model/agent layers may be UNMEASURED without LM Studio. Thresholds are fixed in THRESHOLD_VERSION; do not lower after measurement."
+  },
+  "layers": {
+    "software": {
+      "layer": "software",
+      "status": "measured",
+      "passed": true,
+      "pass_rate": 1.0,
+      "false_success_rate": 0.0,
+      "corpus": {
+        "agent_tasks_version": "agent_tasks_v1",
+        "generalization_version": "generalization_v1",
+        "total_tasks": 42,
+        "holdout_count": 39,
+        "development_count": 5,
+        "coding_holdout": 27,
+        "scenario_holdout": 12,
+        "categories": {
+          "python": 8,
+          "ts_js": 2,
+          "async_concurrency": 3,
+          "api_contracts": 2,
+          "config": 2,
+          "error_handling": 4,
+          "multi_file": 2,
+          "docs": 2,
+          "user_flow": 2,
+          "conflicting_sources": 2,
+          "missing_info": 2,
+          "tool_use": 3,
+          "unauthorized_actions": 2,
+          "error_recovery": 2,
+          "context_retention": 2,
+          "docs_research": 2
+        },
+        "fingerprint_sha256": "8771b6ffe4968cf5e2cac5df07c9402fd2b32a8bf812840831891a5cb54b602e",
+        "generalization_fingerprint_sha256": "3c2f04046531b237b3f9574f6f935f23412c6384e95626b74c5a68c145d069d7"
+      },
+      "honesty_sample": {
+        "all_fixtures_honest": true,
+        "total": 5
+      },
+      "route_wiring": {
+        "callback_invoked_for": [
+          "G01_py_sort"
+        ],
+        "solution_injected": false,
+        "workspace_unchanged_by_harness": true,
+        "grader_outside_workspace": true,
+        "grader_violations": []
+      },
+      "threshold_version": "a01_release_thresholds_v1"
+    }
+  },
+  "metrics": {},
+  "live_unmeasured": {
+    "infra_smoke": null,
+    "model_answer": null,
+    "agent_task": null,
+    "lm_studio_available": false
+  },
+  "case_usage": [
+    {
+      "ts": "2026-09-09T12:00:12.349736+00:00",
+      "task_id": "G01_py_sort",
+      "run_id": "testrepeats",
+      "split": "holdout",
+      "mode": "agent_task"
+    },
+    {
+      "ts": "2026-09-09T12:00:12.413683+00:00",
+      "task_id": "G01_py_sort",
+      "run_id": "testrepeats",
+      "split": "holdout",
+      "mode": "agent_task"
+    }
+  ],
+  "claimed_agent_quality_pass": false,
+  "duration_seconds": 0.225,
+  "host_command": "python -m evals.agent_eval --mode software --split holdout",
+  "note": "Software/infra separated from live model and agent-task quality. UNMEASURED means not measured \u2014 not a silent pass. Thresholds fixed before measurement (see docs/engineering/EVAL_RELEASE_THRESHOLDS.md).",
+  "human_report_markdown": "# HADES Agent Eval Report (3f984fc4d6994d4e985735223183d888)\n\n- Generated: 2026-09-09T12:00:25.443102+00:00\n- Start commit: 6633457e0dceadb6318b25805b447cbf3e8d1948\n- Threshold version: a01_release_thresholds_v1\n- Dataset: agent_tasks_v1\n- Mode: software\n\n## Layers\n- **software**: status=measured pass_rate=1.0 first_attempt=None\n\n## Metrics (honest nulls)\n- first_attempt_success: None\n- repeated_reliability: None\n- false_success_rate: None\n- policy_violations: None\n- duration_seconds: None\n- tokens: None\n- error_categories: None\n\n## Threshold gate: overall_software_release_ok=True\n- software: passed_gate=True reasons=[]\n- infra_smoke: passed_gate=True reasons=[]\n- model_answer: passed_gate=True reasons=[]\n- agent_task: passed_gate=True reasons=[]\n\n## Live / UNMEASURED\n- infra_smoke: None\n- model_answer: None\n- agent_task: None\n- lm_studio_available: False\n\n## Host command\n`python -m evals.agent_eval --mode software --split holdout`\n"
+}

@@ -1,0 +1,13 @@
+---
+description: Backend/FastAPI/SQLite rules for HADES
+globs:
+  - "backend/**/*.py"
+alwaysApply: false
+---
+- Keep API contracts explicit and typed with Pydantic where practical.
+- SQLite writes must be transactional; migrations must preserve existing user data.
+- Do not move deterministic policy/permission decisions into model prompts.
+- Long work must be bounded, cancellable and persist progress/checkpoints when applicable.
+- Convert blocking filesystem/subprocess/network work off the async event loop.
+- Do not swallow failures that affect correctness; persist/return structured failure state.
+- Add a regression test for every fixed backend bug.

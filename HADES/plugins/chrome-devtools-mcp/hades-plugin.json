@@ -1,0 +1,175 @@
+{
+  "format": 1,
+  "id": "chrome-devtools-mcp",
+  "name": "Chrome DevTools MCP",
+  "version": "0.1.0",
+  "description": "Drive Chrome DevTools via MCP from HADES using list_tools/call_tool bridges.",
+  "runtime_type": "node",
+  "entrypoint": "list_tools",
+  "plugin_type": "tool",
+  "category": "Browser",
+  "labels": [
+    "chrome",
+    "devtools",
+    "mcp"
+  ],
+  "permissions": [
+    "subprocess",
+    "network",
+    "filesystem"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "mode": "command",
+      "description": "Check Node/npx prerequisites for this MCP bridge (fail-closed).",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "--action",
+        "doctor"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "none",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency"
+        ]
+      }
+    },
+    {
+      "name": "list_tools",
+      "action": "list",
+      "mode": "command",
+      "description": "List MCP tools exposed by Chrome DevTools MCP.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "--action",
+        "list_tools",
+        "--timeout",
+        "90"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "mcp",
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "call_tool",
+      "action": "call",
+      "mode": "command",
+      "description": "Call one MCP tool from Chrome DevTools MCP with JSON arguments.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "--action",
+        "call_tool",
+        "--tool",
+        "{tool}",
+        "--arguments",
+        "{arguments}",
+        "--timeout",
+        "120"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "tool"
+        ],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "arguments": {
+            "type": "string",
+            "default": "{}",
+            "description": "JSON object string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "mcp",
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "restricted_env",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "mcp",
+      "network",
+      "read_files",
+      "subprocess",
+      "write_files"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "moderate",
+    "latency_class": "normal",
+    "failure_modes": [
+      "dependency",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+    "signed": false
+  },
+  "mcp": {
+    "expand_tools": true,
+    "transport": "stdio"
+  }
+}

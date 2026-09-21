@@ -1,0 +1,322 @@
+{
+  "format": 1,
+  "id": "headroom",
+  "name": "Headroom",
+  "version": "0.1.0",
+  "description": "Local context compression for tool outputs/logs/RAG chunks. Compress files or start the Headroom proxy. Upstream: headroomlabs-ai/headroom.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "service",
+  "category": "Developer",
+  "labels": [
+    "tokens",
+    "compression",
+    "context"
+  ],
+  "permissions": [
+    "subprocess",
+    "filesystem",
+    "network"
+  ],
+  "autonomous": true,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/headroomlabs-ai/headroom",
+  "license": "Apache-2.0",
+  "healthcheck": {
+    "type": "tcp",
+    "host": "127.0.0.1",
+    "port": 8787,
+    "timeout_seconds": 60,
+    "interval_seconds": 1.0
+  },
+  "dependency_install": {
+    "timeout_seconds": 1800,
+    "stall_timeout_seconds": 900
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Check Headroom Python module and CLI in the plugin venv.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "compress",
+      "action": "compress",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "compress",
+        "--path",
+        "{path}",
+        "--model",
+        "{model}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "description": "Compress a local text/JSON file through Headroom before sending it to an LLM.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "model": {
+            "type": "string",
+            "default": "gpt-4o",
+            "maxLength": 80
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 20000,
+            "minimum": 500,
+            "maximum": 100000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "start",
+      "action": "start",
+      "mode": "service",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "proxy",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8787"
+      ],
+      "description": "Start the local Headroom optimization proxy on 127.0.0.1:8787.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "health",
+      "action": "health",
+      "mode": "command",
+      "description": "Run declared healthcheck.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "status",
+      "action": "status",
+      "mode": "command",
+      "description": "Report managed service status.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "logs",
+      "action": "logs",
+      "mode": "command",
+      "description": "Read persisted service logs.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "stop",
+      "action": "stop",
+      "mode": "command",
+      "description": "Stop managed service.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "restricted_env",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "service",
+      "subprocess",
+      "write_files"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "moderate",
+    "latency_class": "slow",
+    "failure_modes": [
+      "dependency",
+      "healthcheck",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/headroomlabs-ai/headroom",
+    "license": "Apache-2.0",
+    "signed": false
+  }
+}

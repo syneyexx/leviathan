@@ -1,0 +1,33 @@
+{
+  "kind": "hades_frontier_hardening_comparison",
+  "before_sha": "19371f444f38fe2f425538fda9f4d3856765d457",
+  "after_sha": "f5ea5a3226ad37caeb515f2cc067ce17ecff764f",
+  "backend_test_count_delta": 48,
+  "gen2_test_count_delta": 0,
+  "python_loc_delta": 3403,
+  "lint_is_eslint_before": false,
+  "lint_is_eslint_after": true,
+  "portfolio_demos_before": {
+    "returncode": 0,
+    "duration_ms": 703.418,
+    "counts": {
+      "passed": 3,
+      "total": 3
+    },
+    "status": "PASS",
+    "stdout_tail": "sum_ok\": true,\n    \"status_ready\": true,\n    \"ok\": true\n  },\n  \"completion\": {\n    \"may_complete\": true,\n    \"reason\": \"verified_checkpoint\",\n    \"owner\": \"TaskRunner after decide_work_task_completion allows it\",\n    \"checkpoint_phase\": \"verified\",\n    \"blockers\": []\n  },\n  \"note\": \"Deterministic success path without model calls.\"\n}\n{\n  \"demo\": \"02_blocked_action\",\n  \"ok\": true,\n  \"blocked\": {\n    \"allowed\": false,\n    \"reason\": \"g11_tool_boundary:injection_rejected\",\n    \"defenses\": [\n      \"g11_tool_boundary\"\n    ]\n  },\n  \"clean_control\": {\n    \"allowed\": true,\n    \"reason\": \"policies_pass\"\n  },\n  \"note\": \"Blocked path is the intended outcome; clean query remains allowed.\"\n}\n{\n  \"demo\": \"03_recovery_after_failure\",\n  \"ok\": true,\n  \"mission_id\": \"msn_deda7d593104498f\",\n  \"replan_kind\": \"contentful\",\n  \"before_tools\": [\n    \"financial-news-intelligence\"\n  ],\n  \"after_tools\": [\n    \"fincept-data\"\n  ],\n  \"wave_diff_keys\": [\n    \"changed_steps\",\n    \"invalidated_approvals\",\n    \"invalidated_step_ids\",\n    \"operational_reason\",\n    \"plan_version_after\",\n    \"plan_version_before\",\n    \"preserved_step_ids\",\n    \"replan_kind\"\n  ],\n  \"no_valid_alternative\": false,\n  \"note\": \"Recovery changes the plan; it does not claim the original failure succeeded.\"\n}\n\n=== demo_01_successful_task.py ===\nPASS demo_01_successful_task.py\n\n=== demo_02_blocked_action.py ===\nPASS demo_02_blocked_action.py\n\n=== demo_03_recovery_after_failure.py ===\nPASS demo_03_recovery_after_failure.py\n\n3/3 demos passed\n"
+  },
+  "portfolio_demos_after": {
+    "returncode": 0,
+    "duration_ms": 937.496,
+    "counts": {
+      "passed": 6,
+      "total": 6
+    },
+    "status": "PASS",
+    "stdout_tail": "_pass\"\n  },\n  \"note\": \"Blocked path is the intended outcome; clean query remains allowed.\"\n}\n{\n  \"demo\": \"03_recovery_after_failure\",\n  \"ok\": true,\n  \"mission_id\": \"msn_864ee7c3b0bc471d\",\n  \"replan_kind\": \"contentful\",\n  \"before_tools\": [\n    \"financial-news-intelligence\"\n  ],\n  \"after_tools\": [\n    \"fincept-data\"\n  ],\n  \"wave_diff_keys\": [\n    \"changed_steps\",\n    \"invalidated_approvals\",\n    \"invalidated_step_ids\",\n    \"operational_reason\",\n    \"plan_version_after\",\n    \"plan_version_before\",\n    \"preserved_step_ids\",\n    \"replan_kind\"\n  ],\n  \"no_valid_alternative\": false,\n  \"note\": \"Recovery changes the plan; it does not claim the original failure succeeded.\"\n}\nPASS demo_04_false_success_defense\n  empty_artifact_ok=False\n  may_complete=False reason=completion_blocked:checkpoint_phase:executed\nPASS demo_05_crash_resume_effects\n  mid=REQUIRES_RECONCILIATION after=ALREADY_COMMITTED args_hash=24d424133d21\nPASS demo_06_context_quality\n  legacy_cov=0.2 compiler_cov=0.4 delta=0.2\n  note=lexical_proxy_only_not_live_model_quality\n\n=== demo_01_successful_task.py ===\nPASS demo_01_successful_task.py\n\n=== demo_02_blocked_action.py ===\nPASS demo_02_blocked_action.py\n\n=== demo_03_recovery_after_failure.py ===\nPASS demo_03_recovery_after_failure.py\n\n=== demo_04_false_success_defense.py ===\nPASS demo_04_false_success_defense.py\n\n=== demo_05_crash_resume_effects.py ===\nPASS demo_05_crash_resume_effects.py\n\n=== demo_06_context_quality.py ===\nPASS demo_06_context_quality.py\n\n6/6 demos passed\n"
+  },
+  "lm_studio_before": "UNAVAILABLE",
+  "lm_studio_after": "UNAVAILABLE",
+  "note": "Deltas are descriptive; do not treat growth alone as quality."
+}

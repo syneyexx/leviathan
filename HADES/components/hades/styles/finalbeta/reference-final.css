@@ -1,0 +1,125 @@
+/* FINALBETA dashboard — canonical 1672x941 visual lock (reference replay).
+   Loaded after pixel-lock.css so the supplied dashboard image stays authoritative
+   without reverting newer navigation/runtime work from main. */
+
+.fb-root .dash-app .dash-welcome-mid,
+.fb-root .dash-app .dashboard-sovereign-quote {
+  color: #e7ae36;
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(231, 174, 54, 0.08);
+}
+
+.fb-root .dash-app .dash-welcome-mid {
+  box-sizing: border-box;
+  min-height: 50px;
+  padding: 3px 24px 2px 0;
+  border-right: 1px solid #0a526d;
+  font-size: 14px;
+  line-height: 1.58;
+  letter-spacing: 0.045em;
+  text-align: left;
+  white-space: nowrap;
+  opacity: 1;
+}
+
+.fb-root .dash-app .dashboard-sovereign-quote {
+  margin: 25px 0 22px 3px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.58;
+  letter-spacing: 0.045em;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.fb-root .dash-app .dash-clock {
+  padding-top: 1px;
+  gap: 12px;
+}
+
+.fb-root .dash-app .dash-clock .date {
+  margin: 0 0 3px;
+  color: #a4bcc7;
+  font-size: 9.5px;
+  line-height: 1.15;
+}
+
+.fb-root .dash-app .dash-clock .time {
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 0.012em;
+}
+
+.fb-root .dash-app .dash-sun {
+  color: #f0b429;
+  filter: drop-shadow(0 0 5px rgba(240, 180, 41, 0.16));
+}
+
+/* Reference icon proportions: thin, precise 24px glyphs with compact chrome. */
+.fb-root .dash-app .dash-stat-ico {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+}
+
+.fb-root .dash-app .dash-stat-ico > svg {
+  width: 25px;
+  height: 25px;
+  stroke-width: 1.7;
+}
+
+.fb-root .dash-app .dash-title-icon {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.7;
+}
+
+.fb-root .dash-app .activity-ico > svg,
+.fb-root .dash-app .result-icon > svg,
+.fb-root .dash-app .agent-icon > svg,
+.fb-root .dash-app .dash-quick svg {
+  stroke-width: 1.7;
+}
+
+.fb-root .dash-app .activity-ico,
+.fb-root .dash-app .result-icon {
+  border-radius: 5px;
+}
+
+.fb-root .dash-app .agent-icon {
+  border-radius: 50%;
+}
+
+.fb-root .dash-app .side-item .side-ico,
+.fb-root .dash-app .dash-side-item .side-ico {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  stroke-width: 1.7;
+}
+
+.fb-root .dash-app .side-item.active .side-ico,
+.fb-root .dash-app .dash-side-item.active .side-ico {
+  color: #20b9ff;
+  filter: drop-shadow(0 0 5px rgba(32, 185, 255, 0.28));
+}
+
+/* Canonical screenshot geometry at the supplied 1672px reference width. */
+@media (min-width: 1672px) {
+  .fb-root .dash-app .dash-welcome {
+    grid-template-columns: minmax(0, 1fr) 231px 151px;
+    column-gap: 18px;
+    align-items: start;
+    margin-bottom: 13px;
+  }
+
+  .fb-root .dash-app .dash-welcome-mid {
+    width: 231px;
+  }
+
+  .fb-root .dash-app .dashboard-sovereign-quote {
+    margin-left: 3px;
+  }
+}

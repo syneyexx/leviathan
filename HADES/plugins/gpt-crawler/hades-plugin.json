@@ -1,0 +1,332 @@
+{
+  "format": 1,
+  "id": "gpt-crawler",
+  "name": "GPT Crawler",
+  "version": "0.1.0",
+  "description": "Builder.io gpt-crawler: crawl sites into knowledge files. Starts local UI on port 3000 when available.",
+  "runtime_type": "node",
+  "entrypoint": "start",
+  "plugin_type": "service",
+  "category": "Research",
+  "labels": [
+    "crawler",
+    "knowledge",
+    "gpt"
+  ],
+  "permissions": [
+    "subprocess",
+    "network",
+    "filesystem"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/BuilderIO/gpt-crawler",
+  "healthcheck": {
+    "type": "http",
+    "url": "http://127.0.0.1:3000/",
+    "method": "GET",
+    "expected_status": [
+      200,
+      301,
+      302,
+      304
+    ],
+    "timeout_seconds": 90,
+    "interval_seconds": 1.0
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{npm}",
+        "exec",
+        "--",
+        "node",
+        "hades_bridge.mjs",
+        "doctor"
+      ],
+      "description": "Inspect gpt-crawler package metadata after npm install.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "write_config",
+      "action": "configure",
+      "command": [
+        "{npm}",
+        "exec",
+        "--",
+        "node",
+        "hades_bridge.mjs",
+        "write-config",
+        "--url",
+        "{url}",
+        "--match",
+        "{match}",
+        "--max-pages",
+        "{max_pages}",
+        "--out",
+        "{out}"
+      ],
+      "description": "Write a crawl config JSON for gpt-crawler.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 8
+          },
+          "match": {
+            "type": "string",
+            "default": ""
+          },
+          "max_pages": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 500
+          },
+          "out": {
+            "type": "string",
+            "default": "hades-config.json"
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "start",
+      "action": "start",
+      "mode": "service",
+      "command": [
+        "{npm}",
+        "run",
+        "start"
+      ],
+      "description": "Start the gpt-crawler web UI (default upstream start script).",
+      "env": {
+        "HOST": "127.0.0.1",
+        "PORT": "3000"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "health",
+      "action": "health",
+      "mode": "command",
+      "description": "Run declared healthcheck.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "status",
+      "action": "status",
+      "mode": "command",
+      "description": "Report managed service status.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "logs",
+      "action": "logs",
+      "mode": "command",
+      "description": "Read persisted service logs.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "stop",
+      "action": "stop",
+      "mode": "command",
+      "description": "Stop managed service.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "service",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "restricted_env",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "service",
+      "subprocess",
+      "write_files"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "expensive",
+    "latency_class": "slow",
+    "failure_modes": [
+      "dependency",
+      "healthcheck",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/BuilderIO/gpt-crawler",
+    "signed": false
+  }
+}

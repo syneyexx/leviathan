@@ -1,0 +1,1 @@
+# hypit HADES plugin — stdlib only; Node/npm used by prepare for @hypit/hypit

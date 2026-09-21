@@ -1,0 +1,150 @@
+{
+  "id": "massgen",
+  "name": "MassGen",
+  "description": "Local committee of planner/critic/synthesizer via LM Studio. Does not launch the MassGen TUI or cloud providers.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "AI",
+  "labels": [
+    "multi-agent",
+    "committee"
+  ],
+  "permissions": [
+    "subprocess",
+    "network"
+  ],
+  "autonomous": true,
+  "source": "https://github.com/massgen/MassGen",
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "mode": "command",
+      "description": "Report committee bridge status.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "run_committee",
+      "action": "run",
+      "mode": "command",
+      "description": "Run planner/critic/synthesizer on a local model. Fails closed if LM Studio is down.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "run_committee",
+        "--prompt",
+        "{prompt}",
+        "--model",
+        "{model}",
+        "--base-url",
+        "{base_url}",
+        "--api-key",
+        "{api_key}",
+        "--agents",
+        "{agents}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "prompt",
+          "model"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "base_url": {
+            "type": "string",
+            "default": "",
+            "maxLength": 400
+          },
+          "api_key": {
+            "type": "string",
+            "default": "",
+            "maxLength": 400
+          },
+          "agents": {
+            "type": "string",
+            "default": "planner,critic,synthesizer",
+            "maxLength": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "network"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network"
+        ]
+      },
+      "autonomous": false
+    }
+  ],
+  "knowledge_paths": [
+    "README.md"
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "hades_api": ">=0.4.1",
+  "version": "0.1.0",
+  "format": 1,
+  "capabilities": {
+    "effects": [
+      "network",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout",
+      "network"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/massgen/MassGen",
+    "signed": false
+  }
+}

@@ -1,0 +1,247 @@
+{
+  "format": 1,
+  "id": "deep-web-downloader",
+  "name": "Deep Web Downloader",
+  "version": "1.0.0",
+  "description": "Multi-hop crawler/downloader for authorized web content using explicit domain allowlists and mandatory robots.txt enforcement.",
+  "runtime_type": "python",
+  "entrypoint": "crawl_url",
+  "plugin_type": "tool",
+  "category": "Research",
+  "labels": [
+    "crawler",
+    "downloader",
+    "documents"
+  ],
+  "permissions": [
+    "subprocess",
+    "network",
+    "filesystem"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "tools": [
+    {
+      "name": "crawl_url",
+      "action": "download",
+      "command": [
+        "{python}",
+        "crawler.py",
+        "crawl",
+        "--url",
+        "{url}",
+        "--output",
+        "{output_dir}",
+        "--max-depth",
+        "{max_depth}",
+        "--max-pages",
+        "{max_pages}",
+        "--max-files",
+        "{max_files}",
+        "--allowed-domains",
+        "{allowed_domains}",
+        "--save-html",
+        "{save_html}",
+        "--delay-seconds",
+        "{delay_seconds}",
+        "--max-file-mb",
+        "{max_file_mb}",
+        "--timeout-seconds",
+        "{timeout_seconds}",
+        "--authorized",
+        "{authorized}"
+      ],
+      "description": "Follow nested links and download discovered documents/files to disk. Requires explicit authorization confirmation.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "url",
+          "authorized"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "description": "Start URL."
+          },
+          "output_dir": {
+            "type": "string",
+            "default": "downloads"
+          },
+          "max_depth": {
+            "type": "integer",
+            "default": 6,
+            "minimum": 0,
+            "maximum": 20
+          },
+          "max_pages": {
+            "type": "integer",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 20000
+          },
+          "max_files": {
+            "type": "integer",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "save_html": {
+            "type": "boolean",
+            "default": true
+          },
+          "delay_seconds": {
+            "type": "number",
+            "default": 0.2,
+            "minimum": 0,
+            "maximum": 30
+          },
+          "max_file_mb": {
+            "type": "integer",
+            "default": 512,
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 180
+          },
+          "authorized": {
+            "type": "boolean",
+            "description": "Confirm the content is public-domain, licensed, yours, or otherwise authorized for download."
+          },
+          "allowed_domains": {
+            "type": "string",
+            "default": "",
+            "description": "Comma-separated additional domains explicitly authorized for traversal. The start domain is always allowed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "inspect_url",
+      "action": "inspect",
+      "command": [
+        "{python}",
+        "crawler.py",
+        "inspect",
+        "--url",
+        "{url}",
+        "--timeout-seconds",
+        "{timeout_seconds}"
+      ],
+      "description": "Inspect a URL, follow redirects, detect whether it is a downloadable file, and list discovered links.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 8
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 180
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "open_terminal",
+      "action": "launch",
+      "command": [
+        "{python}",
+        "crawler.py",
+        "terminal"
+      ],
+      "description": "Open a new OS terminal window with the interactive downloader prompt.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "restricted_env",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "subprocess",
+      "write_files"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "expensive",
+    "latency_class": "normal",
+    "failure_modes": [
+      "dependency",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "1.0.0",
+    "signed": false
+  }
+}

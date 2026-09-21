@@ -1,0 +1,144 @@
+/* TradingCenter Marktdata */
+
+.fb-root .tc-md-mid {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.95fr);
+  gap: 10px;
+}
+
+.fb-root .tc-md-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.2fr);
+  gap: 10px;
+}
+
+.fb-root .tc-watch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fb-root .tc-watch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.2);
+  color: #d5e2e8;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.fb-root .tc-watch-item.active,
+.fb-root .tc-watch-item:hover {
+  border-color: rgba(234, 185, 79, 0.35);
+  background: rgba(234, 185, 79, 0.08);
+  color: #eab94f;
+}
+
+.fb-root .tc-watch-item b {
+  color: #7f96a4;
+  font-weight: 600;
+}
+
+.fb-root .tc-orderbook {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fb-root .tc-ob-row {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  position: relative;
+  padding: 3px 0;
+}
+
+.fb-root .tc-ob-bar {
+  position: absolute;
+  right: 48px;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 2px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.fb-root .tc-ob-bar.ask {
+  background: #f87171;
+}
+
+.fb-root .tc-ob-bar.bid {
+  background: #4ade80;
+}
+
+.fb-root .tc-ob-mid {
+  text-align: center;
+  padding: 8px 0;
+  margin: 4px 0;
+  border-top: 1px solid rgba(70, 120, 160, 0.2);
+  border-bottom: 1px solid rgba(70, 120, 160, 0.2);
+}
+
+.fb-root .tc-ob-mid strong {
+  display: block;
+  color: #f4f8fa;
+  font-size: 16px;
+}
+
+.fb-root .tc-ob-mid span {
+  color: #4ade80;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.fb-root .tc-news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.fb-root .tc-news-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(70, 120, 160, 0.12);
+}
+
+.fb-root .tc-news-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.fb-root .tc-news-row time {
+  color: #6f8490;
+  font-size: 10px;
+}
+
+.fb-root .tc-news-row strong {
+  display: block;
+  color: #e8f1f5;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  line-height: 1.35;
+}
+
+@media (max-width: 1500px) {
+  .fb-root .tc-md-mid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fb-root .tc-md-bottom {
+    grid-template-columns: 1fr;
+  }
+}

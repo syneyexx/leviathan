@@ -1,0 +1,4 @@
+[submodule "Data/HADES"]
+	path = Data/HADES
+	url = https://github.com/syneyexx/HADES.git
+	branch = main

@@ -44,12 +44,13 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
-    label: "Creation",
+    label: "Media Management",
+    to: "/media",
     icon: (
       <>
-        <circle cx="12" cy="12" r="7.5" />
-        <ellipse cx="12" cy="12" rx="7.5" ry="3.2" transform="rotate(-40 12 12)" />
-        <path d="M12 4.5v2.2M12 17.3v2.2" />
+        <rect x="4" y="6" width="16" height="12" rx="2" />
+        <path d="M8 14l3-3 2.5 2.5L16 11l4 4" />
+        <circle cx="9" cy="10" r="1.2" />
       </>
     ),
   },
@@ -118,6 +119,16 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    label: "Model Training",
+    to: "/training",
+    icon: (
+      <>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6.1 6.1l1.6 1.6M16.3 16.3l1.6 1.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6" />
+      </>
+    ),
+  },
+  {
     label: "Tools",
     to: "/tools",
     icon: (
@@ -130,16 +141,8 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
-    label: "Automation",
-    icon: (
-      <>
-        <path d="M4 16l4.5-5 3.5 3 4-6 4 2" />
-        <path d="M17 6v4h4" />
-      </>
-    ),
-  },
-  {
     label: "Analytics",
+    to: "/analytics",
     icon: (
       <>
         <circle cx="6" cy="16" r="1.4" />
@@ -151,11 +154,12 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
-    label: "Simulation",
+    label: "Trading Center",
+    to: "/trading",
     icon: (
       <>
-        <path d="M12 3.8l7 3.2v5.2c0 4.2-3.1 7.4-7 8.6-3.9-1.2-7-4.4-7-8.6V7l7-3.2z" />
-        <path d="M12 9v6M9 12h6" />
+        <path d="M4 16l4.5-5 3.5 3 4-6 4 2" />
+        <path d="M17 6v4h4" />
       </>
     ),
   },

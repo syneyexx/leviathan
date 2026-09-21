@@ -1,0 +1,512 @@
+{
+  "format": 1,
+  "id": "financial-news-intelligence",
+  "name": "Financial News Intelligence",
+  "version": "1.0.0",
+  "description": "Direct-source financial intelligence collector using 480 publisher, regulator, exchange, crypto, sector and corporate-newsroom websites. No Google News/Search aggregation. Includes deduplication, event classification, impact prioritization, provenance and HADES Knowledge ingest.",
+  "runtime_type": "python",
+  "entrypoint": "fetch_financial_news",
+  "plugin_type": "tool",
+  "category": "Finance",
+  "labels": [
+    "finance",
+    "markets",
+    "stocks",
+    "crypto",
+    "news",
+    "rss",
+    "regulatory",
+    "earnings",
+    "m-and-a",
+    "macro",
+    "knowledge"
+  ],
+  "permissions": [
+    "subprocess",
+    "network",
+    "filesystem"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "tools": [
+    {
+      "name": "fetch_financial_news",
+      "action": "download",
+      "command": [
+        "{python}",
+        "financial_news_intelligence.py",
+        "fetch",
+        "--output-dir",
+        "{output_dir}",
+        "--max-sources",
+        "{max_sources}",
+        "--max-articles",
+        "{max_articles}",
+        "--per-source",
+        "{per_source}",
+        "--since-hours",
+        "{since_hours}",
+        "--timeout-seconds",
+        "{timeout_seconds}",
+        "--workers",
+        "{workers}",
+        "--article-workers",
+        "{article_workers}",
+        "--crawl-pages",
+        "{crawl_pages}",
+        "--max-article-chars",
+        "{max_article_chars}",
+        "--respect-robots",
+        "{respect_robots}",
+        "--new-only",
+        "{new_only}",
+        "--min-impact",
+        "{min_impact}",
+        "--query",
+        "{query}",
+        "--categories",
+        "{categories}"
+      ],
+      "description": "Collect current financial/market-moving news from 300-500 direct websites, rank likely market relevance, deduplicate and write JSON/JSONL/Markdown outputs.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "output_dir": {
+            "type": "string",
+            "default": "financial-news-output"
+          },
+          "max_sources": {
+            "type": "integer",
+            "default": 480,
+            "minimum": 300,
+            "maximum": 500
+          },
+          "max_articles": {
+            "type": "integer",
+            "default": 1500,
+            "minimum": 1,
+            "maximum": 50000
+          },
+          "per_source": {
+            "type": "integer",
+            "default": 6,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "since_hours": {
+            "type": "number",
+            "default": 48,
+            "minimum": 0,
+            "maximum": 720
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "default": 12,
+            "minimum": 1,
+            "maximum": 120
+          },
+          "workers": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 32
+          },
+          "article_workers": {
+            "type": "integer",
+            "default": 16,
+            "minimum": 1,
+            "maximum": 32
+          },
+          "crawl_pages": {
+            "type": "boolean",
+            "default": true
+          },
+          "max_article_chars": {
+            "type": "integer",
+            "default": 6000,
+            "minimum": 500,
+            "maximum": 15000
+          },
+          "respect_robots": {
+            "type": "boolean",
+            "default": true
+          },
+          "new_only": {
+            "type": "boolean",
+            "default": true
+          },
+          "min_impact": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 0,
+            "maximum": 100
+          },
+          "query": {
+            "type": "string",
+            "default": ""
+          },
+          "categories": {
+            "type": "string",
+            "default": "",
+            "description": "Comma-separated categories. Empty uses the complete balanced catalog; a filter must still leave at least 300 sites."
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "feed_hades",
+      "action": "write",
+      "command": [
+        "{python}",
+        "financial_news_intelligence.py",
+        "feed-hades",
+        "--output-dir",
+        "{output_dir}",
+        "--max-sources",
+        "{max_sources}",
+        "--max-articles",
+        "{max_articles}",
+        "--per-source",
+        "{per_source}",
+        "--since-hours",
+        "{since_hours}",
+        "--timeout-seconds",
+        "{timeout_seconds}",
+        "--workers",
+        "{workers}",
+        "--article-workers",
+        "{article_workers}",
+        "--crawl-pages",
+        "{crawl_pages}",
+        "--max-article-chars",
+        "{max_article_chars}",
+        "--respect-robots",
+        "{respect_robots}",
+        "--new-only",
+        "{new_only}",
+        "--min-impact",
+        "{min_impact}",
+        "--query",
+        "{query}",
+        "--categories",
+        "{categories}",
+        "--hades-api-url",
+        "{hades_api_url}",
+        "--approved-file-write",
+        "{approved_file_write}"
+      ],
+      "description": "Collect financial intelligence, persist the output, then upload the provenance-rich Markdown batch to HADES Knowledge. Requires explicit write approval.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "approved_file_write"
+        ],
+        "properties": {
+          "output_dir": {
+            "type": "string",
+            "default": "financial-news-output"
+          },
+          "max_sources": {
+            "type": "integer",
+            "default": 480,
+            "minimum": 300,
+            "maximum": 500
+          },
+          "max_articles": {
+            "type": "integer",
+            "default": 1500,
+            "minimum": 1,
+            "maximum": 50000
+          },
+          "per_source": {
+            "type": "integer",
+            "default": 6,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "since_hours": {
+            "type": "number",
+            "default": 48,
+            "minimum": 0,
+            "maximum": 720
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "default": 12,
+            "minimum": 1,
+            "maximum": 120
+          },
+          "workers": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 32
+          },
+          "article_workers": {
+            "type": "integer",
+            "default": 16,
+            "minimum": 1,
+            "maximum": 32
+          },
+          "crawl_pages": {
+            "type": "boolean",
+            "default": true
+          },
+          "max_article_chars": {
+            "type": "integer",
+            "default": 6000,
+            "minimum": 500,
+            "maximum": 15000
+          },
+          "respect_robots": {
+            "type": "boolean",
+            "default": true
+          },
+          "new_only": {
+            "type": "boolean",
+            "default": true
+          },
+          "min_impact": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 0,
+            "maximum": 100
+          },
+          "query": {
+            "type": "string",
+            "default": ""
+          },
+          "categories": {
+            "type": "string",
+            "default": ""
+          },
+          "hades_api_url": {
+            "type": "string",
+            "default": "http://127.0.0.1:8000/api"
+          },
+          "approved_file_write": {
+            "type": "boolean",
+            "description": "Explicitly approve local output creation and HADES Knowledge upload."
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "source_status",
+      "action": "inspect",
+      "command": [
+        "{python}",
+        "financial_news_intelligence.py",
+        "sources",
+        "--max-sources",
+        "{max_sources}",
+        "--categories",
+        "{categories}",
+        "--show",
+        "{show}"
+      ],
+      "description": "Inspect the packaged 480-site direct-source catalog and its category distribution without performing network requests.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "max_sources": {
+            "type": "integer",
+            "default": 480,
+            "minimum": 300,
+            "maximum": 500
+          },
+          "categories": {
+            "type": "string",
+            "default": ""
+          },
+          "show": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 0,
+            "maximum": 500
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "audit_sources",
+      "action": "inspect",
+      "command": [
+        "{python}",
+        "financial_news_intelligence.py",
+        "audit",
+        "--max-sources",
+        "{max_sources}",
+        "--categories",
+        "{categories}",
+        "--timeout-seconds",
+        "{timeout_seconds}",
+        "--workers",
+        "{workers}",
+        "--respect-robots",
+        "{respect_robots}",
+        "--show",
+        "{show}"
+      ],
+      "description": "Probe direct websites, RSS/Atom discovery and homepage fallback to measure how many sources currently return usable candidates.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "max_sources": {
+            "type": "integer",
+            "default": 480,
+            "minimum": 300,
+            "maximum": 500
+          },
+          "categories": {
+            "type": "string",
+            "default": ""
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "default": 8,
+            "minimum": 1,
+            "maximum": 120
+          },
+          "workers": {
+            "type": "integer",
+            "default": 24,
+            "minimum": 1,
+            "maximum": 32
+          },
+          "respect_robots": {
+            "type": "boolean",
+            "default": true
+          },
+          "show": {
+            "type": "integer",
+            "default": 100,
+            "minimum": 0,
+            "maximum": 500
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "open_terminal",
+      "action": "launch",
+      "command": [
+        "{python}",
+        "financial_news_intelligence.py",
+        "terminal"
+      ],
+      "description": "Open an OS terminal in the plugin directory for manual runs or source debugging.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "moderate",
+    "latency_class": "normal",
+    "failure_modes": [
+      "dependency",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "1.0.0",
+    "signed": false
+  }
+}

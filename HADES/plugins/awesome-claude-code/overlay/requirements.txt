@@ -1,0 +1,1 @@
+# catalog plugin — stdlib only

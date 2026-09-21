@@ -1,0 +1,13 @@
+---
+description: HADES Models page context
+globs:
+  - "components/hades/pages/models-page.tsx"
+  - "components/hades/model-usage-card.tsx"
+  - "components/hades/obsidian/pages/models-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `models`.
+UI owner: `components/hades/pages/models-page.tsx`; model usage display: `model-usage-card.tsx`; Obsidian: `obsidian/pages/models-obsidian.tsx`.
+API contract: model list/profile/gateway methods in `lib/hades-api.ts`.
+Backend owners: `backend/models_routes.py`, LM Studio transport in `backend/lm_studio.py`, model/profile persistence in `backend/database.py`.
+Do not scan Settings unless the requested model change also changes shared profile/settings behavior.

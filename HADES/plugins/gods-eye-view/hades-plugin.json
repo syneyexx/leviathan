@@ -1,0 +1,234 @@
+{
+  "format": 1,
+  "id": "gods-eye-view",
+  "name": "God's Eye View",
+  "version": "0.1.1",
+  "description": "Photorealistic 3D globe with live open-source spatial intelligence: aircraft, ships, satellites, earthquakes, public cameras and more. Upstream: bilawalsidhu/gods-eye-view (MIT). Starts a local Vite app on http://127.0.0.1:4173. Requires Node.js 24.14+ or 26.x. Optional API keys (Cesium, Google Maps, OpenAI) are configured inside the app POWER UP panel.",
+  "runtime_type": "node",
+  "entrypoint": "dev",
+  "plugin_type": "service",
+  "category": "Research",
+  "labels": [
+    "globe",
+    "geospatial",
+    "spatial-intelligence",
+    "node"
+  ],
+  "permissions": [
+    "subprocess"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/bilawalsidhu/gods-eye-view",
+  "license": "MIT",
+  "upstream_author": "Bilawal Sidhu",
+  "healthcheck": {
+    "type": "http",
+    "url": "http://127.0.0.1:4173/",
+    "method": "GET",
+    "expected_status": [
+      200
+    ],
+    "timeout_seconds": 90,
+    "interval_seconds": 1.0
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "mode": "command",
+      "description": "Run the God's Eye View setup doctor (Node version and environment checks).",
+      "command": [
+        "{npm}",
+        "run",
+        "doctor"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "service",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "start",
+      "action": "start",
+      "mode": "service",
+      "description": "Start the local God's Eye View Vite server on http://127.0.0.1:4173. Open that URL in your browser after health passes.",
+      "command": [
+        "{npm}",
+        "run",
+        "dev"
+      ],
+      "env": {
+        "HOST": "127.0.0.1",
+        "PORT": "4173"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "service",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "health",
+      "action": "health",
+      "mode": "command",
+      "description": "Check whether the local God's Eye View HTTP server answers on port 4173.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "service",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "status",
+      "action": "status",
+      "mode": "command",
+      "description": "Report managed-process and health status for God's Eye View.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "service",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "logs",
+      "action": "logs",
+      "mode": "command",
+      "description": "Read persisted stdout/stderr from the managed God's Eye View service.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "service",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "stop",
+      "action": "stop",
+      "mode": "command",
+      "description": "Stop the managed God's Eye View service and verify the healthcheck is no longer reachable.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "service",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "healthcheck",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "service",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "moderate",
+    "latency_class": "slow",
+    "failure_modes": [
+      "dependency",
+      "healthcheck",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.1",
+    "source_url": "https://github.com/bilawalsidhu/gods-eye-view",
+    "license": "MIT",
+    "signed": false
+  }
+}

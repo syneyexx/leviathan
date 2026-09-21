@@ -1,0 +1,114 @@
+{
+  "format": 1,
+  "id": "local-stt-paste",
+  "name": "Local STT Paste",
+  "version": "0.1.0",
+  "description": "Offline-first transcript paste helper. Validates pasted local STT text and proposes a structured HADES task (no cloud speech recognition).",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Voice",
+  "labels": [
+    "voice",
+    "stt",
+    "offline",
+    "paste"
+  ],
+  "permissions": [
+    "subprocess"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "hades:plugins/local-stt-paste",
+  "license": "MIT",
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Confirm this plugin does not ship cloud STT; paste-only workflow.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "transcribe_paste",
+      "action": "transcribe_paste",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "transcribe_paste",
+        "--transcript",
+        "{transcript}"
+      ],
+      "description": "Validate pasted transcript and return {ok, transcript, suggestion} task draft JSON on stdout.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "transcript"
+        ],
+        "properties": {
+          "transcript": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 20000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "hades:plugins/local-stt-paste",
+    "license": "MIT",
+    "signed": false
+  }
+}

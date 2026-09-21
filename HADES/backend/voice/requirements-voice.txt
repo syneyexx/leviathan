@@ -1,0 +1,4 @@
+# Optional local voice dependencies (installed via Instellingen → Spraak, not core HADES).
+# CPU works without CUDA; GPU used when ctranslate2 reports CUDA support.
+faster-whisper>=1.0.3,<2
+piper-tts>=1.2.0

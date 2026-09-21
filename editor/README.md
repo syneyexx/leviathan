@@ -9,6 +9,15 @@ EDIT_LAYOUT.bat
 Opent http://127.0.0.1:5173 met de overlay. API: http://127.0.0.1:5199.
 Zonder `LEVIATHAN_EDITOR=1` is er geen editor-UI. Opgeslagen wijzigingen blijven wel staan.
 
+## Zonder editor
+
+Gebruik de normale start (`run_leviathan.bat` / installer / build).
+Dan is er geen editor-UI. `editorContentRuntime.ts` laadt alleen `lv-editor-content.json`.
+
+- Editor alleen bij `LEVIATHAN_EDITOR=1` (via `EDIT_LAYOUT.bat`)
+- Vite-plugin `apply: "serve"` — geen overlay in een production build
+- API op `127.0.0.1:5199`; writes alleen binnen `Data/frontend`
+
 ## Architectuur
 
 ```mermaid

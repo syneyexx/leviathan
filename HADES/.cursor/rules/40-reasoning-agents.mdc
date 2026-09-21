@@ -1,0 +1,11 @@
+---
+description: Apply when changing HADES reasoning profiles, chat orchestration, Work Runtime, agent routing, context management or autonomous tools
+alwaysApply: false
+---
+- Preserve the HADES pipeline: understand -> retrieve -> plan when needed -> execute/tools -> verify -> answer -> optional memory/knowledge update.
+- Adaptive routing must be bounded and observable through useful metadata, not hidden chain-of-thought.
+- Prefer structured model outputs for plans/tool choices/verification; validate them before execution.
+- Tool selection must use only currently eligible tools and must feed failed/blocked results back to the model as failures.
+- Do not mark tasks completed unless acceptance criteria/verification pass.
+- Keep retries bounded and avoid infinite self-reflection loops.
+- Context management should retrieve/summarize relevant content instead of sending whole histories or the whole repository.

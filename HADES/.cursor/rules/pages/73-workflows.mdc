@@ -1,0 +1,12 @@
+---
+description: HADES Workflows page context
+globs:
+  - "components/hades/pages/workflows-page.tsx"
+  - "components/hades/obsidian/pages/workflows-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `workflows`.
+UI owner: `components/hades/pages/workflows-page.tsx`; Obsidian: `obsidian/pages/workflows-obsidian.tsx`.
+API contract: Gen2 workflow definitions, templates, validation, revisions, metrics and run methods in `lib/hades-api.ts`.
+Backend owners: workflow routes/services/storage under `backend/gen2/`; tests primarily in `backend/tests/test_gen2.py`.
+Do not scan unrelated pages for a Workflows-only change.

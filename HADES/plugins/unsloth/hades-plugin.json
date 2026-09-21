@@ -1,0 +1,104 @@
+{
+  "format": 1,
+  "id": "unsloth",
+  "name": "Unsloth",
+  "version": "0.1.0",
+  "description": "Environment diagnostics for Unsloth local LLM training/runtime. Full GPU training remains an operator-managed workload; use doctor/info from HADES Plugins.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Developer",
+  "labels": [
+    "llm",
+    "finetune",
+    "unsloth"
+  ],
+  "permissions": [
+    "subprocess"
+  ],
+  "autonomous": true,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/unslothai/unsloth",
+  "dependency_install": {
+    "timeout_seconds": 3600,
+    "stall_timeout_seconds": 1200
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Diagnose Unsloth/torch availability for local fine-tuning.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "info",
+      "action": "info",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "info"
+      ],
+      "description": "Report imported Unsloth/torch module versions.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "expensive",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/unslothai/unsloth",
+    "signed": false
+  }
+}
