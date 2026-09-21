@@ -187,7 +187,7 @@
      ---------------------------------------------------------- */
 
   --lv-header-height: clamp(70px, 9.2vh, 96px);
-  --lv-sidebar-width: clamp(148px, 13.35vw, 198px);
+  --lv-sidebar-width: clamp(220px, 16.5vw, 268px);
   --lv-right-panel-width: clamp(176px, 15.2vw, 228px);
   --lv-footer-height: clamp(56px, 6.8vh, 68px);
 

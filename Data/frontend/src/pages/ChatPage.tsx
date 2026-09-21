@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api } from "../api/client";
+import { media } from "../assets/media";
 import { BrandMark, BotAvatar } from "../components/BrandMark";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
@@ -310,7 +311,7 @@ export function ChatPage() {
                 data-error={message.error ? "true" : undefined}
               >
                 {message.role === "user" ? (
-                  <img className="lv-msg-avatar" src="/assets/avatar.jpg" alt="" />
+                  <img className="lv-msg-avatar" src={media.avatar} alt="" />
                 ) : (
                   <BotAvatar />
                 )}

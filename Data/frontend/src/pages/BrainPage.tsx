@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { media } from "../assets/media";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
@@ -147,7 +148,7 @@ export function BrainPage() {
       <main className="lv-main">
         <section className="lv-page-hero">
           <div className="lv-hero-media">
-            <img src="/assets/architecture-bg.jpg" alt="" width={1400} height={380} />
+            <img src={media.architectureBg} alt="" width={1400} height={380} />
           </div>
           <div className="lv-hero-shade" />
           <div className="lv-hero-content">
