@@ -227,6 +227,32 @@ def _m6_observations_and_effects(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m7_evidence_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS evidence (
+            evidence_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            claim TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            verified_at TEXT,
+            observation_id TEXT,
+            artifact_id TEXT,
+            run_id TEXT,
+            job_id TEXT,
+            content_hash TEXT,
+            path TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_evidence_status ON evidence(status, created_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -234,6 +260,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=4, name="approvals_table", apply=_m4_approvals_table),
     Migration(version=5, name="jobs_table", apply=_m5_jobs_table),
     Migration(version=6, name="observations_and_effects", apply=_m6_observations_and_effects),
+    Migration(version=7, name="evidence_table", apply=_m7_evidence_table),
 )
 
 

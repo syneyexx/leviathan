@@ -102,6 +102,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/approvals/` | PolicyEngine / ApprovalStore / ApprovalService |
 | `Data/modules/jobs/` | JobStore / JobRuntime / ResourceManager |
 | `Data/modules/observations/` | ToolObservation / Effect ledger |
+| `Data/modules/evidence/` | EvidenceStore / EvidenceService |
 
 ## Tests
 
@@ -192,6 +193,7 @@ SQLite persistence
 | Capabilities / Execution Gateway | `Data/modules/execution/` |
 | Approvals / policy | `Data/modules/approvals/` |
 | Jobs / resources | `Data/modules/jobs/` |
+| Observations / effects | `Data/modules/observations/` |
 | Frontend pages | only when backend truth exists |
 
 ---

@@ -6,6 +6,34 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 12 — Durable Effect Ledger + ToolObservation — PASS
+
+### Objective
+
+Persist every gateway execution as a canonical ToolObservation and EffectRecord. Observation is not evidence and not completion authority.
+
+### Implementation
+
+- `Data/modules/observations/` — ToolObservation, EffectRecord, ObservationStore
+- ExecutionGateway writes durable observation+effect on every result (including REJECTED)
+- Migration v6: `tool_observations` + `effect_ledger`
+- API: `GET /api/observations`, `GET /api/observations/{id}`, effects prefer durable source
+
+### Tests executed
+
+- Full backend suite → **PASS (59)**
+
+### Known limitations
+
+- Output payloads stored in full JSON (no size capping yet)
+- No Evidence domain linking observation → verified artifact proof
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 11 — Job Runtime + Resource Manager — PASS
 
 ### Objective

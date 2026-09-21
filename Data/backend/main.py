@@ -13,6 +13,7 @@ from .database import Database
 from .migrations import MigrationRunner
 from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
 from Data.modules.artifacts import ArtifactStore
+from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
 from Data.modules.execution import (
     CapabilityRequest,
     CapabilityStatus,
@@ -59,6 +60,12 @@ execution_gateway = ExecutionGateway(
 job_store = JobStore(settings.database_path)
 resource_manager = ResourceManager(settings.resources.max_job_concurrency)
 job_runtime = JobRuntime(job_store, execution_gateway, resource_manager)
+evidence_store = EvidenceStore(settings.database_path)
+evidence_service = EvidenceService(
+    evidence_store,
+    artifacts=artifacts,
+    observations=observation_store,
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -74,6 +81,7 @@ async def lifespan(_: FastAPI):
     approval_store.initialize()
     job_store.initialize()
     observation_store.initialize()
+    evidence_store.initialize()
     job_runtime.start_background_worker()
     try:
         yield
@@ -82,7 +90,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.13.0-phase12", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.14.0-phase13", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -711,6 +719,102 @@ def cancel_job(job_id: str) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"job": job.public_dict()}
+
+
+class EvidenceArtifactClaim(BaseModel):
+    artifact_id: str = Field(min_length=1, max_length=120)
+    claim: str | None = None
+    observation_id: str | None = None
+    run_id: str | None = None
+    job_id: str | None = None
+    verify_now: bool = True
+
+
+class EvidenceFileClaim(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+    claim: str | None = None
+    observation_id: str | None = None
+    run_id: str | None = None
+    job_id: str | None = None
+
+
+class EvidenceObservationClaim(BaseModel):
+    observation_id: str = Field(min_length=1, max_length=120)
+    claim: str | None = None
+    run_id: str | None = None
+    job_id: str | None = None
+
+
+@app.get("/api/evidence")
+def list_evidence(
+    status: Annotated[str | None, Query()] = None,
+    run_id: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    parsed = None
+    if status:
+        try:
+            parsed = EvidenceStatus(status.upper())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid evidence status: {status}") from exc
+    items = evidence_service.store.list(status=parsed, run_id=run_id, limit=limit)
+    return {"evidence": [item.public_dict() for item in items]}
+
+
+@app.get("/api/evidence/{evidence_id}")
+def get_evidence(evidence_id: str) -> dict:
+    item = evidence_service.store.get(evidence_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    return {"evidence": item.public_dict()}
+
+
+@app.post("/api/evidence/artifact")
+def claim_artifact_evidence(payload: EvidenceArtifactClaim) -> dict:
+    try:
+        record = evidence_service.claim_artifact_hash(
+            artifact_id=payload.artifact_id,
+            claim=payload.claim,
+            observation_id=payload.observation_id,
+            run_id=payload.run_id,
+            job_id=payload.job_id,
+            verify_now=payload.verify_now,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"evidence": record.public_dict()}
+
+
+@app.post("/api/evidence/file")
+def claim_file_evidence(payload: EvidenceFileClaim) -> dict:
+    record = evidence_service.claim_file_exists(
+        path=payload.path,
+        claim=payload.claim,
+        observation_id=payload.observation_id,
+        run_id=payload.run_id,
+        job_id=payload.job_id,
+    )
+    return {"evidence": record.public_dict()}
+
+
+@app.post("/api/evidence/observation")
+def claim_observation_evidence(payload: EvidenceObservationClaim) -> dict:
+    record = evidence_service.claim_observation_ref(
+        observation_id=payload.observation_id,
+        claim=payload.claim,
+        run_id=payload.run_id,
+        job_id=payload.job_id,
+    )
+    return {"evidence": record.public_dict()}
+
+
+@app.post("/api/evidence/{evidence_id}/verify")
+def verify_evidence(evidence_id: str) -> dict:
+    try:
+        record = evidence_service.verify(evidence_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Evidence not found") from exc
+    return {"evidence": record.public_dict()}
 
 
 @app.get("/")
