@@ -1,4 +1,5 @@
 import architectureBg from "./architecture-bg.jpg";
+import analyticsHero from "./analytics-hero.jpg";
 import avatar from "./avatar.jpg";
 import earthMini from "./earth-mini.jpg";
 import globe from "./globe.jpg";
@@ -11,6 +12,7 @@ import sidebarFooter from "./sidebar-footer.png";
 /** Bundled media URLs — hashed by Vite so images always resolve in dev and production. */
 export const media = {
   architectureBg,
+  analyticsHero,
   avatar,
   earthMini,
   globe,

@@ -7,6 +7,7 @@ import "./styles/tokens.css";
 import "./styles/leviathan.css";
 import "./styles/chat.css";
 import "./styles/pages.css";
+import "./styles/analytics.css";
 
 const root = document.getElementById("root");
 if (!root) {
