@@ -28,12 +28,12 @@ LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 **Not implemented (do not treat UI shell labels as capability):**
 
 - Full Coding/Research agent depth; multi-agent orchestration;
-- Neuro / Training / Evaluation frameworks;
-- native model runtime / residual-stream research.
+- Training / Evaluation frameworks; real residual-stream neuro;
+- Plugin/MCP adapters; production APM export.
 
-**Implemented through Phase 19:**
+**Implemented through Phase 21:**
 
-- Schedules; Workflows; Agents; Verification; Memory; Context budgeting; Evidence; Observations; Jobs; Approvals; Gateway;
+- NeuroAdvisor (advisory); Observability; Schedules; Workflows; Agents; Verification; Memory; Context budgeting; Evidence; Observations; Jobs; Approvals; Gateway;
 - Function Runtime; Knowledge V2; Artifacts; Run/Event; migrations; Settings; React SPA.
 
 ---
@@ -339,7 +339,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 17 — Agents skeleton | PASS | Gateway-only AgentRuntime; feature-flagged OFF |
 | Phase 18 — Workflows | PASS | Ordered capability sequences via gateway |
 | Phase 19 — Schedules | PASS | Interval job/workflow triggers + explicit tick |
-| Phase 20+ | NOT STARTED | Observability / Neuro / … |
+| Phase 20 — Observability | PASS | In-process telemetry hub + /api/telemetry |
+| Phase 21+ | NOT STARTED | Neuro / Plugins / … |
 
 ---
 

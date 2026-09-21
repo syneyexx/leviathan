@@ -38,6 +38,7 @@ from Data.modules.schedules import (
     ScheduleTargetKind,
 )
 from Data.modules.observability import ObservabilityHub
+from Data.modules.neuro import NeuroAdvisor
 
 
 db = Database(settings.database_path)
@@ -95,6 +96,12 @@ schedule_runner = ScheduleRunner(
     workflows=workflow_runtime,
 )
 observability = ObservabilityHub(capacity=500)
+neuro_advisor = NeuroAdvisor(
+    enabled=settings.features.neuro_enabled,
+    associative_memory=settings.features.neuro_associative_memory,
+    process_critic=settings.features.neuro_process_critic,
+    residual_injection=settings.features.neuro_residual_injection,
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -122,7 +129,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.21.0-phase20", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.22.0-phase21", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -196,6 +203,12 @@ async def health() -> dict:
             "enabled": settings.features.agents_enabled,
         },
         "observability": observability.snapshot(),
+        "neuro": {
+            "enabled": settings.features.neuro_enabled,
+            "associative_memory": settings.features.neuro_associative_memory,
+            "process_critic": settings.features.neuro_process_critic,
+            "residual_injection": settings.features.neuro_residual_injection,
+        },
         "llm": model,
     }
 
@@ -276,6 +289,13 @@ async def chat(payload: ChatRequest) -> dict:
     history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
+    neuro = neuro_advisor.assess(message)
+    if neuro.enabled:
+        observability.emit(
+            "neuro",
+            "assess",
+            payload={"signals": len(neuro.signals)},
+        )
 
     runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     try:
@@ -321,6 +341,7 @@ async def chat(payload: ChatRequest) -> dict:
             for item in knowledge_hits
         ],
         "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
+        "neuro": neuro.public_dict(),
     }
 
 
@@ -1174,6 +1195,16 @@ def get_telemetry(
             "not_a_production_apm": True,
         },
     }
+
+
+class NeuroAssessRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=30_000)
+
+
+@app.post("/api/neuro/assess")
+def neuro_assess(payload: NeuroAssessRequest) -> dict:
+    assessment = neuro_advisor.assess(payload.text)
+    return {"assessment": assessment.public_dict()}
 
 
 @app.get("/")

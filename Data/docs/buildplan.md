@@ -6,6 +6,34 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 20 — Observability Hub — PASS
+
+### Objective
+
+Honest in-process telemetry ring buffer + counters. Explicitly not production APM.
+
+### Implementation
+
+- `Data/modules/observability/` — ObservabilityHub, TelemetryEvent
+- Emits from chat completion, capability execute, schedule tick
+- Health includes observability snapshot
+- API: `GET /api/telemetry`
+
+### Tests executed
+
+- Full backend suite → **PASS (79)**
+
+### Known limitations
+
+- In-memory only; lost on restart
+- No export to Prometheus/OTLP yet
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 19 — Schedules — PASS
 
 ### Objective

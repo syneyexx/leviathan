@@ -109,6 +109,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/workflows/` | WorkflowStore / WorkflowRuntime |
 | `Data/modules/schedules/` | ScheduleStore / ScheduleRunner |
 | `Data/modules/observability/` | ObservabilityHub |
+| `Data/modules/neuro/` | NeuroAdvisor (advisory only) |
 
 ## Tests
 
@@ -206,6 +207,7 @@ SQLite persistence
 | Agents | `Data/modules/agents/` (requires feature flag) |
 | Workflows | `Data/modules/workflows/` |
 | Schedules | `Data/modules/schedules/` |
+| Observability | `Data/modules/observability/` |
 | Frontend pages | only when backend truth exists |
 
 ---

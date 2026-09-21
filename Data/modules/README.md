@@ -23,6 +23,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `agents/` | AgentRuntime (shared gateway only; flagged) |
 | `workflows/` | WorkflowStore + WorkflowRuntime |
 | `schedules/` | ScheduleStore + ScheduleRunner |
+| `observability/` | ObservabilityHub (in-process; not APM) |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 
