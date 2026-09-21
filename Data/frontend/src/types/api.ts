@@ -33,6 +33,8 @@ export type ChatResponse = {
   model: string;
   reasoning: ReasoningSummary;
   knowledge_sources: KnowledgeSource[];
+  neuro?: unknown;
+  cortex?: unknown;
 };
 
 export type HealthResponse = {
@@ -53,6 +55,23 @@ export type HealthResponse = {
   chaos?: { plan: { enabled: boolean } };
   backup?: { count: number };
   verification_reports?: { recent: number };
+  neuro?: {
+    enabled: boolean;
+    associative_memory?: boolean;
+    process_critic?: boolean;
+    residual_injection?: boolean;
+    cortex?: boolean;
+    memory_tiers?: boolean;
+    residual_supported?: boolean;
+    residual_kind?: string;
+    absorb?: Record<string, number>;
+  };
+  module_manager?: {
+    enabled: boolean;
+    subprocess_isolation?: boolean;
+    modules?: number;
+  };
+  training_recipes?: { registered: number };
 };
 
 export type ReleaseGateReport = {
@@ -113,6 +132,37 @@ export type BackupManifest = {
   size_bytes: number;
   schema_version: number;
   artifacts_copied: number;
+};
+
+export type NeuroResidualStatus = {
+  supports_residuals: boolean;
+  hook_points: unknown[];
+  runtime?: unknown;
+  kind?: string;
+  truth?: Record<string, boolean>;
+};
+
+export type NeuroAssessmentResponse = {
+  assessment: unknown;
+  reasoning?: ReasoningSummary;
+};
+
+export type TrainingRecipe = {
+  recipe_id: string;
+  name: string;
+  objective: string;
+  loss: string;
+  formulation: string;
+};
+
+export type SoakReport = {
+  iterations: number;
+  passed: number;
+  failed: number;
+  duration_ms: number;
+  steps: Array<{ name: string; ok: boolean; detail: string; duration_ms: number }>;
+  notes?: string[];
+  truth?: Record<string, boolean>;
 };
 
 export type ApiErrorBody = {

@@ -36,6 +36,10 @@ class KnowledgeSearcher(Protocol):
     def search(self, query: Any) -> list[Any]: ...
 
 
+class KnowledgeIngestor(Protocol):
+    def scan_data_root(self, *, limit: int = 50) -> list[Any]: ...
+
+
 class ArtifactWriter(Protocol):
     def create_from_bytes(self, **kwargs: Any) -> Any: ...
 
@@ -81,6 +85,7 @@ class ExecutionGateway:
     catalog: CapabilityCatalog
     function_runtime: FunctionExecutor | None = None
     knowledge_retriever: KnowledgeSearcher | None = None
+    knowledge_store: KnowledgeIngestor | None = None
     artifact_store: ArtifactWriter | None = None
     approval_checker: ApprovalChecker | None = None
     observation_store: ObservationRecorder | None = None
@@ -280,6 +285,19 @@ class ExecutionGateway:
     def _dispatch_knowledge(
         self, definition: CapabilityDefinition, request: CapabilityRequest
     ) -> dict[str, Any]:
+        if definition.provider_ref == "ingest_scan":
+            if self.knowledge_store is None:
+                raise RuntimeError("Knowledge store not configured on ExecutionGateway for ingest")
+            limit = int(request.arguments.get("limit") or 50)
+            records = self.knowledge_store.scan_data_root(limit=limit)
+            return {
+                "ingested": len(records),
+                "document_ids": [
+                    item.document_id if hasattr(item, "document_id") else str(item) for item in records
+                ],
+                "provider_ref": definition.provider_ref,
+                "truth": {"uses_knowledge_v2_ingest": True},
+            }
         if self.knowledge_retriever is None:
             raise RuntimeError("Knowledge retriever not configured on ExecutionGateway")
         from Data.modules.knowledge import RetrievalQuery

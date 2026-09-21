@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
+from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
@@ -26,6 +26,7 @@ from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.memory import MemoryKind, MemoryStatus, MemoryStore
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
+from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
@@ -42,11 +43,22 @@ from Data.modules.schedules import (
     ScheduleTargetKind,
 )
 from Data.modules.observability import ObservabilityHub
-from Data.modules.neuro import NeuroAdvisor
+from Data.modules.neuro import (
+    ContrastiveRetrievalHead,
+    CortexPlanner,
+    CortexRuntime,
+    NeuroAbsorbService,
+    NeuroAdvisor,
+    NeuroMemoryFacade,
+    NeuroSnapshotStore,
+    NeuroSoakHarness,
+    ProcessCritic,
+    build_residual_runtime,
+)
 from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
-from Data.modules.training import TrainingRegistry
+from Data.modules.training import PreferenceBridge, TrainingRecipeRegistry, TrainingRegistry
 from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
@@ -83,6 +95,7 @@ execution_gateway = ExecutionGateway(
     catalog=capability_catalog,
     function_runtime=function_runtime,
     knowledge_retriever=retriever,
+    knowledge_store=knowledge,
     artifact_store=artifacts,
     approval_checker=approval_service,
     observation_store=observation_store,
@@ -116,11 +129,48 @@ schedule_runner = ScheduleRunner(
     workflows=workflow_runtime,
 )
 observability = ObservabilityHub(capacity=500)
+neuro_snapshots = NeuroSnapshotStore(settings.database_path)
+residual_runtime = build_residual_runtime(
+    kind=settings.neuro_runtime.residual_kind,
+    model_id=settings.neuro_runtime.residual_model_id,
+    device=settings.neuro_runtime.residual_device,
+)
+neuro_memory = NeuroMemoryFacade(
+    enabled=settings.features.neuro_enabled and settings.features.neuro_memory_tiers,
+    memory_store=memory_store,
+    knowledge_store=knowledge,
+    knowledge_retriever=retriever,
+    snapshot_store=neuro_snapshots,
+)
+neuro_absorb = NeuroAbsorbService(knowledge)
+neuro_contrastive = ContrastiveRetrievalHead(
+    neuro_memory,
+    embeddings_available=False,
+)
+neuro_critic = ProcessCritic(enabled=settings.features.neuro_process_critic)
+cortex_runtime = CortexRuntime(
+    residual_port=residual_runtime,
+    critic=neuro_critic,
+)
 neuro_advisor = NeuroAdvisor(
     enabled=settings.features.neuro_enabled,
     associative_memory=settings.features.neuro_associative_memory,
     process_critic=settings.features.neuro_process_critic,
     residual_injection=settings.features.neuro_residual_injection,
+    cortex_enabled=settings.features.neuro_cortex,
+    memory_tiers_enabled=settings.features.neuro_memory_tiers,
+    residual_port=residual_runtime,
+    memory_facade=neuro_memory,
+    cortex_planner=CortexPlanner(enabled=settings.features.neuro_cortex),
+    critic=neuro_critic,
+)
+module_manager = ModuleManager(
+    discovery_roots=(
+        DATA_ROOT / "modules",
+        settings.knowledge.data_root / "plugins",
+    ),
+    enabled=settings.features.module_manager_enabled,
+    allow_subprocess_isolation=settings.features.module_manager_subprocess,
 )
 plugin_registry = PluginRegistry(capability_catalog)
 plugin_registry.register_echo_mcp_stub()
@@ -131,13 +181,16 @@ evaluation_harness = EvaluationHarness(
 )
 isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
+training_recipes = TrainingRecipeRegistry()
+preference_bridge = PreferenceBridge(training_registry)
+neuro_soak = NeuroSoakHarness()
 browser_stub = BrowserAutomationStub()
 media_stub = MediaAutomationStub()
 voice_stub = VoiceRuntimeStub()
 
 
 def _gate_catalog_builtins() -> GateCheck:
-    required = {"file.read", "knowledge.search", "artifact.create_text"}
+    required = {"file.read", "knowledge.search", "artifact.create_text", "knowledge.ingest_scan"}
     missing = sorted(required - {item.id for item in capability_catalog.list()})
     return GateCheck(
         gate_id="catalog_builtins",
@@ -179,8 +232,44 @@ def _gate_frontend() -> GateCheck:
     )
 
 
+def _gate_neuro_residual_posture() -> GateCheck:
+    """WARN when residual injection flag is ON but runtime cannot support residuals."""
+    flag_on = settings.features.neuro_residual_injection
+    supported = residual_runtime.supports_residuals()
+    ok = (not flag_on) or supported
+    return GateCheck(
+        gate_id="neuro_residual_posture",
+        name="Neuro residual posture",
+        severity=GateSeverity.WARN,
+        passed=ok,
+        detail=(
+            "ok"
+            if ok
+            else "NEURO_RESIDUAL_INJECTION=true but residual runtime unsupported"
+        ),
+    )
+
+
+def _gate_module_manager_subprocess() -> GateCheck:
+    enabled = settings.features.module_manager_subprocess
+    return GateCheck(
+        gate_id="module_manager_subprocess",
+        name="Module Manager subprocess isolation",
+        severity=GateSeverity.INFO,
+        passed=True,
+        detail="subprocess isolation ON" if enabled else "subprocess isolation OFF (inproc default)",
+    )
+
+
 release_gates = ReleaseGateRunner(
-    checks=[_gate_catalog_builtins, _gate_loopback, _gate_outbound, _gate_frontend]
+    checks=[
+        _gate_catalog_builtins,
+        _gate_loopback,
+        _gate_outbound,
+        _gate_frontend,
+        _gate_neuro_residual_posture,
+        _gate_module_manager_subprocess,
+    ]
 )
 security_auditor = SecurityAuditor(
     checks=[
@@ -333,12 +422,33 @@ def _master_verification_store_check() -> MasterGateCheck:
     )
 
 
+def _master_neuro_posture_check() -> MasterGateCheck:
+    residual_flag = settings.features.neuro_residual_injection
+    supported = residual_runtime.supports_residuals()
+    if residual_flag and not supported:
+        return MasterGateCheck(
+            check_id="neuro_residual",
+            name="Neuro residual posture",
+            status=MasterGateStatus.DEGRADED,
+            detail="residual injection flagged ON without supporting runtime",
+        )
+    return MasterGateCheck(
+        check_id="neuro_residual",
+        name="Neuro residual posture",
+        status=MasterGateStatus.READY,
+        detail=(
+            f"residual_supported={supported}; kind={settings.neuro_runtime.residual_kind}"
+        ),
+    )
+
+
 master_gates = MasterGateRunner(
     checks=[
         _master_release_check,
         _master_security_check,
         _master_evaluation_check,
         _master_verification_store_check,
+        _master_neuro_posture_check,
     ]
 )
 migrations = MigrationRunner(settings.database_path)
@@ -358,19 +468,46 @@ async def lifespan(_: FastAPI):
     observation_store.initialize()
     evidence_store.initialize()
     memory_store.initialize()
+    neuro_snapshots.initialize()
     verification_reports.initialize()
     workflow_store.initialize()
     schedule_store.initialize()
+    if module_manager.enabled:
+        ready = module_manager.discover_load_initialize_all(
+            ModuleContext(
+                database_path=str(settings.database_path),
+                data_root=str(settings.knowledge.data_root),
+                feature_flags={
+                    "neuro_enabled": settings.features.neuro_enabled,
+                    "neuro_cortex": settings.features.neuro_cortex,
+                    "neuro_memory_tiers": settings.features.neuro_memory_tiers,
+                    "neuro_residual_injection": settings.features.neuro_residual_injection,
+                    "module_manager_enabled": settings.features.module_manager_enabled,
+                },
+            )
+        )
+        observability.emit(
+            "module_manager",
+            "startup",
+            payload={"ready": len(ready), "telemetry": dict(module_manager.telemetry)},
+        )
     job_runtime.start_background_worker()
     metrics.incr("lifespan_starts")
     try:
         yield
     finally:
+        if module_manager.enabled:
+            for managed in list(module_manager.list()):
+                if managed.status.value in {"READY", "INITIALIZED", "LOADED", "EXECUTING"}:
+                    try:
+                        module_manager.shutdown(managed.manifest.module_id)
+                    except ModuleManagerError:
+                        pass
         job_runtime.stop_background_worker()
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.46.0-phase45", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.51.0-phase51", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -456,6 +593,20 @@ async def health() -> dict:
             "associative_memory": settings.features.neuro_associative_memory,
             "process_critic": settings.features.neuro_process_critic,
             "residual_injection": settings.features.neuro_residual_injection,
+            "cortex": settings.features.neuro_cortex,
+            "memory_tiers": settings.features.neuro_memory_tiers,
+            "residual_supported": residual_runtime.supports_residuals(),
+            "residual_kind": settings.neuro_runtime.residual_kind,
+            "absorb": dict(neuro_absorb.telemetry),
+        },
+        "module_manager": {
+            "enabled": settings.features.module_manager_enabled,
+            "subprocess_isolation": settings.features.module_manager_subprocess,
+            "modules": len(module_manager.list()) if module_manager.enabled else 0,
+            "telemetry": dict(module_manager.telemetry) if module_manager.enabled else {},
+        },
+        "training_recipes": {
+            "registered": len(training_recipes.list()),
         },
         "plugins": {
             "registered": len(plugin_registry.list()),
@@ -565,13 +716,75 @@ async def chat(payload: ChatRequest) -> dict:
     history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
-    neuro = neuro_advisor.assess(message)
+    knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
+    neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
+    neuro_context: list[dict] = []
+    cortex_report = None
     if neuro.enabled:
         observability.emit(
             "neuro",
             "assess",
             payload={"signals": len(neuro.signals)},
         )
+        for signal in neuro.signals:
+            neuro_context.append(
+                {
+                    "id": signal.signal_id,
+                    "content": f"[{signal.kind} strength={signal.strength}] {signal.summary}",
+                    "status": "advisory",
+                }
+            )
+        if settings.features.neuro_memory_tiers and neuro_memory.enabled:
+            try:
+                neuro_memory.write_working(
+                    message[:800],
+                    tags=("chat_turn",),
+                    metadata={"run_id": run.run_id, "conversation_id": conversation_id},
+                )
+            except (RuntimeError, ValueError):
+                pass
+            bundle = neuro_memory.retrieve(message, tiers=(0, 1, 2), limit_per_tier=3)
+            for hit in bundle.hits:
+                memory_hits.append(
+                    {
+                        "memory_id": hit.ref_id,
+                        "content": f"[tier{hit.tier}] {hit.content}",
+                        "status": "ACTIVE",
+                        "kind": f"neuro_tier_{hit.tier}",
+                    }
+                )
+        if settings.features.neuro_cortex:
+            engagement = next((s for s in neuro.signals if s.kind == "cortex_engagement"), None)
+            depth = 0
+            critic_rounds = 0
+            if engagement is not None:
+                depth = int((engagement.provenance or {}).get("depth") or 0)
+                critic_rounds = int((engagement.provenance or {}).get("critic_rounds") or 0)
+            if depth > 0 or residual_runtime.supports_residuals():
+                report = cortex_runtime.run(
+                    messages=[{"role": "user", "content": message}],
+                    depth=max(depth, 1 if residual_runtime.supports_residuals() else 0),
+                    critic_rounds=critic_rounds,
+                    knowledge_ids=knowledge_ids,
+                    plan_steps=list(plan.steps),
+                )
+                cortex_report = report.public_dict()
+                observability.emit(
+                    "neuro",
+                    "cortex_engagement",
+                    payload={"engaged": report.engaged, "degraded": report.degraded},
+                )
+                metrics.incr("neuro_cortex_runs")
+                neuro_context.append(
+                    {
+                        "id": f"cortex-{run.run_id}",
+                        "content": (
+                            f"[cortex engaged={report.engaged} depth={report.depth} "
+                            f"degraded={report.degraded}] {report.detail}"
+                        ),
+                        "status": "advisory",
+                    }
+                )
 
     runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     try:
@@ -580,6 +793,7 @@ async def chat(payload: ChatRequest) -> dict:
             knowledge=knowledge_hits,
             plan=plan,
             memory=memory_hits,
+            neuro=neuro_context or None,
         )
     except LLMUnavailable as exc:
         runs.transition(run.run_id, RunState.FAILED, error=str(exc))
@@ -618,6 +832,7 @@ async def chat(payload: ChatRequest) -> dict:
         ],
         "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
         "neuro": neuro.public_dict(),
+        "cortex": cortex_report,
     }
 
 
@@ -1529,8 +1744,214 @@ class NeuroAssessRequest(BaseModel):
 
 @app.post("/api/neuro/assess")
 def neuro_assess(payload: NeuroAssessRequest) -> dict:
-    assessment = neuro_advisor.assess(payload.text)
-    return {"assessment": assessment.public_dict()}
+    plan = reasoner.analyze(payload.text, has_knowledge=False)
+    assessment = neuro_advisor.assess(payload.text, plan=plan)
+    return {"assessment": assessment.public_dict(), "reasoning": plan.public_summary()}
+
+
+@app.get("/api/neuro/residual")
+def neuro_residual_status() -> dict:
+    hooks = [item.public_dict() for item in residual_runtime.list_hook_points()]
+    info = residual_runtime.runtime_info() if hasattr(residual_runtime, "runtime_info") else {}
+    return {
+        "supports_residuals": residual_runtime.supports_residuals(),
+        "hook_points": hooks,
+        "runtime": info,
+        "kind": settings.neuro_runtime.residual_kind,
+        "truth": {
+            "residual_injection_is_not_authority": True,
+            "unsupported_is_not_success": True,
+        },
+    }
+
+
+class NeuroCortexRunRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=30_000)
+    depth: int = Field(default=1, ge=0, le=4)
+    critic_rounds: int = Field(default=1, ge=0, le=4)
+
+
+@app.post("/api/neuro/cortex/run")
+def neuro_cortex_run(payload: NeuroCortexRunRequest) -> dict:
+    if not settings.features.neuro_enabled or not settings.features.neuro_cortex:
+        raise HTTPException(status_code=503, detail="Neuro cortex feature flags OFF")
+    report = cortex_runtime.run(
+        messages=[{"role": "user", "content": payload.text}],
+        depth=payload.depth,
+        critic_rounds=payload.critic_rounds,
+    )
+    observability.emit("neuro", "cortex_run", payload={"engaged": report.engaged, "degraded": report.degraded})
+    metrics.incr("neuro_cortex_runs")
+    return {"report": report.public_dict()}
+
+
+class NeuroSnapshotRequest(BaseModel):
+    tier: int = Field(ge=0, le=1)
+    label: str = Field(default="snapshot", min_length=1, max_length=120)
+
+
+@app.post("/api/neuro/memory/snapshot")
+def neuro_memory_snapshot(payload: NeuroSnapshotRequest) -> dict:
+    if not settings.features.neuro_memory_tiers:
+        raise HTTPException(status_code=503, detail="Neuro memory tiers feature flag OFF")
+    try:
+        snap = neuro_memory.snapshot(payload.tier, payload.label)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"snapshot": snap.public_dict()}
+
+
+@app.get("/api/neuro/memory/snapshots")
+def neuro_memory_snapshots(tier: Annotated[int | None, Query(ge=0, le=1)] = None) -> dict:
+    return {"snapshots": [item.public_dict() for item in neuro_snapshots.list(tier=tier)]}
+
+
+@app.post("/api/neuro/memory/snapshots/{snapshot_id}/restore")
+def neuro_memory_restore(snapshot_id: str) -> dict:
+    if not settings.features.neuro_memory_tiers:
+        raise HTTPException(status_code=503, detail="Neuro memory tiers feature flag OFF")
+    try:
+        snap = neuro_memory.restore(snapshot_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Snapshot not found") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"snapshot": snap.public_dict()}
+
+
+class NeuroAbsorbRequest(BaseModel):
+    limit: int = Field(default=50, ge=1, le=5000)
+
+
+@app.post("/api/neuro/absorb")
+def neuro_absorb_scan(payload: NeuroAbsorbRequest) -> dict:
+    """Operator-triggered ModelData absorb via Knowledge V2 (not a parallel pipeline)."""
+    result = neuro_absorb.scan_once(limit=payload.limit)
+    observability.emit("neuro", "absorb", payload={"ingested": result.get("ingested", 0)})
+    metrics.incr("neuro_absorb_scans")
+    return result
+
+
+class NeuroAbsorbScheduleRequest(BaseModel):
+    interval_seconds: int = Field(default=3600, ge=60, le=86400)
+    limit: int = Field(default=50, ge=1, le=5000)
+    approval_id: str = Field(min_length=1, max_length=120)
+    name: str = Field(default="neuro-modeldata-absorb", min_length=1, max_length=120)
+
+
+@app.post("/api/neuro/absorb/schedule")
+def neuro_absorb_schedule(payload: NeuroAbsorbScheduleRequest) -> dict:
+    """Create an interval Job schedule for knowledge.ingest_scan (WRITE → approval required)."""
+    if not approval_service.is_approved(
+        payload.approval_id,
+        capability_id="knowledge.ingest_scan",
+        side_effects=capability_catalog.require("knowledge.ingest_scan").side_effects,
+    ):
+        raise HTTPException(status_code=403, detail="approval_id not valid for knowledge.ingest_scan")
+    record = schedule_store.create(
+        name=payload.name,
+        target_kind=ScheduleTargetKind.JOB,
+        target_ref="knowledge.ingest_scan",
+        interval_seconds=payload.interval_seconds,
+        target_payload={
+            "arguments": {"limit": payload.limit},
+            "approval_id": payload.approval_id,
+        },
+        metadata={"neuro_absorb": True, "uses_knowledge_v2": True},
+    )
+    observability.emit(
+        "neuro",
+        "absorb_schedule",
+        payload={"schedule_id": record.schedule_id, "interval_seconds": payload.interval_seconds},
+    )
+    return {
+        "schedule": record.public_dict(),
+        "truth": {
+            "schedule_is_not_authority": True,
+            "write_still_requires_approval": True,
+            "no_parallel_ingest_pipeline": True,
+        },
+    }
+
+
+class NeuroSoakRequest(BaseModel):
+    iterations: int = Field(default=3, ge=1, le=20)
+
+
+@app.post("/api/neuro/soak")
+def neuro_soak_run(payload: NeuroSoakRequest) -> dict:
+    """Mini local soak for neuro contracts — not a production SLO claim."""
+
+    def _assess() -> str:
+        result = neuro_advisor.assess("soak probe delete risk", plan=reasoner.analyze("soak", False))
+        return f"signals={len(result.signals)} enabled={result.enabled}"
+
+    def _residual() -> str:
+        return f"supports={residual_runtime.supports_residuals()} kind={settings.neuro_runtime.residual_kind}"
+
+    def _modules() -> str:
+        return f"enabled={module_manager.enabled} count={len(module_manager.list())}"
+
+    report = neuro_soak.run(
+        iterations=payload.iterations,
+        steps=[
+            ("neuro_assess", _assess),
+            ("residual_port", _residual),
+            ("module_manager", _modules),
+        ],
+    )
+    metrics.incr("neuro_soak_runs")
+    return {"report": report.public_dict()}
+
+
+@app.post("/api/neuro/contrastive")
+def neuro_contrastive_retrieve(payload: NeuroAssessRequest) -> dict:
+    report = neuro_contrastive.retrieve(payload.text)
+    return {"report": report.public_dict()}
+
+
+@app.get("/api/modules")
+def list_managed_modules() -> dict:
+    if not module_manager.enabled:
+        return {
+            "enabled": False,
+            "modules": [],
+            "truth": {"module_manager_feature_flag_off": True},
+        }
+    return module_manager.public_snapshot()
+
+
+@app.post("/api/modules/discover")
+def discover_modules() -> dict:
+    if not module_manager.enabled:
+        raise HTTPException(status_code=503, detail="Module manager feature flag OFF")
+    manifests = module_manager.discover()
+    observability.emit("module_manager", "discover", payload={"count": len(manifests)})
+    return {
+        "discovered": [item.public_dict() for item in manifests],
+        "snapshot": module_manager.public_snapshot(),
+    }
+
+
+class ModuleExecuteRequest(BaseModel):
+    operation: str = Field(min_length=1, max_length=120)
+    arguments: dict = Field(default_factory=dict)
+
+
+@app.post("/api/modules/{module_id}/execute")
+def execute_managed_module(module_id: str, payload: ModuleExecuteRequest) -> dict:
+    if not module_manager.enabled:
+        raise HTTPException(status_code=503, detail="Module manager feature flag OFF")
+    try:
+        result = module_manager.execute(module_id, payload.operation, payload.arguments)
+    except ModuleManagerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    observability.emit(
+        "module_manager",
+        "execute",
+        payload={"module_id": module_id, "operation": payload.operation, "status": result.status},
+    )
+    return {"result": result.public_dict()}
 
 
 @app.get("/api/plugins")
@@ -1615,6 +2036,20 @@ def run_foundation_evaluation() -> dict:
     return {"report": report.public_dict()}
 
 
+@app.post("/api/evaluation/neuro")
+def run_neuro_evaluation() -> dict:
+    report = evaluation_harness.run_suite(
+        "neuro_ablation",
+        evaluation_harness.neuro_ablation_suite(
+            residual_supported=residual_runtime.supports_residuals(),
+            cortex_enabled=settings.features.neuro_cortex,
+            memory_tiers_enabled=settings.features.neuro_memory_tiers,
+            critic_enabled=settings.features.neuro_process_critic,
+        ),
+    )
+    return {"report": report.public_dict()}
+
+
 class IsolationEvaluateRequest(BaseModel):
     requested: list[str] = Field(default_factory=list)
     reason: str = ""
@@ -1647,6 +2082,35 @@ class TrainingCreateRequest(BaseModel):
 @app.get("/api/training")
 def list_training() -> dict:
     return {"jobs": [item.public_dict() for item in training_registry.list()]}
+
+
+@app.get("/api/training/recipes")
+def list_training_recipes() -> dict:
+    return {"recipes": [item.public_dict() for item in training_recipes.list()]}
+
+
+class PreferenceFromVerificationRequest(BaseModel):
+    limit: int = Field(default=20, ge=1, le=200)
+    recipe_id: str = Field(default="pref_dpo_v1", min_length=1, max_length=80)
+
+
+@app.post("/api/training/preferences/from-verification")
+def training_preferences_from_verification(payload: PreferenceFromVerificationRequest) -> dict:
+    if training_recipes.get(payload.recipe_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown recipe: {payload.recipe_id}")
+    reports = verification_reports.list(limit=payload.limit)
+    jobs = preference_bridge.register_from_verification_reports(
+        reports,
+        recipe_id=payload.recipe_id,
+    )
+    return {
+        "registered": [item.public_dict() for item in jobs],
+        "source_reports": len(reports),
+        "truth": {
+            "registered_is_not_trained": True,
+            "preference_labels_not_fabricated": True,
+        },
+    }
 
 
 @app.post("/api/training")

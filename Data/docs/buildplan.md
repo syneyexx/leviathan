@@ -6,6 +6,132 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 51 — Neuro Layer operational completion — PASS
+
+### Objective
+Close remaining Neuro Layer gaps: chat/context integration, scheduled absorb, preference bridge, soak harness, frontend operator surfaces, vLLM/llama stubs.
+
+### Added / changed
+- ContextBuilder `neuro` section (advisory-only labeling)
+- Chat path wires neuro signals + memory tiers + optional CortexRuntime into LLM context
+- `POST /api/neuro/absorb/schedule` (Job → `knowledge.ingest_scan` with approval_id)
+- `POST /api/neuro/soak` mini soak harness (explicitly not production SLO)
+- `POST /api/training/preferences/from-verification` via PreferenceBridge
+- Residual stubs: `VllmResidualAdapter`, `LlamaCppResidualAdapter` (honest unsupported)
+- Frontend: neuro API client methods + Status page Neuro panel + mini soak
+- Master phase_span `0-51`; version `0.51.0-phase51`
+
+### Tests
+- Full backend suite → **PASS (135)**
+- Frontend typecheck/test after `npm install`
+
+### Still not claimed
+- HF/vLLM/llama weight-backed residual inject
+- Multi-hour power/HBM SLO measurement
+- Automatic preference label fabrication
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-21 — Phases 47–50 — Neuro Layer production path — PASS
+
+### Phase 47 — Residual adapter #1 + critic-on-residual + ablations
+- `DeterministicResidualRuntime` (toy, `production_grade=false`) + `HFTransformersResidualAdapter` (config-only readiness)
+- `build_residual_runtime(kind=unsupported|deterministic|hf)`
+- `ProcessCritic.score_residual` + `CortexRuntime` mid-forward critic loops
+- EvaluationHarness `neuro_ablation_suite` — unsupported residual ⇒ **UNMEASURED** not PASSED
+- Config: `LEVIATHAN_NEURO_RESIDUAL_KIND|MODEL|DEVICE`
+
+### Phase 48 — Memory tier hardening + ModelData absorb
+- Migration **v12** `neuro_memory_snapshots` (central DB)
+- `NeuroSnapshotStore` + facade `snapshot`/`restore` for Tier 0/1
+- `NeuroAbsorbService` → Knowledge V2 `scan_data_root` (no parallel ingest)
+- Capability `knowledge.ingest_scan` (WRITE → approvals required)
+- `ContrastiveRetrievalHead` lexical proxy; vector path honest UNMEASURED
+- APIs: `/api/neuro/absorb`, `/api/neuro/memory/snapshot*`, `/api/neuro/contrastive`
+
+### Phase 49 — Cortex + training recipes
+- `CortexRuntime` against ResidualStreamPort
+- `TrainingRecipeRegistry` with process supervision / DPO / InfoNCE / synthetic / joint recipes
+- API: `GET /api/training/recipes`, `POST /api/neuro/cortex/run`
+- registered ≠ trained preserved
+
+### Phase 50 — Production harden
+- Module Manager `SUBPROCESS` isolation via `SubprocessModuleExecutor` + flag `MODULE_MANAGER_SUBPROCESS`
+- Release gates: neuro residual posture WARN; subprocess INFO; catalog includes ingest_scan
+- Master gate: neuro residual DEGRADED when flag ON without support
+- App version `0.50.0-phase50`
+
+### Tests / verification
+- Full backend suite → **PASS (131)**
+- New: `test_neuro_phases_47_50.py`
+
+### Explicitly NOT claimed
+- HF weight-backed residual inject/forward (config-only)
+- Production-grade GPU residuals / frontier model hooks
+- Real contrastive embedding training metrics
+- Continuous soak under load as measured SLO (counters exist; long-soak NOT TESTED in CI)
+
+### Status
+**PASS** (47–50) — Neuro Layer phased MVP→harden complete for local contracts
+
+---
+
+## 2026-09-21 — Phase 46 — Frontier Neuro Layer MVP + Universal Module Manager — PASS
+
+### Objective
+
+Specify the Top-Tier Frontier Neuro Layer and land MVP scaffolding on the Phase 45 foundation without parallel databases, gateways, or model clients.
+
+### Added
+
+- Architecture specification: `Data/docs/neuro_layer_architecture.md` (interfaces, Mermaid flows, training recipes, hardware guide, risks, phased plan)
+- `Data/modules/module_manager/` — `ILeviathanModule`, discovery from `Data/modules/*/module.json` + `{DATA_ROOT}/plugins/`, lifecycle discover→load→initialize→execute→shutdown, hot-reload, crash containment
+- Neuro contracts: `residual.py` (`ResidualStreamPort`, `UnsupportedResidualRuntime`), `cortex.py` (`CortexPlanner`), `critic.py` (`ProcessCritic`), `memory_tiers.py` (`NeuroMemoryFacade` Tier 0–2)
+- First-party example module: `Data/modules/neuro/module.json` + `echo_module.py`
+- Feature flags: `NEURO_CORTEX`, `NEURO_MEMORY_TIERS`, `MODULE_MANAGER`
+- APIs: `GET /api/neuro/residual`, `GET /api/modules`, `POST /api/modules/discover`, `POST /api/modules/{id}/execute`
+- Memory kinds: `EPISODIC`, `DECISION` (central MemoryStore; no new DB)
+- App version `0.47.0-phase46`
+
+### Changed
+
+- `NeuroAdvisor` composes cortex / critic / memory facade / residual port; residual remains honestly unimplemented without a residual-capable runtime
+- Chat `/api/neuro/assess` passes ReasoningPlan into neuro assessment
+- Config validation: cortex/memory-tier child flags require parent `NEURO`
+- Health exposes neuro residual support + module manager snapshot
+
+### Architecture fit
+
+- Module Manager is the single loader; PluginRegistry remains catalog binding (discoverable ≠ authorized)
+- Memory tiers orchestrate existing MemoryStore + Knowledge V2 — no fork
+- Side effects still exclusively via Execution Gateway + Approvals + Evidence + Verification
+- Residual injection explicit, optional, degradable
+
+### Database / schema
+
+- No new migration — Tier 1 reuses `memory_entries`; Tier 2 reuses Knowledge V2
+
+### Tests / verification
+
+- Full backend suite → **PASS (120)**
+- New: `test_module_manager.py`, expanded `test_neuro.py`
+
+### Explicitly NOT built
+
+- Real GPU residual hooks (vLLM/llama.cpp/TRT adapters)
+- Subprocess plugin isolation
+- LoRA / training execution loops
+- Tier 3 distilled adapters
+
+### Status
+
+**PASS** (Phase 46 MVP) — architecture SPECIFIED; residual GPU path NOT TESTED (no residual runtime wired)
+
+---
+
 ## 2026-09-21 — Phases 36–45 — Final platform polish / Master Program complete — PASS
 
 ### Phase 36 — Durable verification report store

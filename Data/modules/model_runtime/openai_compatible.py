@@ -79,6 +79,7 @@ class OpenAICompatibleLLM:
         memory: list[dict] | None = None,
         observations: list[dict] | None = None,
         evidence: list[dict] | None = None,
+        neuro: list[dict] | None = None,
     ) -> tuple[str, str]:
         model = await self.resolve_model()
         pack = self.context_builder.build(
@@ -88,6 +89,7 @@ class OpenAICompatibleLLM:
             memory=memory,
             observations=observations,
             evidence=evidence,
+            neuro=neuro,
         )
 
         payload = {

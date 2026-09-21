@@ -10,6 +10,8 @@ class MemoryKind(str, Enum):
     PREFERENCE = "PREFERENCE"
     FACT = "FACT"
     PROCEDURE = "PROCEDURE"
+    EPISODIC = "EPISODIC"
+    DECISION = "DECISION"
 
 
 class MemoryStatus(str, Enum):

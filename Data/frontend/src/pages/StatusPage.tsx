@@ -4,8 +4,11 @@ import { AppShell } from "../layouts/AppShell";
 import type {
   HealthResponse,
   MasterGateReport,
+  NeuroResidualStatus,
   ReleaseGateReport,
   SecurityAuditReport,
+  SoakReport,
+  TrainingRecipe,
 } from "../types/api";
 
 type LoadState = {
@@ -13,6 +16,9 @@ type LoadState = {
   release: ReleaseGateReport | null;
   security: SecurityAuditReport | null;
   master: MasterGateReport | null;
+  residual: NeuroResidualStatus | null;
+  recipes: TrainingRecipe[];
+  soak: SoakReport | null;
   error: string | null;
 };
 
@@ -22,6 +28,9 @@ export function StatusPage() {
     release: null,
     security: null,
     master: null,
+    residual: null,
+    recipes: [],
+    soak: null,
     error: null,
   });
 
@@ -29,20 +38,25 @@ export function StatusPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [health, release, security, master] = await Promise.all([
+        const [health, release, security, master, residual, recipes] = await Promise.all([
           api.health(),
           api.releaseGates(),
           api.securityAudit(),
           api.masterGates(),
+          api.neuroResidual(),
+          api.listTrainingRecipes(),
         ]);
         if (cancelled) return;
-        setState({
+        setState((prev) => ({
+          ...prev,
           health,
           release: release.report,
           security: security.report,
           master: master.report,
+          residual,
+          recipes: recipes.recipes,
           error: null,
-        });
+        }));
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof ApiError ? err.message : "Failed to load operator status";
@@ -54,7 +68,18 @@ export function StatusPage() {
     };
   }, []);
 
+  async function runSoak() {
+    try {
+      const result = await api.neuroSoak(3);
+      setState((prev) => ({ ...prev, soak: result.report, error: null }));
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Neuro soak failed";
+      setState((prev) => ({ ...prev, error: message }));
+    }
+  }
+
   const health = state.health;
+  const neuro = health?.neuro;
 
   return (
     <AppShell activeMode="explore" searchPlaceholder="Operator status">
@@ -160,6 +185,50 @@ export function StatusPage() {
               ))}
             </ul>
             <p className="lv-muted">Posture checks only — not a penetration test.</p>
+          </article>
+
+          <article className="lv-panel lv-card">
+            <div className="lv-section-label">Neuro layer</div>
+            <div className="lv-world-stats">
+              <div className="lv-world-stat">
+                <span>Neuro</span>
+                <strong>{neuro?.enabled ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Residual</span>
+                <strong>
+                  {state.residual?.supports_residuals
+                    ? state.residual.kind ?? "supported"
+                    : state.residual?.kind ?? neuro?.residual_kind ?? "unsupported"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Cortex / tiers</span>
+                <strong>
+                  {neuro?.cortex ? "cortex" : "—"}/{neuro?.memory_tiers ? "tiers" : "—"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Module manager</span>
+                <strong>{health?.module_manager?.enabled ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Recipes</span>
+                <strong>{state.recipes.length || health?.training_recipes?.registered || 0}</strong>
+              </div>
+            </div>
+            <p className="lv-muted">
+              Neural signal ≠ authority. Residual unsupported is not success.
+            </p>
+            <button type="button" className="lv-button-primary" onClick={() => void runSoak()}>
+              Run mini soak
+            </button>
+            {state.soak ? (
+              <p className="lv-muted">
+                Soak {state.soak.passed}/{state.soak.passed + state.soak.failed} steps ok ·{" "}
+                {Math.round(state.soak.duration_ms)}ms (not a production SLO)
+              </p>
+            ) : null}
           </article>
         </section>
       </main>

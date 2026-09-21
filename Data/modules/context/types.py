@@ -14,7 +14,7 @@ def estimate_tokens(text: str) -> int:
 @dataclass(frozen=True)
 class ContextSection:
     name: str
-    kind: str  # system | history | knowledge | observation | evidence | memory | constraint
+    kind: str  # system | history | knowledge | observation | evidence | memory | neuro | constraint
     content: str
     token_estimate: int
     provenance: dict[str, Any] = field(default_factory=dict)

@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of Master Program Phase 45.
+> This is the implementation truth for the repository as of Phase 51 (Neuro Layer 46–51 on Master Program Phase 45 foundation).
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,15 +12,15 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with a completed Master Engineering Program foundation (phases 0–45).
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45) plus Neuro Layer phases 46–51.
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.46.0-phase45`);
+- FastAPI backend composition root (`0.51.0-phase51`);
 - OpenAI-compatible LLM client (LM Studio–friendly);
-- SQLite persistence + migrations through v11;
-- Domain modules through Master gates (gateway, approvals, jobs, evidence, verification reports, agents flagged, workflows, schedules, observability, neuro advisory, plugins, evaluation, isolation, release, security, backup, metrics, chaos OFF);
-- Honest stubs: Training / Browser / Media / Voice / Native / Trading;
+- SQLite persistence + migrations through **v12**;
+- Domain modules through Master gates including Universal Module Manager, neuro residual adapters (deterministic toy / HF config-ready), cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
+- Honest stubs: Training execution / Browser / Media / Voice / Native / Trading;
 - React + TypeScript + Vite frontend with operator `/status` page;
 - typed frontend API client;
 - honest failure semantics (no fabricated success).
@@ -28,8 +28,18 @@ LEVIATHAN is a Python-first, local-first AI control plane with a completed Maste
 **Not claimed:**
 
 - Real browser/media/voice/native/trading runtimes;
-- Real MCP network clients; residual-stream neuro; training execution;
-- production APM / production certification / cloud backup sync.
+- Real MCP network clients; **weight-backed HF residual inject**; production GPU residual hooks;
+- training execution with real metrics; production APM / certification / cloud backup sync.
+
+**Neuro Layer (Phases 46–51):**
+
+- Spec: `Data/docs/neuro_layer_architecture.md`
+- Universal Module Manager + optional subprocess isolation
+- Residual ports: Unsupported / Deterministic toy / HF config-ready / vLLM+llama stubs
+- CortexRuntime + ProcessCritic (incl. residual scoring); chat path injects advisory neuro context
+- NeuroMemoryFacade Tier 0–2 + snapshots (v12) + absorb via Knowledge V2 (+ schedule helper)
+- Training recipes + preference bridge from verification (registered ≠ trained)
+- Mini soak harness; Status UI neuro panel; ablation evaluation; release/master neuro gates
 
 **Implemented through Phase 45:**
 
@@ -37,7 +47,7 @@ LEVIATHAN is a Python-first, local-first AI control plane with a completed Maste
 - Chaos (default OFF) + metrics + backup/restore + env docs + expanded API client;
 - Durable verification reports; multi-agent; Coding/Research depth; Security audit; Native/Trading stubs;
 - Release gates; Browser/Media/Voice stubs; Plugins; Evaluation; Isolation; Training stub;
-- Neuro; Observability; Schedules; Workflows; Agents; Verification; Memory; Context; Evidence; Observations; Jobs; Approvals; Gateway;
+- Neuro advisory; Observability; Schedules; Workflows; Agents; Verification; Memory; Context; Evidence; Observations; Jobs; Approvals; Gateway;
 - Function Runtime; Knowledge V2; Artifacts; Run/Event; migrations; Settings; React SPA.
 
 ---
@@ -47,11 +57,11 @@ LEVIATHAN is a Python-first, local-first AI control plane with a completed Maste
 ```text
 LEVIATHAN/
 ├── Data/
-│   ├── backend/          # Python control plane (FastAPI, DB, LLM, reasoning)
+│   ├── backend/          # Python control plane (FastAPI, DB, LLM, config, migrations)
 │   ├── frontend/         # React/TypeScript/Vite UI
-│   ├── modules/          # Reserved for future stateful domain modules
-│   ├── functions/        # Reserved for on-demand cold-path helpers
-│   └── docs/             # buildplan.md, leviathan_system.md, cursor.md
+│   ├── modules/          # Domain modules (gateway, neuro, module_manager, …)
+│   ├── functions/        # On-demand cold-path helpers
+│   └── docs/             # buildplan.md, leviathan_system.md, cursor.md, neuro_layer_architecture.md
 ├── leviathan.py          # Uvicorn launcher helper
 ├── requirements.txt
 ├── .env.example
@@ -67,13 +77,13 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.46.0-phase45`).
+FastAPI application (`version=0.51.0-phase51`).
 
 Responsibilities:
 
-- lifespan DB initialize;
+- lifespan DB initialize + optional ModuleManager discover/load/initialize;
 - `/api/*` route registration;
-- wire `Database`, `ReasoningEngine`, `OpenAICompatibleLLM`;
+- wire shared stores, gateway, neuro advisor, module manager;
 - serve the Vite production build from `Data/frontend/dist`.
 
 `main.py` must remain composition-oriented. Domain logic belongs in dedicated modules/services as the system grows.
@@ -250,7 +260,7 @@ Frontend state is a projection. Canonical conversation/message/knowledge state l
 
 # 5. Modules and functions
 
-`Data/modules/` now owns:
+`Data/modules/` now owns (among others):
 
 - `reasoning/` — ReasoningEngine
 - `context/` — ContextBuilder / ContextPack
@@ -259,9 +269,32 @@ Frontend state is a projection. Canonical conversation/message/knowledge state l
 - `artifacts/` — ArtifactStore + content hashing
 - `knowledge/` — KnowledgeStore V2 + HybridRetriever
 - `function_runtime/` — FunctionRegistry + FunctionRuntime
+- `execution/` — CapabilityCatalog + ExecutionGateway
+- `memory/` — MemoryStore (controlled; EPISODIC/DECISION kinds)
+- `neuro/` — NeuroAdvisor + residual/cortex/critic/memory_tiers contracts
+- `module_manager/` — Universal Module Manager (`ILeviathanModule`)
+- `plugins/` — PluginRegistry (declarative catalog bindings; not a second loader)
+- `observability/` — ObservabilityHub
 
 `Data/functions/` holds ON_DEMAND implementations (`text_file_read`, `csv_inspector`, `pdf_parser`).
 Runtime ownership: `Data/modules/function_runtime/` (registry + lazy execute/cleanup).
+
+### Neuro + Module Manager dataflow
+
+```text
+ReasoningPlan → CortexPlanner (optional)
+             → NeuroMemoryFacade (Tier0/1/2 via Memory + Knowledge)
+             → ProcessCritic (advisory)
+             → ResidualStreamPort (Unsupported today → degrade)
+             → NeuroSignal[] (never authority)
+
+ModuleManager discover(Data/modules + ModelData/plugins)
+  → load/initialize ILeviathanModule
+  → execute(op) contained
+  → side-effecting work still via ExecutionGateway
+```
+
+Full Neuro design: `Data/docs/neuro_layer_architecture.md`.
 
 ---
 
@@ -369,6 +402,12 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 43 — Operator UI | PASS | `/status` + honest Command signals |
 | Phase 44 — Security hardening | PASS | Extra posture findings |
 | Phase 45 — Master gates | PASS | Program summary; not prod cert |
+| Phase 46 — Neuro Layer MVP | PASS | Module Manager + neuro contracts; residual GPU not wired |
+| Phase 47 — Residual adapters | PASS | Deterministic toy + HF config-ready; ablations UNMEASURED |
+| Phase 48 — Memory + absorb | PASS | Snapshots v12; Knowledge ingest_scan; contrastive lexical |
+| Phase 49 — Cortex + recipes | PASS | CortexRuntime; training recipes registered ≠ trained |
+| Phase 50 — Harden | PASS | Subprocess isolation flag; neuro release/master gates |
+| Phase 51 — Neuro ops complete | PASS | Chat/context wire; absorb schedule; soak; Status UI; stubs |
 
 ---
 
