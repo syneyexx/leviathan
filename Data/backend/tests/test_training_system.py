@@ -254,3 +254,37 @@ def test_config_hash_stable() -> None:
     a = TrainingConfig(name="x", method="fixture", base_model_ref="b", seed=1)
     b = TrainingConfig(name="x", method="fixture", base_model_ref="b", seed=1)
     assert a.config_hash() == b.config_hash()
+
+
+class TrainingArtifactModelRegistryTests(unittest.TestCase):
+    def test_sync_registers_trained_artifact(self) -> None:
+        from Data.backend.migrations import MigrationRunner
+        from Data.modules.models.store import ModelStore
+        from Data.modules.training.model_registration import sync_completed_artifacts_to_models
+        from Data.modules.training.store import TrainingStore
+        from Data.modules.training.types import DurableTrainingStatus
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "reg.db"
+            MigrationRunner(db).apply_all()
+            ts = TrainingStore(db)
+            ms = ModelStore(db)
+            job = ts.create_job(name="j", method="fixture", base_model_ref="tiny", seed=1, config={})
+            art = ts.add_artifact(
+                job_id=job.job_id,
+                artifact_type="fixture_adapter",
+                path=str(Path(tmp) / "adapter"),
+                method="fixture",
+                base_model_ref="tiny",
+                compatibility={"inference_ready": False},
+            )
+            ts.update_job(job.job_id, status=DurableTrainingStatus.COMPLETED, artifact_id=art.artifact_id)
+            synced = sync_completed_artifacts_to_models(model_store=ms, training_store=ts)
+            self.assertEqual(len(synced), 1)
+            self.assertTrue(synced[0]["modelId"].startswith("trained:"))
+            row = ms.get_model(synced[0]["modelId"])
+            self.assertIsNotNone(row)
+            self.assertEqual(row["source"], "trained")
+            # second sync is idempotent
+            synced2 = sync_completed_artifacts_to_models(model_store=ms, training_store=ts)
+            self.assertEqual(synced2, [])

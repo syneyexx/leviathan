@@ -472,6 +472,25 @@ class TrainingStore:
             metadata=_loads(row["metadata_json"], {}),
         )
 
+    def update_artifact_registered_model(self, artifact_id: str, model_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE training_artifacts SET registered_model_id = ? WHERE artifact_id = ?",
+                (model_id, artifact_id),
+            )
+
+    def list_jobs_referencing_dataset_version(self, version_id: str) -> list[DurableTrainingJob]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM training_jobs
+                WHERE dataset_version_id = ?
+                ORDER BY created_at DESC
+                """,
+                (version_id,),
+            ).fetchall()
+        return [self._job_from_row(row) for row in rows]
+
     def dataset_version_exists(self, version_id: str) -> bool:
         with self.connect() as conn:
             try:

@@ -61,7 +61,20 @@ class TrainingService:
         self._processes: dict[str, Any] = {}
 
     def reconcile(self) -> list[dict]:
-        return reconcile_active_jobs(self.store, processes=self._processes)
+        results = reconcile_active_jobs(self.store, processes=self._processes)
+        try:
+            from Data.modules.models.store import ModelStore
+            from .model_registration import sync_completed_artifacts_to_models
+
+            synced = sync_completed_artifacts_to_models(
+                model_store=ModelStore(self.settings.database_path),
+                training_store=self.store,
+            )
+            if synced:
+                results.append({"syncedModels": synced})
+        except Exception as exc:  # noqa: BLE001 — registry sync must not break reconcile
+            results.append({"modelRegistrySyncError": str(exc)})
+        return results
 
     def capabilities(self) -> dict[str, Any]:
         return probe_training_capabilities().public_dict()

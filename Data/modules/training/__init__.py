@@ -1,4 +1,4 @@
-"""Training registry stub — registered ≠ trained."""
+"""Training subsystem — durable jobs, optional LoRA, honest stubs where needed."""
 
 from .artifacts import export_artifact, list_job_artifacts
 from .capabilities import probe_training_capabilities, safe_import
@@ -7,6 +7,7 @@ from .evaluation import evaluate_job
 from .events import TrainingEventLog
 from .hardware import probe_hardware
 from .launcher import TrainingLauncher
+from .model_registration import register_training_artifact_as_model, sync_completed_artifacts_to_models
 from .planner import plan_training
 from .preferences import PreferenceBridge
 from .preflight import run_preflight
@@ -69,6 +70,8 @@ __all__ = [
     "probe_hardware",
     "probe_training_capabilities",
     "reconcile_active_jobs",
+    "register_training_artifact_as_model",
     "run_preflight",
     "safe_import",
+    "sync_completed_artifacts_to_models",
 ]

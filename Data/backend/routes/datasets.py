@@ -180,6 +180,28 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             service.get_dataset(dataset_id)
         except DatasetError as exc:
             _raise(exc)
+        # Block deletion when durable training jobs reference any version.
+        versions = service.list_versions(dataset_id)
+        blockers: list[str] = []
+        try:
+            from Data.modules.training.store import TrainingStore
+
+            tstore = TrainingStore(service.store.db_path)
+            for ver in versions:
+                refs = tstore.list_jobs_referencing_dataset_version(ver.version_id)
+                for job in refs:
+                    blockers.append(f"{job.job_id} → {ver.version_id}")
+        except Exception:  # noqa: BLE001 — if training tables absent, allow delete
+            blockers = []
+        if blockers:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "DATASET_IN_USE",
+                    "message": "Dataset has dependent training jobs; refuse silent delete",
+                    "references": blockers[:20],
+                },
+            )
         ok = service.store.delete_dataset(dataset_id)
         return {"deleted": ok, "datasetId": dataset_id}
 
