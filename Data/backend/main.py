@@ -31,6 +31,12 @@ from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
 from Data.modules.verification import VerificationEngine, VerificationRequirement
 from Data.modules.workflows import WorkflowRuntime, WorkflowStepDef, WorkflowStore
+from Data.modules.schedules import (
+    ScheduleRunner,
+    ScheduleStatus,
+    ScheduleStore,
+    ScheduleTargetKind,
+)
 
 
 db = Database(settings.database_path)
@@ -81,6 +87,12 @@ agent_runtime = AgentRuntime(
 )
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
+schedule_store = ScheduleStore(settings.database_path)
+schedule_runner = ScheduleRunner(
+    schedule_store,
+    jobs=job_runtime,
+    workflows=workflow_runtime,
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -99,6 +111,7 @@ async def lifespan(_: FastAPI):
     evidence_store.initialize()
     memory_store.initialize()
     workflow_store.initialize()
+    schedule_store.initialize()
     job_runtime.start_background_worker()
     try:
         yield
@@ -107,7 +120,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.19.0-phase18", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.20.0-phase19", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -1047,6 +1060,82 @@ def cancel_workflow(workflow_id: str) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"workflow": record.public_dict()}
+
+
+class ScheduleCreateRequest(BaseModel):
+    name: str = Field(default="schedule", min_length=1, max_length=120)
+    target_kind: str = "JOB"
+    target_ref: str = Field(min_length=1, max_length=120)
+    interval_seconds: int = Field(default=60, ge=1, le=86_400)
+    target_payload: dict = Field(default_factory=dict)
+    start_after_seconds: int = Field(default=0, ge=0, le=86_400)
+
+
+@app.get("/api/schedules")
+def list_schedules(
+    status: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    parsed = None
+    if status:
+        try:
+            parsed = ScheduleStatus(status.upper())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid schedule status: {status}") from exc
+    return {
+        "schedules": [item.public_dict() for item in schedule_store.list(status=parsed, limit=limit)],
+        "telemetry": dict(schedule_runner.telemetry),
+    }
+
+
+@app.post("/api/schedules")
+def create_schedule(payload: ScheduleCreateRequest) -> dict:
+    try:
+        kind = ScheduleTargetKind(payload.target_kind.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid target_kind: {payload.target_kind}") from exc
+    try:
+        record = schedule_store.create(
+            name=payload.name,
+            target_kind=kind,
+            target_ref=payload.target_ref,
+            interval_seconds=payload.interval_seconds,
+            target_payload=payload.target_payload,
+            start_after_seconds=payload.start_after_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"schedule": record.public_dict()}
+
+
+@app.get("/api/schedules/{schedule_id}")
+def get_schedule(schedule_id: str) -> dict:
+    record = schedule_store.get(schedule_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"schedule": record.public_dict()}
+
+
+@app.post("/api/schedules/{schedule_id}/pause")
+def pause_schedule(schedule_id: str) -> dict:
+    record = schedule_store.set_status(schedule_id, ScheduleStatus.PAUSED)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"schedule": record.public_dict()}
+
+
+@app.post("/api/schedules/{schedule_id}/resume")
+def resume_schedule(schedule_id: str) -> dict:
+    record = schedule_store.set_status(schedule_id, ScheduleStatus.ACTIVE)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"schedule": record.public_dict()}
+
+
+@app.post("/api/schedules/tick")
+def tick_schedules() -> dict:
+    fired = schedule_runner.tick()
+    return {"fired": fired, "telemetry": dict(schedule_runner.telemetry)}
 
 
 @app.get("/")

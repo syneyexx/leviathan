@@ -6,6 +6,35 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 18 — Workflows Runtime — PASS
+
+### Objective
+
+Durable ordered capability sequences executed only through the Execution Gateway.
+
+### Implementation
+
+- `Data/modules/workflows/` — WorkflowStore, WorkflowRuntime, step defs
+- States: CREATED → RUNNING → COMPLETED|FAILED|CANCELLED
+- Migration v9: `workflows` table
+- API: `/api/workflows` create/list/get/run/cancel
+
+### Tests executed
+
+- Full backend suite → **PASS (77)**
+
+### Known limitations
+
+- No branching/conditions; linear steps only
+- No schedule triggers yet
+- Cancel does not interrupt an in-flight gateway call mid-step
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 17 — Agent Runtime Skeleton — PASS
 
 ### Objective

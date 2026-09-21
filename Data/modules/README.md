@@ -22,6 +22,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `verification/` | VerificationEngine (evidence-based) |
 | `agents/` | AgentRuntime (shared gateway only; flagged) |
 | `workflows/` | WorkflowStore + WorkflowRuntime |
+| `schedules/` | ScheduleStore + ScheduleRunner |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 
