@@ -137,7 +137,7 @@ function SectionTitle({ n, title }: { n: number; title: string }) {
 }
 
 function AgentNetwork() {
-  const nodes = [
+  const nodes: Array<{ id: string; label: string; x: number; y: number; hub?: boolean }> = [
     { id: "orch", label: "Orchestrator", x: 200, y: 110, hub: true },
     { id: "research", label: "Research", x: 70, y: 40 },
     { id: "planner", label: "Planner", x: 200, y: 28 },
@@ -145,7 +145,7 @@ function AgentNetwork() {
     { id: "coding", label: "Coding", x: 60, y: 170 },
     { id: "memory", label: "Memory", x: 200, y: 200 },
     { id: "trading", label: "Trading", x: 340, y: 170 },
-  ] as const;
+  ];
 
   const links: Array<[string, string, "active" | "idle"]> = [
     ["orch", "research", "active"],
