@@ -6,6 +6,7 @@ import { ToastProvider } from "./state/ToastContext";
 import "./styles/tokens.css";
 import "./styles/leviathan.css";
 import "./styles/chat.css";
+import "./styles/pages.css";
 
 const root = document.getElementById("root");
 if (!root) {

@@ -14,13 +14,14 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
     ),
   },
   {
+    label: "Chat",
+    to: "/chat",
+    icon: <path d="M5 6h14v9H8l-3 3V6z" />,
+  },
+  {
     label: "Status",
     to: "/status",
-    icon: (
-      <>
-        <path d="M5 19V9M12 19V5M19 19v-7" />
-      </>
-    ),
+    icon: <path d="M5 19V9M12 19V5M19 19v-7" />,
   },
   {
     label: "Research",
@@ -60,12 +61,18 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
     ),
   },
   {
-    label: "Knowledge",
+    label: "Datasets",
     icon: (
       <>
-        <path d="M12 4l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V7l7-3z" />
+        <ellipse cx="12" cy="6" rx="7" ry="3" />
+        <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
+        <path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
       </>
     ),
+  },
+  {
+    label: "Knowledge",
+    icon: <path d="M12 4l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V7l7-3z" />,
   },
   {
     label: "Memory",
@@ -79,10 +86,31 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
   },
   {
     label: "Models",
+    to: "/models",
     icon: (
       <>
         <path d="M12 4l8 4-8 4-8-4 8-4z" />
         <path d="M4 12l8 4 8-4M4 16l8 4 8-4" />
+      </>
+    ),
+  },
+  {
+    label: "Model Training",
+    to: "/training",
+    icon: (
+      <>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" />
+      </>
+    ),
+  },
+  {
+    label: "Brain",
+    to: "/brain",
+    icon: (
+      <>
+        <path d="M9 8a3 3 0 015.8-1.2A3 3 0 0118 10c0 4-3 6-6 8-3-2-6-4-6-8a3 3 0 013-3z" />
+        <path d="M12 11v5" />
       </>
     ),
   },
@@ -123,6 +151,7 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
   },
   {
     label: "Settings",
+    to: "/settings",
     icon: (
       <>
         <circle cx="12" cy="12" r="3" />
