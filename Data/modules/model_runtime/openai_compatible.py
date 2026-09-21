@@ -18,7 +18,8 @@ class OpenAICompatibleLLM:
 
     Works with LM Studio and other servers exposing /v1/models and
     /v1/chat/completions. Provider-facing only — no task lifecycle or
-    execution authority.
+    execution authority. Model Control Plane resolves which endpoint/model
+    to use; this client executes the request.
     """
 
     def __init__(self, settings: Settings, context_builder: ContextBuilder | None = None) -> None:
@@ -31,24 +32,38 @@ class OpenAICompatibleLLM:
         )
         self._resolved_model: str | None = settings.llm_model
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, api_key: str | None = None) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.settings.llm_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
+        key = api_key if api_key is not None else self.settings.llm_api_key
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
         return headers
 
-    async def resolve_model(self) -> str:
+    def _base_url(self, endpoint: str | None = None) -> str:
+        raw = (endpoint or self.settings.llm_base_url).rstrip("/")
+        if raw.endswith("/v1"):
+            return raw
+        if "/v1/" in raw:
+            return raw.split("/v1/")[0] + "/v1"
+        # Ollama native root may be passed; prefer /v1 when present on settings default.
+        if endpoint and not endpoint.rstrip("/").endswith("/v1"):
+            # Caller may pass OpenAI-compatible endpoint already normalized by control plane.
+            return raw if raw.endswith("/v1") else f"{raw}/v1"
+        return raw if raw.endswith("/v1") else f"{raw}/v1"
+
+    async def resolve_model(self, *, endpoint: str | None = None, api_key: str | None = None) -> str:
         if self._resolved_model:
             return self._resolved_model
 
+        base = self._base_url(endpoint)
         try:
             async with httpx.AsyncClient(timeout=min(self.settings.llm_timeout_seconds, 10.0)) as client:
-                response = await client.get(f"{self.settings.llm_base_url}/models", headers=self._headers())
+                response = await client.get(f"{base}/models", headers=self._headers(api_key))
                 response.raise_for_status()
                 payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise LLMUnavailable(
-                f"No model configured and model discovery failed at {self.settings.llm_base_url}."
+                f"No model configured and model discovery failed at {base}."
             ) from exc
 
         models = payload.get("data") if isinstance(payload, dict) else None
@@ -80,8 +95,16 @@ class OpenAICompatibleLLM:
         observations: list[dict] | None = None,
         evidence: list[dict] | None = None,
         neuro: list[dict] | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        stream: bool = False,
     ) -> tuple[str, str]:
-        model = await self.resolve_model()
+        model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
         pack = self.context_builder.build(
             history=history,
             knowledge=knowledge,
@@ -91,19 +114,34 @@ class OpenAICompatibleLLM:
             evidence=evidence,
             neuro=neuro,
         )
+        messages = list(pack.messages)
+        if system_prompt and system_prompt.strip():
+            # Prepend profile system prompt without replacing context-builder system.
+            if messages and messages[0].get("role") == "system":
+                messages[0] = {
+                    "role": "system",
+                    "content": f"{system_prompt.strip()}\n\n{messages[0].get('content', '')}",
+                }
+            else:
+                messages.insert(0, {"role": "system", "content": system_prompt.strip()})
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
-            "messages": list(pack.messages),
-            "temperature": 0.35,
-            "stream": False,
+            "messages": messages,
+            "temperature": 0.35 if temperature is None else temperature,
+            "stream": bool(stream),
         }
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
+        base = self._base_url(endpoint)
         try:
             async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
                 response = await client.post(
-                    f"{self.settings.llm_base_url}/chat/completions",
-                    headers=self._headers(),
+                    f"{base}/chat/completions",
+                    headers=self._headers(api_key),
                     json=payload,
                 )
                 response.raise_for_status()

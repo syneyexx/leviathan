@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of Phase 51 (Neuro Layer 46–51 on Master Program Phase 45 foundation).
+> This is the implementation truth for the repository as of the **Models Control Plane** on Phase 51 foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,16 +12,17 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45) plus Neuro Layer phases 46–51.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–51, and a full **Model Control Plane** for the Models operator surface.
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.51.0-phase51`);
-- OpenAI-compatible LLM client (LM Studio–friendly);
-- SQLite persistence + migrations through **v12**;
-- Domain modules through Master gates including Universal Module Manager, neuro residual adapters (deterministic toy / HF config-ready), cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
-- Honest stubs: Training execution / Browser / Media / Voice / Native / Trading;
-- React + TypeScript + Vite frontend with operator `/status` page;
+- FastAPI backend composition root (`0.52.0-models`);
+- **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
+- OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
+- SQLite persistence + migrations through **v13**;
+- Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
+- Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
+- React + TypeScript + Vite frontend with operator `/status` and production `/models` control plane UI;
 - typed frontend API client;
 - honest failure semantics (no fabricated success).
 
@@ -29,26 +30,21 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 
 - Real browser/media/voice/native/trading runtimes;
 - Real MCP network clients; **weight-backed HF residual inject**; production GPU residual hooks;
+- Programmatic LM Studio load/unload (external management);
+- Managed llama.cpp inference engine;
+- Chat SSE streaming transport (preference stored only);
 - training execution with real metrics; production APM / certification / cloud backup sync.
 
-**Neuro Layer (Phases 46–51):**
+**Model Control Plane:**
 
-- Spec: `Data/docs/neuro_layer_architecture.md`
-- Universal Module Manager + optional subprocess isolation
-- Residual ports: Unsupported / Deterministic toy / HF config-ready / vLLM+llama stubs
-- CortexRuntime + ProcessCritic (incl. residual scoring); chat path injects advisory neuro context
-- NeuroMemoryFacade Tier 0–2 + snapshots (v12) + absorb via Knowledge V2 (+ schedule helper)
-- Training recipes + preference bridge from verification (registered ≠ trained)
-- Mini soak harness; Status UI neuro panel; ablation evaluation; release/master neuro gates
+- UI → `/api/models*` + `/api/model-providers*` → `ModelControlPlane` → Registry / Router / Gateway / RuntimeManager → Provider adapters → runtime
+- Providers: LM Studio (discover/health/inference), Ollama (discover/pull/delete/inference), OpenAI-compatible, llama.cpp boundary (unsupported)
+- Active model ≠ selected model; profiles persisted; fallback + role routing with traced decisions
+- Capability probing caches declared vs verified; never gates tools via keyword NLU
 
-**Implemented through Phase 45:**
+**Neuro Layer (Phases 46–51):** remains as previously documented.
 
-- Master gates + security hardening + operator Status UI + integration harness;
-- Chaos (default OFF) + metrics + backup/restore + env docs + expanded API client;
-- Durable verification reports; multi-agent; Coding/Research depth; Security audit; Native/Trading stubs;
-- Release gates; Browser/Media/Voice stubs; Plugins; Evaluation; Isolation; Training stub;
-- Neuro advisory; Observability; Schedules; Workflows; Agents; Verification; Memory; Context; Evidence; Observations; Jobs; Approvals; Gateway;
-- Function Runtime; Knowledge V2; Artifacts; Run/Event; migrations; Settings; React SPA.
+**Implemented through Phase 45:** remains as previously documented.
 
 ---
 
@@ -105,18 +101,20 @@ Responsibilities:
 
 Path constants: `PROJECT_ROOT`, `DATA_ROOT`, `BACKEND_ROOT`, `FRONTEND_ROOT`, `FRONTEND_DIST`.
 
-## 3.3 Persistence — `Data/backend/database.py`
+## 3.3 Persistence — `Data/backend/database.py` + migrations
 
-SQLite with WAL + foreign keys.
+SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v13**).
 
-Tables:
+Core chat tables (also ensured in `Database.initialize`):
 
-- `conversations` — id, title, created_at, updated_at;
-- `messages` — id, conversation_id, role, content, created_at;
-- `knowledge_documents` — id, title, content, source, created_at, updated_at;
-- `knowledge_fts` — FTS5 virtual table when available.
+- `conversations`, `messages`, knowledge (+ FTS5 when available)
 
-No migration version table yet (Phase 5 target). Schema is created with `CREATE TABLE IF NOT EXISTS`.
+Model Control Plane tables (migration v13):
+
+- `model_providers`, `model_registry`, `model_profiles`, `model_control_state`
+- `model_capability_results`, `model_downloads`, `model_audit_log`
+
+Additional domain tables from earlier migrations: artifacts, approvals, jobs, observations/effects, evidence, memory, workflows, schedules, verification_reports, neuro_memory_snapshots.
 
 ## 3.4 Reasoning — `Data/backend/reasoning.py`
 
@@ -128,18 +126,20 @@ Public summary only — **no private chain-of-thought persistence**.
 
 Deterministic keyword/heuristic classification. Not authoritative for security or side effects.
 
-## 3.5 Model client — `Data/backend/llm.py`
+## 3.5 Model client + Model Control Plane
 
-`OpenAICompatibleLLM`:
+**Executor:** `Data/modules/model_runtime/OpenAICompatibleLLM` — HTTP chat completions against a resolved endpoint/model.
 
-- resolve model (pinned or `/v1/models`);
-- `health()`;
-- `chat(history, knowledge, plan)` → `(answer, model_id)`;
-- raises `LLMUnavailable` on provider failure.
+**Control plane owner:** `Data/modules/models/ModelControlPlane`
 
-Knowledge is injected into the system prompt as **untrusted context data**, labeled as such.
+- Provider adapters: LM Studio, Ollama, OpenAI-compatible, llama.cpp (boundary)
+- Registry reconciles discovery vs persistence; never trusts persisted `loaded=true` after restart without rediscovery
+- Router precedence: explicit → agent → role → active → fallback → optional cloud
+- Gateway tracks real inflight/queue/errors (never synthetic)
+- Profiles persisted per model; activation is explicit
+- Lifecycle load/unload gated by adapter `RuntimeCapabilities` (unsupported → HTTP 409)
 
-Context assembly currently lives here. Future Context Engine should own this.
+Routes: `Data/backend/routes/models.py` (`/api/models*`, `/api/model-providers*`, `/api/model-downloads*`).
 
 ## 3.6 Chat orchestration flow
 
@@ -149,13 +149,15 @@ POST /api/chat
   → persist user message
   → ReasoningEngine.analyze
   → optional Knowledge search
-  → load history window
-  → LLM.chat
-  → persist assistant message OR HTTP 503 on LLMUnavailable
-  → return reasoning summary + knowledge source metadata
+  → ModelControlPlane.resolve_for_chat (+ gateway acquire)
+  → LLM.chat (endpoint/model/profile from router)
+  → gateway release; persist assistant message OR HTTP error
+  → return reasoning + optional routing metadata
 ```
 
-Completion of a chat turn means: model returned usable text and the assistant message was persisted. There is not yet a canonical Run completion contract.
+If the registry is empty / router exhausted and no explicit model was requested, chat may fall back to legacy settings-based LLM resolution (recorded as fallback).
+
+Completion of a chat turn means: model returned usable text and the assistant message was persisted.
 
 ## 3.7 Knowledge V2
 
