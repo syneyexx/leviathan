@@ -27,8 +27,7 @@ LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 
 **Not implemented (do not treat UI shell labels as capability):**
 
-- Execution Gateway / approvals / policy;
-- Function Registry / on-demand functions;
+- Execution Gateway / approvals / policy (functions callable via API but not yet capability-gated);
 - Job runtime / Resource Manager;
 - Full Context Engine token budgeting (basic ContextBuilder exists);
 - Memory / Evidence / Artifacts domains;
