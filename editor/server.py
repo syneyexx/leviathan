@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Standalone Leviathan layout editor — serves API + starts the real Vite UI."""
+"""Standalone Leviathan visual builder — API + real Vite UI."""
 
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
 import os
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +23,10 @@ REPO = ROOT.parent
 FRONTEND = REPO / "Data" / "frontend"
 STYLES = FRONTEND / "src" / "styles"
 PUBLIC = FRONTEND / "public"
+ASSETS = PUBLIC / "assets"
+UPLOADS = ASSETS / "uploads"
+CONTENT_FILE = PUBLIC / "lv-editor-content.json"
+SRC_ROOT = FRONTEND / "src"
 HOST = "127.0.0.1"
 PORT = 5199
 VITE_PORT = 5173
@@ -32,18 +38,84 @@ ALLOWED_FILES = {
     "chat.css": STYLES / "chat.css",
 }
 
+SOURCE_SUFFIXES = {".tsx", ".ts", ".jsx", ".js", ".css", ".html", ".json", ".md"}
 SAFE_NAME = re.compile(r"^[a-z0-9._-]+$", re.I)
+SAFE_UPLOAD = re.compile(r"^[a-zA-Z0-9._-]+$")
 CORS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 }
 
 vite_proc: subprocess.Popen | None = None
 
 
+def default_content() -> dict:
+    return {"version": 1, "entries": {}}
+
+
+def read_content() -> dict:
+    if not CONTENT_FILE.is_file():
+        return default_content()
+    try:
+        data = json.loads(CONTENT_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return default_content()
+    if not isinstance(data, dict):
+        return default_content()
+    data.setdefault("version", 1)
+    data.setdefault("entries", {})
+    return data
+
+
+def write_content(data: dict) -> None:
+    CONTENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONTENT_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def replace_in_sources(old: str, new: str) -> list[dict]:
+    """Replace exact string in frontend source files. Skips tiny strings."""
+    if not isinstance(old, str) or not isinstance(new, str):
+        return []
+    if old == new or len(old) < 2:
+        return []
+    changed: list[dict] = []
+    for path in SRC_ROOT.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if old not in text:
+            continue
+        count = text.count(old)
+        path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+        changed.append({"path": str(path.relative_to(REPO)), "count": count})
+    # Also patch public content references in HTML if any
+    for path in PUBLIC.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in {".html", ".json", ".svg"}:
+            continue
+        if path.resolve() == CONTENT_FILE.resolve():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if old not in text:
+            continue
+        count = text.count(old)
+        path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+        changed.append({"path": str(path.relative_to(REPO)), "count": count})
+    return changed
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "LeviathanLayoutEditor/2.0"
+    server_version = "LeviathanLayoutEditor/3.0"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[editor] {self.address_string()} - {fmt % args}", flush=True)
@@ -70,6 +142,14 @@ class Handler(BaseHTTPRequestHandler):
         if length <= 0:
             return b""
         return self.rfile.read(length)
+
+    def _read_json(self) -> dict | None:
+        raw = self._read_body()
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def _resolve_static(self, path: str) -> Path | None:
         if path in ("", "/"):
@@ -105,6 +185,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "styles": str(STYLES),
+                    "content": str(CONTENT_FILE),
                     "repo": str(REPO),
                     "vite": f"http://{HOST}:{VITE_PORT}/",
                 },
@@ -138,6 +219,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"name": name, "content": text, "path": str(file_path)})
             return
 
+        if path == "/api/content":
+            data = read_content()
+            self._json(200, {"content": data, "path": str(CONTENT_FILE)})
+            return
+
         target = self._resolve_static(path)
         if target is None or not target.is_file():
             self._json(404, {"error": "Not found", "path": path})
@@ -157,43 +243,123 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path != "/api/file":
-            self._json(404, {"error": "Not found"})
+
+        if parsed.path == "/api/file":
+            qs = parse_qs(parsed.query)
+            name = (qs.get("name") or [""])[0]
+            if name not in ALLOWED_FILES or not SAFE_NAME.match(name):
+                self._json(400, {"error": "Unknown file"})
+                return
+            payload = self._read_json()
+            if payload is None:
+                self._json(400, {"error": "Expected JSON body with content"})
+                return
+            content = payload.get("content")
+            if not isinstance(content, str):
+                self._json(400, {"error": "content must be a string"})
+                return
+            if len(content) > 2_000_000:
+                self._json(400, {"error": "File too large"})
+                return
+            file_path = ALLOWED_FILES[name]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8", newline="\n")
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "name": name,
+                    "bytes": len(content.encode("utf-8")),
+                    "path": str(file_path),
+                },
+            )
             return
 
-        qs = parse_qs(parsed.query)
-        name = (qs.get("name") or [""])[0]
-        if name not in ALLOWED_FILES or not SAFE_NAME.match(name):
-            self._json(400, {"error": "Unknown file"})
+        if parsed.path == "/api/content":
+            payload = self._read_json()
+            if payload is None:
+                self._json(400, {"error": "Expected JSON body"})
+                return
+            content = payload.get("content")
+            if not isinstance(content, dict):
+                self._json(400, {"error": "content must be an object"})
+                return
+            content.setdefault("version", 1)
+            content.setdefault("entries", {})
+            if not isinstance(content["entries"], dict):
+                self._json(400, {"error": "entries must be an object"})
+                return
+            write_content(content)
+            self._json(200, {"ok": True, "path": str(CONTENT_FILE), "entries": len(content["entries"])})
             return
 
-        raw = self._read_body()
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self._json(400, {"error": "Expected JSON body with content"})
+        self._json(404, {"error": "Not found"})
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/api/replace-text":
+            payload = self._read_json()
+            if payload is None:
+                self._json(400, {"error": "Expected JSON body"})
+                return
+            old = payload.get("old")
+            new = payload.get("new")
+            if not isinstance(old, str) or not isinstance(new, str):
+                self._json(400, {"error": "old and new must be strings"})
+                return
+            if len(old) < 2:
+                self._json(400, {"error": "old text too short (min 2 chars)"})
+                return
+            changed = replace_in_sources(old, new)
+            self._json(200, {"ok": True, "changed": changed, "count": len(changed)})
             return
 
-        content = payload.get("content")
-        if not isinstance(content, str):
-            self._json(400, {"error": "content must be a string"})
-            return
-        if len(content) > 2_000_000:
-            self._json(400, {"error": "File too large"})
+        if parsed.path == "/api/upload":
+            payload = self._read_json()
+            if payload is None:
+                self._json(400, {"error": "Expected JSON body"})
+                return
+            filename = payload.get("filename") or "upload.bin"
+            data_b64 = payload.get("data")
+            if not isinstance(filename, str) or not isinstance(data_b64, str):
+                self._json(400, {"error": "filename and data required"})
+                return
+            filename = Path(filename).name
+            if not SAFE_UPLOAD.match(filename):
+                self._json(400, {"error": "Invalid filename"})
+                return
+            ext = Path(filename).suffix.lower() or ".bin"
+            if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico"}:
+                self._json(400, {"error": "Unsupported image type"})
+                return
+            if "," in data_b64 and data_b64.strip().startswith("data:"):
+                data_b64 = data_b64.split(",", 1)[1]
+            try:
+                raw = base64.b64decode(data_b64, validate=False)
+            except Exception:
+                self._json(400, {"error": "Invalid base64 data"})
+                return
+            if len(raw) > 12_000_000:
+                self._json(400, {"error": "Image too large (max 12MB)"})
+                return
+            UPLOADS.mkdir(parents=True, exist_ok=True)
+            out_name = f"{uuid.uuid4().hex[:10]}-{filename}"
+            out_path = UPLOADS / out_name
+            out_path.write_bytes(raw)
+            public_url = f"/assets/uploads/{out_name}"
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "url": public_url,
+                    "path": str(out_path),
+                    "bytes": len(raw),
+                },
+            )
             return
 
-        file_path = ALLOWED_FILES[name]
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding="utf-8", newline="\n")
-        self._json(
-            200,
-            {
-                "ok": True,
-                "name": name,
-                "bytes": len(content.encode("utf-8")),
-                "path": str(file_path),
-            },
-        )
+        self._json(404, {"error": "Not found"})
 
 
 def which_npm() -> str | None:
@@ -272,6 +438,10 @@ def main() -> None:
     if not FRONTEND.is_dir():
         raise SystemExit(f"Frontend folder missing: {FRONTEND}")
 
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    if not CONTENT_FILE.is_file():
+        write_content(default_content())
+
     ensure_frontend_deps()
     vite_proc = start_vite()
 
@@ -280,10 +450,11 @@ def main() -> None:
     app_url = f"http://{HOST}:{VITE_PORT}/"
 
     print("=" * 60, flush=True)
-    print("  LEVIATHAN Layout Builder", flush=True)
-    print(f"  Echte UI + visual editor: {app_url}", flush=True)
-    print(f"  Editor API:               {api_url}", flush=True)
-    print(f"  Schrijft naar:            {STYLES}", flush=True)
+    print("  LEVIATHAN Visual Builder", flush=True)
+    print(f"  Echte UI + editor: {app_url}", flush=True)
+    print(f"  Editor API:        {api_url}", flush=True)
+    print(f"  CSS:               {STYLES}", flush=True)
+    print(f"  Content:           {CONTENT_FILE}", flush=True)
     print("  Ctrl+C to stop", flush=True)
     print("=" * 60, flush=True)
 
