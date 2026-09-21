@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { BrandMark } from "../../components/BrandMark";
 import {
   GrowthDelta,
@@ -5,6 +6,7 @@ import {
   MetricCard,
   Panel,
   PlatformIcon,
+  ProgressBar,
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
@@ -12,72 +14,82 @@ import { MediaPlatformShell } from "../../layouts/MediaPlatformShell";
 import { useAppToast } from "../../state/useAppToast";
 
 const TILES = platformTiles.instagram;
-const GROWTH = [1.05, 1.08, 1.1, 1.12, 1.14, 1.16, 1.18, 1.2, 1.21, 1.22, 1.23, 1.24];
+const GROWTH = [0.82, 0.88, 0.9, 0.96, 1.02, 1.05, 1.1, 1.14, 1.16, 1.19, 1.22, 1.24];
 
 const LOCATIONS = [
-  { name: "United States", pct: 28 },
-  { name: "United Kingdom", pct: 12 },
-  { name: "Canada", pct: 8 },
-  { name: "Germany", pct: 7 },
-  { name: "Netherlands", pct: 5 },
+  { label: "United States", value: 28 },
+  { label: "United Kingdom", value: 12 },
+  { label: "Canada", value: 8 },
+  { label: "Germany", value: 6 },
+  { label: "Australia", value: 5 },
 ] as const;
 
 const AGES = [
-  { name: "18-24", pct: 22 },
-  { name: "25-34", pct: 34 },
-  { name: "35-44", pct: 42 },
-  { name: "45-54", pct: 18 },
+  { label: "18–24", value: 34 },
+  { label: "25–34", value: 42 },
+  { label: "35–44", value: 16 },
+  { label: "45+", value: 8 },
 ] as const;
 
 const REELS = [
-  { views: "2.4M", growth: "+38%", thumb: TILES[0] },
-  { views: "1.8M", growth: "+24%", thumb: TILES[1] },
-  { views: "1.1M", growth: "+17%", thumb: TILES[2] },
+  { thumb: TILES[0], views: "2.4M", title: "A Higher Humanity", delta: "+38%" },
+  { thumb: mediaControlCrops.instagramReel1, views: "1.8M", title: "Beauty Builds Belief", delta: "+24%" },
+  { thumb: TILES[1], views: "1.1M", title: "Ideas That Scale", delta: "+19%" },
 ] as const;
 
 const STORIES = [
-  { title: "Ideas Today", eng: "186K", thumb: TILES[3] },
-  { title: "Behind the Build", eng: "142K", thumb: TILES[4] },
-  { title: "Q&A Live", eng: "98K", thumb: TILES[5] },
+  { thumb: TILES[2], views: "186K", title: "Ideas Today…", delta: "+12%" },
+  { thumb: TILES[3], views: "142K", title: "Behind the Build", delta: "+9%" },
+  { thumb: TILES[4], views: "98K", title: "Q&A Live", delta: "+6%" },
 ] as const;
 
-const DMS = [
-  { name: "Alex R.", preview: "Collab on the Higher Humanity series?", time: "2m", unread: true },
-  { name: "Sophia K.", preview: "Logo pack looks incredible.", time: "12m", unread: false },
-  { name: "Creator Agency", preview: "Brand deal draft attached.", time: "1h", unread: false },
-  { name: "Marcus V.", preview: "Can we reuse Reel #3?", time: "3h", unread: false },
-  { name: "Nova Lab", preview: "Story frame feedback inside.", time: "5h", unread: false },
+const INBOX = [
+  { name: "Alex R.", preview: "Your latest reel is fire — collaboration?", time: "2m", avatar: TILES[0] },
+  { name: "Sophia K.", preview: "Love your latest reel!", time: "14m", avatar: TILES[1] },
+  { name: "Creator Agency", preview: "Brand brief attached for Nov.", time: "1h", avatar: TILES[2] },
+  { name: "Daniel M.", preview: "Can we feature Leviathan next week?", time: "3h", avatar: TILES[3] },
+  { name: "Bella C.", preview: "The aesthetics on this feed…", time: "5h", avatar: TILES[4] },
 ] as const;
 
-const POSTS = [
-  { title: "Vision Grid", likes: "186K", comments: "4.2K", date: "Oct 24", thumb: TILES[0] },
-  { title: "Civilization Still", likes: "142K", comments: "3.1K", date: "Oct 22", thumb: TILES[1] },
-  { title: "Orbital Portrait", likes: "118K", comments: "2.4K", date: "Oct 20", thumb: TILES[2] },
+const TOP_POSTS = [
+  { thumb: TILES[0], title: "A Higher Humanity Is Possible", likes: "248K", comments: "4.2K", date: "Oct 14" },
+  { thumb: TILES[1], title: "Discipline Creates Worlds", likes: "196K", comments: "3.1K", date: "Oct 11" },
+  { thumb: TILES[5], title: "Visuals Move People", likes: "174K", comments: "2.8K", date: "Oct 8" },
 ] as const;
 
 const CALENDAR = [
-  { date: "Oct 29", type: "Reel", title: "Discipline Cut", status: "Scheduled" },
-  { date: "Oct 30", type: "Carousel", title: "Aesthetic Thesis", status: "Scheduled" },
-  { date: "Oct 31", type: "Story", title: "Behind Scenes", status: "Draft" },
-  { date: "Nov 1", type: "Reel", title: "AI Civilization", status: "Scheduled" },
-  { date: "Nov 2", type: "Post", title: "Brand Still", status: "Draft" },
+  { date: "Oct 29", type: "Reel", title: "Higher Minds Series", time: "10:00 AM", status: "Scheduled" as const },
+  { date: "Oct 30", type: "Carousel", title: "Civilization Frames", time: "2:00 PM", status: "Scheduled" as const },
+  { date: "Oct 31", type: "Story", title: "Studio Walkthrough", time: "6:00 PM", status: "Draft" as const },
+  { date: "Nov 1", type: "Reel", title: "Beauty Builds Belief", time: "11:00 AM", status: "Scheduled" as const },
+  { date: "Nov 2", type: "Post", title: "A More Human Tomorrow", time: "4:00 PM", status: "Draft" as const },
 ] as const;
 
 const HASHTAGS = [
-  { tag: "#HigherHumanity", posts: "2.4M", growth: "+22%" },
-  { tag: "#LeviathanVisuals", posts: "860K", growth: "+18%" },
-  { tag: "#CivilizationDesign", posts: "420K", growth: "+31%" },
-  { tag: "#AestheticProtocol", posts: "210K", growth: "+14%" },
+  { tag: "#HigherHumanity", reach: "2.4M", growth: "+18%" },
+  { tag: "#AI", reach: "1.8M", growth: "+22%" },
+  { tag: "#FutureOfWork", reach: "964K", growth: "+14%" },
+  { tag: "#Leviathan", reach: "812K", growth: "+31%" },
+  { tag: "#VisualCulture", reach: "640K", growth: "+9%" },
+  { tag: "#Civilization", reach: "428K", growth: "+11%" },
 ] as const;
 
-const DEALS = [
-  { brand: "Neural Minds", type: "Sponsored Reel", status: "In Talks" },
-  { brand: "Apex Protocol", type: "Story Series", status: "Contract Sent" },
-  { brand: "Tomorrow Labs", type: "Feed Takeover", status: "Active" },
+const COLLABS = [
+  { partner: "Neural Minds", type: "Strategic Partnership", status: "In Talks" as const },
+  { partner: "Apex Protocol", type: "Sponsored Content", status: "Contract Sent" as const },
+  { partner: "Tomorrow Labs", type: "Product Collaboration", status: "Active" as const },
 ] as const;
+
+const SCHEDULER_TABS = ["Post", "Reel", "Story", "Carousel"] as const;
+const ASSET_TABS = ["All", "Images", "Reels", "Templates", "Brand", "AI Assets"] as const;
+const FEED_CELLS = [...TILES, mediaControlCrops.instagramReel1, TILES[0], TILES[1]].slice(0, 9);
+const ASSET_STRIP = [...TILES, mediaControlCrops.instagramPoster, mediaControlCrops.instagramReel1];
 
 export function InstagramPage() {
   const toast = useAppToast();
+  const [schedulerTab, setSchedulerTab] = useState<(typeof SCHEDULER_TABS)[number]>("Post");
+  const [assetTab, setAssetTab] = useState<(typeof ASSET_TABS)[number]>("All");
+  const [composer, setComposer] = useState("");
 
   return (
     <MediaPlatformShell
@@ -85,6 +97,13 @@ export function InstagramPage() {
       searchPlaceholder="Search content, hashtags, captions, or anything..."
       createAccent="gold"
       promo={{ platform: "instagram", caption: "Visuals move people. Ideas change the world." }}
+      sidebarCaption="Bigger audiences. A higher humanity."
+      statusItems={[
+        { label: "Profile Status", value: "Healthy" },
+        { label: "Content Flow", value: "On Track" },
+        { label: "Engagement", value: "Excellent" },
+        { label: "Growth Trend", value: "+32%" },
+      ]}
     >
       <div className="mp-page">
         <section className="mp-hero">
@@ -108,7 +127,7 @@ export function InstagramPage() {
         </section>
 
         <section className="mp-profile">
-          <div className="mp-profile-avatar">
+          <div className="mp-profile-avatar" aria-hidden="true">
             <BrandMark id="ig-profile" />
           </div>
           <div className="mp-profile-meta">
@@ -117,102 +136,118 @@ export function InstagramPage() {
             </div>
             <div className="mp-profile-handle">@leviathanofficial</div>
             <div className="mp-profile-bio">Vision · Technology · Civilization · Aesthetics</div>
-            <div className="mp-list-meta" style={{ marginTop: 4 }}>
+            <div className="mp-profile-bio" style={{ marginTop: 2 }}>
               A higher humanity through greater minds.
             </div>
           </div>
           <div className="mp-profile-actions">
             <button className="mp-btn" type="button" onClick={() => toast("View Profile")}>
               View Profile
+              <svg viewBox="0 0 24 24">
+                <path d="M14 5h5v5M19 5l-9 9M10 5H5v14h14v-5" />
+              </svg>
             </button>
             <button className="mp-btn" type="button" onClick={() => toast("Profile Settings")}>
               Profile Settings
+              <svg viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2" />
+              </svg>
             </button>
           </div>
         </section>
 
         <div className="mp-metrics" style={{ gridTemplateColumns: "repeat(6, minmax(0,1fr))" }}>
-          <MetricCard label="Followers" value="1.24M" absolute="+18.2K" percent="+1.5%" sparkline={GROWTH} sparkStroke="#20dc8c" />
-          <MetricCard label="Reach" value="4.8M" percent="+27%" sparkline={[2, 2.4, 2.8, 3.2, 3.6, 4, 4.4, 4.8]} sparkStroke="#c5a059" />
-          <MetricCard label="Impressions" value="12.6M" percent="+32%" sparkline={[6, 7, 8, 9, 10, 11, 12, 12.6]} sparkStroke="#c5a059" />
-          <MetricCard label="Engagement Rate" value="6.8%" percent="+1.4%" sparkline={[4.8, 5.1, 5.4, 5.8, 6.1, 6.4, 6.6, 6.8]} sparkStroke="#20dc8c" />
-          <MetricCard label="Saves" value="186.4K" percent="+28%" sparkline={[100, 120, 130, 145, 155, 170, 180, 186]} sparkStroke="#c5a059" />
-          <MetricCard label="Profile Visits" value="342.1K" percent="+19%" sparkline={[200, 230, 250, 270, 290, 310, 330, 342]} sparkStroke="#20dc8c" />
+          <MetricCard label="Followers" value="1.24M" absolute="+18.2K" percent="+1.5%" sparkline={[40, 42, 45, 48, 52, 55, 58, 62]} sparkStroke="#20dc8c" />
+          <MetricCard label="Reach" value="4.8M" percent="+27%" sparkline={[30, 38, 35, 48, 44, 58, 52, 66]} sparkStroke="#20dc8c" />
+          <MetricCard label="Impressions" value="12.6M" percent="+32%" sparkline={[22, 28, 30, 36, 40, 48, 52, 60]} sparkStroke="#d6a957" />
+          <MetricCard label="Engagement Rate" value="6.8%" percent="+1.4%" sparkline={[20, 35, 28, 48, 40, 55, 60, 58]} sparkStroke="#20dc8c" />
+          <MetricCard label="Saves" value="186.4K" percent="+28%" sparkline={[18, 24, 28, 32, 36, 42, 48, 55]} sparkStroke="#d6a957" />
+          <MetricCard label="Profile Visits" value="342.1K" percent="+19%" sparkline={[24, 28, 32, 30, 38, 44, 50, 56]} sparkStroke="#20dc8c" />
         </div>
 
-        <div className="mp-grid-3">
-          <Panel title="Audience Growth">
-            <LineChart series={[{ id: "f", color: "#22c9d6", values: GROWTH }]} labels={["Oct 1", "Oct 8", "Oct 15", "Oct 22", "Oct 28"]} height={150} />
-            <div className="mp-grid-2" style={{ marginTop: 10, gridTemplateColumns: "1fr 1fr" }}>
-              <div className="mp-stack">
-                <div className="mp-list-title">Top Locations</div>
-                {LOCATIONS.map((l) => (
-                  <div key={l.name} className="mp-bar-row">
-                    <span>{l.name}</span>
-                    <div className="mp-bar-track">
-                      <div className="mp-bar-fill" style={{ width: `${l.pct * 2}%` }} />
-                    </div>
-                    <span>{l.pct}%</span>
-                  </div>
+        <div className="mp-grid-4" style={{ gridTemplateColumns: "1.5fr 0.85fr 0.85fr 0.95fr" }}>
+          <Panel
+            title="Audience Growth"
+            action={
+              <button className="mp-btn" type="button" onClick={() => toast("Last 28 days")}>
+                Last 28 days
+              </button>
+            }
+          >
+            <div className="mp-chart-wrap">
+              <LineChart
+                series={[{ id: "followers", color: "#20dc8c", fill: "rgba(32,220,140,0.14)", values: GROWTH }]}
+                labels={["Oct 1", "Oct 8", "Oct 15", "Oct 22", "Oct 28"]}
+                height={180}
+                marker={{ index: 11, label: "1.24M" }}
+              />
+              <div className="mp-side-stats" style={{ minWidth: 160 }}>
+                <div className="mp-list-meta" style={{ letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                  Top Locations
+                </div>
+                {LOCATIONS.map((row) => (
+                  <ProgressBar key={row.label} value={row.value} label={row.label} tone="teal" />
                 ))}
-              </div>
-              <div className="mp-stack">
-                <div className="mp-list-title">Top Age Range</div>
-                {AGES.map((a) => (
-                  <div key={a.name} className="mp-bar-row">
-                    <span>{a.name}</span>
-                    <div className="mp-bar-track">
-                      <div className="mp-bar-fill" style={{ width: `${a.pct * 2}%` }} />
-                    </div>
-                    <span>{a.pct}%</span>
-                  </div>
+                <div className="mp-list-meta" style={{ letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 8 }}>
+                  Top Age Range
+                </div>
+                {AGES.map((row) => (
+                  <ProgressBar key={row.label} value={row.value} label={row.label} tone="green" />
                 ))}
               </div>
             </div>
           </Panel>
 
-          <Panel title="Reels & Story Performance">
-            <div className="mp-list-title" style={{ marginBottom: 6 }}>
-              Reels
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-              {REELS.map((r) => (
-                <div key={r.views} className="mp-ab-card">
-                  <img src={r.thumb} alt="" />
-                  <div className="mp-ab-meta">
-                    <strong>{r.views}</strong>
-                    <GrowthDelta percent={r.growth} />
+          <Panel title="Reels Performance">
+            <div className="mp-thumb-col">
+              {REELS.map((reel) => (
+                <button key={reel.title} type="button" className="mp-media-card" onClick={() => toast(reel.title)}>
+                  <img src={reel.thumb} alt="" />
+                  <div className="mp-media-card-meta">
+                    <strong>{reel.views}</strong>
+                    <span>{reel.title}</span>
+                    <GrowthDelta percent={reel.delta} />
                   </div>
-                </div>
+                </button>
               ))}
             </div>
-            <div className="mp-list-title" style={{ margin: "10px 0 6px" }}>
-              Stories
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-              {STORIES.map((s) => (
-                <div key={s.title} className="mp-ab-card">
-                  <img src={s.thumb} alt="" style={{ aspectRatio: "9/16" }} />
-                  <div className="mp-ab-meta">
-                    <div className="mp-list-title">{s.title}</div>
-                    <div className="mp-list-meta">{s.eng}</div>
+          </Panel>
+
+          <Panel title="Story Performance">
+            <div className="mp-thumb-col">
+              {STORIES.map((story) => (
+                <button key={story.title} type="button" className="mp-media-card is-story" onClick={() => toast(story.title)}>
+                  <img src={story.thumb} alt="" />
+                  <div className="mp-media-card-meta">
+                    <strong>{story.views}</strong>
+                    <span>{story.title}</span>
+                    <GrowthDelta percent={story.delta} />
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </Panel>
 
           <Panel title="Inbox & DMs">
             <div className="mp-list">
-              {DMS.map((d) => (
-                <div key={d.name} className="mp-list-row">
-                  {d.unread ? <span className="mp-status-dot" data-tone="teal" style={{ marginTop: 0 }} /> : <span style={{ width: 7 }} />}
+              {INBOX.map((msg) => (
+                <button
+                  key={msg.name}
+                  type="button"
+                  className="mp-list-row"
+                  style={{ width: "100%", background: "transparent", border: 0, cursor: "pointer", textAlign: "left", padding: 0 }}
+                  onClick={() => toast(`DM · ${msg.name}`)}
+                >
+                  <img className="mp-avatar-sm" src={msg.avatar} alt="" />
                   <div className="mp-list-copy">
-                    <div className="mp-list-title">{d.name}</div>
-                    <div className="mp-list-meta">{d.preview}</div>
+                    <div className="mp-comment-head">
+                      <strong>{msg.name}</strong>
+                      <span>{msg.time}</span>
+                    </div>
+                    <div className="mp-list-meta">{msg.preview}</div>
                   </div>
-                  <span className="mp-list-meta">{d.time}</span>
-                </div>
+                </button>
               ))}
             </div>
           </Panel>
@@ -220,70 +255,111 @@ export function InstagramPage() {
 
         <div className="mp-grid-4">
           <Panel title="Top Performing Posts">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-              {POSTS.map((p) => (
-                <div key={p.title} className="mp-ab-card">
-                  <img src={p.thumb} alt="" style={{ aspectRatio: "1" }} />
-                  <div className="mp-ab-meta">
-                    <div className="mp-list-title">{p.title}</div>
-                    <div className="mp-list-meta">
-                      ♥ {p.likes} · 💬 {p.comments} · {p.date}
-                    </div>
+            <div className="mp-posts-row">
+              {TOP_POSTS.map((post) => (
+                <button key={post.title} type="button" className="mp-post-tile" onClick={() => toast(post.title)}>
+                  <img src={post.thumb} alt="" />
+                  <div className="mp-post-tile-meta">
+                    <strong>{post.title}</strong>
+                    <span>
+                      ♥ {post.likes} · 💬 {post.comments}
+                    </span>
+                    <em>{post.date}</em>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </Panel>
 
           <Panel title="Content Calendar">
             <div className="mp-list">
-              {CALENDAR.map((c) => (
-                <div key={c.date + c.title} className="mp-list-row">
-                  <div style={{ width: 52, fontSize: 11, color: "var(--mp-gold)" }}>{c.date}</div>
-                  <div className="mp-list-copy">
-                    <div className="mp-list-title">{c.title}</div>
-                    <div className="mp-list-meta">{c.type}</div>
+              {CALENDAR.map((item) => (
+                <div key={`${item.date}-${item.title}`} className="mp-list-row">
+                  <div className="mp-sched-day">
+                    <strong>{item.date}</strong>
+                    <span>{item.time}</span>
                   </div>
-                  <span className={`mp-badge ${c.status === "Scheduled" ? "is-green" : "is-muted"}`}>{c.status}</span>
+                  <div className="mp-list-copy">
+                    <div className="mp-list-title">
+                      {item.type} · {item.title}
+                    </div>
+                  </div>
+                  <span className={`mp-badge ${item.status === "Scheduled" ? "is-green" : "is-muted"}`}>{item.status}</span>
                 </div>
               ))}
             </div>
           </Panel>
 
-          <Panel title="Post Scheduler">
-            <textarea className="mp-textarea" placeholder="Share something with the world..." />
-            <div className="mp-tabs" style={{ marginTop: 8 }}>
-              {["Post", "Reel", "Story", "Carousel"].map((t, i) => (
-                <button key={t} type="button" className={`mp-tab${i === 1 ? " is-active" : ""}`} onClick={() => toast(t)}>
-                  {t}
-                </button>
-              ))}
+          <Panel
+            title="Post Scheduler"
+            action={
+              <div className="mp-tabs">
+                {SCHEDULER_TABS.map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className={`mp-tab${schedulerTab === tab ? " is-active" : ""}`}
+                    onClick={() => setSchedulerTab(tab)}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            <textarea
+              className="mp-textarea"
+              value={composer}
+              onChange={(e) => setComposer(e.target.value)}
+              placeholder="Share something with the world..."
+              aria-label="Post caption"
+            />
+            <div className="mp-composer-bar">
+              <div className="mp-chip-row">
+                {(["Image", "Video", "Emoji", "Location"] as const).map((label) => (
+                  <button key={label} type="button" className="mp-chip" onClick={() => toast(label)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="mp-btn mp-btn-solid"
+                type="button"
+                onClick={() => toast(`Schedule ${schedulerTab}${composer ? `: ${composer.slice(0, 40)}` : ""}`)}
+              >
+                Schedule
+              </button>
             </div>
-            <button className="mp-btn mp-btn-solid" type="button" style={{ marginTop: 10, width: "100%", justifyContent: "center" }} onClick={() => toast("Schedule")}>
-              Schedule
-            </button>
           </Panel>
 
           <Panel title="Hashtag Insights">
             <div className="mp-list">
-              {HASHTAGS.map((h) => (
-                <div key={h.tag} className="mp-list-row">
+              {HASHTAGS.map((row) => (
+                <button
+                  key={row.tag}
+                  type="button"
+                  className="mp-list-row"
+                  style={{ width: "100%", background: "transparent", border: 0, cursor: "pointer", textAlign: "left", padding: 0 }}
+                  onClick={() => toast(row.tag)}
+                >
                   <div className="mp-list-copy">
-                    <div className="mp-list-title">{h.tag}</div>
-                    <div className="mp-list-meta">{h.posts} posts</div>
+                    <div className="mp-list-title">{row.tag}</div>
+                    <div className="mp-list-meta">{row.reach} reach</div>
                   </div>
-                  <GrowthDelta percent={h.growth} />
-                </div>
+                  <GrowthDelta percent={row.growth} />
+                </button>
               ))}
             </div>
           </Panel>
         </div>
 
         <div className="mp-grid-3">
-          <Panel title="Aesthetic Feed Planner" action={<span className="mp-list-meta">Drag to reorder</span>}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
-              {TILES.map((t, i) => (
-                <img key={i} src={t} alt="" style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 6, border: "1px solid rgba(255,255,255,0.08)" }} />
+          <Panel title="Aesthetic Feed Planner" action={<span className="mp-badge is-muted">Drag to reorder</span>}>
+            <div className="mp-feed-grid">
+              {FEED_CELLS.map((src, index) => (
+                <button key={`feed-${index}`} type="button" className="mp-feed-cell" onClick={() => toast(`Feed cell ${index + 1}`)}>
+                  <img src={src} alt="" />
+                </button>
               ))}
             </div>
           </Panel>
@@ -292,31 +368,49 @@ export function InstagramPage() {
             title="Visual Asset Library"
             action={
               <div className="mp-tabs">
-                {["All", "Images", "Reels"].map((t, i) => (
-                  <button key={t} type="button" className={`mp-tab${i === 0 ? " is-active" : ""}`}>
-                    {t}
+                {ASSET_TABS.map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className={`mp-tab${assetTab === tab ? " is-active" : ""}`}
+                    onClick={() => {
+                      setAssetTab(tab);
+                      toast(`${tab} assets`);
+                    }}
+                  >
+                    {tab}
                   </button>
                 ))}
               </div>
             }
           >
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
-              {TILES.slice(0, 4).map((t, i) => (
-                <img key={i} src={t} alt="" className="mp-thumb square" style={{ width: "100%", height: "auto", aspectRatio: "1" }} />
+            <div className="mp-asset-strip">
+              {ASSET_STRIP.map((src, index) => (
+                <button key={`asset-${index}`} type="button" className="mp-asset-cell" onClick={() => toast(`${assetTab} asset ${index + 1}`)}>
+                  <img src={src} alt="" />
+                </button>
               ))}
             </div>
           </Panel>
 
           <Panel title="Collaborations & Brand Deals">
             <div className="mp-list">
-              {DEALS.map((d) => (
-                <div key={d.brand} className="mp-list-row">
+              {COLLABS.map((row) => (
+                <button
+                  key={row.partner}
+                  type="button"
+                  className="mp-list-row"
+                  style={{ width: "100%", background: "transparent", border: 0, cursor: "pointer", textAlign: "left", padding: 0 }}
+                  onClick={() => toast(row.partner)}
+                >
                   <div className="mp-list-copy">
-                    <div className="mp-list-title">{d.brand}</div>
-                    <div className="mp-list-meta">{d.type}</div>
+                    <div className="mp-list-title">{row.partner}</div>
+                    <div className="mp-list-meta">{row.type}</div>
                   </div>
-                  <span className={`mp-badge ${d.status === "Active" ? "is-green" : d.status === "Contract Sent" ? "is-gold" : "is-muted"}`}>{d.status}</span>
-                </div>
+                  <span className={`mp-badge ${row.status === "Active" ? "is-green" : row.status === "In Talks" ? "is-muted" : "is-gold"}`}>
+                    {row.status}
+                  </span>
+                </button>
               ))}
             </div>
           </Panel>
