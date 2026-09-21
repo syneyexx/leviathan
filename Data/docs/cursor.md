@@ -221,6 +221,8 @@ SQLite persistence
 | Evaluation | `Data/modules/evaluation/` |
 | Isolation | `Data/modules/isolation/` |
 | Training | `Data/modules/training/` (registry stub) |
+| Browser / Media / Voice | stub modules under `Data/modules/{browser,media,voice}/` |
+| Release gates | `Data/modules/release/` |
 | Frontend pages | only when backend truth exists |
 
 ---

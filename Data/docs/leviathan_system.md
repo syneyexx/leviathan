@@ -27,14 +27,14 @@ LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 
 **Not implemented (do not treat UI shell labels as capability):**
 
-- Real browser/media/voice runtimes; real MCP network clients;
-- Full Coding/Research depth; multi-agent orchestration;
-- Real residual-stream neuro / training execution;
+- Real browser/media/voice/native/trading runtimes;
+- Real MCP network clients; residual-stream neuro; training execution;
 - production APM / production certification.
 
-**Implemented through Phase 29:**
+**Implemented through Phase 35:**
 
-- Release gates; Browser/Media/Voice honest stubs; Plugins; Evaluation; Isolation; Training stub;
+- Multi-agent coordinator; Coding/Research plan depth; Security audit; Native/Trading stubs;
+- Release gates; Browser/Media/Voice stubs; Plugins; Evaluation; Isolation; Training stub;
 - Neuro; Observability; Schedules; Workflows; Agents; Verification; Memory; Context; Evidence; Observations; Jobs; Approvals; Gateway;
 - Function Runtime; Knowledge V2; Artifacts; Run/Event; migrations; Settings; React SPA.
 
@@ -347,7 +347,11 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 23 — Evaluation | PASS | Foundation suite; unmeasured ≠ passed |
 | Phase 24 — Isolation | PASS | Requested vs effective isolation |
 | Phase 25 — Training stub | PASS | Register only; start honestly unimplemented |
-| Phase 26+ | NOT STARTED | Browser/media / … |
+| Phase 26 — Browser stub | PASS | UNSUPPORTED; no fabricated pages |
+| Phase 27 — Media stub | PASS | UNSUPPORTED; no fabricated media |
+| Phase 28 — Voice stub | PASS | UNSUPPORTED; no fabricated audio/text |
+| Phase 29 — Release gates | PASS | Local BLOCK/WARN readiness checks |
+| Phase 30+ | NOT STARTED | Multi-agent / Coding depth / … |
 
 ---
 

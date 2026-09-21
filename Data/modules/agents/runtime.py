@@ -49,14 +49,43 @@ class AgentRuntime:
                     note="Retrieve knowledge via capability gateway",
                 )
             )
-        if kind == AgentKind.CODING and ("read" in lowered or "file" in lowered):
-            # Coding agent still must go through capabilities — no private FS.
+        if kind == AgentKind.RESEARCH:
             steps.append(
                 AgentStep(
-                    kind=AgentStepKind.CAPABILITY,
-                    capability_id="file.read",
-                    arguments={},
-                    note="Coding file read requires path argument from caller",
+                    kind=AgentStepKind.VERIFY,
+                    note="Research completion should attach evidence when available",
+                )
+            )
+        if kind == AgentKind.CODING:
+            steps.append(
+                AgentStep(
+                    kind=AgentStepKind.PLAN,
+                    note="Coding uses shared filesystem capabilities only — no private shell",
+                )
+            )
+            if "read" in lowered or "file" in lowered or "inspect" in lowered:
+                # Coding agent still must go through capabilities — no private FS.
+                steps.append(
+                    AgentStep(
+                        kind=AgentStepKind.CAPABILITY,
+                        capability_id="file.read",
+                        arguments={},
+                        note="Coding file read requires path argument from caller",
+                    )
+                )
+            if "csv" in lowered:
+                steps.append(
+                    AgentStep(
+                        kind=AgentStepKind.CAPABILITY,
+                        capability_id="file.inspect_csv",
+                        arguments={},
+                        note="CSV inspect requires path override",
+                    )
+                )
+            steps.append(
+                AgentStep(
+                    kind=AgentStepKind.VERIFY,
+                    note="Coding claims require artifact/file evidence via VerificationEngine",
                 )
             )
         steps.append(AgentStep(kind=AgentStepKind.RESPOND, note="Return structured agent result"))

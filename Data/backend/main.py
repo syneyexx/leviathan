@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
-from Data.modules.agents import AgentKind, AgentRuntime
+from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
 from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
@@ -47,6 +47,9 @@ from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
 from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
+from Data.modules.security import SecurityAuditor, SecurityFinding
+from Data.modules.native import NativeRuntimeStub
+from Data.modules.trading import TradingStub
 
 
 db = Database(settings.database_path)
@@ -95,6 +98,7 @@ agent_runtime = AgentRuntime(
     runs=runs,
     agents_enabled=settings.features.agents_enabled,
 )
+multi_agents = MultiAgentCoordinator(agent_runtime)
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
 schedule_store = ScheduleStore(settings.database_path)
@@ -170,6 +174,40 @@ def _gate_frontend() -> GateCheck:
 release_gates = ReleaseGateRunner(
     checks=[_gate_catalog_builtins, _gate_loopback, _gate_outbound, _gate_frontend]
 )
+security_auditor = SecurityAuditor(
+    checks=[
+        lambda: SecurityFinding(
+            finding_id="loopback",
+            severity="high",
+            title="Loopback-only binding",
+            detail="ok" if settings.runtime.loopback_only else "host may be non-loopback",
+            passed=bool(settings.runtime.loopback_only),
+        ),
+        lambda: SecurityFinding(
+            finding_id="outbound",
+            severity="medium",
+            title="Outbound network default deny",
+            detail="denied" if not settings.network.allow_outbound else "allowed",
+            passed=not settings.network.allow_outbound,
+        ),
+        lambda: SecurityFinding(
+            finding_id="approvals_write",
+            severity="high",
+            title="WRITE capabilities require approvals",
+            detail="ExecutionGateway enforces approval_id for gated side effects",
+            passed=True,
+        ),
+        lambda: SecurityFinding(
+            finding_id="agents_default_off",
+            severity="info",
+            title="Agents feature default OFF",
+            detail="agents_enabled=" + str(settings.features.agents_enabled),
+            passed=not settings.features.agents_enabled,
+        ),
+    ]
+)
+native_runtime = NativeRuntimeStub()
+trading_stub = TradingStub()
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -197,7 +235,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.30.0-phase29", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.36.0-phase35", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -1115,6 +1153,30 @@ def execute_agent(payload: AgentExecuteRequest) -> dict:
     return {"agent": result.public_dict()}
 
 
+class MultiAgentRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=30_000)
+    kinds: list[str] = Field(default_factory=lambda: ["RESEARCH", "GENERIC"])
+    capability_overrides: dict = Field(default_factory=dict)
+
+
+@app.post("/api/agents/multi")
+def execute_multi_agent(payload: MultiAgentRequest) -> dict:
+    kinds: list[AgentKind] = []
+    for raw in payload.kinds:
+        try:
+            kinds.append(AgentKind(raw.upper()))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid agent kind: {raw}") from exc
+    result = multi_agents.run(
+        payload.request,
+        kinds=kinds,
+        capability_overrides=payload.capability_overrides or None,
+    )
+    if result.status == "DISABLED":
+        raise HTTPException(status_code=403, detail=result.public_dict())
+    return {"multi_agent": result.public_dict()}
+
+
 class WorkflowCreateRequest(BaseModel):
     name: str = Field(default="workflow", min_length=1, max_length=120)
     run_id: str | None = None
@@ -1478,6 +1540,32 @@ def voice_request(payload: VoiceRequest) -> dict:
 @app.get("/api/release/gates")
 def release_gates_status() -> dict:
     return {"report": release_gates.run().public_dict()}
+
+
+@app.get("/api/security/audit")
+def security_audit() -> dict:
+    return {"report": security_auditor.run().public_dict()}
+
+
+@app.get("/api/native/probe")
+def native_probe() -> dict:
+    return {"native": native_runtime.probe().public_dict()}
+
+
+class TradingOrderRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    side: str = Field(min_length=1, max_length=16)
+    quantity: float = Field(gt=0)
+
+
+@app.post("/api/trading/order")
+def trading_order(payload: TradingOrderRequest) -> dict:
+    result = trading_stub.place_order(
+        symbol=payload.symbol,
+        side=payload.side,
+        quantity=payload.quantity,
+    )
+    raise HTTPException(status_code=501, detail=result.public_dict())
 
 
 @app.get("/")
