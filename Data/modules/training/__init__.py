@@ -1,16 +1,74 @@
 """Training registry stub — registered ≠ trained."""
 
+from .artifacts import export_artifact, list_job_artifacts
+from .capabilities import probe_training_capabilities, safe_import
+from .config import TrainingConfig
+from .evaluation import evaluate_job
+from .events import TrainingEventLog
+from .hardware import probe_hardware
+from .launcher import TrainingLauncher
+from .planner import plan_training
 from .preferences import PreferenceBridge
+from .preflight import run_preflight
 from .recipes import NEURO_RECIPES, TrainingRecipe, TrainingRecipeRegistry
+from .recovery import reconcile_active_jobs
 from .registry import TrainingRegistry
-from .types import TrainingJob, TrainingJobStatus
+from .service import TrainingError, TrainingService
+from .store import TrainingStore
+from .types import (
+    ACTIVE_DURABLE_STATUSES,
+    ArtifactRecord,
+    CheckpointRecord,
+    DurableTrainingJob,
+    DurableTrainingStatus,
+    HardwareSnapshot,
+    MetricRecord,
+    PreflightResult,
+    PreflightVerdict,
+    RESUMABLE_DURABLE_STATUSES,
+    TERMINAL_DURABLE_STATUSES,
+    TrainingCapabilities,
+    TrainingJob,
+    TrainingJobStatus,
+    TrainingMethod,
+    TrainingPlan,
+)
 
 __all__ = [
+    "ACTIVE_DURABLE_STATUSES",
+    "ArtifactRecord",
+    "CheckpointRecord",
+    "DurableTrainingJob",
+    "DurableTrainingStatus",
+    "HardwareSnapshot",
+    "MetricRecord",
     "NEURO_RECIPES",
     "PreferenceBridge",
+    "PreflightResult",
+    "PreflightVerdict",
+    "RESUMABLE_DURABLE_STATUSES",
+    "TERMINAL_DURABLE_STATUSES",
+    "TrainingCapabilities",
+    "TrainingConfig",
+    "TrainingError",
+    "TrainingEventLog",
     "TrainingJob",
     "TrainingJobStatus",
+    "TrainingLauncher",
+    "TrainingMethod",
+    "TrainingPlan",
     "TrainingRecipe",
     "TrainingRecipeRegistry",
     "TrainingRegistry",
+    "TrainingService",
+    "TrainingStore",
+    "evaluate_job",
+    "export_artifact",
+    "list_job_artifacts",
+    "plan_training",
+    "probe_hardware",
+    "probe_training_capabilities",
+    "reconcile_active_jobs",
+    "run_preflight",
+    "safe_import",
 ]

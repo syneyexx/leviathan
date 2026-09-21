@@ -26,9 +26,11 @@ def read_pid_file(path: Path) -> int | None:
 
 
 def pid_is_alive(pid: int) -> bool:
-    """Return True if the OS still has a process with this PID.
+    """Return True if the OS still has a *live* process with this PID.
 
     Uses signal 0 / OpenProcess existence checks. Never terminates.
+    Zombie (defunct) processes are treated as not alive so callers can
+    reconcile after SIGKILL when the parent has not yet reaped the child.
     """
     if pid <= 0:
         return False
@@ -46,6 +48,20 @@ def pid_is_alive(pid: int) -> bool:
             return False
         except Exception:  # noqa: BLE001 — best-effort existence probe
             return False
+    # Linux: zombies still accept signal 0 — treat them as dead for recovery.
+    try:
+        with open(f"/proc/{int(pid)}/stat", encoding="utf-8") as handle:
+            stat = handle.read()
+        # Format: pid (comm) state ...
+        close = stat.rfind(")")
+        if close != -1 and close + 2 < len(stat):
+            state = stat[close + 2]
+            if state == "Z":
+                return False
+    except FileNotFoundError:
+        return False
+    except OSError:
+        pass
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
