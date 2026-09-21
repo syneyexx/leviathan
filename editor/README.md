@@ -1,33 +1,56 @@
-# Leviathan Visual Builder
+# Leviathan Dreamweaver Builder
 
-Standalone full visual editor for the **real** Leviathan UI (website-builder style).
+Volledige visual editor op de **echte** Leviathan UI.
 
-## Start (Windows)
+## Start
 
-From `D:\leviathan\editor\`:
+`D:\leviathan\editor\EDIT_LAYOUT.bat` → http://127.0.0.1:5173
 
-Double-click `EDIT_LAYOUT.bat`
+## Functies
 
-Opens the real app at http://127.0.0.1:5173 with the builder overlay.
+### Selecteren & bewerken
+- Klik om te selecteren · hover outlines
+- Dubbelklik = inline tekst bewerken
+- Panel: tekst, image URL/upload, alle CSS styles
+- Layers-panel om snel elementen te kiezen
 
-## What you can edit
+### Slepen & resizen
+- Sleep via gele handles of het ✥ move-grip
+- Alt+sleep direct op een element
+- Resize met 8 handles
+- Snap-guides (aan/uit)
+- Pijltjestoetsen = nudge (Shift = 10px)
 
-- **Tekst** — klik + bewerk in panel, of **dubbelklik** direct op de layout
-- **Images** — URL plakken of bestand uploaden
-- **Layout** — sleep gele handles (header / sidebar / panels)
-- **Styles** — kleur, font, padding, border, shadow, background, display, …
-- **Verberg/toon** elementen
+### Klembord & contextmenu
+- Rechtermuisklik-menu (Dreamweaver-stijl)
+- Kopiëren / Plakken / Dupliceren / Verwijderen
+- Lock / Unlock
+- Naar voren / naar achter
+- Links / midden / rechts uitlijnen
+- Image vervangen
 
-Alles auto-save’t naar:
-- `Data/frontend/src/styles/` (CSS)
-- `Data/frontend/public/lv-editor-content.json` (tekst/images)
-- bron-`.tsx` bestanden wanneer tekst/image-paden matchen
+### Toevoegen
+- Topbar / panel: +Tekst · +Titel · +Image · +Box · +Knop · +Lijn
+- Sleep image-bestanden vanuit Explorer op de pagina
 
-Uploads komen in `Data/frontend/public/assets/uploads/`.
+### History & opslaan
+- Undo / Redo (Ctrl+Z / Ctrl+Shift+Z)
+- Auto-save naar:
+  - `Data/frontend/src/styles/`
+  - `Data/frontend/public/lv-editor-content.json`
+  - matchende `.tsx` bronnen bij tekst/image swaps
+- Uploads → `Data/frontend/public/assets/uploads/`
 
 ## Shortcuts
 
-- `Ctrl+S` — force save
-- `Esc` — deselect
-- Dubbelklik — inline tekst edit
-- Enter — inline edit afronden
+| Toets | Actie |
+|------|------|
+| Ctrl+S | Opslaan |
+| Ctrl+C / V / D | Copy / Paste / Duplicate |
+| Ctrl+Z / Y | Undo / Redo |
+| Delete | Verwijderen |
+| Esc | Deselect |
+| Pijltjes | Nudgen |
+| Alt+sleep | Verplaatsen |
+| Dubbelklik | Tekst edit |
+| Rechtsklik | Contextmenu |
