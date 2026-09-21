@@ -1,5 +1,4 @@
-"""Reusable LEVIATHAN Python functions.
+"""Representative on-demand LEVIATHAN functions.
 
-Small stateless helpers and shared function-level utilities belong here.
-Larger stateful features should live in Data.modules instead.
+These packages stay dormant until the FunctionRuntime lazy-loads them.
 """

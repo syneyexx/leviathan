@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from Data.modules.jobs import JobRuntime
+from Data.modules.workflows import WorkflowRuntime, WorkflowStepDef
+
+from .store import ScheduleStore, utc_now
+from .types import ScheduleRecord, ScheduleTargetKind
+
+
+class ScheduleRunner:
+    """Fire due schedules into JobRuntime or WorkflowRuntime."""
+
+    def __init__(
+        self,
+        store: ScheduleStore,
+        *,
+        jobs: JobRuntime | None = None,
+        workflows: WorkflowRuntime | None = None,
+    ) -> None:
+        self.store = store
+        self.jobs = jobs
+        self.workflows = workflows
+        self.telemetry: dict[str, Any] = {"ticks": 0, "fired": 0, "errors": 0}
+
+    def tick(self) -> list[dict[str, Any]]:
+        self.telemetry["ticks"] += 1
+        results: list[dict[str, Any]] = []
+        for schedule in self.store.due(now=utc_now()):
+            try:
+                fired = self._fire(schedule)
+                self.store.mark_ran(schedule.schedule_id)
+                self.telemetry["fired"] += 1
+                results.append({"schedule_id": schedule.schedule_id, "ok": True, **fired})
+            except Exception as exc:  # noqa: BLE001
+                self.telemetry["errors"] += 1
+                results.append(
+                    {"schedule_id": schedule.schedule_id, "ok": False, "error": str(exc)}
+                )
+        return results
+
+    def _fire(self, schedule: ScheduleRecord) -> dict[str, Any]:
+        if schedule.target_kind == ScheduleTargetKind.JOB:
+            if self.jobs is None:
+                raise RuntimeError("JobRuntime not configured for schedules")
+            job = self.jobs.enqueue(
+                capability_id=schedule.target_ref,
+                arguments=dict(schedule.target_payload.get("arguments") or {}),
+                approval_id=schedule.target_payload.get("approval_id"),
+                requested_by=f"schedule:{schedule.schedule_id}",
+            )
+            done = self.jobs.process_next()
+            return {
+                "target": "job",
+                "job_id": job.job_id,
+                "job_state": done.state.value if done else job.state.value,
+            }
+        if schedule.target_kind == ScheduleTargetKind.WORKFLOW:
+            if self.workflows is None:
+                raise RuntimeError("WorkflowRuntime not configured for schedules")
+            steps_raw = schedule.target_payload.get("steps") or []
+            steps = [
+                WorkflowStepDef(
+                    step_id=str(item.get("step_id") or f"s{idx}"),
+                    capability_id=str(item["capability_id"]),
+                    arguments=dict(item.get("arguments") or {}),
+                    approval_id=item.get("approval_id"),
+                )
+                for idx, item in enumerate(steps_raw)
+            ]
+            if not steps:
+                # Allow target_ref as single knowledge.search convenience.
+                steps = [
+                    WorkflowStepDef(
+                        step_id="s0",
+                        capability_id=schedule.target_ref,
+                        arguments=dict(schedule.target_payload.get("arguments") or {}),
+                        approval_id=schedule.target_payload.get("approval_id"),
+                    )
+                ]
+            wf = self.workflows.create(name=f"sched:{schedule.name}", steps=steps)
+            done = self.workflows.run(wf.workflow_id)
+            return {
+                "target": "workflow",
+                "workflow_id": done.workflow_id,
+                "workflow_state": done.state.value,
+            }
+        raise ValueError(f"Unsupported target kind: {schedule.target_kind}")

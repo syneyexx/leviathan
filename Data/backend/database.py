@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -140,87 +139,36 @@ class Database:
         return [dict(row) for row in rows]
 
     def upsert_knowledge(self, title: str, content: str, source: str = "manual", document_id: str | None = None) -> dict:
-        document_id = document_id or str(uuid.uuid4())
-        now = utc_now()
-        with self.connect() as conn:
-            existing = conn.execute("SELECT created_at FROM knowledge_documents WHERE id = ?", (document_id,)).fetchone()
-            created_at = existing["created_at"] if existing else now
-            conn.execute(
-                """
-                INSERT INTO knowledge_documents(id, title, content, source, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    title = excluded.title,
-                    content = excluded.content,
-                    source = excluded.source,
-                    updated_at = excluded.updated_at
-                """,
-                (document_id, title, content, source, created_at, now),
-            )
-            try:
-                conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
-                conn.execute(
-                    "INSERT INTO knowledge_fts(document_id, title, content) VALUES (?, ?, ?)",
-                    (document_id, title, content),
-                )
-            except sqlite3.OperationalError:
-                pass
-        return {
-            "id": document_id,
-            "title": title,
-            "content": content,
-            "source": source,
-            "created_at": created_at,
-            "updated_at": now,
-        }
+        from Data.modules.knowledge import KnowledgeStore
+
+        store = KnowledgeStore(self.path)
+        store.initialize()
+        record = store.upsert_document(
+            title=title,
+            content=content,
+            source=source,
+            document_id=document_id,
+        )
+        return record.legacy_dict()
 
     def list_knowledge(self, limit: int = 100) -> list[dict]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT id, title, content, source, created_at, updated_at FROM knowledge_documents ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        from Data.modules.knowledge import KnowledgeStore
+
+        store = KnowledgeStore(self.path)
+        store.initialize()
+        return [item.legacy_dict() for item in store.list_documents(limit=limit)]
 
     def search_knowledge(self, query: str, limit: int = 5) -> list[dict]:
-        tokens = re.findall(r"[\w-]{2,}", query.lower(), flags=re.UNICODE)[:12]
-        if not tokens:
-            return []
-        fts_query = " OR ".join(f'"{token.replace(chr(34), "")}"' for token in tokens)
-        with self.connect() as conn:
-            try:
-                rows = conn.execute(
-                    """
-                    SELECT d.id, d.title, d.content, d.source, d.created_at, d.updated_at,
-                           bm25(knowledge_fts) AS rank
-                    FROM knowledge_fts
-                    JOIN knowledge_documents d ON d.id = knowledge_fts.document_id
-                    WHERE knowledge_fts MATCH ?
-                    ORDER BY rank
-                    LIMIT ?
-                    """,
-                    (fts_query, limit),
-                ).fetchall()
-                return [dict(row) for row in rows]
-            except sqlite3.OperationalError:
-                pattern = "%" + "%".join(tokens[:4]) + "%"
-                rows = conn.execute(
-                    """
-                    SELECT id, title, content, source, created_at, updated_at
-                    FROM knowledge_documents
-                    WHERE lower(title) LIKE ? OR lower(content) LIKE ?
-                    ORDER BY updated_at DESC
-                    LIMIT ?
-                    """,
-                    (pattern, pattern, limit),
-                ).fetchall()
-                return [dict(row) for row in rows]
+        from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
+
+        store = KnowledgeStore(self.path)
+        store.initialize()
+        hits = HybridRetriever(store).search(RetrievalQuery(text=query, limit=limit))
+        return [hit.as_context_document() for hit in hits]
 
     def delete_knowledge(self, document_id: str) -> bool:
-        with self.connect() as conn:
-            cursor = conn.execute("DELETE FROM knowledge_documents WHERE id = ?", (document_id,))
-            try:
-                conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
-            except sqlite3.OperationalError:
-                pass
-            return cursor.rowcount > 0
+        from Data.modules.knowledge import KnowledgeStore
+
+        store = KnowledgeStore(self.path)
+        store.initialize()
+        return store.delete_document(document_id)

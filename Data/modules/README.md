@@ -1,5 +1,46 @@
-# LEVIATHAN Modules
+# Data/modules
 
-`Data/modules/` is reserved for optional LEVIATHAN subsystems and future feature modules.
+Long-lived / stateful domain systems for LEVIATHAN.
 
-Core runtime code belongs in `Data/backend/`. Static browser UI belongs in `Data/frontend/`. Modules added here should expose explicit Python contracts and should not become alternate execution or persistence layers.
+## Current modules
+
+| Module | Ownership |
+|---|---|
+| `reasoning/` | `ReasoningEngine`, `ReasoningPlan` |
+| `context/` | `ContextBuilder`, `ContextPack` |
+| `model_runtime/` | `OpenAICompatibleLLM`, `LLMUnavailable` |
+| `run/` | `RunStore`, Run lifecycle + events |
+| `artifacts/` | `ArtifactStore`, content hash provenance |
+| `knowledge/` | Knowledge V2 documents/chunks/hybrid retrieval |
+| `function_runtime/` | FunctionRegistry + lazy ON_DEMAND runtime |
+| `execution/` | CapabilityCatalog + ExecutionGateway |
+| `approvals/` | PolicyEngine + ApprovalStore + ApprovalService |
+| `jobs/` | JobStore + JobRuntime + ResourceManager |
+| `observations/` | ToolObservation + durable effect ledger |
+| `evidence/` | EvidenceStore + EvidenceService |
+| `memory/` | MemoryStore (controlled; not Knowledge) |
+| `verification/` | VerificationEngine (evidence-based) |
+| `agents/` | AgentRuntime (shared gateway only; flagged) |
+| `workflows/` | WorkflowStore + WorkflowRuntime |
+| `schedules/` | ScheduleStore + ScheduleRunner |
+| `observability/` | ObservabilityHub (in-process; not APM) |
+| `neuro/` | NeuroAdvisor (advisory only; never authority) |
+| `plugins/` | PluginRegistry (declarative → catalog) |
+| `evaluation/` | EvaluationHarness |
+| `isolation/` | IsolationGuard |
+| `training/` | TrainingRegistry stub |
+| `browser/` | BrowserAutomationStub |
+| `media/` | MediaAutomationStub |
+| `voice/` | VoiceRuntimeStub |
+| `release/` | ReleaseGateRunner |
+| `security/` | SecurityAuditor (posture, not pentest) |
+| `native/` | NativeRuntimeStub |
+| `trading/` | TradingStub |
+| `backup/` | BackupService (local SQLite snapshots) |
+| `metrics/` | MetricsCollector (in-process) |
+| `chaos/` | ChaosInjector (default OFF) |
+| `master/` | MasterGateRunner (phases 0–45 summary) |
+
+Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
+
+Create a new module only when real functionality requires persistent/domain ownership.
