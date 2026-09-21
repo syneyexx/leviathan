@@ -1,0 +1,236 @@
+{
+  "format": 1,
+  "id": "dspy",
+  "name": "DSPy",
+  "version": "0.1.0",
+  "description": "Program language models with Stanford DSPy inside HADES. predict/compile talk to local LM Studio via OpenAI-compatible HTTP — model ids stay dynamic.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "AI",
+  "labels": [
+    "dspy",
+    "llm",
+    "lm-studio",
+    "prompting",
+    "compile"
+  ],
+  "permissions": [
+    "subprocess",
+    "network",
+    "filesystem"
+  ],
+  "autonomous": true,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/stanfordnlp/dspy",
+  "license": "MIT",
+  "dependency_install": {
+    "timeout_seconds": 1800,
+    "stall_timeout_seconds": 900
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Check whether DSPy is importable and report default LM Studio base URL.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network"
+        ]
+      }
+    },
+    {
+      "name": "predict",
+      "action": "predict",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "predict",
+        "--question",
+        "{question}",
+        "--base-url",
+        "{base_url}",
+        "--model",
+        "{model}",
+        "--api-key",
+        "{api_key}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "description": "Run a minimal DSPy Predict against a local OpenAI-compatible endpoint (LM Studio).",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "question",
+          "model"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Dynamic LM Studio / OpenAI-compatible model id"
+          },
+          "base_url": {
+            "type": "string",
+            "default": "http://127.0.0.1:1234/v1",
+            "maxLength": 400
+          },
+          "api_key": {
+            "type": "string",
+            "default": "lm-studio",
+            "maxLength": 400
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 12000,
+            "minimum": 500,
+            "maximum": 50000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network"
+        ]
+      }
+    },
+    {
+      "name": "compile",
+      "action": "compile",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "compile",
+        "--training-json",
+        "{training_json}",
+        "--base-url",
+        "{base_url}",
+        "--model",
+        "{model}",
+        "--api-key",
+        "{api_key}",
+        "--output",
+        "{output}"
+      ],
+      "description": "Attach few-shot demos from a JSON list and save a lightweight DSPy program.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "training_json",
+          "model"
+        ],
+        "properties": {
+          "training_json": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "base_url": {
+            "type": "string",
+            "default": "http://127.0.0.1:1234/v1",
+            "maxLength": 400
+          },
+          "api_key": {
+            "type": "string",
+            "default": "lm-studio",
+            "maxLength": 400
+          },
+          "output": {
+            "type": "string",
+            "default": "dspy_program.json",
+            "maxLength": 400
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network"
+        ]
+      }
+    }
+  ],
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "write_files",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "moderate",
+    "latency_class": "normal",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout",
+      "network"
+    ]
+  },
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/stanfordnlp/dspy",
+    "signed": false,
+    "license": "MIT"
+  }
+}

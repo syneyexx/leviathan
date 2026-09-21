@@ -1,0 +1,13 @@
+---
+description: HADES Plugins page context
+globs:
+  - "components/hades/pages/plugins-page.tsx"
+  - "components/hades/pages/plugins-page-core.tsx"
+  - "components/hades/obsidian/pages/plugins-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `plugins`.
+UI owners: `plugins-page.tsx` plus `plugins-page-core.tsx`; Obsidian: `obsidian/pages/plugins-obsidian.tsx`.
+API contract: plugin lifecycle/repair/package/tool/invoke methods in `lib/hades-api.ts`.
+Backend owners: `PluginManager` in `backend/platform_services.py` / `backend/platform_services_core.py`, plugin/tool/toolcall persistence in `backend/platform_db.py`, plugin policy/routes in `backend/main.py`, local package picker in `backend/folder_picker.py`.
+MCP is a separate subsystem; only cross into `backend/mcp_host/` for an explicit MCP integration change.

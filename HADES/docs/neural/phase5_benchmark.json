@@ -1,0 +1,123 @@
+{
+  "policy": {
+    "learning_rate": 0.15,
+    "loss_tolerance": 0.1,
+    "max_grad_norm": 1.0,
+    "max_learning_rate": 0.2,
+    "max_parameter_delta_norm": 10.0,
+    "max_surprise": 1.5,
+    "max_update_steps": 40,
+    "max_writes_per_session": 5,
+    "min_source_reliability": 0.5,
+    "min_surprise": 0.15,
+    "require_verified": true,
+    "weight_decay": 0.0001
+  },
+  "rollbacks": 0,
+  "runtime_learn_enabled": false,
+  "sample_decisions": [
+    {
+      "accepted": false,
+      "decision": {
+        "allow": false,
+        "details": {},
+        "reason": "unverified_experience",
+        "source_reliability": 0.0,
+        "surprise": null,
+        "verified": false
+      },
+      "write": null
+    },
+    {
+      "accepted": true,
+      "decision": {
+        "allow": true,
+        "details": {},
+        "reason": "accepted_by_policy",
+        "source_reliability": 1.0,
+        "surprise": {
+          "cosine": 0.09313640743494034,
+          "key_norm": 0.9999999403953552,
+          "surprise": 0.9068635925650597,
+          "value_norm": 1.0
+        },
+        "verified": true
+      },
+      "write": {
+        "accepted": true,
+        "final_loss": 0.01452791690826416,
+        "latency_ms": 3.793076999954792,
+        "parameter_delta_norm": 0.4655888140141714,
+        "reason": null,
+        "rolled_back": false,
+        "steps": 4
+      }
+    },
+    {
+      "accepted": true,
+      "decision": {
+        "allow": true,
+        "details": {},
+        "reason": "accepted_by_policy",
+        "source_reliability": 1.0,
+        "surprise": {
+          "cosine": 0.2768138349056244,
+          "key_norm": 1.0,
+          "surprise": 0.7231861650943756,
+          "value_norm": 0.9999999403953552
+        },
+        "verified": true
+      },
+      "write": {
+        "accepted": true,
+        "final_loss": 0.028695523738861084,
+        "latency_ms": 2.0962590001545323,
+        "parameter_delta_norm": 0.49265622723038244,
+        "reason": null,
+        "rolled_back": false,
+        "steps": 4
+      }
+    },
+    {
+      "accepted": false,
+      "decision": {
+        "allow": false,
+        "details": {},
+        "reason": "unverified_experience",
+        "source_reliability": 0.0,
+        "surprise": null,
+        "verified": false
+      },
+      "write": null
+    },
+    {
+      "accepted": true,
+      "decision": {
+        "allow": true,
+        "details": {},
+        "reason": "accepted_by_policy",
+        "source_reliability": 1.0,
+        "surprise": {
+          "cosine": 0.14041221141815186,
+          "key_norm": 1.0,
+          "surprise": 0.8595877885818481,
+          "value_norm": 1.0
+        },
+        "verified": true
+      },
+      "write": {
+        "accepted": true,
+        "final_loss": 0.03982347249984741,
+        "latency_ms": 2.5700330002109695,
+        "parameter_delta_norm": 0.6222066205936385,
+        "reason": null,
+        "rolled_back": false,
+        "steps": 5
+      }
+    }
+  ],
+  "slow_protected": true,
+  "surprise_definition": "1 - cosine(memory.encode(key), value)",
+  "writes_accepted": 5,
+  "writes_rejected": 3
+}

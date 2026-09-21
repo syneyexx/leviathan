@@ -1,0 +1,607 @@
+/* FINALBETA Model Training — tabbed workspace (Datasets / Model / Framework / Runs). */
+
+.fb-root .training-app {
+  grid-template-rows: var(--hades-topbar-height) 1fr;
+}
+
+.fb-root .training-app .body {
+  grid-template-columns: var(--hades-sidebar-width) minmax(0, 1fr) min(400px, 26vw);
+}
+
+.fb-root .training-app .training-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: #2a3d4c transparent;
+}
+
+.fb-root .training-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.fb-root .training-overzicht,
+.fb-root .training-datasets,
+.fb-root .training-model,
+.fb-root .training-framework,
+.fb-root .training-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.fb-root .training-stat-row {
+  display: grid;
+  gap: 10px;
+}
+
+.fb-root .training-stat-row-5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.fb-root .training-stat-row-6 {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.fb-root .training-stat {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid rgba(62, 199, 232, 0.18);
+  background: linear-gradient(180deg, rgba(12, 28, 40, 0.95), rgba(8, 18, 28, 0.92));
+}
+
+.fb-root .training-stat-label {
+  color: #7f93a3;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.fb-root .training-stat-value {
+  color: #e8f1f6;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.fb-root .training-stat-value.gold,
+.fb-root .training-stat-value.gold {
+  color: #f0b429;
+}
+
+.fb-root .training-stat-value.cyan {
+  color: #3ec7e8;
+}
+
+.fb-root .training-stat-value.green {
+  color: #3ecf8e;
+}
+
+.fb-root .training-stat-value.blue {
+  color: #5b9fd4;
+}
+
+.fb-root .training-stat-value.warn {
+  color: #e88b4a;
+}
+
+.fb-root .training-stat-value.muted {
+  color: #9aafbd;
+}
+
+.fb-root .training-stat-hint {
+  color: #6f8494;
+  font-size: 11px;
+}
+
+.fb-root .training-ds-grid,
+.fb-root .training-model-grid,
+.fb-root .training-fw-grid,
+.fb-root .training-runs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.fb-root .training-section-head {
+  margin-bottom: 10px;
+}
+
+.fb-root .training-table-wrap {
+  overflow: auto;
+  max-height: 340px;
+  scrollbar-width: thin;
+}
+
+.fb-root .training-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.fb-root .training-table th {
+  text-align: left;
+  color: #7f93a3;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(62, 199, 232, 0.2);
+  position: sticky;
+  top: 0;
+  background: #0b1a26;
+}
+
+.fb-root .training-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(26, 43, 58, 0.9);
+  color: #c5d5e0;
+  vertical-align: middle;
+}
+
+.fb-root .training-table tbody tr {
+  cursor: pointer;
+}
+
+.fb-root .training-table tbody tr:hover {
+  background: rgba(62, 199, 232, 0.06);
+}
+
+.fb-root .training-table tbody tr.selected {
+  background: rgba(240, 180, 41, 0.08);
+  box-shadow: inset 2px 0 0 #f0b429;
+}
+
+.fb-root .training-table.compact td,
+.fb-root .training-table.compact th {
+  padding: 6px 8px;
+}
+
+.fb-root .training-table .mono,
+.fb-root .mono {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 11px;
+}
+
+.fb-root .training-ds-details,
+.fb-root .training-model-details,
+.fb-root .training-run-details,
+.fb-root .training-neural-card {
+  min-height: 280px;
+}
+
+.fb-root .training-subtabs {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 12px;
+  border-bottom: 1px solid rgba(62, 199, 232, 0.18);
+}
+
+.fb-root .training-subtab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: #7f93a3;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 10px;
+  cursor: pointer;
+  position: relative;
+}
+
+.fb-root .training-subtab.active {
+  color: #f0b429;
+}
+
+.fb-root .training-subtab.active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  background: #f0b429;
+  border-radius: 1px;
+}
+
+.fb-root .training-ds-desc {
+  margin: 0 0 12px;
+  color: #8ea3af;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fb-root .training-quality {
+  margin-top: 12px;
+}
+
+.fb-root .training-quality-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+  color: #9aafbd;
+  font-size: 11px;
+}
+
+.fb-root .training-quality-top .gold,
+.fb-root .training-quality-top strong.gold {
+  color: #f0b429;
+  font-size: 16px;
+}
+
+.fb-root .training-quality-top small {
+  font-size: 11px;
+  color: #7f93a3;
+  margin-left: 2px;
+}
+
+.fb-root .training-bottom-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fb-root .training-pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fb-root .training-pipe-step {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(26, 43, 58, 0.85);
+}
+
+.fb-root .training-pipe-step:last-child {
+  border-bottom: 0;
+}
+
+.fb-root .training-pipe-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 1.5px solid #3ec7e8;
+  background: transparent;
+}
+
+.fb-root .training-pipe-step.done .training-pipe-dot {
+  background: #3ecf8e;
+  border-color: #3ecf8e;
+}
+
+.fb-root .training-pipe-step.doing .training-pipe-dot {
+  background: #f0b429;
+  border-color: #f0b429;
+  box-shadow: 0 0 0 3px rgba(240, 180, 41, 0.15);
+}
+
+.fb-root .training-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.fb-root .training-activity-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(26, 43, 58, 0.8);
+}
+
+.fb-root .training-activity-row:last-child {
+  border-bottom: 0;
+}
+
+.fb-root .training-activity-row .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.fb-root .training-activity-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #3ec7e8;
+  flex-shrink: 0;
+}
+
+.fb-root .training-activity-dot.green {
+  background: #3ecf8e;
+}
+
+.fb-root .training-activity-dot.gold {
+  background: #f0b429;
+}
+
+.fb-root .training-activity-dot.cyan {
+  background: #3ec7e8;
+}
+
+.fb-root .training-insp-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fb-root .training-form-tight {
+  margin-top: 8px;
+}
+
+.fb-root .training-model-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.fb-root .training-cap-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fb-root .training-cap-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 28px;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: #9aafbd;
+}
+
+.fb-root .training-cap-row strong {
+  text-align: right;
+  color: #f0b429;
+  font-size: 11px;
+}
+
+.fb-root .training-radar {
+  width: 100%;
+  max-height: 140px;
+  margin-top: 10px;
+}
+
+.fb-root .training-compat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fb-root .training-compat-row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #c5d5e0;
+}
+
+.fb-root .training-compat-row.ok {
+  color: #b8d4c8;
+}
+
+.fb-root .training-profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fb-root .training-profile {
+  appearance: none;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(62, 199, 232, 0.2);
+  background: rgba(8, 18, 28, 0.7);
+  color: #d7e6ef;
+  cursor: pointer;
+}
+
+.fb-root .training-profile.active {
+  border-color: rgba(240, 180, 41, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(240, 180, 41, 0.2);
+}
+
+.fb-root .training-profile .muted {
+  font-size: 11px;
+}
+
+.fb-root .training-neural {
+  margin-top: 8px;
+  border: 1px solid rgba(62, 199, 232, 0.18);
+  border-radius: 10px;
+  background: radial-gradient(ellipse at center, rgba(18, 54, 74, 0.45), rgba(6, 14, 22, 0.95));
+  overflow: hidden;
+}
+
+.fb-root .training-neural-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.fb-root .training-objectives,
+.fb-root .training-signals {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.fb-root .training-obj-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #9aafbd;
+  margin-bottom: 5px;
+}
+
+.fb-root .training-obj-top strong {
+  color: #f0b429;
+}
+
+.fb-root .training-signal-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(26, 43, 58, 0.85);
+}
+
+.fb-root .training-signal-row:last-child {
+  border-bottom: 0;
+}
+
+.fb-root .training-signal-val {
+  font-weight: 650;
+  color: #e8f1f6;
+  white-space: nowrap;
+}
+
+.fb-root .training-signal-val.green,
+.fb-root .training-trend.green {
+  color: #3ecf8e;
+}
+
+.fb-root .training-signal-val.cyan,
+.fb-root .training-trend.cyan {
+  color: #3ec7e8;
+}
+
+.fb-root .training-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+  padding: 0 10px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(62, 199, 232, 0.28);
+  background: rgba(8, 18, 28, 0.85);
+  color: #7f93a3;
+}
+
+.fb-root .training-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #d7e6ef;
+  font-size: 12px;
+}
+
+.fb-root .training-mini-progress {
+  display: grid;
+  grid-template-columns: 1fr 36px;
+  gap: 8px;
+  align-items: center;
+  min-width: 110px;
+}
+
+.fb-root .training-mini-progress span {
+  font-size: 11px;
+  color: #8ea3af;
+  text-align: right;
+}
+
+.fb-root .training-run-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fb-root .training-run-log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #07131c;
+  border: 1px solid rgba(62, 199, 232, 0.15);
+  color: #9aafbd;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.fb-root .training-chart-card .chart-head {
+  display: flex;
+  justify-content: space-between;
+  color: #7f93a3;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.fb-root .training-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fb-root .training-sample-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(62, 199, 232, 0.15);
+  background: rgba(8, 18, 28, 0.65);
+}
+
+.fb-root .training-sample-row p {
+  margin: 6px 0 0;
+  color: #c5d5e0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fb-root .training-ds-panel .orange,
+.fb-root .training-run-panel .orange {
+  color: #e88b4a;
+}
+
+@media (max-width: 1280px) {
+  .fb-root .training-stat-row-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .fb-root .training-stat-row-5 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .fb-root .training-ds-grid,
+  .fb-root .training-model-grid,
+  .fb-root .training-fw-grid,
+  .fb-root .training-runs-grid,
+  .fb-root .training-bottom-3 {
+    grid-template-columns: 1fr;
+  }
+}

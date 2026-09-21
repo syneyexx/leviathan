@@ -1,0 +1,15 @@
+---
+description: HADES Mission Control page context
+globs:
+  - "components/hades/pages/mission-control-page.tsx"
+  - "components/hades/features/project-continuity-panel.tsx"
+  - "components/hades/v3/v3-home.tsx"
+  - "components/hades/v4/v4-home.tsx"
+  - "components/hades/obsidian/pages/mission-control-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `mission-control`.
+Classic advanced UI: `pages/mission-control-page.tsx`; V3/V4 normal overview: `v3/v3-home.tsx` and `v4/v4-home.tsx`; Obsidian: `obsidian/pages/mission-control-obsidian.tsx`. Project continuity UI is `features/project-continuity-panel.tsx`.
+API contract: Gen2/project-continuity methods in `lib/hades-api.ts`.
+Backend owners: `backend/gen2/routes.py`, `backend/gen2/services.py`, `backend/gen2/store.py`; continuity state in `backend/project_continuity.py`; Gen2 coverage in `backend/tests/test_gen2.py`.
+Do not scan unrelated pages for a Mission Control-only change.

@@ -1,0 +1,62 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "main.tsx",
+    "vite-env.d.ts",
+    "vite.config.ts",
+    "components/hades/**/*.tsx",
+    "components/ui/alert-dialog.tsx",
+    "components/ui/badge.tsx",
+    "components/ui/button.tsx",
+    "components/ui/card.tsx",
+    "components/ui/dialog.tsx",
+    "components/ui/input.tsx",
+    "components/ui/progress.tsx",
+    "components/ui/select.tsx",
+    "components/ui/separator.tsx",
+    "components/ui/sheet.tsx",
+    "components/ui/sidebar.tsx",
+    "components/ui/skeleton.tsx",
+    "components/ui/slider.tsx",
+    "components/ui/sonner.tsx",
+    "components/ui/switch.tsx",
+    "components/ui/tabs.tsx",
+    "components/ui/textarea.tsx",
+    "components/ui/tooltip.tsx",
+    "lib/**/*.ts",
+    "hooks/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "app",
+    "worker",
+    "db",
+    "drizzle",
+    "build",
+    "scripts"
+  ]
+}

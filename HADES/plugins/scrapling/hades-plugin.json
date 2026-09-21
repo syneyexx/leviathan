@@ -1,0 +1,239 @@
+{
+  "format": 1,
+  "id": "scrapling",
+  "name": "Scrapling",
+  "version": "0.1.0",
+  "description": "Adaptive web scraping framework with fetch/extract tools for HADES. Upstream: D4Vinci/Scrapling.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Research",
+  "labels": [
+    "scraping",
+    "crawler",
+    "fetch"
+  ],
+  "permissions": [
+    "subprocess",
+    "network",
+    "filesystem"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/D4Vinci/Scrapling",
+  "license": "BSD-3-Clause",
+  "dependency_install": {
+    "timeout_seconds": 1800,
+    "stall_timeout_seconds": 900
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Check Scrapling install in the plugin venv.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "install_browsers",
+      "action": "install",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "install_browsers"
+      ],
+      "description": "Run scrapling install to fetch browser dependencies.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "fetch",
+      "action": "fetch",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "fetch",
+        "--url",
+        "{url}",
+        "--mode",
+        "{mode}",
+        "--css",
+        "{css}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "description": "Fetch a URL with Scrapling (basic/stealth/dynamic) and optionally extract CSS matches.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 2000
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "basic",
+              "stealth",
+              "dynamic"
+            ],
+            "default": "basic"
+          },
+          "css": {
+            "type": "string",
+            "default": ""
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 20000,
+            "minimum": 500,
+            "maximum": 80000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "extract",
+      "action": "extract",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "extract",
+        "--url",
+        "{url}",
+        "--output",
+        "{path}"
+      ],
+      "description": "Safely fetch page content and save it to a file after HADES file-write policy validation.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "url",
+          "path"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 2000
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "restricted_env",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "subprocess",
+      "write_files"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "moderate",
+    "latency_class": "normal",
+    "failure_modes": [
+      "dependency",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/D4Vinci/Scrapling",
+    "license": "BSD-3-Clause",
+    "signed": false
+  }
+}

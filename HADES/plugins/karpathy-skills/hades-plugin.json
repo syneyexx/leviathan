@@ -1,0 +1,189 @@
+{
+  "id": "karpathy-skills",
+  "name": "Karpathy Skills",
+  "description": "Karpathy-inspired coding pitfalls as a HADES skill: less magic, more verification.",
+  "runtime_type": "python",
+  "entrypoint": "skill_bridge.py",
+  "plugin_type": "tool",
+  "category": "Developer",
+  "labels": [
+    "skills",
+    "coding",
+    "quality"
+  ],
+  "permissions": [
+    "subprocess"
+  ],
+  "autonomous": true,
+  "source": "https://github.com/multica-ai/andrej-karpathy-skills",
+  "tools": [
+    {
+      "name": "list_skills",
+      "action": "list",
+      "mode": "command",
+      "description": "List skills/rules packaged in Karpathy Skills.",
+      "command": [
+        "{python}",
+        "skill_bridge.py",
+        "list",
+        "--limit",
+        "{limit}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "default": 200,
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      },
+      "metadata": {
+        "static_knowledge": true,
+        "action": "list"
+      }
+    },
+    {
+      "name": "get_skill",
+      "action": "get",
+      "mode": "command",
+      "description": "Load one skill/rule document from Karpathy Skills.",
+      "command": [
+        "{python}",
+        "skill_bridge.py",
+        "get",
+        "--skill",
+        "{skill}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "skill"
+        ],
+        "properties": {
+          "skill": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 16000,
+            "minimum": 500,
+            "maximum": 80000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "search_skills",
+      "action": "search",
+      "mode": "command",
+      "description": "Search skills/rules in Karpathy Skills.",
+      "command": [
+        "{python}",
+        "skill_bridge.py",
+        "search",
+        "--query",
+        "{query}",
+        "--limit",
+        "{limit}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      },
+      "metadata": {
+        "static_knowledge": true,
+        "action": "search"
+      }
+    }
+  ],
+  "knowledge_paths": [
+    "README.md"
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "hades_api": ">=0.4.1",
+  "version": "0.1.0",
+  "format": 1,
+  "capabilities": {
+    "effects": [
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/multica-ai/andrej-karpathy-skills",
+    "signed": false
+  }
+}

@@ -1,0 +1,313 @@
+{
+  "format": 1,
+  "id": "sinwindie-osint",
+  "name": "Sinwindie OSINT",
+  "version": "0.1.0",
+  "description": "HADES wrapper for sinwindie/OSINT: modernized SULTAN username search across curated public profile URL templates, plus topic/bookmarklet catalog from the upstream OSINT toolkit. PDF attack-surface guides are indexed but not bundled. Author terms: personal toolkit use only.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Research",
+  "labels": [
+    "osint",
+    "username",
+    "sultan",
+    "bookmarklets",
+    "sinwindie"
+  ],
+  "permissions": [
+    "subprocess",
+    "network"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/sinwindie/OSINT",
+  "license": "Author terms — personal toolkit use; do not sell/host without permission (upstream README)",
+  "upstream_author": "Sinwindie",
+  "dependency_install": {
+    "timeout_seconds": 300,
+    "stall_timeout_seconds": 180
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Check bridge health and report packaged SULTAN site / topic / bookmarklet counts.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "search_username",
+      "action": "lookup",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "search_username",
+        "--username",
+        "{username}",
+        "--category={category}",
+        "--max-sites",
+        "{max_sites}",
+        "--timeout",
+        "{timeout}",
+        "--workers",
+        "{workers}"
+      ],
+      "description": "Run SULTAN-style username probes against curated public profile URL templates (error-text heuristic).",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Handle without spaces (leading @ stripped)."
+          },
+          "category": {
+            "type": "string",
+            "default": "",
+            "description": "Optional category filter (e.g. Social Media, Gaming)."
+          },
+          "max_sites": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 200,
+            "description": "Limit probes (0 = all matching sites)."
+          },
+          "timeout": {
+            "type": "number",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 60
+          },
+          "workers": {
+            "type": "integer",
+            "default": 8,
+            "minimum": 1,
+            "maximum": 16
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "list_sites",
+      "action": "catalog",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "list_sites",
+        "--category={category}",
+        "--query={query}"
+      ],
+      "description": "List SULTAN URL templates / categories shipped from upstream SULTAN_DATA.xlsx.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "default": ""
+          },
+          "query": {
+            "type": "string",
+            "default": ""
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "list_topics",
+      "action": "catalog",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "list_topics",
+        "--query={query}"
+      ],
+      "description": "List OSINT topics and resources from the sinwindie/OSINT collection (PDFs indexed, not bundled).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "default": ""
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "list_bookmarklets",
+      "action": "catalog",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "list_bookmarklets",
+        "--topic={topic}"
+      ],
+      "description": "List packaged OSINT bookmarklet helpers from upstream.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "default": ""
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "get_bookmarklet",
+      "action": "read",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "get_bookmarklet",
+        "--id",
+        "{id}"
+      ],
+      "description": "Return the full bookmarklet script/content for a packaged id/path.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bookmarklet id/path/title from list_bookmarklets."
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "network",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "expensive",
+    "latency_class": "normal",
+    "failure_modes": [
+      "dependency",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/sinwindie/OSINT",
+    "license": "Author terms — personal toolkit use; do not sell/host without permission (upstream README)",
+    "signed": false
+  }
+}

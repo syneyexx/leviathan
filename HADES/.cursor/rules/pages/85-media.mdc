@@ -1,0 +1,14 @@
+---
+description: Apply when changing the Media page, media APIs, or autonomous media intelligence subsystem
+globs: components/hades/pages/media-page.tsx,components/hades/obsidian/pages/media-obsidian.tsx,components/hades/features/media/**,lib/hades-api.ts,backend/media/**,docs/media/**
+alwaysApply: false
+---
+
+Page ID: `media`.
+UI owner: `components/hades/pages/media-page.tsx`; Obsidian: `obsidian/pages/media-obsidian.tsx`.
+API contract: media methods/types in `lib/hades-api.ts`.
+Backend owners: `backend/media/` (store, service, orchestrator, platforms, routes).
+
+Preserve honest capability truth states (READY / AUTH_REQUIRED / PRIVATE_ONLY / etc.).
+Never fake platform readiness or virality guarantees.
+Reuse HADES voice, FFmpeg rendering, secrets store, and workflow patterns — do not invent parallel stacks.

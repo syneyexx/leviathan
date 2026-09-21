@@ -1,0 +1,41 @@
+/* FINALBETA canonical icon hardening.
+   Inline SVG presentation is preserved by reference-baseline.css. This file
+   keeps those canonical glyphs from collapsing inside dense flex controls. */
+.fb-root svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.fb-root .btn > svg,
+.fb-root .bottomnav button > svg,
+.fb-root .more-menu button > svg,
+.fb-root .side-item > svg,
+.fb-root .settings-nav button > svg,
+.fb-root .icon-cell > svg,
+.fb-root .collection-row > svg,
+.fb-root .toolbar .btn > svg,
+.fb-root .search > svg,
+.fb-root .status-tile svg,
+.fb-root .file-name > svg,
+.fb-root .agent-icon > svg,
+.fb-root .dash-workspace > svg,
+.fb-root .mission-attach > svg,
+.fb-root .summary-icon > svg,
+.fb-root .acceptance > svg {
+  flex: 0 0 auto;
+}
+
+.fb-root .more-menu button > svg {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+}
+
+.fb-root .bottomnav button > svg {
+  min-width: 23px;
+}
+
+.fb-root .more-menu button,
+.fb-root .settings-nav button {
+  line-height: 1.15;
+}

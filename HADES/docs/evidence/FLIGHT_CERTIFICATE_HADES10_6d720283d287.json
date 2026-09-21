@@ -1,0 +1,140 @@
+{
+  "schema": "hades.flight_certificate.v1",
+  "product": "HADES-10",
+  "phase": 10,
+  "generated_at": "2026-09-14T18:19:48.420678+00:00",
+  "commit": "6d720283d2871a008c52d69cacef30b1802233d2",
+  "branch": "cursor/hades-10-chat-primary-60e4",
+  "origin_main": "81c256d821180c0c0c7c2aff6c41a3b60d888cbc",
+  "platform": {
+    "system": "Linux",
+    "release": "6.12.94+",
+    "python": "3.12.3",
+    "machine": "x86_64"
+  },
+  "gates": [
+    {
+      "id": "frontend_typecheck",
+      "status": "PASS",
+      "command": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "returncode": 0,
+      "started_at": "2026-09-14T18:19:37.250412+00:00",
+      "finished_at": "2026-09-14T18:19:44.373492+00:00",
+      "stdout_tail": "\n> hades-local-ai@0.4.1 typecheck\n> tsc --noEmit\n\n",
+      "stderr_tail": ""
+    },
+    {
+      "id": "frontend_lint",
+      "status": "PASS",
+      "command": [
+        "npm",
+        "run",
+        "lint"
+      ],
+      "returncode": 0,
+      "started_at": "2026-09-14T18:19:44.373506+00:00",
+      "finished_at": "2026-09-14T18:19:47.363869+00:00",
+      "stdout_tail": "\n> hades-local-ai@0.4.1 lint\n> eslint . --max-warnings 0\n\n",
+      "stderr_tail": ""
+    },
+    {
+      "id": "hades10_focused_backend",
+      "status": "PASS",
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "tests.test_conversation_pins",
+        "tests.test_conversation_summaries",
+        "tests.test_mandatory_evidence_duplicate",
+        "tests.test_vision_budget",
+        "tests.test_conversation_export",
+        "tests.test_hades10_defaults",
+        "tests.test_conversation_runs",
+        "tests.test_conversation_coding_jobs",
+        "tests.test_conversation_research",
+        "tests.test_conversation_work_approvals",
+        "tests.test_memory_proposal_idempotency",
+        "-q"
+      ],
+      "returncode": 0,
+      "started_at": "2026-09-14T18:19:47.364082+00:00",
+      "finished_at": "2026-09-14T18:19:48.307256+00:00",
+      "stdout_tail": "",
+      "stderr_tail": "----------------------------------------------------------------------\nRan 27 tests in 0.837s\n\nOK\n"
+    },
+    {
+      "id": "launcher_lifecycle",
+      "status": "PASS",
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "unittest",
+        "tests.test_launcher_lifecycle",
+        "-q"
+      ],
+      "returncode": 0,
+      "started_at": "2026-09-14T18:19:48.307282+00:00",
+      "finished_at": "2026-09-14T18:19:48.419642+00:00",
+      "stdout_tail": "",
+      "stderr_tail": "----------------------------------------------------------------------\nRan 2 tests in 0.052s\n\nOK\n"
+    },
+    {
+      "id": "verify_hades_quick",
+      "status": "NOT_RUN",
+      "note": "Skipped: verify_hades.py --quick currently fails on pre-existing BETA/V3/V4/host/plugin contract tests also present on origin/main tip (confirmed identical main.tsx). Full python-only discover hung on test_conversation_create_and_list in this Linux agent."
+    },
+    {
+      "id": "verify_hades_python_only",
+      "status": "FAIL",
+      "failure_reason": "hung_on_test_conversation_create_and_list_killed_after_22m",
+      "note": "Not a HADES-10 regression signal by itself; recorded for honesty."
+    }
+  ],
+  "host": [
+    {
+      "id": "windows_host",
+      "status": "UNVERIFIED_ON_HOST",
+      "detail": "Linux-6.12.94+-x86_64-with-glibc2.39"
+    },
+    {
+      "id": "tray_lifecycle",
+      "status": "UNVERIFIED_ON_HOST"
+    },
+    {
+      "id": "lm_studio_live",
+      "status": "UNMEASURED",
+      "detail": "No live LM Studio probe in this certificate run."
+    },
+    {
+      "id": "meet_dit_model_live_quality",
+      "status": "UNMEASURED",
+      "detail": "Live model quality requires a loaded local model on the owner host."
+    },
+    {
+      "id": "exact_origin_main_checkout",
+      "status": "FAIL",
+      "detail": {
+        "certified_sha": "6d720283d2871a008c52d69cacef30b1802233d2",
+        "origin_main_sha": "81c256d821180c0c0c7c2aff6c41a3b60d888cbc",
+        "branch": "cursor/hades-10-chat-primary-60e4",
+        "note": "Campaign-branch certificate on same PR as requested by owner. Re-run after merge for exact-main SHA alignment."
+      }
+    }
+  ],
+  "overall": "NOT_FLIGHT_READY",
+  "overall_reason": "Critical HADES-10 software gates PASS, but certificate is not bound to exact origin/main (81c256d821180c0c0c7c2aff6c41a3b60d888cbc). Host Windows/LM paths remain UNVERIFIED_ON_HOST/UNMEASURED. Full verify_hades --quick has known pre-existing BETA/V3/V4/host failures on main tip; python-only discover hung in this agent environment.",
+  "vocabulary": [
+    "PASS",
+    "FAIL",
+    "NOT_RUN",
+    "UNVERIFIED_ON_HOST",
+    "UNMEASURED",
+    "FLIGHT_READY",
+    "NOT_FLIGHT_READY"
+  ]
+}

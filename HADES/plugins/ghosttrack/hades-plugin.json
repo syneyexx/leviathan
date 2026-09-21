@@ -1,0 +1,315 @@
+{
+  "format": 1,
+  "id": "ghosttrack",
+  "name": "GhostTrack",
+  "version": "0.1.0",
+  "description": "OSINT helpers from HunxByts/GhostTrack: IP geolocation (ipwho.is), phone-number metadata (phonenumbers), username URL probes across public social sites, and show-your-IP. Packaged with a non-interactive JSON HADES bridge; optional open_terminal launches upstream GhostTR.py. Public information only — not live device tracking.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Research",
+  "labels": [
+    "osint",
+    "ip",
+    "phone",
+    "username",
+    "ghosttrack"
+  ],
+  "permissions": [
+    "subprocess",
+    "network"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/HunxByts/GhostTrack",
+  "license": "Upstream unlicensed / author terms — see GhostTrack README",
+  "upstream_author": "HunxByts",
+  "dependency_install": {
+    "timeout_seconds": 600,
+    "stall_timeout_seconds": 300
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Check GhostTrack bridge dependencies (requests, phonenumbers) and whether upstream GhostTR.py is present.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "track_ip",
+      "action": "lookup",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "track_ip",
+        "--ip",
+        "{ip}",
+        "--timeout",
+        "{timeout}"
+      ],
+      "description": "Look up public geolocation and ISP metadata for an IP via ipwho.is (same source as upstream GhostTrack).",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "ip"
+        ],
+        "properties": {
+          "ip": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 64,
+            "description": "IPv4 or IPv6 address to look up."
+          },
+          "timeout": {
+            "type": "number",
+            "default": 12,
+            "minimum": 1,
+            "maximum": 60
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "show_ip",
+      "action": "lookup",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "show_ip",
+        "--timeout",
+        "{timeout}"
+      ],
+      "description": "Show this machine's public IP via api.ipify.org.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "number",
+            "default": 12,
+            "minimum": 1,
+            "maximum": 60
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "track_phone",
+      "action": "lookup",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "track_phone",
+        "--phone",
+        "{phone}",
+        "--default-region",
+        "{default_region}"
+      ],
+      "description": "Parse a phone number and return region/carrier/timezone metadata via the phonenumbers library (not live GPS).",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "phone"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 32,
+            "description": "Phone number, preferably in E.164 form (e.g. +31612345678)."
+          },
+          "default_region": {
+            "type": "string",
+            "default": "ID",
+            "minLength": 2,
+            "maxLength": 2,
+            "description": "ISO region used when the number has no country code (upstream default: ID)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "track_username",
+      "action": "lookup",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "track_username",
+        "--username",
+        "{username}",
+        "--timeout",
+        "{timeout}",
+        "--max-sites",
+        "{max_sites}"
+      ],
+      "description": "Probe public social profile URLs for a username (HTTP 200 heuristic, same sites as upstream GhostTrack).",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Social handle without spaces (leading @ is stripped)."
+          },
+          "timeout": {
+            "type": "number",
+            "default": 8,
+            "minimum": 1,
+            "maximum": 30
+          },
+          "max_sites": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 50,
+            "description": "Limit how many sites to probe (0 = all upstream sites)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "open_terminal",
+      "action": "launch",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "open_terminal"
+      ],
+      "description": "Open a new OS terminal window running the original interactive GhostTR.py menu.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "normal",
+        "failure_modes": [
+          "dependency",
+          "network",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "network",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "moderate",
+    "latency_class": "normal",
+    "failure_modes": [
+      "dependency",
+      "network",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/HunxByts/GhostTrack",
+    "license": "Upstream unlicensed / author terms — see GhostTrack README",
+    "signed": false
+  }
+}

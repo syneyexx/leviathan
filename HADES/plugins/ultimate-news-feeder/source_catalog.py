@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+"""Source catalog definitions for UltimateNewsFeeder.
+
+The primary catalog is loaded at runtime from plenaryapp/awesome-rss-feeds
+(CC0-1.0). Each country OPML contains direct publisher RSS/Atom feeds.
+Google News country feeds are bundled as a resilient worldwide fallback.
+"""
+
+PLENARY_BASE = (
+    "https://raw.githubusercontent.com/plenaryapp/awesome-rss-feeds/"
+    "master/countries/without_category/{filename}"
+)
+
+# The upstream CC0 catalog currently exposes country OPML files for these 25 markets.
+PLENARY_COUNTRIES: dict[str, str] = {
+    "AU": "Australia.opml",
+    "BD": "Bangladesh.opml",
+    "BR": "Brazil.opml",
+    "CA": "Canada.opml",
+    "DE": "Germany.opml",
+    "ES": "Spain.opml",
+    "FR": "France.opml",
+    "GB": "United Kingdom.opml",
+    "HK": "Hong Kong SAR China.opml",
+    "ID": "Indonesia.opml",
+    "IE": "Ireland.opml",
+    "IN": "India.opml",
+    "IR": "Iran.opml",
+    "IT": "Italy.opml",
+    "JP": "Japan.opml",
+    "MM": "Myanmar (Burma).opml",
+    "MX": "Mexico.opml",
+    "NG": "Nigeria.opml",
+    "PH": "Philippines.opml",
+    "PK": "Pakistan.opml",
+    "PL": "Poland.opml",
+    "RU": "Russia.opml",
+    "UA": "Ukraine.opml",
+    "US": "United States.opml",
+    "ZA": "South Africa.opml",
+}
+
+# ISO-ish country code, display name, Google News UI locale, language tag, macro region.
+# These are fallback feeds, not a claim that Google News has a local newsroom in each country.
+GOOGLE_NEWS_LOCALES: list[tuple[str, str, str, str, str]] = [
+    # Europe
+    ("AL", "Albania", "en-US", "en", "Europe"),
+    ("AT", "Austria", "de", "de", "Europe"),
+    ("BE", "Belgium", "nl", "nl", "Europe"),
+    ("BA", "Bosnia and Herzegovina", "en-US", "en", "Europe"),
+    ("BG", "Bulgaria", "en-US", "en", "Europe"),
+    ("HR", "Croatia", "en-US", "en", "Europe"),
+    ("CY", "Cyprus", "en-US", "en", "Europe"),
+    ("CZ", "Czechia", "cs", "cs", "Europe"),
+    ("DK", "Denmark", "da", "da", "Europe"),
+    ("EE", "Estonia", "en-US", "en", "Europe"),
+    ("FI", "Finland", "fi", "fi", "Europe"),
+    ("FR", "France", "fr", "fr", "Europe"),
+    ("DE", "Germany", "de", "de", "Europe"),
+    ("GR", "Greece", "el", "el", "Europe"),
+    ("HU", "Hungary", "hu", "hu", "Europe"),
+    ("IS", "Iceland", "en-US", "en", "Europe"),
+    ("IE", "Ireland", "en-IE", "en", "Europe"),
+    ("IT", "Italy", "it", "it", "Europe"),
+    ("LV", "Latvia", "en-US", "en", "Europe"),
+    ("LT", "Lithuania", "en-US", "en", "Europe"),
+    ("LU", "Luxembourg", "fr", "fr", "Europe"),
+    ("MT", "Malta", "en-US", "en", "Europe"),
+    ("MD", "Moldova", "en-US", "en", "Europe"),
+    ("NL", "Netherlands", "nl", "nl", "Europe"),
+    ("MK", "North Macedonia", "en-US", "en", "Europe"),
+    ("NO", "Norway", "no", "no", "Europe"),
+    ("PL", "Poland", "pl", "pl", "Europe"),
+    ("PT", "Portugal", "pt-PT", "pt", "Europe"),
+    ("RO", "Romania", "ro", "ro", "Europe"),
+    ("RU", "Russia", "ru", "ru", "Europe"),
+    ("RS", "Serbia", "en-US", "en", "Europe"),
+    ("SK", "Slovakia", "sk", "sk", "Europe"),
+    ("SI", "Slovenia", "en-US", "en", "Europe"),
+    ("ES", "Spain", "es", "es", "Europe"),
+    ("SE", "Sweden", "sv", "sv", "Europe"),
+    ("CH", "Switzerland", "de", "de", "Europe"),
+    ("UA", "Ukraine", "uk", "uk", "Europe"),
+    ("GB", "United Kingdom", "en-GB", "en", "Europe"),
+    # Middle East / Central Asia
+    ("AM", "Armenia", "en-US", "en", "Middle East & Central Asia"),
+    ("AZ", "Azerbaijan", "en-US", "en", "Middle East & Central Asia"),
+    ("GE", "Georgia", "en-US", "en", "Middle East & Central Asia"),
+    ("IL", "Israel", "he", "he", "Middle East & Central Asia"),
+    ("IR", "Iran", "fa", "fa", "Middle East & Central Asia"),
+    ("JO", "Jordan", "ar", "ar", "Middle East & Central Asia"),
+    ("KZ", "Kazakhstan", "ru", "ru", "Middle East & Central Asia"),
+    ("KW", "Kuwait", "ar", "ar", "Middle East & Central Asia"),
+    ("LB", "Lebanon", "ar", "ar", "Middle East & Central Asia"),
+    ("OM", "Oman", "ar", "ar", "Middle East & Central Asia"),
+    ("QA", "Qatar", "ar", "ar", "Middle East & Central Asia"),
+    ("SA", "Saudi Arabia", "ar", "ar", "Middle East & Central Asia"),
+    ("TR", "Türkiye", "tr", "tr", "Middle East & Central Asia"),
+    ("AE", "United Arab Emirates", "ar", "ar", "Middle East & Central Asia"),
+    # Africa
+    ("DZ", "Algeria", "fr", "fr", "Africa"),
+    ("AO", "Angola", "pt-PT", "pt", "Africa"),
+    ("BW", "Botswana", "en-US", "en", "Africa"),
+    ("CM", "Cameroon", "fr", "fr", "Africa"),
+    ("CI", "Côte d'Ivoire", "fr", "fr", "Africa"),
+    ("EG", "Egypt", "ar", "ar", "Africa"),
+    ("ET", "Ethiopia", "en-US", "en", "Africa"),
+    ("GH", "Ghana", "en-US", "en", "Africa"),
+    ("KE", "Kenya", "en-US", "en", "Africa"),
+    ("MA", "Morocco", "fr", "fr", "Africa"),
+    ("MZ", "Mozambique", "pt-PT", "pt", "Africa"),
+    ("NA", "Namibia", "en-US", "en", "Africa"),
+    ("NG", "Nigeria", "en-US", "en", "Africa"),
+    ("RW", "Rwanda", "en-US", "en", "Africa"),
+    ("SN", "Senegal", "fr", "fr", "Africa"),
+    ("ZA", "South Africa", "en-ZA", "en", "Africa"),
+    ("TZ", "Tanzania", "en-US", "en", "Africa"),
+    ("TN", "Tunisia", "fr", "fr", "Africa"),
+    ("UG", "Uganda", "en-US", "en", "Africa"),
+    ("ZM", "Zambia", "en-US", "en", "Africa"),
+    ("ZW", "Zimbabwe", "en-US", "en", "Africa"),
+    # South / East / Southeast Asia
+    ("BD", "Bangladesh", "bn", "bn", "Asia"),
+    ("CN", "China", "zh-CN", "zh-Hans", "Asia"),
+    ("HK", "Hong Kong", "zh-HK", "zh-Hant", "Asia"),
+    ("IN", "India", "en-IN", "en", "Asia"),
+    ("ID", "Indonesia", "id", "id", "Asia"),
+    ("JP", "Japan", "ja", "ja", "Asia"),
+    ("MY", "Malaysia", "en-US", "en", "Asia"),
+    ("MN", "Mongolia", "en-US", "en", "Asia"),
+    ("MM", "Myanmar", "en-US", "en", "Asia"),
+    ("NP", "Nepal", "en-US", "en", "Asia"),
+    ("PK", "Pakistan", "en-US", "en", "Asia"),
+    ("PH", "Philippines", "en-PH", "en", "Asia"),
+    ("SG", "Singapore", "en-SG", "en", "Asia"),
+    ("KR", "South Korea", "ko", "ko", "Asia"),
+    ("LK", "Sri Lanka", "en-US", "en", "Asia"),
+    ("TW", "Taiwan", "zh-TW", "zh-Hant", "Asia"),
+    ("TH", "Thailand", "th", "th", "Asia"),
+    ("VN", "Vietnam", "vi", "vi", "Asia"),
+    # North America / Caribbean
+    ("CA", "Canada", "en-CA", "en", "North America"),
+    ("CR", "Costa Rica", "es", "es", "North America"),
+    ("DO", "Dominican Republic", "es", "es", "North America"),
+    ("JM", "Jamaica", "en-US", "en", "North America"),
+    ("MX", "Mexico", "es-MX", "es", "North America"),
+    ("PA", "Panama", "es", "es", "North America"),
+    ("TT", "Trinidad and Tobago", "en-US", "en", "North America"),
+    ("US", "United States", "en-US", "en", "North America"),
+    # South America
+    ("AR", "Argentina", "es-419", "es", "South America"),
+    ("BO", "Bolivia", "es-419", "es", "South America"),
+    ("BR", "Brazil", "pt-BR", "pt-419", "South America"),
+    ("CL", "Chile", "es-419", "es", "South America"),
+    ("CO", "Colombia", "es-419", "es", "South America"),
+    ("EC", "Ecuador", "es-419", "es", "South America"),
+    ("PY", "Paraguay", "es-419", "es", "South America"),
+    ("PE", "Peru", "es-419", "es", "South America"),
+    ("UY", "Uruguay", "es-419", "es", "South America"),
+    ("VE", "Venezuela", "es-419", "es", "South America"),
+    # Oceania
+    ("AU", "Australia", "en-AU", "en", "Oceania"),
+    ("FJ", "Fiji", "en-US", "en", "Oceania"),
+    ("NZ", "New Zealand", "en-NZ", "en", "Oceania"),
+    ("PG", "Papua New Guinea", "en-US", "en", "Oceania"),
+]
+
+COUNTRY_NAMES = {cc: name for cc, name, _hl, _lang, _region in GOOGLE_NEWS_LOCALES}
+COUNTRY_REGIONS = {cc: region for cc, _name, _hl, _lang, region in GOOGLE_NEWS_LOCALES}
+COUNTRY_LANGS = {cc: lang for cc, _name, _hl, lang, _region in GOOGLE_NEWS_LOCALES}

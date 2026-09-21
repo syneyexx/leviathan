@@ -1,0 +1,30 @@
+{
+  "model_load_ms": 778.2433800002764,
+  "mode_latency": {
+    "off": {
+      "n": 20,
+      "mean_ms": 0.532880800028579,
+      "min_ms": 0.46091300009720726,
+      "max_ms": 0.6507389998660074,
+      "bypassed_last": true
+    },
+    "shadow": {
+      "n": 20,
+      "mean_ms": 0.8850728499055549,
+      "min_ms": 0.7592189995193621,
+      "max_ms": 1.4971189993957523,
+      "bypassed_last": false
+    },
+    "read": {
+      "n": 20,
+      "mean_ms": 0.8263345499472052,
+      "min_ms": 0.7361719999607885,
+      "max_ms": 0.9876459998849896,
+      "bypassed_last": false
+    }
+  },
+  "base_frozen_checksum_prefix": "1b955d452b70533d",
+  "inference_count": 61,
+  "peak_vram": "NOT MEASURED (cpu toy)",
+  "isolation_crash_containment": "PASS (subprocess crash test)"
+}

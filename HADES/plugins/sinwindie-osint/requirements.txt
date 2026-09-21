@@ -1,0 +1,2 @@
+# optional: urllib is stdlib; requests listed for doctor parity with upstream SULTAN
+requests>=2.28.0

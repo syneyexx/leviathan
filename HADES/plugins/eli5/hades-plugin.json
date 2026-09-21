@@ -1,0 +1,238 @@
+{
+  "id": "eli5",
+  "name": "ELI5",
+  "description": "Explain anything to a chosen audience. HADES gets the skill plus a local explanation scaffold.",
+  "runtime_type": "python",
+  "entrypoint": "skill_bridge.py",
+  "plugin_type": "tool",
+  "category": "Developer",
+  "labels": [
+    "education",
+    "writing",
+    "skills"
+  ],
+  "permissions": [
+    "subprocess"
+  ],
+  "autonomous": true,
+  "source": "https://github.com/DreambigOu/ELI5",
+  "tools": [
+    {
+      "name": "list_skills",
+      "action": "list",
+      "mode": "command",
+      "description": "List skills/rules packaged in ELI5.",
+      "command": [
+        "{python}",
+        "skill_bridge.py",
+        "list",
+        "--limit",
+        "{limit}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "default": 200,
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      },
+      "metadata": {
+        "static_knowledge": true,
+        "action": "list"
+      }
+    },
+    {
+      "name": "get_skill",
+      "action": "get",
+      "mode": "command",
+      "description": "Load one skill/rule document from ELI5.",
+      "command": [
+        "{python}",
+        "skill_bridge.py",
+        "get",
+        "--skill",
+        "{skill}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "skill"
+        ],
+        "properties": {
+          "skill": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 16000,
+            "minimum": 500,
+            "maximum": 80000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "search_skills",
+      "action": "search",
+      "mode": "command",
+      "description": "Search skills/rules in ELI5.",
+      "command": [
+        "{python}",
+        "skill_bridge.py",
+        "search",
+        "--query",
+        "{query}",
+        "--limit",
+        "{limit}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      },
+      "metadata": {
+        "static_knowledge": true,
+        "action": "search"
+      }
+    },
+    {
+      "name": "explain",
+      "action": "explain",
+      "mode": "command",
+      "description": "Build an ELI5 explanation scaffold for a topic and audience.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "eli5",
+        "--topic",
+        "{topic}",
+        "--audience",
+        "{audience}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "topic"
+        ],
+        "properties": {
+          "topic": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "audience": {
+            "type": "string",
+            "default": "curious adult",
+            "maxLength": 80
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "knowledge_paths": [
+    "README.md"
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "hades_api": ">=0.4.1",
+  "version": "0.1.0",
+  "format": 1,
+  "capabilities": {
+    "effects": [
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/DreambigOu/ELI5",
+    "signed": false,
+    "license": "MIT"
+  },
+  "license": "MIT"
+}

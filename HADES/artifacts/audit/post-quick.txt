@@ -1,0 +1,1269 @@
+
+=== TypeScript typecheck ===
++ /home/ubuntu/.nvm/versions/node/v22.22.2/bin/npm run typecheck
+
+> hades-local-ai@0.4.1 typecheck
+> tsc --noEmit
+
+
+=== ESLint ===
++ /home/ubuntu/.nvm/versions/node/v22.22.2/bin/npm run lint
+
+> hades-local-ai@0.4.1 lint
+> eslint . --max-warnings 0
+
+
+=== Frontend contract/component tests ===
++ /exec-daemon/node --test tests/source-contracts.test.mjs tests/ui-components.test.mjs tests/ui-style-system.test.mjs tests/settings-unlimited-contracts.test.mjs tests/voice-ui-contracts.test.mjs tests/voice-playback-queue.test.mjs tests/voice-audio-capture.test.mjs tests/voice-ui-ssr.test.mjs tests/coding-agent-helpers.test.mjs tests/brain-gateway.test.mjs tests/use-hades-query.test.mjs
+TAP version 13
+# WebSocket server error: Port 24678 is already in use
+# Subtest: brain adapter separates content edit vs layout rights
+ok 1 - brain adapter separates content edit vs layout rights
+  ---
+  duration_ms: 590.546753
+  ...
+# Subtest: fitViewportToNodes uses visible bounds instead of fixed zoom
+ok 2 - fitViewportToNodes uses visible bounds instead of fixed zoom
+  ---
+  duration_ms: 0.477837
+  ...
+# Subtest: relation validation blocks self-link and duplicates
+ok 3 - relation validation blocks self-link and duplicates
+  ---
+  duration_ms: 0.297746
+  ...
+# Subtest: hash deeplink helpers select c/t/id
+ok 4 - hash deeplink helpers select c/t/id
+  ---
+  duration_ms: 207.219272
+  ...
+# Subtest: brain graph wires pointercancel and zoom controls
+ok 5 - brain graph wires pointercancel and zoom controls
+  ---
+  duration_ms: 923.612591
+  ...
+# Subtest: coding-agent helpers preserve status labels and tones
+ok 6 - coding-agent helpers preserve status labels and tones
+  ---
+  duration_ms: 247.078262
+  ...
+# Subtest: coding-agent helpers parse argv/edits and collect logs
+ok 7 - coding-agent helpers parse argv/edits and collect logs
+  ---
+  duration_ms: 1.235711
+  ...
+# (!) Failed to run dependency scan. Skipping dependency pre-bundling. Error:   Failed to scan for dependencies from entries:
+#   /workspace/index.html
+#   Build failed with 1 error:
+# [plugin vite:dep-scan:resolve]
+# Error: The server is being restarted or closed. Request is outdated
+#     at throwClosedServerError (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30025:30)
+#     at EnvironmentPluginContainer.resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30160:65)
+#     at resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30866:38)
+#     at resolve (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30878:22)
+#     at PluginContextImpl.resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:31008:29)
+#     at plugin (file:///workspace/node_modules/rolldown/dist/shared/bindingify-input-options-BnfFBV6b.mjs:1092:30)
+#     at plugin.<computed> (file:///workspace/node_modules/rolldown/dist/shared/bindingify-input-options-BnfFBV6b.mjs:1625:18)
+#     at aggregateBindingErrorsIntoJsError (file:///workspace/node_modules/rolldown/dist/shared/error-CkdMJ9ps.mjs:48:18)
+#     at unwrapBindingResult (file:///workspace/node_modules/rolldown/dist/shared/error-CkdMJ9ps.mjs:18:128)
+#     at scan (file:///workspace/node_modules/rolldown/dist/experimental-index.mjs:176:3)
+#     at async Object.build (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30826:3)
+#     at async scan (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30771:4)
+#     at async file:///workspace/node_modules/vite/dist/node/chunks/node.js:23242:15
+# Subtest: toSettingsForm preserves null instead of coercing Unlimited
+ok 8 - toSettingsForm preserves null instead of coercing Unlimited
+  ---
+  duration_ms: 0.656544
+  ...
+# Subtest: settings save uses sync refs to avoid stale Select→Save races
+ok 9 - settings save uses sync refs to avoid stale Select→Save races
+  ---
+  duration_ms: 0.168709
+  ...
+# Subtest: network and sibling policies persist immediately via persistPolicy
+ok 10 - network and sibling policies persist immediately via persistPolicy
+  ---
+  duration_ms: 0.148666
+  ...
+# Subtest: volume truthiness fallback removed from chat settings load
+ok 11 - volume truthiness fallback removed from chat settings load
+  ---
+  duration_ms: 0.449328
+  ...
+# Subtest: shell merges partial hades-settings-updated events
+ok 12 - shell merges partial hades-settings-updated events
+  ---
+  duration_ms: 0.329042
+  ...
+# Subtest: Windows scripts no longer use Unix-only inline environment syntax
+ok 13 - Windows scripts no longer use Unix-only inline environment syntax
+  ---
+  duration_ms: 7.098364
+  ...
+# Subtest: Work Runtime persists plans, checkpoints and verification
+not ok 14 - Work Runtime persists plans, checkpoints and verification
+  ---
+  duration_ms: 4.768605
+  location: '/workspace/tests/source-contracts.test.mjs:21:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /parsed\["passed"\]/. Input:
+    
+    'from __future__ import annotations\n' +
+      '\n' +
+      'import json\n' +
+      'import re\n' +
+      'from typing import Any\n' +
+      '\n' +
+      'from .contracts import AcceptanceCriterionMatch, ToolObservation, VerificationResult\n' +
+      '\n' +
+      '_SUCCESS = {"completed", "succeeded", "success", "ok"}\n' +
+      '_FAILURE = {"failed", "error", "blocked", "rejected", "cancelled", "timeout"}\n' +
+      '\n' +
+      '# Soft display/parse bound — overflow criteria are marked unmet, never silently dropped as passed.\n' +
+      '_CHECKLIST_SOFT_LIMIT = 48\n' +
+      '\n' +
+      '_TRUE_STRINGS = frozenset({"true", "yes", "y", "1"})\n' +
+      '_FALSE_STRINGS = frozenset({"false", "no", "n", "0"})\n' +
+      '\n' +
+      '\n' +
+      'def _extract_json(text: str) -> Any | None:\n' +
+      '    candidates = [text.strip()]\n' +
+      '    fenced = re.findall(r"```(?:json)?\\s*(.*?)\\s*```", text, flags=re.S | re.I)\n' +
+      '    candidates = fenced + candidates\n' +
+      '    start = text.find("{")\n' +
+      '    end = text.rfind("}")\n' +
+      '    if start >= 0 and end > start:\n' +
+      '        candidates.append(text[start : end + 1])\n' +
+      '    for candidate in candidates:\n' +
+      '        try:\n' +
+      '            return json.loads(candidate)\n' +
+      '        except Exception:\n' +
+      '            continue\n' +
+      '    return None\n' +
+      '\n' +
+      '\n' +
+      'def parse_strict_bool(value: Any) -> bool | None:\n' +
+      '    """Parse verification booleans strictly.\n' +
+      '\n' +
+      '    Accepts real bools and the explicit strings true/false (case-insensitive).\n' +
+      '    Rejects arbitrary truthy values such as non-empty strings (including "false"\n' +
+      '    when coerced via bool()).\n' +
+      '    """\n' +
+      '    if isinstance(value, bool):\n' +
+      '        return value\n' +
+      '    if isinstance(value, (int, float)) and not isinstance(value, bool):\n' +
+      '        if value == 1:\n' +
+      '            return True\n' +
+      '        if value == 0:\n' +
+      '            return False\n' +
+      '        return None\n' +
+      '    if isinstance(value, str):\n' +
+      '        normalized = value.strip().lower()\n' +
+      '        if normalized in _TRUE_STRINGS:\n' +
+      '            return True\n' +
+      '        if normalized in _FALSE_STRINGS:\n' +
+      '            return False\n' +
+      '        return None\n' +
+      '    return None\n' +
+      '\n' +
+      '\n' +
+      'def criterion_id_for(index: int, criterion: str = "") -> str:\n' +
+      '    """Stable criterion id for matching (order-based, independent of wording drift)."""\n' +
+      '    _ = criterion  # wording is not part of the id — ids stay stable across paraphrases\n' +
+      '    return f"c{index + 1}"\n' +
+      '\n' +
+      '\n' +
+      'def _norm_criterion(text: str) -> str:\n' +
+      '    return re.sub(r"\\s+", " ", (text or "").strip().lower())\n' +
+      '\n' +
+      '\n' +
+      'def _tool_status(item: ToolObservation | dict[str, Any]) -> str:\n' +
+      '    if isinstance(item, ToolObservation):\n' +
+      '        return str(item.status or "")\n' +
+      '    return str(item.get("status") or "")\n' +
+      '\n' +
+      '\n' +
+      'def _tool_call_id(item: ToolObservation | dict[str, Any]) -> str | None:\n' +
+      '    if isinstance(item, ToolObservation):\n' +
+      '        value = item.call_id\n' +
+      '    else:\n' +
+      '        value = item.get("call_id") or item.get("id")\n' +
+      '    return str(value) if value else None\n' +
+      '\n' +
+      '\n' +
+      'def _tool_optional(item: ToolObservation | dict[str, Any]) -> bool:\n' +
+      '    if isinstance(item, ToolObservation):\n' +
+      '        return False\n' +
+      '    return bool(item.get("optional"))\n' +
+      '\n' +
+      '\n' +
+      'def _step_is_draft_only(step: dict[str, Any]) -> bool:\n' +
+      '    """True when a step is the candidate/draft answer under review, not source evidence."""\n' +
+      '    if step.get("is_draft") or step.get("evidence_role") in {"draft", "candidate_answer", "under_review"}:\n' +
+      '        return True\n' +
+      '    title = str(step.get("title") or "").strip().lower()\n' +
+      '    return title in {"chatantwoord", "draft", "candidate answer", "conceptantwoord", "onder beoordeling"}\n' +
+      '\n' +
+      '\n' +
+      'def build_allowed_evidence_refs(\n' +
+      '    *,\n' +
+      '    step_outputs: list[dict[str, Any]] | None = None,\n' +
+      '    tool_observations: list[ToolObservation] | list[dict[str, Any]] | None = None,\n' +
+      '    include_draft_steps: bool = False,\n' +
+      ') -> set[str]:\n' +
+      '    allowed: set[str] = set()\n' +
+      '    for index, step in enumerate(step_outputs or [], start=1):\n' +
+      '        if _step_is_draft_only(step) and not include_draft_steps:\n' +
+      '            # Draft may be assessed for structure/relevance, but is not factual evidence.\n' +
+      '            continue\n' +
+      '        allowed.add(f"step:{index}")\n' +
+      '        step_id = step.get("step_id") or step.get("id")\n' +
+      '        if step_id:\n' +
+      '            allowed.add(f"step:{step_id}")\n' +
+      '        title = str(step.get("title") or "").strip()\n' +
+      '        if title:\n' +
+      '            allowed.add(f"step:{title}")\n' +
+      '        provenance = str(step.get("provenance") or "").strip()\n' +
+      '        if provenance:\n' +
+      '            allowed.add(provenance)\n' +
+      '        for ref in step.get("evidence_refs") or []:\n' +
+      '            if ref:\n' +
+      '                allowed.add(str(ref))\n' +
+      '    for item in tool_observations or []:\n' +
+      '        call_id = _tool_call_id(item)\n' +
+      '        status = _tool_status(item)\n' +
+      '        if call_id and status in _SUCCESS:\n' +
+      '            allowed.add(f"tool:{call_id}")\n' +
+      '        if isinstance(item, ToolObservation):\n' +
+      '            plugin_id, tool_name = item.plugin_id, item.tool_name\n' +
+      '        else:\n' +
+      '            plugin_id = str(item.get("plugin_id") or "")\n' +
+      '            tool_name = str(item.get("tool_name") or "")\n' +
+      '        if plugin_id and tool_name and status in _SUCCESS:\n' +
+      '            allowed.add(f"tool:{plugin_id}/{tool_name}")\n' +
+      '    return allowed\n' +
+      '\n' +
+      '\n' +
+      'def validate_evidence_refs(\n' +
+      '    refs: list[str],\n' +
+      '    *,\n' +
+      '    step_outputs: list[dict[str, Any]] | None = None,\n' +
+      '    tool_observations: list[ToolObservation] | list[dict[str, Any]] | None = None,\n' +
+      '    include_draft_steps: bool = False,\n' +
+      ') -> tuple[bool, str]:\n' +
+      '    """Every evidence_ref must resolve to a real step or successful tool observation."""\n' +
+      '    if not refs:\n' +
+      '        return True, ""\n' +
+      '    allowed = build_allowed_evidence_refs(\n' +
+      '        step_outputs=step_outputs,\n' +
+      '        tool_observations=tool_observations,\n' +
+      '        include_draft_steps=include_draft_steps,\n' +
+      '    )\n' +
+      '    unknown = [ref for ref in refs if ref not in allowed]\n' +
+      '    if unknown:\n' +
+      `        return False, f"Onbekende of ongeldige evidence_refs: {', '.join(unknown[:6])}"\n` +
+      '    return True, ""\n' +
+      '\n' +
+      '\n' +
+      'def required_tool_failures(\n' +
+      '    tool_observations: list[ToolObservation] | list[dict[str, Any]] | None,\n' +
+      ') -> list[str]:\n' +
+      '    failures: list[str] = []\n' +
+      '    for item in tool_observations or []:\n' +
+      '        if _tool_optional(item):\n' +
+      '            continue\n' +
+      '        status = _tool_status(item)\n' +
+      '        if status in _FAILURE:\n' +
+      '            if isinstance(item, ToolObservation):\n' +
+      '                label = f"{item.plugin_id}/{item.tool_name}"\n' +
+      '                detail = item.error or status\n' +
+      '            else:\n' +
+      `                label = f"{item.get('plugin_id')}/{item.get('tool_name')}"\n` +
+      '                detail = item.get("error") or status\n' +
+      '            failures.append(f"{label}: {detail}")\n' +
+      '    return failures\n' +
+      '\n' +
+      '\n' +
+      'def build_verification_prompt(\n' +
+      '    *,\n' +
+      '    task_title: str,\n' +
+      '    task_prompt: str,\n' +
+      '    acceptance_criteria: list[str],\n' +
+      '    step_outputs: list[dict[str, str]],\n' +
+      '    tool_observations: list[ToolObservation] | list[dict[str, Any]],\n' +
+      '    draft_answer: str | None = None,\n' +
+      ') -> str:\n' +
+      '    evidence_parts: list[str] = []\n' +
+      '    draft_parts: list[str] = []\n' +
+      '    for index, item in enumerate(step_outputs):\n' +
+      '        block = (\n' +
+      `            f"=== {index + 1}. {item.get('title')} ({item.get('agent_id')}) ===\\n"\n` +
+      `            f"{str(item.get('output', ''))[:18_000]}"\n` +
+      '        )\n' +
+      '        if _step_is_draft_only(item):\n' +
+      '            draft_parts.append(block)\n' +
+      '        else:\n' +
+      '            evidence_parts.append(block)\n' +
+      '    if draft_answer and not draft_parts:\n' +
+      '        draft_parts.append(f"=== DRAFT UNDER REVIEW ===\\n{draft_answer[:18_000]}")\n' +
+      '    evidence = "\\n\\n".join(evidence_parts) or "(geen bron/tool-observaties)"\n' +
+      '    draft_view = "\\n\\n".join(draft_parts) or "(geen conceptantwoord)"\n' +
+      '\n' +
+      '    tools_view: list[dict[str, Any]] = []\n' +
+      '    for item in tool_observations:\n' +
+      '        if isinstance(item, ToolObservation):\n' +
+      '            tools_view.append(\n' +
+      '                {\n' +
+      '                    "call_id": item.call_id,\n' +
+      '                    "plugin_id": item.plugin_id,\n' +
+      '                    "tool_name": item.tool_name,\n' +
+      '                    "status": item.status,\n' +
+      '                    "exit_code": item.exit_code,\n' +
+      '                    "error": item.error,\n' +
+      '                    "succeeded": item.succeeded,\n' +
+      '                }\n' +
+      '            )\n' +
+      '        else:\n' +
+      '            tools_view.append(\n' +
+      '                {\n' +
+      '                    "call_id": item.get("call_id") or item.get("id"),\n' +
+      '                    "plugin_id": item.get("plugin_id"),\n' +
+      '                    "tool_name": item.get("tool_name"),\n' +
+      '                    "status": item.get("status"),\n' +
+      '                    "exit_code": item.get("exit_code"),\n' +
+      '                    "error": item.get("error"),\n' +
+      '                }\n' +
+      '            )\n' +
+      '    allowed = sorted(\n' +
+      '        build_allowed_evidence_refs(\n' +
+      '            step_outputs=list(step_outputs),\n' +
+      '            tool_observations=tool_observations,\n' +
+      '            include_draft_steps=False,\n' +
+      '        )\n' +
+      '    )\n' +
+      '    criteria = acceptance_criteria or ["De oorspronkelijke opdracht is volledig uitgevoerd."]\n' +
+      '    criteria_lines = []\n' +
+      '    for index, criterion in enumerate(criteria):\n' +
+      '        cid = criterion_id_for(index, criterion)\n' +
+      '        criteria_lines.append(f"- id={cid}: {criterion}")\n' +
+      '\n' +
+      '    return (\n' +
+      '        "Je bent de onafhankelijke HADES Verification/Critic. "\n' +
+      '        "Bepaal of de oorspronkelijke taak werkelijk is voltooid volgens de acceptance criteria. "\n' +
+      '        "Een geslaagde maar irrelevante toolcall is geen bewijs van taakvoltooiing. "\n' +
+      '        "Het CONCEPTANTWOORD mag beoordeeld worden op relevantie, structuur, consistentie en formulering, "\n' +
+      '        "maar bewijst NIET zijn eigen feitelijke claims. Verwijs niet naar het concept als feitelijk bewijs. "\n' +
+      '        "Gebruik uitsluitend bestaande evidence_refs uit de toegestane lijst (bronnen/toolresultaten). "\n' +
+      '        "Ontbrekend bewijs => passed=false. Lever geen herschreven final_answer met nieuwe claims; "\n' +
+      '        "geef repair_instructions voor gerichte reparatie. "\n' +
+      '        "Antwoord ALLEEN met JSON: "\n' +
+      `        '{"passed":true|false,"issues":["..."],"evidence_refs":["step:1|tool:..."],'\n` +
+      `        '"final":"","incomplete":false,'\n` +
+      `        '"repair_instructions":["..."],'\n` +
+      `        '"criteria_checklist":[{"id":"c1","criterion":"...","met":true|false,"note":"..."}]}.\\n\\n'\n` +
+      '        f"TAAK:\\n{task_title}\\n{task_prompt}\\n\\nACCEPTANCE CRITERIA (match op id):\\n"\n' +
+      '        + "\\n".join(criteria_lines)\n' +
+      '        + "\\n\\nBeoordeel ELKE acceptance criterion in criteria_checklist met hetzelfde id en met=true/false (echte booleans)."\n' +
+      '        + f"\\n\\nCONCEPTANTWOORD (onder beoordeling, GEEN feitelijk bewijs):'... 17105 more characters
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    from __future__ import annotations
+    
+    import json
+    import re
+    from typing import Any
+    
+    from .contracts import AcceptanceCriterionMatch, ToolObservation, VerificationResult
+    
+    _SUCCESS = {"completed", "succeeded", "success", "ok"}
+    _FAILURE = {"failed", "error", "blocked", "rejected", "cancelled", "timeout"}
+    
+    # Soft display/parse bound — overflow criteria are marked unmet, never silently dropped as passed.
+    _CHECKLIST_SOFT_LIMIT = 48
+    
+    _TRUE_STRINGS = frozenset({"true", "yes", "y", "1"})
+    _FALSE_STRINGS = frozenset({"false", "no", "n", "0"})
+    
+    
+    def _extract_json(text: str) -> Any | None:
+        candidates = [text.strip()]
+        fenced = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.S | re.I)
+        candidates = fenced + candidates
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            candidates.append(text[start : end + 1])
+        for candidate in candidates:
+            try:
+                return json.loads(candidate)
+            except Exception:
+                continue
+        return None
+    
+    
+    def parse_strict_bool(value: Any) -> bool | None:
+        """Parse verification booleans strictly.
+    
+        Accepts real bools and the explicit strings true/false (case-insensitive).
+        Rejects arbitrary truthy values such as non-empty strings (including "false"
+        when coerced via bool()).
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if value == 1:
+                return True
+            if value == 0:
+                return False
+            return None
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in _TRUE_STRINGS:
+                return True
+            if normalized in _FALSE_STRINGS:
+                return False
+            return None
+        return None
+    
+    
+    def criterion_id_for(index: int, criterion: str = "") -> str:
+        """Stable criterion id for matching (order-based, independent of wording drift)."""
+        _ = criterion  # wording is not part of the id — ids stay stable across paraphrases
+        return f"c{index + 1}"
+    
+    
+    def _norm_criterion(text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").strip().lower())
+    
+    
+    def _tool_status(item: ToolObservation | dict[str, Any]) -> str:
+        if isinstance(item, ToolObservation):
+            return str(item.status or "")
+        return str(item.get("status") or "")
+    
+    
+    def _tool_call_id(item: ToolObservation | dict[str, Any]) -> str | None:
+        if isinstance(item, ToolObservation):
+            value = item.call_id
+        else:
+            value = item.get("call_id") or item.get("id")
+        return str(value) if value else None
+    
+    
+    def _tool_optional(item: ToolObservation | dict[str, Any]) -> bool:
+        if isinstance(item, ToolObservation):
+            return False
+        return bool(item.get("optional"))
+    
+    
+    def _step_is_draft_only(step: dict[str, Any]) -> bool:
+        """True when a step is the candidate/draft answer under review, not source evidence."""
+        if step.get("is_draft") or step.get("evidence_role") in {"draft", "candidate_answer", "under_review"}:
+            return True
+        title = str(step.get("title") or "").strip().lower()
+        return title in {"chatantwoord", "draft", "candidate answer", "conceptantwoord", "onder beoordeling"}
+    
+    
+    def build_allowed_evidence_refs(
+        *,
+        step_outputs: list[dict[str, Any]] | None = None,
+        tool_observations: list[ToolObservation] | list[dict[str, Any]] | None = None,
+        include_draft_steps: bool = False,
+    ) -> set[str]:
+        allowed: set[str] = set()
+        for index, step in enumerate(step_outputs or [], start=1):
+            if _step_is_draft_only(step) and not include_draft_steps:
+                # Draft may be assessed for structure/relevance, but is not factual evidence.
+                continue
+            allowed.add(f"step:{index}")
+            step_id = step.get("step_id") or step.get("id")
+            if step_id:
+                allowed.add(f"step:{step_id}")
+            title = str(step.get("title") or "").strip()
+            if title:
+                allowed.add(f"step:{title}")
+            provenance = str(step.get("provenance") or "").strip()
+            if provenance:
+                allowed.add(provenance)
+            for ref in step.get("evidence_refs") or []:
+                if ref:
+                    allowed.add(str(ref))
+        for item in tool_observations or []:
+            call_id = _tool_call_id(item)
+            status = _tool_status(item)
+            if call_id and status in _SUCCESS:
+                allowed.add(f"tool:{call_id}")
+            if isinstance(item, ToolObservation):
+                plugin_id, tool_name = item.plugin_id, item.tool_name
+            else:
+                plugin_id = str(item.get("plugin_id") or "")
+                tool_name = str(item.get("tool_name") or "")
+            if plugin_id and tool_name and status in _SUCCESS:
+                allowed.add(f"tool:{plugin_id}/{tool_name}")
+        return allowed
+    
+    
+    def validate_evidence_refs(
+        refs: list[str],
+        *,
+        step_outputs: list[dict[str, Any]] | None = None,
+        tool_observations: list[ToolObservation] | list[dict[str, Any]] | None = None,
+        include_draft_steps: bool = False,
+    ) -> tuple[bool, str]:
+        """Every evidence_ref must resolve to a real step or successful tool observation."""
+        if not refs:
+            return True, ""
+        allowed = build_allowed_evidence_refs(
+            step_outputs=step_outputs,
+            tool_observations=tool_observations,
+            include_draft_steps=include_draft_steps,
+        )
+        unknown = [ref for ref in refs if ref not in allowed]
+        if unknown:
+            return False, f"Onbekende of ongeldige evidence_refs: {', '.join(unknown[:6])}"
+        return True, ""
+    
+    
+    def required_tool_failures(
+        tool_observations: list[ToolObservation] | list[dict[str, Any]] | None,
+    ) -> list[str]:
+        failures: list[str] = []
+        for item in tool_observations or []:
+            if _tool_optional(item):
+                continue
+            status = _tool_status(item)
+            if status in _FAILURE:
+                if isinstance(item, ToolObservation):
+                    label = f"{item.plugin_id}/{item.tool_name}"
+                    detail = item.error or status
+                else:
+                    label = f"{item.get('plugin_id')}/{item.get('tool_name')}"
+                    detail = item.get("error") or status
+                failures.append(f"{label}: {detail}")
+        return failures
+    
+    
+    def build_verification_prompt(
+        *,
+        task_title: str,
+        task_prompt: str,
+        acceptance_criteria: list[str],
+        step_outputs: list[dict[str, str]],
+        tool_observations: list[ToolObservation] | list[dict[str, Any]],
+        draft_answer: str | None = None,
+    ) -> str:
+        evidence_parts: list[str] = []
+        draft_parts: list[str] = []
+        for index, item in enumerate(step_outputs):
+            block = (
+                f"=== {index + 1}. {item.get('title')} ({item.get('agent_id')}) ===\n"
+                f"{str(item.get('output', ''))[:18_000]}"
+            )
+            if _step_is_draft_only(item):
+                draft_parts.append(block)
+            else:
+                evidence_parts.append(block)
+        if draft_answer and not draft_parts:
+            draft_parts.append(f"=== DRAFT UNDER REVIEW ===\n{draft_answer[:18_000]}")
+        evidence = "\n\n".join(evidence_parts) or "(geen bron/tool-observaties)"
+        draft_view = "\n\n".join(draft_parts) or "(geen conceptantwoord)"
+    
+        tools_view: list[dict[str, Any]] = []
+        for item in tool_observations:
+            if isinstance(item, ToolObservation):
+                tools_view.append(
+                    {
+                        "call_id": item.call_id,
+                        "plugin_id": item.plugin_id,
+                        "tool_name": item.tool_name,
+                        "status": item.status,
+                        "exit_code": item.exit_code,
+                        "error": item.error,
+                        "succeeded": item.succeeded,
+                    }
+                )
+            else:
+                tools_view.append(
+                    {
+                        "call_id": item.get("call_id") or item.get("id"),
+                        "plugin_id": item.get("plugin_id"),
+                        "tool_name": item.get("tool_name"),
+                        "status": item.get("status"),
+                        "exit_code": item.get("exit_code"),
+                        "error": item.get("error"),
+                    }
+                )
+        allowed = sorted(
+            build_allowed_evidence_refs(
+                step_outputs=list(step_outputs),
+                tool_observations=tool_observations,
+                include_draft_steps=False,
+            )
+        )
+        criteria = acceptance_criteria or ["De oorspronkelijke opdracht is volledig uitgevoerd."]
+        criteria_lines = []
+        for index, criterion in enumerate(criteria):
+            cid = criterion_id_for(index, criterion)
+            criteria_lines.append(f"- id={cid}: {criterion}")
+    
+        return (
+            "Je bent de onafhankelijke HADES Verification/Critic. "
+            "Bepaal of de oorspronkelijke taak werkelijk is voltooid volgens de acceptance criteria. "
+            "Een geslaagde maar irrelevante toolcall is geen bewijs van taakvoltooiing. "
+            "Het CONCEPTANTWOORD mag beoordeeld worden op relevantie, structuur, consistentie en formulering, "
+            "maar bewijst NIET zijn eigen feitelijke claims. Verwijs niet naar het concept als feitelijk bewijs. "
+            "Gebruik uitsluitend bestaande evidence_refs uit de toegestane lijst (bronnen/toolresultaten). "
+            "Ontbrekend bewijs => passed=false. Lever geen herschreven final_answer met nieuwe claims; "
+            "geef repair_instructions voor gerichte reparatie. "
+            "Antwoord ALLEEN met JSON: "
+            '{"passed":true|false,"issues":["..."],"evidence_refs":["step:1|tool:..."],'
+            '"final":"","incomplete":false,'
+            '"repair_instructions":["..."],'
+            '"criteria_checklist":[{"id":"c1","criterion":"...","met":true|false,"note":"..."}]}.\n\n'
+            f"TAAK:\n{task_title}\n{task_prompt}\n\nACCEPTANCE CRITERIA (match op id):\n"
+            + "\n".join(criteria_lines)
+            + "\n\nBeoordeel ELKE acceptance criterion in criteria_checklist met hetzelfde id en met=true/false (echte booleans)."
+            + f"\n\nCONCEPTANTWOORD (onder beoordeling, GEEN feitelijk bewijs):\n{draft_view}"
+            + f"\n\nBRONMATERIAAL / WERKRESULTATEN:\n{evidence}\n\nTOOLSTATUS:\n{json.dumps(tools_view, ensure_ascii=False)}"
+            + f"\n\nTOEGESTANE EVIDENCE_REFS (geen draft):\n{json.dumps(allowed, ensure_ascii=False)}"
+        )
+    
+    
+    def _parse_criteria_checklist(raw: Any) -> tuple[list[AcceptanceCriterionMatch], list[str]]:
+        """Parse checklist rows with strict bools. Returns (rows, parse_issues)."""
+        if not isinstance(raw, list):
+            return [], ["criteria_checklist ontbreekt of is geen lijst"]
+        rows: list[AcceptanceCriterionMatch] = []
+        issues: list[str] = []
+        seen_ids: set[str] = set()
+        for item in raw:
+            if len(rows) >= _CHECKLIST_SOFT_LIMIT:
+                issues.append(f"checklist_truncated_at_{_CHECKLIST_SOFT_LIMIT}")
+                break
+            if isinstance(item, dict):
+                criterion = str(item.get("criterion") or item.get("text") or "").strip()
+                cid = str(item.get("id") or item.get("criterion_id") or "").strip()
+                if not criterion and not cid:
+                    continue
+                note = str(item.get("note") or item.get("reason") or "").strip()[:400]
+                met_raw = item.get("met", item.get("passed", None))
+                met = parse_strict_bool(met_raw)
+                if met is None:
+                    issues.append(f"invalid_bool_for:{cid or criterion[:40]}")
+                    met = False
+                    if not note:
+                        note = f"Ongeldige met-waarde ({met_raw!r}); behandeld als niet behaald"
+                if cid and cid in seen_ids:
+                    issues.append(f"duplicate_criterion_id:{cid}")
+                    note = (note + "; dubbele id genegeerd voor matching").strip("; ")
+                if cid:
+                    seen_ids.add(cid)
+                rows.append(
+                    AcceptanceCriterionMatch(
+                        criterion=criterion[:500] or cid,
+                        met=met,
+                        note=note,
+                        criterion_id=cid,
+                    )
+                )
+            elif isinstance(item, str) and item.strip():
+                rows.append(
+                    AcceptanceCriterionMatch(criterion=item.strip()[:500], met=False, note="Geen met-veld", criterion_id="")
+                )
+        return rows, issues
+    
+    
+    def bounded_schema_repair(parsed: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+        """Attempt a bounded repair of near-valid critic JSON. Returns (repaired|None, notes)."""
+        notes: list[str] = []
+        if not isinstance(parsed, dict):
+            return None, ["not_an_object"]
+        out = dict(parsed)
+    
+        passed = parse_strict_bool(out.get("passed"))
+        if passed is None and "passed" in out:
+            notes.append("passed_not_strict_bool")
+            return None, notes
+        if passed is None:
+            # Missing passed — cannot invent success.
+            notes.append("passed_missing")
+            out["passed"] = False
+            out["incomplete"] = True
+            passed = False
+        else:
+            out["passed"] = passed
+    
+        incomplete = parse_strict_bool(out.get("incomplete"))
+        if incomplete is None:
+            out["incomplete"] = False if "incomplete" not in out else True
+            if "incomplete" in parsed and parse_strict_bool(parsed.get("incomplete")) is None:
+                notes.append("incomplete_defaulted_true_after_invalid")
+                out["incomplete"] = True
+        else:
+            out["incomplete"] = incomplete
+    
+        issues = out.get("issues", [])
+        if not isinstance(issues, list):
+            out["issues"] = [str(issues)]
+            notes.append("issues_coerced_to_list")
+        evidence_refs = out.get("evidence_refs", [])
+        if not isinstance(evidence_refs, list):
+            out["evidence_refs"] = []
+            notes.append("evidence_refs_cleared_invalid")
+        checklist = out.get("criteria_checklist") or out.get("acceptance_checklist") or out.get("checklist")
+        if checklist is not None and not isinstance(checklist, list):
+            out["criteria_checklist"] = []
+            notes.append("checklist_cleared_invalid")
+        elif isinstance(checklist, list):
+            out["criteria_checklist"] = checklist
+        repairs = out.get("repair_instructions", [])
+        if repairs is not None and not isinstance(repairs, list):
+            out["repair_instructions"] = [str(repairs)]
+            notes.append("repair_instructions_coerced")
+        if notes:
+            notes.insert(0, "schema_repaired")
+        return out, notes
+    
+    
+    def build_acceptance_checklist(
+        criteria: list[str] | None,
+        *,
+        result: VerificationResult | None = None,
+    ) -> list[AcceptanceCriterionMatch]:
+        """Build a visible checklist matched by stable criterion ids / exact text.
+    
+        Rules:
+        - No positional fallback that can map the wrong critic row onto an expected criterion.
+        - A bare passed=True without per-criterion rows does NOT mark criteria as met.
+        - Soft limits never silently drop required criteria as satisfied.
+        """
+        expected_raw = [str(item).strip() for item in (criteria or []) if str(item).strip()]
+        truncated_note = ""
+        if len(expected_raw) > _CHECKLIST_SOFT_LIMIT:
+            truncated_note = f"Soft limit {_CHECKLIST_SOFT_LIMIT}: overige criteria blijven expliciet unmet"
+        expected = expected_raw  # never drop requirements from the matching set
+    
+        if not expected:
+            expected = ["De oorspronkelijke opdracht is volledig uitgevoerd."]
+    
+        if result is None:
+            return [
+                AcceptanceCriterionMatch(
+                    criterion=item,
+                    met=False,
+                    note="Nog niet geverifieerd",
+                    criterion_id=criterion_id_for(index, item),
+                )
+                for index, item in enumerate(expected)
+            ]
+    
+        by_id: dict[str, AcceptanceCriterionMatch] = {}
+        by_norm: dict[str, AcceptanceCriterionMatch] = {}
+        unknown_ids: list[str] = []
+        expected_ids = {criterion_id_for(i, c) for i, c in enumerate(expected)}
+        expected_norms = {_norm_criterion(c) for c in expected}
+    
+        for row in result.criteria_checklist:
+            cid = (row.criterion_id or "").strip()
+            if cid:
+                if cid in by_id:
+                    continue  # duplicate id: first wins
+                if cid not in expected_ids:
+                    unknown_ids.append(cid)
+                by_id[cid] = row
+            norm = _norm_criterion(row.criterion)
+            if norm and norm not in by_norm:
+                by_norm[norm] = row
+                if norm not in expected_norms and not cid:
+                    unknown_ids.append(f"text:{row.criterion[:40]}")
+    
+        matched: list[AcceptanceCriterionMatch] = []
+        for index, criterion in enumerate(expected):
+            cid = criterion_id_for(index, criterion)
+            row = by_id.get(cid) or by_norm.get(_norm_criterion(criterion))
+            if row is not None:
+                matched.append(
+                    AcceptanceCriterionMatch(
+                        criterion=criterion,
+                        met=bool(row.met),
+                        note=row.note,
+                        criterion_id=cid,
+                    )
+                )
+            elif not result.criteria_checklist:
+                # Missing checklist entirely — even if passed=True, criteria are unmet.
+                note = "Geen criteria_checklist; algemeen passed vervangt geen individuele controle"
+                if result.passed:
+                    note = "passed=true zonder checklist; criterium niet individueel aangetoond"
+                matched.append(
+                    AcceptanceCriterionMatch(criterion=criterion, met=False, note=note, criterion_id=cid)
+                )
+            else:
+                matched.append(
+                    AcceptanceCriterionMatch(
+                        criterion=criterion,
+                        met=False,
+                        note="Geen match op criterion id/tekst (geen positionele fallback)",
+                        criterion_id=cid,
+                    )
+                )
+    
+        if unknown_ids and result is not None:
+            # Surface unknown ids on the first unmatched note if needed; callers can inspect issues.
+            result.issues = list(result.issues) + [f"onbekende_criterion_ids:{','.join(unknown_ids[:6])}"]
+            result.issues = result.issues[:16]
+    
+        if truncated_note:
+            for row in matched[_CHECKLIST_SOFT_LIMIT:]:
+                if row.met:
+                    row.met = False
+                    row.note = (row.note + "; " if row.note else "") + truncated_note
+    
+        return matched
+    
+    
+    def checklist_blocks_completion(checklist: list[AcceptanceCriterionMatch] | list[dict[str, Any]] | None) -> bool:
+        for item in checklist or []:
+            if isinstance(item, AcceptanceCriterionMatch):
+                if not item.met:
+                    return True
+            elif isinstance(item, dict):
+                met = parse_strict_bool(item.get("met"))
+                if met is not True:
+                    return True
+        return False
+    
+    
+    def parse_verification_result(raw: str) -> VerificationResult | None:
+        """Parse critic output. Invalid schema after bounded repair => unverified/incomplete."""
+        parsed = _extract_json(raw)
+        repair_notes: list[str] = []
+        if not isinstance(parsed, dict):
+            return VerificationResult(
+                passed=False,
+                issues=["Ongeldige JSON van verification/critic"],
+                final_answer="",
+                method="structured_critic",
+                incomplete=True,
+                parse_status="invalid_json",
+                schema_valid=False,
+                criteria_coverage_complete=False,
+                evidence_sufficient=False,
+            )
+    
+        repaired, repair_notes = bounded_schema_repair(parsed)
+        if repaired is None:
+            return VerificationResult(
+                passed=False,
+                issues=["Ongeldig schema van verification/critic"] + repair_notes,
+                final_answer="",
+                method="structured_critic",
+                incomplete=True,
+                parse_status="invalid_schema",
+                schema_valid=False,
+                criteria_coverage_complete=False,
+                evidence_sufficient=False,
+                repair_notes=repair_notes,
+            )
+    
+        passed = bool(repaired["passed"])
+        issues = [str(item) for item in (repaired.get("issues") or [])[:12]]
+        evidence_refs = [str(item) for item in (repaired.get("evidence_refs") or [])[:20]]
+        checklist, checklist_issues = _parse_criteria_checklist(
+            repaired.get("criteria_checklist") or repaired.get("acceptance_checklist") or repaired.get("checklist")
+        )
+        issues.extend(checklist_issues[:6])
+        repair_instructions = [str(item) for item in (repaired.get("repair_instructions") or [])[:12]]
+        proposed = str(repaired.get("final") or repaired.get("proposed_final_answer") or "").strip()
+        incomplete = bool(repaired.get("incomplete", False))
+        parse_status = "repaired" if repair_notes else "valid_schema"
+    
+        return VerificationResult(
+            passed=passed,
+            issues=issues,
+            final_answer="",  # Do not auto-adopt critic rewrite as verified final.
+            evidence_refs=evidence_refs,
+            method="structured_critic",
+            incomplete=incomplete,
+            criteria_checklist=checklist,
+            parse_status=parse_status,
+            schema_valid=True,
+            criteria_coverage_complete=False,  # filled by verification_allows_success
+            evidence_sufficient=False,
+            repair_notes=repair_notes,
+            repair_instructions=repair_instructions,
+            proposed_final_answer=proposed,
+        )
+    
+    
+    def verification_allows_success(
+        result: VerificationResult | None,
+        *,
+        tool_observations: list[ToolObservation] | list[dict[str, Any]] | None = None,
+        step_outputs: list[dict[str, Any]] | None = None,
+        require_final: bool = True,
+        require_evidence_when_tools: bool = True,
+        acceptance_criteria: list[str] | None = None,
+        allow_draft_as_evidence: bool = False,
+    ) -> tuple[bool, str]:
+        if result is None:
+            return False, "Verification/Critic gaf geen valide completion-beslissing."
+        if result.parse_status in {"invalid_json", "invalid_schema"}:
+            return False, "Verification output ongeldig; status blijft unverified/incomplete."
+        if result.incomplete:
+            return False, "Verification markeerde het resultaat als incompleet."
+        if not result.passed:
+            return False, "; ".join(result.issues[:8]) or "Critic vond onvoldoende bewijs."
+    
+        # Prefer draft content already produced; proposed_final_answer is advisory only unless
+        # callers explicitly adopt it after targeted re-check.
+        usable_final = (result.final_answer or result.proposed_final_answer or "").strip()
+        if require_final and not usable_final:
+            # Chat path often keeps the original draft; allow success when draft exists in steps.
+            draft_present = any(_step_is_draft_only(step) and str(step.get("output") or "").strip() for step in (step_outputs or []))
+            if not draft_present:
+                return False, "Verification slaagde maar leverde geen bruikbaar eindresultaat."
+    
+        checklist = build_acceptance_checklist(acceptance_criteria, result=result)
+        result.criteria_checklist = checklist
+        # Coverage = every expected criterion has an explicit row (matched or explicitly unmet).
+        # Missing checklist still yields rows, but those are incomplete coverage.
+        missing_individual = any(
+            "zonder checklist" in (row.note or "")
+            or row.note.startswith("Geen criteria_checklist")
+            or "geen positionele fallback" in (row.note or "").lower()
+            for row in checklist
+        )
+        expected_count = len([c for c in (acceptance_criteria or checklist) if str(getattr(c, "criterion", c) or "").strip()])
+        result.criteria_coverage_complete = bool(checklist) and len(checklist) >= max(1, expected_count) and not missing_individual
+    
+        if checklist_blocks_completion(checklist):
+            unmet = [row.criterion for row in checklist if not row.met][:6]
+            result.parse_status = "incomplete_coverage" if not any(row.met for row in checklist) else "unverified"
+            return False, "Acceptatiecriteria niet gehaald: " + "; ".join(unmet)
+    
+        failures = required_tool_failures(tool_observations)
+        if failures:
+            return False, "Vereiste toolactie(s) mislukt zonder aantoonbaar herstel: " + "; ".join(failures[:6])
+    
+        if result.evidence_refs:
+            ok, reason = validate_evidence_refs(
+                result.evidence_refs,
+                step_outputs=step_outputs,
+                tool_observations=tool_observations,
+                include_draft_steps=allow_draft_as_evidence,
+            )
+            if not ok:
+                result.evidence_sufficient = False
+                return False, reason
+            result.evidence_sufficient = True
+        else:
+            result.evidence_sufficient = False
+    
+        if require_evidence_when_tools and tool_observations is not None and not result.evidence_refs:
+            successes = 0
+            for item in tool_observations:
+                if _tool_status(item) in _SUCCESS:
+                    successes += 1
+            if successes > 0:
+                return False, "Toolsucces zonder gekoppeld taakbewijs is onvoldoende voor completion."
+            non_draft_steps = [s for s in (step_outputs or []) if not _step_is_draft_only(s)]
+            if non_draft_steps:
+                return False, "Voltooide werkstappen vereisen gekoppelde evidence_refs."
+    
+        result.parse_status = "verified"
+        # Keep proposed text available but do not treat it as already-verified final unless set.
+        if not result.final_answer and result.proposed_final_answer:
+            # Callers that require_final may copy after their own checks; leave final empty by default.
+            pass
+        return True, ""
+    
+    
+    def apply_critic_outcome(
+        *,
+        draft_answer: str,
+        result: VerificationResult | None,
+        allowed: bool,
+        reason: str,
+    ) -> tuple[str, str, list[str]]:
+        """Apply critic outcome without unchecked adoption of rewritten claims.
+    
+        Returns (content, status_note, repair_instructions).
+        Contract: critic assesses + gives repair instructions; a rewritten final is
+        advisory (proposed_final_answer) and is only used when it does not introduce
+        unchecked replacement of the draft as factual verification.
+        """
+        if not allowed or result is None:
+            repairs = list(result.repair_instructions) if result else []
+            suffix = f"\n\n---\nVerificatie kon voltooiing niet bevestigen: {reason}"
+            if repairs:
+                suffix += "\nGerichte reparatie: " + "; ".join(repairs[:4])
+            return draft_answer + suffix, f"verification:failed:{reason}", repairs
+    
+        # Prefer keeping the draft; only adopt proposed text when it is a constrained repair
+        # and evidence still holds — callers should re-verify material rewrites.
+        proposed = (result.proposed_final_answer or "").strip()
+        if proposed and proposed != draft_answer.strip():
+            # Do not silently replace; return draft with repair note unless proposed is empty-final path.
+            if result.repair_instructions:
+                return (
+                    draft_answer,
+                    "verification:passed_with_repair_instructions",
+                    list(result.repair_instructions),
+                )
+            # Short structural polish without new claim markers may be adopted by caller after re-check.
+            return draft_answer, "verification:passed_proposed_rewrite_pending_recheck", list(result.repair_instructions)
+        return draft_answer, "verification:passed", []
+    
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///workspace/tests/source-contracts.test.mjs:31:10)
+    async Test.run (node:internal/test_runner/test:980:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:677:7)
+  ...
+# Subtest: Research, knowledge and plugin APIs are present in the release
+ok 15 - Research, knowledge and plugin APIs are present in the release
+  ---
+  duration_ms: 7.089302
+  ...
+# Subtest: release no longer ships inactive Cloudflare/OpenAI Sites scaffolding
+ok 16 - release no longer ships inactive Cloudflare/OpenAI Sites scaffolding
+  ---
+  duration_ms: 0.545282
+  ...
+# Subtest: package.json and package-lock root dependencies match
+ok 17 - package.json and package-lock root dependencies match
+  ---
+  duration_ms: 3.257543
+  ...
+# Subtest: v0.4 chat prompts, autonomous tools, labels and one-click launcher are wired
+ok 18 - v0.4 chat prompts, autonomous tools, labels and one-click launcher are wired
+  ---
+  duration_ms: 3.48991
+  ...
+# Subtest: v0.4.1 Plugin Runtime exposes structured calls and verified lifecycle output
+ok 19 - v0.4.1 Plugin Runtime exposes structured calls and verified lifecycle output
+  ---
+  duration_ms: 3.843116
+  ...
+# Subtest: dependency repair exposes bounded live diagnostics without moving controls into Settings
+ok 20 - dependency repair exposes bounded live diagnostics without moving controls into Settings
+  ---
+  duration_ms: 0.875404
+  ...
+# Subtest: Settings page exposes every DEFAULT_SETTINGS key as an editable control
+ok 21 - Settings page exposes every DEFAULT_SETTINGS key as an editable control
+  ---
+  duration_ms: 7.764881
+  ...
+# Subtest: Agents page is wired to live /api/agents console without mock production data
+ok 22 - Agents page is wired to live /api/agents console without mock production data
+  ---
+  duration_ms: 2.589698
+  ...
+# Subtest: Plugin Converter packages source without dependency installation or source execution
+ok 23 - Plugin Converter packages source without dependency installation or source execution
+  ---
+  duration_ms: 0.822147
+  ...
+# Subtest: Plugins page can pack a selected folder into a usable .HadesPlugin
+ok 24 - Plugins page can pack a selected folder into a usable .HadesPlugin
+  ---
+  duration_ms: 3.312695
+  ...
+# Subtest: Voice-to-task path is paste/local STT; built-in ASR lives in voice mode
+ok 25 - Voice-to-task path is paste/local STT; built-in ASR lives in voice mode
+  ---
+  duration_ms: 2.453291
+  ...
+# Subtest: VoiceStudio is a swappable local TTS provider for spoken answers
+ok 26 - VoiceStudio is a swappable local TTS provider for spoken answers
+  ---
+  duration_ms: 4.367051
+  ...
+# Subtest: Coding Agent composer/indexer/debug/release surfaces are wired
+ok 27 - Coding Agent composer/indexer/debug/release surfaces are wired
+  ---
+  duration_ms: 6.981748
+  ...
+# Subtest: P0 chat: optimistic replace, provisional stream, live usage card
+ok 28 - P0 chat: optimistic replace, provisional stream, live usage card
+  ---
+  duration_ms: 2.913001
+  ...
+# WebSocket server error: Port 24678 is already in use
+# Subtest: production CSS contains HADES shell and Work Runtime styling
+ok 29 - production CSS contains HADES shell and Work Runtime styling
+  ---
+  duration_ms: 26.520646
+  ...
+# Subtest: progress primitive forwards accessibility semantics
+ok 30 - progress primitive forwards accessibility semantics
+  ---
+  duration_ms: 1007.40896
+  ...
+# Subtest: HADES page header and panel render reusable shell markup
+ok 31 - HADES page header and panel render reusable shell markup
+  ---
+  duration_ms: 396.623541
+  ...
+# Subtest: heavy HADES routes are lazy and route boundary is exported
+ok 32 - heavy HADES routes are lazy and route boundary is exported
+  ---
+  duration_ms: 567.815094
+  ...
+# Subtest: trustworthy agent UX components render accessible summaries
+ok 33 - trustworthy agent UX components render accessible summaries
+  ---
+  duration_ms: 5.049433
+  ...
+# Subtest: agents console helpers filter inactive (*) agents and missing metrics
+ok 34 - agents console helpers filter inactive (*) agents and missing metrics
+  ---
+  duration_ms: 9.559149
+  ...
+# Subtest: dual UI settings are persisted and typed
+ok 35 - dual UI settings are persisted and typed
+  ---
+  duration_ms: 4.880806
+  ...
+# Subtest: Obsidian style system is complete and scoped
+ok 36 - Obsidian style system is complete and scoped
+  ---
+  duration_ms: 10.721937
+  ...
+# Subtest: Interface preset applies ui_style immediately on selection
+ok 37 - Interface preset applies ui_style immediately on selection
+  ---
+  duration_ms: 9.225922
+  ...
+# Subtest: Hades app switches shells from ui_style without fake telemetry
+ok 38 - Hades app switches shells from ui_style without fake telemetry
+  ---
+  duration_ms: 5.382207
+  ...
+# Subtest: shouldAutoFetch respects enabled=false on visibility
+ok 39 - shouldAutoFetch respects enabled=false on visibility
+  ---
+  duration_ms: 497.173163
+  ...
+# Subtest: multiple subscribers dedupe concurrent fetches
+ok 40 - multiple subscribers dedupe concurrent fetches
+  ---
+  duration_ms: 34.070843
+  ...
+# Subtest: aborted/stale responses do not overwrite newer data
+ok 41 - aborted/stale responses do not overwrite newer data
+  ---
+  duration_ms: 9.301223
+  ...
+# Subtest: manual refetch works when enabled=false; invalidate marks needsRefetch
+ok 42 - manual refetch works when enabled=false; invalidate marks needsRefetch
+  ---
+  duration_ms: 0.354171
+  ...
+# (!) Failed to run dependency scan. Skipping dependency pre-bundling. Error:   Failed to scan for dependencies from entries:
+#   /workspace/index.html
+#   Build failed with 2 errors:
+# [plugin vite:dep-scan:resolve]
+# Error: The server is being restarted or closed. Request is outdated
+#     at throwClosedServerError (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30025:30)
+#     at EnvironmentPluginContainer.resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30160:65)
+#     at resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30866:38)
+#     at resolve (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30878:22)
+#     at PluginContextImpl.resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:31008:29)
+#     at plugin (file:///workspace/node_modules/rolldown/dist/shared/bindingify-input-options-BnfFBV6b.mjs:1092:30)
+#     at plugin.<computed> (file:///workspace/node_modules/rolldown/dist/shared/bindingify-input-options-BnfFBV6b.mjs:1625:18)
+# [plugin vite:dep-scan:resolve]
+# Error: The server is being restarted or closed. Request is outdated
+#     at throwClosedServerError (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30025:30)
+#     at EnvironmentPluginContainer.resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30160:65)
+#     at resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30866:38)
+#     at resolve (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30878:22)
+#     at PluginContextImpl.resolveId (file:///workspace/node_modules/vite/dist/node/chunks/node.js:31008:29)
+#     at plugin (file:///workspace/node_modules/rolldown/dist/shared/bindingify-input-options-BnfFBV6b.mjs:1092:30)
+#     at plugin.<computed> (file:///workspace/node_modules/rolldown/dist/shared/bindingify-input-options-BnfFBV6b.mjs:1625:18)
+#     at aggregateBindingErrorsIntoJsError (file:///workspace/node_modules/rolldown/dist/shared/error-CkdMJ9ps.mjs:48:18)
+#     at unwrapBindingResult (file:///workspace/node_modules/rolldown/dist/shared/error-CkdMJ9ps.mjs:18:128)
+#     at scan (file:///workspace/node_modules/rolldown/dist/experimental-index.mjs:176:3)
+#     at async Object.build (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30826:3)
+#     at async scan (file:///workspace/node_modules/vite/dist/node/chunks/node.js:30771:4)
+#     at async file:///workspace/node_modules/vite/dist/node/chunks/node.js:23242:15
+# Subtest: voiceMediaSupported rejects insecure context
+ok 43 - voiceMediaSupported rejects insecure context
+  ---
+  duration_ms: 192.784211
+  ...
+# Subtest: AudioCapture maps NotAllowedError to denied mic state
+ok 44 - AudioCapture maps NotAllowedError to denied mic state
+  ---
+  duration_ms: 0.775752
+  ...
+# Subtest: AudioCapture stop ends MediaStream tracks (HOST_TEST session close)
+ok 45 - AudioCapture stop ends MediaStream tracks (HOST_TEST session close)
+  ---
+  duration_ms: 0.498328
+  ...
+# Subtest: PlaybackQueue rejects stale generation and measures interrupt stop
+ok 46 - PlaybackQueue rejects stale generation and measures interrupt stop
+  ---
+  duration_ms: 168.020097
+  ...
+# Subtest: alignGeneration cancels queued segments from older generation
+ok 47 - alignGeneration cancels queued segments from older generation
+  ---
+  duration_ms: 0.349925
+  ...
+# Subtest: Chat exposes dictation, spoken answers, conversation, stop, and read-aloud controls
+ok 48 - Chat exposes dictation, spoken answers, conversation, stop, and read-aloud controls
+  ---
+  duration_ms: 4.423773
+  ...
+# Subtest: Dictation toggle uses continuous VAD; session honors turn mode and wake/barge-in
+ok 49 - Dictation toggle uses continuous VAD; session honors turn mode and wake/barge-in
+  ---
+  duration_ms: 1.601366
+  ...
+# Subtest: Audio capture enforces user gesture, secure context, and echo constraints
+ok 50 - Audio capture enforces user gesture, secure context, and echo constraints
+  ---
+  duration_ms: 0.521573
+  ...
+# Subtest: Playback queue supports generation cancel for barge-in
+ok 51 - Playback queue supports generation cancel for barge-in
+  ---
+  duration_ms: 0.645443
+  ...
+# Subtest: Settings Spraak panel includes install and device tests
+ok 52 - Settings Spraak panel includes install and device tests
+  ---
+  duration_ms: 0.939315
+  ...
+# Subtest: VoiceComposerControls renders dictation and conversation actions
+ok 53 - VoiceComposerControls renders dictation and conversation actions
+  ---
+  duration_ms: 612.952417
+  ...
+# Subtest: VoicePanel renders interrupt and settings affordances
+ok 54 - VoicePanel renders interrupt and settings affordances
+  ---
+  duration_ms: 44.665929
+  ...
+# Subtest: VoiceMessageActions renders replay without duplicating Voorlezen
+ok 55 - VoiceMessageActions renders replay without duplicating Voorlezen
+  ---
+  duration_ms: 4.143384
+  ...
+1..55
+# tests 55
+# suites 0
+# pass 54
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3995.135091

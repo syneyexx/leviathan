@@ -1,0 +1,160 @@
+{
+  "format": 1,
+  "id": "rtk",
+  "name": "RTK",
+  "version": "0.1.0",
+  "description": "Rust Token Killer: compress common shell/dev command output before it reaches an LLM. Builds with Cargo on plugin install. Upstream: rtk-ai/rtk.",
+  "runtime_type": "rust",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Developer",
+  "labels": [
+    "tokens",
+    "cli",
+    "rust",
+    "rtk"
+  ],
+  "permissions": [
+    "subprocess",
+    "filesystem"
+  ],
+  "autonomous": true,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/rtk-ai/rtk",
+  "license": "Apache-2.0",
+  "dependency_install": {
+    "timeout_seconds": 2400,
+    "stall_timeout_seconds": 1200
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Locate the RTK binary built into the plugin runtime.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "gain",
+      "action": "status",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "gain"
+      ],
+      "description": "Show RTK savings dashboard (rtk gain).",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "run",
+      "action": "run",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "run",
+        "--args",
+        "{args}"
+      ],
+      "description": "Run RTK with argv tokens (example: git status, read file.py, ls .).",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "args"
+        ],
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "read_files",
+          "subprocess",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "read_files",
+      "subprocess",
+      "write_files"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "expensive",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/rtk-ai/rtk",
+    "license": "Apache-2.0",
+    "signed": false
+  }
+}

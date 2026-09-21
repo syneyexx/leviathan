@@ -1,0 +1,38 @@
+.no-motion .b2-link,
+.no-motion .b2-link-flow,
+.no-motion .b2-node-aura,
+.no-motion .b2-node-body,
+.no-motion .b2-node-orbit,
+.no-motion .b2-starfield circle,
+.no-motion .b2-satellite-halo {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (max-width: 1180px) {
+  .b2-layout { grid-template-columns: minmax(0, 1fr) 250px; }
+  .b2-graph-help { display: none; }
+  .b2-search { width: min(300px, 30vw); }
+}
+
+@media (max-width: 940px) {
+  .brain-redesign-page { overflow: auto; height: auto; }
+  .b2-toolbar { flex-wrap: wrap; }
+  .b2-count { margin-left: 0; }
+  .b2-view-controls { margin-left: auto; }
+  .b2-layout { grid-template-columns: 1fr; }
+  .b2-graph-panel { min-height: 590px; }
+  .b2-inspector { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); overflow: visible; }
+}
+
+@media (max-width: 680px) {
+  .brain-redesign-page { padding: 12px; }
+  .b2-header { align-items: flex-start; }
+  .b2-header-actions { flex-direction: column; align-items: stretch; }
+  .b2-search { width: 100%; }
+  .b2-type-select,
+  .b2-view-select { width: 150px; }
+  .b2-inspector { grid-template-columns: 1fr; }
+  .b2-minimap { width: 110px; }
+  .b2-legend { max-width: calc(100% - 130px); overflow-x: auto; }
+}

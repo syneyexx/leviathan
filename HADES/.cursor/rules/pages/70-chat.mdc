@@ -1,0 +1,15 @@
+---
+description: HADES Chat page context
+globs:
+  - "components/hades/pages/chat-page.tsx"
+  - "components/hades/pages/chat-reasoning-page.tsx"
+  - "components/hades/features/chat/**/*.ts"
+  - "components/hades/features/chat/**/*.tsx"
+  - "components/hades/obsidian/pages/chat-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `chat`.
+UI path: `chat-reasoning-page.tsx` wraps `chat-page.tsx`; reusable chat composition lives in `components/hades/features/chat/`; Obsidian has `obsidian/pages/chat-obsidian.tsx`.
+API contract: chat/settings methods and types in `lib/hades-api.ts`; speech client helpers in `lib/hades-speech.ts` when voice is involved.
+Backend owners: chat/retrieval/tool orchestration in `backend/main.py`, `backend/reasoning/`, persistence in `backend/database.py`, model transport in `backend/lm_studio.py`; voice-specific work may touch `backend/voice/`, `backend/speech/`, `backend/mentions.py`, `backend/chat_commands.py`.
+Do not scan unrelated pages for a Chat-only change.

@@ -1,0 +1,61 @@
+
+> hades-local-ai@0.4.1 build
+> vite build
+
+vite v8.0.13 building client environment for production...
+[2Ktransforming...✓ 2053 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                     0.50 kB │ gzip:   0.32 kB
+dist/.vite/manifest.json                           12.90 kB │ gzip:   1.54 kB
+dist/assets/brain-page-DnnFV_2b.css                20.02 kB │ gzip:   5.17 kB
+dist/assets/index-C1Ui2Zwr.css                    241.60 kB │ gzip:  41.48 kB
+dist/assets/agents-obsidian-Dx9-am3g.js             0.16 kB │ gzip:   0.14 kB
+dist/assets/brain-obsidian-Dk7pl9ZR.js              0.16 kB │ gzip:   0.14 kB
+dist/assets/tasks-obsidian-DKjvDgPj.js              0.16 kB │ gzip:   0.14 kB
+dist/assets/files-obsidian-BUjV-EGX.js              0.16 kB │ gzip:   0.15 kB
+dist/assets/models-obsidian-DMoLAbgp.js             0.16 kB │ gzip:   0.14 kB
+dist/assets/power-BvgqcEq7.js                       0.16 kB │ gzip:   0.16 kB
+dist/assets/memory-obsidian-qAGUjxUn.js             0.16 kB │ gzip:   0.14 kB
+dist/assets/trading-obsidian-C8AfCNOt.js            0.16 kB │ gzip:   0.14 kB
+dist/assets/plugins-obsidian-Bi4K8Qr5.js            0.16 kB │ gzip:   0.14 kB
+dist/assets/workflows-obsidian-C7eQvwok.js          0.17 kB │ gzip:   0.14 kB
+dist/assets/research-obsidian-Bcs-EAuO.js           0.17 kB │ gzip:   0.14 kB
+dist/assets/settings-obsidian-CpQxxCdc.js           0.17 kB │ gzip:   0.15 kB
+dist/assets/play-Clh9caHb.js                        0.18 kB │ gzip:   0.17 kB
+dist/assets/coding-agent-obsidian-D3b9fxMj.js       0.18 kB │ gzip:   0.15 kB
+dist/assets/circle-stop-B1CCgeVi.js                 0.18 kB │ gzip:   0.17 kB
+dist/assets/rotate-ccw-DFhtkfZf.js                  0.19 kB │ gzip:   0.17 kB
+dist/assets/mission-control-obsidian-DhMFlZu8.js    0.19 kB │ gzip:   0.15 kB
+dist/assets/pause-CawUUmuo.js                       0.20 kB │ gzip:   0.15 kB
+dist/assets/upload-BXxkQsxK.js                      0.22 kB │ gzip:   0.18 kB
+dist/assets/database-BNgVI8QQ.js                    0.23 kB │ gzip:   0.19 kB
+dist/assets/circle-play-CAJEhIJR.js                 0.24 kB │ gzip:   0.20 kB
+dist/assets/folder-open-Cur0VeUc.js                 0.28 kB │ gzip:   0.21 kB
+dist/assets/refresh-cw-i64oK830.js                  0.31 kB │ gzip:   0.22 kB
+dist/assets/server-BTLgn-5Y.js                      0.32 kB │ gzip:   0.20 kB
+dist/assets/book-open-check-CdZFXYFh.js             0.33 kB │ gzip:   0.24 kB
+dist/assets/network-94kQNT9p.js                     0.37 kB │ gzip:   0.23 kB
+dist/assets/hard-drive--qGve0yu.js                  0.37 kB │ gzip:   0.24 kB
+dist/assets/alert-dialog-xkykVHDM.js                5.04 kB │ gzip:   1.61 kB
+dist/assets/research-page-CXIbIuuW.js              13.55 kB │ gzip:   4.73 kB
+dist/assets/memory-page-CJvBDWvX.js                15.84 kB │ gzip:   4.71 kB
+dist/assets/trading-page-CVFbLkqW.js               17.08 kB │ gzip:   5.10 kB
+dist/assets/workflows-page-BMtWmoWi.js             17.95 kB │ gzip:   5.36 kB
+dist/assets/files-page-CyUwIBTH.js                 19.46 kB │ gzip:   5.64 kB
+dist/assets/models-page-BZ7W6UR1.js                25.14 kB │ gzip:   8.41 kB
+dist/assets/tasks-page-BSlPUFl_.js                 25.77 kB │ gzip:   7.28 kB
+dist/assets/brain-page-CxuLEzob.js                 29.20 kB │ gzip:   9.64 kB
+dist/assets/agents-page-CiiZ0JGS.js                29.41 kB │ gzip:   7.64 kB
+dist/assets/plugins-page-7LWCb652.js               50.15 kB │ gzip:  14.05 kB
+dist/assets/coding-agent-page-fHe4dL3I.js          56.20 kB │ gzip:  13.88 kB
+dist/assets/mission-control-page-C0H2bU_Q.js       57.16 kB │ gzip:  13.78 kB
+dist/assets/settings-page-B3hHRNAi.js              88.02 kB │ gzip:  20.17 kB
+dist/assets/index-CSuiqqmZ.js                     596.00 kB │ gzip: 178.03 kB
+
+✓ built in 870ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.

@@ -1,0 +1,130 @@
+{
+  "id": "ruview",
+  "name": "RuView",
+  "description": "Parse local WiFi CSI dumps. Does not invent presence or vital signs without hardware evidence.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Research",
+  "labels": [
+    "wifi",
+    "csi",
+    "sensing"
+  ],
+  "permissions": [
+    "subprocess",
+    "filesystem"
+  ],
+  "autonomous": true,
+  "source": "https://github.com/ruvnet/RuView",
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "mode": "command",
+      "description": "Explain hardware requirement honestly.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "parse_csi",
+      "action": "parse",
+      "mode": "command",
+      "description": "Parse a local CSI CSV/JSON capture.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "parse_csi",
+        "--path",
+        "{path}",
+        "--max-rows",
+        "{max_rows}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "max_rows": {
+            "type": "integer",
+            "default": 2000,
+            "minimum": 1,
+            "maximum": 50000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "read_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "knowledge_paths": [
+    "README.md"
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "hades_api": ">=0.4.1",
+  "version": "0.1.0",
+  "format": 1,
+  "capabilities": {
+    "effects": [
+      "read_files",
+      "write_files",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/ruvnet/RuView",
+    "signed": false,
+    "license": "MIT"
+  },
+  "license": "MIT"
+}

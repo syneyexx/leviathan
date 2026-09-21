@@ -1,0 +1,205 @@
+{
+  "id": "open-code-review",
+  "name": "Open Code Review",
+  "description": "Line-level review comments for local files: deterministic heuristics always, optional LM Studio pass.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Developer",
+  "labels": [
+    "code-review",
+    "quality"
+  ],
+  "permissions": [
+    "subprocess",
+    "filesystem",
+    "network"
+  ],
+  "autonomous": true,
+  "source": "https://github.com/alibaba/open-code-review",
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "mode": "command",
+      "description": "Check review bridge and LM client.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "review_file",
+      "action": "review",
+      "mode": "command",
+      "description": "Static heuristic review of one local file.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "review_file",
+        "--path",
+        "{path}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 24000,
+            "minimum": 500,
+            "maximum": 80000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "read_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "review_with_model",
+      "action": "review",
+      "mode": "command",
+      "description": "Static review plus LM Studio comments. Fails closed if the endpoint is down.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "review_with_model",
+        "--path",
+        "{path}",
+        "--model",
+        "{model}",
+        "--base-url",
+        "{base_url}",
+        "--api-key",
+        "{api_key}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path",
+          "model"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "base_url": {
+            "type": "string",
+            "default": "",
+            "maxLength": 400
+          },
+          "api_key": {
+            "type": "string",
+            "default": "",
+            "maxLength": 400
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 24000,
+            "minimum": 500,
+            "maximum": 80000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "read_files",
+          "network"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network"
+        ]
+      }
+    }
+  ],
+  "knowledge_paths": [
+    "README.md"
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "hades_api": ">=0.4.1",
+  "version": "0.1.0",
+  "format": 1,
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "write_files",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout",
+      "network"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/alibaba/open-code-review",
+    "signed": false,
+    "license": "Apache-2.0"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,12 @@
+---
+description: HADES Tasks page context
+globs:
+  - "components/hades/pages/tasks-page.tsx"
+  - "components/hades/obsidian/pages/tasks-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `tasks`.
+UI owner: `components/hades/pages/tasks-page.tsx`; related UI: `execution-completion-banner.tsx`, `lib/execution-completion.ts`, `lib/hash-query.ts`; Obsidian page: `obsidian/pages/tasks-obsidian.tsx`.
+API contract: task/work/agent/model/inbox/approval/voice-task methods in `lib/hades-api.ts`.
+Backend owners: task routes and `TaskRunner` in `backend/main.py`, completion ownership in `backend/run_lifecycle.py`, work/agent persistence in `backend/platform_db.py`, schedules in `backend/schedules.py`, voice task parsing in `backend/voice_tasks.py`.
+Do not scan unrelated pages for a Tasks-only change.

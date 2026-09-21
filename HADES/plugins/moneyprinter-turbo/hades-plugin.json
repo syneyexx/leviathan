@@ -1,0 +1,333 @@
+{
+  "format": 1,
+  "id": "moneyprinter-turbo",
+  "name": "MoneyPrinterTurbo",
+  "version": "0.1.0",
+  "description": "AI short-video generator WebUI for HADES. Seed LM Studio for local script generation, then start Streamlit on port 8501. Upstream: harry0703/MoneyPrinterTurbo.",
+  "runtime_type": "python",
+  "entrypoint": "webui/Main.py",
+  "plugin_type": "service",
+  "category": "Media",
+  "labels": [
+    "video",
+    "short-video",
+    "streamlit",
+    "lm-studio",
+    "tts"
+  ],
+  "permissions": [
+    "subprocess",
+    "filesystem",
+    "network"
+  ],
+  "autonomous": false,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/harry0703/MoneyPrinterTurbo",
+  "license": "MIT",
+  "healthcheck": {
+    "type": "http",
+    "url": "http://127.0.0.1:8501/",
+    "method": "GET",
+    "expected_status": [
+      200,
+      301,
+      302,
+      304
+    ],
+    "timeout_seconds": 240,
+    "interval_seconds": 2.0
+  },
+  "dependency_install": {
+    "timeout_seconds": 3600,
+    "stall_timeout_seconds": 1800
+  },
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "description": "Check MoneyPrinterTurbo layout and report UI/API endpoints.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess",
+          "service"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network",
+          "healthcheck"
+        ]
+      }
+    },
+    {
+      "name": "seed_lm_studio",
+      "action": "configure",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "seed_lm_studio",
+        "--base-url",
+        "{base_url}",
+        "--model",
+        "{model}",
+        "--api-key",
+        "{api_key}"
+      ],
+      "description": "Seed config.toml openai_* fields for local LM Studio script generation.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "base_url": {
+            "type": "string",
+            "default": "http://127.0.0.1:1234/v1",
+            "maxLength": 400
+          },
+          "api_key": {
+            "type": "string",
+            "default": "lm-studio",
+            "maxLength": 400
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "read_files",
+          "write_files",
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "start",
+      "action": "start",
+      "mode": "service",
+      "command": [
+        "{python}",
+        "-m",
+        "streamlit",
+        "run",
+        "webui/Main.py",
+        "--server.address",
+        "127.0.0.1",
+        "--server.port",
+        "8501",
+        "--browser.gatherUsageStats",
+        "false"
+      ],
+      "env": {
+        "MPT_WEBUI_HOST": "127.0.0.1",
+        "MPT_WEBUI_PORT": "8501"
+      },
+      "description": "Start MoneyPrinterTurbo Streamlit WebUI on http://127.0.0.1:8501.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess",
+          "service"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "expensive",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network",
+          "healthcheck"
+        ]
+      }
+    },
+    {
+      "name": "health",
+      "action": "health",
+      "mode": "command",
+      "description": "Run declared healthcheck.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess",
+          "service"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network",
+          "healthcheck"
+        ]
+      }
+    },
+    {
+      "name": "status",
+      "action": "status",
+      "mode": "command",
+      "description": "Report managed service status.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess",
+          "service"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network",
+          "healthcheck"
+        ]
+      }
+    },
+    {
+      "name": "logs",
+      "action": "logs",
+      "mode": "command",
+      "description": "Read persisted service logs.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess",
+          "service"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network",
+          "healthcheck"
+        ]
+      }
+    },
+    {
+      "name": "stop",
+      "action": "stop",
+      "mode": "command",
+      "description": "Stop managed service.",
+      "command": "",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "network",
+          "read_files",
+          "write_files",
+          "subprocess",
+          "service"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "moderate",
+        "latency_class": "slow",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout",
+          "network",
+          "healthcheck"
+        ]
+      }
+    }
+  ],
+  "isolation": "restricted_env",
+  "capabilities": {
+    "effects": [
+      "network",
+      "read_files",
+      "write_files",
+      "subprocess",
+      "service"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "expensive",
+    "latency_class": "slow",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout",
+      "network",
+      "healthcheck"
+    ]
+  },
+  "trust_default": "untrusted",
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/harry0703/MoneyPrinterTurbo",
+    "signed": false,
+    "license": "MIT"
+  }
+}
