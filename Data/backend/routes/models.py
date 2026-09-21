@@ -90,6 +90,12 @@ class ProbeRequest(BaseModel):
     timeoutSeconds: float = 15.0
 
 
+class InferenceTestRequest(BaseModel):
+    prompt: str = Field(default="ping", min_length=1, max_length=8000)
+    maxTokens: int = Field(default=64, ge=1, le=2048)
+    stream: bool = False
+
+
 class CompatibleQuery(BaseModel):
     requiredCapabilities: list[str] = Field(default_factory=list)
     locality: str = "any"
@@ -411,6 +417,20 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
         except ModelControlError as exc:
             raise_model_error(exc)
         return {"benchmark": result}
+
+    @router.post("/api/models/{model_id}/test")
+    async def test_model_inference(model_id: str, payload: InferenceTestRequest) -> dict:
+        """Exercise real gateway + provider inference (no fabricated output)."""
+        try:
+            result = await plane.test_inference(
+                model_id,
+                prompt=payload.prompt,
+                max_tokens=payload.maxTokens,
+                stream=payload.stream,
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"result": result}
 
     @router.get("/api/model-providers")
     def list_providers() -> dict:

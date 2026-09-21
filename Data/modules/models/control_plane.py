@@ -311,6 +311,79 @@ class ModelControlPlane:
             "error": error,
         }
 
+    async def test_inference(
+        self,
+        model_id: str,
+        *,
+        prompt: str = "ping",
+        max_tokens: int = 64,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """Run a real inference through gateway capacity + provider adapter."""
+        model = self.registry.get(model_id)
+        call_id = self.gateway.acquire(
+            model_id=model.id,
+            provider_id=model.provider_id,
+            timeout_seconds=30.0,
+        )
+        started = time.perf_counter()
+        error_msg: str | None = None
+        try:
+            adapter = self.get_adapter(model.provider_id)
+            _ = stream
+            result = await adapter.test_inference(model.id, prompt=prompt, max_tokens=max_tokens)
+            total_ms = (time.perf_counter() - started) * 1000.0
+            self.registry.touch_used(model.id)
+            self.gateway.record_selection(model.id, trace_id=call_id)
+            self._emit(
+                "model.inference.tested",
+                {
+                    "modelId": model.id,
+                    "providerId": model.provider_id,
+                    "latencyMs": total_ms,
+                    "callId": call_id,
+                    "streamRequested": bool(stream),
+                },
+            )
+            return {
+                "ok": True,
+                "modelId": model.id,
+                "providerId": model.provider_id,
+                "callId": call_id,
+                "traceId": call_id,
+                "totalLatencyMs": total_ms,
+                "ttftMs": result.get("latencyMs"),
+                "finishReason": result.get("finishReason"),
+                "preview": result.get("preview") or result.get("content") or "",
+                "raw": {k: v for k, v in result.items() if k != "preview"},
+                "streamRequested": bool(stream),
+                "streamImplemented": False,
+                "note": (
+                    "Streaming token transport is not exposed on this test endpoint yet; "
+                    "non-stream completion used the real provider path."
+                    if stream
+                    else None
+                ),
+            }
+        except ModelControlError:
+            error_msg = "model_control_error"
+            raise
+        except Exception as exc:
+            error_msg = str(exc)
+            raise ModelControlError(
+                code="INFERENCE_FAILED",
+                message=error_msg,
+                model_id=model.id,
+                provider_id=model.provider_id,
+                http_status=503,
+            ) from exc
+        finally:
+            self.gateway.release(
+                model_id=model.id,
+                provider_id=model.provider_id,
+                error=error_msg,
+            )
+
     async def refresh_all(self) -> dict[str, Any]:
         started = time.perf_counter()
         results: list[dict[str, Any]] = []

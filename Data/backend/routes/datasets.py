@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from Data.modules.datasets import DatasetError, DatasetService
+from Data.modules.common.atomic import ensure_dir
 from Data.modules.common.secrets import redact_secrets
 
 
 def _raise(exc: DatasetError) -> None:
     raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
+
+
+MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB per request; larger corpora use local/HF paths
+ALLOWED_UPLOAD_SUFFIXES = {".jsonl", ".ndjson", ".json", ".csv", ".tsv", ".txt", ".md", ".markdown"}
 
 
 class CreateDatasetBody(BaseModel):
@@ -90,6 +96,70 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             metadata=body.metadata,
         )
         return {"dataset": ds.public_dict()}
+
+    @router.post("/api/datasets/upload")
+    async def upload_dataset(
+        file: UploadFile = File(...),
+        name: str | None = Form(default=None),
+        description: str = Form(default=""),
+        license: str | None = Form(default=None),
+        materialize: bool = Form(default=True),
+    ) -> dict:
+        filename = Path(file.filename or "upload.bin").name
+        if "\x00" in filename or filename in {".", ".."} or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=400, detail={"code": "unsafe_filename", "message": "Invalid filename"})
+        suffix = Path(filename).suffix.lower()
+        if suffix not in ALLOWED_UPLOAD_SUFFIXES:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "unsupported_extension",
+                    "message": f"Unsupported upload type: {suffix or '(none)'}",
+                    "allowed": sorted(ALLOWED_UPLOAD_SUFFIXES),
+                },
+            )
+        upload_root = ensure_dir(service.corpus.datasets_raw / "_uploads")
+        dest = upload_root / f"{Path(filename).stem}-{Path(filename).suffix}"
+        # Unique dest
+        from uuid import uuid4
+
+        dest = upload_root / f"{uuid4().hex}_{filename}"
+        total = 0
+        try:
+            with dest.open("wb") as handle:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail={
+                                "code": "upload_too_large",
+                                "message": f"Upload exceeds {MAX_UPLOAD_BYTES} bytes; use local path or HF import",
+                            },
+                        )
+                    handle.write(chunk)
+        except HTTPException:
+            dest.unlink(missing_ok=True)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            dest.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail={"code": "upload_failed", "message": str(exc)}) from exc
+        try:
+            job = service.enqueue_import_local(
+                path=str(dest),
+                name=name or Path(filename).stem,
+                description=description,
+                license=license,
+                materialize=materialize,
+            )
+        except DatasetError as exc:
+            dest.unlink(missing_ok=True)
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job), "bytes": total, "filename": filename}
 
     @router.get("/api/datasets/{dataset_id}")
     def get_dataset(dataset_id: str) -> dict:
