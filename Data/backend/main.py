@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
+from Data.modules.agents import AgentKind, AgentRuntime
 from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
@@ -70,6 +71,13 @@ evidence_service = EvidenceService(
 )
 memory_store = MemoryStore(settings.database_path)
 verification_engine = VerificationEngine(evidence_store)
+agent_runtime = AgentRuntime(
+    gateway=execution_gateway,
+    jobs=job_runtime,
+    verification=verification_engine,
+    runs=runs,
+    agents_enabled=settings.features.agents_enabled,
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -95,7 +103,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.17.0-phase16", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.18.0-phase17", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -164,6 +172,9 @@ async def health() -> dict:
             "active": resource_manager.active_job_ids(),
             "telemetry": dict(job_runtime.telemetry),
             "resources": dict(resource_manager.telemetry),
+        },
+        "agents": {
+            "enabled": settings.features.agents_enabled,
         },
         "llm": model,
     }
@@ -945,6 +956,32 @@ def evaluate_verification(payload: VerifyRequest) -> dict:
         job_id=payload.job_id,
     )
     return {"report": report.public_dict()}
+
+
+class AgentExecuteRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=30_000)
+    kind: str = "GENERIC"
+    use_jobs: bool = False
+    conversation_id: str | None = None
+    capability_overrides: dict = Field(default_factory=dict)
+
+
+@app.post("/api/agents/execute")
+def execute_agent(payload: AgentExecuteRequest) -> dict:
+    try:
+        kind = AgentKind(payload.kind.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid agent kind: {payload.kind}") from exc
+    result = agent_runtime.execute(
+        payload.request,
+        kind=kind,
+        use_jobs=payload.use_jobs,
+        conversation_id=payload.conversation_id,
+        capability_overrides=payload.capability_overrides or None,
+    )
+    if result.status == "DISABLED":
+        raise HTTPException(status_code=403, detail=result.public_dict())
+    return {"agent": result.public_dict()}
 
 
 @app.get("/")

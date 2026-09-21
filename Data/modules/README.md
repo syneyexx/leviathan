@@ -19,6 +19,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `observations/` | ToolObservation + durable effect ledger |
 | `evidence/` | EvidenceStore + EvidenceService |
 | `memory/` | MemoryStore (controlled; not Knowledge) |
+| `verification/` | VerificationEngine (evidence-based) |
+| `agents/` | AgentRuntime (shared gateway only; flagged) |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 

@@ -6,6 +6,63 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 17 — Agent Runtime Skeleton — PASS
+
+### Objective
+
+Agent strategy layer over shared Run/Job/Gateway/Verification. No private execution paths. Feature-flagged OFF by default.
+
+### Implementation
+
+- `Data/modules/agents/` — AgentRuntime, AgentKind (GENERIC/CODING/RESEARCH)
+- Plans capability steps; executes only via ExecutionGateway (or JobRuntime)
+- Disabled when `LEVIATHAN_FEATURE_AGENTS=false`
+- API: `POST /api/agents/execute`
+
+### Tests executed
+
+- Full backend suite → **PASS (75)**
+
+### Known limitations
+
+- Plans are heuristic stubs, not LLM planners
+- Coding/Research are thin specializations, not full agents
+- No multi-agent orchestration
+
+### Status
+
+**PASS**
+
+---
+
+## 2026-09-21 — Phase 16 — Verification Engine — PASS
+
+### Objective
+
+Completion authority from Evidence requirements. UNMEASURED ≠ PASSED. Model text is never verification.
+
+### Implementation
+
+- `Data/modules/verification/` — VerificationEngine, VerificationRequirement/Report
+- Outcomes: PASSED / FAILED / UNMEASURED
+- Helpers: require_artifact / require_file
+- API: `POST /api/verification/evaluate`
+
+### Tests executed
+
+- Full backend suite → **PASS (73)**
+
+### Known limitations
+
+- Chat/agent completion not yet blocked by verification reports
+- No durable verification report store (in-memory report per call)
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 15 — Memory Domain — PASS
 
 ### Objective
