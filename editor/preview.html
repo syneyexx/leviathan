@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Leviathan Preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles/tokens.css" id="css-tokens" />
+    <link rel="stylesheet" href="/styles/leviathan.css" id="css-leviathan" />
+    <link rel="stylesheet" href="/styles/pages.css" id="css-pages" />
+    <style id="live-overrides"></style>
+    <style>
+      /* Preview-only helpers — do not affect the real app */
+      html, body { height: 100%; overflow: hidden; }
+      .pv-main {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: var(--lv-content-gap);
+        padding: var(--lv-page-pad-y) var(--lv-page-pad-x);
+      }
+      .pv-hero {
+        border: 1px solid var(--lv-border-gold);
+        border-radius: var(--lv-radius-lg);
+        min-height: clamp(180px, 28vh, 280px);
+        background:
+          linear-gradient(120deg, rgba(3,5,4,0.55), rgba(3,5,4,0.2)),
+          url("/assets/hero.jpg") center / cover no-repeat;
+        display: grid;
+        align-content: end;
+        padding: clamp(16px, 2vw, 28px);
+      }
+      .pv-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: var(--lv-card-gap);
+        min-height: 0;
+      }
+      .pv-card {
+        border: 1px solid var(--lv-border);
+        border-radius: var(--lv-radius-md);
+        background: linear-gradient(145deg, rgba(14,16,14,0.96), rgba(5,7,6,0.98));
+        padding: 14px;
+        min-height: 120px;
+      }
+      .pv-right {
+        min-width: 0;
+        min-height: 0;
+        border-left: 1px solid var(--lv-border);
+        padding: var(--lv-page-pad-y) var(--lv-page-pad-x);
+        display: flex;
+        flex-direction: column;
+        gap: var(--lv-card-gap);
+        background: rgba(5, 7, 6, 0.55);
+      }
+      .pv-chip {
+        border: 1px solid var(--lv-border-soft);
+        border-radius: var(--lv-radius-pill);
+        padding: 8px 12px;
+        color: var(--lv-text-secondary);
+        font-size: var(--lv-text-sm);
+      }
+      [data-region] { position: relative; }
+    </style>
+  </head>
+  <body>
+    <div class="lv-app" data-region="app">
+      <header class="lv-header" data-region="header">
+        <div class="lv-brand-block">
+          <div class="lv-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48" fill="none">
+              <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="1.5" />
+              <path d="M24 10v28M10 24h28" stroke="currentColor" stroke-width="1.5" />
+              <circle cx="24" cy="24" r="6" fill="currentColor" opacity="0.35" />
+            </svg>
+          </div>
+          <div class="lv-brand-copy">
+            <div class="lv-brand">LEVIATHAN</div>
+            <div class="lv-brand-tag">Intelligence Beyond Limits</div>
+          </div>
+        </div>
+
+        <label class="lv-search">
+          <svg class="lv-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+          <input type="search" placeholder="Search anything..." aria-label="Search" />
+          <span class="lv-kbd">CTRL K</span>
+        </label>
+
+        <div class="lv-clock">
+          <div class="lv-clock-date">MON 21 SEP</div>
+          <div class="lv-clock-time">19:15</div>
+          <div class="lv-clock-mode">Serenity Mode</div>
+        </div>
+
+        <div class="lv-systems">
+          <div class="lv-earth-mini">
+            <img src="/assets/earth-mini.jpg" alt="" width="64" height="64" />
+          </div>
+          <div class="lv-systems-capsule">
+            <div class="lv-systems-title">
+              <span class="lv-status-online"></span>
+              Systems Online
+            </div>
+            <div class="lv-systems-row">
+              <span class="lv-sys-item"><span class="lv-status-online"></span>AI</span>
+              <span class="lv-sys-item"><span class="lv-status-online"></span>Tools</span>
+              <span class="lv-sys-item"><span class="lv-status-online"></span>Agents</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="lv-header-end">
+          <div class="lv-header-quote">A deeper intelligence<br />A brighter tomorrow</div>
+          <button class="lv-menu-btn" type="button" aria-label="Menu"><span></span><span></span></button>
+        </div>
+      </header>
+
+      <div class="lv-body">
+        <aside class="lv-sidebar" data-region="sidebar" id="sidebar">
+          <nav class="lv-nav" aria-label="Primary">
+            <a class="lv-nav-item is-active" href="#"><svg class="lv-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>Command</a>
+            <a class="lv-nav-item" href="#"><svg class="lv-icon" viewBox="0 0 24 24"><path d="M5 6h14v9H8l-3 3V6z"/></svg>Chat</a>
+            <a class="lv-nav-item" href="#"><svg class="lv-icon" viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/></svg>Status</a>
+            <a class="lv-nav-item" href="#"><svg class="lv-icon" viewBox="0 0 24 24"><path d="M12 4l8 4-8 4-8-4 8-4z"/><path d="M4 12l8 4 8-4"/></svg>Models</a>
+            <a class="lv-nav-item" href="#"><svg class="lv-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2"/></svg>Settings</a>
+          </nav>
+          <div class="lv-sidebar-footer">
+            <img class="lv-ornament-img" src="/assets/ornament.jpg" alt="" width="80" height="80" />
+            <div class="lv-motto">Discipline Creates Freedom</div>
+          </div>
+        </aside>
+
+        <main class="pv-main" data-region="content">
+          <section class="pv-hero">
+            <h1 class="lv-hero-title">COMMAND</h1>
+            <div class="lv-section-label">Layout preview · live CSS</div>
+          </section>
+          <div class="pv-grid">
+            <article class="pv-card"><div class="lv-section-label">Deep Research</div><p style="color:var(--lv-text-secondary);font-size:var(--lv-text-sm);margin:8px 0 0;">Analyze complex topics</p></article>
+            <article class="pv-card"><div class="lv-section-label">Build Anything</div><p style="color:var(--lv-text-secondary);font-size:var(--lv-text-sm);margin:8px 0 0;">Generate &amp; improve code</p></article>
+            <article class="pv-card"><div class="lv-section-label">Data Analysis</div><p style="color:var(--lv-text-secondary);font-size:var(--lv-text-sm);margin:8px 0 0;">Find insights in your data</p></article>
+          </div>
+        </main>
+
+        <aside class="pv-right" data-region="right">
+          <div class="lv-section-label">Right panel</div>
+          <div class="pv-chip">Research Agent</div>
+          <div class="pv-chip">Code Agent</div>
+          <div class="pv-chip">Trading Agent</div>
+          <div class="lv-panel lv-panel-premium" style="padding:12px;margin-top:auto;">
+            <div class="lv-section-label">Panel width</div>
+            <p style="margin:8px 0 0;color:var(--lv-text-secondary);font-size:var(--lv-text-sm);">
+              Sleep de rand of gebruik de sliders links.
+            </p>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="lv-footer" data-region="footer">
+        <div class="lv-user">
+          <img class="lv-avatar" src="/assets/avatar.jpg" alt="" width="40" height="40" />
+          <div>
+            <div class="lv-user-name">LEVIATHAN</div>
+            <div class="lv-user-meta">v1.0.0 | Elite Mode</div>
+          </div>
+        </div>
+        <nav class="lv-dock" aria-label="Modes">
+          <a class="lv-dock-item is-active" href="#"><svg class="lv-icon" viewBox="0 0 24 24"><path d="M8 8h8v8H8z"/><path d="M5 12h2M17 12h2M12 5v2M12 17v2"/></svg><span>Explore</span></a>
+          <a class="lv-dock-item" href="#"><svg class="lv-icon" viewBox="0 0 24 24"><path d="M5 6h14v9H8l-3 3V6z"/></svg><span>Chat</span></a>
+        </nav>
+        <div class="lv-footer-quote">Discipline Creates Freedom</div>
+      </footer>
+    </div>
+
+    <script>
+      const STYLE_IDS = {
+        "tokens.css": "css-tokens",
+        "leviathan.css": "css-leviathan",
+        "pages.css": "css-pages",
+        "chat.css": null,
+      };
+
+      function ensureStyle(name) {
+        const id = STYLE_IDS[name];
+        if (!id) return null;
+        let el = document.getElementById(id);
+        if (!el) {
+          el = document.createElement("style");
+          el.id = id;
+          document.head.appendChild(el);
+        }
+        return el;
+      }
+
+      function applyFile(name, content) {
+        const el = ensureStyle(name);
+        if (!el) return;
+        // Replace <link> with <style> content for live edits
+        if (el.tagName === "LINK") {
+          const style = document.createElement("style");
+          style.id = el.id;
+          style.textContent = content;
+          el.replaceWith(style);
+          return;
+        }
+        el.textContent = content;
+      }
+
+      function regionRects() {
+        const names = ["header", "sidebar", "content", "right", "footer"];
+        const out = {};
+        for (const name of names) {
+          const node = document.querySelector(`[data-region="${name}"]`);
+          if (!node) continue;
+          const r = node.getBoundingClientRect();
+          out[name] = { left: r.left, top: r.top, width: r.width, height: r.height };
+        }
+        return out;
+      }
+
+      window.addEventListener("message", (event) => {
+        const data = event.data || {};
+        if (data.type === "apply-file") {
+          applyFile(data.name, data.content || "");
+          parent.postMessage({ type: "regions", regions: regionRects() }, "*");
+        }
+        if (data.type === "apply-vars") {
+          const root = document.documentElement;
+          for (const [key, value] of Object.entries(data.vars || {})) {
+            root.style.setProperty(key, value);
+          }
+          parent.postMessage({ type: "regions", regions: regionRects() }, "*");
+        }
+        if (data.type === "clear-vars") {
+          document.documentElement.removeAttribute("style");
+          parent.postMessage({ type: "regions", regions: regionRects() }, "*");
+        }
+        if (data.type === "request-regions") {
+          parent.postMessage({ type: "regions", regions: regionRects() }, "*");
+        }
+        if (data.type === "select-region") {
+          document.querySelectorAll("[data-region]").forEach((n) => {
+            n.style.outline = "";
+          });
+          const node = document.querySelector(`[data-region="${data.region}"]`);
+          if (node) node.style.outline = "2px solid rgba(240,200,117,0.7)";
+        }
+      });
+
+      window.addEventListener("load", () => {
+        parent.postMessage({ type: "preview-ready" }, "*");
+        parent.postMessage({ type: "regions", regions: regionRects() }, "*");
+      });
+
+      window.addEventListener("resize", () => {
+        parent.postMessage({ type: "regions", regions: regionRects() }, "*");
+      });
+
+      document.addEventListener("click", (event) => {
+        const region = event.target.closest("[data-region]");
+        if (!region) return;
+        parent.postMessage({ type: "region-click", region: region.dataset.region }, "*");
+      });
+    </script>
+  </body>
+</html>
