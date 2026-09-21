@@ -6,6 +6,41 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 9 — Capability Broker + Execution Gateway — PASS
+
+### Objective
+
+Introduce a Capability Catalog (what can be done) and a single Execution Gateway (how it is done) so privileged work is validated, policy-checked, executed via providers, and recorded as effects — without agent-local bypass paths.
+
+### Implementation
+
+- `Data/modules/execution/` — types, CapabilityCatalog, builtins, ExecutionGateway, effect ledger
+- Builtin capabilities:
+  - `file.read` / `file.inspect_csv` / `file.parse_pdf` → Function Runtime
+  - `knowledge.search` → HybridRetriever
+  - `artifact.create_text` → ArtifactStore (WRITE)
+- Gateway flow: validate args → side-effect policy → optional approval → provider dispatch → CapabilityResult + EffectRecord
+- Phase 9 policy: READ auto-allowed; WRITE+ requires `approval_id` (verified in Phase 10)
+- API: `GET/POST /api/capabilities`, `GET .../{id}`, `POST .../{id}/execute`, `GET .../effects/recent`
+- Health includes capability registry + gateway telemetry
+
+### Tests executed
+
+- Full backend suite → **PASS (44)**
+- Includes approval-required rejection for WRITE without approval_id
+
+### Known limitations
+
+- Approval IDs are presence-checked only (Phase 10 verifies)
+- Effect ledger is in-memory (not durable across restarts)
+- Direct `/api/functions/*/execute` remains for Function Runtime; agent/privileged paths should use capabilities
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 8 — On-demand Function Runtime — PASS
 
 ### Objective

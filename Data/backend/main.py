@@ -12,6 +12,12 @@ from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.modules.artifacts import ArtifactStore
+from Data.modules.execution import (
+    CapabilityRequest,
+    CapabilityStatus,
+    ExecutionGateway,
+    build_default_catalog,
+)
 from Data.modules.function_runtime import FunctionCallStatus, build_default_registry, FunctionRuntime
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
@@ -35,6 +41,13 @@ function_runtime = FunctionRuntime(
     max_concurrency=settings.resources.max_function_concurrency,
     warm_cache_size=2,
 )
+capability_catalog = build_default_catalog()
+execution_gateway = ExecutionGateway(
+    catalog=capability_catalog,
+    function_runtime=function_runtime,
+    knowledge_retriever=retriever,
+    artifact_store=artifacts,
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -53,7 +66,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.9.0-phase8", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.10.0-phase9", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -108,6 +121,11 @@ async def health() -> dict:
             "registered": len(function_registry),
             "loaded": sorted(function_runtime.loaded_function_ids()),
             "telemetry": dict(function_runtime.telemetry),
+        },
+        "capabilities": {
+            "registered": len(capability_catalog),
+            "telemetry": dict(execution_gateway.telemetry),
+            "effects_recorded": len(execution_gateway.effect_ledger),
         },
         "llm": model,
     }
@@ -418,6 +436,80 @@ def cancel_function_call(call_id: str) -> dict:
     if not cancelled:
         raise HTTPException(status_code=404, detail="Active function call not found")
     return {"cancelled": True, "call_id": call_id}
+
+
+@app.get("/api/capabilities")
+def list_capabilities() -> dict:
+    return {
+        "capabilities": [item.public_dict() for item in execution_gateway.list_capabilities()],
+        "telemetry": dict(execution_gateway.telemetry),
+        "effects_recorded": len(execution_gateway.effect_ledger),
+    }
+
+
+@app.get("/api/capabilities/{capability_id}")
+def get_capability(capability_id: str) -> dict:
+    definition = execution_gateway.get_capability(capability_id)
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Capability not found")
+    return {"capability": definition.public_dict()}
+
+
+class CapabilityExecuteRequest(BaseModel):
+    arguments: dict = Field(default_factory=dict)
+    approval_id: str | None = None
+    run_id: str | None = None
+    requested_by: str = "api"
+
+
+@app.post("/api/capabilities/{capability_id}/execute")
+def execute_capability(capability_id: str, payload: CapabilityExecuteRequest) -> dict:
+    if capability_id not in capability_catalog:
+        raise HTTPException(status_code=404, detail="Capability not found")
+    result = execution_gateway.execute(
+        CapabilityRequest(
+            capability_id=capability_id,
+            arguments=payload.arguments,
+            approval_id=payload.approval_id,
+            run_id=payload.run_id,
+            requested_by=payload.requested_by,
+        )
+    )
+    status_code = 200
+    if result.status == CapabilityStatus.REJECTED:
+        reason = (result.telemetry or {}).get("reason")
+        status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+    elif result.status == CapabilityStatus.TIMEOUT:
+        status_code = 504
+    elif result.status == CapabilityStatus.CANCELLED:
+        status_code = 409
+    elif result.status == CapabilityStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {"result": result.public_dict()}
+
+
+@app.get("/api/capabilities/effects/recent")
+def recent_capability_effects(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
+    items = execution_gateway.effect_ledger[-limit:]
+    return {
+        "effects": [
+            {
+                "effect_id": item.effect_id,
+                "request_id": item.request_id,
+                "capability_id": item.capability_id,
+                "side_effects": list(item.side_effects),
+                "status": item.status,
+                "provider_kind": item.provider_kind,
+                "provider_ref": item.provider_ref,
+                "recorded_at_ms": item.recorded_at_ms,
+                "approval_id": item.approval_id,
+                "error": item.error,
+            }
+            for item in reversed(items)
+        ]
+    }
 
 
 @app.get("/")

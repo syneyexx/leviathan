@@ -95,6 +95,10 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/context/` | ContextBuilder |
 | `Data/modules/model_runtime/` | OpenAICompatibleLLM |
 | `Data/modules/run/` | RunStore / events / transitions |
+| `Data/modules/artifacts/` | ArtifactStore |
+| `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
+| `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |
+| `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway |
 
 ## Tests
 
@@ -182,7 +186,8 @@ SQLite persistence
 | Knowledge store / retrieval | `Data/modules/knowledge/` |
 | Function runtime | `Data/modules/function_runtime/` |
 | Function implementations | `Data/functions/<name>/` |
-| Execution / approvals | modules + gateway — never agent-local |
+| Capabilities / Execution Gateway | `Data/modules/execution/` |
+| Approvals / policy | `Data/modules/approvals/` (Phase 10) |
 | Frontend pages | only when backend truth exists |
 
 ---
