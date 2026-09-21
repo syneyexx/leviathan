@@ -1,7 +1,5 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
-// Local .mjs plugin ships without bundled types (layout editor overlay).
-// @ts-expect-error — no declaration file for ../../editor/vite-plugin.mjs
 import { leviathanLayoutEditor } from "../../editor/vite-plugin.mjs";
 
 const layoutEditor = process.env.LEVIATHAN_EDITOR === "1";

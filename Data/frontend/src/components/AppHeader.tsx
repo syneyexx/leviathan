@@ -2,15 +2,19 @@ import { media } from "../assets/media";
 import { BrandMark } from "./BrandMark";
 import { useClock } from "../hooks/useClock";
 
+const DEFAULT_SYSTEM_ITEMS = ["AI", "Tools", "Agents", "Sync"] as const;
+
 type AppHeaderProps = {
   searchPlaceholder?: string;
   modeLabel?: string;
+  systemItems?: readonly string[];
   onMenuClick: () => void;
 };
 
 export function AppHeader({
   searchPlaceholder = "Search anything...",
   modeLabel = "Serenity Mode",
+  systemItems = DEFAULT_SYSTEM_ITEMS,
   onMenuClick,
 }: AppHeaderProps) {
   const clock = useClock();
@@ -55,22 +59,12 @@ export function AppHeader({
             </svg>
           </div>
           <div className="lv-systems-row">
-            <span className="lv-sys-item">
-              <span className="lv-status-online" />
-              AI
-            </span>
-            <span className="lv-sys-item">
-              <span className="lv-status-online" />
-              Tools
-            </span>
-            <span className="lv-sys-item">
-              <span className="lv-status-online" />
-              Agents
-            </span>
-            <span className="lv-sys-item">
-              <span className="lv-status-online" />
-              Sync
-            </span>
+            {systemItems.map((item) => (
+              <span key={item} className="lv-sys-item">
+                <span className="lv-status-online" />
+                {item}
+              </span>
+            ))}
           </div>
         </div>
       </div>

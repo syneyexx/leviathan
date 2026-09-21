@@ -61,7 +61,8 @@ LEVIATHAN/
 ├── leviathan.py          # Uvicorn launcher helper
 ├── requirements.txt
 ├── .env.example
-├── RUN_LEVIATHAN.bat
+├── installer.bat
+├── run_leviathan.bat
 └── README.md
 ```
 

@@ -34,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: "Research",
+    to: "/research",
     icon: (
       <>
         <circle cx="11" cy="11" r="6.5" />
@@ -68,6 +69,17 @@ const NAV_ITEMS: NavItem[] = [
       <>
         <path d="M4 9.5h16v9.5H4z" />
         <path d="M4 9.5l1.8-3h5.2l1.5 3" />
+      </>
+    ),
+  },
+  {
+    label: "Datasets",
+    to: "/datasets",
+    icon: (
+      <>
+        <ellipse cx="12" cy="6" rx="7" ry="3" />
+        <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
+        <path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
       </>
     ),
   },
@@ -107,6 +119,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: "Tools",
+    to: "/tools",
     icon: (
       <>
         <circle cx="7" cy="8" r="2.2" />

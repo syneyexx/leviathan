@@ -58,7 +58,8 @@ LEVIATHAN/
 ├── requirements.txt
 ├── README.md
 ├── leviathan.py
-└── RUN_LEVIATHAN.bat
+├── installer.bat
+└── run_leviathan.bat
 ```
 
 ---

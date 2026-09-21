@@ -33,6 +33,13 @@ Persisted conversation + response
 
 Python 3.11+ and Node.js 20+ are recommended.
 
+### Windows (recommended)
+
+1. Double-click `installer.bat` once — creates `.venv`, installs Python + npm deps, builds the frontend, and creates `.env`.
+2. Double-click `run_leviathan.bat` to start the app.
+
+### Manual
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
