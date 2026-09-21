@@ -166,5 +166,163 @@ export type SoakReport = {
 };
 
 export type ApiErrorBody = {
-  detail?: string | { msg: string }[];
+  detail?: string | { msg: string }[] | { code?: string; message?: string; retryable?: boolean };
 };
+
+export type CapabilityState = "supported" | "unsupported" | "unknown" | "unverified";
+
+export type ModelCapabilities = {
+  chat: CapabilityState;
+  reasoning: CapabilityState;
+  coding: CapabilityState;
+  toolCalling: CapabilityState;
+  structuredOutput: CapabilityState;
+  vision: CapabilityState;
+  embeddings: CapabilityState;
+  streaming: CapabilityState;
+};
+
+export type ModelDescriptor = {
+  id: string;
+  displayName: string;
+  providerId: string;
+  runtimeId?: string | null;
+  source: string;
+  objectType?: string | null;
+  architecture?: string | null;
+  family?: string | null;
+  parameterCount?: number | null;
+  quantization?: string | null;
+  format?: string | null;
+  diskSizeBytes?: number | null;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+  capabilities: ModelCapabilities;
+  lifecycleState: string;
+  health: string;
+  active: boolean;
+  loaded: boolean | null;
+  localPath?: string | null;
+  endpoint?: string | null;
+  lastDiscoveredAt?: string | null;
+  lastUsedAt?: string | null;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+};
+
+export type ModelProfile = {
+  modelId: string;
+  temperature: number;
+  topP: number;
+  topK: number;
+  maxTokens: number;
+  repeatPenalty: number;
+  seed: number;
+  systemPrompt: string;
+  active: boolean;
+  updatedAt?: string | null;
+};
+
+export type RuntimeCapabilities = {
+  discoverModels: boolean;
+  importModel: boolean;
+  downloadModel: boolean;
+  loadModel: boolean;
+  unloadModel: boolean;
+  deleteModel: boolean;
+  listLoadedModels: boolean;
+  inference: boolean;
+  streaming: boolean;
+  embeddings: boolean;
+  toolCalling: boolean;
+  structuredOutput: boolean;
+  vision: boolean;
+  runtimeMetrics: boolean;
+  loadOptions: string[];
+};
+
+export type ModelProvider = {
+  id: string;
+  name: string;
+  type: string;
+  endpoint: string;
+  enabled: boolean;
+  health: string;
+  apiKeyConfigured: boolean;
+  autoConnect: boolean;
+  timeoutSeconds: number;
+  refreshIntervalSeconds: number;
+  lastSuccessfulAt?: string | null;
+  lastError?: string | null;
+  lastLatencyMs?: number | null;
+  lastCheckAt?: string | null;
+  capabilities: RuntimeCapabilities;
+  metadata?: Record<string, unknown>;
+};
+
+export type ModelsStatus = {
+  runtime: string;
+  availableModels: number;
+  activeModel: string | null;
+  loadedModels: number;
+  discoveryLatencyMs: number | null;
+  gatewayHealth: string;
+  lastRefreshAt?: string | null;
+  lastRefreshError?: string | null;
+  providerCount?: number;
+  offlineProviders?: ModelProvider[];
+};
+
+export type GatewaySnapshot = {
+  modelsInUse: string[];
+  activeCalls: number;
+  queueDepth: number;
+  capacity: {
+    globalLimit: number | null;
+    globalInflight: number;
+    providerLimits: Record<string, number | null>;
+    modelLimits: Record<string, number | null>;
+    queueDepth: number;
+  };
+  lastFallbackReason: string | null;
+  callsFailed: number;
+  capacityTimeouts: number;
+  lastError: string | null;
+  lastSelectedModel?: string | null;
+  lastTraceId?: string | null;
+};
+
+export type RouterConfig = {
+  fallbackOrder: string[];
+  roleModelOverrides: Record<string, string>;
+  cloudFallbackAllowed: boolean;
+  streaming: boolean;
+  streamProvisionalText: boolean;
+  progressEventsEnabled: boolean;
+};
+
+export type DownloadJob = {
+  id: string;
+  state: string;
+  source: string;
+  repositoryId?: string | null;
+  revision?: string | null;
+  destination?: string | null;
+  bytesDownloaded?: number | null;
+  totalBytes?: number | null;
+  speedBps?: number | null;
+  etaSeconds?: number | null;
+  error?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  modelId?: string | null;
+};
+
+export type VerifiedCapability = {
+  capability: string;
+  declared: CapabilityState;
+  verified: CapabilityState;
+  lastTestedAt?: string | null;
+  detail?: string | null;
+};
+

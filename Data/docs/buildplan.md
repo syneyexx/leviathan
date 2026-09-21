@@ -6,6 +6,41 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Models Control Plane (full backend + Models page) — PASS
+
+### Objective
+Replace the mock Models page with a production Model Control Plane: registry, profiles, providers, gateway, router, lifecycle gating, import/download, capability probing, and a complete operator UI — without parallel databases or fake telemetry.
+
+### Added
+- `Data/modules/models/` — contracts, store, registry, profiles, gateway, router, runtime manager, resource preflight, capability probe, benchmarks, downloads, import, provider adapters (LM Studio, Ollama, OpenAI-compatible, llama.cpp boundary), `ModelControlPlane` facade
+- Migration **v13** — `model_providers`, `model_registry`, `model_profiles`, `model_control_state`, `model_capability_results`, `model_downloads`, `model_audit_log` (central DB)
+- API routes via `Data/backend/routes/models.py` (composition in `main.py`)
+- Chat uses router + gateway + active profile (explicit model / role / fallback; legacy settings fallback when registry empty)
+- Frontend Models page rebuilt as real control surfaces under `Data/frontend/src/pages/models/`
+- Tests: `test_models_control_plane.py` + catalog unit tests; migration expectation → v13
+
+### Architecture fit
+- Single SQLite persistence; secrets never returned to browser
+- Provider capabilities gate load/unload/delete (LM Studio: discover/inference/health; load/unload unsupported honestly)
+- llama.cpp adapter is an explicit unmanaged boundary (not a fake runtime)
+- Observability events under category `models`
+
+### Verification
+- Backend: `PYTHONPATH=/workspace python3 -m pytest Data/backend/tests` → **PASS (149)**
+- Frontend: `npm run typecheck`, `npm run test`, `npm run build` → **PASS**
+- Live LM Studio / Ollama / HF download against real runtimes: **NOT TESTED** in this environment (no local runtimes); adapters and offline/timeout paths covered by unit tests
+
+### Explicitly NOT claimed
+- Programmatic LM Studio load/unload (provider does not expose it on the OpenAI surface used here)
+- Managed llama.cpp inference engine
+- Chat SSE token streaming (preference persisted; HTTP chat remains non-SSE)
+- Automatic “best model” ranking from benchmarks
+
+### Status
+**PASS** (control plane implemented; external runtime E2E NOT TESTED here)
+
+---
+
 ## 2026-09-21 — Phase 51 — Neuro Layer operational completion — PASS
 
 ### Objective

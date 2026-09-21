@@ -36,6 +36,10 @@ function detailMessage(data: ApiErrorBody | null, status: number): string {
   if (Array.isArray(data.detail) && data.detail.length > 0) {
     return data.detail.map((item) => item.msg).join("; ");
   }
+  if (typeof data.detail === "object" && data.detail !== null && "message" in data.detail) {
+    const body = data.detail as { code?: string; message?: string };
+    return body.code ? `${body.code}: ${body.message ?? ""}` : String(body.message ?? `Request failed (${status})`);
+  }
   return `Request failed (${status})`;
 }
 
@@ -183,5 +187,172 @@ export const api = {
 
   listTrainingRecipes(): Promise<{ recipes: TrainingRecipe[] }> {
     return request<{ recipes: TrainingRecipe[] }>("/api/training/recipes");
+  },
+
+  listModels(): Promise<{
+    models: import("../types/api").ModelDescriptor[];
+    status: import("../types/api").ModelsStatus;
+    discoveryLatencyMs?: number | null;
+  }> {
+    return request("/api/models");
+  },
+
+  modelsStatus(): Promise<{
+    status: import("../types/api").ModelsStatus;
+    telemetry: Record<string, unknown>;
+  }> {
+    return request("/api/models/status");
+  },
+
+  refreshModels(): Promise<{
+    summary: unknown;
+    models: import("../types/api").ModelDescriptor[];
+    status: import("../types/api").ModelsStatus;
+  }> {
+    return request("/api/models/refresh", { method: "POST" });
+  },
+
+  getModel(modelId: string): Promise<{
+    model: import("../types/api").ModelDescriptor;
+    profile: import("../types/api").ModelProfile;
+    capabilities: import("../types/api").VerifiedCapability[];
+    provider: import("../types/api").ModelProvider | null;
+    preflight: Record<string, unknown>;
+  }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}`);
+  },
+
+  getModelProfile(modelId: string): Promise<{ profile: import("../types/api").ModelProfile }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/profile`);
+  },
+
+  saveModelProfile(
+    modelId: string,
+    profile: Partial<import("../types/api").ModelProfile> & { activate?: boolean },
+  ): Promise<{ profile: import("../types/api").ModelProfile; activeModelId: string | null }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/profile`, {
+      method: "PUT",
+      body: JSON.stringify(profile),
+    });
+  },
+
+  activateModel(modelId: string): Promise<{
+    model: import("../types/api").ModelDescriptor;
+    activeModelId: string;
+  }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/activate`, { method: "POST" });
+  },
+
+  loadModel(modelId: string, options: Record<string, unknown> = {}): Promise<unknown> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/load`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    });
+  },
+
+  unloadModel(modelId: string): Promise<unknown> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/unload`, { method: "POST" });
+  },
+
+  deleteModel(modelId: string): Promise<{ deleted: boolean }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+  },
+
+  probeModel(
+    modelId: string,
+    capabilities?: string[],
+  ): Promise<{ results: import("../types/api").VerifiedCapability[] }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/probe`, {
+      method: "POST",
+      body: JSON.stringify({ capabilities }),
+    });
+  },
+
+  benchmarkModel(modelId: string): Promise<{ benchmark: Record<string, unknown> }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/benchmark`, { method: "POST" });
+  },
+
+  getGateway(): Promise<{ gateway: import("../types/api").GatewaySnapshot }> {
+    return request("/api/models/gateway");
+  },
+
+  getRouter(): Promise<{ router: import("../types/api").RouterConfig }> {
+    return request("/api/models/router");
+  },
+
+  saveRouter(
+    config: Partial<import("../types/api").RouterConfig>,
+  ): Promise<{ router: import("../types/api").RouterConfig }> {
+    return request("/api/models/router", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    });
+  },
+
+  listModelProviders(): Promise<{ providers: import("../types/api").ModelProvider[] }> {
+    return request("/api/model-providers");
+  },
+
+  createModelProvider(payload: Record<string, unknown>): Promise<{
+    provider: import("../types/api").ModelProvider;
+  }> {
+    return request("/api/model-providers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updateModelProvider(
+    providerId: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ provider: import("../types/api").ModelProvider }> {
+    return request(`/api/model-providers/${encodeURIComponent(providerId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteModelProvider(providerId: string): Promise<{ deleted: boolean }> {
+    return request(`/api/model-providers/${encodeURIComponent(providerId)}`, { method: "DELETE" });
+  },
+
+  testModelProvider(providerId: string): Promise<{
+    connected: boolean;
+    providerId: string;
+    provider: string;
+    modelsFound: number;
+    latencyMs: number | null;
+    health: string;
+    error: string | null;
+  }> {
+    return request(`/api/model-providers/${encodeURIComponent(providerId)}/test`, {
+      method: "POST",
+    });
+  },
+
+  importModel(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request("/api/models/import", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  downloadModel(payload: Record<string, unknown>): Promise<{
+    download: import("../types/api").DownloadJob;
+  }> {
+    return request("/api/models/download", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listModelDownloads(): Promise<{ downloads: import("../types/api").DownloadJob[] }> {
+    return request("/api/model-downloads");
+  },
+
+  cancelModelDownload(downloadId: string): Promise<{ download: import("../types/api").DownloadJob }> {
+    return request(`/api/model-downloads/${encodeURIComponent(downloadId)}/cancel`, {
+      method: "POST",
+    });
   },
 };
