@@ -1,0 +1,14 @@
+---
+description: HADES Agents page context
+globs:
+  - "components/hades/pages/agents-page.tsx"
+  - "components/hades/features/agents/**/*.ts"
+  - "components/hades/features/agents/**/*.tsx"
+  - "components/hades/obsidian/pages/agents-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `agents`.
+UI owner: `pages/agents-page.tsx`; reusable console pieces are in `components/hades/features/agents/`; filtering/sorting helpers in `lib/agents-console.ts`; Obsidian: `obsidian/pages/agents-obsidian.tsx`.
+API contract: agent detail/mutation, specialist and practice methods in `lib/hades-api.ts`.
+Backend owners: agent/work routes in `backend/main.py`, agent/work persistence in `backend/platform_db.py`, practice scenarios in `backend/practice_api.py`, specialist contracts under `backend/reasoning/`.
+Do not scan unrelated pages for an Agents-only change.

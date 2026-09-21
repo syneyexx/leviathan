@@ -1,0 +1,211 @@
+{
+  "id": "data-formulator",
+  "name": "Data Formulator",
+  "description": "Offline CSV profiling and SVG/HTML charts for HADES. Does not start the Microsoft web UI.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Data",
+  "labels": [
+    "csv",
+    "charts",
+    "visualization"
+  ],
+  "permissions": [
+    "subprocess",
+    "filesystem"
+  ],
+  "autonomous": true,
+  "source": "https://github.com/microsoft/data-formulator",
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "mode": "command",
+      "description": "Confirm the local chart bridge.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "summarize",
+      "action": "summarize",
+      "mode": "command",
+      "description": "Profile a local CSV (columns, numeric stats).",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "summarize",
+        "--path",
+        "{path}",
+        "--max-rows",
+        "{max_rows}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "max_rows": {
+            "type": "integer",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 20000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "read_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "chart",
+      "action": "render",
+      "mode": "command",
+      "description": "Write a local HTML/SVG chart from a CSV.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "chart",
+        "--path",
+        "{path}",
+        "--x",
+        "{x}",
+        "--y",
+        "{y}",
+        "--type",
+        "{type}",
+        "--output",
+        "{output}",
+        "--max-rows",
+        "{max_rows}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "x": {
+            "type": "string",
+            "default": "",
+            "maxLength": 80
+          },
+          "y": {
+            "type": "string",
+            "default": "",
+            "maxLength": 80
+          },
+          "type": {
+            "type": "string",
+            "default": "bar",
+            "enum": [
+              "bar",
+              "table"
+            ]
+          },
+          "output": {
+            "type": "string",
+            "default": "chart.html",
+            "maxLength": 300
+          },
+          "max_rows": {
+            "type": "integer",
+            "default": 500,
+            "minimum": 1,
+            "maximum": 20000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "read_files",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "knowledge_paths": [
+    "README.md"
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "hades_api": ">=0.4.1",
+  "version": "0.1.0",
+  "format": 1,
+  "capabilities": {
+    "effects": [
+      "read_files",
+      "write_files",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/microsoft/data-formulator",
+    "signed": false,
+    "license": "MIT"
+  },
+  "license": "MIT"
+}

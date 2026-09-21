@@ -1,0 +1,846 @@
+[
+  {
+    "id": "activepieces",
+    "tools": 6,
+    "tool_names": [
+      "doctor",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "agent-reach",
+    "tools": 5,
+    "tool_names": [
+      "doctor",
+      "install_check",
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": true,
+    "tests": 1,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "agentic-awesome-skills",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "anthropic-cybersecurity-skills",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "antigravity-awesome-skills",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "awesome-claude-code",
+    "tools": 3,
+    "tool_names": [
+      "list_entries",
+      "search",
+      "read"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "awesome-claude-code-toolkit",
+    "tools": 3,
+    "tool_names": [
+      "list_entries",
+      "search",
+      "read"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "awesome-llm-apps",
+    "tools": 3,
+    "tool_names": [
+      "list_entries",
+      "search",
+      "read"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "chrome-devtools-mcp",
+    "tools": 2,
+    "tool_names": [
+      "list_tools",
+      "call_tool"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "node"
+  },
+  {
+    "id": "claude-code-best-practice",
+    "tools": 3,
+    "tool_names": [
+      "list_entries",
+      "search",
+      "read"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "claude-osint",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "composio",
+    "tools": 2,
+    "tool_names": [
+      "doctor",
+      "list_toolkits"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "deep-web-downloader",
+    "tools": 3,
+    "tool_names": [
+      "crawl_url",
+      "inspect_url",
+      "open_terminal"
+    ],
+    "bridge": false,
+    "tests": 1,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "design-dna",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "desktop-commander-mcp",
+    "tools": 2,
+    "tool_names": [
+      "list_tools",
+      "call_tool"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "node"
+  },
+  {
+    "id": "dspy",
+    "tools": 3,
+    "tool_names": [
+      "doctor",
+      "predict",
+      "compile"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "ecc",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "financial-news-intelligence",
+    "tools": 5,
+    "tool_names": [
+      "fetch_financial_news",
+      "feed_hades",
+      "source_status",
+      "audit_sources",
+      "open_terminal"
+    ],
+    "bridge": false,
+    "tests": 1,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "fincept-data",
+    "tools": 5,
+    "tool_names": [
+      "fincept_catalog",
+      "fincept_get",
+      "fincept_batch_get",
+      "fincept_post",
+      "fincept_doctor"
+    ],
+    "bridge": false,
+    "tests": 1,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "geolibre",
+    "tools": 11,
+    "tool_names": [
+      "geolibre_inspect",
+      "geolibre_analyze",
+      "geolibre_load",
+      "geolibre_list",
+      "geolibre_query",
+      "doctor",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": false,
+    "tests": 1,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "node"
+  },
+  {
+    "id": "ghosttrack",
+    "tools": 6,
+    "tool_names": [
+      "doctor",
+      "track_ip",
+      "show_ip",
+      "track_phone",
+      "track_username",
+      "open_terminal"
+    ],
+    "bridge": true,
+    "tests": 1,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "gods-eye-view",
+    "tools": 6,
+    "tool_names": [
+      "doctor",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "node"
+  },
+  {
+    "id": "gpt-crawler",
+    "tools": 7,
+    "tool_names": [
+      "doctor",
+      "write_config",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "node"
+  },
+  {
+    "id": "graphrag",
+    "tools": 4,
+    "tool_names": [
+      "doctor",
+      "init",
+      "index",
+      "query"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "filesystem",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "gsap-skills",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "headroom",
+    "tools": 7,
+    "tool_names": [
+      "doctor",
+      "compress",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "filesystem",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "humanizer",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "impeccable",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "kotaemon",
+    "tools": 6,
+    "tool_names": [
+      "doctor",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "filesystem",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "local-stt-paste",
+    "tools": 2,
+    "tool_names": [
+      "doctor",
+      "transcribe_paste"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "markitdown",
+    "tools": 2,
+    "tool_names": [
+      "doctor",
+      "convert"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "filesystem"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "moneyprinter-turbo",
+    "tools": 7,
+    "tool_names": [
+      "doctor",
+      "seed_lm_studio",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "filesystem",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "netstriker-ai",
+    "tools": 6,
+    "tool_names": [
+      "doctor",
+      "list_remediation",
+      "get_remediation",
+      "dpdp_map",
+      "resolve_target",
+      "scan_local"
+    ],
+    "bridge": true,
+    "tests": 1,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "patchright",
+    "tools": 4,
+    "tool_names": [
+      "doctor",
+      "install_browsers",
+      "fetch",
+      "screenshot"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "ponytail",
+    "tools": 3,
+    "tool_names": [
+      "list_skills",
+      "get_skill",
+      "search_skills"
+    ],
+    "bridge": false,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "project-nomad",
+    "tools": 4,
+    "tool_names": [
+      "doctor",
+      "list_entries",
+      "search",
+      "read"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "puppeteer",
+    "tools": 3,
+    "tool_names": [
+      "doctor",
+      "fetch",
+      "screenshot"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "node"
+  },
+  {
+    "id": "rtk",
+    "tools": 3,
+    "tool_names": [
+      "doctor",
+      "gain",
+      "run"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "filesystem"
+    ],
+    "runtime": "rust"
+  },
+  {
+    "id": "scrapling",
+    "tools": 4,
+    "tool_names": [
+      "doctor",
+      "install_browsers",
+      "fetch",
+      "extract"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "searxng",
+    "tools": 7,
+    "tool_names": [
+      "doctor",
+      "start",
+      "search",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": true,
+    "tests": 1,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "sinwindie-osint",
+    "tools": 6,
+    "tool_names": [
+      "doctor",
+      "search_username",
+      "list_sites",
+      "list_topics",
+      "list_bookmarklets",
+      "get_bookmarklet"
+    ],
+    "bridge": true,
+    "tests": 1,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "ultimate-news-feeder",
+    "tools": 4,
+    "tool_names": [
+      "fetch_latest",
+      "feed_hades",
+      "source_status",
+      "discover_websites"
+    ],
+    "bridge": false,
+    "tests": 1,
+    "requirements": false,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "unsloth",
+    "tools": 2,
+    "tool_names": [
+      "doctor",
+      "info"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "vibe-trading",
+    "tools": 9,
+    "tool_names": [
+      "doctor",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop",
+      "research",
+      "list_tools",
+      "call_tool"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "filesystem",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "voicestudio",
+    "tools": 7,
+    "tool_names": [
+      "doctor",
+      "api_probe",
+      "start",
+      "health",
+      "status",
+      "logs",
+      "stop"
+    ],
+    "bridge": true,
+    "tests": 0,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network"
+    ],
+    "runtime": "python"
+  },
+  {
+    "id": "web-pdf-harvester",
+    "tools": 10,
+    "tool_names": [
+      "discover",
+      "status",
+      "list_resources",
+      "download_selected",
+      "download_all",
+      "resume_downloads",
+      "verify",
+      "cancel",
+      "health",
+      "run"
+    ],
+    "bridge": false,
+    "tests": 1,
+    "requirements": true,
+    "permissions": [
+      "subprocess",
+      "network",
+      "filesystem"
+    ],
+    "runtime": "python"
+  }
+]

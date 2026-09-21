@@ -1,0 +1,17 @@
+{
+  "base_checksum_after": "34269bf8899049612cc2651bc88fb22a703ac79f2afae749bfbdf4e39b4013b5",
+  "base_checksum_before": "34269bf8899049612cc2651bc88fb22a703ac79f2afae749bfbdf4e39b4013b5",
+  "base_unchanged": true,
+  "batches": 2,
+  "candidate_checkpoint_id": null,
+  "eval_recall": null,
+  "examples_seen": 4,
+  "final_loss": 0.025092974305152893,
+  "latency_ms": 654.6742629998334,
+  "notes": {
+    "objective": "cosine_reconstruction",
+    "train_fast": false
+  },
+  "steps": 6,
+  "train_recall": 0.9803317487239838
+}

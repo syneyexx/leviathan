@@ -1,0 +1,180 @@
+{
+  "format": 1,
+  "id": "claude-code-best-practice",
+  "name": "Claude Code Best Practice",
+  "version": "0.1.0",
+  "description": "Searchable Claude Code / agentic engineering best-practice docs for HADES.",
+  "runtime_type": "python",
+  "entrypoint": "catalog_bridge.py",
+  "plugin_type": "tool",
+  "category": "Developer",
+  "labels": [
+    "claude-code",
+    "best-practices",
+    "catalog"
+  ],
+  "permissions": [
+    "subprocess"
+  ],
+  "autonomous": true,
+  "hades_api": ">=0.4.1",
+  "source": "https://github.com/shanraisshan/claude-code-best-practice",
+  "tools": [
+    {
+      "name": "list_entries",
+      "action": "list",
+      "mode": "command",
+      "description": "List packaged files in Claude Code Best Practice.",
+      "command": [
+        "{python}",
+        "catalog_bridge.py",
+        "list",
+        "--limit",
+        "{limit}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "default": 100,
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "search",
+      "action": "search",
+      "mode": "command",
+      "description": "Search Claude Code Best Practice for a query string.",
+      "command": [
+        "{python}",
+        "catalog_bridge.py",
+        "search",
+        "--query",
+        "{query}",
+        "--limit",
+        "{limit}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "read",
+      "action": "read",
+      "mode": "command",
+      "description": "Read one file from Claude Code Best Practice.",
+      "command": [
+        "{python}",
+        "catalog_bridge.py",
+        "read",
+        "--path",
+        "{path}",
+        "--max-chars",
+        "{max_chars}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "max_chars": {
+            "type": "integer",
+            "default": 12000,
+            "minimum": 500,
+            "maximum": 50000
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    }
+  ],
+  "license": "MIT",
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "capabilities": {
+    "effects": [
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/shanraisshan/claude-code-best-practice",
+    "license": "MIT",
+    "signed": false
+  }
+}

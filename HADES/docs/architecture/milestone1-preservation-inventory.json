@@ -1,0 +1,1843 @@
+{
+  "commit": "e0ab833b565eeb61beb0793b86e01b80622c47ad",
+  "generated": "2026-09-08",
+  "note": "Baseline before Milestone 1 additive work",
+  "routes": [
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/agents"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/agents/{agent_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/cancel-current"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/agents/{agent_id}/state"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/brain"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/brain/links"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/brain/nodes"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "DELETE",
+      "path": "/api/brain/nodes/{node_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/brain/nodes/{node_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/connection/test"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/conversations"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/conversations"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "DELETE",
+      "path": "/api/conversations/{conversation_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PATCH",
+      "path": "/api/conversations/{conversation_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/conversations/{conversation_id}/messages"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/conversations/{conversation_id}/messages"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/files"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/files/upload"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/files/workspaces"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "DELETE",
+      "path": "/api/files/workspaces/{workspace_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/files/workspaces/{workspace_id}/rescan"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "DELETE",
+      "path": "/api/files/{file_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/files/{file_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/files/{file_id}/reindex"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/health"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/knowledge"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/knowledge/harvest"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/knowledge/pack"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/knowledge/pack/import"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/knowledge/search"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/memories"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/memories"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/memories/export"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/memories/import"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/memories/retrieve"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "DELETE",
+      "path": "/api/memories/{memory_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/memories/{memory_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/memories/{memory_id}/history"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/memories/{memory_id}/supersede"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/models"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/models/{model_id:path}/profile"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/models/{model_id:path}/profile"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/plugins"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/approvals/batch"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/import"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/import-folder"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/import-zip"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/pick-folder"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "DELETE",
+      "path": "/api/plugins/{plugin_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/plugins/{plugin_id}/events"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/expand-mcp"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/plugins/{plugin_id}/export"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/invoke"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/repair"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/rollback"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/plugins/{plugin_id}/state"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/plugins/{plugin_id}/timeline"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/plugins/{plugin_id}/tool-calls"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/plugins/{plugin_id}/trust"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/update"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/research"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/research"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/research/{project_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/research/{project_id}/cancel"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/research/{project_id}/coverage"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/research/{project_id}/run"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/runs/{run_id}/events"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/runs/{run_id}/events/stream"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/runs/{run_id}/inspection"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/settings"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/settings"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/settings/backup"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/settings/reset"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/specialists"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/tasks"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/tasks"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/cancel"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/control"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/events"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/resume-checkpoint"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/retry"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/run"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/work"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/trading"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/trading/bot"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/trading/buy"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/trading/dashboard"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/trading/enabled"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "PUT",
+      "path": "/api/trading/kill-switch"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/trading/market/bars"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/trading/market/import-csv"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/trading/market/seed"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/trading/positions/{position_id}/close"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/trading/reset"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/trading/runs"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/trading/runs"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/trading/runs/{run_id}"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "POST",
+      "path": "/api/trading/runs/{run_id}/cancel"
+    },
+    {
+      "file": "backend/main.py",
+      "method": "GET",
+      "path": "/api/trading/strategies"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/approvals"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/approvals/{request_id}"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/approvals/{request_id}/decide"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/artifacts"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/artifacts/generate"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "DELETE",
+      "path": "/artifacts/{artifact_id}"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/artifacts/{artifact_id}"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/artifacts/{artifact_id}/download"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/artifacts/{artifact_id}/preview"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/artifacts/{artifact_id}/verify"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/browser/capabilities"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/build/goal"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/build/plan"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/build/run"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/build/{run_id}"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/build/{run_id}/apply"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/build/{run_id}/conflicts"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/build/{run_id}/preview"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/build/{run_id}/restore"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/claims"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/claims"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/code/definition"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/code/outline"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/code/references"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/compute/local/capabilities"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/compute/local/jobs/{job_id}"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/compute/local/jobs/{job_id}/cancel"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/compute/local/submit"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/conversations/{conversation_id}/attachments"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/conversations/{conversation_id}/branch"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/conversations/{conversation_id}/branches"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/conversations/{conversation_id}/branches/{branch_id}/activate"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/conversations/{conversation_id}/draft"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "PUT",
+      "path": "/conversations/{conversation_id}/draft"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/debug/diagnose"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/files/symbols"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/files/symbols/refresh"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/committees"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/committees"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/committees/{session_id}"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/compute/jobs"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/compute/jobs"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/compute/jobs/{job_id}/cancel"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/compute/nodes"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/compute/nodes/heartbeat"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/context/compile"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/context/packs/{pack_id}"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/dashboard"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/evals/matrix"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/evals/recommend"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/evals/reports"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/evals/run"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/finance/events"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/finance/fuse"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/flight/compare"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/flight/events"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/flight/runs/{run_id}/events"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/flight/runs/{run_id}/replay"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/graph/as-of"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/graph/contradictions"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/graph/edges"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/graph/edges"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/missions"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/compile"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/missions/{mission_id}"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/missions/{mission_id}/budgets"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/{mission_id}/budgets/consume"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/{mission_id}/budgets/release"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/{mission_id}/budgets/reserve"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/{mission_id}/gates/{gate_id}"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/{mission_id}/pause"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/{mission_id}/resume"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/missions/{mission_id}/start"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/sandbox/envelopes"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/sandbox/envelopes/{plugin_id}"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "PUT",
+      "path": "/gen2/sandbox/envelopes/{plugin_id}"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/sandbox/envelopes/{plugin_id}/check"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "GET",
+      "path": "/gen2/skills"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/skills/candidates"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/skills/{skill_id}/benchmark"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/skills/{skill_id}/deactivate"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/skills/{skill_id}/execute"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/skills/{skill_id}/promote"
+    },
+    {
+      "file": "backend/gen2/routes.py",
+      "method": "POST",
+      "path": "/gen2/skills/{skill_id}/rollback"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/host/capabilities"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/host/verify"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/inbox"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/inbox/{item_id}/archive"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/inbox/{item_id}/read"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/mcp/catalog"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/memory/forget"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/memory/proposals"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/memory/proposals/{proposal_id}/decide"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/onboarding"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/onboarding/complete"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/plugins/marketplace"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/plugins/marketplace/{plugin_id}/install"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/practice/run-all"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/practice/scenarios"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/practice/scenarios/{scenario_id}/run"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/preview/plan"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/preview/start"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/preview/stop"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/preview/{run_id}/status"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/project/analyze-file"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/project/impact"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/project/map"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/project/retrieval-compare"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/release/confidence"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/release/confidence/smoke"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "GET",
+      "path": "/schedules/{schedule_id}"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/schedules/{schedule_id}/disable"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/schedules/{schedule_id}/pause"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/schedules/{schedule_id}/resume"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/search"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/tasks/{task_id}/schedule"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/terminal/run"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/tools/cards"
+    },
+    {
+      "file": "backend/capability_routes.py",
+      "method": "POST",
+      "path": "/voice/to-task"
+    }
+  ],
+  "route_count": 218,
+  "pages": [
+    "agents-page.tsx",
+    "brain-graph.tsx",
+    "brain-inspector.tsx",
+    "brain-node-icon.tsx",
+    "brain-page.tsx",
+    "chat-page.tsx",
+    "chat-reasoning-page.tsx",
+    "coding-agent-page.tsx",
+    "files-page.tsx",
+    "memory-page.tsx",
+    "mission-control-page.tsx",
+    "models-page.tsx",
+    "plugins-page-core.tsx",
+    "plugins-page.tsx",
+    "research-page.tsx",
+    "settings-page.tsx",
+    "tasks-page.tsx",
+    "trading-page.tsx"
+  ],
+  "navigation_hints": [
+    {
+      "id": "chat",
+      "label": "Chat"
+    },
+    {
+      "id": "tasks",
+      "label": "Taken"
+    },
+    {
+      "id": "mission-control",
+      "label": "Mission Control"
+    },
+    {
+      "id": "agents",
+      "label": "Agents"
+    },
+    {
+      "id": "coding-agent",
+      "label": "Coding Agent"
+    },
+    {
+      "id": "research",
+      "label": "Onderzoek"
+    },
+    {
+      "id": "trading",
+      "label": "Trading"
+    },
+    {
+      "id": "brain",
+      "label": "Brain"
+    },
+    {
+      "id": "memory",
+      "label": "Geheugen"
+    },
+    {
+      "id": "files",
+      "label": "Bestanden"
+    },
+    {
+      "id": "plugins",
+      "label": "Plugins"
+    },
+    {
+      "id": "models",
+      "label": "Modellen"
+    },
+    {
+      "id": "settings",
+      "label": "Instellingen"
+    },
+    {
+      "id": "apps",
+      "label": "Apps"
+    },
+    {
+      "id": "knowledge",
+      "label": "Kennis"
+    },
+    {
+      "id": "system",
+      "label": "Systeem"
+    }
+  ],
+  "default_settings_keys_sample": [
+    "allow_cloud_model_fallback",
+    "auto_connect",
+    "auto_memory_mode",
+    "auto_web_research",
+    "conversation_learning",
+    "embedding_model_id",
+    "enable_semantic_retrieval",
+    "expert_mastery_target",
+    "expert_max_cycles",
+    "file_read_policy",
+    "file_write_policy",
+    "language",
+    "lm_studio_api_key",
+    "lm_studio_base_url",
+    "max_concurrent_tasks",
+    "max_dependency_depth",
+    "max_model_calls_per_task",
+    "max_model_concurrency",
+    "max_parallel_steps",
+    "max_retrieval_chars",
+    "max_retrieval_chars_per_hit",
+    "max_retrieval_items",
+    "max_specialist_steps",
+    "max_subtasks",
+    "max_tokens",
+    "max_tool_rounds",
+    "memory_auto_promote",
+    "memory_default_scope",
+    "model_fallback_order",
+    "model_refresh_seconds",
+    "network_policy",
+    "onboarding_completed_at",
+    "plugin_auto_install_dependencies",
+    "plugin_autonomous_tools",
+    "progress_events_enabled",
+    "reasoning_profile",
+    "repeat_penalty",
+    "request_timeout_seconds",
+    "research_default_depth",
+    "research_max_questions",
+    "research_prefer_local",
+    "retrieval_diversity_window",
+    "retrieval_lexical_weight",
+    "retrieval_semantic_weight",
+    "role_model_overrides",
+    "seed",
+    "stream_provisional_text",
+    "streaming",
+    "subprocess_policy",
+    "system_prompt",
+    "temperature",
+    "terminal_allowlist",
+    "theme",
+    "top_k",
+    "top_p"
+  ],
+  "plugins": [
+    {
+      "id": "geolibre",
+      "path": "plugins/geolibre/hades-plugin.json",
+      "tools": [
+        "geolibre_inspect",
+        "geolibre_analyze",
+        "geolibre_load",
+        "geolibre_list",
+        "geolibre_query",
+        "doctor",
+        "start",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    },
+    {
+      "id": "graphrag",
+      "path": "plugins/graphrag/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "init",
+        "index",
+        "query"
+      ]
+    },
+    {
+      "id": "gods-eye-view",
+      "path": "plugins/gods-eye-view/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "start",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    },
+    {
+      "id": "agentic-awesome-skills",
+      "path": "plugins/agentic-awesome-skills/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "rtk",
+      "path": "plugins/rtk/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "gain",
+        "run"
+      ]
+    },
+    {
+      "id": "ghosttrack",
+      "path": "plugins/ghosttrack/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "track_ip",
+        "show_ip",
+        "track_phone",
+        "track_username",
+        "open_terminal"
+      ]
+    },
+    {
+      "id": "hypit",
+      "path": "plugins/hypit/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "prepare",
+        "list_skills",
+        "get_skill",
+        "search_skills",
+        "inspect_source",
+        "version",
+        "check",
+        "plan",
+        "runtime_init",
+        "build"
+      ]
+    },
+    {
+      "id": "activepieces",
+      "path": "plugins/activepieces/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "start",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    },
+    {
+      "id": "antigravity-awesome-skills",
+      "path": "plugins/antigravity-awesome-skills/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "chrome-devtools-mcp",
+      "path": "plugins/chrome-devtools-mcp/hades-plugin.json",
+      "tools": [
+        "list_tools",
+        "call_tool"
+      ]
+    },
+    {
+      "id": "kotaemon",
+      "path": "plugins/kotaemon/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "start",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    },
+    {
+      "id": "fincept-data",
+      "path": "plugins/fincept-data/hades-plugin.json",
+      "tools": [
+        "fincept_catalog",
+        "fincept_get",
+        "fincept_batch_get",
+        "fincept_post",
+        "fincept_doctor"
+      ]
+    },
+    {
+      "id": "awesome-llm-apps",
+      "path": "plugins/awesome-llm-apps/hades-plugin.json",
+      "tools": [
+        "list_entries",
+        "search",
+        "read"
+      ]
+    },
+    {
+      "id": "humanizer",
+      "path": "plugins/humanizer/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "unsloth",
+      "path": "plugins/unsloth/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "info"
+      ]
+    },
+    {
+      "id": "netstriker-ai",
+      "path": "plugins/netstriker-ai/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "list_remediation",
+        "get_remediation",
+        "dpdp_map",
+        "resolve_target",
+        "scan_local"
+      ]
+    },
+    {
+      "id": "local-stt-paste",
+      "path": "plugins/local-stt-paste/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "transcribe_paste"
+      ]
+    },
+    {
+      "id": "ecc",
+      "path": "plugins/ecc/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "ponytail",
+      "path": "plugins/ponytail/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "anthropic-cybersecurity-skills",
+      "path": "plugins/anthropic-cybersecurity-skills/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "awesome-claude-code",
+      "path": "plugins/awesome-claude-code/hades-plugin.json",
+      "tools": [
+        "list_entries",
+        "search",
+        "read"
+      ]
+    },
+    {
+      "id": "agent-reach",
+      "path": "plugins/agent-reach/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "install_check",
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "composio",
+      "path": "plugins/composio/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "list_toolkits"
+      ]
+    },
+    {
+      "id": "desktop-commander-mcp",
+      "path": "plugins/desktop-commander-mcp/hades-plugin.json",
+      "tools": [
+        "list_tools",
+        "call_tool"
+      ]
+    },
+    {
+      "id": "sinwindie-osint",
+      "path": "plugins/sinwindie-osint/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "search_username",
+        "list_sites",
+        "list_topics",
+        "list_bookmarklets",
+        "get_bookmarklet"
+      ]
+    },
+    {
+      "id": "claude-osint",
+      "path": "plugins/claude-osint/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "financial-news-intelligence",
+      "path": "plugins/financial-news-intelligence/hades-plugin.json",
+      "tools": [
+        "fetch_financial_news",
+        "feed_hades",
+        "source_status",
+        "audit_sources",
+        "open_terminal"
+      ]
+    },
+    {
+      "id": "puppeteer",
+      "path": "plugins/puppeteer/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "fetch",
+        "screenshot"
+      ]
+    },
+    {
+      "id": "scrapling",
+      "path": "plugins/scrapling/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "install_browsers",
+        "fetch",
+        "extract"
+      ]
+    },
+    {
+      "id": "voicestudio",
+      "path": "plugins/voicestudio/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "start",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    },
+    {
+      "id": "markitdown",
+      "path": "plugins/markitdown/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "convert"
+      ]
+    },
+    {
+      "id": "awesome-claude-code-toolkit",
+      "path": "plugins/awesome-claude-code-toolkit/hades-plugin.json",
+      "tools": [
+        "list_entries",
+        "search",
+        "read"
+      ]
+    },
+    {
+      "id": "headroom",
+      "path": "plugins/headroom/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "compress",
+        "start",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    },
+    {
+      "id": "project-nomad",
+      "path": "plugins/project-nomad/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "list_entries",
+        "search",
+        "read"
+      ]
+    },
+    {
+      "id": "ultimate-news-feeder",
+      "path": "plugins/ultimate-news-feeder/hades-plugin.json",
+      "tools": [
+        "fetch_latest",
+        "feed_hades",
+        "source_status",
+        "discover_websites"
+      ]
+    },
+    {
+      "id": "searxng",
+      "path": "plugins/searxng/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "start",
+        "search",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    },
+    {
+      "id": "design-dna",
+      "path": "plugins/design-dna/hades-plugin.json",
+      "tools": [
+        "list_skills",
+        "get_skill",
+        "search_skills"
+      ]
+    },
+    {
+      "id": "claude-code-best-practice",
+      "path": "plugins/claude-code-best-practice/hades-plugin.json",
+      "tools": [
+        "list_entries",
+        "search",
+        "read"
+      ]
+    },
+    {
+      "id": "deep-web-downloader",
+      "path": "plugins/deep-web-downloader/hades-plugin.json",
+      "tools": [
+        "crawl_url",
+        "inspect_url",
+        "open_terminal"
+      ]
+    },
+    {
+      "id": "gpt-crawler",
+      "path": "plugins/gpt-crawler/hades-plugin.json",
+      "tools": [
+        "doctor",
+        "write_config",
+        "start",
+        "health",
+        "status",
+        "logs",
+        "stop"
+      ]
+    }
+  ],
+  "build_coding_inputs": {
+    "BuildEdit": [
+      {
+        "name": "path",
+        "type": "str = Field(min_length=1, max_length=500)"
+      },
+      {
+        "name": "action",
+        "type": "Literal[\"create\", \"replace\", \"patch_lines\"]"
+      },
+      {
+        "name": "content",
+        "type": "str | None = None"
+      },
+      {
+        "name": "old_content",
+        "type": "str | None = None"
+      },
+      {
+        "name": "start_line",
+        "type": "int | None = None"
+      },
+      {
+        "name": "end_line",
+        "type": "int | None = None"
+      }
+    ],
+    "BuildRunInput": [
+      {
+        "name": "source_repo",
+        "type": "str = Field(min_length=1, max_length=1000)"
+      },
+      {
+        "name": "edits",
+        "type": "list[BuildEdit] = Field(default_factory=list, max_length=50)"
+      },
+      {
+        "name": "repair_waves",
+        "type": "list[list[BuildEdit]] = Field(default_factory=list, max_length=3)"
+      },
+      {
+        "name": "test_suite",
+        "type": "Literal[\"pytest\", \"unittest\", \"npm_test\"] = \"unittest\""
+      },
+      {
+        "name": "test_args",
+        "type": "list[str] = Field(default_factory=list, max_length=20)"
+      },
+      {
+        "name": "max_attempts",
+        "type": "int = Field(default=2, ge=1, le=5)"
+      },
+      {
+        "name": "goal",
+        "type": "str = Field(default=\"\", max_length=2000)"
+      },
+      {
+        "name": "auto_repair",
+        "type": "bool = False"
+      }
+    ],
+    "CodingGoalInput": [
+      {
+        "name": "source_repo",
+        "type": "str = Field(min_length=1, max_length=1000)"
+      },
+      {
+        "name": "goal",
+        "type": "str = Field(min_length=1, max_length=4000)"
+      },
+      {
+        "name": "test_suite",
+        "type": "Literal[\"pytest\", \"unittest\", \"npm_test\"] = \"unittest\""
+      },
+      {
+        "name": "test_args",
+        "type": "list[str] = Field(default_factory=list, max_length=20)"
+      },
+      {
+        "name": "max_attempts",
+        "type": "int = Field(default=3, ge=1, le=5)"
+      },
+      {
+        "name": "model_id",
+        "type": "str | None = Field(default=None, max_length=200)"
+      },
+      {
+        "name": "auto_repair",
+        "type": "bool = True"
+      },
+      {
+        "name": "edits",
+        "type": "list[BuildEdit] = Field(default_factory=list, max_length=50)"
+      },
+      {
+        "name": "repair_waves",
+        "type": "list[list[BuildEdit]] = Field(default_factory=list, max_length=3)"
+      }
+    ],
+    "BuildPlanInput": [
+      {
+        "name": "edits",
+        "type": "list[BuildEdit] = Field(default_factory=list, max_length=50)"
+      },
+      {
+        "name": "goal",
+        "type": "str = Field(default=\"\", max_length=2000)"
+      }
+    ],
+    "BuildApplyInput": [
+      {
+        "name": "approved",
+        "type": "bool = False"
+      }
+    ]
+  },
+  "db_tables": [
+    "agent_profiles",
+    "agent_usage_events",
+    "app_settings",
+    "approval_requests",
+    "artifacts",
+    "brain_external_links",
+    "brain_links",
+    "brain_nodes",
+    "client_request_dedup",
+    "conversation_branches",
+    "conversation_drafts",
+    "conversations",
+    "gen2_capability_envelopes",
+    "gen2_committee_sessions",
+    "gen2_compute_nodes",
+    "gen2_context_packs",
+    "gen2_eval_runs",
+    "gen2_graph_edges",
+    "gen2_market_events",
+    "gen2_mission_executions",
+    "gen2_missions",
+    "gen2_model_matrix",
+    "gen2_remote_jobs",
+    "gen2_run_events",
+    "gen2_skill_candidates",
+    "inbox_items",
+    "indexed_files",
+    "knowledge_chunks",
+    "knowledge_sources",
+    "market_bars",
+    "memories",
+    "memory_proposals",
+    "message_attachments",
+    "messages",
+    "model_profiles",
+    "paper_orders",
+    "paper_positions",
+    "paper_trading_settings",
+    "paper_wallets",
+    "plugin_events",
+    "plugin_tools",
+    "plugins",
+    "research_events",
+    "research_project_sources",
+    "research_projects",
+    "schema_migrations",
+    "task_events",
+    "task_occurrences",
+    "task_schedules",
+    "tasks",
+    "tool_calls",
+    "trading_bot_settings",
+    "trading_events",
+    "trading_strategies",
+    "trading_strategy_runs",
+    "work_checkpoints",
+    "work_steps",
+    "workspaces"
+  ],
+  "user_flows": [
+    "Chat send_message with optional tools",
+    "POST /build/run structured edits",
+    "POST /build/goal natural-language coding",
+    "GET /build/{run_id} status",
+    "Mission Control start/pause/resume",
+    "Plugin invoke + trust ladder",
+    "Eval Lab quality_suite + live_quality",
+    "Research runner",
+    "Paper trading"
+  ]
+}

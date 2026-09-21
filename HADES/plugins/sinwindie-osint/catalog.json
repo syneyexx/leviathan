@@ -1,0 +1,530 @@
+{
+  "source": "https://github.com/sinwindie/OSINT",
+  "author": "Sinwindie",
+  "topics": [
+    {
+      "id": "Cryptocurrency",
+      "name": "Cryptocurrency",
+      "resources": [
+        {
+          "path": "Cryptocurrency/Cryptocurrency OSINT Attack Surface.pdf",
+          "name": "Cryptocurrency OSINT Attack Surface.pdf",
+          "topic": "Cryptocurrency",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "DarkWeb",
+      "name": "DarkWeb",
+      "resources": [
+        {
+          "path": "DarkWeb/DWM OSINT Attack Surface.pdf",
+          "name": "DWM OSINT Attack Surface.pdf",
+          "topic": "DarkWeb",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Discord",
+      "name": "Discord",
+      "resources": [
+        {
+          "path": "Discord/Discord OSINT Attack Surface.pdf",
+          "name": "Discord OSINT Attack Surface.pdf",
+          "topic": "Discord",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Email",
+      "name": "Email",
+      "resources": [
+        {
+          "path": "Email/EMAIL OSINT Attack Surface.pdf",
+          "name": "EMAIL OSINT Attack Surface.pdf",
+          "topic": "Email",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Gab",
+      "name": "Gab",
+      "resources": [
+        {
+          "path": "Gab/Gab OSINT Attack Surface.pdf",
+          "name": "Gab OSINT Attack Surface.pdf",
+          "topic": "Gab",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "Gab/Gab OSINT Techniques.pdf",
+          "name": "Gab OSINT Techniques.pdf",
+          "topic": "Gab",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "Gettr",
+      "name": "Gettr",
+      "resources": [
+        {
+          "path": "Gettr/Gettr OSINT Attack Surface.pdf",
+          "name": "Gettr OSINT Attack Surface.pdf",
+          "topic": "Gettr",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Github",
+      "name": "Github",
+      "resources": [
+        {
+          "path": "Github/Github OSINT Attack Surface.pdf",
+          "name": "Github OSINT Attack Surface.pdf",
+          "topic": "Github",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Image Analysis",
+      "name": "Image Analysis",
+      "resources": [
+        {
+          "path": "Image Analysis/IMAGE OSINT Attack Surface.odg",
+          "name": "IMAGE OSINT Attack Surface.odg",
+          "topic": "Image Analysis",
+          "type": "odg",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "Image Analysis/IMAGE OSINT Attack Surface.pdf",
+          "name": "IMAGE OSINT Attack Surface.pdf",
+          "topic": "Image Analysis",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "Instagram",
+      "name": "Instagram",
+      "resources": [
+        {
+          "path": "Instagram/Instagram OSINT Attack Surface.pdf",
+          "name": "Instagram OSINT Attack Surface.pdf",
+          "topic": "Instagram",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "IP",
+      "name": "IP",
+      "resources": [
+        {
+          "path": "IP/IP Address OSINT Attack Surface.pdf",
+          "name": "IP Address OSINT Attack Surface.pdf",
+          "topic": "IP",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "LinkedIn",
+      "name": "LinkedIn",
+      "resources": [
+        {
+          "path": "LinkedIn/LinkedIn OSINT Attack Surface.pdf",
+          "name": "LinkedIn OSINT Attack Surface.pdf",
+          "topic": "LinkedIn",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "LinkedIn/LinkedIn OSINT Techniques Part I and II.pdf",
+          "name": "LinkedIn OSINT Techniques Part I and II.pdf",
+          "topic": "LinkedIn",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "Mastodon",
+      "name": "Mastodon",
+      "resources": [
+        {
+          "path": "Mastodon/Mastodon OSINT Attack Surface.pdf",
+          "name": "Mastodon OSINT Attack Surface.pdf",
+          "topic": "Mastodon",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "MISC",
+      "name": "MISC",
+      "resources": [
+        {
+          "path": "MISC/Account Knocking For Fun and OSINT.pdf",
+          "name": "Account Knocking For Fun and OSINT.pdf",
+          "topic": "MISC",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "MISC/DiagramTemplate.odg",
+          "name": "DiagramTemplate.odg",
+          "topic": "MISC",
+          "type": "odg",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "MISC/Make Your Own Custom OSINT Bookmarklets.pdf",
+          "name": "Make Your Own Custom OSINT Bookmarklets.pdf",
+          "topic": "MISC",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "MISC/The 7 Deadly Sins of OSINT.pdf",
+          "name": "The 7 Deadly Sins of OSINT.pdf",
+          "topic": "MISC",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 4
+    },
+    {
+      "id": "OpenSea",
+      "name": "OpenSea",
+      "resources": [
+        {
+          "path": "OpenSea/OpenSea OSINT Attack Surface.pdf",
+          "name": "OpenSea OSINT Attack Surface.pdf",
+          "topic": "OpenSea",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Person",
+      "name": "Person",
+      "resources": [
+        {
+          "path": "Person/Person OSINT Attack Surface.pdf",
+          "name": "Person OSINT Attack Surface.pdf",
+          "topic": "Person",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Phone",
+      "name": "Phone",
+      "resources": [
+        {
+          "path": "Phone/Telephone Number OSINT Attack Surface.pdf",
+          "name": "Telephone Number OSINT Attack Surface.pdf",
+          "topic": "Phone",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Pinterest",
+      "name": "Pinterest",
+      "resources": [
+        {
+          "path": "Pinterest/Pinterest OSINT Attack Surface.pdf",
+          "name": "Pinterest OSINT Attack Surface.pdf",
+          "topic": "Pinterest",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "PokemonGo",
+      "name": "PokemonGo",
+      "resources": [
+        {
+          "path": "PokemonGo/PokemonGo OSINT Attack Surface.pdf",
+          "name": "PokemonGo OSINT Attack Surface.pdf",
+          "topic": "PokemonGo",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "PokemonGo/Pokémon GO OSINT Techniques_ Part I and II.pdf",
+          "name": "Pokémon GO OSINT Techniques_ Part I and II.pdf",
+          "topic": "PokemonGo",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "Reddit",
+      "name": "Reddit",
+      "resources": [
+        {
+          "path": "Reddit/Reddit OSINT Attack Surface.pdf",
+          "name": "Reddit OSINT Attack Surface.pdf",
+          "topic": "Reddit",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "Reddit/Reddit OSINT Techniques.pdf",
+          "name": "Reddit OSINT Techniques.pdf",
+          "topic": "Reddit",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "root",
+      "name": "root",
+      "resources": [
+        {
+          "path": "README.md",
+          "name": "README.md",
+          "topic": "root",
+          "type": "md",
+          "packaged": true
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Skype",
+      "name": "Skype",
+      "resources": [
+        {
+          "path": "Skype/Skype OSINT Attack Surface.pdf",
+          "name": "Skype OSINT Attack Surface.pdf",
+          "topic": "Skype",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Snapchat",
+      "name": "Snapchat",
+      "resources": [
+        {
+          "path": "Snapchat/Snapchat OSINT Attack Surface.pdf",
+          "name": "Snapchat OSINT Attack Surface.pdf",
+          "topic": "Snapchat",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "SULTAN",
+      "name": "SULTAN",
+      "resources": [
+        {
+          "path": "SULTAN/Build An OSINT Username Search Tool Using SULTAN.pdf",
+          "name": "Build An OSINT Username Search Tool Using SULTAN.pdf",
+          "topic": "SULTAN",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "SULTAN/SULTAN_DATA.xlsx",
+          "name": "SULTAN_DATA.xlsx",
+          "topic": "SULTAN",
+          "type": "xlsx",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "TikTok",
+      "name": "TikTok",
+      "resources": [
+        {
+          "path": "TikTok/OSINT Investigations on TikTok.pdf",
+          "name": "OSINT Investigations on TikTok.pdf",
+          "topic": "TikTok",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "TikTok/TikTok OSINT Attack Surface.pdf",
+          "name": "TikTok OSINT Attack Surface.pdf",
+          "topic": "TikTok",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "Tumblr",
+      "name": "Tumblr",
+      "resources": [
+        {
+          "path": "Tumblr/OSINT Investigations On Tumblr.pdf",
+          "name": "OSINT Investigations On Tumblr.pdf",
+          "topic": "Tumblr",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        },
+        {
+          "path": "Tumblr/Tumblr OSINT Attack Surface.pdf",
+          "name": "Tumblr OSINT Attack Surface.pdf",
+          "topic": "Tumblr",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 2
+    },
+    {
+      "id": "Twitter",
+      "name": "Twitter",
+      "resources": [
+        {
+          "path": "Twitter/Twitter OSINT Attack Surface.pdf",
+          "name": "Twitter OSINT Attack Surface.pdf",
+          "topic": "Twitter",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Username",
+      "name": "Username",
+      "resources": [
+        {
+          "path": "Username/USERNAME OSINT Attack Surface.pdf",
+          "name": "USERNAME OSINT Attack Surface.pdf",
+          "topic": "Username",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Websites",
+      "name": "Websites",
+      "resources": [
+        {
+          "path": "Websites/Website OSINT Attack Surface.pdf",
+          "name": "Website OSINT Attack Surface.pdf",
+          "topic": "Websites",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    },
+    {
+      "id": "Youtube",
+      "name": "Youtube",
+      "resources": [
+        {
+          "path": "Youtube/Youtube OSINT Attack Surface.pdf",
+          "name": "Youtube OSINT Attack Surface.pdf",
+          "topic": "Youtube",
+          "type": "pdf",
+          "packaged": false,
+          "note": "Listed from upstream; PDF/ODG omitted from .HadesPlugin to keep size practical."
+        }
+      ],
+      "resource_count": 1
+    }
+  ],
+  "bookmarklet_count": 10,
+  "sultan_site_count": 111
+}

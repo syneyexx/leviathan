@@ -1,0 +1,12 @@
+---
+description: HADES Files page context
+globs:
+  - "components/hades/pages/files-page.tsx"
+  - "components/hades/obsidian/pages/files-obsidian.tsx"
+alwaysApply: false
+---
+Page ID: `files`.
+UI owner: `components/hades/pages/files-page.tsx`; Obsidian: `obsidian/pages/files-obsidian.tsx`.
+API contract: file/workspace/index/search methods in `lib/hades-api.ts`.
+Backend owners: `KnowledgeService` in `backend/platform_services_core.py`, knowledge/workspace/indexed-file persistence in `backend/platform_db.py`, file/knowledge routes in `backend/main.py`.
+Do not scan ResearchRunner unless the file change explicitly involves research ingestion.

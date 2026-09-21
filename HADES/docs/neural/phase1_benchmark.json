@@ -1,0 +1,13 @@
+{
+  "associations_stored": 6,
+  "cpu_read_latency_ms_mean": 0.10330633328218634,
+  "cuda_available": false,
+  "gpu_latency_ms": null,
+  "initial_recall_mean_cosine": 0.9365005294481913,
+  "interference_note": "see test_interference_measurement",
+  "last_write_latency_ms": 92.5790890000826,
+  "new_recall_mean_cosine": 0.9670650164286295,
+  "nn_baseline_old_mean_cosine": 1.00000003973643,
+  "parameter_count": 37232,
+  "post_write_retention_mean_cosine": 0.9205397367477417
+}

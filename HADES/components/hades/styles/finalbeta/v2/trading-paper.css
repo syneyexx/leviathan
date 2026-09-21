@@ -1,0 +1,123 @@
+/* TradingCenter Paper trading */
+
+.fb-root .tc-paper-mid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 0.95fr);
+  gap: 10px;
+}
+
+.fb-root .tc-paper-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.15fr) minmax(0, 0.95fr);
+  gap: 10px;
+}
+
+.fb-root .tc-account-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.fb-root .tc-account-grid .tc-detail-row {
+  padding: 5px 0;
+}
+
+.fb-root .tc-order-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fb-root .tc-order-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.fb-root .tc-order-tabs button {
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid rgba(70, 120, 160, 0.28);
+  background: rgba(0, 0, 0, 0.3);
+  color: #9db4bf;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.fb-root .tc-order-tabs button.buy.active {
+  color: #041018;
+  background: #22c55e;
+  border-color: #22c55e;
+}
+
+.fb-root .tc-order-tabs button.sell.active {
+  color: #fff;
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
+.fb-root .tc-order-mode {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: #9db4bf;
+}
+
+.fb-root .tc-order-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.fb-root .tc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fb-root .tc-field span {
+  color: #7f96a4;
+  font-size: 10px;
+}
+
+.fb-root .tc-field input,
+.fb-root .tc-field select {
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid rgba(70, 120, 160, 0.28);
+  background: rgba(0, 0, 0, 0.35);
+  color: #e8f1f5;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.fb-root .tc-order-submit {
+  margin-top: 4px;
+  height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #34d399, #16a34a);
+  color: #041018;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fb-root .tc-side-long {
+  color: #4ade80;
+  font-weight: 700;
+}
+
+.fb-root .tc-side-short {
+  color: #f87171;
+  font-weight: 700;
+}
+
+@media (max-width: 1400px) {
+  .fb-root .tc-paper-mid,
+  .fb-root .tc-paper-bottom {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,186 @@
+{
+  "id": "autoclip",
+  "name": "AutoClip",
+  "description": "Local ffmpeg probe/cut for highlight clips. Fails closed without ffmpeg.",
+  "runtime_type": "python",
+  "entrypoint": "hades_bridge.py",
+  "plugin_type": "tool",
+  "category": "Media",
+  "labels": [
+    "video",
+    "ffmpeg",
+    "clips"
+  ],
+  "permissions": [
+    "subprocess",
+    "filesystem"
+  ],
+  "autonomous": false,
+  "source": "https://github.com/zhouxiaoka/autoclip",
+  "tools": [
+    {
+      "name": "doctor",
+      "action": "doctor",
+      "mode": "command",
+      "description": "Check ffmpeg/ffprobe.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "doctor"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "probe",
+      "action": "probe",
+      "mode": "command",
+      "description": "Probe a local video.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "probe",
+        "--path",
+        "{path}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "read_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      }
+    },
+    {
+      "name": "cut",
+      "action": "cut",
+      "mode": "command",
+      "description": "Cut a clip from a local video.",
+      "command": [
+        "{python}",
+        "hades_bridge.py",
+        "cut",
+        "--path",
+        "{path}",
+        "--start",
+        "{start}",
+        "--duration",
+        "{duration}",
+        "--output",
+        "{output}"
+      ],
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "start": {
+            "type": "string",
+            "default": "0",
+            "maxLength": 32
+          },
+          "duration": {
+            "type": "string",
+            "default": "10",
+            "maxLength": 32
+          },
+          "output": {
+            "type": "string",
+            "default": "clip.mp4",
+            "maxLength": 300
+          }
+        },
+        "additionalProperties": false
+      },
+      "capabilities": {
+        "effects": [
+          "subprocess",
+          "read_files",
+          "write_files"
+        ],
+        "side_effect_class": "process",
+        "cost_class": "cheap",
+        "latency_class": "fast",
+        "failure_modes": [
+          "dependency",
+          "schema",
+          "timeout"
+        ]
+      },
+      "autonomous": false
+    }
+  ],
+  "knowledge_paths": [
+    "README.md"
+  ],
+  "isolation": "plugin_cwd",
+  "trust_default": "untrusted",
+  "hades_api": ">=0.4.1",
+  "version": "0.1.0",
+  "format": 1,
+  "capabilities": {
+    "effects": [
+      "read_files",
+      "write_files",
+      "subprocess"
+    ],
+    "side_effect_class": "process",
+    "cost_class": "cheap",
+    "latency_class": "fast",
+    "failure_modes": [
+      "dependency",
+      "schema",
+      "timeout"
+    ]
+  },
+  "marketplace": {
+    "pinned_version": "0.1.0",
+    "source_url": "https://github.com/zhouxiaoka/autoclip",
+    "signed": false,
+    "license": "MIT"
+  },
+  "license": "MIT"
+}

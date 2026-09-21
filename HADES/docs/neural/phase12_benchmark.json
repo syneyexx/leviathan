@@ -1,0 +1,44 @@
+{
+  "phase": 12,
+  "title": "safe_continual_learning",
+  "host": "cloud-agent",
+  "runtime": "toy_transformer_hidden32",
+  "gates": {
+    "experience_capture": "PASS",
+    "verification_gate": "PASS",
+    "eligibility": "PASS",
+    "fast_memory": "PASS",
+    "candidate_slow_memory": "PASS",
+    "evaluation_gate": "PASS",
+    "promotion": "PASS",
+    "rollback": "PASS",
+    "secret_safety": "PASS",
+    "personal_data_policy": "IMPLEMENTED",
+    "base_llm_unchanged": "PASS"
+  },
+  "benchmark": {
+    "first_promote": {
+      "train_recall": 0.9535,
+      "eval_recall": 0.9799,
+      "retention_before": 0.0035,
+      "retention_after": 0.9632,
+      "retention_drop": -0.9597,
+      "base_unchanged": true
+    },
+    "interference_second_cycle": {
+      "retention_before": 0.9632,
+      "retention_after": 0.9328,
+      "retention_drop": 0.0305,
+      "max_allowed_drop": 0.35
+    }
+  },
+  "tests": {
+    "command": "python -m unittest tests.test_neural_continual_learning_phase12 tests.test_neural_learning_lifecycle_phase12 tests.test_neural_consolidation tests.test_neural_experience tests.test_neural_fast_memory tests.test_neural_real_integration tests.test_neural_gateway_phase10 tests.test_neural_dual_retrieval_phase11 tests.test_neural_runtime_phase9 tests.test_neural_runtime_disabled",
+    "result": "95 PASS"
+  },
+  "notes": [
+    "LEARN remains disabled by default",
+    "Secrets and personal-data heuristics block consolidation",
+    "Failed experiences are not written as positive success memory"
+  ]
+}
