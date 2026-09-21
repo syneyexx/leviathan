@@ -39,6 +39,10 @@ from Data.modules.schedules import (
 )
 from Data.modules.observability import ObservabilityHub
 from Data.modules.neuro import NeuroAdvisor
+from Data.modules.plugins import PluginRegistry, PluginStatus
+from Data.modules.evaluation import EvaluationHarness
+from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
+from Data.modules.training import TrainingRegistry
 
 
 db = Database(settings.database_path)
@@ -102,6 +106,15 @@ neuro_advisor = NeuroAdvisor(
     process_critic=settings.features.neuro_process_critic,
     residual_injection=settings.features.neuro_residual_injection,
 )
+plugin_registry = PluginRegistry(capability_catalog)
+plugin_registry.register_echo_mcp_stub()
+evaluation_harness = EvaluationHarness(
+    catalog=capability_catalog,
+    evidence=evidence_store,
+    verification=verification_engine,
+)
+isolation_guard = IsolationGuard(settings)
+training_registry = TrainingRegistry()
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -129,7 +142,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.22.0-phase21", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.26.0-phase25", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -208,6 +221,13 @@ async def health() -> dict:
             "associative_memory": settings.features.neuro_associative_memory,
             "process_critic": settings.features.neuro_process_critic,
             "residual_injection": settings.features.neuro_residual_injection,
+        },
+        "plugins": {
+            "registered": len(plugin_registry.list()),
+        },
+        "isolation": isolation_guard.evaluate().public_dict(),
+        "training": {
+            "registered": len(training_registry.list()),
         },
         "llm": model,
     }
@@ -1205,6 +1225,145 @@ class NeuroAssessRequest(BaseModel):
 def neuro_assess(payload: NeuroAssessRequest) -> dict:
     assessment = neuro_advisor.assess(payload.text)
     return {"assessment": assessment.public_dict()}
+
+
+@app.get("/api/plugins")
+def list_plugins() -> dict:
+    return {"plugins": [item.public_dict() for item in plugin_registry.list()]}
+
+
+@app.get("/api/plugins/{plugin_id}")
+def get_plugin(plugin_id: str) -> dict:
+    item = plugin_registry.get(plugin_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Plugin not found")
+    return {"plugin": item.public_dict()}
+
+
+@app.post("/api/plugins/{plugin_id}/disable")
+def disable_plugin(plugin_id: str) -> dict:
+    try:
+        item = plugin_registry.set_status(plugin_id, PluginStatus.DISABLED)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Plugin not found") from exc
+    return {"plugin": item.public_dict()}
+
+
+@app.post("/api/plugins/{plugin_id}/enable")
+def enable_plugin(plugin_id: str) -> dict:
+    try:
+        item = plugin_registry.set_status(plugin_id, PluginStatus.ENABLED)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Plugin not found") from exc
+    return {"plugin": item.public_dict()}
+
+
+class PluginInvokeRequest(BaseModel):
+    external_name: str = Field(min_length=1, max_length=120)
+    arguments: dict = Field(default_factory=dict)
+    approval_id: str | None = None
+
+
+@app.post("/api/plugins/{plugin_id}/invoke")
+def invoke_plugin(plugin_id: str, payload: PluginInvokeRequest) -> dict:
+    capability_id = plugin_registry.resolve_capability(plugin_id, payload.external_name)
+    if capability_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Plugin binding not found or plugin not ENABLED",
+        )
+    result = execution_gateway.execute(
+        CapabilityRequest(
+            capability_id=capability_id,
+            arguments=payload.arguments,
+            approval_id=payload.approval_id,
+            requested_by=f"plugin:{plugin_id}",
+        )
+    )
+    observability.emit(
+        "plugin",
+        "invoke",
+        payload={"plugin_id": plugin_id, "capability_id": capability_id, "status": result.status.value},
+    )
+    status_code = 200
+    if result.status == CapabilityStatus.REJECTED:
+        reason = (result.telemetry or {}).get("reason")
+        status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+    elif result.status == CapabilityStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {
+        "capability_id": capability_id,
+        "result": result.public_dict(),
+        "truth": {"discoverable_capability_is_not_authorized_capability": True},
+    }
+
+
+@app.post("/api/evaluation/foundation")
+def run_foundation_evaluation() -> dict:
+    report = evaluation_harness.run_suite(
+        "foundation",
+        evaluation_harness.default_foundation_suite(),
+    )
+    return {"report": report.public_dict()}
+
+
+class IsolationEvaluateRequest(BaseModel):
+    requested: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+@app.get("/api/isolation")
+def get_isolation() -> dict:
+    return {"isolation": isolation_guard.evaluate().public_dict()}
+
+
+@app.post("/api/isolation/evaluate")
+def evaluate_isolation(payload: IsolationEvaluateRequest) -> dict:
+    modes: list[IsolationMode] = []
+    for raw in payload.requested:
+        try:
+            modes.append(IsolationMode(raw.upper()))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid isolation mode: {raw}") from exc
+    report = isolation_guard.evaluate(
+        IsolationRequest(requested=tuple(modes), reason=payload.reason)
+    )
+    return {"isolation": report.public_dict()}
+
+
+class TrainingCreateRequest(BaseModel):
+    name: str = Field(default="training", min_length=1, max_length=120)
+    objective: str = Field(min_length=1, max_length=2000)
+
+
+@app.get("/api/training")
+def list_training() -> dict:
+    return {"jobs": [item.public_dict() for item in training_registry.list()]}
+
+
+@app.post("/api/training")
+def create_training(payload: TrainingCreateRequest) -> dict:
+    job = training_registry.register(name=payload.name, objective=payload.objective)
+    return {"job": job.public_dict()}
+
+
+@app.get("/api/training/{job_id}")
+def get_training(job_id: str) -> dict:
+    job = training_registry.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Training job not found")
+    return {"job": job.public_dict()}
+
+
+@app.post("/api/training/{job_id}/start")
+def start_training(job_id: str) -> dict:
+    try:
+        job = training_registry.start_unsupported(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Training job not found") from exc
+    raise HTTPException(status_code=501, detail=job.public_dict())
 
 
 @app.get("/")

@@ -110,6 +110,10 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/schedules/` | ScheduleStore / ScheduleRunner |
 | `Data/modules/observability/` | ObservabilityHub |
 | `Data/modules/neuro/` | NeuroAdvisor (advisory only) |
+| `Data/modules/plugins/` | PluginRegistry / MCP stubs |
+| `Data/modules/evaluation/` | EvaluationHarness |
+| `Data/modules/isolation/` | IsolationGuard |
+| `Data/modules/training/` | TrainingRegistry stub |
 
 ## Tests
 
@@ -208,6 +212,7 @@ SQLite persistence
 | Workflows | `Data/modules/workflows/` |
 | Schedules | `Data/modules/schedules/` |
 | Observability | `Data/modules/observability/` |
+| Neuro | `Data/modules/neuro/` (advisory; feature-flagged) |
 | Frontend pages | only when backend truth exists |
 
 ---

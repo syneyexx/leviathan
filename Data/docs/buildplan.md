@@ -6,6 +6,34 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 21 — Neuro Advisory Interface — PASS
+
+### Objective
+
+Feature-flagged NeuroAdvisor emitting advisory signals only. neural signal ≠ authority. Residual injection honestly unimplemented.
+
+### Implementation
+
+- `Data/modules/neuro/` — NeuroAdvisor, NeuroSignal, NeuroAssessment
+- Child features: associative_memory, process_critic, residual_injection
+- Chat includes neuro assessment when enabled; never gates execution
+- API: `POST /api/neuro/assess`
+
+### Tests executed
+
+- Full backend suite → **PASS (82)**
+
+### Known limitations
+
+- Heuristic only — no real residual-stream / embedding neuro backend
+- Does not influence approvals, gateway, or verification
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 20 — Observability Hub — PASS
 
 ### Objective
