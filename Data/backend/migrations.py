@@ -253,6 +253,39 @@ def _m7_evidence_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m8_memory_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_entries (
+            memory_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            trust TEXT NOT NULL,
+            run_id TEXT,
+            conversation_id TEXT,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_entries(status, updated_at)"
+    )
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
+            USING fts5(memory_id UNINDEXED, content, tags)
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -261,6 +294,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=5, name="jobs_table", apply=_m5_jobs_table),
     Migration(version=6, name="observations_and_effects", apply=_m6_observations_and_effects),
     Migration(version=7, name="evidence_table", apply=_m7_evidence_table),
+    Migration(version=8, name="memory_table", apply=_m8_memory_table),
 )
 
 

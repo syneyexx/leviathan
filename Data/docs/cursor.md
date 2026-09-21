@@ -103,6 +103,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/jobs/` | JobStore / JobRuntime / ResourceManager |
 | `Data/modules/observations/` | ToolObservation / Effect ledger |
 | `Data/modules/evidence/` | EvidenceStore / EvidenceService |
+| `Data/modules/memory/` | MemoryStore |
 
 ## Tests
 

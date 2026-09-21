@@ -23,6 +23,7 @@ from Data.modules.execution import (
 from Data.modules.function_runtime import FunctionCallStatus, build_default_registry, FunctionRuntime
 from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
+from Data.modules.memory import MemoryKind, MemoryStatus, MemoryStore
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
@@ -66,6 +67,7 @@ evidence_service = EvidenceService(
     artifacts=artifacts,
     observations=observation_store,
 )
+memory_store = MemoryStore(settings.database_path)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -82,6 +84,7 @@ async def lifespan(_: FastAPI):
     job_store.initialize()
     observation_store.initialize()
     evidence_store.initialize()
+    memory_store.initialize()
     job_runtime.start_background_worker()
     try:
         yield
@@ -90,7 +93,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.14.0-phase13", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.16.0-phase15", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -239,10 +242,16 @@ async def chat(payload: ChatRequest) -> dict:
 
     history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+    memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
 
     runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     try:
-        answer, model = await llm.chat(history=history, knowledge=knowledge_hits, plan=plan)
+        answer, model = await llm.chat(
+            history=history,
+            knowledge=knowledge_hits,
+            plan=plan,
+            memory=memory_hits,
+        )
     except LLMUnavailable as exc:
         runs.transition(run.run_id, RunState.FAILED, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -273,6 +282,7 @@ async def chat(payload: ChatRequest) -> dict:
             }
             for item in knowledge_hits
         ],
+        "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
     }
 
 
@@ -815,6 +825,92 @@ def verify_evidence(evidence_id: str) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Evidence not found") from exc
     return {"evidence": record.public_dict()}
+
+
+class MemoryCreateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=20_000)
+    kind: str = "NOTE"
+    source: str = "manual"
+    trust: str = "explicit"
+    tags: list[str] = Field(default_factory=list)
+    conversation_id: str | None = None
+    run_id: str | None = None
+
+
+@app.get("/api/memory")
+def list_memory(
+    status: Annotated[str | None, Query()] = "ACTIVE",
+    kind: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    parsed_status = None
+    if status:
+        try:
+            parsed_status = MemoryStatus(status.upper())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid memory status: {status}") from exc
+    parsed_kind = None
+    if kind:
+        try:
+            parsed_kind = MemoryKind(kind.upper())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid memory kind: {kind}") from exc
+    items = memory_store.list(status=parsed_status, kind=parsed_kind, limit=limit)
+    return {"memory": [item.public_dict() for item in items]}
+
+
+@app.post("/api/memory")
+def create_memory(payload: MemoryCreateRequest) -> dict:
+    try:
+        kind = MemoryKind(payload.kind.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid memory kind: {payload.kind}") from exc
+    try:
+        record = memory_store.create(
+            content=payload.content,
+            kind=kind,
+            source=payload.source,
+            trust=payload.trust,
+            tags=payload.tags,
+            conversation_id=payload.conversation_id,
+            run_id=payload.run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"memory": record.public_dict()}
+
+
+@app.get("/api/memory/search")
+def search_memory(
+    q: Annotated[str, Query(min_length=1, max_length=500)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> dict:
+    items = memory_store.search(q, limit=limit)
+    return {"memory": [item.public_dict() for item in items]}
+
+
+@app.get("/api/memory/{memory_id}")
+def get_memory(memory_id: str) -> dict:
+    item = memory_store.get(memory_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"memory": item.public_dict()}
+
+
+@app.post("/api/memory/{memory_id}/archive")
+def archive_memory(memory_id: str) -> dict:
+    item = memory_store.set_status(memory_id, MemoryStatus.ARCHIVED)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"memory": item.public_dict()}
+
+
+@app.post("/api/memory/{memory_id}/revoke")
+def revoke_memory(memory_id: str) -> dict:
+    item = memory_store.set_status(memory_id, MemoryStatus.REVOKED)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"memory": item.public_dict()}
 
 
 @app.get("/")

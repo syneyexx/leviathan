@@ -6,6 +6,63 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 15 — Memory Domain — PASS
+
+### Objective
+
+Controlled durable Memory separate from Knowledge. Refuse automatic model-output trust. Searchable; injectable into Context Engine.
+
+### Implementation
+
+- `Data/modules/memory/` — MemoryStore, kinds/status, FTS with LIKE fallback
+- Rejects `trust=model_output`
+- Chat retrieves matching memory into ContextBuilder
+- Migration v8: `memory_entries` + `memory_fts`
+- API: `/api/memory` CRUD-ish + search/archive/revoke
+
+### Tests executed
+
+- Full backend suite → **PASS (69)**
+
+### Known limitations
+
+- No semantic memory embeddings (feature flag exists, unused)
+- No UI for memory curation
+
+### Status
+
+**PASS**
+
+---
+
+## 2026-09-21 — Phase 14 — Context Engine (token budgeting) — PASS
+
+### Objective
+
+Upgrade ContextBuilder into a budgeted Context Engine: heuristic token estimates, priority packing, knowledge dedupe, optional observation/evidence/memory slots, honest provenance.
+
+### Implementation
+
+- `Data/modules/context/types.py` — ContextSection, ContextPack metadata, `estimate_tokens` (chars/4)
+- ContextBuilder packs system → history → knowledge → extras under budget; drops excess
+- Settings domain `context` (`LEVIATHAN_CONTEXT_TOKEN_BUDGET`, reserve, max knowledge chars)
+- OpenAICompatibleLLM constructs builder from settings
+
+### Tests executed
+
+- Full backend suite → **PASS (66)**
+
+### Known limitations
+
+- Token estimate is heuristic, not a real tokenizer
+- Chat path does not yet inject observation/evidence/memory lists (slots ready)
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 13 — Evidence Domain — PASS
 
 ### Objective

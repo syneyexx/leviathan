@@ -75,9 +75,20 @@ class OpenAICompatibleLLM:
         history: list[dict[str, str]],
         knowledge: list[dict],
         plan: ReasoningPlan,
+        *,
+        memory: list[dict] | None = None,
+        observations: list[dict] | None = None,
+        evidence: list[dict] | None = None,
     ) -> tuple[str, str]:
         model = await self.resolve_model()
-        pack = self.context_builder.build(history=history, knowledge=knowledge, plan=plan)
+        pack = self.context_builder.build(
+            history=history,
+            knowledge=knowledge,
+            plan=plan,
+            memory=memory,
+            observations=observations,
+            evidence=evidence,
+        )
 
         payload = {
             "model": model,
