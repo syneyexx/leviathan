@@ -51,7 +51,7 @@ vite_proc: subprocess.Popen | None = None
 
 
 def default_content() -> dict:
-    return {"version": 1, "entries": {}}
+    return {"version": 2, "entries": {}, "nodes": []}
 
 
 def read_content() -> dict:
@@ -63,8 +63,13 @@ def read_content() -> dict:
         return default_content()
     if not isinstance(data, dict):
         return default_content()
-    data.setdefault("version", 1)
+    data.setdefault("version", 2)
     data.setdefault("entries", {})
+    data.setdefault("nodes", [])
+    if not isinstance(data["entries"], dict):
+        data["entries"] = {}
+    if not isinstance(data["nodes"], list):
+        data["nodes"] = []
     return data
 
 
@@ -224,6 +229,31 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"content": data, "path": str(CONTENT_FILE)})
             return
 
+        if path == "/api/assets":
+            exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico"}
+            assets = []
+            roots = [
+                (ASSETS, "/assets"),
+                (UPLOADS, "/assets/uploads"),
+            ]
+            for folder, url_prefix in roots:
+                if not folder.is_dir():
+                    continue
+                for file_path in sorted(folder.iterdir()):
+                    if not file_path.is_file():
+                        continue
+                    if file_path.suffix.lower() not in exts:
+                        continue
+                    assets.append(
+                        {
+                            "name": file_path.name,
+                            "url": f"{url_prefix}/{file_path.name}",
+                            "bytes": file_path.stat().st_size,
+                        }
+                    )
+            self._json(200, {"assets": assets, "count": len(assets)})
+            return
+
         target = self._resolve_static(path)
         if target is None or not target.is_file():
             self._json(404, {"error": "Not found", "path": path})
@@ -284,13 +314,25 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(content, dict):
                 self._json(400, {"error": "content must be an object"})
                 return
-            content.setdefault("version", 1)
+            content.setdefault("version", 2)
             content.setdefault("entries", {})
+            content.setdefault("nodes", [])
             if not isinstance(content["entries"], dict):
                 self._json(400, {"error": "entries must be an object"})
                 return
+            if not isinstance(content.get("nodes"), list):
+                self._json(400, {"error": "nodes must be a list"})
+                return
             write_content(content)
-            self._json(200, {"ok": True, "path": str(CONTENT_FILE), "entries": len(content["entries"])})
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "path": str(CONTENT_FILE),
+                    "entries": len(content["entries"]),
+                    "nodes": len(content["nodes"]),
+                },
+            )
             return
 
         self._json(404, {"error": "Not found"})
