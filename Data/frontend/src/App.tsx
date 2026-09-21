@@ -22,11 +22,8 @@ export default function App() {
       <Route path="/brain" element={<BrainPage />} />
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/training" element={<TrainingPage />} />
-<<<<<<< HEAD
       <Route path="/tools" element={<ToolsPage />} />
-=======
       <Route path="/analytics" element={<AnalyticsPage />} />
->>>>>>> dc684af (Add pixel-faithful Analytics page with mock dashboards)
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/chat.html" element={<Navigate to="/chat" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
