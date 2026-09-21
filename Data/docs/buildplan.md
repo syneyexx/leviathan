@@ -6,6 +6,45 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 8 — On-demand Function Runtime — PASS
+
+### Objective
+
+Build FunctionDefinition + FunctionRegistry with lazy loading, validation, lifecycle, timeout, cancellation, typed results, cleanup, telemetry, resource metadata, and bounded warm cache. Prove cold capabilities are not permanently loaded. Ship representative functions: text file read, CSV inspect, PDF parse.
+
+### Implementation
+
+- `Data/modules/function_runtime/` — registry, runtime, builtins catalog
+- Lifecycle modes: PURE / ON_DEMAND / WARM_CACHE / PERSISTENT (defaults ON_DEMAND)
+- Lazy import via entrypoint `package.module:callable`
+- ON_DEMAND unloads `sys.modules` after execute (cold again)
+- Bounded warm LRU cache; concurrency semaphore from settings
+- Timeout via thread pool; cancel flags for in-flight calls
+- Input schema validation → REJECTED
+- Representative functions under `Data/functions/`:
+  - `text_file_read`
+  - `csv_inspector`
+  - `pdf_parser` (optional pypdf; honest failure if missing)
+- API: `GET /api/functions`, `GET /api/functions/{id}`, `POST .../execute`, `POST .../calls/{call_id}/cancel`
+- Health includes function registry/load/telemetry
+
+### Tests executed
+
+- Full backend suite → **PASS (37)**
+- Cold dormancy proven: registry construction does not import `Data.functions.*`; after ON_DEMAND execute module is unloaded
+
+### Known limitations
+
+- Execution Gateway / approvals not yet required (Phase 9–10)
+- PDF parsing depends on optional `pypdf` (not added to requirements.txt)
+- Cancel is cooperative via cancel_event / pre-exec flag; hard kill of arbitrary native work is not claimed
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-20 — Phase 7 — Knowledge V2 — PASS
 
 ### Objective

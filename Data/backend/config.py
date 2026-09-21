@@ -293,7 +293,12 @@ class Settings:
                 api_key=api_key,
                 timeout_seconds=timeout,
             ),
-            knowledge=KnowledgeSettings(top_k=knowledge_top_k, data_root=data_root),
+            knowledge=KnowledgeSettings(
+                top_k=knowledge_top_k,
+                data_root=data_root,
+                chunk_max_chars=chunk_max,
+                chunk_overlap=chunk_overlap,
+            ),
             reasoning=ReasoningSettings(enabled=_env_bool("LEVIATHAN_REASONING_ENABLED", True)),
             features=FeatureFlags(
                 reasoning_iterative_retrieval=_env_bool("LEVIATHAN_FEATURE_ITERATIVE_RETRIEVAL", False),

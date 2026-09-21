@@ -274,7 +274,7 @@ class KnowledgeStore:
         except sqlite3.OperationalError:
             pass
 
-        parts = chunk_text(content)
+        parts = chunk_text(content, max_chars=self.chunk_max_chars, overlap=self.chunk_overlap)
         records: list[ChunkRecord] = []
         for index, part in enumerate(parts):
             chunk_id = str(uuid.uuid4())

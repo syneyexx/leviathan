@@ -12,6 +12,7 @@ from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.modules.artifacts import ArtifactStore
+from Data.modules.function_runtime import FunctionCallStatus, build_default_registry, FunctionRuntime
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
 from Data.modules.reasoning import ReasoningEngine
@@ -28,6 +29,12 @@ knowledge = KnowledgeStore(
     chunk_overlap=settings.knowledge.chunk_overlap,
 )
 retriever = HybridRetriever(knowledge)
+function_registry = build_default_registry()
+function_runtime = FunctionRuntime(
+    function_registry,
+    max_concurrency=settings.resources.max_function_concurrency,
+    warm_cache_size=2,
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -40,10 +47,13 @@ async def lifespan(_: FastAPI):
     knowledge.initialize()
     runs.initialize()
     artifacts.initialize()
-    yield
+    try:
+        yield
+    finally:
+        function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.8.0-phase7", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.9.0-phase8", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -93,6 +103,11 @@ async def health() -> dict:
             "documents": len(knowledge.list_documents(limit=10_000)),
             "embedding_provider": retriever.embeddings.provider_id,
             "embedding_available": retriever.embeddings.available(),
+        },
+        "functions": {
+            "registered": len(function_registry),
+            "loaded": sorted(function_runtime.loaded_function_ids()),
+            "telemetry": dict(function_runtime.telemetry),
         },
         "llm": model,
     }
@@ -352,6 +367,57 @@ def ingest_knowledge_scan(limit: int = 50) -> dict:
         "data_root": str(settings.knowledge.data_root),
         "documents": [doc.public_dict() for doc in docs],
     }
+
+
+@app.get("/api/functions")
+def list_functions() -> dict:
+    return {
+        "functions": [item.public_dict() for item in function_registry.list()],
+        "loaded": sorted(function_runtime.loaded_function_ids()),
+        "telemetry": dict(function_runtime.telemetry),
+    }
+
+
+@app.get("/api/functions/{function_id}")
+def get_function(function_id: str) -> dict:
+    definition = function_registry.get(function_id)
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Function not found")
+    return {
+        "function": definition.public_dict(),
+        "loaded": function_id in function_runtime.loaded_function_ids(),
+    }
+
+
+class FunctionExecuteRequest(BaseModel):
+    arguments: dict = Field(default_factory=dict)
+
+
+@app.post("/api/functions/{function_id}/execute")
+def execute_function(function_id: str, payload: FunctionExecuteRequest) -> dict:
+    if function_id not in function_registry:
+        raise HTTPException(status_code=404, detail="Function not found")
+    result = function_runtime.execute(function_id, payload.arguments)
+    status_code = 200
+    if result.status == FunctionCallStatus.REJECTED:
+        status_code = 422
+    elif result.status == FunctionCallStatus.TIMEOUT:
+        status_code = 504
+    elif result.status == FunctionCallStatus.CANCELLED:
+        status_code = 409
+    elif result.status == FunctionCallStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {"result": result.public_dict()}
+
+
+@app.post("/api/functions/calls/{call_id}/cancel")
+def cancel_function_call(call_id: str) -> dict:
+    cancelled = function_runtime.cancel(call_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Active function call not found")
+    return {"cancelled": True, "call_id": call_id}
 
 
 @app.get("/")

@@ -1,5 +1,4 @@
-"""On-demand / cold-path functions.
+"""Representative on-demand LEVIATHAN functions.
 
-Heavy optional capabilities belong here so they remain dormant until invoked.
-Do not place long-lived stateful managers in this package.
+These packages stay dormant until the FunctionRuntime lazy-loads them.
 """

@@ -47,7 +47,7 @@ LEVIATHAN/
 │   │       ├── state/
 │   │       ├── styles/
 │   │       └── types/
-│   ├── functions/                # reserved
+│   ├── functions/                # on-demand implementations
 │   ├── modules/                  # reserved
 │   └── docs/
 │       ├── buildplan.md
@@ -180,7 +180,8 @@ SQLite persistence
 | Context Engine | new module; migrate out of `llm.py` |
 | Knowledge ingest parsers (PDF/OCR) | `Data/functions/` called by Knowledge |
 | Knowledge store / retrieval | `Data/modules/knowledge/` |
-| Function runtime | `Data/functions/*` + registry |
+| Function runtime | `Data/modules/function_runtime/` |
+| Function implementations | `Data/functions/<name>/` |
 | Execution / approvals | modules + gateway — never agent-local |
 | Frontend pages | only when backend truth exists |
 

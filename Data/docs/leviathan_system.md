@@ -63,7 +63,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.8.0-phase7`).
+FastAPI application (`version=0.9.0-phase8`).
 
 Responsibilities:
 
@@ -254,8 +254,10 @@ Frontend state is a projection. Canonical conversation/message/knowledge state l
 - `run/` — RunStore, RunState, events
 - `artifacts/` — ArtifactStore + content hashing
 - `knowledge/` — KnowledgeStore V2 + HybridRetriever
+- `function_runtime/` — FunctionRegistry + FunctionRuntime
 
-`Data/functions/` remains reserved for on-demand cold-path capabilities (not yet implemented).
+`Data/functions/` holds ON_DEMAND implementations (`text_file_read`, `csv_inspector`, `pdf_parser`).
+Runtime ownership: `Data/modules/function_runtime/` (registry + lazy execute/cleanup).
 
 ---
 
@@ -325,7 +327,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 5 — Migration foundation | PASS | `schema_migrations` + baseline v1 |
 | Phase 6 — Artifact system | PASS | Metadata DB + filesystem bytes + hash verify |
 | Phase 7 — Knowledge V2 | PASS | Chunks, provenance, ingest states, hybrid retrieval |
-| Phase 8+ | NOT STARTED | Function runtime, execution gateway, … |
+| Phase 8 — Function runtime | PASS | Registry, ON_DEMAND lazy load/unload, builtins |
+| Phase 9+ | NOT STARTED | Capability broker + Execution Gateway, … |
 
 ---
 
