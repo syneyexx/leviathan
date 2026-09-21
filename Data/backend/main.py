@@ -26,6 +26,8 @@ from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.memory import MemoryKind, MemoryStatus, MemoryStore
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
+from Data.modules.models import ModelControlError, ModelControlPlane
+from Data.backend.routes.models import build_models_router
 from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
@@ -454,6 +456,7 @@ master_gates = MasterGateRunner(
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
+model_plane = ModelControlPlane(settings, observability=observability)
 
 
 @asynccontextmanager
@@ -472,6 +475,16 @@ async def lifespan(_: FastAPI):
     verification_reports.initialize()
     workflow_store.initialize()
     schedule_store.initialize()
+    model_plane.bootstrap()
+    try:
+        await model_plane.reconcile_startup()
+    except Exception as exc:  # noqa: BLE001 — startup must not crash if providers offline
+        observability.emit(
+            "models",
+            "model.discovery.failed",
+            payload={"error": str(exc)},
+            level="warning",
+        )
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
@@ -507,7 +520,8 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.51.0-phase51", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.52.0-models", lifespan=lifespan)
+app.include_router(build_models_router(model_plane))
 
 
 class ConversationCreate(BaseModel):
@@ -517,6 +531,8 @@ class ConversationCreate(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=30_000)
     conversation_id: str | None = None
+    model_id: str | None = None
+    preferred_role: str | None = None
 
 
 class KnowledgeWrite(BaseModel):
@@ -549,11 +565,13 @@ async def health() -> dict:
     metrics.incr("health_checks")
     metrics.set_gauge("capabilities_registered", float(len(capability_catalog)))
     metrics.set_gauge("approvals_pending", float(len(approval_service.list(status=ApprovalStatus.PENDING, limit=500))))
+    model_status = model_plane.status_cards()
     return {
         "ok": True,
         "version": app.version,
         "database": str(settings.database_path),
         "reasoning_enabled": settings.reasoning_enabled,
+        "models": model_status,
         "frontend": {
             "dist_ready": (FRONTEND_DIST / "index.html").is_file(),
             "dist_path": str(FRONTEND_DIST),
@@ -787,24 +805,104 @@ async def chat(payload: ChatRequest) -> dict:
                 )
 
     runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
+    route_meta: dict | None = None
+    call_id: str | None = None
+    provider_id_for_release = "unknown"
+    model_id_for_release = "unknown"
     try:
+        routed = model_plane.resolve_for_chat(
+            explicit_model_id=payload.model_id,
+            preferred_role=payload.preferred_role,
+        )
+        decision = routed["decision"]
+        profile = routed["profile"]
+        provider_id_for_release = routed["provider_id"]
+        model_id_for_release = routed["model"].id
+        call_id = model_plane.gateway.acquire(
+            model_id=model_id_for_release,
+            provider_id=provider_id_for_release,
+            timeout_seconds=min(settings.llm_timeout_seconds, 30.0),
+        )
+        route_meta = {
+            "decision": decision.public_dict(),
+            "traceId": call_id,
+        }
+        runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
+        # Chat HTTP path is non-SSE today; streaming preference is stored for future stream endpoints.
         answer, model = await llm.chat(
             history=history,
             knowledge=knowledge_hits,
             plan=plan,
             memory=memory_hits,
             neuro=neuro_context or None,
+            model_id=routed["provider_model_id"],
+            endpoint=routed["endpoint"],
+            api_key=routed["api_key"],
+            temperature=profile.temperature,
+            max_tokens=profile.max_tokens,
+            top_p=profile.top_p,
+            system_prompt=profile.system_prompt or None,
+            stream=False,
         )
+        model_plane.registry.touch_used(model_id_for_release)
+        model_plane.gateway.release(model_id=model_id_for_release, provider_id=provider_id_for_release)
+        call_id = None
+    except ModelControlError as exc:
+        if call_id:
+            model_plane.gateway.release(
+                model_id=model_id_for_release,
+                provider_id=provider_id_for_release,
+                error=exc.code,
+            )
+        # Fall back to legacy settings-based client when registry empty / router exhausted
+        if exc.code in {"ROUTER_EXHAUSTED", "MODEL_NOT_FOUND"} and not payload.model_id:
+            try:
+                answer, model = await llm.chat(
+                    history=history,
+                    knowledge=knowledge_hits,
+                    plan=plan,
+                    memory=memory_hits,
+                    neuro=neuro_context or None,
+                )
+                route_meta = {
+                    "decision": {
+                        "reason": "legacy_settings_fallback",
+                        "fallbackUsed": True,
+                        "fallbackReason": exc.code,
+                    }
+                }
+                model_plane.gateway.record_fallback(exc.code)
+            except LLMUnavailable as llm_exc:
+                runs.transition(run.run_id, RunState.FAILED, error=str(llm_exc))
+                raise HTTPException(status_code=503, detail=str(llm_exc)) from llm_exc
+        else:
+            runs.transition(run.run_id, RunState.FAILED, error=str(exc))
+            raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
     except LLMUnavailable as exc:
+        if call_id:
+            model_plane.gateway.release(
+                model_id=model_id_for_release,
+                provider_id=provider_id_for_release,
+                error=str(exc),
+            )
         runs.transition(run.run_id, RunState.FAILED, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    runs.append_event(run.run_id, EventType.MODEL_COMPLETED, {"model": model})
+    runs.append_event(
+        run.run_id,
+        EventType.MODEL_COMPLETED,
+        {"model": model, **(route_meta or {})},
+    )
     assistant_message = db.add_message(conversation_id, "assistant", answer)
     observability.emit(
         "chat",
         "completed",
-        payload={"run_id": run.run_id, "model": model, "memory_hits": len(memory_hits)},
+        payload={
+            "run_id": run.run_id,
+            "model": model,
+            "memory_hits": len(memory_hits),
+            "route": route_meta,
+        },
     )
     # Chat completion contract: model returned usable text AND assistant message persisted.
     completed = runs.transition(
@@ -820,6 +918,7 @@ async def chat(payload: ChatRequest) -> dict:
         "user_message": user_message,
         "assistant_message": assistant_message,
         "model": model,
+        "routing": route_meta,
         "reasoning": plan.public_summary(),
         "knowledge_sources": [
             {

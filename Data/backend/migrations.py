@@ -368,6 +368,141 @@ def _m12_neuro_memory_snapshots(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m13_model_control_plane(conn: sqlite3.Connection) -> None:
+    """Central Model Control Plane tables (same LEVIATHAN database)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_providers (
+            provider_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            provider_type TEXT NOT NULL,
+            endpoint TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            api_key_ciphertext TEXT,
+            auto_connect INTEGER NOT NULL DEFAULT 1,
+            timeout_seconds REAL NOT NULL DEFAULT 30,
+            refresh_interval_seconds REAL NOT NULL DEFAULT 60,
+            health TEXT NOT NULL DEFAULT 'unknown',
+            last_successful_at TEXT,
+            last_error TEXT,
+            last_latency_ms REAL,
+            last_check_at TEXT,
+            capabilities_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_registry (
+            model_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            runtime_id TEXT,
+            source TEXT NOT NULL,
+            object_type TEXT,
+            architecture TEXT,
+            family TEXT,
+            parameter_count INTEGER,
+            quantization TEXT,
+            format TEXT,
+            disk_size_bytes INTEGER,
+            context_window INTEGER,
+            max_output_tokens INTEGER,
+            capabilities_json TEXT NOT NULL DEFAULT '{}',
+            lifecycle_state TEXT NOT NULL DEFAULT 'unknown',
+            health TEXT NOT NULL DEFAULT 'unknown',
+            active INTEGER NOT NULL DEFAULT 0,
+            loaded INTEGER,
+            local_path TEXT,
+            endpoint TEXT,
+            last_discovered_at TEXT,
+            last_used_at TEXT,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_registry_provider "
+        "ON model_registry(provider_id, lifecycle_state)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_profiles (
+            model_id TEXT PRIMARY KEY,
+            temperature REAL NOT NULL,
+            top_p REAL NOT NULL,
+            top_k INTEGER NOT NULL,
+            max_tokens INTEGER NOT NULL,
+            repeat_penalty REAL NOT NULL,
+            seed INTEGER NOT NULL,
+            system_prompt TEXT NOT NULL DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_control_state (
+            key TEXT PRIMARY KEY,
+            value_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_capability_results (
+            model_id TEXT NOT NULL,
+            capability TEXT NOT NULL,
+            declared TEXT NOT NULL,
+            verified TEXT NOT NULL,
+            last_tested_at TEXT,
+            detail TEXT,
+            PRIMARY KEY(model_id, capability)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_downloads (
+            download_id TEXT PRIMARY KEY,
+            state TEXT NOT NULL,
+            source TEXT NOT NULL,
+            repository_id TEXT,
+            revision TEXT,
+            destination TEXT,
+            bytes_downloaded INTEGER,
+            total_bytes INTEGER,
+            speed_bps REAL,
+            eta_seconds REAL,
+            error TEXT,
+            model_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            detail_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -381,6 +516,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=10, name="schedules_table", apply=_m10_schedules_table),
     Migration(version=11, name="verification_reports", apply=_m11_verification_reports),
     Migration(version=12, name="neuro_memory_snapshots", apply=_m12_neuro_memory_snapshots),
+    Migration(version=13, name="model_control_plane", apply=_m13_model_control_plane),
 )
 
 

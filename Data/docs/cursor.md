@@ -94,6 +94,8 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/reasoning/` | ReasoningEngine |
 | `Data/modules/context/` | ContextBuilder |
 | `Data/modules/model_runtime/` | OpenAICompatibleLLM |
+| `Data/modules/models/` | **Model Control Plane** (registry, profiles, gateway, router, providers, downloads) |
+| `Data/backend/routes/models.py` | Models HTTP API surface (included from `main.py`) |
 | `Data/modules/run/` | RunStore / events / transitions |
 | `Data/modules/artifacts/` | ArtifactStore |
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
@@ -142,6 +144,22 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 
 - `src/pages/CommandPage.tsx` — dashboard/Command shell
 - `src/pages/ChatPage.tsx` — real chat against `/api/*`
+- `src/pages/ModelsPage.tsx` → `src/pages/models/*` — Model Control Plane UI (no mock catalog)
+- `src/pages/StatusPage.tsx` — operator status
+- `src/pages/BrainPage.tsx`, `TrainingPage.tsx`, `SettingsPage.tsx` — additional shells
+
+## Models UI ownership
+
+| File | Role |
+|---|---|
+| `pages/models/ModelsPage.tsx` | Page composition / data load |
+| `ModelCatalog.tsx` | Search/filter/sort/keyboard selection |
+| `ModelInspector.tsx` | Overview/capabilities/profile/runtime/resources/benchmarks/diagnostics |
+| `ProviderManager.tsx` | Provider CRUD + connection test |
+| `ModelGatewayPanel.tsx` / `ModelRouterPanel.tsx` | Live gateway + router editor |
+| `ModelImportDialog.tsx` / `ModelDownloadManager.tsx` | Import/download UX |
+
+Do not put provider-specific logic in React — call `/api/model-providers` and capability flags.
 
 ## Shared shell
 

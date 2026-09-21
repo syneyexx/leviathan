@@ -977,3 +977,238 @@
   .lv-settings-card.span-2 { grid-column: auto; }
   .lv-page-hero .lv-hero-content { max-width: 100%; }
 }
+
+/* ---- Models control plane ---- */
+.lv-models-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-bottom: 2rem;
+}
+
+.lv-models-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  border-bottom: 1px solid var(--lv-border-soft);
+  padding-bottom: 0.75rem;
+}
+
+.lv-models-kicker {
+  margin: 0;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  color: var(--lv-gold);
+  text-transform: uppercase;
+}
+
+.lv-models-title {
+  margin: 0.15rem 0 0;
+  font-family: var(--lv-font-display, "Cormorant Garamond", "Times New Roman", serif);
+  font-size: clamp(2.4rem, 4vw, 3.4rem);
+  font-weight: 600;
+  color: var(--lv-text-bright);
+  letter-spacing: 0.04em;
+}
+
+.lv-models-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lv-models-status-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.lv-models-status-card {
+  background:
+    linear-gradient(180deg, rgba(214, 169, 87, 0.06), transparent 55%),
+    var(--lv-surface);
+  border: 1px solid var(--lv-border);
+  padding: 0.7rem 0.8rem;
+  min-height: 4.2rem;
+}
+
+.lv-models-status-card span {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--lv-text-muted);
+}
+
+.lv-models-status-card strong {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.95rem;
+  color: var(--lv-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lv-models-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--lv-border);
+  background: var(--lv-surface-raised);
+}
+
+.lv-models-banner.is-error {
+  border-color: rgba(220, 64, 64, 0.45);
+  color: #f0b4b4;
+}
+
+.lv-models-banner.is-warn {
+  border-color: rgba(214, 169, 87, 0.45);
+  color: var(--lv-gold-pale);
+}
+
+.lv-models-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  border: 1px dashed var(--lv-border-gold);
+  background: var(--lv-surface);
+}
+
+.lv-models-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.lv-models-table tr.is-selected td {
+  background: rgba(214, 169, 87, 0.08);
+}
+
+.lv-models-table tbody:focus {
+  outline: 1px solid var(--lv-border-active);
+}
+
+.lv-lifecycle,
+.lv-health {
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.lv-lifecycle--active,
+.lv-lifecycle--loaded,
+.lv-health--healthy { color: var(--lv-success); }
+
+.lv-lifecycle--error,
+.lv-health--error,
+.lv-health--auth_error { color: #e85d5d; }
+
+.lv-lifecycle--offline,
+.lv-health--offline,
+.lv-health--timeout { color: #d9a441; }
+
+.lv-models-inspector,
+.lv-models-panels {
+  display: grid;
+  gap: 1rem;
+}
+
+.lv-models-panels {
+  grid-template-columns: 1fr 1fr;
+}
+
+.lv-models-inspector {
+  border: 1px solid var(--lv-border);
+  background: var(--lv-surface);
+  padding: 1rem;
+}
+
+.lv-models-profile {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 42rem;
+}
+
+.lv-models-profile label,
+.lv-models-field {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--lv-text-secondary);
+}
+
+.lv-models-prompt {
+  font-family: var(--lv-font-mono, ui-monospace, monospace);
+  min-height: 8rem;
+}
+
+.lv-models-dirty {
+  color: var(--lv-gold-bright);
+  margin: 0;
+}
+
+.lv-models-check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.35rem 0;
+  color: var(--lv-text-secondary);
+}
+
+.lv-models-roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.lv-models-provider-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.lv-models-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 5, 4, 0.72);
+}
+
+.lv-models-modal-card {
+  width: min(560px, 92vw);
+  background: var(--lv-surface-raised);
+  border: 1px solid var(--lv-border-gold);
+  padding: 1rem 1.1rem 1.2rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.lv-models-telemetry-note {
+  margin: 0;
+}
+
+.lv-cap-chips {
+  color: var(--lv-text-muted);
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1200px) {
+  .lv-models-status-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lv-models-panels { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 900px) {
+  .lv-models-status-row,
+  .lv-models-roles,
+  .lv-models-provider-form { grid-template-columns: 1fr; }
+  .lv-models-header { flex-direction: column; align-items: flex-start; }
+}
