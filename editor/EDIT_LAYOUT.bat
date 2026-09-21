@@ -3,14 +3,13 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo   LEVIATHAN Layout Builder
-echo   Echte UI + visual edit op de layout
+echo   LEVIATHAN Visual Builder
+echo   Tekst · Images · Layout · Styles
 echo ========================================
 echo.
-echo  Start de builder. Browser opent de ECHTE
-echo  Leviathan UI. Klik/sleep op de layout;
-echo  CSS in Data\frontend\src\styles wordt
-echo  automatisch bijgewerkt.
+echo  Opent de ECHTE Leviathan UI.
+echo  Klik / dubbelklik / sleep op de layout.
+echo  Alles wordt in de echte bestanden gezet.
 echo.
 
 where node >nul 2>&1

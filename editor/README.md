@@ -1,32 +1,33 @@
-# Leviathan Layout Builder
+# Leviathan Visual Builder
 
-Standalone visual editor for the **real** Leviathan UI. Not part of the main app docs.
+Standalone full visual editor for the **real** Leviathan UI (website-builder style).
 
 ## Start (Windows)
 
-From `D:\leviathan\editor\` (or your repo clone):
+From `D:\leviathan\editor\`:
 
 Double-click `EDIT_LAYOUT.bat`
 
-That starts:
-- Editor API on http://127.0.0.1:5199 (reads/writes CSS)
-- Real Vite frontend on http://127.0.0.1:5173 with the builder overlay
+Opens the real app at http://127.0.0.1:5173 with the builder overlay.
 
-## How to edit
+## What you can edit
 
-1. Click elements on the real layout (header, sidebar, cards, …)
-2. Drag the yellow handles to resize
-3. Use the right panel for padding / gap / sizes
-4. The code panel updates live and **auto-saves** into:
+- **Tekst** — klik + bewerk in panel, of **dubbelklik** direct op de layout
+- **Images** — URL plakken of bestand uploaden
+- **Layout** — sleep gele handles (header / sidebar / panels)
+- **Styles** — kleur, font, padding, border, shadow, background, display, …
+- **Verberg/toon** elementen
 
-`Data/frontend/src/styles/` (`tokens.css`, `leviathan.css`, `pages.css`, `chat.css`)
+Alles auto-save’t naar:
+- `Data/frontend/src/styles/` (CSS)
+- `Data/frontend/public/lv-editor-content.json` (tekst/images)
+- bron-`.tsx` bestanden wanneer tekst/image-paden matchen
+
+Uploads komen in `Data/frontend/public/assets/uploads/`.
 
 ## Shortcuts
 
 - `Ctrl+S` — force save
 - `Esc` — deselect
-- Top bar — toggle Edit / Panel / Code
-
-## Note
-
-Requires Node.js (npm) and Python 3. First run may run `npm install` in `Data/frontend`.
+- Dubbelklik — inline tekst edit
+- Enter — inline edit afronden
