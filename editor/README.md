@@ -1,56 +1,46 @@
-# Leviathan Dreamweaver Builder
+# Leviathan Visual Builder (admin tool)
 
-Volledige visual editor op de **echte** Leviathan UI.
+Losstaande full-freedom layout editor over de **echte** Leviathan UI.
+Hoort **niet** bij de normale Leviathan-start.
 
-## Start
+## Start de editor
 
-`D:\leviathan\editor\EDIT_LAYOUT.bat` → http://127.0.0.1:5173
+```
+D:\leviathan\editor\EDIT_LAYOUT.bat
+```
 
-## Functies
+Opent http://127.0.0.1:5173 met de visual builder overlay.
 
-### Selecteren & bewerken
-- Klik om te selecteren · hover outlines
-- Dubbelklik = inline tekst bewerken
-- Panel: tekst, image URL/upload, alle CSS styles
-- Layers-panel om snel elementen te kiezen
+## Start Leviathan zonder editor
 
-### Slepen & resizen
-- Sleep via gele handles of het ✥ move-grip
-- Alt+sleep direct op een element
-- Resize met 8 handles
-- Snap-guides (aan/uit)
-- Pijltjestoetsen = nudge (Shift = 10px)
+Gebruik je normale start (`run_leviathan.bat` / installer / build).
+Dan zie je **geen** editor-UI — wel al je opgeslagen wijzigingen.
 
-### Klembord & contextmenu
-- Rechtermuisklik-menu (Dreamweaver-stijl)
-- Kopiëren / Plakken / Dupliceren / Verwijderen
-- Lock / Unlock
-- Naar voren / naar achter
-- Links / midden / rechts uitlijnen
-- Image vervangen
+## Capabilities
 
-### Toevoegen
-- Topbar / panel: +Tekst · +Titel · +Image · +Box · +Knop · +Lijn
-- Sleep image-bestanden vanuit Explorer op de pagina
+- Vrije layout: drag, 8-handle resize, rotate, multi-select (Shift), reparent (drop-zones)
+- Snap + guides + optioneel grid; aspect lock; min/max constraints
+- Dockable panels: Inspector, Layers, Assets, Insert, Tokens, Code, History
+  (slepen / float / dock L-R-B / tabs / maximize; presets in `localStorage`)
+- Insert: tekst, titel, image, knop, divider, spacer, frame, custom HTML
+- Styles + live tokens.css; shell regio-sliders (header/sidebar/right/footer)
+- Inline text, image upload/library/replace, undo/redo, lock, group/ungroup
+- Shell containers (`.lv-app`, `.lv-body`, …) blijven protected
 
-### History & opslaan
-- Undo / Redo (Ctrl+Z / Ctrl+Shift+Z)
-- Auto-save naar:
-  - `Data/frontend/src/styles/`
-  - `Data/frontend/public/lv-editor-content.json`
-  - matchende `.tsx` bronnen bij tekst/image swaps
-- Uploads → `Data/frontend/public/assets/uploads/`
+## Wat wordt opgeslagen (blijft in Leviathan)
 
-## Shortcuts
+| Actie | Bestand |
+|------|---------|
+| Maten, kleuren, styles | `Data/frontend/src/styles/*.css` |
+| Tekst / image-paden (waar mogelijk) | bron-`.tsx` via replace |
+| Overrides + nieuwe widgets | `Data/frontend/public/lv-editor-content.json` |
+| Geüploade images | `Data/frontend/public/assets/uploads/` |
 
-| Toets | Actie |
-|------|------|
-| Ctrl+S | Opslaan |
-| Ctrl+C / V / D | Copy / Paste / Duplicate |
-| Ctrl+Z / Y | Undo / Redo |
-| Delete | Verwijderen |
-| Esc | Deselect |
-| Pijltjes | Nudgen |
-| Alt+sleep | Verplaatsen |
-| Dubbelklik | Tekst edit |
-| Rechtsklik | Contextmenu |
+In normale Leviathan laadt `editorContentRuntime.ts` alleen
+`lv-editor-content.json` — geen editor-UI.
+
+## Scheiding
+
+- Editor alleen bij `LEVIATHAN_EDITOR=1` (via `EDIT_LAYOUT.bat`)
+- Vite-plugin `apply: "serve"` → zit niet in production build overlay
+- API op `127.0.0.1:5199`; writes alleen binnen `Data/frontend`
