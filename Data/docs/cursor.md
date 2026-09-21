@@ -109,6 +109,8 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/memory/` | MemoryStore |
 | `Data/modules/verification/` | VerificationEngine |
 | `Data/modules/agents/` | AgentRuntime (feature-flagged) |
+| `Data/modules/coding/` | **CodingControlPlane** — sessions, XML loop, workspace, patches |
+| `Data/backend/routes/coding.py` | Coding HTTP API (`/api/coding/*`) |
 | `Data/modules/workflows/` | WorkflowStore / WorkflowRuntime |
 | `Data/modules/schedules/` | ScheduleStore / ScheduleRunner |
 | `Data/modules/observability/` | ObservabilityHub |
@@ -146,6 +148,8 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 - `src/pages/CommandPage.tsx` — dashboard/Command shell
 - `src/pages/ChatPage.tsx` — real chat against `/api/*`
 - `src/pages/ModelsPage.tsx` → `src/pages/models/*` — Model Control Plane UI (no mock catalog)
+- `src/pages/CodingPage.tsx` → `src/pages/coding/*` — **Coding Agent** operator surface (`/coding`, real APIs; not chat redirect)
+- `src/pages/ResearchPage.tsx` — Research workspace
 - `src/pages/StatusPage.tsx` — operator status
 - `src/pages/BrainPage.tsx`, `TrainingPage.tsx`, `SettingsPage.tsx` — additional shells
 
@@ -238,6 +242,7 @@ SQLite persistence
 | Memory | `Data/modules/memory/` |
 | Verification | `Data/modules/verification/` |
 | Agents | `Data/modules/agents/` (requires feature flag) |
+| Coding Agent | `Data/modules/coding/` + `/coding` UI (requires `LEVIATHAN_FEATURE_AGENTS` + `LEVIATHAN_FEATURE_CODING`) |
 | Workflows | `Data/modules/workflows/` |
 | Schedules | `Data/modules/schedules/` |
 | Observability | `Data/modules/observability/` |

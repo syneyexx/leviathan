@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of the **Models Control Plane** on Phase 51 foundation.
+> This is the implementation truth for the repository as of the **Coding Agent** control plane (migration v15) on the Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,17 +12,18 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–51, and a full **Model Control Plane** for the Models operator surface.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–51, a full **Model Control Plane**, Datasets/Training/Research (v14), and a **Coding Agent** for `/coding`.
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.52.0-models`);
+- FastAPI backend composition root (`0.54.0-coding`);
+- **Coding Agent** (`Data/modules/coding/`) — sessions, XML capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker;
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v13**;
+- SQLite persistence + migrations through **v15**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
-- React + TypeScript + Vite frontend with operator `/status` and production `/models` control plane UI;
+- React + TypeScript + Vite frontend with operator `/status`, production `/models`, and **Coding Agent** `/coding` UI;
 - typed frontend API client;
 - honest failure semantics (no fabricated success).
 
@@ -104,7 +105,7 @@ Path constants: `PROJECT_ROOT`, `DATA_ROOT`, `BACKEND_ROOT`, `FRONTEND_ROOT`, `F
 
 ## 3.3 Persistence — `Data/backend/database.py` + migrations
 
-SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v13**).
+SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v15**).
 
 Core chat tables (also ensured in `Database.initialize`):
 
@@ -114,6 +115,12 @@ Model Control Plane tables (migration v13):
 
 - `model_providers`, `model_registry`, `model_profiles`, `model_control_state`
 - `model_capability_results`, `model_downloads`, `model_audit_log`
+
+Datasets / Training / Research (migration v14): dataset_*, training_*, research_* tables.
+
+Coding Agent (migration v15):
+
+- `coding_sessions`, `coding_turns`, `coding_steps`, `coding_patches`
 
 Additional domain tables from earlier migrations: artifacts, approvals, jobs, observations/effects, evidence, memory, workflows, schedules, verification_reports, neuro_memory_snapshots.
 
@@ -159,6 +166,24 @@ POST /api/chat
 If the registry is empty / router exhausted and no explicit model was requested, chat may fall back to legacy settings-based LLM resolution (recorded as fallback).
 
 Completion of a chat turn means: model returned usable text and the assistant message was persisted.
+
+## 3.6b Coding Agent flow
+
+Owner: `Data/modules/coding/` · UI: `/coding` · Flag: `LEVIATHAN_FEATURE_CODING` (requires AGENTS).
+
+```text
+POST /api/coding/sessions + /turn
+  → persist user turn; status=RUNNING; wake CodingWorker
+  → CodingLoop (background thread):
+       ReasoningEngine → optional NeuroAdvisor (advisory)
+       ContextBuilder(mode=coding) with CODING_SYSTEM_PROMPT
+       LLM.chat (temperature 0.1) → parse XML <capability> tags
+       READ → ExecutionGateway; WRITE/EXECUTE → ApprovalService then WAITING_APPROVAL
+       observations / coding_patches / VerificationEngine
+  → UI polls GET /api/coding/sessions/{id}
+```
+
+Workspace default: `LEVIATHAN_CODING_WORKSPACE` (`D:/leviathan/codingworkspace`). HADES paths denied. No private shell/FS/DB.
 
 ## 3.7 Knowledge V2
 
