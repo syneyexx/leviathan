@@ -764,6 +764,25 @@ img { display: block; max-width: 100%; }
 
 .lv-tab-chev { width: 12px; height: 12px; }
 
+.lv-submenu {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.lv-submenu-tabs {
+  align-items: center;
+}
+
+.lv-submenu .lv-tab {
+  text-decoration: none;
+}
+
+.lv-chat-main > .lv-submenu {
+  padding: 0 0 8px;
+  border-bottom: 1px solid rgba(214, 169, 87, 0.12);
+  margin-bottom: 4px;
+}
+
 .lv-prompt {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;

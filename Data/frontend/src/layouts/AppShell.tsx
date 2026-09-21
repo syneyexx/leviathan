@@ -64,7 +64,7 @@ export function AppShell({
         onMenuClick={() => setSidebarOpen((value) => !value)}
       />
       <div className="lv-body">
-        <AppSidebar open={sidebarOpen} onReserved={onReserved} />
+        <AppSidebar open={sidebarOpen} />
         {children}
       </div>
       <AppFooter activeMode={activeMode} onReserved={onReserved} />
