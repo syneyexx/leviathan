@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { media } from "../assets/media";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 import type { HealthResponse } from "../types/api";
@@ -40,9 +41,9 @@ const FEATURES = [
 ] as const;
 
 const PROJECTS = [
-  { title: "Trading AI", meta: "Updated 2h ago", image: "/assets/project-1.jpg" },
-  { title: "Autonomous Agents", meta: "Updated 5h ago", image: "/assets/project-2.jpg" },
-  { title: "Market Analysis", meta: "Updated 1d ago", image: "/assets/project-3.jpg" },
+  { title: "Trading AI", meta: "Updated 2h ago", image: media.project1 },
+  { title: "Autonomous Agents", meta: "Updated 5h ago", image: media.project2 },
+  { title: "Market Analysis", meta: "Updated 1d ago", image: media.project3 },
 ] as const;
 
 const AGENTS = [
@@ -122,7 +123,7 @@ export function CommandPage() {
       <main className="lv-main">
         <section className="lv-hero">
           <div className="lv-hero-media">
-            <img src="/assets/hero.jpg" alt="" width={1400} height={380} />
+            <img src={media.hero} alt="" width={1400} height={380} />
           </div>
           <div className="lv-hero-shade" />
           <div className="lv-hero-content">
@@ -351,7 +352,7 @@ export function CommandPage() {
         <article className="lv-panel lv-panel-premium lv-world">
           <div className="lv-section-label">World View</div>
           <div className="lv-world-view">
-            <img src="/assets/globe.jpg" alt="World activity globe" width={208} height={208} />
+            <img src={media.globe} alt="World activity globe" width={208} height={208} />
           </div>
           <div className="lv-world-stats">
             <div className="lv-world-stat">

@@ -1,3 +1,4 @@
+import { media } from "../assets/media";
 import { BrandMark } from "./BrandMark";
 import { useClock } from "../hooks/useClock";
 
@@ -43,7 +44,7 @@ export function AppHeader({
 
       <div className="lv-systems">
         <div className="lv-earth-mini">
-          <img src="/assets/earth-mini.jpg" alt="" width={64} height={64} />
+          <img src={media.earthMini} alt="" width={64} height={64} />
         </div>
         <div className="lv-systems-capsule">
           <div className="lv-systems-title">

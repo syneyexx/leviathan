@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { media } from "../assets/media";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
@@ -64,7 +65,7 @@ export function SettingsPage() {
       <main className="lv-main">
         <section className="lv-page-hero">
           <div className="lv-hero-media">
-            <img src="/assets/globe.jpg" alt="" width={1400} height={380} />
+            <img src={media.globe} alt="" width={1400} height={380} />
           </div>
           <div className="lv-hero-shade" />
           <div className="lv-hero-content">

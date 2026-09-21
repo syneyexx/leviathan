@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { media } from "../assets/media";
 
 type AppFooterProps = {
   activeMode: "explore" | "chat";
@@ -52,7 +53,7 @@ export function AppFooter({ activeMode, onReserved }: AppFooterProps) {
   return (
     <footer className="lv-footer">
       <div className="lv-user">
-        <img className="lv-avatar" src="/assets/avatar.jpg" alt="" width={40} height={40} />
+        <img className="lv-avatar" src={media.avatar} alt="" width={40} height={40} />
         <div>
           <div className="lv-user-name">LEVIATHAN</div>
           <div className="lv-user-meta">v1.0.0 | Elite Mode</div>
