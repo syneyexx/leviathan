@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { BrainPage } from "./pages/BrainPage";
 import { ChatPage } from "./pages/ChatPage";
 import { CommandPage } from "./pages/CommandPage";
@@ -22,6 +23,7 @@ export default function App() {
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/training" element={<TrainingPage />} />
       <Route path="/tools" element={<ToolsPage />} />
+      <Route path="/analytics" element={<AnalyticsPage />} />
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/chat.html" element={<Navigate to="/chat" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />

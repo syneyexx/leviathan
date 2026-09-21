@@ -140,6 +140,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     label: "Analytics",
+    to: "/analytics",
     icon: (
       <>
         <circle cx="6" cy="16" r="1.4" />
