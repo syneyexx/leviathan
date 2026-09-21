@@ -194,7 +194,7 @@ export function MediaPlatformShell({
           </div>
           <div>
             <div className="mp-brand-title">LEVIATHAN</div>
-            <div className="mp-brand-tag">Create a Higher Reality</div>
+            <div className="mp-brand-tag">CREATE A HIGHER REALITY</div>
           </div>
         </NavLink>
 
