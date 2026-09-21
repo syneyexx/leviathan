@@ -28,14 +28,15 @@ Dan zie je **geen** editor-UI — wel al je opgeslagen wijzigingen.
 In normale Leviathan laadt een kleine runtime (`editorContentRuntime.ts`)
 alleen `lv-editor-content.json` — geen editor-UI.
 
-## Functies (editor)
+## Images toevoegen
 
-- Sleep · resize · snap · nudge (pijltjes)
-- Rechtsklik-menu · copy/paste/duplicate/delete/lock/align
-- Insert: tekst, titel, image, box, knop, lijn
-- Image upload / drop vanuit Explorer
-- Layers · Undo/Redo · inline tekst
-- Auto-save (Ctrl+S forceert)
+- Topbar **+Img** of panel **+ Image**
+- Rechtermuisklik → **Image toevoegen…**
+- Sleep een bestand vanaf je PC op de pagina
+- Kies uit de asset-bibliotheek of **Upload vanaf PC**
+
+Images landen in `Data/frontend/public/assets/uploads/` en blijven
+zichtbaar in normale Leviathan (zonder editor).
 
 ## Scheiding
 
