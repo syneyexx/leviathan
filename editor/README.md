@@ -1,45 +1,121 @@
-# Leviathan Visual Editor (admin tool)
+# Leviathan Visual Editor
 
-Losstaande admin-tool om de **echte** Leviathan-layout te bewerken.
-Hoort **niet** bij de normale Leviathan-start.
-
-## Start de editor
+Admin-studio om de echte Leviathan-layout te bewerken. Hoort niet bij de normale start.
 
 ```
-D:\leviathan\editor\EDIT_LAYOUT.bat
+EDIT_LAYOUT.bat
 ```
 
-Opent http://127.0.0.1:5173 met de Dreamweaver-achtige overlay.
+Opent http://127.0.0.1:5173 met de overlay. API: http://127.0.0.1:5199.
+Zonder `LEVIATHAN_EDITOR=1` is er geen editor-UI. Opgeslagen wijzigingen blijven wel staan.
 
-## Start Leviathan zonder editor
+## Architectuur
 
-Gebruik je normale start (`run_leviathan.bat` / installer / build).
-Dan zie je **geen** editor-UI — wel al je opgeslagen wijzigingen.
+```mermaid
+flowchart LR
+  bat["EDIT_LAYOUT.bat"] --> py["server.py"]
+  py --> vite["Vite LEVIATHAN_EDITOR=1"]
+  vite --> boot["canvas.js module"]
+  boot --> state["state"]
+  boot --> commands["commands"]
+  boot --> selection["selection"]
+  boot --> geometry["geometry"]
+  boot --> api["api"]
+  boot --> chrome["chrome / docks"]
+  chrome --> panels["panels/*"]
+  boot --> ix["interactions"]
+  ix --> camera["camera zoom/pan"]
+  py --> files["styles/*.css + lv-editor-content.json"]
+  runtime["editorContentRuntime.ts"] --> files
+```
 
-## Wat wordt opgeslagen (blijft in Leviathan)
+`canvas.js` is de enige inject (`type="module"`). De rest zijn plain ES-modules die `server.py` statisch serveert. Geen build-step voor de editor zelf. De Vite-plugin blijft `apply: "serve"`.
+
+| Module | Rol |
+| --- | --- |
+| `js/state.js` | `getState` / `setState` / `subscribe` |
+| `js/commands.js` | `execute({ do, undo, label })`, gestures, history max 100 |
+| `js/selection.js` | primary + multi, shell-regels, deep-select |
+| `js/geometry.js` | box, snap, guides, align, distribute, zoom-math |
+| `js/api.js` | fetch-wrappers |
+| `js/chrome.js` | docks, tabs, float, presets (`localStorage`) |
+| `js/panels/*` | eigen `render` + events |
+| `js/interactions.js` | pointer machine |
+| `js/camera.js` | zoom/pan, viewport-presets |
+| `js/layout.js` | align, distribute, nudge |
+| `js/widgets.js` | insert, clipboard, componenten |
+| `js/registry.js` + `js/palette.js` | command palette |
+
+Shell (`.lv-app .lv-body .lv-header .lv-sidebar .lv-footer .lv-right .lv-main`) wordt niet verwijderd of verplaatst. Maten lopen via CSS-variabelen.
+
+## Wat wordt opgeslagen
 
 | Actie | Bestand |
-|------|---------|
-| Maten, kleuren, styles | `Data/frontend/src/styles/*.css` |
-| Tekst / image-paden (waar mogelijk) | bron-`.tsx` via replace |
-| Overrides + nieuwe widgets | `Data/frontend/public/lv-editor-content.json` |
-| Geüploade images | `Data/frontend/public/assets/uploads/` |
+| --- | --- |
+| Desktop-styles | `Data/frontend/src/styles/*.css` |
+| Tekst / image-paden | bron via replace |
+| Overrides, widgets, componenten, breakpoints | `Data/frontend/public/lv-editor-content.json` |
+| Uploads | `Data/frontend/public/assets/uploads/` |
 
-In normale Leviathan laadt een kleine runtime (`editorContentRuntime.ts`)
-alleen `lv-editor-content.json` — geen editor-UI.
+Content schema v2, backward compatible:
 
-## Images toevoegen
+```json
+{ "version": 2, "entries": {}, "nodes": [], "components": [] }
+```
 
-- Topbar **+Img** of panel **+ Image**
-- Rechtermuisklik → **Image toevoegen…**
-- Sleep een bestand vanaf je PC op de pagina
-- Kies uit de asset-bibliotheek of **Upload vanaf PC**
+`entries[selector].breakpoints.tablet|mobile` zijn decls. Die gaan naar JSON, niet naar de desktop-CSS. De runtime past ze toe onder 1024px (tablet) en 640px (mobile).
 
-Images landen in `Data/frontend/public/assets/uploads/` en blijven
-zichtbaar in normale Leviathan (zonder editor).
+Zoom en pan zijn een transform op `#root` en worden niet opgeslagen.
 
-## Scheiding
+## Shortcuts
 
-- Editor alleen bij `LEVIATHAN_EDITOR=1` (via `EDIT_LAYOUT.bat`)
-- Vite-plugin `apply: "serve"` → zit niet in production build overlay
-- Leviathan blijft een aparte app; editor is admin tooling
+| Toets | Actie |
+| --- | --- |
+| `V` `H` `R` `M` | select, hand, roteren, meten |
+| Spatie + slepen / middelste muis | pan |
+| Ctrl/Cmd + scroll | zoom naar cursor (0.25×–3×) |
+| `0` `1` `2` | 100%, breedte, selectie |
+| Cmd/Ctrl+K | commandopalet |
+| Cmd/Ctrl+S | opslaan |
+| Cmd/Ctrl+Z / Shift+Z | undo / redo |
+| Cmd/Ctrl+C V D | kopiëren, plakken, dupliceren |
+| Delete | verwijderen of verbergen |
+| Pijltjes / Shift | nudge 1px / 10px |
+| Cmd/Ctrl+klik | deep-select |
+| Shift+klik | toevoegen aan selectie |
+| Dubbelklik | een niveau dieper, daarna tekst |
+| Slepen op leeg vlak | marquee, Shift = toevoegen |
+| Alt tijdens slepen | reparent (alleen widgets) |
+| Alt+L C R T M B | uitlijnen |
+| Alt+Shift+H / V | verdelen |
+| `T` `B` `I` | tekst, box, image |
+| Cmd/Ctrl+Alt+1 2 3 | desktop, tablet, mobile |
+| Cmd/Ctrl+Alt+A | AI-paneel |
+| Cmd/Ctrl+/ | help |
+
+Alle commando's staan ook in het Help-paneel en in het palet. Palet zoekt fuzzy op commando's, recente acties en laagnamen.
+
+## Studio
+
+- Zoom, pan, measure, rotate, smart guides (goud = rand, magenta = midden), pixelgrid en 12 kolommen.
+- Multi-select uitlijnen en verdelen.
+- Inspector: spacing-box, formaat + ratio, typografie, kleur + alpha + swatches, schaduwlagen, rand, flex/grid, positie. Geavanceerd CSS blijft een vouw.
+- Token-knop schrijft `var(--lv-…)`. Gebonden waarden zijn gemarkeerd; Ontkoppel schrijft de berekende waarde terug.
+- Lagen: boom, filter, oog, lock, drag-reorder, virtualisatie boven 200 rijen, broodkruimel boven de inspector.
+- Panelen rechts met tabs, links lagen, onder code. Zweven via ↗. Presets Studio / Focus / Code.
+- Componenten: `{ id, name, html, defaultStyles, variant }`, instance `data-lvb-component-id`. Master bijwerken vervangt HTML en houdt style.
+- Responsive: Desktop / Tablet 834 / Mobile 390 als preview op `.lv-app`.
+- AI: paneel “Toepassen” post naar `/api/editor-ai`. Zonder model antwoordt de server 501 en schrijft niets. Undo blijft gelden als er later wel een resultaat komt.
+
+## Changelog — frontier
+
+De Dreamweaver-overlay is een modulaire studio geworden:
+
+- Boot blijft één script; logica zit in `editor/js/**` zonder bundler.
+- Command-stack met undo/redo (max 100) en history pas op pointer-up.
+- Echte camera: zoom naar cursor, pan, fit, chrome in schermpixels.
+- Modes, deep-select, drill-in, marquee, align/distribute, betrouwbare guides.
+- Visuele inspector, lagenboom, commandopalet, tokens, lichte componenten.
+- Breakpoint-overrides in content-JSON.
+- AI-contract en stub-endpoint, bevestiging verplicht.
+- Runtime zonder editor past entries, nodes én breakpoint-decls toe.

@@ -21,8 +21,9 @@ export function leviathanLayoutEditor(options = {}) {
         {
           tag: "script",
           attrs: {
+            type: "module",
             src: `${apiOrigin}/canvas.js`,
-            defer: "true",
+            crossorigin: "anonymous",
             "data-lv-editor-api": apiOrigin,
           },
           injectTo: "body",
