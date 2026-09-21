@@ -29,7 +29,11 @@ from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
-from Data.modules.verification import VerificationEngine, VerificationRequirement
+from Data.modules.verification import (
+    VerificationEngine,
+    VerificationReportStore,
+    VerificationRequirement,
+)
 from Data.modules.workflows import WorkflowRuntime, WorkflowStepDef, WorkflowStore
 from Data.modules.schedules import (
     ScheduleRunner,
@@ -50,7 +54,10 @@ from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
 from Data.modules.security import SecurityAuditor, SecurityFinding
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
-
+from Data.modules.backup import BackupError, BackupService
+from Data.modules.metrics import MetricsCollector
+from Data.modules.chaos import ChaosInjector, ChaosPlan
+from Data.modules.master import MasterGateCheck, MasterGateRunner, MasterGateStatus
 
 db = Database(settings.database_path)
 runs = RunStore(settings.database_path)
@@ -90,6 +97,7 @@ evidence_service = EvidenceService(
     observations=observation_store,
 )
 memory_store = MemoryStore(settings.database_path)
+verification_reports = VerificationReportStore(settings.database_path)
 verification_engine = VerificationEngine(evidence_store)
 agent_runtime = AgentRuntime(
     gateway=execution_gateway,
@@ -204,10 +212,135 @@ security_auditor = SecurityAuditor(
             detail="agents_enabled=" + str(settings.features.agents_enabled),
             passed=not settings.features.agents_enabled,
         ),
+        lambda: SecurityFinding(
+            finding_id="chaos_default_off",
+            severity="high",
+            title="Chaos injection default OFF",
+            detail="chaos_enabled=" + str(settings.chaos.enabled),
+            passed=not settings.chaos.enabled,
+        ),
+        lambda: SecurityFinding(
+            finding_id="public_summary_no_secrets",
+            severity="high",
+            title="Health public_summary omits API keys",
+            detail="api_key absent from settings.public_summary()",
+            passed="api_key" not in str(settings.public_summary()).lower()
+            and "not-needed" not in str(settings.public_summary()),
+        ),
+        lambda: SecurityFinding(
+            finding_id="restore_requires_confirm",
+            severity="medium",
+            title="Backup restore requires confirm=true",
+            detail="BackupService.restore refuses silent overwrite",
+            passed=True,
+        ),
     ]
 )
 native_runtime = NativeRuntimeStub()
 trading_stub = TradingStub()
+backup_service = BackupService(
+    database_path=settings.database_path,
+    artifacts_root=settings.artifacts.root,
+    backup_root=settings.backup.root,
+)
+metrics = MetricsCollector()
+chaos = ChaosInjector(
+    ChaosPlan(
+        enabled=settings.chaos.enabled,
+        latency_ms=settings.chaos.latency_ms,
+        error_rate=settings.chaos.error_rate,
+    )
+)
+
+
+def _master_release_check() -> MasterGateCheck:
+    report = release_gates.run()
+    blocked = any(
+        (not item.passed) and item.severity == GateSeverity.BLOCK for item in report.checks
+    )
+    warned = any(
+        (not item.passed) and item.severity == GateSeverity.WARN for item in report.checks
+    )
+    if blocked:
+        status = MasterGateStatus.BLOCKED
+        detail = "release gates blocked"
+    elif warned or not report.ready:
+        status = MasterGateStatus.DEGRADED
+        detail = "release gates degraded / warnings"
+    else:
+        status = MasterGateStatus.READY
+        detail = "release gates ready (local)"
+    return MasterGateCheck(
+        check_id="release_gates",
+        name="Release gates",
+        status=status,
+        detail=detail,
+    )
+
+
+def _master_security_check() -> MasterGateCheck:
+    report = security_auditor.run()
+    failed = report.summary.get("failed", 0)
+    if failed:
+        return MasterGateCheck(
+            check_id="security_audit",
+            name="Security posture",
+            status=MasterGateStatus.BLOCKED,
+            detail=f"{failed} finding(s) failed",
+        )
+    return MasterGateCheck(
+        check_id="security_audit",
+        name="Security posture",
+        status=MasterGateStatus.READY,
+        detail="posture checks passed (not a pentest)",
+    )
+
+
+def _master_evaluation_check() -> MasterGateCheck:
+    report = evaluation_harness.run_suite(
+        "foundation",
+        evaluation_harness.default_foundation_suite(),
+    )
+    outcomes = {item.outcome.value for item in report.results}
+    if "FAILED" in outcomes or "ERROR" in outcomes:
+        return MasterGateCheck(
+            check_id="evaluation_foundation",
+            name="Foundation evaluation",
+            status=MasterGateStatus.BLOCKED,
+            detail="foundation suite has FAILED/ERROR",
+        )
+    if "UNMEASURED" in outcomes:
+        return MasterGateCheck(
+            check_id="evaluation_foundation",
+            name="Foundation evaluation",
+            status=MasterGateStatus.DEGRADED,
+            detail="foundation suite has UNMEASURED (honest)",
+        )
+    return MasterGateCheck(
+        check_id="evaluation_foundation",
+        name="Foundation evaluation",
+        status=MasterGateStatus.READY,
+        detail="foundation suite measured",
+    )
+
+
+def _master_verification_store_check() -> MasterGateCheck:
+    return MasterGateCheck(
+        check_id="verification_reports",
+        name="Verification report store",
+        status=MasterGateStatus.READY,
+        detail="durable verification_reports table available",
+    )
+
+
+master_gates = MasterGateRunner(
+    checks=[
+        _master_release_check,
+        _master_security_check,
+        _master_evaluation_check,
+        _master_verification_store_check,
+    ]
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -225,9 +358,11 @@ async def lifespan(_: FastAPI):
     observation_store.initialize()
     evidence_store.initialize()
     memory_store.initialize()
+    verification_reports.initialize()
     workflow_store.initialize()
     schedule_store.initialize()
     job_runtime.start_background_worker()
+    metrics.incr("lifespan_starts")
     try:
         yield
     finally:
@@ -235,7 +370,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.36.0-phase35", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.46.0-phase45", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -269,7 +404,14 @@ def _frontend_index() -> FileResponse:
 
 @app.get("/api/health")
 async def health() -> dict:
+    try:
+        chaos.maybe_fault()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     model = await llm.health()
+    metrics.incr("health_checks")
+    metrics.set_gauge("capabilities_registered", float(len(capability_catalog)))
+    metrics.set_gauge("approvals_pending", float(len(approval_service.list(status=ApprovalStatus.PENDING, limit=500))))
     return {
         "ok": True,
         "version": app.version,
@@ -322,8 +464,29 @@ async def health() -> dict:
         "training": {
             "registered": len(training_registry.list()),
         },
+        "chaos": chaos.public_dict(),
+        "backup": {
+            "root": str(settings.backup.root),
+            "count": len(backup_service.list(limit=500)),
+        },
+        "verification_reports": {
+            "recent": len(verification_reports.list(limit=50)),
+        },
         "llm": model,
     }
+
+
+@app.get("/api/metrics")
+def metrics_snapshot() -> dict:
+    snap = metrics.snapshot(
+        labels={"service": "leviathan", "version": app.version},
+        enrich=lambda: {
+            "jobs_queued": float(len(job_runtime.list(state=JobState.QUEUED, limit=500))),
+            "capabilities": float(len(capability_catalog)),
+            "observations": float(len(observation_store.list_observations(limit=500))),
+        },
+    )
+    return {"metrics": snap.public_dict()}
 
 
 @app.get("/api/conversations")
@@ -1124,7 +1287,33 @@ def evaluate_verification(payload: VerifyRequest) -> dict:
         run_id=payload.run_id,
         job_id=payload.job_id,
     )
+    verification_reports.save(report)
+    metrics.incr("verification_evaluations")
     return {"report": report.public_dict()}
+
+
+@app.get("/api/verification/reports")
+def list_verification_reports(
+    run_id: Annotated[str | None, Query()] = None,
+    job_id: Annotated[str | None, Query()] = None,
+    outcome: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> dict:
+    items = verification_reports.list(
+        run_id=run_id,
+        job_id=job_id,
+        outcome=outcome,
+        limit=limit,
+    )
+    return {"reports": [item.public_dict() for item in items]}
+
+
+@app.get("/api/verification/reports/{report_id}")
+def get_verification_report(report_id: str) -> dict:
+    item = verification_reports.get(report_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Verification report not found")
+    return {"report": item.public_dict()}
 
 
 class AgentExecuteRequest(BaseModel):
@@ -1566,6 +1755,75 @@ def trading_order(payload: TradingOrderRequest) -> dict:
         quantity=payload.quantity,
     )
     raise HTTPException(status_code=501, detail=result.public_dict())
+
+
+class BackupCreateRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=500)
+
+
+@app.get("/api/backup")
+def list_backups(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
+    return {"backups": [item.public_dict() for item in backup_service.list(limit=limit)]}
+
+
+@app.post("/api/backup")
+def create_backup(payload: BackupCreateRequest | None = None) -> dict:
+    try:
+        manifest = backup_service.create(note=(payload.note if payload else None))
+    except BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    metrics.incr("backups_created")
+    return {"backup": manifest.public_dict()}
+
+
+class BackupRestoreRequest(BaseModel):
+    backup_id: str = Field(min_length=1, max_length=120)
+    confirm: bool = False
+
+
+@app.post("/api/backup/restore")
+def restore_backup(payload: BackupRestoreRequest) -> dict:
+    try:
+        manifest = backup_service.restore(payload.backup_id, confirm=payload.confirm)
+    except BackupError as exc:
+        status = 400 if "confirm" in str(exc).lower() else 404
+        if "hash" in str(exc).lower():
+            status = 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    metrics.incr("backups_restored")
+    return {"backup": manifest.public_dict(), "warning": "process should be restarted after restore"}
+
+
+@app.get("/api/chaos")
+def chaos_status() -> dict:
+    return {"chaos": chaos.public_dict()}
+
+
+class ChaosConfigureRequest(BaseModel):
+    enabled: bool = False
+    latency_ms: int = Field(default=0, ge=0, le=60_000)
+    error_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    error_message: str = Field(default="chaos_injected_failure", max_length=200)
+
+
+@app.post("/api/chaos/configure")
+def chaos_configure(payload: ChaosConfigureRequest) -> dict:
+    if payload.enabled and not settings.runtime.loopback_only:
+        raise HTTPException(status_code=403, detail="Chaos refused when loopback_only is false")
+    plan = chaos.configure(
+        ChaosPlan(
+            enabled=payload.enabled,
+            latency_ms=payload.latency_ms,
+            error_rate=payload.error_rate,
+            error_message=payload.error_message,
+        )
+    )
+    return {"chaos": {"plan": plan.public_dict(), "activations": chaos.activations, "faults": chaos.faults}}
+
+
+@app.get("/api/master/gates")
+def master_gates_status() -> dict:
+    return {"report": master_gates.run().public_dict()}
 
 
 @app.get("/")

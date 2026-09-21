@@ -9,6 +9,7 @@ from Data.modules.evidence import EvidenceService, EvidenceStore
 from Data.modules.verification import (
     VerificationEngine,
     VerificationOutcome,
+    VerificationReportStore,
     VerificationRequirement,
 )
 
@@ -24,6 +25,8 @@ class VerificationEngineTests(unittest.TestCase):
         self.evidence_store.initialize()
         self.evidence = EvidenceService(self.evidence_store, artifacts=self.artifacts)
         self.engine = VerificationEngine(self.evidence_store)
+        self.reports = VerificationReportStore(self.db)
+        self.reports.initialize()
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -63,6 +66,26 @@ class VerificationEngineTests(unittest.TestCase):
         )
         report = self.engine.verify([req], run_id="run-2")
         self.assertEqual(report.outcome, VerificationOutcome.FAILED)
+
+    def test_persist_and_reload_report(self) -> None:
+        artifact = self.artifacts.create_from_bytes(
+            data=b"ok",
+            artifact_type="text",
+            producer="test",
+            filename="b.txt",
+            run_id="run-3",
+        )
+        self.evidence.claim_artifact_hash(artifact_id=artifact.artifact_id, run_id="run-3")
+        report = self.engine.verify(
+            [VerificationEngine.require_artifact(artifact.artifact_id)],
+            run_id="run-3",
+        )
+        self.reports.save(report)
+        loaded = self.reports.get(report.report_id)
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual(loaded.outcome, VerificationOutcome.PASSED)
+        self.assertEqual(len(self.reports.list(run_id="run-3")), 1)
 
 
 if __name__ == "__main__":

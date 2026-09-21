@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of Phase 0 (audit) and Phase 1 (React/TypeScript/Vite frontend foundation).
+> This is the implementation truth for the repository as of Master Program Phase 45.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,28 +12,30 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
+LEVIATHAN is a Python-first, local-first AI control plane with a completed Master Engineering Program foundation (phases 0–45).
 
 **Implemented and real:**
 
-- FastAPI backend composition root;
+- FastAPI backend composition root (`0.46.0-phase45`);
 - OpenAI-compatible LLM client (LM Studio–friendly);
-- SQLite persistence for conversations, messages, and Knowledge documents;
-- lightweight deterministic ReasoningEngine;
-- Knowledge FTS5 search with LIKE fallback;
-- React + TypeScript + Vite frontend preserving the LEVIATHAN visual identity;
+- SQLite persistence + migrations through v11;
+- Domain modules through Master gates (gateway, approvals, jobs, evidence, verification reports, agents flagged, workflows, schedules, observability, neuro advisory, plugins, evaluation, isolation, release, security, backup, metrics, chaos OFF);
+- Honest stubs: Training / Browser / Media / Voice / Native / Trading;
+- React + TypeScript + Vite frontend with operator `/status` page;
 - typed frontend API client;
-- honest LLM failure semantics (no fabricated assistant success).
+- honest failure semantics (no fabricated success).
 
-**Not implemented (do not treat UI shell labels as capability):**
+**Not claimed:**
 
 - Real browser/media/voice/native/trading runtimes;
 - Real MCP network clients; residual-stream neuro; training execution;
-- production APM / production certification.
+- production APM / production certification / cloud backup sync.
 
-**Implemented through Phase 35:**
+**Implemented through Phase 45:**
 
-- Multi-agent coordinator; Coding/Research plan depth; Security audit; Native/Trading stubs;
+- Master gates + security hardening + operator Status UI + integration harness;
+- Chaos (default OFF) + metrics + backup/restore + env docs + expanded API client;
+- Durable verification reports; multi-agent; Coding/Research depth; Security audit; Native/Trading stubs;
 - Release gates; Browser/Media/Voice stubs; Plugins; Evaluation; Isolation; Training stub;
 - Neuro; Observability; Schedules; Workflows; Agents; Verification; Memory; Context; Evidence; Observations; Jobs; Approvals; Gateway;
 - Function Runtime; Knowledge V2; Artifacts; Run/Event; migrations; Settings; React SPA.
@@ -65,7 +67,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.9.0-phase8`).
+FastAPI application (`version=0.46.0-phase45`).
 
 Responsibilities:
 
@@ -351,7 +353,22 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 27 — Media stub | PASS | UNSUPPORTED; no fabricated media |
 | Phase 28 — Voice stub | PASS | UNSUPPORTED; no fabricated audio/text |
 | Phase 29 — Release gates | PASS | Local BLOCK/WARN readiness checks |
-| Phase 30+ | NOT STARTED | Multi-agent / Coding depth / … |
+| Phase 30 — Multi-agent | PASS | Sequential shared-gateway coordinator |
+| Phase 31 — Coding depth | PASS | VERIFY + CSV capability planning |
+| Phase 32 — Research depth | PASS | Search + VERIFY planning notes |
+| Phase 33 — Security audit | PASS | Posture checks; not a pentest |
+| Phase 34 — Native stub | PASS | Native unavailable; Python-first |
+| Phase 35 — Trading stub | PASS | Orders refused; no fabricated fills |
+| Phase 36 — Verification reports | PASS | Durable store + list/get APIs |
+| Phase 37 — Frontend API client | PASS | Expanded typed operator client |
+| Phase 38 — Env/config docs | PASS | `.env.example` + backup/chaos knobs |
+| Phase 39 — Backup/restore | PASS | Local snapshots; confirm required |
+| Phase 40 — Metrics surface | PASS | In-process `/api/metrics` |
+| Phase 41 — Chaos helpers | PASS | Default OFF; loopback-gated |
+| Phase 42 — Integration harness | PASS | Approval→gateway→evidence→verify |
+| Phase 43 — Operator UI | PASS | `/status` + honest Command signals |
+| Phase 44 — Security hardening | PASS | Extra posture findings |
+| Phase 45 — Master gates | PASS | Program summary; not prod cert |
 
 ---
 

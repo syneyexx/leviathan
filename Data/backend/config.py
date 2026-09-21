@@ -165,6 +165,18 @@ class ArtifactSettings:
 
 
 @dataclass(frozen=True)
+class BackupSettings:
+    root: Path
+
+
+@dataclass(frozen=True)
+class ChaosSettings:
+    enabled: bool
+    latency_ms: int
+    error_rate: float
+
+
+@dataclass(frozen=True)
 class Settings:
     """Canonical LEVIATHAN settings.
 
@@ -184,6 +196,8 @@ class Settings:
     context: ContextSettings
     network: NetworkSettings
     artifacts: ArtifactSettings
+    backup: BackupSettings
+    chaos: ChaosSettings
     database_path: Path
 
     # --- Compatibility accessors (Step 1 call sites) ---
@@ -258,6 +272,12 @@ class Settings:
             },
             "network": {"allow_outbound": self.network.allow_outbound},
             "artifacts": {"root": str(self.artifacts.root)},
+            "backup": {"root": str(self.backup.root)},
+            "chaos": {
+                "enabled": self.chaos.enabled,
+                "latency_ms": self.chaos.latency_ms,
+                "error_rate": self.chaos.error_rate,
+            },
             "database_path": str(self.database_path),
         }
 
@@ -297,6 +317,13 @@ class Settings:
 
         artifacts_raw = _env_raw("LEVIATHAN_ARTIFACTS_ROOT", "Data/backend/data/artifacts") or "Data/backend/data/artifacts"
         artifacts_root = _resolve_path(artifacts_raw)
+        backup_raw = _env_raw("LEVIATHAN_BACKUP_ROOT", "Data/backend/data/backups") or "Data/backend/data/backups"
+        backup_root = _resolve_path(backup_raw)
+        chaos_enabled = _env_bool("LEVIATHAN_CHAOS_ENABLED", False)
+        chaos_latency = _env_int("LEVIATHAN_CHAOS_LATENCY_MS", 0, minimum=0, maximum=60_000)
+        chaos_error_rate = _env_float("LEVIATHAN_CHAOS_ERROR_RATE", 0.0, minimum=0.0)
+        if chaos_error_rate > 1.0:
+            raise ConfigurationError("LEVIATHAN_CHAOS_ERROR_RATE must be <= 1.0")
 
         settings = cls(
             runtime=RuntimeSettings(host=host, port=port, loopback_only=loopback_only),
@@ -339,12 +366,22 @@ class Settings:
             ),
             network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", False)),
             artifacts=ArtifactSettings(root=artifacts_root),
+            backup=BackupSettings(root=backup_root),
+            chaos=ChaosSettings(
+                enabled=chaos_enabled,
+                latency_ms=chaos_latency,
+                error_rate=chaos_error_rate,
+            ),
             database_path=database_path,
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        if self.chaos.enabled and self.runtime.loopback_only is False:
+            raise ConfigurationError(
+                "LEVIATHAN_CHAOS_ENABLED=true is refused when loopback_only is false"
+            )
         if self.features.neuro_residual_injection and not self.features.neuro_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION requires LEVIATHAN_FEATURE_NEURO=true"

@@ -112,6 +112,25 @@ img { display: block; max-width: 100%; }
   flex-shrink: 0;
 }
 
+.lv-status-offline {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(140, 140, 140, 0.55);
+  flex-shrink: 0;
+}
+
+.lv-muted {
+  color: var(--lv-text-muted, rgba(180, 170, 150, 0.75));
+  font-size: 0.85em;
+}
+
+.lv-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
 .lv-icon {
   width: 1.1em;
   height: 1.1em;

@@ -118,10 +118,15 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/media/` | MediaAutomationStub |
 | `Data/modules/voice/` | VoiceRuntimeStub |
 | `Data/modules/release/` | ReleaseGateRunner |
+| `Data/modules/security/` | SecurityAuditor |
+| `Data/modules/backup/` | BackupService |
+| `Data/modules/metrics/` | MetricsCollector |
+| `Data/modules/chaos/` | ChaosInjector |
+| `Data/modules/master/` | MasterGateRunner |
 
 ## Tests
 
-`Data/backend/tests/` — foundation, config, context, run, migrations.
+`Data/backend/tests/` — foundation through master/integration harness.
 
 ---
 
@@ -223,6 +228,11 @@ SQLite persistence
 | Training | `Data/modules/training/` (registry stub) |
 | Browser / Media / Voice | stub modules under `Data/modules/{browser,media,voice}/` |
 | Release gates | `Data/modules/release/` |
+| Security posture | `Data/modules/security/` |
+| Backup / restore | `Data/modules/backup/` |
+| Metrics | `Data/modules/metrics/` |
+| Chaos helpers | `Data/modules/chaos/` (default OFF) |
+| Master gates | `Data/modules/master/` |
 | Frontend pages | only when backend truth exists |
 
 ---
@@ -242,6 +252,6 @@ SQLite persistence
 
 # Immediate capability boundary
 
-**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, lightweight reasoning, React/Vite frontend foundation.
+**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, reasoning, Run/Artifact/Knowledge V2, Function Runtime, Execution Gateway, Approvals, Jobs, Observations, Evidence, Memory, Verification (durable reports), Agents (flagged), Workflows, Schedules, Observability, Neuro (advisory), Plugins/MCP stub, Evaluation, Isolation, Training/Browser/Media/Voice/Native/Trading stubs, Release + Security + Master gates, Backup/restore, Metrics, Chaos (OFF), operator Status page.
 
-**Not real yet:** tools, execution gateway, approvals, Run runtime, agents, Memory, Evidence, Neuro, training, jobs, migrations framework.
+**Not claimed:** production certification, live trading fills, real browser/media/voice automation, native runtime, cloud backup sync, APM, penetration testing.

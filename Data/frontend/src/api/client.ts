@@ -1,9 +1,15 @@
 import type {
   ApiErrorBody,
+  BackupManifest,
   ChatResponse,
   Conversation,
   HealthResponse,
+  MasterGateReport,
   Message,
+  MetricsSnapshot,
+  ReleaseGateReport,
+  SecurityAuditReport,
+  VerificationReport,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -57,6 +63,10 @@ export const api = {
     return request<HealthResponse>("/api/health");
   },
 
+  metrics(): Promise<{ metrics: MetricsSnapshot }> {
+    return request<{ metrics: MetricsSnapshot }>("/api/metrics");
+  },
+
   listConversations(): Promise<{ conversations: Conversation[] }> {
     return request<{ conversations: Conversation[] }>("/api/conversations");
   },
@@ -84,5 +94,51 @@ export const api = {
         conversation_id: conversationId,
       }),
     });
+  },
+
+  listCapabilities(): Promise<{ capabilities: unknown[] }> {
+    return request<{ capabilities: unknown[] }>("/api/capabilities");
+  },
+
+  listApprovals(status?: string): Promise<{ approvals: unknown[] }> {
+    const query = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request<{ approvals: unknown[] }>(`/api/approvals${query}`);
+  },
+
+  listJobs(): Promise<{ jobs: unknown[] }> {
+    return request<{ jobs: unknown[] }>("/api/jobs");
+  },
+
+  releaseGates(): Promise<{ report: ReleaseGateReport }> {
+    return request<{ report: ReleaseGateReport }>("/api/release/gates");
+  },
+
+  securityAudit(): Promise<{ report: SecurityAuditReport }> {
+    return request<{ report: SecurityAuditReport }>("/api/security/audit");
+  },
+
+  masterGates(): Promise<{ report: MasterGateReport }> {
+    return request<{ report: MasterGateReport }>("/api/master/gates");
+  },
+
+  listVerificationReports(limit = 20): Promise<{ reports: VerificationReport[] }> {
+    return request<{ reports: VerificationReport[] }>(
+      `/api/verification/reports?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  listBackups(): Promise<{ backups: BackupManifest[] }> {
+    return request<{ backups: BackupManifest[] }>("/api/backup");
+  },
+
+  createBackup(note?: string): Promise<{ backup: BackupManifest }> {
+    return request<{ backup: BackupManifest }>("/api/backup", {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    });
+  },
+
+  telemetry(): Promise<{ events: unknown[]; snapshot?: unknown }> {
+    return request<{ events: unknown[]; snapshot?: unknown }>("/api/telemetry");
   },
 };

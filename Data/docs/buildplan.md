@@ -6,6 +6,80 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phases 36–45 — Final platform polish / Master Program complete — PASS
+
+### Phase 36 — Durable verification report store
+- `VerificationReportStore` + migration v11 `verification_reports`
+- Evaluate persists; `GET /api/verification/reports[+/{id}]`
+
+### Phase 37 — Frontend API client expansion
+- Typed client covers health, metrics, capabilities, approvals, jobs, release, security, master, verification, backup, telemetry
+
+### Phase 38 — `.env.example` + config docs
+- Context, backup root, chaos knobs documented; secrets stay out of public_summary
+
+### Phase 39 — Backup / restore
+- `Data/modules/backup/` local SQLite + artifacts snapshot
+- Restore requires `confirm=true`; hash mismatch refused
+
+### Phase 40 — Metrics / health surface
+- `Data/modules/metrics/` + `GET /api/metrics`; health counters enriched
+
+### Phase 41 — Chaos / resilience helpers
+- `ChaosInjector` default OFF; refused when loopback_only is false
+- `GET/POST /api/chaos*`
+
+### Phase 42 — Integration harness
+- `test_integration_harness.py` — approval → gateway → evidence → verification → durable report
+
+### Phase 43 — Operator UI polish
+- `/status` page with real master/release/security health
+- Command agents/world panel uses honest control-plane signals (no fabricated “12 online”)
+
+### Phase 44 — Security hardening pass
+- Extra auditor findings: chaos off, no secrets in public_summary, restore confirm
+- Chaos configure blocked off-loopback
+
+### Phase 45 — Master gate summary
+- `Data/modules/master/` aggregates release + security + evaluation + verification store
+- `GET /api/master/gates` — READY ≠ production certified
+- App version `0.46.0-phase45`
+
+### Tests executed
+- Full backend suite → **PASS (106)**
+
+### Status
+**PASS** (36–45) — Master Engineering Program phases 0–45 complete for local-first foundation
+
+---
+
+## 2026-09-21 — Phases 30–35 — Multi-agent, agent depth, security, native, trading — PASS
+
+### Phase 30 — Multi-agent coordinator
+- Sequential RESEARCH→GENERIC (configurable) on shared AgentRuntime
+
+### Phase 31–32 — Coding / Research depth
+- Coding plans: VERIFY + optional CSV inspect; Research adds VERIFY note
+- Still gateway-only
+
+### Phase 33 — Security audit
+- `Data/modules/security/` posture checks; not a pentest
+- `GET /api/security/audit`
+
+### Phase 34 — Native runtime stub
+- Python-first; native unavailable honestly
+
+### Phase 35 — Trading stub
+- Orders refused; no fabricated fills (`501`)
+
+### Tests executed
+- Full backend suite → **PASS (99)**
+
+### Status
+**PASS** (30–35)
+
+---
+
 ## 2026-09-21 — Phases 26–29 — Browser/Media/Voice stubs + Release gates — PASS
 
 ### Phase 26 — Browser automation stub

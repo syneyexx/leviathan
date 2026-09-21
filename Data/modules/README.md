@@ -33,6 +33,13 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `media/` | MediaAutomationStub |
 | `voice/` | VoiceRuntimeStub |
 | `release/` | ReleaseGateRunner |
+| `security/` | SecurityAuditor (posture, not pentest) |
+| `native/` | NativeRuntimeStub |
+| `trading/` | TradingStub |
+| `backup/` | BackupService (local SQLite snapshots) |
+| `metrics/` | MetricsCollector (in-process) |
+| `chaos/` | ChaosInjector (default OFF) |
+| `master/` | MasterGateRunner (phases 0–45 summary) |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 

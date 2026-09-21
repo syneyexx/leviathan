@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { api } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
+import type { HealthResponse } from "../types/api";
 
 const TABS = ["Chat", "Code", "Research", "Analyze", "Create", "Plan", "Automate", "More"] as const;
 
@@ -46,7 +48,7 @@ const PROJECTS = [
 const AGENTS = [
   {
     title: "Research Agent",
-    meta: "Analyzing market trends…",
+    meta: "Feature-flagged · gateway-only when enabled",
     tone: "blue",
     icon: (
       <>
@@ -57,7 +59,7 @@ const AGENTS = [
   },
   {
     title: "Code Agent",
-    meta: "Working on optimization…",
+    meta: "Plans VERIFY + optional CSV inspect",
     tone: "cyan",
     icon: (
       <>
@@ -68,13 +70,13 @@ const AGENTS = [
   },
   {
     title: "Trading Agent",
-    meta: "Monitoring live feeds…",
+    meta: "Stub — orders refused (no fabricated fills)",
     tone: "warn",
     icon: <path d="M5 19V9M12 19V5M19 19v-7" />,
   },
   {
     title: "Media Agent",
-    meta: "Rendering assets…",
+    meta: "Stub — media automation unsupported",
     tone: "gold",
     icon: <rect x="5" y="7" width="14" height="10" rx="2" />,
   },
@@ -85,6 +87,22 @@ export function CommandPage() {
   const toast = useAppToast();
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>("Chat");
   const [prompt, setPrompt] = useState("");
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .health()
+      .then((value) => {
+        if (!cancelled) setHealth(value);
+      })
+      .catch(() => {
+        if (!cancelled) setHealth(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const sendToChat = () => {
     const text = prompt.trim();
@@ -94,6 +112,10 @@ export function CommandPage() {
     }
     navigate("/chat", { state: { draft: text } });
   };
+
+  const agentsEnabled = Boolean(health?.agents?.enabled);
+  const llmLabel = health?.llm.available ? health.llm.model ?? "Ready" : "Offline";
+  const pendingApprovals = health?.approvals?.pending ?? 0;
 
   return (
     <AppShell activeMode="explore">
@@ -294,7 +316,7 @@ export function CommandPage() {
                   <path d="M8 12a4 4 0 018 0" />
                   <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
                 </svg>
-                12 online
+                {agentsEnabled ? "Agents flag ON" : "Agents flag OFF"}
               </span>
             </div>
             <div className="lv-agent-list">
@@ -303,7 +325,7 @@ export function CommandPage() {
                   key={agent.title}
                   className="lv-agent-row"
                   type="button"
-                  onClick={() => toast(agent.title)}
+                  onClick={() => navigate("/status")}
                 >
                   <span className={`lv-agent-icon ${agent.tone}`}>
                     <svg className="lv-icon" viewBox="0 0 24 24">
@@ -314,7 +336,7 @@ export function CommandPage() {
                     <strong>{agent.title}</strong>
                     <small>{agent.meta}</small>
                   </span>
-                  <span className="lv-status-online" />
+                  <span className={agentsEnabled ? "lv-status-online" : "lv-status-offline"} />
                   <svg className="lv-icon" viewBox="0 0 24 24">
                     <path d="M9 6l6 6-6 6" />
                   </svg>
@@ -333,20 +355,20 @@ export function CommandPage() {
           </div>
           <div className="lv-world-stats">
             <div className="lv-world-stat">
-              <span>Global Activity</span>
-              <strong>Online</strong>
+              <span>Control plane</span>
+              <strong>{health?.ok ? "Online" : "Unknown"}</strong>
             </div>
             <div className="lv-world-stat">
-              <span>Markets</span>
-              <strong className="amber">Live</strong>
+              <span>LLM</span>
+              <strong className="amber">{llmLabel}</strong>
             </div>
             <div className="lv-world-stat">
-              <span>AI Compute</span>
-              <strong>Optimal</strong>
+              <span>Approvals</span>
+              <strong>{pendingApprovals} pending</strong>
             </div>
             <div className="lv-world-stat">
-              <span>Network</span>
-              <strong>Online</strong>
+              <span>Capabilities</span>
+              <strong>{health?.capabilities?.registered ?? "—"}</strong>
             </div>
           </div>
         </article>

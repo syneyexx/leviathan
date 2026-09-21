@@ -330,6 +330,26 @@ def _m10_schedules_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m11_verification_reports(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verification_reports (
+            report_id TEXT PRIMARY KEY,
+            outcome TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            run_id TEXT,
+            job_id TEXT,
+            requirements_json TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_verification_reports_created "
+        "ON verification_reports(created_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -341,6 +361,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=8, name="memory_table", apply=_m8_memory_table),
     Migration(version=9, name="workflows_table", apply=_m9_workflows_table),
     Migration(version=10, name="schedules_table", apply=_m10_schedules_table),
+    Migration(version=11, name="verification_reports", apply=_m11_verification_reports),
 )
 
 

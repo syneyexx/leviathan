@@ -14,6 +14,15 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
     ),
   },
   {
+    label: "Status",
+    to: "/status",
+    icon: (
+      <>
+        <path d="M5 19V9M12 19V5M19 19v-7" />
+      </>
+    ),
+  },
+  {
     label: "Research",
     icon: (
       <>

@@ -1,6 +1,7 @@
 """Verification Engine — completion authority from Evidence, not model text."""
 
 from .engine import VerificationEngine
+from .store import VerificationReportStore
 from .types import (
     RequirementResult,
     VerificationOutcome,
@@ -13,5 +14,6 @@ __all__ = [
     "VerificationEngine",
     "VerificationOutcome",
     "VerificationReport",
+    "VerificationReportStore",
     "VerificationRequirement",
 ]

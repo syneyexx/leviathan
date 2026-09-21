@@ -46,6 +46,73 @@ export type HealthResponse = {
     base_url: string;
     error?: string;
   };
+  agents?: { enabled: boolean };
+  approvals?: { pending: number };
+  jobs?: { queued: number };
+  capabilities?: { registered: number };
+  chaos?: { plan: { enabled: boolean } };
+  backup?: { count: number };
+  verification_reports?: { recent: number };
+};
+
+export type ReleaseGateReport = {
+  ready: boolean;
+  checks: Array<{
+    gate_id: string;
+    name: string;
+    severity: string;
+    passed: boolean;
+    detail: string;
+  }>;
+  truth?: Record<string, boolean>;
+};
+
+export type SecurityAuditReport = {
+  findings: Array<{
+    finding_id: string;
+    severity: string;
+    title: string;
+    detail: string;
+    passed: boolean;
+  }>;
+  summary: { total: number; passed: number; failed: number };
+  truth?: Record<string, boolean>;
+};
+
+export type MasterGateReport = {
+  status: string;
+  phase_span: string;
+  checks: Array<{
+    check_id: string;
+    name: string;
+    status: string;
+    detail: string;
+  }>;
+  truth?: Record<string, boolean>;
+};
+
+export type MetricsSnapshot = {
+  collected_at: number;
+  counters: Record<string, number>;
+  gauges: Record<string, number>;
+  labels: Record<string, string>;
+  truth?: Record<string, boolean>;
+};
+
+export type VerificationReport = {
+  report_id: string;
+  outcome: string;
+  created_at: string;
+  run_id?: string | null;
+  job_id?: string | null;
+};
+
+export type BackupManifest = {
+  backup_id: string;
+  created_at: string;
+  size_bytes: number;
+  schema_version: number;
+  artifacts_copied: number;
 };
 
 export type ApiErrorBody = {
