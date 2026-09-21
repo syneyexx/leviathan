@@ -52,6 +52,10 @@ class ApprovalChecker(Protocol):
     ) -> bool: ...
 
 
+class ObservationRecorder(Protocol):
+    def record_execution(self, **kwargs: Any) -> Any: ...
+
+
 @dataclass
 class EffectRecord:
     effect_id: str
@@ -64,6 +68,7 @@ class EffectRecord:
     recorded_at_ms: float
     approval_id: str | None = None
     error: str | None = None
+    observation_id: str | None = None
 
 
 @dataclass
@@ -78,6 +83,7 @@ class ExecutionGateway:
     knowledge_retriever: KnowledgeSearcher | None = None
     artifact_store: ArtifactWriter | None = None
     approval_checker: ApprovalChecker | None = None
+    observation_store: ObservationRecorder | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
@@ -88,6 +94,7 @@ class ExecutionGateway:
             "timeouts": 0,
             "cancellations": 0,
             "approval_required": 0,
+            "observations_recorded": 0,
         }
     )
 
@@ -110,6 +117,7 @@ class ExecutionGateway:
                 f"Unknown capability: {request.capability_id}",
                 reason="unknown_capability",
                 started=started,
+                request=request,
             )
 
         try:
@@ -123,6 +131,7 @@ class ExecutionGateway:
                 started=started,
                 definition=definition,
                 approval_id=request.approval_id,
+                request=request,
             )
 
         try:
@@ -138,6 +147,7 @@ class ExecutionGateway:
                 started=started,
                 definition=definition,
                 approval_id=request.approval_id,
+                request=request,
             )
 
         try:
@@ -155,7 +165,7 @@ class ExecutionGateway:
                 telemetry={"duration_ms": (time.perf_counter() - started) * 1000},
             )
             self.telemetry["failed"] += 1
-            self._record_effect(result)
+            self._record_effect(result, request=request)
             return result
 
         if isinstance(output, CapabilityResult):
@@ -171,7 +181,7 @@ class ExecutionGateway:
             }
             self._bump_status(output.status)
             self._maybe_consume_approval(request, output)
-            self._record_effect(output)
+            self._record_effect(output, request=request)
             return output
 
         result = CapabilityResult(
@@ -187,7 +197,7 @@ class ExecutionGateway:
         )
         self.telemetry["completed"] += 1
         self._maybe_consume_approval(request, result)
-        self._record_effect(result)
+        self._record_effect(result, request=request)
         return result
 
     def _maybe_consume_approval(self, request: CapabilityRequest, result: CapabilityResult) -> None:
@@ -355,6 +365,7 @@ class ExecutionGateway:
         started: float,
         definition: CapabilityDefinition | None = None,
         approval_id: str | None = None,
+        request: CapabilityRequest | None = None,
     ) -> CapabilityResult:
         self.telemetry["rejected"] += 1
         result = CapabilityResult(
@@ -371,7 +382,7 @@ class ExecutionGateway:
                 "duration_ms": (time.perf_counter() - started) * 1000,
             },
         )
-        self._record_effect(result)
+        self._record_effect(result, request=request)
         return result
 
     def _bump_status(self, status: CapabilityStatus) -> None:
@@ -386,18 +397,56 @@ class ExecutionGateway:
         else:
             self.telemetry["failed"] += 1
 
-    def _record_effect(self, result: CapabilityResult) -> None:
+    def _record_effect(
+        self,
+        result: CapabilityResult,
+        *,
+        request: CapabilityRequest | None = None,
+    ) -> None:
+        observation_id = None
+        effect_id = str(uuid.uuid4())
+        side_effects = [item.value for item in result.side_effects]
+        duration_ms = (result.telemetry or {}).get("duration_ms")
+        run_id = request.run_id if request else None
+        job_id = request.job_id if request else None
+
+        if self.observation_store is not None:
+            try:
+                observation, durable = self.observation_store.record_execution(
+                    request_id=result.request_id,
+                    capability_id=result.capability_id,
+                    status=result.status.value,
+                    side_effects=side_effects,
+                    provider_kind=result.provider_kind,
+                    provider_ref=result.provider_ref,
+                    approval_id=result.approval_id,
+                    run_id=run_id,
+                    job_id=job_id,
+                    output=result.output,
+                    error=result.error,
+                    duration_ms=duration_ms,
+                    metadata={"reason": (result.telemetry or {}).get("reason")},
+                )
+                observation_id = observation.observation_id
+                effect_id = durable.effect_id
+                self.telemetry["observations_recorded"] += 1
+                result.telemetry["observation_id"] = observation_id
+                result.telemetry["effect_id"] = effect_id
+            except Exception as exc:  # noqa: BLE001 — never fail execution on ledger write
+                result.telemetry["observation_persist_error"] = str(exc)
+
         self.effect_ledger.append(
             EffectRecord(
-                effect_id=str(uuid.uuid4()),
+                effect_id=effect_id,
                 request_id=result.request_id,
                 capability_id=result.capability_id,
-                side_effects=[item.value for item in result.side_effects],
+                side_effects=tuple(side_effects),
                 status=result.status.value,
                 provider_kind=result.provider_kind,
                 provider_ref=result.provider_ref,
                 recorded_at_ms=time.time() * 1000,
                 approval_id=result.approval_id,
                 error=result.error,
+                observation_id=observation_id,
             )
         )

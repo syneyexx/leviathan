@@ -175,12 +175,65 @@ def _m5_jobs_table(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state, created_at)")
 
 
+def _m6_observations_and_effects(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_observations (
+            observation_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            side_effects_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            provider_kind TEXT,
+            provider_ref TEXT,
+            approval_id TEXT,
+            run_id TEXT,
+            job_id TEXT,
+            output_json TEXT,
+            error TEXT,
+            duration_ms REAL,
+            effect_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_observations_capability "
+        "ON tool_observations(capability_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS effect_ledger (
+            effect_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            side_effects_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            provider_kind TEXT,
+            provider_ref TEXT,
+            approval_id TEXT,
+            run_id TEXT,
+            job_id TEXT,
+            observation_id TEXT,
+            error TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_effect_ledger_request "
+        "ON effect_ledger(request_id, recorded_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
     Migration(version=3, name="knowledge_v2", apply=_m3_knowledge_v2),
     Migration(version=4, name="approvals_table", apply=_m4_approvals_table),
     Migration(version=5, name="jobs_table", apply=_m5_jobs_table),
+    Migration(version=6, name="observations_and_effects", apply=_m6_observations_and_effects),
 )
 
 

@@ -6,6 +6,38 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 11 — Job Runtime + Resource Manager — PASS
+
+### Objective
+
+Durable capability jobs with validated lifecycle, bounded concurrency (ResourceManager), cancel, and execution only through the Execution Gateway.
+
+### Implementation
+
+- `Data/modules/jobs/` — JobState transitions, JobStore, ResourceManager, JobRuntime
+- Lifecycle: CREATED → QUEUED → RUNNING → COMPLETED|FAILED|CANCELLED
+- Jobs invoke capabilities via ExecutionGateway (approvals still enforced)
+- ResourceManager uses `settings.resources.max_job_concurrency`
+- Background worker started in app lifespan
+- Migration v5: `jobs` table
+- API: `GET/POST /api/jobs`, `GET .../{id}`, `POST .../{id}/cancel`
+
+### Tests executed
+
+- Full backend suite → **PASS (57)**
+
+### Known limitations
+
+- Single-process in-memory worker (no multi-worker claim fencing beyond SQLite UPDATE)
+- Cancel of in-flight work is cooperative (post-gateway check)
+- Effect ledger still in-memory (Phase 12+)
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 10 — Approval + Policy — PASS
 
 ### Objective

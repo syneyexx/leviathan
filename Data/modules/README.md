@@ -15,6 +15,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `function_runtime/` | FunctionRegistry + lazy ON_DEMAND runtime |
 | `execution/` | CapabilityCatalog + ExecutionGateway |
 | `approvals/` | PolicyEngine + ApprovalStore + ApprovalService |
+| `jobs/` | JobStore + JobRuntime + ResourceManager |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 

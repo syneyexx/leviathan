@@ -54,6 +54,7 @@ class CapabilityRequest:
     arguments: dict[str, Any] = field(default_factory=dict)
     request_id: str | None = None
     run_id: str | None = None
+    job_id: str | None = None
     approval_id: str | None = None
     requested_by: str = "api"
 

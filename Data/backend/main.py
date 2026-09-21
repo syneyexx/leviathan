@@ -23,6 +23,7 @@ from Data.modules.function_runtime import FunctionCallStatus, build_default_regi
 from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
+from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
 
@@ -46,12 +47,14 @@ function_runtime = FunctionRuntime(
 capability_catalog = build_default_catalog()
 approval_store = ApprovalStore(settings.database_path)
 approval_service = ApprovalService(approval_store, PolicyEngine())
+observation_store = ObservationStore(settings.database_path)
 execution_gateway = ExecutionGateway(
     catalog=capability_catalog,
     function_runtime=function_runtime,
     knowledge_retriever=retriever,
     artifact_store=artifacts,
     approval_checker=approval_service,
+    observation_store=observation_store,
 )
 job_store = JobStore(settings.database_path)
 resource_manager = ResourceManager(settings.resources.max_job_concurrency)
@@ -70,6 +73,7 @@ async def lifespan(_: FastAPI):
     artifacts.initialize()
     approval_store.initialize()
     job_store.initialize()
+    observation_store.initialize()
     job_runtime.start_background_worker()
     try:
         yield
@@ -78,7 +82,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.12.0-phase11", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.13.0-phase12", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -468,6 +472,33 @@ def list_capabilities() -> dict:
     }
 
 
+@app.get("/api/capabilities/effects/recent")
+def recent_capability_effects(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
+    durable = observation_store.list_effects(limit=limit)
+    if durable:
+        return {"effects": [item.public_dict() for item in durable], "source": "durable"}
+    items = execution_gateway.effect_ledger[-limit:]
+    return {
+        "source": "memory",
+        "effects": [
+            {
+                "effect_id": item.effect_id,
+                "request_id": item.request_id,
+                "capability_id": item.capability_id,
+                "side_effects": list(item.side_effects),
+                "status": item.status,
+                "provider_kind": item.provider_kind,
+                "provider_ref": item.provider_ref,
+                "recorded_at_ms": item.recorded_at_ms,
+                "approval_id": item.approval_id,
+                "error": item.error,
+                "observation_id": item.observation_id,
+            }
+            for item in reversed(items)
+        ],
+    }
+
+
 @app.get("/api/capabilities/{capability_id}")
 def get_capability(capability_id: str) -> dict:
     definition = execution_gateway.get_capability(capability_id)
@@ -511,26 +542,21 @@ def execute_capability(capability_id: str, payload: CapabilityExecuteRequest) ->
     return {"result": result.public_dict()}
 
 
-@app.get("/api/capabilities/effects/recent")
-def recent_capability_effects(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
-    items = execution_gateway.effect_ledger[-limit:]
-    return {
-        "effects": [
-            {
-                "effect_id": item.effect_id,
-                "request_id": item.request_id,
-                "capability_id": item.capability_id,
-                "side_effects": list(item.side_effects),
-                "status": item.status,
-                "provider_kind": item.provider_kind,
-                "provider_ref": item.provider_ref,
-                "recorded_at_ms": item.recorded_at_ms,
-                "approval_id": item.approval_id,
-                "error": item.error,
-            }
-            for item in reversed(items)
-        ]
-    }
+@app.get("/api/observations")
+def list_observations(
+    capability_id: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    items = observation_store.list_observations(capability_id=capability_id, limit=limit)
+    return {"observations": [item.public_dict() for item in items]}
+
+
+@app.get("/api/observations/{observation_id}")
+def get_observation(observation_id: str) -> dict:
+    item = observation_store.get_observation(observation_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    return {"observation": item.public_dict()}
 
 
 class ApprovalCreateRequest(BaseModel):

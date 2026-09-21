@@ -173,6 +173,7 @@ class JobRuntime:
                     arguments=job.arguments,
                     approval_id=job.approval_id,
                     run_id=job.run_id,
+                    job_id=job.job_id,
                     requested_by=job.requested_by,
                     request_id=job.job_id,
                 )
