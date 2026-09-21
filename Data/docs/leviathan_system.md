@@ -268,7 +268,7 @@ Phase 1 is a **framework migration**, not a visual redesign.
 | `/chat` | Chat | Real conversations / messages / LLM / reasoning metadata |
 | `/chat.html` | redirect → `/chat` | Compatibility |
 
-Reserved nav items (Research, Agents, Memory, …) toast as future steps — they are **not** fake backend pages.
+Reserved nav items without a real page stay section-local tabs — they are **not** fake backend pages. `/coding` is a real Coding Agent surface (not a chat redirect).
 
 ## 4.5 Typed API client
 
