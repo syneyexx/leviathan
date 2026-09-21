@@ -23,7 +23,12 @@ class OpenAICompatibleLLM:
 
     def __init__(self, settings: Settings, context_builder: ContextBuilder | None = None) -> None:
         self.settings = settings
-        self.context_builder = context_builder or ContextBuilder()
+        self.context_builder = context_builder or ContextBuilder(
+            token_budget=settings.context.token_budget,
+            max_knowledge_chars=settings.context.max_knowledge_chars,
+            max_history_messages=settings.resources.max_history_messages,
+            reserve_response_tokens=settings.context.reserve_response_tokens,
+        )
         self._resolved_model: str | None = settings.llm_model
 
     def _headers(self) -> dict[str, str]:

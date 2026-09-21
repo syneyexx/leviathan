@@ -148,6 +148,13 @@ class ResourceLimits:
 
 
 @dataclass(frozen=True)
+class ContextSettings:
+    token_budget: int
+    reserve_response_tokens: int
+    max_knowledge_chars: int
+
+
+@dataclass(frozen=True)
 class NetworkSettings:
     allow_outbound: bool
 
@@ -174,6 +181,7 @@ class Settings:
     reasoning: ReasoningSettings
     features: FeatureFlags
     resources: ResourceLimits
+    context: ContextSettings
     network: NetworkSettings
     artifacts: ArtifactSettings
     database_path: Path
@@ -242,6 +250,11 @@ class Settings:
                 "max_function_concurrency": self.resources.max_function_concurrency,
                 "max_job_concurrency": self.resources.max_job_concurrency,
                 "max_history_messages": self.resources.max_history_messages,
+            },
+            "context": {
+                "token_budget": self.context.token_budget,
+                "reserve_response_tokens": self.context.reserve_response_tokens,
+                "max_knowledge_chars": self.context.max_knowledge_chars,
             },
             "network": {"allow_outbound": self.network.allow_outbound},
             "artifacts": {"root": str(self.artifacts.root)},
@@ -314,6 +327,15 @@ class Settings:
                 max_function_concurrency=_env_int("LEVIATHAN_MAX_FUNCTION_CONCURRENCY", 2, minimum=1, maximum=64),
                 max_job_concurrency=_env_int("LEVIATHAN_MAX_JOB_CONCURRENCY", 1, minimum=1, maximum=64),
                 max_history_messages=max_history,
+            ),
+            context=ContextSettings(
+                token_budget=_env_int("LEVIATHAN_CONTEXT_TOKEN_BUDGET", 6000, minimum=512, maximum=200_000),
+                reserve_response_tokens=_env_int(
+                    "LEVIATHAN_CONTEXT_RESERVE_RESPONSE_TOKENS", 512, minimum=64, maximum=32_000
+                ),
+                max_knowledge_chars=_env_int(
+                    "LEVIATHAN_CONTEXT_MAX_KNOWLEDGE_CHARS", 1800, minimum=200, maximum=50_000
+                ),
             ),
             network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", False)),
             artifacts=ArtifactSettings(root=artifacts_root),

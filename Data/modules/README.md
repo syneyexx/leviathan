@@ -17,6 +17,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `approvals/` | PolicyEngine + ApprovalStore + ApprovalService |
 | `jobs/` | JobStore + JobRuntime + ResourceManager |
 | `observations/` | ToolObservation + durable effect ledger |
+| `evidence/` | EvidenceStore + EvidenceService |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 

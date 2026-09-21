@@ -194,6 +194,7 @@ SQLite persistence
 | Approvals / policy | `Data/modules/approvals/` |
 | Jobs / resources | `Data/modules/jobs/` |
 | Observations / effects | `Data/modules/observations/` |
+| Evidence | `Data/modules/evidence/` |
 | Frontend pages | only when backend truth exists |
 
 ---

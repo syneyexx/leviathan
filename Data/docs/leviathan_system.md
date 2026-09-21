@@ -27,14 +27,13 @@ LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 
 **Not implemented (do not treat UI shell labels as capability):**
 
-- Full Context Engine token budgeting (basic ContextBuilder exists);
 - Memory domains;
 - Agents / Neuro / Training / Evaluation frameworks;
 - native model runtime / residual-stream research.
 
-**Implemented through Phase 13:**
+**Implemented through Phase 14:**
 
-- Evidence domain; durable ToolObservation + effects; Job Runtime; Approvals; Capability Gateway;
+- Context Engine token budgeting; Evidence; Observations; Jobs; Approvals; Capability Gateway;
 - Function Runtime; Knowledge V2; Artifacts; Run/Event; migrations; Settings; React SPA.
 
 ---
@@ -333,7 +332,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 10 — Approval + Policy | PASS | Durable approvals, PolicyEngine, single-use consume |
 | Phase 11 — Job Runtime | PASS | JobStore, ResourceManager, gateway-backed worker |
 | Phase 12 — Observations + Effects | PASS | Durable ToolObservation + effect_ledger |
-| Phase 13+ | NOT STARTED | Evidence / Context Engine / … |
+| Phase 13 — Evidence | PASS | Artifact/file/observation evidence with verify |
+| Phase 14+ | NOT STARTED | Context Engine / Memory / Agents / … |
 
 ---
 

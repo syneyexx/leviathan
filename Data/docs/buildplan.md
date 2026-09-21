@@ -6,6 +6,36 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 13 — Evidence Domain — PASS
+
+### Objective
+
+Introduce Evidence as verified proof distinct from ToolObservation and model output. Artifact hash, file existence, and observation-existence claims with honest FAILED outcomes.
+
+### Implementation
+
+- `Data/modules/evidence/` — EvidenceStore, EvidenceService, EvidenceKind/Status
+- Artifact hash verification reuses ArtifactStore.verify_hash
+- Observation refs prove existence only (`existence_only` metadata)
+- Migration v7: `evidence` table
+- API: `GET /api/evidence`, claims for artifact/file/observation, `POST .../verify`
+
+### Tests executed
+
+- Full backend suite → **PASS (63)**
+
+### Known limitations
+
+- No composite multi-claim evidence graphs yet
+- No UI for evidence review
+- Completion authority for agents still not wired to evidence requirements
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 12 — Durable Effect Ledger + ToolObservation — PASS
 
 ### Objective
