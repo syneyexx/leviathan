@@ -130,6 +130,20 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: #f5dfa9;
+  word-break: break-all;
+}
+
+.lvb-section {
+  margin-top: 4px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #d6a957;
+}
+
+.lvb-section-sub {
+  color: #8a8680;
+  margin-top: 8px;
 }
 
 .lvb-dock .lvb-muted {
@@ -137,6 +151,11 @@
   font-size: 12px;
   color: #8a8680;
   line-height: 1.4;
+}
+
+.lvb-dock .lvb-muted b {
+  color: #f5dfa9;
+  font-weight: 600;
 }
 
 .lvb-field {
@@ -157,6 +176,8 @@
 
 .lvb-field input[type="text"],
 .lvb-field input[type="number"],
+.lvb-field input[type="file"],
+.lvb-field textarea,
 .lvb-field select {
   width: 100%;
   border: 1px solid rgba(214, 169, 87, 0.22);
@@ -164,6 +185,30 @@
   border-radius: 8px;
   padding: 7px 8px;
   font-size: 12px;
+}
+
+.lvb-field textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.4;
+  font-family: inherit;
+}
+
+.lvb-color-row {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 6px;
+  align-items: center;
+}
+
+.lvb-color-row input[type="color"] {
+  width: 42px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(214, 169, 87, 0.22);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
 }
 
 .lvb-row {
@@ -308,6 +353,13 @@ body.lvb-editing {
 body.lvb-editing a,
 body.lvb-editing button:not(.lvb-btn):not(.lvb-chip) {
   cursor: default !important;
+}
+
+.lvb-inline-editing {
+  outline: 2px solid #f0c875 !important;
+  outline-offset: 2px;
+  min-width: 1ch;
+  cursor: text !important;
 }
 
 @media (max-width: 900px) {
