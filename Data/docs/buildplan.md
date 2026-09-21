@@ -6,6 +6,37 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 10 — Approval + Policy — PASS
+
+### Objective
+
+Verify gated capability execution with durable approvals and an explicit side-effect policy. Fake `approval_id` values must be denied.
+
+### Implementation
+
+- `Data/modules/approvals/` — PolicyEngine, ApprovalStore (SQLite), ApprovalService
+- Policy: READ auto-allowed; WRITE/NETWORK/EXECUTE/DELETE/DESTRUCTIVE/EXTERNAL require approval
+- Approval lifecycle: PENDING → APPROVED|DENIED|EXPIRED; APPROVED → CONSUMED (single-use)
+- ExecutionGateway uses ApprovalService as `approval_checker`; consumes single-use on COMPLETED
+- Migration v4: `approvals` table
+- API: `GET/POST /api/approvals`, `GET .../{id}`, `POST .../{id}/approve|deny`
+
+### Tests executed
+
+- Full backend suite → **PASS (50)**
+
+### Known limitations
+
+- No UI for operator approvals yet
+- Effect ledger remains in-memory
+- Expiry is checked on read (lazy), not via background sweeper
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 9 — Capability Broker + Execution Gateway — PASS
 
 ### Objective

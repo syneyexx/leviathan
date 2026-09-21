@@ -27,16 +27,15 @@ LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 
 **Not implemented (do not treat UI shell labels as capability):**
 
-- Approvals / policy verification of approval_id (Phase 10);
 - Job runtime / Resource Manager;
 - Full Context Engine token budgeting (basic ContextBuilder exists);
 - Memory / Evidence domains;
 - Agents / Neuro / Training / Evaluation frameworks;
 - native model runtime / residual-stream research.
 
-**Implemented through Phase 9:**
+**Implemented through Phase 10:**
 
-- Capability Catalog + Execution Gateway (validate → policy → provider → effect ledger);
+- Capability Catalog + Execution Gateway + Approvals/Policy;
 - Function Runtime ON_DEMAND; Knowledge V2; Artifacts; Run/Event; migrations; nested Settings; React SPA.
 
 ---
@@ -332,7 +331,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 7 — Knowledge V2 | PASS | Chunks, provenance, ingest states, hybrid retrieval |
 | Phase 8 — Function runtime | PASS | Registry, ON_DEMAND lazy load/unload, builtins |
 | Phase 9 — Capability + Gateway | PASS | Catalog, ExecutionGateway, effect ledger, WRITE needs approval_id |
-| Phase 10+ | NOT STARTED | Approvals + Policy, Job Runtime, … |
+| Phase 10 — Approval + Policy | PASS | Durable approvals, PolicyEngine, single-use consume |
+| Phase 11+ | NOT STARTED | Job Runtime, … |
 
 ---
 

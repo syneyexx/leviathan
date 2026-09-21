@@ -170,6 +170,7 @@ class ExecutionGateway:
                 "duration_ms": (time.perf_counter() - started) * 1000,
             }
             self._bump_status(output.status)
+            self._maybe_consume_approval(request, output)
             self._record_effect(output)
             return output
 
@@ -185,8 +186,21 @@ class ExecutionGateway:
             telemetry={"duration_ms": (time.perf_counter() - started) * 1000},
         )
         self.telemetry["completed"] += 1
+        self._maybe_consume_approval(request, result)
         self._record_effect(result)
         return result
+
+    def _maybe_consume_approval(self, request: CapabilityRequest, result: CapabilityResult) -> None:
+        if result.status != CapabilityStatus.COMPLETED or not request.approval_id:
+            return
+        consume = getattr(self.approval_checker, "consume_if_single_use", None)
+        if not callable(consume):
+            return
+        try:
+            consume(request.approval_id)
+            result.telemetry["approval_consumed"] = True
+        except Exception as exc:  # noqa: BLE001 — do not fail completed work on ledger consume
+            result.telemetry["approval_consume_error"] = str(exc)
 
     def _enforce_policy(self, definition: CapabilityDefinition, request: CapabilityRequest) -> None:
         needs_approval = any(effect not in _AUTO_ALLOWED_EFFECTS for effect in definition.side_effects)
@@ -199,9 +213,10 @@ class ExecutionGateway:
                 reason="approval_required",
             )
         if self.approval_checker is None:
-            # Phase 9: presence of approval_id is required but not yet verified.
-            # Phase 10 wires a real ApprovalChecker.
-            return
+            raise GatewayRejection(
+                "Approval checker not configured; cannot verify gated capability",
+                reason="approval_denied",
+            )
         if not self.approval_checker.is_approved(
             request.approval_id,
             capability_id=definition.id,

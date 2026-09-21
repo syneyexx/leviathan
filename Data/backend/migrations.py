@@ -126,10 +126,38 @@ def _m3_knowledge_v2(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _m4_approvals_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS approvals (
+            approval_id TEXT PRIMARY KEY,
+            capability_id TEXT NOT NULL,
+            side_effects_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reason TEXT,
+            run_id TEXT,
+            decided_by TEXT,
+            decided_at TEXT,
+            expires_at TEXT,
+            single_use INTEGER NOT NULL DEFAULT 1,
+            arguments_digest TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_approvals_capability_status "
+        "ON approvals(capability_id, status)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
     Migration(version=3, name="knowledge_v2", apply=_m3_knowledge_v2),
+    Migration(version=4, name="approvals_table", apply=_m4_approvals_table),
 )
 
 

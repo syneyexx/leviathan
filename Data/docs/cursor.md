@@ -99,6 +99,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
 | `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |
 | `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway |
+| `Data/modules/approvals/` | PolicyEngine / ApprovalStore / ApprovalService |
 
 ## Tests
 
@@ -187,7 +188,7 @@ SQLite persistence
 | Function runtime | `Data/modules/function_runtime/` |
 | Function implementations | `Data/functions/<name>/` |
 | Capabilities / Execution Gateway | `Data/modules/execution/` |
-| Approvals / policy | `Data/modules/approvals/` (Phase 10) |
+| Approvals / policy | `Data/modules/approvals/` |
 | Frontend pages | only when backend truth exists |
 
 ---

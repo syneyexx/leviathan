@@ -13,6 +13,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `artifacts/` | `ArtifactStore`, content hash provenance |
 | `knowledge/` | Knowledge V2 documents/chunks/hybrid retrieval |
 | `function_runtime/` | FunctionRegistry + lazy ON_DEMAND runtime |
+| `execution/` | CapabilityCatalog + ExecutionGateway |
+| `approvals/` | PolicyEngine + ApprovalStore + ApprovalService |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 

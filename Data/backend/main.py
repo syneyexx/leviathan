@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
+from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.execution import (
     CapabilityRequest,
@@ -42,11 +43,14 @@ function_runtime = FunctionRuntime(
     warm_cache_size=2,
 )
 capability_catalog = build_default_catalog()
+approval_store = ApprovalStore(settings.database_path)
+approval_service = ApprovalService(approval_store, PolicyEngine())
 execution_gateway = ExecutionGateway(
     catalog=capability_catalog,
     function_runtime=function_runtime,
     knowledge_retriever=retriever,
     artifact_store=artifacts,
+    approval_checker=approval_service,
 )
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
@@ -60,13 +64,14 @@ async def lifespan(_: FastAPI):
     knowledge.initialize()
     runs.initialize()
     artifacts.initialize()
+    approval_store.initialize()
     try:
         yield
     finally:
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.10.0-phase9", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.11.0-phase10", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -126,6 +131,9 @@ async def health() -> dict:
             "registered": len(capability_catalog),
             "telemetry": dict(execution_gateway.telemetry),
             "effects_recorded": len(execution_gateway.effect_ledger),
+        },
+        "approvals": {
+            "pending": len(approval_service.list(status=ApprovalStatus.PENDING, limit=500)),
         },
         "llm": model,
     }
@@ -510,6 +518,104 @@ def recent_capability_effects(limit: Annotated[int, Query(ge=1, le=200)] = 50) -
             for item in reversed(items)
         ]
     }
+
+
+class ApprovalCreateRequest(BaseModel):
+    capability_id: str = Field(min_length=1, max_length=120)
+    reason: str | None = None
+    run_id: str | None = None
+    requested_by: str = "api"
+    single_use: bool = True
+    arguments: dict = Field(default_factory=dict)
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decided_by: str = "operator"
+    reason: str | None = None
+
+
+@app.get("/api/approvals")
+def list_approvals(
+    status: Annotated[str | None, Query()] = None,
+    capability_id: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    parsed_status = None
+    if status:
+        try:
+            parsed_status = ApprovalStatus(status.upper())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid status: {status}") from exc
+    items = approval_service.list(
+        status=parsed_status,
+        capability_id=capability_id,
+        limit=limit,
+    )
+    return {"approvals": [item.public_dict() for item in items]}
+
+
+@app.post("/api/approvals")
+def create_approval(payload: ApprovalCreateRequest) -> dict:
+    definition = capability_catalog.get(payload.capability_id)
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Capability not found")
+    decision = approval_service.evaluate_policy(definition.side_effects)
+    if not decision.requires_approval:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Capability does not require approval",
+                "policy": decision.public_dict(),
+            },
+        )
+    record = approval_service.request(
+        capability_id=definition.id,
+        side_effects=definition.side_effects,
+        requested_by=payload.requested_by,
+        reason=payload.reason,
+        run_id=payload.run_id,
+        single_use=payload.single_use,
+        arguments=payload.arguments or None,
+    )
+    return {"approval": record.public_dict(), "policy": decision.public_dict()}
+
+
+@app.get("/api/approvals/{approval_id}")
+def get_approval(approval_id: str) -> dict:
+    record = approval_service.get(approval_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    return {"approval": record.public_dict()}
+
+
+@app.post("/api/approvals/{approval_id}/approve")
+def approve_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict:
+    try:
+        record = approval_service.approve(
+            approval_id,
+            decided_by=payload.decided_by,
+            reason=payload.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Approval not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"approval": record.public_dict()}
+
+
+@app.post("/api/approvals/{approval_id}/deny")
+def deny_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict:
+    try:
+        record = approval_service.deny(
+            approval_id,
+            decided_by=payload.decided_by,
+            reason=payload.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Approval not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"approval": record.public_dict()}
 
 
 @app.get("/")

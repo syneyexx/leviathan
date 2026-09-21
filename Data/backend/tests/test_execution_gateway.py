@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from Data.modules.approvals import ApprovalService, ApprovalStore, PolicyEngine
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.execution import (
     CapabilityRequest,
@@ -35,11 +36,14 @@ class ExecutionGatewayTests(unittest.TestCase):
         self.registry = build_default_registry()
         self.runtime = FunctionRuntime(self.registry, max_concurrency=2, warm_cache_size=1)
         self.catalog = build_default_catalog()
+        self.approvals = ApprovalService(ApprovalStore(self.db_path), PolicyEngine())
+        self.approvals.store.initialize()
         self.gateway = ExecutionGateway(
             catalog=self.catalog,
             function_runtime=self.runtime,
             knowledge_retriever=self.retriever,
             artifact_store=self.artifacts,
+            approval_checker=self.approvals,
         )
 
     def tearDown(self) -> None:
@@ -89,20 +93,38 @@ class ExecutionGatewayTests(unittest.TestCase):
         self.assertEqual(result.telemetry.get("reason"), "approval_required")
         self.assertGreaterEqual(self.gateway.telemetry["approval_required"], 1)
 
-    def test_write_capability_with_approval_id_phase9(self) -> None:
-        # Phase 9: approval_id presence is enough; Phase 10 verifies it.
+    def test_write_capability_with_verified_approval(self) -> None:
+        pending = self.approvals.request(
+            capability_id="artifact.create_text",
+            side_effects=(SideEffect.WRITE,),
+            requested_by="test",
+        )
+        approved = self.approvals.approve(pending.approval_id, decided_by="operator")
         result = self.gateway.execute(
             CapabilityRequest(
                 capability_id="artifact.create_text",
                 arguments={"content": "approved text", "filename": "out.txt"},
-                approval_id="phase9-placeholder",
+                approval_id=approved.approval_id,
             )
         )
         self.assertEqual(result.status, CapabilityStatus.COMPLETED)
         assert result.output is not None
         self.assertEqual(result.output["type"], "text")
-        self.assertEqual(result.approval_id, "phase9-placeholder")
-        self.assertIn(SideEffect.WRITE, result.side_effects)
+        self.assertTrue(result.telemetry.get("approval_consumed"))
+        consumed = self.approvals.get(approved.approval_id)
+        assert consumed is not None
+        self.assertEqual(consumed.status.value, "CONSUMED")
+
+    def test_placeholder_approval_id_is_denied(self) -> None:
+        result = self.gateway.execute(
+            CapabilityRequest(
+                capability_id="artifact.create_text",
+                arguments={"content": "x", "filename": "out.txt"},
+                approval_id="phase9-placeholder",
+            )
+        )
+        self.assertEqual(result.status, CapabilityStatus.REJECTED)
+        self.assertEqual(result.telemetry.get("reason"), "approval_denied")
 
     def test_knowledge_search_capability(self) -> None:
         self.knowledge.upsert_document(
