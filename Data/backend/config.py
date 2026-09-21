@@ -136,6 +136,9 @@ class FeatureFlags:
     neuro_associative_memory: bool
     neuro_process_critic: bool
     neuro_residual_injection: bool
+    neuro_cortex: bool
+    neuro_memory_tiers: bool
+    module_manager_enabled: bool
     agents_enabled: bool
 
 
@@ -257,6 +260,9 @@ class Settings:
                 "neuro_associative_memory": self.features.neuro_associative_memory,
                 "neuro_process_critic": self.features.neuro_process_critic,
                 "neuro_residual_injection": self.features.neuro_residual_injection,
+                "neuro_cortex": self.features.neuro_cortex,
+                "neuro_memory_tiers": self.features.neuro_memory_tiers,
+                "module_manager_enabled": self.features.module_manager_enabled,
                 "agents_enabled": self.features.agents_enabled,
             },
             "resources": {
@@ -347,6 +353,9 @@ class Settings:
                 neuro_associative_memory=_env_bool("LEVIATHAN_FEATURE_NEURO_ASSOCIATIVE_MEMORY", False),
                 neuro_process_critic=_env_bool("LEVIATHAN_FEATURE_NEURO_PROCESS_CRITIC", False),
                 neuro_residual_injection=_env_bool("LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION", False),
+                neuro_cortex=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX", False),
+                neuro_memory_tiers=_env_bool("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS", False),
+                module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
             ),
             resources=ResourceLimits(
@@ -393,6 +402,14 @@ class Settings:
         if self.features.neuro_process_critic and not self.features.neuro_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_NEURO_PROCESS_CRITIC requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_cortex and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_CORTEX requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_memory_tiers and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS requires LEVIATHAN_FEATURE_NEURO=true"
             )
         if self.features.neuro_enabled and self.features.agents_enabled:
             # Allowed combination — neuro remains advisory; agents still need gateway later.

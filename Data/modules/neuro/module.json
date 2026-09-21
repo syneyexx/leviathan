@@ -1,0 +1,23 @@
+{
+  "module_id": "neuro.echo",
+  "name": "Neuro Echo Module",
+  "version": "0.1.0",
+  "entrypoint": "Data.modules.neuro.echo_module:create_echo_module",
+  "capabilities": [
+    {
+      "capability_id": "neuro.echo.ping",
+      "name": "Neuro Echo Ping",
+      "description": "Module-local ping used to validate Universal Module Manager.",
+      "external_name": "ping",
+      "side_effects": ["READ"]
+    }
+  ],
+  "permissions": ["neuro.read"],
+  "side_effects": ["READ"],
+  "isolation": "INPROC",
+  "hot_reload": true,
+  "neuro_hooks": ["advisory"],
+  "metadata": {
+    "first_party": true
+  }
+}

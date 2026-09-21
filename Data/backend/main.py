@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import FRONTEND_DIST, FRONTEND_ROOT, settings
+from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
@@ -26,6 +26,7 @@ from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.memory import MemoryKind, MemoryStatus, MemoryStore
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
+from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
 from Data.modules.run import EventType, RunState, RunStore
@@ -42,7 +43,13 @@ from Data.modules.schedules import (
     ScheduleTargetKind,
 )
 from Data.modules.observability import ObservabilityHub
-from Data.modules.neuro import NeuroAdvisor
+from Data.modules.neuro import (
+    CortexPlanner,
+    NeuroAdvisor,
+    NeuroMemoryFacade,
+    ProcessCritic,
+    UnsupportedResidualRuntime,
+)
 from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
@@ -116,11 +123,31 @@ schedule_runner = ScheduleRunner(
     workflows=workflow_runtime,
 )
 observability = ObservabilityHub(capacity=500)
+residual_runtime = UnsupportedResidualRuntime()
+neuro_memory = NeuroMemoryFacade(
+    enabled=settings.features.neuro_enabled and settings.features.neuro_memory_tiers,
+    memory_store=memory_store,
+    knowledge_store=knowledge,
+    knowledge_retriever=retriever,
+)
 neuro_advisor = NeuroAdvisor(
     enabled=settings.features.neuro_enabled,
     associative_memory=settings.features.neuro_associative_memory,
     process_critic=settings.features.neuro_process_critic,
     residual_injection=settings.features.neuro_residual_injection,
+    cortex_enabled=settings.features.neuro_cortex,
+    memory_tiers_enabled=settings.features.neuro_memory_tiers,
+    residual_port=residual_runtime,
+    memory_facade=neuro_memory,
+    cortex_planner=CortexPlanner(enabled=settings.features.neuro_cortex),
+    critic=ProcessCritic(enabled=settings.features.neuro_process_critic),
+)
+module_manager = ModuleManager(
+    discovery_roots=(
+        DATA_ROOT / "modules",
+        settings.knowledge.data_root / "plugins",
+    ),
+    enabled=settings.features.module_manager_enabled,
 )
 plugin_registry = PluginRegistry(capability_catalog)
 plugin_registry.register_echo_mcp_stub()
@@ -361,16 +388,42 @@ async def lifespan(_: FastAPI):
     verification_reports.initialize()
     workflow_store.initialize()
     schedule_store.initialize()
+    if module_manager.enabled:
+        ready = module_manager.discover_load_initialize_all(
+            ModuleContext(
+                database_path=str(settings.database_path),
+                data_root=str(settings.knowledge.data_root),
+                feature_flags={
+                    "neuro_enabled": settings.features.neuro_enabled,
+                    "neuro_cortex": settings.features.neuro_cortex,
+                    "neuro_memory_tiers": settings.features.neuro_memory_tiers,
+                    "neuro_residual_injection": settings.features.neuro_residual_injection,
+                    "module_manager_enabled": settings.features.module_manager_enabled,
+                },
+            )
+        )
+        observability.emit(
+            "module_manager",
+            "startup",
+            payload={"ready": len(ready), "telemetry": dict(module_manager.telemetry)},
+        )
     job_runtime.start_background_worker()
     metrics.incr("lifespan_starts")
     try:
         yield
     finally:
+        if module_manager.enabled:
+            for managed in list(module_manager.list()):
+                if managed.status.value in {"READY", "INITIALIZED", "LOADED", "EXECUTING"}:
+                    try:
+                        module_manager.shutdown(managed.manifest.module_id)
+                    except ModuleManagerError:
+                        pass
         job_runtime.stop_background_worker()
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.46.0-phase45", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.47.0-phase46", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -456,6 +509,14 @@ async def health() -> dict:
             "associative_memory": settings.features.neuro_associative_memory,
             "process_critic": settings.features.neuro_process_critic,
             "residual_injection": settings.features.neuro_residual_injection,
+            "cortex": settings.features.neuro_cortex,
+            "memory_tiers": settings.features.neuro_memory_tiers,
+            "residual_supported": residual_runtime.supports_residuals(),
+        },
+        "module_manager": {
+            "enabled": settings.features.module_manager_enabled,
+            "modules": len(module_manager.list()) if module_manager.enabled else 0,
+            "telemetry": dict(module_manager.telemetry) if module_manager.enabled else {},
         },
         "plugins": {
             "registered": len(plugin_registry.list()),
@@ -565,7 +626,8 @@ async def chat(payload: ChatRequest) -> dict:
     history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
-    neuro = neuro_advisor.assess(message)
+    knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
+    neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
     if neuro.enabled:
         observability.emit(
             "neuro",
@@ -1529,8 +1591,66 @@ class NeuroAssessRequest(BaseModel):
 
 @app.post("/api/neuro/assess")
 def neuro_assess(payload: NeuroAssessRequest) -> dict:
-    assessment = neuro_advisor.assess(payload.text)
-    return {"assessment": assessment.public_dict()}
+    plan = reasoner.analyze(payload.text, has_knowledge=False)
+    assessment = neuro_advisor.assess(payload.text, plan=plan)
+    return {"assessment": assessment.public_dict(), "reasoning": plan.public_summary()}
+
+
+@app.get("/api/neuro/residual")
+def neuro_residual_status() -> dict:
+    hooks = [item.public_dict() for item in residual_runtime.list_hook_points()]
+    return {
+        "supports_residuals": residual_runtime.supports_residuals(),
+        "hook_points": hooks,
+        "truth": {
+            "residual_injection_is_not_authority": True,
+            "unsupported_is_not_success": True,
+        },
+    }
+
+
+@app.get("/api/modules")
+def list_managed_modules() -> dict:
+    if not module_manager.enabled:
+        return {
+            "enabled": False,
+            "modules": [],
+            "truth": {"module_manager_feature_flag_off": True},
+        }
+    return module_manager.public_snapshot()
+
+
+@app.post("/api/modules/discover")
+def discover_modules() -> dict:
+    if not module_manager.enabled:
+        raise HTTPException(status_code=503, detail="Module manager feature flag OFF")
+    manifests = module_manager.discover()
+    observability.emit("module_manager", "discover", payload={"count": len(manifests)})
+    return {
+        "discovered": [item.public_dict() for item in manifests],
+        "snapshot": module_manager.public_snapshot(),
+    }
+
+
+class ModuleExecuteRequest(BaseModel):
+    operation: str = Field(min_length=1, max_length=120)
+    arguments: dict = Field(default_factory=dict)
+
+
+@app.post("/api/modules/{module_id}/execute")
+def execute_managed_module(module_id: str, payload: ModuleExecuteRequest) -> dict:
+    if not module_manager.enabled:
+        raise HTTPException(status_code=503, detail="Module manager feature flag OFF")
+    try:
+        result = module_manager.execute(module_id, payload.operation, payload.arguments)
+    except ModuleManagerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    observability.emit(
+        "module_manager",
+        "execute",
+        payload={"module_id": module_id, "operation": payload.operation, "status": result.status},
+    )
+    return {"result": result.public_dict()}
 
 
 @app.get("/api/plugins")

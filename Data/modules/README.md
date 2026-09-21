@@ -24,8 +24,9 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `workflows/` | WorkflowStore + WorkflowRuntime |
 | `schedules/` | ScheduleStore + ScheduleRunner |
 | `observability/` | ObservabilityHub (in-process; not APM) |
-| `neuro/` | NeuroAdvisor (advisory only; never authority) |
-| `plugins/` | PluginRegistry (declarative → catalog) |
+| `neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers (advisory; never authority) |
+| `module_manager/` | Universal Module Manager — single `ILeviathanModule` loader |
+| `plugins/` | PluginRegistry (declarative → catalog; not a second loader) |
 | `evaluation/` | EvaluationHarness |
 | `isolation/` | IsolationGuard |
 | `training/` | TrainingRegistry stub |

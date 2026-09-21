@@ -109,8 +109,9 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/workflows/` | WorkflowStore / WorkflowRuntime |
 | `Data/modules/schedules/` | ScheduleStore / ScheduleRunner |
 | `Data/modules/observability/` | ObservabilityHub |
-| `Data/modules/neuro/` | NeuroAdvisor (advisory only) |
-| `Data/modules/plugins/` | PluginRegistry / MCP stubs |
+| `Data/modules/neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers |
+| `Data/modules/module_manager/` | Universal Module Manager (`ILeviathanModule`) |
+| `Data/modules/plugins/` | PluginRegistry / MCP stubs (bindings only) |
 | `Data/modules/evaluation/` | EvaluationHarness |
 | `Data/modules/isolation/` | IsolationGuard |
 | `Data/modules/training/` | TrainingRegistry stub |
@@ -221,8 +222,10 @@ SQLite persistence
 | Workflows | `Data/modules/workflows/` |
 | Schedules | `Data/modules/schedules/` |
 | Observability | `Data/modules/observability/` |
-| Neuro | `Data/modules/neuro/` (advisory; feature-flagged) |
-| Plugins / MCP | `Data/modules/plugins/` |
+| Neuro | `Data/modules/neuro/` (advisory; feature-flagged; residual optional) |
+| Universal Module Manager | `Data/modules/module_manager/` (single loader; feature-flagged) |
+| Neuro architecture spec | `Data/docs/neuro_layer_architecture.md` |
+| Plugins / MCP bindings | `Data/modules/plugins/` (not a second loader) |
 | Evaluation | `Data/modules/evaluation/` |
 | Isolation | `Data/modules/isolation/` |
 | Training | `Data/modules/training/` (registry stub) |
@@ -252,6 +255,6 @@ SQLite persistence
 
 # Immediate capability boundary
 
-**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, reasoning, Run/Artifact/Knowledge V2, Function Runtime, Execution Gateway, Approvals, Jobs, Observations, Evidence, Memory, Verification (durable reports), Agents (flagged), Workflows, Schedules, Observability, Neuro (advisory), Plugins/MCP stub, Evaluation, Isolation, Training/Browser/Media/Voice/Native/Trading stubs, Release + Security + Master gates, Backup/restore, Metrics, Chaos (OFF), operator Status page.
+**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, reasoning, Run/Artifact/Knowledge V2, Function Runtime, Execution Gateway, Approvals, Jobs, Observations, Evidence, Memory, Verification (durable reports), Agents (flagged), Workflows, Schedules, Observability, Neuro (advisory + Phase 46 contracts), Universal Module Manager (flagged), Plugins/MCP stub, Evaluation, Isolation, Training/Browser/Media/Voice/Native/Trading stubs, Release + Security + Master gates, Backup/restore, Metrics, Chaos (OFF), operator Status page.
 
-**Not claimed:** production certification, live trading fills, real browser/media/voice automation, native runtime, cloud backup sync, APM, penetration testing.
+**Not claimed:** production certification, live trading fills, real browser/media/voice automation, native runtime, cloud backup sync, APM, penetration testing, real residual-stream GPU injection.

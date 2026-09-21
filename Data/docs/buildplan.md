@@ -6,6 +6,59 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 46 — Frontier Neuro Layer MVP + Universal Module Manager — PASS
+
+### Objective
+
+Specify the Top-Tier Frontier Neuro Layer and land MVP scaffolding on the Phase 45 foundation without parallel databases, gateways, or model clients.
+
+### Added
+
+- Architecture specification: `Data/docs/neuro_layer_architecture.md` (interfaces, Mermaid flows, training recipes, hardware guide, risks, phased plan)
+- `Data/modules/module_manager/` — `ILeviathanModule`, discovery from `Data/modules/*/module.json` + `{DATA_ROOT}/plugins/`, lifecycle discover→load→initialize→execute→shutdown, hot-reload, crash containment
+- Neuro contracts: `residual.py` (`ResidualStreamPort`, `UnsupportedResidualRuntime`), `cortex.py` (`CortexPlanner`), `critic.py` (`ProcessCritic`), `memory_tiers.py` (`NeuroMemoryFacade` Tier 0–2)
+- First-party example module: `Data/modules/neuro/module.json` + `echo_module.py`
+- Feature flags: `NEURO_CORTEX`, `NEURO_MEMORY_TIERS`, `MODULE_MANAGER`
+- APIs: `GET /api/neuro/residual`, `GET /api/modules`, `POST /api/modules/discover`, `POST /api/modules/{id}/execute`
+- Memory kinds: `EPISODIC`, `DECISION` (central MemoryStore; no new DB)
+- App version `0.47.0-phase46`
+
+### Changed
+
+- `NeuroAdvisor` composes cortex / critic / memory facade / residual port; residual remains honestly unimplemented without a residual-capable runtime
+- Chat `/api/neuro/assess` passes ReasoningPlan into neuro assessment
+- Config validation: cortex/memory-tier child flags require parent `NEURO`
+- Health exposes neuro residual support + module manager snapshot
+
+### Architecture fit
+
+- Module Manager is the single loader; PluginRegistry remains catalog binding (discoverable ≠ authorized)
+- Memory tiers orchestrate existing MemoryStore + Knowledge V2 — no fork
+- Side effects still exclusively via Execution Gateway + Approvals + Evidence + Verification
+- Residual injection explicit, optional, degradable
+
+### Database / schema
+
+- No new migration — Tier 1 reuses `memory_entries`; Tier 2 reuses Knowledge V2
+
+### Tests / verification
+
+- Full backend suite → **PASS (120)**
+- New: `test_module_manager.py`, expanded `test_neuro.py`
+
+### Explicitly NOT built
+
+- Real GPU residual hooks (vLLM/llama.cpp/TRT adapters)
+- Subprocess plugin isolation
+- LoRA / training execution loops
+- Tier 3 distilled adapters
+
+### Status
+
+**PASS** (Phase 46 MVP) — architecture SPECIFIED; residual GPU path NOT TESTED (no residual runtime wired)
+
+---
+
 ## 2026-09-21 — Phases 36–45 — Final platform polish / Master Program complete — PASS
 
 ### Phase 36 — Durable verification report store
