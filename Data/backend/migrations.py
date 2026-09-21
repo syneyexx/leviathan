@@ -503,6 +503,363 @@ def _m13_model_control_plane(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m14_datasets_training_research(conn: sqlite3.Connection) -> None:
+    """Datasets, training jobs, and research workspace persistence."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS datasets (
+            dataset_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            original_filename TEXT,
+            original_uri TEXT,
+            license TEXT,
+            schema_version INTEGER NOT NULL DEFAULT 1,
+            content_hash TEXT,
+            byte_size INTEGER,
+            row_count INTEGER,
+            detected_format TEXT,
+            format_confidence REAL,
+            provenance_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            raw_path TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_versions (
+            version_id TEXT PRIMARY KEY,
+            dataset_id TEXT NOT NULL,
+            version_label TEXT NOT NULL,
+            parent_version_id TEXT,
+            status TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            schema_json TEXT NOT NULL DEFAULT '{}',
+            row_count INTEGER,
+            byte_size INTEGER,
+            content_hash TEXT,
+            storage_path TEXT,
+            split_json TEXT NOT NULL DEFAULT '{}',
+            transform_lineage_json TEXT NOT NULL DEFAULT '[]',
+            token_stats_json TEXT NOT NULL DEFAULT '{}',
+            validation_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(dataset_id) REFERENCES datasets(dataset_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dataset_versions_dataset "
+        "ON dataset_versions(dataset_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_files (
+            file_id TEXT PRIMARY KEY,
+            dataset_id TEXT NOT NULL,
+            version_id TEXT,
+            role TEXT NOT NULL,
+            path TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            byte_size INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(dataset_id) REFERENCES datasets(dataset_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_jobs (
+            job_id TEXT PRIMARY KEY,
+            dataset_id TEXT,
+            version_id TEXT,
+            job_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            phase TEXT,
+            progress REAL,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            worker_pid INTEGER,
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
+            config_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            log_path TEXT,
+            trace_id TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dataset_jobs_status ON dataset_jobs(status, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_indexes (
+            index_id TEXT PRIMARY KEY,
+            dataset_id TEXT NOT NULL,
+            version_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            chunk_count INTEGER,
+            embedding_model TEXT,
+            index_version INTEGER NOT NULL DEFAULT 1,
+            knowledge_scope TEXT,
+            storage_path TEXT,
+            provenance_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(dataset_id) REFERENCES datasets(dataset_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_jobs (
+            job_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            phase TEXT,
+            method TEXT NOT NULL,
+            base_model_ref TEXT NOT NULL,
+            dataset_version_id TEXT,
+            output_dir TEXT,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            planner_json TEXT NOT NULL DEFAULT '{}',
+            preflight_json TEXT NOT NULL DEFAULT '{}',
+            progress REAL,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            worker_pid INTEGER,
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
+            metrics_summary_json TEXT NOT NULL DEFAULT '{}',
+            evaluation_json TEXT NOT NULL DEFAULT '{}',
+            artifact_id TEXT,
+            error TEXT,
+            log_path TEXT,
+            trace_id TEXT,
+            seed INTEGER,
+            config_hash TEXT,
+            environment_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_training_jobs_status ON training_jobs(status, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            step INTEGER,
+            epoch REAL,
+            metric_name TEXT NOT NULL,
+            metric_value REAL NOT NULL,
+            recorded_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(job_id) REFERENCES training_jobs(job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_training_metrics_job ON training_metrics(job_id, recorded_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_checkpoints (
+            checkpoint_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            step INTEGER,
+            epoch REAL,
+            path TEXT NOT NULL,
+            content_hash TEXT,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(job_id) REFERENCES training_jobs(job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_artifacts (
+            artifact_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            path TEXT NOT NULL,
+            base_model_ref TEXT,
+            dataset_version_id TEXT,
+            method TEXT,
+            config_hash TEXT,
+            content_hash TEXT,
+            model_card_path TEXT,
+            evaluation_json TEXT NOT NULL DEFAULT '{}',
+            compatibility_json TEXT NOT NULL DEFAULT '{}',
+            registered_model_id TEXT,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(job_id) REFERENCES training_jobs(job_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_projects (
+            project_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            objective TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            depth TEXT NOT NULL DEFAULT 'standard',
+            allow_web INTEGER NOT NULL DEFAULT 0,
+            respect_robots_txt INTEGER NOT NULL DEFAULT 1,
+            model_profile_json TEXT NOT NULL DEFAULT '{}',
+            budget_json TEXT NOT NULL DEFAULT '{}',
+            plan_json TEXT NOT NULL DEFAULT '{}',
+            coverage_json TEXT NOT NULL DEFAULT '{}',
+            local_scopes_json TEXT NOT NULL DEFAULT '[]',
+            seed_sources_json TEXT NOT NULL DEFAULT '[]',
+            current_round INTEGER NOT NULL DEFAULT 0,
+            total_rounds INTEGER NOT NULL DEFAULT 1,
+            error TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            worker_pid INTEGER,
+            trace_id TEXT,
+            report_version INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_events (
+            event_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_events_project "
+        "ON research_events(project_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_sources (
+            source_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            original_uri TEXT,
+            canonical_uri TEXT,
+            title TEXT,
+            author TEXT,
+            published_at TEXT,
+            fetched_at TEXT,
+            content_hash TEXT,
+            mime_type TEXT,
+            snapshot_path TEXT,
+            parse_status TEXT,
+            parser TEXT,
+            provenance_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_evidence (
+            evidence_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            chunk_id TEXT,
+            span_text TEXT NOT NULL,
+            location_json TEXT NOT NULL DEFAULT '{}',
+            retrieval_method TEXT,
+            associated_claim_ids_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE,
+            FOREIGN KEY(source_id) REFERENCES research_sources(source_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_claims (
+            claim_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            proposition TEXT NOT NULL,
+            raw_wording TEXT,
+            status TEXT NOT NULL,
+            supporting_evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            contradicting_evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            source_diversity INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_conflicts (
+            conflict_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            claim_id TEXT,
+            summary TEXT NOT NULL,
+            supporting_evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            contradicting_evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            analysis_json TEXT NOT NULL DEFAULT '{}',
+            unresolved_questions_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_reports (
+            report_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body_markdown TEXT NOT NULL,
+            body_html TEXT,
+            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            source_ids_json TEXT NOT NULL DEFAULT '[]',
+            model_profile_json TEXT NOT NULL DEFAULT '{}',
+            generation_trace_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            UNIQUE(project_id, version),
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -517,6 +874,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=11, name="verification_reports", apply=_m11_verification_reports),
     Migration(version=12, name="neuro_memory_snapshots", apply=_m12_neuro_memory_snapshots),
     Migration(version=13, name="model_control_plane", apply=_m13_model_control_plane),
+    Migration(version=14, name="datasets_training_research", apply=_m14_datasets_training_research),
 )
 
 
