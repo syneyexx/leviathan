@@ -334,6 +334,7 @@
   font-size: var(--lv-heading-sm);
   color: var(--lv-gold-pale);
   letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 .lv-stat-card span {
@@ -459,8 +460,20 @@
 
 .lv-brain-bottom {
   display: grid;
-  grid-template-columns: 1.1fr 1.2fr 1.4fr;
+  grid-template-columns: 0.9fr 1.1fr 1.6fr;
   gap: var(--lv-card-gap);
+}
+
+.lv-brain-bottom .lv-stat-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.lv-brain-bottom .lv-stat-card {
+  padding: 10px 6px;
+}
+
+.lv-brain-bottom .lv-stat-card strong {
+  font-size: clamp(13px, 1.1vw, 16px);
 }
 
 .lv-quick-actions {
