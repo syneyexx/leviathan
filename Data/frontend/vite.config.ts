@@ -1,8 +1,11 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { leviathanLayoutEditor } from "../../editor/vite-plugin.mjs";
+
+const layoutEditor = process.env.LEVIATHAN_EDITOR === "1";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), ...(layoutEditor ? [leviathanLayoutEditor()] : [])],
   server: {
     host: "127.0.0.1",
     port: 5173,
