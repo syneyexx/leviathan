@@ -161,7 +161,9 @@ class CodingSettings:
         "git",
     )
     temperature: float = 0.1
-    token_budget: int = 8000
+    token_budget: int = 24_000
+    reserve_response_tokens: int = 1024
+    max_file_chars: int = 8000
 
 
 @dataclass(frozen=True)
@@ -433,7 +435,13 @@ class Settings:
                 ),
                 command_allowlist=command_allowlist or ("python", "python3", "pytest"),
                 temperature=_env_float("LEVIATHAN_CODING_TEMPERATURE", 0.1, minimum=0.0),
-                token_budget=_env_int("LEVIATHAN_CODING_TOKEN_BUDGET", 8000, minimum=512, maximum=200_000),
+                token_budget=_env_int("LEVIATHAN_CODING_TOKEN_BUDGET", 24_000, minimum=512, maximum=200_000),
+                reserve_response_tokens=_env_int(
+                    "LEVIATHAN_CODING_RESERVE_RESPONSE_TOKENS", 1024, minimum=64, maximum=32_000
+                ),
+                max_file_chars=_env_int(
+                    "LEVIATHAN_CODING_MAX_FILE_CHARS", 8000, minimum=200, maximum=200_000
+                ),
             ),
             neuro_runtime=NeuroRuntimeSettings(
                 residual_kind=(
