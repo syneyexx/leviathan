@@ -8,6 +8,7 @@ type ShellProps = {
   activeMode: "explore" | "chat";
   searchPlaceholder?: string;
   modeLabel?: string;
+  systemItems?: readonly string[];
   layout?: "standard" | "wide";
   pageClass?: string;
   chatApp?: boolean;
@@ -18,6 +19,7 @@ export function AppShell({
   activeMode,
   searchPlaceholder,
   modeLabel,
+  systemItems,
   layout = "standard",
   pageClass,
   chatApp = false,
@@ -58,6 +60,7 @@ export function AppShell({
       <AppHeader
         searchPlaceholder={searchPlaceholder}
         modeLabel={modeLabel}
+        systemItems={systemItems}
         onMenuClick={() => setSidebarOpen((value) => !value)}
       />
       <div className="lv-body">

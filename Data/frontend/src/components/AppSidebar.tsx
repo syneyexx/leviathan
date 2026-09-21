@@ -25,6 +25,7 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
   },
   {
     label: "Research",
+    to: "/research",
     icon: (
       <>
         <circle cx="12" cy="9" r="3.5" />
@@ -62,6 +63,7 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
   },
   {
     label: "Datasets",
+    to: "/datasets",
     icon: (
       <>
         <ellipse cx="12" cy="6" rx="7" ry="3" />
@@ -116,6 +118,7 @@ const NAV_ITEMS: { label: string; to?: string; icon: ReactNode }[] = [
   },
   {
     label: "Tools",
+    to: "/tools",
     icon: <path d="M14 7l3 3-8 8H6v-3l8-8z" />,
   },
   {
