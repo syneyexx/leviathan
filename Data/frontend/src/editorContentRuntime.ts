@@ -42,7 +42,11 @@ function hasDirectText(el: Element): boolean {
 
 function applyEntry(el: Element, entry: EditorContentEntry): void {
   if (entry.text != null && el.tagName !== "IMG") {
-    if (el.childElementCount === 0 || hasDirectText(el)) {
+    if (el.classList.contains("lv-ring")) {
+      const bold = el.querySelector("b");
+      if (bold) bold.textContent = entry.text;
+      else if (el.childElementCount === 0 || hasDirectText(el)) el.textContent = entry.text;
+    } else if (el.childElementCount === 0 || hasDirectText(el)) {
       el.textContent = entry.text;
     }
   }
@@ -57,6 +61,10 @@ function applyEntry(el: Element, entry: EditorContentEntry): void {
       if (value != null && value !== "") {
         (el as HTMLElement).style.setProperty(key, value);
       }
+    }
+    if (el.classList.contains("lv-ring") && entry.styles["--p"] != null && entry.text == null) {
+      const bold = el.querySelector("b");
+      if (bold) bold.textContent = `${Math.round(Number(entry.styles["--p"]))}%`;
     }
   }
   const htmlEl = el as HTMLElement;

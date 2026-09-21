@@ -34,14 +34,24 @@
 .lvb-statusbar,
 .lvb-menu,
 .lvb-media,
-.lvb-hover,
-.lvb-select,
-.lvb-multi,
 .lvb-handle,
 .lvb-move-grip,
 .lvb-drop-hint,
-.lvb-guide,
+.lvb-guide {
+  pointer-events: auto;
+}
+
+/* Selection/hover outlines must NOT block clicks on nested page elements
+   (e.g. .lv-ring gauges inside a selected card). Only handles/grip capture. */
+.lvb-hover,
+.lvb-select,
+.lvb-multi,
 .lvb-label {
+  pointer-events: none;
+}
+
+.lvb-select .lvb-handle,
+.lvb-select .lvb-move-grip {
   pointer-events: auto;
 }
 
@@ -616,11 +626,11 @@
   border: 1px solid rgba(240, 200, 117, 0.75);
   background: rgba(214, 169, 87, 0.06);
   z-index: 3;
+  pointer-events: none;
 }
 
 .lvb-hover {
   border-style: dashed;
-  pointer-events: none;
 }
 
 .lvb-select {
@@ -630,7 +640,6 @@
 .lvb-multi {
   border-color: rgba(32, 220, 140, 0.7);
   background: rgba(32, 220, 140, 0.05);
-  pointer-events: none;
 }
 
 .lvb-label {
@@ -647,6 +656,11 @@
   border-radius: 4px;
   white-space: nowrap;
   pointer-events: none;
+}
+
+.lvb-handle,
+.lvb-move-grip {
+  pointer-events: auto;
 }
 
 .lvb-handle {

@@ -307,12 +307,32 @@
     if (el.dataset.lvbId) return `[data-lvb-id="${el.dataset.lvbId}"]`;
     if (el.tagName === "IMG") {
       const src = el.getAttribute("src");
-      if (src) return `img[src="${src}"]`;
-      return "img";
+      if (src) {
+        const sel = `img[src="${src}"]`;
+        try {
+          if (document.querySelectorAll(sel).length === 1) return sel;
+        } catch {
+          /* ignore */
+        }
+      }
     }
     const lv = [...el.classList].filter((c) => c.startsWith("lv-") && !c.startsWith("lvb-"));
-    if (lv.length === 1) return `.${lv[0]}`;
-    if (lv.length > 1) return `.${lv.join(".")}`;
+    if (lv.length) {
+      const sel = lv.length === 1 ? `.${lv[0]}` : `.${lv.join(".")}`;
+      try {
+        if (document.querySelectorAll(sel).length === 1) return sel;
+      } catch {
+        /* ignore */
+      }
+      // Ambiguous class (e.g. four .lv-ring gauges) → unique path
+      const parent = el.parentElement;
+      if (parent && parent !== document.body) {
+        const idx = [...parent.children].indexOf(el) + 1;
+        const tag = el.tagName.toLowerCase();
+        return `${selectorFor(parent)} > ${tag}:nth-child(${idx})`;
+      }
+      return sel;
+    }
     if (el.id && el.id !== "root") return `#${el.id}`;
     const tag = el.tagName.toLowerCase();
     const parent = el.parentElement;
@@ -321,6 +341,78 @@
       return `${selectorFor(parent)} > ${tag}:nth-child(${idx})`;
     }
     return tag;
+  }
+
+  function isEditableCandidate(el) {
+    if (!(el instanceof Element) || isBuilderNode(el)) return false;
+    if (el.dataset?.lvbId) return true;
+    if (el.tagName === "IMG") return true;
+    if (el.classList && [...el.classList].some((c) => c.startsWith("lv-"))) return true;
+    return ["H1", "H2", "H3", "H4", "P", "SPAN", "LABEL", "BUTTON", "A", "B", "STRONG", "DIV", "SECTION", "ARTICLE"].includes(
+      el.tagName,
+    );
+  }
+
+  /** Prefer deepest / smallest editable under the pointer (so rings beat parent cards). */
+  function pickDeepestAt(clientX, clientY, fallbackTarget) {
+    const prevSelect = ui.select?.style.pointerEvents;
+    const prevHover = ui.hover?.style.pointerEvents;
+    if (ui.select) ui.select.style.pointerEvents = "none";
+    if (ui.hover) ui.hover.style.pointerEvents = "none";
+    $$(".lvb-multi, .lvb-handle, .lvb-move-grip", ui.root).forEach((n) => {
+      n.style.pointerEvents = "none";
+    });
+    let best = null;
+    let bestArea = Infinity;
+    try {
+      const stack = document.elementsFromPoint(clientX, clientY);
+      for (const node of stack) {
+        if (!(node instanceof Element) || isBuilderNode(node)) continue;
+        // Walk up from this hit to the nearest editable candidate
+        let el = node;
+        while (el && el !== document.body && el.id !== "root") {
+          if (isBuilderNode(el)) break;
+          if (isEditableCandidate(el)) {
+            // Prefer leaf-ish lv widgets (ring, gauge, label) over huge shells/panels
+            const r = el.getBoundingClientRect();
+            const area = Math.max(1, r.width * r.height);
+            const isShell = isShellLocked(el);
+            const score = isShell ? area * 1000 : area;
+            if (score < bestArea) {
+              bestArea = score;
+              best = el;
+            }
+            break;
+          }
+          el = el.parentElement;
+        }
+      }
+    } finally {
+      if (ui.select) ui.select.style.pointerEvents = prevSelect || "";
+      if (ui.hover) ui.hover.style.pointerEvents = prevHover || "";
+      $$(".lvb-handle, .lvb-move-grip", ui.root).forEach((n) => {
+        n.style.pointerEvents = "";
+      });
+    }
+    return best || (fallbackTarget instanceof Element && !isBuilderNode(fallbackTarget) ? fallbackTarget : null);
+  }
+
+  function resolvePickEl(el) {
+    if (!(el instanceof Element)) return null;
+    // Click on <b> inside .lv-ring → select the ring itself
+    if (!el.classList?.contains("lv-ring")) {
+      const ring = el.closest?.(".lv-ring");
+      if (ring && !isBuilderNode(ring)) return ring;
+    }
+    if (!el.classList?.contains("lv-gauge")) {
+      const gauge = el.closest?.(".lv-gauge");
+      // If we landed on the label span of a gauge, prefer the ring child
+      if (gauge && el.tagName === "SPAN") {
+        const ring = gauge.querySelector(".lv-ring");
+        if (ring) return ring;
+      }
+    }
+    return el;
   }
 
   function regionFor(el) {
@@ -369,10 +461,18 @@
   }
 
   function pickEditable(target, clientX, clientY) {
-    if (!(target instanceof Element) || isBuilderNode(target)) return null;
+    if (isBuilderNode(target) && (clientX == null || clientY == null)) return null;
 
-    let imgHit = target.tagName === "IMG" ? target : target.closest?.("img");
-    if (!imgHit) imgHit = findDescendantImage(target);
+    // Prefer deepest element under cursor so nested gauges/rings win over parent cards
+    let seed = target;
+    if (clientX != null && clientY != null) {
+      seed = pickDeepestAt(clientX, clientY, target) || target;
+    }
+    if (!(seed instanceof Element) || isBuilderNode(seed)) return null;
+    seed = resolvePickEl(seed);
+
+    let imgHit = seed.tagName === "IMG" ? seed : seed.closest?.("img");
+    if (!imgHit) imgHit = findDescendantImage(seed);
     if (!imgHit && clientX != null && clientY != null) {
       const prev = ui.select?.style.pointerEvents;
       const prevHover = ui.hover?.style.pointerEvents;
@@ -402,7 +502,7 @@
       return { el: imgHit, region: regionFor(imgHit), selector: selectorFor(imgHit), kind: "img" };
     }
 
-    let el = target;
+    let el = seed;
     while (el && el !== document.body && el.id !== "root") {
       if (isBuilderNode(el)) return null;
       if (el.dataset?.lvbId) return { el, region: regionFor(el), selector: selectorFor(el), kind: "widget" };
@@ -410,7 +510,7 @@
         const kind = el.childElementCount === 0 || hasDirectText(el) ? "texty" : "element";
         return { el, region: regionFor(el), selector: selectorFor(el), kind };
       }
-      if (["H1", "H2", "H3", "H4", "P", "SPAN", "LABEL", "BUTTON", "A", "DIV", "SECTION", "ARTICLE"].includes(el.tagName)) {
+      if (["H1", "H2", "H3", "H4", "P", "SPAN", "LABEL", "BUTTON", "A", "B", "STRONG", "DIV", "SECTION", "ARTICLE"].includes(el.tagName)) {
         return { el, region: regionFor(el), selector: selectorFor(el), kind: "texty" };
       }
       el = el.parentElement;
@@ -781,13 +881,24 @@
   function applyEntryToEl(el, entry) {
     if (!entry || !(el instanceof Element)) return;
     if (entry.text != null && el.tagName !== "IMG") {
-      if (el.childElementCount === 0 || hasDirectText(el)) el.textContent = entry.text;
+      if (el.classList?.contains("lv-ring")) {
+        const b = el.querySelector("b");
+        if (b) b.textContent = entry.text;
+        else el.textContent = entry.text;
+      } else if (el.childElementCount === 0 || hasDirectText(el)) {
+        el.textContent = entry.text;
+      }
     }
     if (entry.src && el.tagName === "IMG") el.setAttribute("src", entry.src);
     if (entry.alt != null && el.tagName === "IMG") el.setAttribute("alt", entry.alt);
     if (entry.styles) {
       for (const [k, v] of Object.entries(entry.styles)) {
         el.style.setProperty(k, v);
+      }
+      // Keep ring label in sync with --p when text wasn't explicitly set
+      if (el.classList?.contains("lv-ring") && entry.styles["--p"] != null && entry.text == null) {
+        const b = el.querySelector("b");
+        if (b) b.textContent = `${Math.round(Number(entry.styles["--p"]))}%`;
       }
     }
     if (entry.left != null) el.style.left = entry.left;
@@ -1386,6 +1497,21 @@
           <input type="range" min="${region.min}" max="${region.max}" value="${px}" data-role="region-var" /></div>`;
     }
 
+    // Performance rings / CSS custom props (e.g. --p fill %)
+    if (el.classList?.contains("lv-ring") || el.style.getPropertyValue("--p") || getComputedStyle(el).getPropertyValue("--p")) {
+      const pRaw =
+        el.style.getPropertyValue("--p").trim() ||
+        getComputedStyle(el).getPropertyValue("--p").trim() ||
+        "0";
+      const pVal = Math.round(Number.parseFloat(pRaw) || 0);
+      html += `
+        <div class="lvb-section">Ring / gauge</div>
+        <div class="lvb-field"><label>Fill % (--p) · ${pVal}%</label>
+          <input type="range" min="0" max="100" value="${pVal}" data-role="css-var" data-var="--p" /></div>
+        <div class="lvb-field"><label>Label tekst</label>
+          <input type="text" data-role="ring-label" value="${escapeHtml((el.querySelector("b") || el).textContent || "")}" /></div>`;
+    }
+
     html += `
       <div class="lvb-section">Constraints</div>
       <div class="lvb-chip-row">
@@ -1634,6 +1760,25 @@
     markDirty("tokens.css");
     applyTokensLive();
     syncCodePane();
+  }
+
+  function updateCssVar(el, selector, varName, value, { history = true } = {}) {
+    if (!el || !selector || !varName) return;
+    if (history) pushHistory(`var:${varName}`);
+    el.style.setProperty(varName, String(value));
+    const entry = getEntry(selector) || {};
+    const styles = { ...(entry.styles || {}), [varName]: String(value) };
+    upsertContentEntry(selector, { styles });
+    // Also bake into CSS override file for persistence beyond content.json
+    const file = state.activeFile === "tokens.css" ? styleFileForSelector() : state.activeFile;
+    const decls = readOverrideDecls(state.files[file], selector);
+    decls[varName] = String(value);
+    state.files[file] = upsertOverride(state.files[file], selector, declsToText(decls));
+    state.activeFile = file;
+    markDirty(file);
+    applyTokensLive();
+    syncCodePane();
+    refreshSelectionChrome();
   }
 
   function updateDecl(prop, value, { history = true, el = null, selector = null } = {}) {
@@ -2899,6 +3044,25 @@
     if (!(t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement)) return;
     if (t.dataset.role === "region-var" && state.selectedRegion?.varKey) {
       updateRegionVar(state.selectedRegion, Number(t.value));
+    }
+    if (t.dataset.role === "css-var" && state.selectedEl && t.dataset.var) {
+      updateCssVar(state.selectedEl, state.selectedSelector || selectorFor(state.selectedEl), t.dataset.var, t.value);
+      if (t.dataset.var === "--p") {
+        const label = state.selectedEl.querySelector("b");
+        if (label) label.textContent = `${Math.round(Number(t.value))}%`;
+        // refresh label on the range field
+        const fieldLabel = t.closest(".lvb-field")?.querySelector("label");
+        if (fieldLabel) fieldLabel.textContent = `Fill % (--p) · ${Math.round(Number(t.value))}%`;
+      }
+    }
+    if (t.dataset.role === "ring-label" && state.selectedEl) {
+      const label = state.selectedEl.querySelector("b") || state.selectedEl;
+      pushHistory("ring-label");
+      label.textContent = t.value;
+      upsertContentEntry(state.selectedSelector || selectorFor(state.selectedEl), { text: t.value });
+      if (label !== state.selectedEl && state.selectedEl.childElementCount) {
+        // keep content entry text for the ring's bold child via html-ish text
+      }
     }
     if (t.dataset.role === "token-region") {
       const region = REGIONS.find((r) => r.id === t.dataset.region);
