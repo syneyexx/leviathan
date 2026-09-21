@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
-import { BrandMark, SidebarOrnament } from "./BrandMark";
+import { media } from "../assets/media";
+import { BrandMark } from "./BrandMark";
 
 type NavItem = {
   label: string;
@@ -228,11 +229,14 @@ export function AppSidebar({ open, onReserved }: AppSidebarProps) {
       </nav>
 
       <div className="lv-sidebar-footer">
-        <SidebarOrnament />
-        <div className="lv-motto">
-          <span>Discipline</span>
-          <span>Creates Freedom</span>
-        </div>
+        <img
+          className="lv-sidebar-footer-mark"
+          src={media.sidebarFooter}
+          alt="Discipline creates freedom"
+          width={246}
+          height={204}
+          draggable={false}
+        />
       </div>
     </aside>
   );

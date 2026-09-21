@@ -41,64 +41,6 @@ export function BrandMark({ id = "g1" }: { id?: string }) {
   );
 }
 
-/** Celestial compass / astrolabe for the sidebar footer. */
-export function SidebarOrnament() {
-  return (
-    <svg className="lv-ornament-svg" viewBox="0 0 120 120" fill="none" aria-hidden="true">
-      <defs>
-        <radialGradient id="ornGlow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#F5DFA9" stopOpacity="0.7" />
-          <stop offset="28%" stopColor="#F0C875" stopOpacity="0.28" />
-          <stop offset="70%" stopColor="#D6A957" stopOpacity="0.08" />
-          <stop offset="100%" stopColor="#D6A957" stopOpacity="0" />
-        </radialGradient>
-        <linearGradient id="ornStroke" x1="18" y1="12" x2="102" y2="108">
-          <stop stopColor="#F5DFA9" />
-          <stop offset="0.45" stopColor="#F0C875" />
-          <stop offset="1" stopColor="#8A6528" />
-        </linearGradient>
-      </defs>
-      <circle cx="60" cy="60" r="56" fill="url(#ornGlow)" />
-      <circle cx="60" cy="60" r="50" stroke="url(#ornStroke)" strokeWidth="1.05" opacity="0.95" />
-      <circle cx="60" cy="60" r="38" stroke="url(#ornStroke)" strokeWidth="0.8" opacity="0.65" />
-      <circle cx="60" cy="60" r="24" stroke="url(#ornStroke)" strokeWidth="0.7" opacity="0.55" />
-      {/* Orbital ellipses */}
-      <ellipse cx="60" cy="60" rx="44" ry="18" stroke="#F0C875" strokeWidth="0.65" opacity="0.4" transform="rotate(-28 60 60)" />
-      <ellipse cx="60" cy="60" rx="42" ry="16" stroke="#D6A957" strokeWidth="0.55" opacity="0.35" transform="rotate(34 60 60)" />
-      {/* Star rays */}
-      {Array.from({ length: 8 }).map((_, i) => {
-        const a = (i * Math.PI) / 4 - Math.PI / 2;
-        const long = i % 2 === 0;
-        const outer = long ? 47 : 34;
-        const inner = long ? 10 : 12;
-        return (
-          <line
-            key={i}
-            x1={60 + Math.cos(a) * inner}
-            y1={60 + Math.sin(a) * inner}
-            x2={60 + Math.cos(a) * outer}
-            y2={60 + Math.sin(a) * outer}
-            stroke="#F0C875"
-            strokeWidth={long ? 1.2 : 0.7}
-            opacity={long ? 0.95 : 0.55}
-            strokeLinecap="round"
-          />
-        );
-      })}
-      {/* Central star */}
-      <path
-        d="M60 48l2.4 7.4H70l-6.2 4.5 2.4 7.4L60 62.8l-6.2 4.5 2.4-7.4-6.2-4.5h7.6L60 48z"
-        fill="#F5DFA9"
-        opacity="0.95"
-      />
-      <circle cx="60" cy="60" r="3.2" fill="#FFF6D8" />
-      <circle cx="88" cy="38" r="1.4" fill="#F5DFA9" opacity="0.85" />
-      <circle cx="34" cy="78" r="1.1" fill="#F0C875" opacity="0.75" />
-      <circle cx="82" cy="82" r="1" fill="#F0C875" opacity="0.7" />
-    </svg>
-  );
-}
-
 export function BotAvatar() {
   return (
     <div className="lv-msg-avatar bot" aria-hidden="true">
