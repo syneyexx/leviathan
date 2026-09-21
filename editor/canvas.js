@@ -475,7 +475,7 @@
       await apiPutContent(state.content);
       state.contentDirty = false;
     }
-    setStatus("Opgeslagen", "ok");
+    setStatus("Opgeslagen in Leviathan-bestanden", "ok");
   }
 
   async function loadAll() {

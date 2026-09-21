@@ -3,12 +3,13 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo   LEVIATHAN Dreamweaver Builder
-echo   Sleep · Copy · Rechtsklik · Insert
+echo   LEVIATHAN Visual Editor (ADMIN)
+echo   Los van normale Leviathan-start
 echo ========================================
 echo.
-echo  Opent de ECHTE Leviathan UI.
-echo  Volledig visual bewerken op de layout.
+echo  Wijzigingen worden opgeslagen in de
+echo  echte Leviathan-bestanden.
+echo  Normale start = zonder editor-UI.
 echo.
 
 where node >nul 2>&1
