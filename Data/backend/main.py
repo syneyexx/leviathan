@@ -20,6 +20,7 @@ from Data.modules.execution import (
     build_default_catalog,
 )
 from Data.modules.function_runtime import FunctionCallStatus, build_default_registry, FunctionRuntime
+from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
 from Data.modules.knowledge import HybridRetriever, KnowledgeStore, RetrievalQuery
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
 from Data.modules.reasoning import ReasoningEngine
@@ -52,6 +53,9 @@ execution_gateway = ExecutionGateway(
     artifact_store=artifacts,
     approval_checker=approval_service,
 )
+job_store = JobStore(settings.database_path)
+resource_manager = ResourceManager(settings.resources.max_job_concurrency)
+job_runtime = JobRuntime(job_store, execution_gateway, resource_manager)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -65,13 +69,16 @@ async def lifespan(_: FastAPI):
     runs.initialize()
     artifacts.initialize()
     approval_store.initialize()
+    job_store.initialize()
+    job_runtime.start_background_worker()
     try:
         yield
     finally:
+        job_runtime.stop_background_worker()
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.11.0-phase10", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.12.0-phase11", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -134,6 +141,12 @@ async def health() -> dict:
         },
         "approvals": {
             "pending": len(approval_service.list(status=ApprovalStatus.PENDING, limit=500)),
+        },
+        "jobs": {
+            "queued": len(job_runtime.list(state=JobState.QUEUED, limit=500)),
+            "active": resource_manager.active_job_ids(),
+            "telemetry": dict(job_runtime.telemetry),
+            "resources": dict(resource_manager.telemetry),
         },
         "llm": model,
     }
@@ -616,6 +629,62 @@ def deny_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"approval": record.public_dict()}
+
+
+class JobCreateRequest(BaseModel):
+    capability_id: str = Field(min_length=1, max_length=120)
+    arguments: dict = Field(default_factory=dict)
+    approval_id: str | None = None
+    run_id: str | None = None
+    requested_by: str = "api"
+
+
+@app.get("/api/jobs")
+def list_jobs(
+    state: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    parsed = None
+    if state:
+        try:
+            parsed = JobState(state.upper())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid job state: {state}") from exc
+    return {"jobs": [item.public_dict() for item in job_runtime.list(state=parsed, limit=limit)]}
+
+
+@app.post("/api/jobs")
+def create_job(payload: JobCreateRequest) -> dict:
+    try:
+        job = job_runtime.enqueue(
+            capability_id=payload.capability_id,
+            arguments=payload.arguments,
+            approval_id=payload.approval_id,
+            run_id=payload.run_id,
+            requested_by=payload.requested_by,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"job": job.public_dict()}
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str) -> dict:
+    job = job_runtime.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job": job.public_dict()}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict:
+    try:
+        job = job_runtime.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"job": job.public_dict()}
 
 
 @app.get("/")

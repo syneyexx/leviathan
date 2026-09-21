@@ -153,11 +153,34 @@ def _m4_approvals_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m5_jobs_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            capability_id TEXT NOT NULL,
+            arguments_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            run_id TEXT,
+            approval_id TEXT,
+            requested_by TEXT NOT NULL,
+            result_json TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state, created_at)")
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
     Migration(version=3, name="knowledge_v2", apply=_m3_knowledge_v2),
     Migration(version=4, name="approvals_table", apply=_m4_approvals_table),
+    Migration(version=5, name="jobs_table", apply=_m5_jobs_table),
 )
 
 
