@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of Phase 50 (Neuro Layer 46–50 on Master Program Phase 45 foundation).
+> This is the implementation truth for the repository as of Phase 51 (Neuro Layer 46–51 on Master Program Phase 45 foundation).
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,11 +12,11 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45) plus Neuro Layer phases 46–50.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45) plus Neuro Layer phases 46–51.
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.50.0-phase50`);
+- FastAPI backend composition root (`0.51.0-phase51`);
 - OpenAI-compatible LLM client (LM Studio–friendly);
 - SQLite persistence + migrations through **v12**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters (deterministic toy / HF config-ready), cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
@@ -31,15 +31,15 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 - Real MCP network clients; **weight-backed HF residual inject**; production GPU residual hooks;
 - training execution with real metrics; production APM / certification / cloud backup sync.
 
-**Neuro Layer (Phases 46–50):**
+**Neuro Layer (Phases 46–51):**
 
 - Spec: `Data/docs/neuro_layer_architecture.md`
 - Universal Module Manager + optional subprocess isolation
-- Residual ports: Unsupported / Deterministic toy / HF config-ready
-- CortexRuntime + ProcessCritic (incl. residual scoring)
-- NeuroMemoryFacade Tier 0–2 + snapshots (v12) + absorb via Knowledge V2
-- Training recipes registered; execution still honest 501/FAILED
-- Ablation evaluation suite; release/master neuro posture gates
+- Residual ports: Unsupported / Deterministic toy / HF config-ready / vLLM+llama stubs
+- CortexRuntime + ProcessCritic (incl. residual scoring); chat path injects advisory neuro context
+- NeuroMemoryFacade Tier 0–2 + snapshots (v12) + absorb via Knowledge V2 (+ schedule helper)
+- Training recipes + preference bridge from verification (registered ≠ trained)
+- Mini soak harness; Status UI neuro panel; ablation evaluation; release/master neuro gates
 
 **Implemented through Phase 45:**
 
@@ -77,7 +77,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.50.0-phase50`).
+FastAPI application (`version=0.51.0-phase51`).
 
 Responsibilities:
 
@@ -407,6 +407,7 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 48 — Memory + absorb | PASS | Snapshots v12; Knowledge ingest_scan; contrastive lexical |
 | Phase 49 — Cortex + recipes | PASS | CortexRuntime; training recipes registered ≠ trained |
 | Phase 50 — Harden | PASS | Subprocess isolation flag; neuro release/master gates |
+| Phase 51 — Neuro ops complete | PASS | Chat/context wire; absorb schedule; soak; Status UI; stubs |
 
 ---
 
