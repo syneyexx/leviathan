@@ -1,18 +1,28 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { media } from "../assets/media";
+import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
 const CATEGORIES = [
-  { id: "general", label: "General", desc: "App defaults & behavior" },
-  { id: "models", label: "Models", desc: "Runtime & load preferences" },
-  { id: "agents", label: "Agents", desc: "Autonomy & approvals" },
-  { id: "tools", label: "Tools", desc: "Capabilities & gateways" },
-  { id: "data", label: "Data", desc: "Storage & backups" },
-  { id: "notifications", label: "Notifications", desc: "Alerts & updates" },
-  { id: "performance", label: "Performance", desc: "Limits & acceleration" },
-  { id: "security", label: "Security", desc: "Access & audit" },
+  { id: "algemeen", label: "Algemeen", desc: "App defaults & behavior" },
+  { id: "llm-gedrag", label: "LLM Gedrag", desc: "Response style & limits" },
+  { id: "llm-studio", label: "LLM Studio", desc: "Studio & playground prefs" },
+  { id: "rechten", label: "Rechten & Security", desc: "Access & audit" },
+  { id: "benchmarks", label: "Model Benchmarks", desc: "Eval defaults" },
+  { id: "mediacenter", label: "Mediacenter", desc: "Media defaults" },
+  { id: "opslag", label: "Opslag", desc: "Storage & backups" },
+  { id: "python", label: "Python & Runtime", desc: "Runtime & acceleration" },
+  { id: "settings-console", label: "Console", desc: "Operator console" },
+  { id: "logs", label: "Logs", desc: "Retention & verbosity" },
 ] as const;
+
+type CategoryId = (typeof CATEGORIES)[number]["id"];
+
+function isCategoryId(value: string | null): value is CategoryId {
+  return CATEGORIES.some((item) => item.id === value);
+}
 
 const INTEGRATIONS = [
   { name: "OpenAI", status: "Connected" },
@@ -27,7 +37,9 @@ type ToggleState = Record<string, boolean>;
 
 export function SettingsPage() {
   const toast = useAppToast();
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]["id"]>("general");
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab");
+  const category: CategoryId = isCategoryId(tab) ? tab : "algemeen";
   const [appName, setAppName] = useState("LEVIATHAN");
   const [toggles, setToggles] = useState<ToggleState>({
     autoSave: true,
@@ -52,6 +64,13 @@ export function SettingsPage() {
 
   const setToggle = (key: string) => {
     setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const selectCategory = (id: CategoryId) => {
+    const next = new URLSearchParams(params);
+    if (id === "algemeen") next.delete("tab");
+    else next.set("tab", id);
+    setParams(next, { replace: true });
   };
 
   return (
@@ -86,6 +105,8 @@ export function SettingsPage() {
           </div>
         </section>
 
+        <SubMenu />
+
         <div className="lv-settings-layout">
           <aside className="lv-panel lv-settings-nav">
             {CATEGORIES.map((item) => (
@@ -93,7 +114,7 @@ export function SettingsPage() {
                 key={item.id}
                 className={`lv-settings-nav-item${category === item.id ? " is-active" : ""}`}
                 type="button"
-                onClick={() => setCategory(item.id)}
+                onClick={() => selectCategory(item.id)}
               >
                 <strong>{item.label}</strong>
                 <small>{item.desc}</small>

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { media } from "../assets/media";
+import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
@@ -169,6 +170,8 @@ export function TradingCenterPage() {
         <section className="lv-tr-hero" aria-label="Trading Center">
           <img src={media.tradingHero} alt="" width={1400} height={220} />
         </section>
+
+        <SubMenu />
 
         <section className="lv-tr-kpi-row">
           {[

@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { media } from "../assets/media";
+import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 import type { HealthResponse } from "../types/api";
-
-const TABS = ["Chat", "Code", "Research", "Analyze", "Create", "Plan", "Automate", "More"] as const;
 
 const FEATURES = [
   {
@@ -86,7 +85,6 @@ const AGENTS = [
 export function CommandPage() {
   const navigate = useNavigate();
   const toast = useAppToast();
-  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>("Chat");
   const [prompt, setPrompt] = useState("");
   const [health, setHealth] = useState<HealthResponse | null>(null);
 
@@ -144,32 +142,7 @@ export function CommandPage() {
         </section>
 
         <section className="lv-command">
-          <div className="lv-tabs" role="tablist">
-            {TABS.map((tab) => (
-              <button
-                key={tab}
-                className={`lv-tab${activeTab === tab ? " is-active" : ""}`}
-                type="button"
-                onClick={() => {
-                  setActiveTab(tab);
-                  if (tab === "Chat") return;
-                  toast(tab);
-                }}
-              >
-                {tab === "Chat" ? (
-                  <>
-                    <span className="lv-tab-dot" />
-                    Chat
-                    <svg className="lv-icon lv-tab-chev" viewBox="0 0 24 24">
-                      <path d="M7 10l5 5 5-5" />
-                    </svg>
-                  </>
-                ) : (
-                  tab
-                )}
-              </button>
-            ))}
-          </div>
+          <SubMenu />
 
           <div className="lv-prompt">
             <button

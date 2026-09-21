@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
@@ -272,9 +273,9 @@ export function ToolsPage() {
   return (
     <AppShell
       activeMode="explore"
-      modeLabel="Tools Mode"
-      searchPlaceholder="Search tools, integrations, functions..."
-      systemItems={["LLM", "Neural", "Memory", "Tools"]}
+      modeLabel="Modules Mode"
+      searchPlaceholder="Search modules, integrations, functions..."
+      systemItems={["LLM", "Neural", "Memory", "Modules"]}
       layout="wide"
       pageClass="lv-app--tools"
     >
@@ -285,7 +286,7 @@ export function ToolsPage() {
           </div>
           <div className="lv-hero-shade" />
           <div className="lv-hero-content">
-            <h1 className="lv-hero-title">Tools</h1>
+            <h1 className="lv-hero-title">Modules</h1>
             <p className="lv-hero-kicker" style={{ marginTop: 6 }}>
               Extend Capabilities. Execute Reality.
             </p>
@@ -299,6 +300,8 @@ export function ToolsPage() {
             <span>Transcend</span>
           </div>
         </section>
+
+        <SubMenu />
 
         <div className="lv-tools-toolbar">
           <div className="lv-tabs" role="tablist">

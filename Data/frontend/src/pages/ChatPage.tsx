@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { media } from "../assets/media";
 import { BrandMark, BotAvatar } from "../components/BrandMark";
+import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 import type { Conversation, ReasoningSummary } from "../types/api";
@@ -254,6 +255,7 @@ export function ChatPage() {
       </aside>
 
       <main className="lv-chat-main">
+        <SubMenu />
         <div className="lv-chat-top">
           <div className="lv-chat-title-wrap">
             <div className="lv-chat-title-row">
