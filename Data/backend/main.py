@@ -51,13 +51,14 @@ from Data.modules.neuro import (
     NeuroAdvisor,
     NeuroMemoryFacade,
     NeuroSnapshotStore,
+    NeuroSoakHarness,
     ProcessCritic,
     build_residual_runtime,
 )
 from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
-from Data.modules.training import TrainingRecipeRegistry, TrainingRegistry
+from Data.modules.training import PreferenceBridge, TrainingRecipeRegistry, TrainingRegistry
 from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
@@ -181,6 +182,8 @@ evaluation_harness = EvaluationHarness(
 isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
 training_recipes = TrainingRecipeRegistry()
+preference_bridge = PreferenceBridge(training_registry)
+neuro_soak = NeuroSoakHarness()
 browser_stub = BrowserAutomationStub()
 media_stub = MediaAutomationStub()
 voice_stub = VoiceRuntimeStub()
@@ -504,7 +507,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.50.0-phase50", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.51.0-phase51", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -715,12 +718,73 @@ async def chat(payload: ChatRequest) -> dict:
     memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
     knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
     neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
+    neuro_context: list[dict] = []
+    cortex_report = None
     if neuro.enabled:
         observability.emit(
             "neuro",
             "assess",
             payload={"signals": len(neuro.signals)},
         )
+        for signal in neuro.signals:
+            neuro_context.append(
+                {
+                    "id": signal.signal_id,
+                    "content": f"[{signal.kind} strength={signal.strength}] {signal.summary}",
+                    "status": "advisory",
+                }
+            )
+        if settings.features.neuro_memory_tiers and neuro_memory.enabled:
+            try:
+                neuro_memory.write_working(
+                    message[:800],
+                    tags=("chat_turn",),
+                    metadata={"run_id": run.run_id, "conversation_id": conversation_id},
+                )
+            except (RuntimeError, ValueError):
+                pass
+            bundle = neuro_memory.retrieve(message, tiers=(0, 1, 2), limit_per_tier=3)
+            for hit in bundle.hits:
+                memory_hits.append(
+                    {
+                        "memory_id": hit.ref_id,
+                        "content": f"[tier{hit.tier}] {hit.content}",
+                        "status": "ACTIVE",
+                        "kind": f"neuro_tier_{hit.tier}",
+                    }
+                )
+        if settings.features.neuro_cortex:
+            engagement = next((s for s in neuro.signals if s.kind == "cortex_engagement"), None)
+            depth = 0
+            critic_rounds = 0
+            if engagement is not None:
+                depth = int((engagement.provenance or {}).get("depth") or 0)
+                critic_rounds = int((engagement.provenance or {}).get("critic_rounds") or 0)
+            if depth > 0 or residual_runtime.supports_residuals():
+                report = cortex_runtime.run(
+                    messages=[{"role": "user", "content": message}],
+                    depth=max(depth, 1 if residual_runtime.supports_residuals() else 0),
+                    critic_rounds=critic_rounds,
+                    knowledge_ids=knowledge_ids,
+                    plan_steps=list(plan.steps),
+                )
+                cortex_report = report.public_dict()
+                observability.emit(
+                    "neuro",
+                    "cortex_engagement",
+                    payload={"engaged": report.engaged, "degraded": report.degraded},
+                )
+                metrics.incr("neuro_cortex_runs")
+                neuro_context.append(
+                    {
+                        "id": f"cortex-{run.run_id}",
+                        "content": (
+                            f"[cortex engaged={report.engaged} depth={report.depth} "
+                            f"degraded={report.degraded}] {report.detail}"
+                        ),
+                        "status": "advisory",
+                    }
+                )
 
     runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     try:
@@ -729,6 +793,7 @@ async def chat(payload: ChatRequest) -> dict:
             knowledge=knowledge_hits,
             plan=plan,
             memory=memory_hits,
+            neuro=neuro_context or None,
         )
     except LLMUnavailable as exc:
         runs.transition(run.run_id, RunState.FAILED, error=str(exc))
@@ -767,6 +832,7 @@ async def chat(payload: ChatRequest) -> dict:
         ],
         "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
         "neuro": neuro.public_dict(),
+        "cortex": cortex_report,
     }
 
 
@@ -1766,6 +1832,78 @@ def neuro_absorb_scan(payload: NeuroAbsorbRequest) -> dict:
     return result
 
 
+class NeuroAbsorbScheduleRequest(BaseModel):
+    interval_seconds: int = Field(default=3600, ge=60, le=86400)
+    limit: int = Field(default=50, ge=1, le=5000)
+    approval_id: str = Field(min_length=1, max_length=120)
+    name: str = Field(default="neuro-modeldata-absorb", min_length=1, max_length=120)
+
+
+@app.post("/api/neuro/absorb/schedule")
+def neuro_absorb_schedule(payload: NeuroAbsorbScheduleRequest) -> dict:
+    """Create an interval Job schedule for knowledge.ingest_scan (WRITE → approval required)."""
+    if not approval_service.is_approved(
+        payload.approval_id,
+        capability_id="knowledge.ingest_scan",
+        side_effects=capability_catalog.require("knowledge.ingest_scan").side_effects,
+    ):
+        raise HTTPException(status_code=403, detail="approval_id not valid for knowledge.ingest_scan")
+    record = schedule_store.create(
+        name=payload.name,
+        target_kind=ScheduleTargetKind.JOB,
+        target_ref="knowledge.ingest_scan",
+        interval_seconds=payload.interval_seconds,
+        target_payload={
+            "arguments": {"limit": payload.limit},
+            "approval_id": payload.approval_id,
+        },
+        metadata={"neuro_absorb": True, "uses_knowledge_v2": True},
+    )
+    observability.emit(
+        "neuro",
+        "absorb_schedule",
+        payload={"schedule_id": record.schedule_id, "interval_seconds": payload.interval_seconds},
+    )
+    return {
+        "schedule": record.public_dict(),
+        "truth": {
+            "schedule_is_not_authority": True,
+            "write_still_requires_approval": True,
+            "no_parallel_ingest_pipeline": True,
+        },
+    }
+
+
+class NeuroSoakRequest(BaseModel):
+    iterations: int = Field(default=3, ge=1, le=20)
+
+
+@app.post("/api/neuro/soak")
+def neuro_soak_run(payload: NeuroSoakRequest) -> dict:
+    """Mini local soak for neuro contracts — not a production SLO claim."""
+
+    def _assess() -> str:
+        result = neuro_advisor.assess("soak probe delete risk", plan=reasoner.analyze("soak", False))
+        return f"signals={len(result.signals)} enabled={result.enabled}"
+
+    def _residual() -> str:
+        return f"supports={residual_runtime.supports_residuals()} kind={settings.neuro_runtime.residual_kind}"
+
+    def _modules() -> str:
+        return f"enabled={module_manager.enabled} count={len(module_manager.list())}"
+
+    report = neuro_soak.run(
+        iterations=payload.iterations,
+        steps=[
+            ("neuro_assess", _assess),
+            ("residual_port", _residual),
+            ("module_manager", _modules),
+        ],
+    )
+    metrics.incr("neuro_soak_runs")
+    return {"report": report.public_dict()}
+
+
 @app.post("/api/neuro/contrastive")
 def neuro_contrastive_retrieve(payload: NeuroAssessRequest) -> dict:
     report = neuro_contrastive.retrieve(payload.text)
@@ -1949,6 +2087,30 @@ def list_training() -> dict:
 @app.get("/api/training/recipes")
 def list_training_recipes() -> dict:
     return {"recipes": [item.public_dict() for item in training_recipes.list()]}
+
+
+class PreferenceFromVerificationRequest(BaseModel):
+    limit: int = Field(default=20, ge=1, le=200)
+    recipe_id: str = Field(default="pref_dpo_v1", min_length=1, max_length=80)
+
+
+@app.post("/api/training/preferences/from-verification")
+def training_preferences_from_verification(payload: PreferenceFromVerificationRequest) -> dict:
+    if training_recipes.get(payload.recipe_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown recipe: {payload.recipe_id}")
+    reports = verification_reports.list(limit=payload.limit)
+    jobs = preference_bridge.register_from_verification_reports(
+        reports,
+        recipe_id=payload.recipe_id,
+    )
+    return {
+        "registered": [item.public_dict() for item in jobs],
+        "source_reports": len(reports),
+        "truth": {
+            "registered_is_not_trained": True,
+            "preference_labels_not_fabricated": True,
+        },
+    }
 
 
 @app.post("/api/training")

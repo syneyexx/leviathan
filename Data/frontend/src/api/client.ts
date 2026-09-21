@@ -7,8 +7,12 @@ import type {
   MasterGateReport,
   Message,
   MetricsSnapshot,
+  NeuroAssessmentResponse,
+  NeuroResidualStatus,
   ReleaseGateReport,
   SecurityAuditReport,
+  SoakReport,
+  TrainingRecipe,
   VerificationReport,
 } from "../types/api";
 
@@ -140,5 +144,44 @@ export const api = {
 
   telemetry(): Promise<{ events: unknown[]; snapshot?: unknown }> {
     return request<{ events: unknown[]; snapshot?: unknown }>("/api/telemetry");
+  },
+
+  neuroAssess(text: string): Promise<NeuroAssessmentResponse> {
+    return request<NeuroAssessmentResponse>("/api/neuro/assess", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+  },
+
+  neuroResidual(): Promise<NeuroResidualStatus> {
+    return request<NeuroResidualStatus>("/api/neuro/residual");
+  },
+
+  neuroAbsorb(limit = 50): Promise<{ ingested: number; truth?: Record<string, boolean> }> {
+    return request<{ ingested: number; truth?: Record<string, boolean> }>("/api/neuro/absorb", {
+      method: "POST",
+      body: JSON.stringify({ limit }),
+    });
+  },
+
+  neuroSoak(iterations = 3): Promise<{ report: SoakReport }> {
+    return request<{ report: SoakReport }>("/api/neuro/soak", {
+      method: "POST",
+      body: JSON.stringify({ iterations }),
+    });
+  },
+
+  neuroEvaluation(): Promise<{ report: unknown }> {
+    return request<{ report: unknown }>("/api/evaluation/neuro", { method: "POST" });
+  },
+
+  listModules(): Promise<{ enabled?: boolean; modules?: unknown[]; truth?: Record<string, boolean> }> {
+    return request<{ enabled?: boolean; modules?: unknown[]; truth?: Record<string, boolean> }>(
+      "/api/modules",
+    );
+  },
+
+  listTrainingRecipes(): Promise<{ recipes: TrainingRecipe[] }> {
+    return request<{ recipes: TrainingRecipe[] }>("/api/training/recipes");
   },
 };

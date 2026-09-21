@@ -3,6 +3,8 @@
 from .adapters import (
     DeterministicResidualRuntime,
     HFTransformersResidualAdapter,
+    LlamaCppResidualAdapter,
+    VllmResidualAdapter,
     build_residual_runtime,
 )
 from .advisor import NeuroAdvisor
@@ -21,6 +23,7 @@ from .residual import (
     ResidualTensorRef,
     UnsupportedResidualRuntime,
 )
+from .soak import NeuroSoakHarness, SoakReport, SoakStepResult
 from .snapshots import (
     ContrastiveRetrievalHead,
     ContrastiveRetrievalReport,
@@ -41,6 +44,7 @@ __all__ = [
     "CriticScore",
     "DeterministicResidualRuntime",
     "HFTransformersResidualAdapter",
+    "LlamaCppResidualAdapter",
     "MemorySnapshot",
     "NeuroAbsorbService",
     "NeuroAdvisor",
@@ -50,6 +54,7 @@ __all__ = [
     "NeuroMemoryHit",
     "NeuroSignal",
     "NeuroSnapshotStore",
+    "NeuroSoakHarness",
     "ProcessCritic",
     "ResidualForwardRequest",
     "ResidualForwardResult",
@@ -59,7 +64,10 @@ __all__ = [
     "ResidualReadRequest",
     "ResidualStreamPort",
     "ResidualTensorRef",
+    "SoakReport",
+    "SoakStepResult",
     "UnsupportedResidualRuntime",
+    "VllmResidualAdapter",
     "WorkingMemoryBuffer",
     "build_residual_runtime",
 ]

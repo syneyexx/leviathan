@@ -499,6 +499,8 @@ Every major block behind a flag; health `public_summary` lists flag states (neve
 
 ### Phase 50 — Production harden — **DONE** (subprocess flag + neuro gates; long-soak SLO NOT TESTED in CI)
 
+### Phase 51 — Operational completion — **DONE** (chat/context/schedule/soak/UI; weight-backed GPU residuals still NOT claimed)
+
 ---
 
 ## 14. Recommended next concrete code changes (repo)

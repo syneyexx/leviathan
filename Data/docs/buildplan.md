@@ -6,6 +6,35 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 51 — Neuro Layer operational completion — PASS
+
+### Objective
+Close remaining Neuro Layer gaps: chat/context integration, scheduled absorb, preference bridge, soak harness, frontend operator surfaces, vLLM/llama stubs.
+
+### Added / changed
+- ContextBuilder `neuro` section (advisory-only labeling)
+- Chat path wires neuro signals + memory tiers + optional CortexRuntime into LLM context
+- `POST /api/neuro/absorb/schedule` (Job → `knowledge.ingest_scan` with approval_id)
+- `POST /api/neuro/soak` mini soak harness (explicitly not production SLO)
+- `POST /api/training/preferences/from-verification` via PreferenceBridge
+- Residual stubs: `VllmResidualAdapter`, `LlamaCppResidualAdapter` (honest unsupported)
+- Frontend: neuro API client methods + Status page Neuro panel + mini soak
+- Master phase_span `0-51`; version `0.51.0-phase51`
+
+### Tests
+- Full backend suite → **PASS (135)**
+- Frontend typecheck/test after `npm install`
+
+### Still not claimed
+- HF/vLLM/llama weight-backed residual inject
+- Multi-hour power/HBM SLO measurement
+- Automatic preference label fabrication
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-21 — Phases 47–50 — Neuro Layer production path — PASS
 
 ### Phase 47 — Residual adapter #1 + critic-on-residual + ablations

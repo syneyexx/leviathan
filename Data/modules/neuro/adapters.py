@@ -264,6 +264,108 @@ class HFTransformersResidualAdapter:
         )
 
 
+@dataclass
+class VllmResidualAdapter:
+    """vLLM residual adapter placeholder — honest until hooks plugin is wired."""
+
+    endpoint: str | None = None
+
+    def supports_residuals(self) -> bool:
+        return False
+
+    def runtime_info(self) -> dict[str, Any]:
+        return {
+            "kind": "vllm",
+            "production_grade": False,
+            "endpoint": self.endpoint,
+            "available": False,
+            "truth": {"adapter_stub_only": True, "residual_injection_is_not_authority": True},
+        }
+
+    def list_hook_points(self) -> Sequence[ResidualHookPoint]:
+        return ()
+
+    def read(self, request: ResidualReadRequest) -> ResidualTensorRef:
+        return ResidualTensorRef(
+            hook=request.hook,
+            dtype="none",
+            shape=(),
+            available=False,
+            note="vLLM residual hooks not wired",
+            metadata=self.runtime_info(),
+        )
+
+    def inject(self, request: ResidualInjectRequest) -> ResidualInjectReceipt:
+        return ResidualInjectReceipt(
+            implemented=False,
+            mode=request.mode,
+            hook=request.hook,
+            applied=False,
+            detail="vLLM residual adapter stub — not implemented",
+        )
+
+    def run_forward(self, request: ResidualForwardRequest) -> ResidualForwardResult:
+        return ResidualForwardResult(
+            implemented=False,
+            text=None,
+            degraded_to_chat_completions=True,
+            detail="vLLM residual forward unavailable — degrade to chat completions",
+            receipts=tuple(self.inject(item) for item in request.inject),
+            metadata=self.runtime_info(),
+        )
+
+
+@dataclass
+class LlamaCppResidualAdapter:
+    """llama.cpp residual adapter placeholder — honest until custom server exposes hooks."""
+
+    model_path: str | None = None
+
+    def supports_residuals(self) -> bool:
+        return False
+
+    def runtime_info(self) -> dict[str, Any]:
+        return {
+            "kind": "llama_cpp",
+            "production_grade": False,
+            "model_path": self.model_path,
+            "available": False,
+            "truth": {"adapter_stub_only": True, "residual_injection_is_not_authority": True},
+        }
+
+    def list_hook_points(self) -> Sequence[ResidualHookPoint]:
+        return ()
+
+    def read(self, request: ResidualReadRequest) -> ResidualTensorRef:
+        return ResidualTensorRef(
+            hook=request.hook,
+            dtype="none",
+            shape=(),
+            available=False,
+            note="llama.cpp residual hooks not wired",
+            metadata=self.runtime_info(),
+        )
+
+    def inject(self, request: ResidualInjectRequest) -> ResidualInjectReceipt:
+        return ResidualInjectReceipt(
+            implemented=False,
+            mode=request.mode,
+            hook=request.hook,
+            applied=False,
+            detail="llama.cpp residual adapter stub — not implemented",
+        )
+
+    def run_forward(self, request: ResidualForwardRequest) -> ResidualForwardResult:
+        return ResidualForwardResult(
+            implemented=False,
+            text=None,
+            degraded_to_chat_completions=True,
+            detail="llama.cpp residual forward unavailable — degrade to chat completions",
+            receipts=tuple(self.inject(item) for item in request.inject),
+            metadata=self.runtime_info(),
+        )
+
+
 def build_residual_runtime(
     *,
     kind: str = "unsupported",
@@ -278,6 +380,10 @@ def build_residual_runtime(
         return DeterministicResidualRuntime(n_layers=n_layers, hidden_size=hidden_size)
     if normalized in {"hf", "transformers", "huggingface"}:
         return HFTransformersResidualAdapter(model_id=model_id, device=device)
+    if normalized in {"vllm"}:
+        return VllmResidualAdapter(endpoint=model_id)
+    if normalized in {"llama_cpp", "llamacpp", "llama.cpp"}:
+        return LlamaCppResidualAdapter(model_path=model_id)
     from .residual import UnsupportedResidualRuntime
 
     return UnsupportedResidualRuntime()

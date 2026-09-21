@@ -442,7 +442,19 @@ class Settings:
                 "LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS requires LEVIATHAN_FEATURE_MODULE_MANAGER=true"
             )
         kind = self.neuro_runtime.residual_kind
-        if kind not in {"unsupported", "deterministic", "toy", "deterministic_toy", "hf", "transformers", "huggingface"}:
+        if kind not in {
+            "unsupported",
+            "deterministic",
+            "toy",
+            "deterministic_toy",
+            "hf",
+            "transformers",
+            "huggingface",
+            "vllm",
+            "llama_cpp",
+            "llamacpp",
+            "llama.cpp",
+        }:
             raise ConfigurationError(
                 f"LEVIATHAN_NEURO_RESIDUAL_KIND invalid: {kind!r}"
             )
