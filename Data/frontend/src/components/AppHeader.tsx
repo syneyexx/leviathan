@@ -3,11 +3,13 @@ import { useClock } from "../hooks/useClock";
 
 type AppHeaderProps = {
   searchPlaceholder?: string;
+  modeLabel?: string;
   onMenuClick: () => void;
 };
 
 export function AppHeader({
   searchPlaceholder = "Search anything...",
+  modeLabel = "Serenity Mode",
   onMenuClick,
 }: AppHeaderProps) {
   const clock = useClock();
@@ -36,7 +38,7 @@ export function AppHeader({
       <div className="lv-clock" aria-live="polite">
         <div className="lv-clock-date">{clock.date}</div>
         <div className="lv-clock-time">{clock.time}</div>
-        <div className="lv-clock-mode">Serenity Mode</div>
+        <div className="lv-clock-mode">{modeLabel}</div>
       </div>
 
       <div className="lv-systems">

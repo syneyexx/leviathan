@@ -7,11 +7,22 @@ import { useAppToast } from "../state/useAppToast";
 type ShellProps = {
   activeMode: "explore" | "chat";
   searchPlaceholder?: string;
+  modeLabel?: string;
+  layout?: "standard" | "wide";
+  pageClass?: string;
   chatApp?: boolean;
   children: ReactNode;
 };
 
-export function AppShell({ activeMode, searchPlaceholder, chatApp = false, children }: ShellProps) {
+export function AppShell({
+  activeMode,
+  searchPlaceholder,
+  modeLabel,
+  layout = "standard",
+  pageClass,
+  chatApp = false,
+  children,
+}: ShellProps) {
   const toast = useAppToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -33,10 +44,20 @@ export function AppShell({ activeMode, searchPlaceholder, chatApp = false, child
     toast(`${label} is reserved for a later Leviathan step.`);
   };
 
+  const appClass = [
+    "lv-app",
+    chatApp ? "lv-chat-app" : "",
+    layout === "wide" ? "lv-app--wide" : "",
+    pageClass ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`lv-app${chatApp ? " lv-chat-app" : ""}`}>
+    <div className={appClass}>
       <AppHeader
         searchPlaceholder={searchPlaceholder}
+        modeLabel={modeLabel}
         onMenuClick={() => setSidebarOpen((value) => !value)}
       />
       <div className="lv-body">

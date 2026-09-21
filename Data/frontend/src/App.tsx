@@ -1,7 +1,11 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { BrainPage } from "./pages/BrainPage";
 import { ChatPage } from "./pages/ChatPage";
 import { CommandPage } from "./pages/CommandPage";
+import { ModelsPage } from "./pages/ModelsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { StatusPage } from "./pages/StatusPage";
+import { TrainingPage } from "./pages/TrainingPage";
 
 export default function App() {
   return (
@@ -9,6 +13,10 @@ export default function App() {
       <Route path="/" element={<CommandPage />} />
       <Route path="/status" element={<StatusPage />} />
       <Route path="/chat" element={<ChatPage />} />
+      <Route path="/brain" element={<BrainPage />} />
+      <Route path="/models" element={<ModelsPage />} />
+      <Route path="/training" element={<TrainingPage />} />
+      <Route path="/settings" element={<SettingsPage />} />
       <Route path="/chat.html" element={<Navigate to="/chat" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
