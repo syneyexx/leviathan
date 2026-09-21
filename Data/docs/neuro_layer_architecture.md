@@ -489,41 +489,15 @@ Every major block behind a flag; health `public_summary` lists flag states (neve
 
 ## 13. Phased implementation plan
 
-### Phase 46 — MVP contracts (THIS DELIVERY)
+### Phase 46 — MVP contracts — **DONE**
 
-- Architecture doc (this file)
-- `ILeviathanModule` + ModuleManager discover/load/init/execute/shutdown
-- ResidualStreamPort + Unsupported adapter
-- NeuroMemoryFacade (Tier0 + Tier1/2 wiring)
-- CortexPlanner + ProcessCritic contracts
-- Feature flags + APIs + tests
-- Docs: buildplan / system / cursor
+### Phase 47 — Residual adapter #1 — **DONE** (deterministic toy VERIFIED; HF weights NOT loaded)
 
-**Explicitly NOT in Phase 46:** real GPU residual hooks, LoRA training loops, subprocess isolation, production APM.
+### Phase 48 — Memory tier hardening — **DONE**
 
-### Phase 47 — Residual adapter #1
+### Phase 49 — Cortex + training recipes — **DONE** (recipes registered; trainer execution still stub)
 
-- Choose one local runtime with real hooks (likely HF in-proc or vLLM plugin)
-- Wire read/inject + critic-on-residual
-- Ablation harness entries
-
-### Phase 48 — Memory tier hardening
-
-- Episodic decision memory UX + snapshot/restore
-- Continuous ModelData absorb scheduler via existing Jobs/Schedules
-- Contrastive retrieval head (when embeddings real)
-
-### Phase 49 — Cortex + training recipes
-
-- Cortex block implementation against ResidualPort
-- Training recipes registered; optional local trainer backend
-- Preference data from Verification outcomes
-
-### Phase 50 — Production harden
-
-- Subprocess isolation for untrusted plugins
-- Release/Master gates for neuro posture
-- Long-soak reliability + power/latency SLOs
+### Phase 50 — Production harden — **DONE** (subprocess flag + neuro gates; long-soak SLO NOT TESTED in CI)
 
 ---
 

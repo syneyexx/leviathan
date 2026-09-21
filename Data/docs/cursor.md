@@ -109,12 +109,12 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/workflows/` | WorkflowStore / WorkflowRuntime |
 | `Data/modules/schedules/` | ScheduleStore / ScheduleRunner |
 | `Data/modules/observability/` | ObservabilityHub |
-| `Data/modules/neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers |
-| `Data/modules/module_manager/` | Universal Module Manager (`ILeviathanModule`) |
+| `Data/modules/neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers/adapters/snapshots |
+| `Data/modules/module_manager/` | Universal Module Manager (`ILeviathanModule` + optional subprocess) |
 | `Data/modules/plugins/` | PluginRegistry / MCP stubs (bindings only) |
-| `Data/modules/evaluation/` | EvaluationHarness |
+| `Data/modules/evaluation/` | EvaluationHarness (+ neuro ablation suite) |
 | `Data/modules/isolation/` | IsolationGuard |
-| `Data/modules/training/` | TrainingRegistry stub |
+| `Data/modules/training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `Data/modules/browser/` | BrowserAutomationStub |
 | `Data/modules/media/` | MediaAutomationStub |
 | `Data/modules/voice/` | VoiceRuntimeStub |
@@ -255,6 +255,6 @@ SQLite persistence
 
 # Immediate capability boundary
 
-**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, reasoning, Run/Artifact/Knowledge V2, Function Runtime, Execution Gateway, Approvals, Jobs, Observations, Evidence, Memory, Verification (durable reports), Agents (flagged), Workflows, Schedules, Observability, Neuro (advisory + Phase 46 contracts), Universal Module Manager (flagged), Plugins/MCP stub, Evaluation, Isolation, Training/Browser/Media/Voice/Native/Trading stubs, Release + Security + Master gates, Backup/restore, Metrics, Chaos (OFF), operator Status page.
+**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, reasoning, Run/Artifact/Knowledge V2, Function Runtime, Execution Gateway, Approvals, Jobs, Observations, Evidence, Memory, Verification (durable reports), Agents (flagged), Workflows, Schedules, Observability, Neuro Layer 46–50 (advisory + deterministic residual toy + snapshots/absorb/recipes), Universal Module Manager (flagged; optional subprocess), Plugins/MCP stub, Evaluation (+ neuro ablations), Isolation, Training/Browser/Media/Voice/Native/Trading stubs, Release + Security + Master gates, Backup/restore, Metrics, Chaos (OFF), operator Status page.
 
-**Not claimed:** production certification, live trading fills, real browser/media/voice automation, native runtime, cloud backup sync, APM, penetration testing, real residual-stream GPU injection.
+**Not claimed:** production certification, live trading fills, real browser/media/voice automation, native runtime, cloud backup sync, APM, penetration testing, weight-backed HF residual injection, frontier GPU residual hooks.

@@ -6,6 +6,50 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phases 47–50 — Neuro Layer production path — PASS
+
+### Phase 47 — Residual adapter #1 + critic-on-residual + ablations
+- `DeterministicResidualRuntime` (toy, `production_grade=false`) + `HFTransformersResidualAdapter` (config-only readiness)
+- `build_residual_runtime(kind=unsupported|deterministic|hf)`
+- `ProcessCritic.score_residual` + `CortexRuntime` mid-forward critic loops
+- EvaluationHarness `neuro_ablation_suite` — unsupported residual ⇒ **UNMEASURED** not PASSED
+- Config: `LEVIATHAN_NEURO_RESIDUAL_KIND|MODEL|DEVICE`
+
+### Phase 48 — Memory tier hardening + ModelData absorb
+- Migration **v12** `neuro_memory_snapshots` (central DB)
+- `NeuroSnapshotStore` + facade `snapshot`/`restore` for Tier 0/1
+- `NeuroAbsorbService` → Knowledge V2 `scan_data_root` (no parallel ingest)
+- Capability `knowledge.ingest_scan` (WRITE → approvals required)
+- `ContrastiveRetrievalHead` lexical proxy; vector path honest UNMEASURED
+- APIs: `/api/neuro/absorb`, `/api/neuro/memory/snapshot*`, `/api/neuro/contrastive`
+
+### Phase 49 — Cortex + training recipes
+- `CortexRuntime` against ResidualStreamPort
+- `TrainingRecipeRegistry` with process supervision / DPO / InfoNCE / synthetic / joint recipes
+- API: `GET /api/training/recipes`, `POST /api/neuro/cortex/run`
+- registered ≠ trained preserved
+
+### Phase 50 — Production harden
+- Module Manager `SUBPROCESS` isolation via `SubprocessModuleExecutor` + flag `MODULE_MANAGER_SUBPROCESS`
+- Release gates: neuro residual posture WARN; subprocess INFO; catalog includes ingest_scan
+- Master gate: neuro residual DEGRADED when flag ON without support
+- App version `0.50.0-phase50`
+
+### Tests / verification
+- Full backend suite → **PASS (131)**
+- New: `test_neuro_phases_47_50.py`
+
+### Explicitly NOT claimed
+- HF weight-backed residual inject/forward (config-only)
+- Production-grade GPU residuals / frontier model hooks
+- Real contrastive embedding training metrics
+- Continuous soak under load as measured SLO (counters exist; long-soak NOT TESTED in CI)
+
+### Status
+**PASS** (47–50) — Neuro Layer phased MVP→harden complete for local contracts
+
+---
+
 ## 2026-09-21 — Phase 46 — Frontier Neuro Layer MVP + Universal Module Manager — PASS
 
 ### Objective

@@ -133,6 +133,26 @@ class WorkingMemoryBuffer:
         with self._lock:
             return [self._slots[sid].public_dict() for sid in self._order if sid in self._slots]
 
+    def clear(self) -> None:
+        with self._lock:
+            self._slots.clear()
+            self._order.clear()
+
+    def load_slots(self, items: Sequence[dict[str, Any]]) -> int:
+        loaded = 0
+        self.clear()
+        for item in items:
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            self.write(
+                content,
+                tags=item.get("tags") or (),
+                metadata=item.get("metadata") or {},
+            )
+            loaded += 1
+        return loaded
+
 
 class NeuroMemoryFacade:
     """Orchestrates Tier 0–2 without forking MemoryStore or KnowledgeStore."""
@@ -144,12 +164,14 @@ class NeuroMemoryFacade:
         memory_store: MemoryStore | None = None,
         knowledge_store: KnowledgeStore | None = None,
         knowledge_retriever: HybridRetriever | None = None,
+        snapshot_store: Any | None = None,
         working_capacity: int = 64,
     ) -> None:
         self.enabled = enabled
         self.memory_store = memory_store
         self.knowledge_store = knowledge_store
         self.knowledge_retriever = knowledge_retriever
+        self.snapshot_store = snapshot_store
         self.working = WorkingMemoryBuffer(capacity=working_capacity)
 
     def write_working(self, content: str, **kwargs: Any) -> WorkingSlot:
@@ -296,3 +318,67 @@ class NeuroMemoryFacade:
             source="neuro.memory_facade",
             payload_ref=top.ref_id,
         )
+
+    def snapshot(self, tier: int, label: str) -> Any:
+        if not self.enabled:
+            raise RuntimeError("Neuro memory tiers feature flag OFF")
+        if self.snapshot_store is None:
+            raise RuntimeError("NeuroSnapshotStore not configured")
+        if tier == 0:
+            payload = {"working": self.working.snapshot()}
+        elif tier == 1:
+            if self.memory_store is None:
+                raise RuntimeError("MemoryStore unavailable for Tier 1 snapshot")
+            items = self.memory_store.list(limit=200)
+            payload = {
+                "memories": [
+                    {
+                        "memory_id": item.memory_id,
+                        "kind": item.kind.value,
+                        "content": item.content,
+                        "trust": item.trust,
+                        "tags": list(item.tags),
+                    }
+                    for item in items
+                ]
+            }
+        else:
+            raise ValueError("Only Tier 0/1 snapshots supported (Tier 2 uses Knowledge versions)")
+        return self.snapshot_store.save(label=label, tier=tier, payload=payload)
+
+    def restore(self, snapshot_id: str) -> Any:
+        if not self.enabled:
+            raise RuntimeError("Neuro memory tiers feature flag OFF")
+        if self.snapshot_store is None:
+            raise RuntimeError("NeuroSnapshotStore not configured")
+        snap = self.snapshot_store.get(snapshot_id)
+        if snap is None:
+            raise KeyError(f"Unknown snapshot: {snapshot_id}")
+        if snap.tier == 0:
+            self.working.load_slots(snap.payload.get("working") or [])
+        elif snap.tier == 1:
+            if self.memory_store is None:
+                raise RuntimeError("MemoryStore unavailable for Tier 1 restore")
+            for item in snap.payload.get("memories") or []:
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                kind_raw = str(item.get("kind") or MemoryKind.EPISODIC.value)
+                try:
+                    kind = MemoryKind(kind_raw)
+                except ValueError:
+                    kind = MemoryKind.EPISODIC
+                try:
+                    self.memory_store.create(
+                        content=content,
+                        kind=kind,
+                        trust=str(item.get("trust") or "imported"),
+                        source="neuro.snapshot_restore",
+                        tags=item.get("tags") or [],
+                        metadata={"restored_from": snapshot_id},
+                    )
+                except ValueError:
+                    continue
+        else:
+            raise ValueError("Tier 2 restore not supported via neuro snapshots")
+        return snap

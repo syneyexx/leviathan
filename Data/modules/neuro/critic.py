@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from .types import NeuroSignal
+from .residual import ResidualTensorRef
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,50 @@ class ProcessCritic:
             factual_grounding=factual_grounding,
             method=method,
             notes=("heuristic critic — residual tensors not required for this path",),
+        )
+
+    def score_residual(
+        self,
+        tensor: ResidualTensorRef,
+        *,
+        plan_steps: Sequence[str] | None = None,
+        knowledge_ids: Sequence[str] | None = None,
+        evidence_ids: Sequence[str] | None = None,
+    ) -> CriticScore:
+        """Score using residual tensor availability/stats when present."""
+        if not self.enabled:
+            return CriticScore(
+                consistency=0.0,
+                goal_progress=0.0,
+                factual_grounding=0.0,
+                method="disabled",
+                notes=("process critic feature flag OFF",),
+            )
+        if not tensor.available:
+            return CriticScore(
+                consistency=0.3,
+                goal_progress=0.3,
+                factual_grounding=0.2,
+                method="residual_unavailable",
+                notes=(tensor.note or "residual tensor unavailable",),
+            )
+        meta = tensor.metadata or {}
+        norm = float(meta.get("norm") or 0.0)
+        # Bounded heuristic on residual energy — advisory only.
+        consistency = max(0.0, min(1.0, 1.0 - abs(norm - 1.0) / 5.0))
+        goal_progress = 0.5 if plan_steps else 0.4
+        if knowledge_ids or evidence_ids:
+            factual_grounding = 0.55
+            method = "residual_stats_with_id_context"
+        else:
+            factual_grounding = 0.35
+            method = "residual_stats_ungrounded"
+        return CriticScore(
+            consistency=round(consistency, 3),
+            goal_progress=goal_progress,
+            factual_grounding=factual_grounding,
+            method=method,
+            notes=(f"hook={tensor.hook.name}", "critic_on_residual advisory"),
         )
 
     def as_signal(self, score: CriticScore) -> NeuroSignal:

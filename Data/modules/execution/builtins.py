@@ -92,6 +92,25 @@ def build_default_catalog() -> CapabilityCatalog:
     )
     catalog.register(
         CapabilityDefinition(
+            id="knowledge.ingest_scan",
+            name="Ingest ModelData Scan",
+            description="Incremental Knowledge V2 scan of configured ModelData root.",
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.KNOWLEDGE,
+            provider_ref="ingest_scan",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "limit": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("knowledge.write",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
             id="artifact.create_text",
             name="Create Text Artifact",
             description="Create a text artifact on disk with metadata.",

@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .discovery import ManifestError, discover_manifest_paths, load_manifest_file
+from .subprocess_exec import SubprocessModuleExecutor
 from .types import (
     ILeviathanModule,
     ModuleContext,
     ModuleHealth,
+    ModuleIsolation,
     ModuleManifest,
     ModuleResult,
     ModuleStatus,
@@ -58,8 +60,10 @@ class ModuleManager:
     discovery_roots: tuple[Path, ...]
     execute_timeout_seconds: float = 30.0
     enabled: bool = True
+    allow_subprocess_isolation: bool = False
     _modules: dict[str, ManagedModule] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
+    _last_context: ModuleContext | None = field(default=None, repr=False)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
             "discovered": 0,
@@ -68,6 +72,7 @@ class ModuleManager:
             "execute_calls": 0,
             "execute_failures": 0,
             "reload_attempts": 0,
+            "subprocess_executes": 0,
             "errors": 0,
         }
     )
@@ -149,8 +154,10 @@ class ModuleManager:
             self.load(module_id)
             managed = self._require(module_id)
         assert managed.instance is not None
+        context = ctx or ModuleContext()
+        self._last_context = context
         try:
-            managed.instance.initialize(ctx or ModuleContext())
+            managed.instance.initialize(context)
             managed.status = ModuleStatus.READY
             managed.error = None
             self.telemetry["initialized"] += 1
@@ -174,6 +181,40 @@ class ModuleManager:
         managed.status = ModuleStatus.EXECUTING
         started = time.perf_counter()
         args = dict(arguments or {})
+
+        # Phase 50: optional subprocess isolation for untrusted plugins.
+        if (
+            managed.manifest.isolation == ModuleIsolation.SUBPROCESS
+            and self.allow_subprocess_isolation
+        ):
+            self.telemetry["subprocess_executes"] += 1
+            executor = SubprocessModuleExecutor(timeout_seconds=self.execute_timeout_seconds)
+            ctx = self._last_context or ModuleContext()
+            raw = executor.execute(
+                entrypoint=managed.manifest.entrypoint,
+                operation=operation,
+                arguments=args,
+                context={
+                    "database_path": ctx.database_path,
+                    "data_root": ctx.data_root,
+                    "feature_flags": dict(ctx.feature_flags),
+                    "metadata": dict(ctx.metadata),
+                },
+            )
+            status = str(raw.get("status") or "FAILED")
+            result = ModuleResult(
+                module_id=module_id,
+                operation=operation,
+                status=status,
+                output=raw.get("output") if isinstance(raw.get("output"), dict) else raw,
+                error=raw.get("error"),
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            managed.last_result = result
+            managed.status = ModuleStatus.READY if status in {"COMPLETED", "OK", "SUCCESS"} else ModuleStatus.ERROR
+            if managed.status == ModuleStatus.ERROR:
+                self.telemetry["execute_failures"] += 1
+            return result
 
         def _call() -> ModuleResult:
             assert managed.instance is not None

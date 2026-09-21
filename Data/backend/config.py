@@ -139,7 +139,16 @@ class FeatureFlags:
     neuro_cortex: bool
     neuro_memory_tiers: bool
     module_manager_enabled: bool
+    module_manager_subprocess: bool
     agents_enabled: bool
+
+
+@dataclass(frozen=True)
+class NeuroRuntimeSettings:
+    residual_kind: str  # unsupported | deterministic | hf
+    residual_model_id: str | None
+    residual_device: str
+    absorb_default_limit: int
 
 
 @dataclass(frozen=True)
@@ -195,6 +204,7 @@ class Settings:
     knowledge: KnowledgeSettings
     reasoning: ReasoningSettings
     features: FeatureFlags
+    neuro_runtime: NeuroRuntimeSettings
     resources: ResourceLimits
     context: ContextSettings
     network: NetworkSettings
@@ -263,7 +273,14 @@ class Settings:
                 "neuro_cortex": self.features.neuro_cortex,
                 "neuro_memory_tiers": self.features.neuro_memory_tiers,
                 "module_manager_enabled": self.features.module_manager_enabled,
+                "module_manager_subprocess": self.features.module_manager_subprocess,
                 "agents_enabled": self.features.agents_enabled,
+            },
+            "neuro_runtime": {
+                "residual_kind": self.neuro_runtime.residual_kind,
+                "residual_model_id": self.neuro_runtime.residual_model_id,
+                "residual_device": self.neuro_runtime.residual_device,
+                "absorb_default_limit": self.neuro_runtime.absorb_default_limit,
             },
             "resources": {
                 "max_model_concurrency": self.resources.max_model_concurrency,
@@ -356,7 +373,16 @@ class Settings:
                 neuro_cortex=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX", False),
                 neuro_memory_tiers=_env_bool("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS", False),
                 module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
+                module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
+            ),
+            neuro_runtime=NeuroRuntimeSettings(
+                residual_kind=(
+                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_KIND", "unsupported") or "unsupported"
+                ).strip().lower(),
+                residual_model_id=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_MODEL", "") or "").strip() or None,
+                residual_device=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_DEVICE", "cpu") or "cpu").strip(),
+                absorb_default_limit=_env_int("LEVIATHAN_NEURO_ABSORB_LIMIT", 50, minimum=1, maximum=5000),
             ),
             resources=ResourceLimits(
                 max_model_concurrency=_env_int("LEVIATHAN_MAX_MODEL_CONCURRENCY", 1, minimum=1, maximum=64),
@@ -410,6 +436,15 @@ class Settings:
         if self.features.neuro_memory_tiers and not self.features.neuro_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.module_manager_subprocess and not self.features.module_manager_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS requires LEVIATHAN_FEATURE_MODULE_MANAGER=true"
+            )
+        kind = self.neuro_runtime.residual_kind
+        if kind not in {"unsupported", "deterministic", "toy", "deterministic_toy", "hf", "transformers", "huggingface"}:
+            raise ConfigurationError(
+                f"LEVIATHAN_NEURO_RESIDUAL_KIND invalid: {kind!r}"
             )
         if self.features.neuro_enabled and self.features.agents_enabled:
             # Allowed combination — neuro remains advisory; agents still need gateway later.

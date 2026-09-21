@@ -27,13 +27,14 @@ class ResidualReadRequest:
 
 @dataclass(frozen=True)
 class ResidualTensorRef:
-    """Opaque residual reference — MVP never fabricates tensor bytes."""
+    """Opaque residual reference — never fabricates production tensor bytes as evidence."""
 
     hook: ResidualHookPoint
     dtype: str
     shape: tuple[int, ...]
     available: bool
     note: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -42,7 +43,8 @@ class ResidualTensorRef:
             "shape": list(self.shape),
             "available": self.available,
             "note": self.note,
-            "truth": {"tensor_bytes_not_fabricated": True},
+            "metadata": self.metadata,
+            "truth": {"tensor_bytes_not_fabricated_as_evidence": True},
         }
 
 
@@ -94,6 +96,7 @@ class ResidualForwardResult:
     degraded_to_chat_completions: bool
     detail: str
     receipts: tuple[ResidualInjectReceipt, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +105,7 @@ class ResidualForwardResult:
             "degraded_to_chat_completions": self.degraded_to_chat_completions,
             "detail": self.detail,
             "receipts": [item.public_dict() for item in self.receipts],
+            "metadata": self.metadata,
             "truth": {"model_output_is_not_evidence": True},
         }
 

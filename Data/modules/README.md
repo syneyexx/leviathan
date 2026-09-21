@@ -24,12 +24,12 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `workflows/` | WorkflowStore + WorkflowRuntime |
 | `schedules/` | ScheduleStore + ScheduleRunner |
 | `observability/` | ObservabilityHub (in-process; not APM) |
-| `neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers (advisory; never authority) |
-| `module_manager/` | Universal Module Manager — single `ILeviathanModule` loader |
+| `neuro/` | NeuroAdvisor + residual/cortex/critic/memory/adapters/snapshots (advisory; never authority) |
+| `module_manager/` | Universal Module Manager — single `ILeviathanModule` loader (+ optional subprocess) |
 | `plugins/` | PluginRegistry (declarative → catalog; not a second loader) |
-| `evaluation/` | EvaluationHarness |
+| `evaluation/` | EvaluationHarness (+ neuro ablations) |
 | `isolation/` | IsolationGuard |
-| `training/` | TrainingRegistry stub |
+| `training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `browser/` | BrowserAutomationStub |
 | `media/` | MediaAutomationStub |
 | `voice/` | VoiceRuntimeStub |

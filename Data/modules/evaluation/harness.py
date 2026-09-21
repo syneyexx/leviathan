@@ -74,6 +74,53 @@ class EvaluationHarness:
             ),
         ]
 
+    def neuro_ablation_suite(
+        self,
+        *,
+        residual_supported: bool,
+        cortex_enabled: bool,
+        memory_tiers_enabled: bool,
+        critic_enabled: bool,
+    ) -> list[EvalCase]:
+        """Ablation checks. Missing residual hardware ⇒ UNMEASURED, not PASSED."""
+        return [
+            EvalCase(
+                case_id="neuro-residual-port",
+                name="Residual port availability",
+                description="Residual-capable runtime present",
+                check="neuro_residual",
+                params={"supported": residual_supported},
+            ),
+            EvalCase(
+                case_id="neuro-ablate-cortex",
+                name="Cortex flag posture",
+                description="Cortex engagement flag state (informational)",
+                check="neuro_flag",
+                params={"enabled": cortex_enabled, "name": "cortex"},
+            ),
+            EvalCase(
+                case_id="neuro-ablate-memory-tiers",
+                name="Memory tiers flag posture",
+                description="Memory tiers flag state (informational)",
+                check="neuro_flag",
+                params={"enabled": memory_tiers_enabled, "name": "memory_tiers"},
+            ),
+            EvalCase(
+                case_id="neuro-ablate-critic",
+                name="Process critic flag posture",
+                description="Process critic flag state (informational)",
+                check="neuro_flag",
+                params={"enabled": critic_enabled, "name": "process_critic"},
+            ),
+            EvalCase(
+                case_id="neuro-contrastive-embeddings",
+                name="Contrastive embedding quality",
+                description="Contrastive vector retrieval requires measured embeddings",
+                check="always_unmeasured",
+                params={"reason": "Contrastive vector head unmeasured without EmbeddingProvider"},
+            ),
+        ]
+
     def _run_case(self, case: EvalCase) -> EvalCaseResult:
         try:
             if case.check == "capability_exists":
@@ -105,6 +152,23 @@ class EvaluationHarness:
                 if report.outcome == VerificationOutcome.FAILED:
                     return EvalCaseResult(case.case_id, EvalOutcome.FAILED, "failed")
                 return EvalCaseResult(case.case_id, EvalOutcome.UNMEASURED, "unmeasured")
+            if case.check == "neuro_residual":
+                supported = bool(case.params.get("supported"))
+                if not supported:
+                    return EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.UNMEASURED,
+                        "residual runtime unsupported — ablation UNMEASURED not PASSED",
+                    )
+                return EvalCaseResult(case.case_id, EvalOutcome.PASSED, "residual runtime supports hooks")
+            if case.check == "neuro_flag":
+                enabled = bool(case.params.get("enabled"))
+                name = str(case.params.get("name") or "flag")
+                return EvalCaseResult(
+                    case.case_id,
+                    EvalOutcome.PASSED,
+                    f"{name}={'ON' if enabled else 'OFF'} (posture recorded)",
+                )
             if case.check == "always_unmeasured":
                 return EvalCaseResult(
                     case.case_id,

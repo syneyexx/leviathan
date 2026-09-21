@@ -44,16 +44,20 @@ from Data.modules.schedules import (
 )
 from Data.modules.observability import ObservabilityHub
 from Data.modules.neuro import (
+    ContrastiveRetrievalHead,
     CortexPlanner,
+    CortexRuntime,
+    NeuroAbsorbService,
     NeuroAdvisor,
     NeuroMemoryFacade,
+    NeuroSnapshotStore,
     ProcessCritic,
-    UnsupportedResidualRuntime,
+    build_residual_runtime,
 )
 from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
-from Data.modules.training import TrainingRegistry
+from Data.modules.training import TrainingRecipeRegistry, TrainingRegistry
 from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
@@ -90,6 +94,7 @@ execution_gateway = ExecutionGateway(
     catalog=capability_catalog,
     function_runtime=function_runtime,
     knowledge_retriever=retriever,
+    knowledge_store=knowledge,
     artifact_store=artifacts,
     approval_checker=approval_service,
     observation_store=observation_store,
@@ -123,12 +128,28 @@ schedule_runner = ScheduleRunner(
     workflows=workflow_runtime,
 )
 observability = ObservabilityHub(capacity=500)
-residual_runtime = UnsupportedResidualRuntime()
+neuro_snapshots = NeuroSnapshotStore(settings.database_path)
+residual_runtime = build_residual_runtime(
+    kind=settings.neuro_runtime.residual_kind,
+    model_id=settings.neuro_runtime.residual_model_id,
+    device=settings.neuro_runtime.residual_device,
+)
 neuro_memory = NeuroMemoryFacade(
     enabled=settings.features.neuro_enabled and settings.features.neuro_memory_tiers,
     memory_store=memory_store,
     knowledge_store=knowledge,
     knowledge_retriever=retriever,
+    snapshot_store=neuro_snapshots,
+)
+neuro_absorb = NeuroAbsorbService(knowledge)
+neuro_contrastive = ContrastiveRetrievalHead(
+    neuro_memory,
+    embeddings_available=False,
+)
+neuro_critic = ProcessCritic(enabled=settings.features.neuro_process_critic)
+cortex_runtime = CortexRuntime(
+    residual_port=residual_runtime,
+    critic=neuro_critic,
 )
 neuro_advisor = NeuroAdvisor(
     enabled=settings.features.neuro_enabled,
@@ -140,7 +161,7 @@ neuro_advisor = NeuroAdvisor(
     residual_port=residual_runtime,
     memory_facade=neuro_memory,
     cortex_planner=CortexPlanner(enabled=settings.features.neuro_cortex),
-    critic=ProcessCritic(enabled=settings.features.neuro_process_critic),
+    critic=neuro_critic,
 )
 module_manager = ModuleManager(
     discovery_roots=(
@@ -148,6 +169,7 @@ module_manager = ModuleManager(
         settings.knowledge.data_root / "plugins",
     ),
     enabled=settings.features.module_manager_enabled,
+    allow_subprocess_isolation=settings.features.module_manager_subprocess,
 )
 plugin_registry = PluginRegistry(capability_catalog)
 plugin_registry.register_echo_mcp_stub()
@@ -158,13 +180,14 @@ evaluation_harness = EvaluationHarness(
 )
 isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
+training_recipes = TrainingRecipeRegistry()
 browser_stub = BrowserAutomationStub()
 media_stub = MediaAutomationStub()
 voice_stub = VoiceRuntimeStub()
 
 
 def _gate_catalog_builtins() -> GateCheck:
-    required = {"file.read", "knowledge.search", "artifact.create_text"}
+    required = {"file.read", "knowledge.search", "artifact.create_text", "knowledge.ingest_scan"}
     missing = sorted(required - {item.id for item in capability_catalog.list()})
     return GateCheck(
         gate_id="catalog_builtins",
@@ -206,8 +229,44 @@ def _gate_frontend() -> GateCheck:
     )
 
 
+def _gate_neuro_residual_posture() -> GateCheck:
+    """WARN when residual injection flag is ON but runtime cannot support residuals."""
+    flag_on = settings.features.neuro_residual_injection
+    supported = residual_runtime.supports_residuals()
+    ok = (not flag_on) or supported
+    return GateCheck(
+        gate_id="neuro_residual_posture",
+        name="Neuro residual posture",
+        severity=GateSeverity.WARN,
+        passed=ok,
+        detail=(
+            "ok"
+            if ok
+            else "NEURO_RESIDUAL_INJECTION=true but residual runtime unsupported"
+        ),
+    )
+
+
+def _gate_module_manager_subprocess() -> GateCheck:
+    enabled = settings.features.module_manager_subprocess
+    return GateCheck(
+        gate_id="module_manager_subprocess",
+        name="Module Manager subprocess isolation",
+        severity=GateSeverity.INFO,
+        passed=True,
+        detail="subprocess isolation ON" if enabled else "subprocess isolation OFF (inproc default)",
+    )
+
+
 release_gates = ReleaseGateRunner(
-    checks=[_gate_catalog_builtins, _gate_loopback, _gate_outbound, _gate_frontend]
+    checks=[
+        _gate_catalog_builtins,
+        _gate_loopback,
+        _gate_outbound,
+        _gate_frontend,
+        _gate_neuro_residual_posture,
+        _gate_module_manager_subprocess,
+    ]
 )
 security_auditor = SecurityAuditor(
     checks=[
@@ -360,12 +419,33 @@ def _master_verification_store_check() -> MasterGateCheck:
     )
 
 
+def _master_neuro_posture_check() -> MasterGateCheck:
+    residual_flag = settings.features.neuro_residual_injection
+    supported = residual_runtime.supports_residuals()
+    if residual_flag and not supported:
+        return MasterGateCheck(
+            check_id="neuro_residual",
+            name="Neuro residual posture",
+            status=MasterGateStatus.DEGRADED,
+            detail="residual injection flagged ON without supporting runtime",
+        )
+    return MasterGateCheck(
+        check_id="neuro_residual",
+        name="Neuro residual posture",
+        status=MasterGateStatus.READY,
+        detail=(
+            f"residual_supported={supported}; kind={settings.neuro_runtime.residual_kind}"
+        ),
+    )
+
+
 master_gates = MasterGateRunner(
     checks=[
         _master_release_check,
         _master_security_check,
         _master_evaluation_check,
         _master_verification_store_check,
+        _master_neuro_posture_check,
     ]
 )
 migrations = MigrationRunner(settings.database_path)
@@ -385,6 +465,7 @@ async def lifespan(_: FastAPI):
     observation_store.initialize()
     evidence_store.initialize()
     memory_store.initialize()
+    neuro_snapshots.initialize()
     verification_reports.initialize()
     workflow_store.initialize()
     schedule_store.initialize()
@@ -423,7 +504,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.47.0-phase46", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.50.0-phase50", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -512,11 +593,17 @@ async def health() -> dict:
             "cortex": settings.features.neuro_cortex,
             "memory_tiers": settings.features.neuro_memory_tiers,
             "residual_supported": residual_runtime.supports_residuals(),
+            "residual_kind": settings.neuro_runtime.residual_kind,
+            "absorb": dict(neuro_absorb.telemetry),
         },
         "module_manager": {
             "enabled": settings.features.module_manager_enabled,
+            "subprocess_isolation": settings.features.module_manager_subprocess,
             "modules": len(module_manager.list()) if module_manager.enabled else 0,
             "telemetry": dict(module_manager.telemetry) if module_manager.enabled else {},
+        },
+        "training_recipes": {
+            "registered": len(training_recipes.list()),
         },
         "plugins": {
             "registered": len(plugin_registry.list()),
@@ -1599,14 +1686,90 @@ def neuro_assess(payload: NeuroAssessRequest) -> dict:
 @app.get("/api/neuro/residual")
 def neuro_residual_status() -> dict:
     hooks = [item.public_dict() for item in residual_runtime.list_hook_points()]
+    info = residual_runtime.runtime_info() if hasattr(residual_runtime, "runtime_info") else {}
     return {
         "supports_residuals": residual_runtime.supports_residuals(),
         "hook_points": hooks,
+        "runtime": info,
+        "kind": settings.neuro_runtime.residual_kind,
         "truth": {
             "residual_injection_is_not_authority": True,
             "unsupported_is_not_success": True,
         },
     }
+
+
+class NeuroCortexRunRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=30_000)
+    depth: int = Field(default=1, ge=0, le=4)
+    critic_rounds: int = Field(default=1, ge=0, le=4)
+
+
+@app.post("/api/neuro/cortex/run")
+def neuro_cortex_run(payload: NeuroCortexRunRequest) -> dict:
+    if not settings.features.neuro_enabled or not settings.features.neuro_cortex:
+        raise HTTPException(status_code=503, detail="Neuro cortex feature flags OFF")
+    report = cortex_runtime.run(
+        messages=[{"role": "user", "content": payload.text}],
+        depth=payload.depth,
+        critic_rounds=payload.critic_rounds,
+    )
+    observability.emit("neuro", "cortex_run", payload={"engaged": report.engaged, "degraded": report.degraded})
+    metrics.incr("neuro_cortex_runs")
+    return {"report": report.public_dict()}
+
+
+class NeuroSnapshotRequest(BaseModel):
+    tier: int = Field(ge=0, le=1)
+    label: str = Field(default="snapshot", min_length=1, max_length=120)
+
+
+@app.post("/api/neuro/memory/snapshot")
+def neuro_memory_snapshot(payload: NeuroSnapshotRequest) -> dict:
+    if not settings.features.neuro_memory_tiers:
+        raise HTTPException(status_code=503, detail="Neuro memory tiers feature flag OFF")
+    try:
+        snap = neuro_memory.snapshot(payload.tier, payload.label)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"snapshot": snap.public_dict()}
+
+
+@app.get("/api/neuro/memory/snapshots")
+def neuro_memory_snapshots(tier: Annotated[int | None, Query(ge=0, le=1)] = None) -> dict:
+    return {"snapshots": [item.public_dict() for item in neuro_snapshots.list(tier=tier)]}
+
+
+@app.post("/api/neuro/memory/snapshots/{snapshot_id}/restore")
+def neuro_memory_restore(snapshot_id: str) -> dict:
+    if not settings.features.neuro_memory_tiers:
+        raise HTTPException(status_code=503, detail="Neuro memory tiers feature flag OFF")
+    try:
+        snap = neuro_memory.restore(snapshot_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Snapshot not found") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"snapshot": snap.public_dict()}
+
+
+class NeuroAbsorbRequest(BaseModel):
+    limit: int = Field(default=50, ge=1, le=5000)
+
+
+@app.post("/api/neuro/absorb")
+def neuro_absorb_scan(payload: NeuroAbsorbRequest) -> dict:
+    """Operator-triggered ModelData absorb via Knowledge V2 (not a parallel pipeline)."""
+    result = neuro_absorb.scan_once(limit=payload.limit)
+    observability.emit("neuro", "absorb", payload={"ingested": result.get("ingested", 0)})
+    metrics.incr("neuro_absorb_scans")
+    return result
+
+
+@app.post("/api/neuro/contrastive")
+def neuro_contrastive_retrieve(payload: NeuroAssessRequest) -> dict:
+    report = neuro_contrastive.retrieve(payload.text)
+    return {"report": report.public_dict()}
 
 
 @app.get("/api/modules")
@@ -1735,6 +1898,20 @@ def run_foundation_evaluation() -> dict:
     return {"report": report.public_dict()}
 
 
+@app.post("/api/evaluation/neuro")
+def run_neuro_evaluation() -> dict:
+    report = evaluation_harness.run_suite(
+        "neuro_ablation",
+        evaluation_harness.neuro_ablation_suite(
+            residual_supported=residual_runtime.supports_residuals(),
+            cortex_enabled=settings.features.neuro_cortex,
+            memory_tiers_enabled=settings.features.neuro_memory_tiers,
+            critic_enabled=settings.features.neuro_process_critic,
+        ),
+    )
+    return {"report": report.public_dict()}
+
+
 class IsolationEvaluateRequest(BaseModel):
     requested: list[str] = Field(default_factory=list)
     reason: str = ""
@@ -1767,6 +1944,11 @@ class TrainingCreateRequest(BaseModel):
 @app.get("/api/training")
 def list_training() -> dict:
     return {"jobs": [item.public_dict() for item in training_registry.list()]}
+
+
+@app.get("/api/training/recipes")
+def list_training_recipes() -> dict:
+    return {"recipes": [item.public_dict() for item in training_recipes.list()]}
 
 
 @app.post("/api/training")
