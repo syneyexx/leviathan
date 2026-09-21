@@ -45,9 +45,9 @@ const NAV_ITEMS: NavItem[] = [
     label: "Creation",
     icon: (
       <>
-        <circle cx="12" cy="12" r="8" />
-        <path d="M7.2 16.8l9.6-9.6" />
-        <path d="M9 7.2h.01M15 16.8h.01M7.2 12h.01M16.8 12h.01" />
+        <circle cx="12" cy="12" r="7.5" />
+        <ellipse cx="12" cy="12" rx="7.5" ry="3.2" transform="rotate(-40 12 12)" />
+        <path d="M12 4.5v2.2M12 17.3v2.2" />
       </>
     ),
   },
@@ -74,9 +74,8 @@ const NAV_ITEMS: NavItem[] = [
     label: "Knowledge",
     icon: (
       <>
-        <path d="M12 3.8l7 3.2v5.2c0 4.2-3.1 7.4-7 8.6-3.9-1.2-7-4.4-7-8.6V7l7-3.2z" />
-        <path d="M9.5 12.2c.7-1.4 1.9-2.1 2.5-2.1.9 0 1.7.6 1.7 1.5 0 1.4-1.8 1.7-1.8 2.8" />
-        <circle cx="12" cy="16.2" r="0.7" fill="currentColor" stroke="none" />
+        <path d="M12 3.5l7.2 4.2v.4c0 1.5-.4 5.2-2.6 7.6L12 20.5l-4.6-4.8C5.2 13.3 4.8 9.6 4.8 8.1v-.4L12 3.5z" />
+        <path d="M12 3.5l3.6 8.2-3.6 2.4-3.6-2.4L12 3.5z" />
       </>
     ),
   },
