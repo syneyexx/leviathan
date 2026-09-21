@@ -3,87 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Leviathan Layout Editor</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="/editor.css" />
+    <title>Leviathan Layout Builder</title>
+    <meta http-equiv="refresh" content="0; url=http://127.0.0.1:5173/" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #0a0c0b;
+        color: #e8e4dc;
+        font-family: Georgia, serif;
+      }
+      a { color: #d6a957; }
+      p { opacity: 0.75; }
+    </style>
   </head>
   <body>
-    <div class="ed-app">
-      <header class="ed-top">
-        <div class="ed-brand">
-          <span class="ed-brand-mark" aria-hidden="true"></span>
-          <div>
-            <div class="ed-brand-title">Layout Editor</div>
-            <div class="ed-brand-sub">Leviathan shell · live preview</div>
-          </div>
-        </div>
-
-        <div class="ed-tabs" id="fileTabs" role="tablist" aria-label="CSS bestanden"></div>
-
-        <div class="ed-actions">
-          <span class="ed-status" id="statusText">Laden…</span>
-          <button type="button" class="ed-btn" id="btnReload" title="Herladen vanaf schijf">Herladen</button>
-          <button type="button" class="ed-btn ed-btn-primary" id="btnSave" title="Opslaan (Ctrl+S)">Opslaan</button>
-        </div>
-      </header>
-
-      <aside class="ed-side">
-        <div class="ed-side-head">
-          <h2>Visuele layout</h2>
-          <p>Sleep de randen in de preview of pas sliders aan. Code werkt live mee.</p>
-        </div>
-
-        <div class="ed-controls" id="layoutControls"></div>
-
-        <div class="ed-side-foot">
-          <label class="ed-check">
-            <input type="checkbox" id="autoSave" />
-            Auto-save bij wijziging
-          </label>
-          <label class="ed-check">
-            <input type="checkbox" id="showGuides" checked />
-            Toon layout-guides
-          </label>
-          <div class="ed-hint">
-            Tip: klik een zone in de preview om die te selecteren.
-            Bewerk <code>tokens.css</code> voor maten, <code>leviathan.css</code> voor structuur.
-          </div>
-        </div>
-      </aside>
-
-      <main class="ed-main">
-        <section class="ed-preview-pane">
-          <div class="ed-preview-bar">
-            <span>Live preview</span>
-            <div class="ed-viewport-btns">
-              <button type="button" class="ed-chip is-active" data-w="100%">Desktop</button>
-              <button type="button" class="ed-chip" data-w="1280px">1280</button>
-              <button type="button" class="ed-chip" data-w="1024px">1024</button>
-              <button type="button" class="ed-chip" data-w="768px">Tablet</button>
-            </div>
-          </div>
-          <div class="ed-preview-frame-wrap">
-            <div class="ed-preview-frame" id="previewFrame">
-              <iframe id="preview" title="Leviathan layout preview" src="/preview.html"></iframe>
-              <div class="ed-guides" id="guides" hidden></div>
-            </div>
-          </div>
-        </section>
-
-        <section class="ed-code-pane">
-          <div class="ed-code-bar">
-            <span id="codeFileLabel">tokens.css</span>
-            <span class="ed-dirty" id="dirtyBadge" hidden>niet opgeslagen</span>
-          </div>
-          <textarea id="code" spellcheck="false" wrap="off" aria-label="CSS broncode"></textarea>
-        </section>
-      </main>
+    <div>
+      <h1>Layout Builder</h1>
+      <p>Doorsturen naar de echte Leviathan UI…</p>
+      <p><a href="http://127.0.0.1:5173/">http://127.0.0.1:5173/</a></p>
     </div>
-    <script src="/editor.js"></script>
   </body>
 </html>
