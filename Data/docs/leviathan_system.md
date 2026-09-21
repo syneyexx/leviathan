@@ -338,7 +338,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 16 — Verification | PASS | Evidence-based requirements; unmeasured ≠ passed |
 | Phase 17 — Agents skeleton | PASS | Gateway-only AgentRuntime; feature-flagged OFF |
 | Phase 18 — Workflows | PASS | Ordered capability sequences via gateway |
-| Phase 19+ | NOT STARTED | Schedules / Neuro / … |
+| Phase 19 — Schedules | PASS | Interval job/workflow triggers + explicit tick |
+| Phase 20+ | NOT STARTED | Observability / Neuro / … |
 
 ---
 

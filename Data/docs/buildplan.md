@@ -6,6 +6,34 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phase 19 — Schedules — PASS
+
+### Objective
+
+Interval schedules that fire Jobs or Workflows through shared runtimes. Explicit tick (no hidden cron daemon claimed).
+
+### Implementation
+
+- `Data/modules/schedules/` — ScheduleStore, ScheduleRunner
+- Targets: JOB (capability enqueue) or WORKFLOW
+- Migration v10: `schedules` table
+- API: `/api/schedules` + `POST /api/schedules/tick`
+
+### Tests executed
+
+- Full backend suite → **PASS (78)**
+
+### Known limitations
+
+- Interval-only (no cron expressions)
+- Tick is explicit API/call — no background scheduler thread claimed beyond job worker
+
+### Status
+
+**PASS**
+
+---
+
 ## 2026-09-21 — Phase 18 — Workflows Runtime — PASS
 
 ### Objective

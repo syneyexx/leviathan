@@ -37,6 +37,7 @@ from Data.modules.schedules import (
     ScheduleStore,
     ScheduleTargetKind,
 )
+from Data.modules.observability import ObservabilityHub
 
 
 db = Database(settings.database_path)
@@ -93,6 +94,7 @@ schedule_runner = ScheduleRunner(
     jobs=job_runtime,
     workflows=workflow_runtime,
 )
+observability = ObservabilityHub(capacity=500)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -120,7 +122,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.20.0-phase19", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.21.0-phase20", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -193,6 +195,7 @@ async def health() -> dict:
         "agents": {
             "enabled": settings.features.agents_enabled,
         },
+        "observability": observability.snapshot(),
         "llm": model,
     }
 
@@ -288,6 +291,11 @@ async def chat(payload: ChatRequest) -> dict:
 
     runs.append_event(run.run_id, EventType.MODEL_COMPLETED, {"model": model})
     assistant_message = db.add_message(conversation_id, "assistant", answer)
+    observability.emit(
+        "chat",
+        "completed",
+        payload={"run_id": run.run_id, "model": model, "memory_hits": len(memory_hits)},
+    )
     # Chat completion contract: model returned usable text AND assistant message persisted.
     completed = runs.transition(
         run.run_id,
@@ -574,6 +582,16 @@ def execute_capability(capability_id: str, payload: CapabilityExecuteRequest) ->
             run_id=payload.run_id,
             requested_by=payload.requested_by,
         )
+    )
+    observability.emit(
+        "capability",
+        "execute",
+        payload={
+            "capability_id": capability_id,
+            "status": result.status.value,
+            "request_id": result.request_id,
+        },
+        level="info" if result.status.value == "COMPLETED" else "warn",
     )
     status_code = 200
     if result.status == CapabilityStatus.REJECTED:
@@ -1135,7 +1153,27 @@ def resume_schedule(schedule_id: str) -> dict:
 @app.post("/api/schedules/tick")
 def tick_schedules() -> dict:
     fired = schedule_runner.tick()
+    observability.emit(
+        "schedule",
+        "tick",
+        payload={"fired": len(fired), "ok": sum(1 for item in fired if item.get("ok"))},
+    )
     return {"fired": fired, "telemetry": dict(schedule_runner.telemetry)}
+
+
+@app.get("/api/telemetry")
+def get_telemetry(
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    category: Annotated[str | None, Query()] = None,
+) -> dict:
+    return {
+        "snapshot": observability.snapshot(),
+        "events": [item.public_dict() for item in observability.recent(limit=limit, category=category)],
+        "truth": {
+            "in_process_ring_buffer_only": True,
+            "not_a_production_apm": True,
+        },
+    }
 
 
 @app.get("/")
