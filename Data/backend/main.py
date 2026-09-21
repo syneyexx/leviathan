@@ -43,6 +43,10 @@ from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
 from Data.modules.training import TrainingRegistry
+from Data.modules.browser import BrowserAction, BrowserAutomationStub
+from Data.modules.media import MediaAction, MediaAutomationStub
+from Data.modules.voice import VoiceAction, VoiceRuntimeStub
+from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
 
 
 db = Database(settings.database_path)
@@ -115,6 +119,57 @@ evaluation_harness = EvaluationHarness(
 )
 isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
+browser_stub = BrowserAutomationStub()
+media_stub = MediaAutomationStub()
+voice_stub = VoiceRuntimeStub()
+
+
+def _gate_catalog_builtins() -> GateCheck:
+    required = {"file.read", "knowledge.search", "artifact.create_text"}
+    missing = sorted(required - {item.id for item in capability_catalog.list()})
+    return GateCheck(
+        gate_id="catalog_builtins",
+        name="Core capabilities registered",
+        severity=GateSeverity.BLOCK,
+        passed=not missing,
+        detail="ok" if not missing else f"missing {missing}",
+    )
+
+
+def _gate_loopback() -> GateCheck:
+    return GateCheck(
+        gate_id="loopback_only",
+        name="Loopback-only host",
+        severity=GateSeverity.BLOCK,
+        passed=bool(settings.runtime.loopback_only),
+        detail="loopback_only enabled" if settings.runtime.loopback_only else "loopback_only disabled",
+    )
+
+
+def _gate_outbound() -> GateCheck:
+    return GateCheck(
+        gate_id="outbound_default_deny",
+        name="Outbound network default deny",
+        severity=GateSeverity.WARN,
+        passed=not settings.network.allow_outbound,
+        detail="outbound denied" if not settings.network.allow_outbound else "outbound allowed",
+    )
+
+
+def _gate_frontend() -> GateCheck:
+    ready = (FRONTEND_DIST / "index.html").is_file()
+    return GateCheck(
+        gate_id="frontend_dist",
+        name="Frontend dist present",
+        severity=GateSeverity.WARN,
+        passed=ready,
+        detail="dist ready" if ready else "frontend dist missing",
+    )
+
+
+release_gates = ReleaseGateRunner(
+    checks=[_gate_catalog_builtins, _gate_loopback, _gate_outbound, _gate_frontend]
+)
 migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
@@ -142,7 +197,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.26.0-phase25", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.30.0-phase29", lifespan=lifespan)
 
 
 class ConversationCreate(BaseModel):
@@ -1364,6 +1419,65 @@ def start_training(job_id: str) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Training job not found") from exc
     raise HTTPException(status_code=501, detail=job.public_dict())
+
+
+class BrowserRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=40)
+    url: str | None = None
+
+
+@app.post("/api/browser/request")
+def browser_request(payload: BrowserRequest) -> dict:
+    try:
+        action = BrowserAction(payload.action.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid browser action: {payload.action}") from exc
+    job = browser_stub.request(action=action, url=payload.url)
+    status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
+    if status != 200:
+        raise HTTPException(status_code=status, detail=job.public_dict())
+    return {"job": job.public_dict()}
+
+
+class MediaRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=40)
+    path: str | None = None
+
+
+@app.post("/api/media/request")
+def media_request(payload: MediaRequest) -> dict:
+    try:
+        action = MediaAction(payload.action.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid media action: {payload.action}") from exc
+    job = media_stub.request(action=action, path=payload.path)
+    status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
+    if status != 200:
+        raise HTTPException(status_code=status, detail=job.public_dict())
+    return {"job": job.public_dict()}
+
+
+class VoiceRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=40)
+    text: str | None = None
+
+
+@app.post("/api/voice/request")
+def voice_request(payload: VoiceRequest) -> dict:
+    try:
+        action = VoiceAction(payload.action.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid voice action: {payload.action}") from exc
+    job = voice_stub.request(action=action, text=payload.text)
+    status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
+    if status != 200:
+        raise HTTPException(status_code=status, detail=job.public_dict())
+    return {"job": job.public_dict()}
+
+
+@app.get("/api/release/gates")
+def release_gates_status() -> dict:
+    return {"report": release_gates.run().public_dict()}
 
 
 @app.get("/")

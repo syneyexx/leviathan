@@ -6,6 +6,59 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Phases 26–29 — Browser/Media/Voice stubs + Release gates — PASS
+
+### Phase 26 — Browser automation stub
+- Honest UNSUPPORTED responses; no fabricated page content
+
+### Phase 27 — Media automation stub
+- Honest UNSUPPORTED; path required
+
+### Phase 28 — Voice runtime stub
+- ASR/TTS not implemented; no fabricated transcripts
+
+### Phase 29 — Release gates
+- `Data/modules/release/` — BLOCK/WARN/INFO local readiness
+- Gates: catalog builtins, loopback, outbound deny, frontend dist
+- `GET /api/release/gates` — ready ≠ production certified
+
+### Tests executed
+- Full backend suite → **PASS (94)**
+
+### Status
+**PASS** (26–29)
+
+---
+
+## 2026-09-21 — Phases 22–25 — Plugins, Evaluation, Isolation, Training — PASS
+
+### Phase 22 — Plugins / MCP adapters
+- `Data/modules/plugins/` — PluginRegistry binds external names → catalog capabilities
+- MCP echo stub (no network); invoke only via ExecutionGateway
+- discoverable ≠ authorized
+
+### Phase 23 — Evaluation harness
+- `Data/modules/evaluation/` — PASSED/FAILED/UNMEASURED/ERROR
+- Foundation suite; embedding quality honestly UNMEASURED
+- `POST /api/evaluation/foundation`
+
+### Phase 24 — Isolation honesty
+- `Data/modules/isolation/` — requested vs effective isolation
+- Baseline: PROCESS + NETWORK_DENY + WORKSPACE (when outbound disabled)
+- `GET/POST /api/isolation*`
+
+### Phase 25 — Training registry stub
+- `Data/modules/training/` — register only; start → FAILED honest 501
+- registered ≠ trained; no fabricated metrics
+
+### Tests executed
+- Full backend suite → **PASS (86)**
+
+### Status
+**PASS** (22–25)
+
+---
+
 ## 2026-09-21 — Phase 21 — Neuro Advisory Interface — PASS
 
 ### Objective

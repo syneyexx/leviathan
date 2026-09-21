@@ -27,15 +27,15 @@ LEVIATHAN is a Python-first, local-first AI system in early foundation stages.
 
 **Not implemented (do not treat UI shell labels as capability):**
 
-- Full Coding/Research agent depth; multi-agent orchestration;
+- Real browser/media/voice runtimes; real MCP network clients;
+- Full Coding/Research depth; multi-agent orchestration;
 - Real residual-stream neuro / training execution;
-- Real MCP network clients; browser automation; media pipelines;
-- production APM export.
+- production APM / production certification.
 
-**Implemented through Phase 25:**
+**Implemented through Phase 29:**
 
-- Plugins/MCP stubs; Evaluation; Isolation guard; Training registry stub;
-- NeuroAdvisor; Observability; Schedules; Workflows; Agents; Verification; Memory; Context; Evidence; Observations; Jobs; Approvals; Gateway;
+- Release gates; Browser/Media/Voice honest stubs; Plugins; Evaluation; Isolation; Training stub;
+- Neuro; Observability; Schedules; Workflows; Agents; Verification; Memory; Context; Evidence; Observations; Jobs; Approvals; Gateway;
 - Function Runtime; Knowledge V2; Artifacts; Run/Event; migrations; Settings; React SPA.
 
 ---
@@ -343,7 +343,11 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 19 — Schedules | PASS | Interval job/workflow triggers + explicit tick |
 | Phase 20 — Observability | PASS | In-process telemetry hub + /api/telemetry |
 | Phase 21 — Neuro advisory | PASS | Flagged advisor; signal ≠ authority |
-| Phase 22+ | NOT STARTED | Plugins/MCP / Evaluation / … |
+| Phase 22 — Plugins/MCP | PASS | Declarative bindings; gateway-only invoke |
+| Phase 23 — Evaluation | PASS | Foundation suite; unmeasured ≠ passed |
+| Phase 24 — Isolation | PASS | Requested vs effective isolation |
+| Phase 25 — Training stub | PASS | Register only; start honestly unimplemented |
+| Phase 26+ | NOT STARTED | Browser/media / … |
 
 ---
 

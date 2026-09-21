@@ -114,6 +114,10 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/evaluation/` | EvaluationHarness |
 | `Data/modules/isolation/` | IsolationGuard |
 | `Data/modules/training/` | TrainingRegistry stub |
+| `Data/modules/browser/` | BrowserAutomationStub |
+| `Data/modules/media/` | MediaAutomationStub |
+| `Data/modules/voice/` | VoiceRuntimeStub |
+| `Data/modules/release/` | ReleaseGateRunner |
 
 ## Tests
 
@@ -213,6 +217,10 @@ SQLite persistence
 | Schedules | `Data/modules/schedules/` |
 | Observability | `Data/modules/observability/` |
 | Neuro | `Data/modules/neuro/` (advisory; feature-flagged) |
+| Plugins / MCP | `Data/modules/plugins/` |
+| Evaluation | `Data/modules/evaluation/` |
+| Isolation | `Data/modules/isolation/` |
+| Training | `Data/modules/training/` (registry stub) |
 | Frontend pages | only when backend truth exists |
 
 ---
