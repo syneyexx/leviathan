@@ -383,6 +383,12 @@
     return res.json();
   }
 
+  async function apiListAssets() {
+    const res = await fetch(`${API}/api/assets`);
+    if (!res.ok) throw new Error("Assets laden mislukt");
+    return res.json();
+  }
+
   /* ------------------------------------------------------------------ */
   /* History / dirty / save                                             */
   /* ------------------------------------------------------------------ */
@@ -764,7 +770,7 @@
         <div class="lvb-chip-row">
           <button type="button" class="lvb-chip" data-insert="text">+ Tekst</button>
           <button type="button" class="lvb-chip" data-insert="heading">+ Titel</button>
-          <button type="button" class="lvb-chip" data-insert="image">+ Image</button>
+          <button type="button" class="lvb-chip" data-act="add-image">+ Image</button>
           <button type="button" class="lvb-chip" data-insert="box">+ Box</button>
           <button type="button" class="lvb-chip" data-insert="button">+ Knop</button>
           <button type="button" class="lvb-chip" data-insert="divider">+ Lijn</button>
@@ -783,8 +789,12 @@
         <div class="lvb-section">Image</div>
         <div class="lvb-field"><label>Bron (URL)</label>
           <input type="text" data-role="img-src" value="${escapeHtml(src)}" /></div>
-        <div class="lvb-field"><label>Upload</label>
-          <input type="file" accept="image/*" data-role="img-file" /></div>
+        <div class="lvb-field"><label>Upload / bibliotheek</label>
+          <div class="lvb-chip-row">
+            <button type="button" class="lvb-chip" data-act2="pick-image">Kies image…</button>
+            <button type="button" class="lvb-chip" data-act2="upload-replace">Upload…</button>
+          </div>
+        </div>
         <div class="lvb-field"><label>Alt</label>
           <input type="text" data-role="img-alt" value="${escapeHtml(el.getAttribute("alt") || "")}" /></div>`;
     } else {
@@ -1344,6 +1354,10 @@
   }
 
   function insertPreset(type) {
+    if (type === "image") {
+      openImageLibrary({ mode: "insert" });
+      return;
+    }
     const presets = {
       text: {
         label: "tekst",
@@ -1352,10 +1366,6 @@
       heading: {
         label: "titel",
         html: `<h2 class="lvb-widget lvb-heading" style="margin:0;color:#F5DFA9;font-family:Cinzel,serif;letter-spacing:0.2em;text-transform:uppercase;">Nieuwe titel</h2>`,
-      },
-      image: {
-        label: "image",
-        html: `<img class="lvb-widget lvb-image" src="/assets/hero.jpg" alt="Nieuwe image" width="240" height="140" style="display:block;max-width:100%;border-radius:8px;object-fit:cover;" />`,
       },
       box: {
         label: "box",
@@ -1373,6 +1383,69 @@
     const preset = presets[type];
     if (!preset) return;
     insertWidget(preset);
+  }
+
+  function insertImageAtUrl(url, alt = "Image") {
+    const safeAlt = escapeHtml(alt || "Image");
+    const el = insertWidget({
+      label: "image",
+      html: `<img class="lvb-widget lvb-image" src="${url}" alt="${safeAlt}" style="display:block;width:240px;max-width:100%;height:auto;border-radius:8px;object-fit:cover;" />`,
+      styles: {
+        position: "relative",
+        left: "12px",
+        top: "12px",
+        width: "240px",
+      },
+    });
+    if (el) {
+      syncNodesFromDom();
+      markContentDirty();
+      setStatus("Image toegevoegd — sleep om te plaatsen", "ok");
+    }
+    return el;
+  }
+
+  async function uploadAndInsertImage(file) {
+    setStatus("Image uploaden…");
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const uploaded = await apiUpload(file.name, dataUrl);
+    insertImageAtUrl(uploaded.url, file.name);
+    hideImageLibrary();
+  }
+
+  async function openImageLibrary({ mode = "insert" } = {}) {
+    state.imagePickerMode = mode; // insert | replace
+    if (!ui.media) return;
+    ui.media.hidden = false;
+    ui.mediaTitle.textContent = mode === "replace" ? "Image vervangen" : "Image toevoegen";
+    ui.mediaGrid.innerHTML = `<p class="lvb-muted">Assets laden…</p>`;
+    try {
+      const data = await apiListAssets();
+      const assets = data.assets || [];
+      if (!assets.length) {
+        ui.mediaGrid.innerHTML = `<p class="lvb-muted">Nog geen images. Upload er een via de knop hierboven.</p>`;
+        return;
+      }
+      ui.mediaGrid.innerHTML = assets
+        .map(
+          (a) => `<button type="button" class="lvb-media-item" data-asset-url="${escapeHtml(a.url)}" title="${escapeHtml(a.name)}">
+            <img src="${escapeHtml(a.url)}" alt="" loading="lazy" />
+            <span>${escapeHtml(a.name)}</span>
+          </button>`,
+        )
+        .join("");
+    } catch (err) {
+      ui.mediaGrid.innerHTML = `<p class="lvb-muted">${escapeHtml(String(err))}</p>`;
+    }
+  }
+
+  function hideImageLibrary() {
+    if (ui.media) ui.media.hidden = true;
   }
 
   /* ------------------------------------------------------------------ */
@@ -1396,6 +1469,7 @@
       { sep: true },
       { label: "Tekst bewerken", act: "edit-text", disabled: !el || el.tagName === "IMG" },
       { label: "Image vervangen…", act: "replace-image", disabled: !el || el.tagName !== "IMG" },
+      { label: "Image toevoegen…", act: "insert-image" },
       { sep: true },
       { label: "Naar voren", act: "front" },
       { label: "Naar achter", act: "back" },
@@ -1404,7 +1478,6 @@
       { label: "Rechts uitlijnen", act: "align-right" },
       { sep: true },
       { label: "Insert → Tekst", act: "insert-text" },
-      { label: "Insert → Image", act: "insert-image" },
       { label: "Insert → Box", act: "insert-box" },
     ];
     ui.menu.innerHTML = items
@@ -1438,7 +1511,7 @@
       case "edit-text":
         return state.selectedEl && startInlineEdit(state.selectedEl);
       case "replace-image":
-        return ui.hiddenFile?.click();
+        return openImageLibrary({ mode: "replace" });
       case "front":
         return bringForward();
       case "back":
@@ -1452,7 +1525,7 @@
       case "insert-text":
         return insertPreset("text");
       case "insert-image":
-        return insertPreset("image");
+        return openImageLibrary({ mode: "insert" });
       case "insert-box":
         return insertPreset("box");
       default:
@@ -1477,7 +1550,7 @@
         <button type="button" class="lvb-btn" data-nav="/settings">Settings</button>
         <div class="lvb-sep"></div>
         <button type="button" class="lvb-btn" data-insert="text" title="Tekst">+T</button>
-        <button type="button" class="lvb-btn" data-insert="image" title="Image">+Img</button>
+        <button type="button" class="lvb-btn" data-act="add-image" title="Image toevoegen">+Img</button>
         <button type="button" class="lvb-btn" data-insert="box" title="Box">+Box</button>
         <button type="button" class="lvb-btn" data-insert="button" title="Knop">+Btn</button>
         <div class="lvb-sep"></div>
@@ -1509,9 +1582,22 @@
         <textarea data-role="code-area" spellcheck="false" wrap="off"></textarea>
       </div>
       <div class="lvb-menu" data-role="menu" hidden></div>
+      <div class="lvb-media" data-role="media" hidden>
+        <div class="lvb-media-head">
+          <strong data-role="media-title">Image toevoegen</strong>
+          <button type="button" class="lvb-btn" data-act="close-media">Sluiten</button>
+        </div>
+        <div class="lvb-media-actions">
+          <button type="button" class="lvb-btn lvb-btn-primary" data-act="upload-image">Upload vanaf PC</button>
+          <button type="button" class="lvb-btn" data-act="refresh-media">Ververs</button>
+        </div>
+        <p class="lvb-muted" style="margin:0 0 8px">Kies een bestaande asset of upload een nieuwe. Blijft opgeslagen in Leviathan.</p>
+        <div class="lvb-media-grid" data-role="media-grid"></div>
+      </div>
       <div class="lvb-snap-x" data-role="snap-x"></div>
       <div class="lvb-snap-y" data-role="snap-y"></div>
       <input type="file" accept="image/*" data-role="hidden-file" hidden />
+      <input type="file" accept="image/*" data-role="add-file" hidden />
       <div class="lvb-hover" hidden><div class="lvb-label" data-role="hover-label"></div></div>
       <div class="lvb-select" hidden><div class="lvb-label" data-role="select-label"></div></div>
     `;
@@ -1528,9 +1614,13 @@
     ui.layers = $('[data-role="layers"]', root);
     ui.layersList = $('[data-role="layers-list"]', root);
     ui.menu = $('[data-role="menu"]', root);
+    ui.media = $('[data-role="media"]', root);
+    ui.mediaTitle = $('[data-role="media-title"]', root);
+    ui.mediaGrid = $('[data-role="media-grid"]', root);
     ui.snapX = $('[data-role="snap-x"]', root);
     ui.snapY = $('[data-role="snap-y"]', root);
     ui.hiddenFile = $('[data-role="hidden-file"]', root);
+    ui.addFile = $('[data-role="add-file"]', root);
     ui.hover = $(".lvb-hover", root);
     ui.select = $(".lvb-select", root);
     ui.hoverLabel = $('[data-role="hover-label"]', root);
@@ -1595,6 +1685,10 @@
       if (act === "redo") redo();
       if (act === "save") saveAll().catch((e) => setStatus(String(e), "dirty"));
       if (act === "reload") loadAll().catch((e) => setStatus(String(e), "dirty"));
+      if (act === "add-image") openImageLibrary({ mode: "insert" });
+      if (act === "close-media") hideImageLibrary();
+      if (act === "refresh-media") openImageLibrary({ mode: state.imagePickerMode || "insert" });
+      if (act === "upload-image") ui.addFile?.click();
     });
 
     ui.files.addEventListener("click", (event) => {
@@ -1639,41 +1733,52 @@
       }
     });
 
-    ui.dock.addEventListener("change", (event) => {
-      const t = event.target;
-      if (!(t instanceof HTMLInputElement)) return;
-      if (t.dataset.role === "img-file" && t.files?.[0] && state.selectedEl?.tagName === "IMG") {
-        const file = t.files[0];
-        const reader = new FileReader();
-        reader.onload = async () => {
-          try {
-            setStatus("Uploaden…");
-            const uploaded = await apiUpload(file.name, String(reader.result));
-            const oldSrc = state.selectedEl.getAttribute("src") || "";
-            await commitImageSrc(state.selectedEl, state.selectedSelector, uploaded.url, oldSrc);
-          } catch (err) {
-            setStatus(String(err), "dirty");
-          }
-        };
-        reader.readAsDataURL(file);
-      }
-    });
-
     ui.hiddenFile.addEventListener("change", () => {
       const file = ui.hiddenFile.files?.[0];
-      if (!file || state.selectedEl?.tagName !== "IMG") return;
+      if (!file) return;
       const reader = new FileReader();
       reader.onload = async () => {
         try {
+          setStatus("Uploaden…");
           const uploaded = await apiUpload(file.name, String(reader.result));
-          const oldSrc = state.selectedEl.getAttribute("src") || "";
-          await commitImageSrc(state.selectedEl, state.selectedSelector, uploaded.url, oldSrc);
+          if (state.selectedEl?.tagName === "IMG") {
+            const oldSrc = state.selectedEl.getAttribute("src") || "";
+            await commitImageSrc(state.selectedEl, state.selectedSelector, uploaded.url, oldSrc);
+          } else {
+            insertImageAtUrl(uploaded.url, file.name);
+          }
+          hideImageLibrary();
         } catch (err) {
           setStatus(String(err), "dirty");
         }
       };
       reader.readAsDataURL(file);
       ui.hiddenFile.value = "";
+    });
+
+    ui.addFile.addEventListener("change", () => {
+      const file = ui.addFile.files?.[0];
+      if (!file) return;
+      uploadAndInsertImage(file).catch((err) => setStatus(String(err), "dirty"));
+      ui.addFile.value = "";
+    });
+
+    ui.mediaGrid.addEventListener("click", async (event) => {
+      const item = event.target.closest("[data-asset-url]");
+      if (!item) return;
+      const url = item.dataset.assetUrl;
+      if (!url) return;
+      try {
+        if (state.imagePickerMode === "replace" && state.selectedEl?.tagName === "IMG") {
+          const oldSrc = state.selectedEl.getAttribute("src") || "";
+          await commitImageSrc(state.selectedEl, state.selectedSelector, url, oldSrc);
+        } else {
+          insertImageAtUrl(url, item.title || "Image");
+        }
+        hideImageLibrary();
+      } catch (err) {
+        setStatus(String(err), "dirty");
+      }
     });
 
     ui.dock.addEventListener("click", (event) => {
@@ -1701,6 +1806,11 @@
         if (a === "align-left") alignInParent("left");
         if (a === "align-center") alignInParent("center");
         if (a === "align-right") alignInParent("right");
+        if (a === "pick-image") openImageLibrary({ mode: "replace" });
+        if (a === "upload-replace") {
+          state.imagePickerMode = "replace";
+          ui.hiddenFile?.click();
+        }
         if (a === "clear-styles") {
           const file = state.activeFile === "tokens.css" ? styleFileForSelector() : state.activeFile;
           const re = new RegExp(
@@ -1827,35 +1937,29 @@
       true,
     );
 
-    // Drop image files onto canvas
+    // Drop image files onto canvas → always add as new image widget
     window.addEventListener("dragover", (e) => {
       if (!state.enabled) return;
       e.preventDefault();
     });
     window.addEventListener("drop", async (e) => {
       if (!state.enabled) return;
+      if (isBuilderNode(e.target)) return;
       e.preventDefault();
       const file = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith("image/"));
       if (!file) return;
       try {
-        setStatus("Uploaden…");
-        const dataUrl = await new Promise((resolve, reject) => {
-          const r = new FileReader();
-          r.onload = () => resolve(String(r.result));
-          r.onerror = reject;
-          r.readAsDataURL(file);
-        });
-        const uploaded = await apiUpload(file.name, dataUrl);
-        const el = insertWidget({
-          label: "image",
-          html: `<img class="lvb-widget lvb-image" src="${uploaded.url}" alt="${escapeHtml(file.name)}" style="display:block;max-width:280px;border-radius:8px;" />`,
-        });
-        if (el) {
-          el.style.left = `${Math.round(e.clientX - 80)}px`;
-          el.style.top = `${Math.round(e.clientY - 40)}px`;
-          el.style.position = "fixed";
-          // convert fixed to relative-ish by baking
-          bakePosition(el, selectorFor(el));
+        await uploadAndInsertImage(file);
+        if (state.selectedEl) {
+          state.selectedEl.style.position = "relative";
+          // approximate drop position relative to parent
+          const parent = state.selectedEl.parentElement;
+          if (parent) {
+            const pr = parent.getBoundingClientRect();
+            state.selectedEl.style.left = `${Math.max(0, Math.round(e.clientX - pr.left - 40))}px`;
+            state.selectedEl.style.top = `${Math.max(0, Math.round(e.clientY - pr.top - 40))}px`;
+            bakePosition(state.selectedEl, selectorFor(state.selectedEl));
+          }
         }
       } catch (err) {
         setStatus(String(err), "dirty");
