@@ -1,0 +1,72 @@
+/* ============================================================
+   LEVIATHAN — Agents page (MediaPlatformShell)
+   ============================================================ */
+
+.mp-shell[data-platform="agents"] .mp-hero {
+  min-height: 132px;
+}
+
+.mp-shell[data-platform="agents"] .mp-hero-title {
+  font-size: clamp(28px, 3vw, 44px);
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 28px rgba(214, 169, 87, 0.35);
+}
+
+.mp-shell[data-platform="agents"] .mp-hero-flow {
+  letter-spacing: 0.2em;
+}
+
+.mp-shell[data-platform="agents"] .mp-panel-title {
+  font-family: var(--lv-font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: var(--mp-gold-bright);
+}
+
+.mp-shell[data-platform="agents"] .mp-tool-tile {
+  border-color: rgba(214, 169, 87, 0.18);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.mp-shell[data-platform="agents"] .mp-tool-tile:hover {
+  border-color: rgba(214, 169, 87, 0.45);
+  box-shadow: 0 0 16px rgba(214, 169, 87, 0.12);
+}
+
+.mp-shell[data-platform="agents"] .mp-btn-solid {
+  box-shadow: 0 0 18px rgba(214, 169, 87, 0.35);
+}
+
+.mp-shell[data-platform="agents"] input[type="range"] {
+  width: 100%;
+  accent-color: var(--mp-gold-bright);
+}
+
+.mp-shell[data-platform="agents"] .mp-progress[data-tone="teal"] .mp-progress-fill {
+  background: linear-gradient(90deg, #22c9d6, #4285e8);
+  box-shadow: 0 0 10px rgba(34, 201, 214, 0.3);
+}
+
+.mp-shell[data-platform="agents"] .mp-progress[data-tone="green"] .mp-progress-fill {
+  background: linear-gradient(90deg, #20dc8c, #22c9d6);
+}
+
+.mp-shell[data-platform="agents"] svg[aria-label="Agent network"] {
+  border-radius: 10px;
+  border: 1px solid rgba(214, 169, 87, 0.14);
+  background: radial-gradient(ellipse at center, rgba(214, 169, 87, 0.06), transparent 65%);
+}
+
+.mp-shell[data-platform="agents"] .mp-chip-row label {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 169, 87, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+@media (max-width: 1200px) {
+  .mp-shell[data-platform="agents"] .mp-grid-3 {
+    grid-template-columns: 1fr !important;
+  }
+}

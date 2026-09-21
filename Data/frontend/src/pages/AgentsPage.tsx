@@ -74,6 +74,19 @@ export function AgentsPage() {
   const [autonomy, setAutonomy] = useState(70);
   const [workers, setWorkers] = useState(3);
   const [taskTab, setTaskTab] = useState("All Tasks (12)");
+  const [logTab, setLogTab] = useState("All");
+  const [priority, setPriority] = useState<"Low" | "Med" | "High">("High");
+
+  const visibleTasks =
+    taskTab.startsWith("Running")
+      ? TASKS.filter((t) => t.status === "Running")
+      : taskTab.startsWith("Queued")
+        ? TASKS.filter((t) => t.status === "Queued")
+        : taskTab.startsWith("Completed")
+          ? []
+          : TASKS;
+
+  const visibleLogs = logTab === "All" ? LOGS : LOGS.filter((l) => l.kind === logTab);
 
   return (
     <MediaPlatformShell
@@ -179,7 +192,6 @@ export function AgentsPage() {
               {[
                 ["Select Agent", "Coding Agent"],
                 ["Assign Role", "Custom (specify)"],
-                ["Task Priority", "High"],
                 ["Approval Mode", "Auto (Low Risk)"],
               ].map(([label, value]) => (
                 <label key={label} className="mp-stack" style={{ gap: 4 }}>
@@ -189,7 +201,21 @@ export function AgentsPage() {
                   </select>
                 </label>
               ))}
-              <label className="mp-stack" style={{ gap: 4 }}>
+              <div className="mp-stack" style={{ gap: 4 }}>
+                <span className="mp-list-meta">Task Priority</span>
+                <div className="mp-chip-row">
+                  {(["Low", "Med", "High"] as const).map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      className={`mp-tab${priority === level ? " is-active" : ""}`}
+                      onClick={() => setPriority(level)}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+              </div>              <label className="mp-stack" style={{ gap: 4 }}>
                 <span className="mp-list-meta">Autonomy Level · {autonomy}%</span>
                 <input type="range" min={0} max={100} value={autonomy} onChange={(e) => setAutonomy(Number(e.target.value))} />
               </label>
@@ -237,25 +263,32 @@ export function AgentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {TASKS.map((t) => (
-                  <tr key={t.id}>
-                    <td style={{ color: "var(--mp-cyan, #22c9d6)" }}>{t.id}</td>
-                    <td>{t.desc}</td>
-                    <td>{t.agent}</td>
-                    <td>
-                      <span className={`mp-badge ${t.status === "Running" ? "is-green" : "is-muted"}`}>{t.status}</span>
+                {visibleTasks.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="mp-list-meta">
+                      No completed tasks in the live window — 128 archived.
                     </td>
-                    <td>
-                      <span className={`mp-badge ${t.priority === "High" ? "is-red" : t.priority === "Med" ? "is-gold" : "is-muted"}`}>{t.priority}</span>
-                    </td>
-                    <td style={{ minWidth: 100 }}>
-                      <ProgressBar value={t.progress} tone="teal" showValue />
-                    </td>
-                    <td>{t.eta}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                ) : (
+                  visibleTasks.map((t) => (
+                    <tr key={t.id}>
+                      <td style={{ color: "var(--mp-cyan, #22c9d6)" }}>{t.id}</td>
+                      <td>{t.desc}</td>
+                      <td>{t.agent}</td>
+                      <td>
+                        <span className={`mp-badge ${t.status === "Running" ? "is-green" : "is-muted"}`}>{t.status}</span>
+                      </td>
+                      <td>
+                        <span className={`mp-badge ${t.priority === "High" ? "is-red" : t.priority === "Med" ? "is-gold" : "is-muted"}`}>{t.priority}</span>
+                      </td>
+                      <td style={{ minWidth: 100 }}>
+                        <ProgressBar value={t.progress} tone="teal" showValue />
+                      </td>
+                      <td>{t.eta}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>            </table>
           </Panel>
 
           <Panel title="5 · Communication / Agent Network">
@@ -312,8 +345,13 @@ export function AgentsPage() {
             title="7 · Logs / Event Timeline"
             action={
               <div className="mp-tabs">
-                {["All", "System", "Agents", "Tasks", "Warnings", "Errors"].map((t, i) => (
-                  <button key={t} type="button" className={`mp-tab${i === 0 ? " is-active" : ""}`}>
+                {["All", "System", "Agents", "Tasks", "Warnings", "Errors"].map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`mp-tab${logTab === t ? " is-active" : ""}`}
+                    onClick={() => setLogTab(t)}
+                  >
                     {t}
                   </button>
                 ))}
@@ -321,7 +359,7 @@ export function AgentsPage() {
             }
           >
             <div className="mp-list">
-              {LOGS.map((l) => (
+              {visibleLogs.map((l) => (
                 <div key={l.t + l.text} className="mp-list-row">
                   <span className="mp-list-meta" style={{ width: 64 }}>
                     {l.t}
@@ -332,7 +370,6 @@ export function AgentsPage() {
               ))}
             </div>
           </Panel>
-
           <Panel
             title="8 · Knowledge / Skills / Tool Access"
             action={
