@@ -6,6 +6,36 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Models + Datasets + Training + Research production subsystem — PASS
+
+### Objective
+Deliver end-to-end Models control (already present), plus real Datasets, Training, and Research subsystems with durable jobs, honest capability reporting, and wired frontend pages — no mock progress/sources/metrics.
+
+### Added
+- Migration **v14** — datasets/versions/files/jobs/indexes; training jobs/metrics/checkpoints/artifacts; research projects/events/sources/evidence/claims/conflicts/reports
+- `Data/modules/common/` — atomic IO, path safety, retry/backoff, secrets, corpus layout, process liveness
+- `Data/modules/datasets/` — import (local/upload/HF resumable), materialize, detect/canonicalize, validate, dedupe, transforms, splits, tokenize stats, export, knowledge indexing, job runner
+- `Data/modules/training/` — durable TrainingService, capabilities/hardware/preflight/planner, fixture + real LoRA worker subprocess, cancel/resume/reconcile, evaluation, artifact→model registry sync
+- `Data/modules/research/` — projects/plans, local retrieval, optional web provider, SSRF guard, evidence/claims/conflicts/coverage/reports/export
+- API routers mounted from `main.py`; startup reconcile + dataset background worker
+- Frontend: Datasets / Training / Research pages rewritten against real APIs; Models Test console
+- Docs: `Data/docs/models_datasets_training_research.md`
+
+### Verification
+- Backend: full `pytest Data/backend/tests` → **179+ passed** (subsystem suites included)
+- Frontend: typecheck / lint / test / build → **PASS** (per frontend wiring commit)
+- Real CUDA LoRA / live LM Studio / live HF / live web search: **ENVIRONMENT-DEPENDENT / NOT EXECUTED** in this agent VM
+
+### Explicitly NOT claimed
+- Token-streaming SSE on model test endpoint (non-stream real inference works; stream flag documented as not yet transported)
+- Automatic “trained model is better” labeling
+- Fabricated web results when provider unconfigured
+
+### Status
+**PASS** (implemented + automatically verified where environment permits)
+
+---
+
 ## 2026-09-21 — Models Control Plane (full backend + Models page) — PASS
 
 ### Objective

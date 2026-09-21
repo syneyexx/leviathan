@@ -102,6 +102,10 @@ Unavailable models produce HTTP 503 — no fabricated assistant success.
 
 ## Current boundary
 
-Implemented: chat, LLM client, Knowledge CRUD/search, lightweight reasoning, React/Vite UI.
+Implemented: chat, LLM client, Knowledge CRUD/search, lightweight reasoning, React/Vite UI,
+**Model Control Plane**, **Datasets** (import/materialize/prepare/index), **Training**
+(durable LoRA/QLoRA + fixture worker), **Research** (local evidence ledger + optional web).
 
-Not yet: tools/execution gateway, approvals, Run runtime, agents, Memory, Evidence, Neuro, training/eval frameworks.
+See `Data/docs/models_datasets_training_research.md` for operator setup.
+
+Environment-dependent (not claimed in CI): live LM Studio, CUDA LoRA runs, live HF gated downloads, live web search providers.

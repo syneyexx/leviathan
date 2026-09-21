@@ -1,390 +1,804 @@
-import { useState } from "react";
-import { media } from "../assets/media";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
+import type {
+  HardwareSnapshot,
+  PreflightResult,
+  TrainingCapabilities,
+  TrainingCheckpoint,
+  TrainingJob,
+  TrainingLogs,
+  TrainingMetric,
+  TrainingPlan,
+} from "../types/api";
 
-const KPIS = [
-  { label: "Total Training Jobs", value: "24", meta: "+33% this month", spark: [10, 14, 18, 16, 22, 28, 30, 36] },
-  { label: "Active Runs", value: "3", meta: "2 queued", spark: [8, 10, 12, 11, 14, 16, 18, 20] },
-  { label: "GPU Availability", value: "87%", meta: "7 / 8 GPUs online", spark: [70, 72, 75, 78, 80, 84, 86, 87] },
-  { label: "Best Validation Score", value: "0.9243", meta: "+2.1%", spark: [80, 82, 84, 86, 88, 90, 91, 92] },
-] as const;
+type Tab = "datasets" | "prepare" | "train" | "runs" | "evaluate" | "checkpoints" | "exports";
 
-const GPUS = [
-  { id: 0, vram: "21.4 / 24 GB", util: 94, temp: "71°C", power: "312W", status: "Online" },
-  { id: 1, vram: "20.8 / 24 GB", util: 91, temp: "69°C", power: "298W", status: "Online" },
-  { id: 2, vram: "19.6 / 24 GB", util: 88, temp: "68°C", power: "286W", status: "Online" },
-  { id: 3, vram: "18.2 / 24 GB", util: 82, temp: "66°C", power: "274W", status: "Online" },
-  { id: 4, vram: "17.4 / 24 GB", util: 79, temp: "65°C", power: "261W", status: "Online" },
-  { id: 5, vram: "16.1 / 24 GB", util: 74, temp: "63°C", power: "248W", status: "Online" },
-  { id: 6, vram: "15.2 / 24 GB", util: 68, temp: "61°C", power: "232W", status: "Online" },
-  { id: 7, vram: "0.4 / 24 GB", util: 4, temp: "42°C", power: "48W", status: "Online" },
-] as const;
+const ACTIVE = new Set(["queued", "preflight", "running", "evaluating", "exporting", "cancelling"]);
+const RESUMABLE = new Set(["interrupted", "queued"]);
 
-const CHECKPOINTS = [
-  { name: "ra-v3-ep068", epoch: 68, loss: "0.0417", size: "6.8 GB", when: "2m ago" },
-  { name: "ra-v3-ep060", epoch: 60, loss: "0.0482", size: "6.8 GB", when: "28m ago" },
-  { name: "ra-v3-ep050", epoch: 50, loss: "0.0561", size: "6.8 GB", when: "1h ago" },
-  { name: "ra-v3-ep040", epoch: 40, loss: "0.0714", size: "6.8 GB", when: "2h ago" },
-] as const;
-
-const METRICS = [
-  { name: "Validation Loss", value: "0.0417", delta: "-12.3%", up: false },
-  { name: "Perplexity", value: "8.42", delta: "-6.8%", up: false },
-  { name: "Accuracy", value: "91.4%", delta: "+2.1%", up: true },
-  { name: "F1 Score", value: "0.903", delta: "+1.6%", up: true },
-] as const;
-
-const LOGS = [
-  "[14:27:18] INFO Step 12480/18400 loss=0.0324 lr=2.0e-5",
-  "[14:27:12] INFO Validation loss=0.0417 perplexity=8.42",
-  "[14:26:58] INFO Checkpoint saved → /models/runs/ra-v3-20250422_1420",
-  "[14:26:41] WARN Grad norm spiked to 1.84 — clipped",
-  "[14:26:20] INFO Epoch 68/100 completed in 2m 48s",
-] as const;
-
-const EXPERIMENTS = [
-  { name: "Research-Assistant-v3", base: "Llama-3-8B", dataset: "Research-v2", status: "Training", progress: 68 },
-  { name: "hades-coder-7b-sft", base: "Qwen2.5-7B", dataset: "Code-SFT", status: "Completed", progress: 100 },
-  { name: "align-dpo-v1", base: "Llama-3-8B", dataset: "Prefs-v1", status: "Queued", progress: 0 },
-] as const;
-
-function Spark({ points }: { points: readonly number[] }) {
-  const max = Math.max(...points);
-  const min = Math.min(...points);
-  const d = points
-    .map((v, i) => {
-      const x = (i / (points.length - 1)) * 70;
-      const y = 20 - ((v - min) / (max - min || 1)) * 16;
-      return `${i === 0 ? "M" : "L"}${x},${y}`;
-    })
-    .join(" ");
-  return (
-    <svg className="lv-tn-spark" viewBox="0 0 70 22" aria-hidden="true">
-      <path d={d} fill="none" stroke="#22C9D6" strokeWidth="1.5" />
-    </svg>
-  );
+function dash(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
 }
 
-function LossChart() {
-  return (
-    <svg className="lv-tn-chart" viewBox="0 0 520 220" role="img" aria-label="Training progress chart">
-      {[0, 1, 2, 3, 4].map((i) => (
-        <line key={i} x1="40" x2="500" y1={20 + i * 40} y2={20 + i * 40} stroke="rgba(214,169,87,0.1)" />
-      ))}
-      <path
-        d="M40,40 C90,55 140,70 180,95 C230,125 280,145 330,155 C380,165 430,170 500,175"
-        fill="none"
-        stroke="#22C9D6"
-        strokeWidth="2"
-      />
-      <path
-        d="M40,48 C90,62 140,80 180,105 C230,132 280,150 330,158 C380,166 430,172 500,178"
-        fill="none"
-        stroke="#20DC8C"
-        strokeWidth="2"
-      />
-      <path d="M40,190 C180,160 320,120 500,80" fill="none" stroke="#D6A957" strokeWidth="1.5" opacity="0.8" />
-      <line x1="360" x2="360" y1="20" y2="200" stroke="rgba(32,220,140,0.35)" strokeDasharray="3 3" />
-      <rect x="368" y="34" width="120" height="72" rx="8" fill="rgba(5,7,6,0.92)" stroke="rgba(214,169,87,0.25)" />
-      <text x="378" y="52" className="lv-tn-axis">Epoch 68 / 100</text>
-      <text x="378" y="68" className="lv-tn-axis">Train 0.0324</text>
-      <text x="378" y="84" className="lv-tn-axis">Val 0.0417</text>
-      <text x="378" y="100" className="lv-tn-axis">LR 2.0e-5</text>
-      <text x="40" y="214" className="lv-tn-axis">0</text>
-      <text x="490" y="214" className="lv-tn-axis">100</text>
-    </svg>
-  );
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return "—";
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function errMsg(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
 }
 
 export function TrainingPage() {
   const toast = useAppToast();
-  const [method, setMethod] = useState<"Full" | "LoRA">("LoRA");
-  const [checkpointing, setCheckpointing] = useState(true);
+  const [tab, setTab] = useState<Tab>("train");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [capabilities, setCapabilities] = useState<TrainingCapabilities | null>(null);
+  const [hardware, setHardware] = useState<HardwareSnapshot | null>(null);
+  const [capsError, setCapsError] = useState<string | null>(null);
+  const [hwError, setHwError] = useState<string | null>(null);
+
+  const [jobs, setJobs] = useState<TrainingJob[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<TrainingMetric[]>([]);
+  const [logs, setLogs] = useState<TrainingLogs | null>(null);
+  const [checkpoints, setCheckpoints] = useState<TrainingCheckpoint[]>([]);
+  const [evaluation, setEvaluation] = useState<Record<string, unknown> | null>(null);
+  const [exportResult, setExportResult] = useState<Record<string, unknown> | null>(null);
+
+  const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  const [plan, setPlan] = useState<TrainingPlan | null>(null);
+
+  // Train form
+  const [name, setName] = useState("training-run");
+  const [method, setMethod] = useState("fixture");
+  const [baseModel, setBaseModel] = useState("unspecified");
+  const [datasetVersionId, setDatasetVersionId] = useState("");
+  const [datasetPath, setDatasetPath] = useState("");
+  const [epochs, setEpochs] = useState("1");
+  const [batchSize, setBatchSize] = useState("1");
+  const [learningRate, setLearningRate] = useState("0.0002");
+  const [maxSeq, setMaxSeq] = useState("512");
+  const [precision, setPrecision] = useState("fp32");
+  const [fixtureSteps, setFixtureSteps] = useState("5");
+
+  const selectedJob = useMemo(
+    () => jobs.find((j) => j.jobId === selectedJobId) ?? null,
+    [jobs, selectedJobId],
+  );
+
+  const payload = useMemo(
+    () => ({
+      name: name.trim() || "training-run",
+      method,
+      base_model_ref: baseModel.trim() || "unspecified",
+      dataset_version_id: datasetVersionId.trim() || null,
+      dataset_path: datasetPath.trim() || null,
+      epochs: Number(epochs) || 1,
+      train_batch_size: Number(batchSize) || 1,
+      learning_rate: Number(learningRate) || 2e-4,
+      max_seq_length: Number(maxSeq) || 512,
+      precision,
+      fixture_steps: Number(fixtureSteps) || 5,
+    }),
+    [name, method, baseModel, datasetVersionId, datasetPath, epochs, batchSize, learningRate, maxSeq, precision, fixtureSteps],
+  );
+
+  const loadCaps = useCallback(async () => {
+    setCapsError(null);
+    setHwError(null);
+    try {
+      const res = await api.trainingCapabilities();
+      setCapabilities(res.capabilities);
+    } catch (err) {
+      setCapabilities(null);
+      setCapsError(errMsg(err, "Training capabilities unavailable"));
+    }
+    try {
+      const res = await api.trainingHardware();
+      setHardware(res.hardware);
+    } catch (err) {
+      setHardware(null);
+      setHwError(errMsg(err, "Hardware probe unavailable"));
+    }
+  }, []);
+
+  const loadJobs = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await api.listTrainingJobs();
+      setJobs(res.jobs);
+      if (res.jobs.length === 0) {
+        setSelectedJobId(null);
+      } else if (!selectedJobId || !res.jobs.some((j) => j.jobId === selectedJobId)) {
+        setSelectedJobId(res.jobs[0].jobId);
+      }
+    } catch (err) {
+      setError(errMsg(err, "Failed to load training jobs"));
+      setJobs([]);
+    }
+  }, [selectedJobId]);
+
+  useEffect(() => {
+    void loadCaps();
+    void loadJobs();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!selectedJobId) {
+      setMetrics([]);
+      setLogs(null);
+      setCheckpoints([]);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const [m, l, c, jobRes] = await Promise.all([
+          api.listTrainingMetrics(selectedJobId),
+          api.getTrainingLogs(selectedJobId),
+          api.listTrainingCheckpoints(selectedJobId),
+          api.getTrainingJob(selectedJobId),
+        ]);
+        if (cancelled) return;
+        setMetrics(m.metrics);
+        setLogs(l);
+        setCheckpoints(c.checkpoints);
+        setJobs((prev) => {
+          const others = prev.filter((j) => j.jobId !== selectedJobId);
+          return [jobRes.job, ...others].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        });
+      } catch {
+        /* keep last good snapshot */
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [selectedJobId]);
+
+  async function withBusy(fn: () => Promise<void>, ok?: string) {
+    setBusy(true);
+    try {
+      await fn();
+      if (ok) toast(ok);
+    } catch (err) {
+      toast(errMsg(err, "Action failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onPreflight() {
+    await withBusy(async () => {
+      const [pf, pl] = await Promise.all([
+        api.trainingPreflight(payload),
+        api.trainingPlan(payload),
+      ]);
+      setPreflight(pf.preflight);
+      setPlan(pl.plan);
+    }, "Preflight complete");
+  }
+
+  async function onCreate(start: boolean) {
+    if (preflight?.verdict === "BLOCKED") {
+      toast("Preflight blocked — fix issues before starting");
+      return;
+    }
+    await withBusy(async () => {
+      if (!preflight) {
+        const pf = await api.trainingPreflight(payload);
+        setPreflight(pf.preflight);
+        if (pf.preflight.verdict === "BLOCKED") {
+          throw new ApiError(400, "Preflight blocked — cannot start");
+        }
+      }
+      const res = await api.createTrainingJob({ ...payload, auto_start: start });
+      setSelectedJobId(res.job.jobId);
+      await loadJobs();
+      setTab("runs");
+    }, start ? "Job created and started" : "Job created");
+  }
+
+  const methodDisabledReason = useMemo(() => {
+    if (!capabilities) return capsError ?? "Capabilities not loaded";
+    if (method === "fixture" && !capabilities.canRunFixture) return "Fixture runner unavailable";
+    if (method === "lora" && !capabilities.canRunLora) {
+      return `LoRA unavailable — missing: ${capabilities.missingForLora.join(", ") || "deps"}`;
+    }
+    if (method === "qlora" && !capabilities.canRunQlora) return "QLoRA unavailable on this host";
+    if (method === "dpo" && !capabilities.canRunDpo) return "DPO unavailable on this host";
+    return null;
+  }, [capabilities, capsError, method]);
 
   return (
     <AppShell
       activeMode="explore"
       modeLabel="Training Mode"
-      searchPlaceholder="Search models, datasets, experiments, or ask Leviathan..."
-      layout="wide"
+      searchPlaceholder="Search training runs…"
       pageClass="lv-app--training"
+      layout="wide"
     >
-      <main className="lv-main lv-tn-main">
-        <section className="lv-tn-hero" aria-label="Model Training">
-          <img src={media.trainingHero} alt="" width={1400} height={220} />
-        </section>
+      <main className="lv-main">
+        <header className="lv-models-header">
+          <div>
+            <div className="lv-models-kicker">Improve the mind</div>
+            <h1 className="lv-models-title">Training</h1>
+            <p className="lv-muted">Live jobs, real metrics, honest hardware — no fake progress.</p>
+          </div>
+          <div className="lv-models-header-actions">
+            <button className="lv-btn" type="button" disabled={busy} onClick={() => void loadCaps()}>
+              Refresh hardware
+            </button>
+            <button className="lv-btn" type="button" disabled={busy} onClick={() => void loadJobs()}>
+              Refresh jobs
+            </button>
+          </div>
+        </header>
 
-        <section className="lv-tn-kpi-row">
-          {KPIS.map((item) => (
-            <article key={item.label} className="lv-tn-kpi">
-              <div className="lv-tn-kpi-label">{item.label}</div>
-              <div className="lv-tn-kpi-value">{item.value}</div>
-              <div className="lv-tn-kpi-foot">
-                <span>{item.meta}</span>
-                <Spark points={item.spark} />
-              </div>
-            </article>
+        {error ? (
+          <div className="lv-models-banner is-error" role="alert">
+            <strong>Training API error</strong>
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        <div className="lv-models-status-row">
+          <div className="lv-models-status-card">
+            <span>Capabilities</span>
+            <strong>
+              {capabilities
+                ? capabilities.ready
+                  ? "Ready"
+                  : "Partial"
+                : capsError
+                  ? "Unavailable"
+                  : "…"}
+            </strong>
+          </div>
+          <div className="lv-models-status-card">
+            <span>CUDA</span>
+            <strong>
+              {hardware ? (hardware.cudaAvailable ? "Available" : "None") : hwError ? "—" : "…"}
+            </strong>
+          </div>
+          <div className="lv-models-status-card">
+            <span>GPUs</span>
+            <strong>{hardware ? hardware.gpus.length : "—"}</strong>
+          </div>
+          <div className="lv-models-status-card">
+            <span>Active jobs</span>
+            <strong>{jobs.filter((j) => ACTIVE.has(j.status)).length}</strong>
+          </div>
+        </div>
+
+        {(capsError || hwError) && (
+          <div className="lv-models-banner is-warn" role="status">
+            <strong>Environment note</strong>
+            <span>{[capsError, hwError].filter(Boolean).join(" · ")}</span>
+          </div>
+        )}
+
+        <div className="lv-tabs" role="tablist">
+          {(
+            [
+              ["datasets", "Datasets"],
+              ["prepare", "Prepare"],
+              ["train", "Train"],
+              ["runs", "Runs"],
+              ["evaluate", "Evaluate"],
+              ["checkpoints", "Checkpoints"],
+              ["exports", "Exports"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              className={`lv-tab${tab === id ? " is-active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
           ))}
-        </section>
+        </div>
 
-        <section className="lv-tn-mid">
-          <article className="lv-panel lv-tn-card">
-            <div className="lv-tn-card-head">
-              <div className="lv-section-label">Training Progress</div>
-              <span className="lv-tn-live">Live</span>
-            </div>
-            <div className="lv-tn-legend">
-              <span>
-                <i style={{ background: "#22C9D6" }} /> Training Loss
-              </span>
-              <span>
-                <i style={{ background: "#20DC8C" }} /> Validation Loss
-              </span>
-              <span>
-                <i style={{ background: "#D6A957" }} /> Learning Rate
-              </span>
-            </div>
-            <LossChart />
-          </article>
+        {tab === "datasets" ? (
+          <section className="lv-panel">
+            <p>
+              Training consumes dataset versions from the Datasets control plane. Prepare data there, then
+              paste a <code>dataset_version_id</code> into Train.
+            </p>
+            <Link className="lv-btn lv-btn-gold" to="/datasets">
+              Open Datasets
+            </Link>
+          </section>
+        ) : null}
 
-          <article className="lv-panel lv-tn-card">
-            <div className="lv-tn-card-head">
-              <div className="lv-section-label">Training Configuration</div>
-              <button type="button" className="lv-tn-mini" onClick={() => toast("Load preset")}>
-                Load Preset
-              </button>
-            </div>
-            <div className="lv-tn-form">
-              {[
-                ["Base Model", "Llama-3-8B-Instruct"],
-                ["Dataset", "Leviathan-Research-v2"],
-                ["Training Method", "Supervised Fine-tuning (SFT)"],
-                ["Optimizer", "AdamW"],
-                ["Scheduler", "Cosine with Warmup"],
-                ["Precision", "Mixed Precision (FP16)"],
-              ].map(([label, value]) => (
-                <label key={label} className="lv-tn-field">
-                  <span>{label}</span>
-                  <select defaultValue={value}>
-                    <option>{value}</option>
-                  </select>
-                </label>
-              ))}
-              <label className="lv-tn-field">
-                <span>Sequence Length</span>
-                <input defaultValue="4096" />
-              </label>
-              <label className="lv-tn-field">
-                <span>Batch Size</span>
-                <input defaultValue="32" />
-              </label>
-              <div className="lv-tn-method">
-                <span>Fine-tuning Type</span>
-                <div>
-                  <button type="button" className={method === "Full" ? "is-active" : ""} onClick={() => setMethod("Full")}>
-                    Full Finetune
-                  </button>
-                  <button type="button" className={method === "LoRA" ? "is-active" : ""} onClick={() => setMethod("LoRA")}>
-                    LoRA
-                  </button>
-                </div>
-              </div>
-              {method === "LoRA" && (
-                <label className="lv-tn-field">
-                  <span>LoRA Rank</span>
-                  <input defaultValue="64" />
-                </label>
-              )}
-              <label className="lv-tn-toggle">
-                <span>Grad Checkpointing</span>
-                <button type="button" className={checkpointing ? "is-on" : ""} onClick={() => setCheckpointing((v) => !v)}>
-                  {checkpointing ? "Enabled" : "Off"}
-                </button>
-              </label>
-            </div>
-          </article>
-
-          <article className="lv-panel lv-tn-card">
-            <div className="lv-tn-card-head">
-              <div className="lv-section-label">Run Status</div>
-              <span className="lv-tn-pill">Training</span>
-            </div>
-            <strong className="lv-tn-run-name">Research-Assistant-v3</strong>
-            <p className="lv-tn-run-sub">Fine-tuning Llama-3-8B on domain data</p>
-            <div className="lv-tn-progress">
-              <div>
-                <span>Progress</span>
-                <strong>68%</strong>
-              </div>
-              <div className="lv-tn-bar">
-                <span style={{ width: "68%" }} />
-              </div>
-            </div>
-            <ul className="lv-tn-stats">
-              <li>
-                <span>Epoch</span>
-                <strong>68 / 100</strong>
-              </li>
-              <li>
-                <span>Step</span>
-                <strong>12,480 / 18,400</strong>
-              </li>
-              <li>
-                <span>Elapsed</span>
-                <strong>03:27:18</strong>
-              </li>
-              <li>
-                <span>ETA</span>
-                <strong>01:36:52</strong>
-              </li>
-              <li>
-                <span>Current Loss</span>
-                <strong>0.0324</strong>
-              </li>
-              <li>
-                <span>Validation Loss</span>
-                <strong>0.0417</strong>
-              </li>
-              <li>
-                <span>Output Path</span>
-                <strong className="lv-tn-path">/models/runs/ra-v3-20250422_1420</strong>
-              </li>
-            </ul>
-            <div className="lv-tn-run-actions">
-              <button type="button" onClick={() => toast("Paused")}>
-                Pause
-              </button>
-              <button type="button" className="danger" onClick={() => toast("Stop requested")}>
-                Stop
-              </button>
-            </div>
-          </article>
-        </section>
-
-        <section className="lv-tn-lower">
-          <article className="lv-panel lv-tn-card">
-            <div className="lv-section-label">GPU & System Resources</div>
-            <div className="lv-tn-table-wrap">
-              <table className="lv-tn-table">
-                <thead>
-                  <tr>
-                    <th>GPU</th>
-                    <th>VRAM</th>
-                    <th>Util</th>
-                    <th>Temp</th>
-                    <th>Power</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {GPUS.map((g) => (
-                    <tr key={g.id}>
-                      <td>GPU {g.id}</td>
-                      <td>{g.vram}</td>
-                      <td>
-                        <div className="lv-tn-util">
-                          <span style={{ width: `${g.util}%` }} />
-                        </div>
-                        {g.util}%
-                      </td>
-                      <td>{g.temp}</td>
-                      <td>{g.power}</td>
-                      <td className="is-online">{g.status}</td>
-                    </tr>
+        {tab === "prepare" ? (
+          <section className="lv-panel">
+            <h2>Prepare note</h2>
+            <p className="lv-muted">
+              Validate, dedupe, split, and export happen on the Datasets page. This tab does not invent
+              preparation progress — configure a dataset version, then return here to train.
+            </p>
+            <Link className="lv-btn" to="/datasets">
+              Go to Prepare on Datasets
+            </Link>
+            {capabilities ? (
+              <div style={{ marginTop: "1rem" }}>
+                <h3>Package availability</h3>
+                <ul>
+                  {capabilities.packages.map((p) => (
+                    <li key={p.name}>
+                      {p.name}: {p.available ? `ok${p.version ? ` (${p.version})` : ""}` : "missing"}
+                      {p.importError ? ` — ${p.importError}` : ""}
+                    </li>
                   ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="lv-tn-sysbars">
-              <div>
-                <div>
-                  <span>System RAM</span>
-                  <strong>126 / 256 GB · 49%</strong>
-                </div>
-                <div className="lv-tn-bar">
-                  <span style={{ width: "49%" }} />
-                </div>
+                </ul>
+                {capabilities.notes.length > 0 ? (
+                  <p className="lv-muted">{capabilities.notes.join(" · ")}</p>
+                ) : null}
               </div>
-              <div>
-                <div>
-                  <span>Disk Usage</span>
-                  <strong>1.2 / 4.0 TB · 30%</strong>
+            ) : null}
+            {hardware ? (
+              <div style={{ marginTop: "1rem" }}>
+                <h3>Hardware</h3>
+                <div className="lv-meta-grid">
+                  <div className="lv-meta-item">
+                    <span>CPU</span>
+                    <strong>{dash(hardware.cpuModel)}</strong>
+                  </div>
+                  <div className="lv-meta-item">
+                    <span>RAM free</span>
+                    <strong>{formatBytes(hardware.ramAvailableBytes)}</strong>
+                  </div>
+                  <div className="lv-meta-item">
+                    <span>Disk free</span>
+                    <strong>{formatBytes(hardware.diskFreeBytes)}</strong>
+                  </div>
                 </div>
-                <div className="lv-tn-bar">
-                  <span style={{ width: "30%" }} />
-                </div>
+                {hardware.gpus.length === 0 ? (
+                  <p className="lv-muted">No GPUs measured on this host.</p>
+                ) : (
+                  <ul>
+                    {hardware.gpus.map((g) => (
+                      <li key={g.index}>
+                        [{g.index}] {g.name} — VRAM {formatBytes(g.totalVramBytes)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {hardware.notes.length > 0 ? (
+                  <p className="lv-muted">{hardware.notes.join(" · ")}</p>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {tab === "train" ? (
+          <section className="lv-panel" aria-label="Create training job">
+            <div className="lv-form-grid">
+              <div className="lv-form-field">
+                <label htmlFor="tr-name">Job name</label>
+                <input id="tr-name" className="lv-input" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-method">Method</label>
+                <select id="tr-method" className="lv-input" value={method} onChange={(e) => setMethod(e.target.value)}>
+                  <option value="fixture">fixture</option>
+                  <option value="sft">sft</option>
+                  <option value="lora">lora</option>
+                  <option value="qlora">qlora</option>
+                  <option value="dpo">dpo</option>
+                </select>
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-base">Base model ref</label>
+                <input
+                  id="tr-base"
+                  className="lv-input"
+                  value={baseModel}
+                  onChange={(e) => setBaseModel(e.target.value)}
+                />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-dsv">Dataset version id</label>
+                <input
+                  id="tr-dsv"
+                  className="lv-input"
+                  value={datasetVersionId}
+                  onChange={(e) => setDatasetVersionId(e.target.value)}
+                  placeholder="optional"
+                />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-dsp">Dataset path</label>
+                <input
+                  id="tr-dsp"
+                  className="lv-input"
+                  value={datasetPath}
+                  onChange={(e) => setDatasetPath(e.target.value)}
+                  placeholder="optional local path"
+                />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-epochs">Epochs</label>
+                <input id="tr-epochs" className="lv-input" value={epochs} onChange={(e) => setEpochs(e.target.value)} />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-bs">Batch size</label>
+                <input id="tr-bs" className="lv-input" value={batchSize} onChange={(e) => setBatchSize(e.target.value)} />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-lr">Learning rate</label>
+                <input
+                  id="tr-lr"
+                  className="lv-input"
+                  value={learningRate}
+                  onChange={(e) => setLearningRate(e.target.value)}
+                />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-seq">Max seq length</label>
+                <input id="tr-seq" className="lv-input" value={maxSeq} onChange={(e) => setMaxSeq(e.target.value)} />
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-prec">Precision</label>
+                <select
+                  id="tr-prec"
+                  className="lv-input"
+                  value={precision}
+                  onChange={(e) => setPrecision(e.target.value)}
+                >
+                  <option value="fp32">fp32</option>
+                  <option value="fp16">fp16</option>
+                  <option value="bf16">bf16</option>
+                </select>
+              </div>
+              <div className="lv-form-field">
+                <label htmlFor="tr-fix">Fixture steps</label>
+                <input
+                  id="tr-fix"
+                  className="lv-input"
+                  value={fixtureSteps}
+                  onChange={(e) => setFixtureSteps(e.target.value)}
+                  disabled={method !== "fixture"}
+                  title={method !== "fixture" ? "Only used for fixture method" : undefined}
+                />
               </div>
             </div>
-          </article>
 
-          <article className="lv-panel lv-tn-card">
-            <div className="lv-section-label">Checkpoints</div>
-            <ul className="lv-tn-list">
-              {CHECKPOINTS.map((c) => (
-                <li key={c.name}>
-                  <strong>{c.name}</strong>
-                  <span>
-                    Ep {c.epoch} · Val {c.loss}
-                  </span>
-                  <em>
-                    {c.size} · {c.when}
-                  </em>
-                </li>
-              ))}
-            </ul>
-          </article>
+            {methodDisabledReason ? (
+              <p className="lv-muted">Selected method note: {methodDisabledReason}</p>
+            ) : null}
 
-          <article className="lv-panel lv-tn-card">
-            <div className="lv-section-label">Evaluation Metrics</div>
-            <ul className="lv-tn-metrics">
-              {METRICS.map((m) => (
-                <li key={m.name}>
-                  <span>{m.name}</span>
-                  <strong>{m.value}</strong>
-                  <em className={m.up ? "is-good" : "is-good"}>{m.delta}</em>
-                </li>
-              ))}
-            </ul>
-          </article>
-        </section>
+            <div className="lv-form-actions" style={{ marginTop: "1rem" }}>
+              <button className="lv-btn" type="button" disabled={busy} onClick={() => void onPreflight()}>
+                Run preflight
+              </button>
+              <button
+                className="lv-btn"
+                type="button"
+                disabled={busy || Boolean(methodDisabledReason && method !== "fixture" && method !== "sft")}
+                title={methodDisabledReason ?? undefined}
+                onClick={() => void onCreate(false)}
+              >
+                Create job
+              </button>
+              <button
+                className="lv-btn lv-btn-gold"
+                type="button"
+                disabled={
+                  busy ||
+                  preflight?.verdict === "BLOCKED" ||
+                  Boolean(methodDisabledReason && method !== "fixture" && method !== "sft")
+                }
+                title={
+                  preflight?.verdict === "BLOCKED"
+                    ? "Blocked by preflight"
+                    : (methodDisabledReason ?? undefined)
+                }
+                onClick={() => void onCreate(true)}
+              >
+                Create &amp; start
+              </button>
+            </div>
 
-        <section className="lv-tn-footer-row">
-          <article className="lv-panel lv-tn-card lv-tn-logs">
-            <div className="lv-section-label">Training Logs</div>
-            <pre>{LOGS.join("\n")}</pre>
-          </article>
-          <article className="lv-panel lv-tn-card">
-            <div className="lv-section-label">Quick Actions</div>
-            <div className="lv-tn-actions">
-              {["Start Training", "Save Preset", "Open Logs", "Evaluate Model", "Deploy to Models"].map((label, i) => (
-                <button key={label} type="button" className={i === 0 ? "primary" : ""} onClick={() => toast(label)}>
-                  {label}
+            {preflight ? (
+              <div style={{ marginTop: "1rem" }}>
+                <h3>Preflight — {preflight.verdict}</h3>
+                {preflight.issues.length === 0 ? (
+                  <p className="lv-muted">No issues reported.</p>
+                ) : (
+                  <ul>
+                    {preflight.issues.map((issue) => (
+                      <li key={`${issue.code}-${issue.message}`}>
+                        [{issue.severity}] {issue.code}: {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <p className="lv-muted">Run preflight before starting production jobs.</p>
+            )}
+
+            {plan ? (
+              <div style={{ marginTop: "1rem" }}>
+                <h3>Plan — {plan.strategy}</h3>
+                <p className="lv-muted">{plan.reason}</p>
+                {plan.warnings.length > 0 ? <p className="lv-muted">{plan.warnings.join(" · ")}</p> : null}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {tab === "runs" ? (
+          <section className="lv-panel" aria-label="Training runs">
+            {jobs.length === 0 ? (
+              <div className="lv-models-empty">
+                <h2>NO TRAINING JOBS</h2>
+                <p>Create a job from the Train tab. Nothing is simulated here.</p>
+                <button className="lv-btn lv-btn-gold" type="button" onClick={() => setTab("train")}>
+                  Open Train
                 </button>
-              ))}
-            </div>
-            <div className="lv-section-label" style={{ marginTop: 10 }}>
-              Active Experiments
-            </div>
-            <ul className="lv-tn-experiments">
-              {EXPERIMENTS.map((e) => (
-                <li key={e.name}>
-                  <div>
-                    <strong>{e.name}</strong>
-                    <small>
-                      {e.base} · {e.dataset} · {e.status}
-                    </small>
-                  </div>
-                  <div className="lv-tn-bar compact">
-                    <span style={{ width: `${e.progress}%` }} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </article>
-        </section>
+              </div>
+            ) : (
+              <>
+                <div className="lv-models-table-wrap">
+                  <table className="lv-models-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Method</th>
+                        <th>Status</th>
+                        <th>Progress</th>
+                        <th>Updated</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobs.map((job) => (
+                        <tr
+                          key={job.jobId}
+                          className={job.jobId === selectedJobId ? "is-selected" : undefined}
+                          onClick={() => setSelectedJobId(job.jobId)}
+                        >
+                          <td>
+                            <strong>{job.name}</strong>
+                            <div className="lv-muted">{job.jobId}</div>
+                          </td>
+                          <td>{job.method}</td>
+                          <td>{job.status}</td>
+                          <td>{job.progress == null ? "—" : `${Math.round(job.progress * 100)}%`}</td>
+                          <td>{job.updatedAt}</td>
+                          <td>
+                            <div className="lv-row-actions">
+                              {job.status === "queued" ? (
+                                <button
+                                  className="lv-btn"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void withBusy(async () => {
+                                      await api.startTrainingJob(job.jobId);
+                                      await loadJobs();
+                                    }, "Started");
+                                  }}
+                                >
+                                  Start
+                                </button>
+                              ) : null}
+                              {ACTIVE.has(job.status) ? (
+                                <button
+                                  className="lv-btn"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void withBusy(async () => {
+                                      await api.cancelTrainingJob(job.jobId);
+                                      await loadJobs();
+                                    }, "Cancel requested");
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              ) : null}
+                              {RESUMABLE.has(job.status) ? (
+                                <button
+                                  className="lv-btn"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void withBusy(async () => {
+                                      await api.resumeTrainingJob(job.jobId);
+                                      await loadJobs();
+                                    }, "Resume requested");
+                                  }}
+                                >
+                                  Resume
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-        <p className="lv-footer-quote">“Greater intelligence is not built in a day, but in the deliberate compounding of effort.” — LEVIATHAN</p>
+                {selectedJob ? (
+                  <div style={{ marginTop: "1rem" }}>
+                    <h3>
+                      {selectedJob.name} — {selectedJob.status}
+                    </h3>
+                    {selectedJob.error ? <p className="lv-muted">Error: {selectedJob.error}</p> : null}
+                    <h4>Metrics</h4>
+                    {metrics.length === 0 ? (
+                      <p className="lv-muted">No metrics recorded yet.</p>
+                    ) : (
+                      <div className="lv-models-table-wrap">
+                        <table className="lv-models-table">
+                          <thead>
+                            <tr>
+                              <th>Step</th>
+                              <th>Epoch</th>
+                              <th>Name</th>
+                              <th>Value</th>
+                              <th>At</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {metrics.slice(-40).map((m, i) => (
+                              <tr key={`${m.metricName}-${m.step}-${m.recordedAt}-${i}`}>
+                                <td>{dash(m.step)}</td>
+                                <td>{dash(m.epoch)}</td>
+                                <td>{m.metricName}</td>
+                                <td>{m.metricValue}</td>
+                                <td>{m.recordedAt}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <h4>Logs</h4>
+                    {logs?.text ? (
+                      <pre className="lv-code-block" style={{ maxHeight: 240, overflow: "auto" }}>
+                        {logs.text}
+                      </pre>
+                    ) : (
+                      <p className="lv-muted">No log text yet{logs?.logPath ? ` (path: ${logs.logPath})` : ""}.</p>
+                    )}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {tab === "evaluate" ? (
+          <section className="lv-panel">
+            {!selectedJob ? (
+              <p className="lv-muted">Select a job on Runs first.</p>
+            ) : (
+              <>
+                <p className="lv-muted">
+                  Evaluate <strong>{selectedJob.name}</strong> ({selectedJob.status})
+                </p>
+                <button
+                  className="lv-btn lv-btn-gold"
+                  type="button"
+                  disabled={busy || ACTIVE.has(selectedJob.status)}
+                  title={ACTIVE.has(selectedJob.status) ? "Wait for the job to finish" : undefined}
+                  onClick={() =>
+                    void withBusy(async () => {
+                      const res = await api.evaluateTrainingJob(selectedJob.jobId);
+                      setEvaluation(res.evaluation);
+                    }, "Evaluation complete")
+                  }
+                >
+                  Run evaluate
+                </button>
+                {evaluation ? (
+                  <pre className="lv-code-block" style={{ marginTop: "1rem", maxHeight: 320, overflow: "auto" }}>
+                    {JSON.stringify(evaluation, null, 2)}
+                  </pre>
+                ) : (
+                  <p className="lv-muted">No evaluation result loaded.</p>
+                )}
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {tab === "checkpoints" ? (
+          <section className="lv-panel">
+            {!selectedJobId ? (
+              <p className="lv-muted">Select a job on Runs first.</p>
+            ) : checkpoints.length === 0 ? (
+              <div className="lv-models-empty">
+                <h2>NO CHECKPOINTS</h2>
+                <p>Checkpoints appear when the trainer writes them for this job.</p>
+              </div>
+            ) : (
+              <div className="lv-models-table-wrap">
+                <table className="lv-models-table">
+                  <thead>
+                    <tr>
+                      <th>Step</th>
+                      <th>Epoch</th>
+                      <th>Path</th>
+                      <th>Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {checkpoints.map((c) => (
+                      <tr key={c.checkpointId}>
+                        <td>{dash(c.step)}</td>
+                        <td>{dash(c.epoch)}</td>
+                        <td>{c.path}</td>
+                        <td>{c.createdAt}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        {tab === "exports" ? (
+          <section className="lv-panel">
+            {!selectedJob ? (
+              <p className="lv-muted">Select a job on Runs first.</p>
+            ) : (
+              <>
+                <button
+                  className="lv-btn lv-btn-gold"
+                  type="button"
+                  disabled={busy || selectedJob.status !== "completed"}
+                  title={
+                    selectedJob.status !== "completed"
+                      ? "Export is available after a completed job"
+                      : undefined
+                  }
+                  onClick={() =>
+                    void withBusy(async () => {
+                      const res = await api.exportTrainingJob(selectedJob.jobId);
+                      setExportResult(res.export);
+                    }, "Export complete")
+                  }
+                >
+                  Export artifact
+                </button>
+                {exportResult ? (
+                  <pre className="lv-code-block" style={{ marginTop: "1rem", maxHeight: 320, overflow: "auto" }}>
+                    {JSON.stringify(exportResult, null, 2)}
+                  </pre>
+                ) : (
+                  <p className="lv-muted">No export result yet.</p>
+                )}
+              </>
+            )}
+          </section>
+        ) : null}
       </main>
     </AppShell>
   );

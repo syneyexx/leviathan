@@ -326,3 +326,481 @@ export type VerifiedCapability = {
   detail?: string | null;
 };
 
+export type ModelInferenceTestResult = {
+  ok: boolean;
+  modelId: string;
+  providerId: string;
+  callId?: string;
+  traceId?: string;
+  totalLatencyMs?: number;
+  ttftMs?: number | null;
+  finishReason?: string | null;
+  preview?: string;
+  raw?: Record<string, unknown>;
+  streamRequested?: boolean;
+  streamImplemented?: boolean;
+  note?: string | null;
+};
+
+/* ---------- Datasets ---------- */
+
+export type DatasetRecord = {
+  datasetId: string;
+  name: string;
+  sourceType: string;
+  status: string;
+  description: string;
+  originalFilename?: string | null;
+  originalUri?: string | null;
+  license?: string | null;
+  schemaVersion: number;
+  contentHash?: string | null;
+  byteSize?: number | null;
+  rowCount?: number | null;
+  detectedFormat?: string | null;
+  formatConfidence?: number | null;
+  provenance?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  rawPath?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DatasetVersion = {
+  versionId: string;
+  datasetId: string;
+  versionLabel: string;
+  parentVersionId?: string | null;
+  status: string;
+  kind: string;
+  schema?: Record<string, unknown>;
+  rowCount?: number | null;
+  byteSize?: number | null;
+  contentHash?: string | null;
+  storagePath?: string | null;
+  split?: Record<string, unknown>;
+  transformLineage?: Record<string, unknown>[];
+  tokenStats?: Record<string, unknown>;
+  validation?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DatasetFile = {
+  fileId: string;
+  datasetId: string;
+  versionId?: string | null;
+  role: string;
+  path: string;
+  contentHash: string;
+  byteSize: number;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type DatasetJob = {
+  jobId: string;
+  datasetId?: string | null;
+  versionId?: string | null;
+  jobType: string;
+  status: string;
+  phase?: string | null;
+  progress?: number | null;
+  cancelRequested?: boolean;
+  workerPid?: number | null;
+  checkpoint?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: string | null;
+  logPath?: string | null;
+  traceId?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  updatedAt: string;
+  finishedAt?: string | null;
+};
+
+export type DatasetIndex = {
+  indexId: string;
+  datasetId: string;
+  versionId: string;
+  status: string;
+  chunkCount?: number | null;
+  embeddingModel?: string | null;
+  indexVersion?: number;
+  knowledgeScope?: string | null;
+  storagePath?: string | null;
+  provenance?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DatasetPreviewRow = Record<string, unknown>;
+
+export type HfDatasetFile = {
+  path?: string;
+  filename?: string;
+  size?: number | null;
+  [key: string]: unknown;
+};
+
+/* ---------- Training ---------- */
+
+export type PackageAvailability = {
+  name: string;
+  available: boolean;
+  version?: string | null;
+  importError?: string | null;
+};
+
+export type TrainingCapabilities = {
+  packages: PackageAvailability[];
+  canRunFixture: boolean;
+  canRunLora: boolean;
+  canRunQlora: boolean;
+  canRunDpo: boolean;
+  ready: boolean;
+  missingForLora: string[];
+  notes: string[];
+  truth?: Record<string, boolean>;
+};
+
+export type GpuDeviceInfo = {
+  index: number;
+  name: string;
+  totalVramBytes?: number | null;
+  freeVramBytes?: number | null;
+  usedVramBytes?: number | null;
+  computeCapability?: string | null;
+};
+
+export type HardwareSnapshot = {
+  cpuModel?: string | null;
+  logicalCores?: number | null;
+  physicalCores?: number | null;
+  ramTotalBytes?: number | null;
+  ramAvailableBytes?: number | null;
+  diskFreeBytes?: number | null;
+  gpus: GpuDeviceInfo[];
+  cudaAvailable: boolean;
+  cudaRuntimeVersion?: string | null;
+  torchCudaVersion?: string | null;
+  driverVersion?: string | null;
+  supportsFp16?: boolean | null;
+  supportsBf16?: boolean | null;
+  supports4bit?: boolean | null;
+  notes: string[];
+  measuredAt?: string;
+  truth?: Record<string, boolean>;
+};
+
+export type PreflightIssue = {
+  severity: string;
+  code: string;
+  message: string;
+};
+
+export type PreflightResult = {
+  verdict: string;
+  issues: PreflightIssue[];
+  details?: Record<string, unknown>;
+};
+
+export type TrainingPlan = {
+  strategy: string;
+  reason: string;
+  effectiveBatchSize: number;
+  trainBatchSize: number;
+  gradientAccumulation: number;
+  maxSeqLength: number;
+  precision: string;
+  gradientCheckpointing: boolean;
+  loadIn4bit: boolean;
+  warnings: string[];
+  estimated: boolean;
+  details?: Record<string, unknown>;
+};
+
+export type TrainingJob = {
+  jobId: string;
+  name: string;
+  status: string;
+  phase?: string | null;
+  method: string;
+  baseModelRef: string;
+  datasetVersionId?: string | null;
+  outputDir?: string | null;
+  config?: Record<string, unknown>;
+  planner?: Record<string, unknown>;
+  preflight?: Record<string, unknown>;
+  progress?: number | null;
+  cancelRequested?: boolean;
+  workerPid?: number | null;
+  checkpoint?: Record<string, unknown>;
+  metricsSummary?: Record<string, unknown>;
+  evaluation?: Record<string, unknown>;
+  artifactId?: string | null;
+  error?: string | null;
+  logPath?: string | null;
+  traceId?: string | null;
+  seed?: number | null;
+  configHash?: string | null;
+  environment?: Record<string, unknown>;
+  createdAt: string;
+  startedAt?: string | null;
+  updatedAt: string;
+  finishedAt?: string | null;
+  truth?: Record<string, boolean>;
+};
+
+export type TrainingMetric = {
+  id?: number | null;
+  jobId: string;
+  step?: number | null;
+  epoch?: number | null;
+  metricName: string;
+  metricValue: number;
+  recordedAt: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type TrainingCheckpoint = {
+  checkpointId: string;
+  jobId: string;
+  step?: number | null;
+  epoch?: number | null;
+  path: string;
+  contentHash?: string | null;
+  metrics?: Record<string, unknown>;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type TrainingLogs = {
+  jobId: string;
+  logPath?: string | null;
+  text: string;
+  events: Record<string, unknown>[];
+};
+
+export type TrainingJobCreatePayload = {
+  name?: string;
+  method?: string;
+  base_model_ref?: string;
+  dataset_version_id?: string | null;
+  dataset_path?: string | null;
+  output_dir?: string | null;
+  seed?: number;
+  epochs?: number | null;
+  max_steps?: number | null;
+  train_batch_size?: number;
+  eval_batch_size?: number;
+  gradient_accumulation?: number;
+  learning_rate?: number;
+  warmup_steps?: number;
+  weight_decay?: number;
+  max_seq_length?: number;
+  logging_steps?: number;
+  save_steps?: number;
+  precision?: string;
+  lora_r?: number;
+  lora_alpha?: number;
+  lora_dropout?: number;
+  lora_target_modules?: string[];
+  gradient_checkpointing?: boolean;
+  load_in_4bit?: boolean;
+  fixture_steps?: number;
+  fixture_sleep_ms?: number;
+  auto_start?: boolean;
+};
+
+export type TrainingPreflightPayload = {
+  name?: string;
+  method?: string;
+  base_model_ref?: string;
+  dataset_version_id?: string | null;
+  dataset_path?: string | null;
+  output_dir?: string | null;
+  seed?: number;
+  epochs?: number | null;
+  max_steps?: number | null;
+  train_batch_size?: number;
+  gradient_accumulation?: number;
+  learning_rate?: number;
+  max_seq_length?: number;
+  precision?: string;
+  load_in_4bit?: boolean;
+  fixture_steps?: number;
+  fixture_sleep_ms?: number;
+};
+
+/* ---------- Research ---------- */
+
+export type ResearchBudget = {
+  search_queries: number;
+  urls_per_query: number;
+  max_sources: number;
+  rounds: number;
+  research_workers: number;
+  max_local_hits: number;
+  max_evidence_per_source: number;
+};
+
+export type ResearchPlan = {
+  interpreted_question: string;
+  scope: string;
+  assumptions: string[];
+  subquestions: string[];
+  retrieval_queries: string[];
+  preferred_source_types: string[];
+  local_scopes: string[];
+  exclusion_criteria: string[];
+  rounds: number;
+  budget: ResearchBudget;
+  notes: string;
+};
+
+export type ResearchCoverage = {
+  planned_questions: string[];
+  answered_questions: string[];
+  unresolved_questions: string[];
+  source_count: number;
+  unique_domains: string[];
+  claims_supported: number;
+  claims_with_conflicts: number;
+  claims_unsupported: number;
+  rounds_completed: number;
+  web_status: string;
+  notes: string[];
+};
+
+export type ResearchProject = {
+  project_id: string;
+  title: string;
+  topic: string;
+  objective: string;
+  status: string;
+  depth: string;
+  allow_web: boolean;
+  respect_robots_txt: boolean;
+  model_profile?: Record<string, unknown>;
+  budget: ResearchBudget;
+  plan?: ResearchPlan | null;
+  coverage?: ResearchCoverage | null;
+  local_scopes: string[];
+  seed_sources: string[];
+  current_round: number;
+  total_rounds: number;
+  error?: string | null;
+  cancel_requested?: boolean;
+  worker_pid?: number | null;
+  trace_id?: string | null;
+  report_version: number;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  source_count: number;
+  claim_count: number;
+  evidence_count: number;
+  conflict_count: number;
+  web_unavailable_reason?: string | null;
+};
+
+export type ResearchEvent = {
+  event_id: string;
+  project_id: string;
+  event_type: string;
+  message: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ResearchSource = {
+  source_id: string;
+  project_id: string;
+  source_type: string;
+  original_uri?: string | null;
+  canonical_uri?: string | null;
+  title?: string | null;
+  author?: string | null;
+  published_at?: string | null;
+  fetched_at?: string | null;
+  content_hash?: string | null;
+  mime_type?: string | null;
+  snapshot_path?: string | null;
+  parse_status: string;
+  parser?: string | null;
+  provenance?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ResearchEvidence = {
+  evidence_id: string;
+  project_id: string;
+  source_id: string;
+  chunk_id?: string | null;
+  span_text: string;
+  location?: Record<string, unknown>;
+  retrieval_method?: string | null;
+  associated_claim_ids: string[];
+  citation_key: string;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ResearchClaim = {
+  claim_id: string;
+  project_id: string;
+  proposition: string;
+  raw_wording?: string | null;
+  status: string;
+  supporting_evidence_ids: string[];
+  contradicting_evidence_ids: string[];
+  source_diversity: number;
+  created_at: string;
+  updated_at: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ResearchConflict = {
+  conflict_id: string;
+  project_id: string;
+  claim_id?: string | null;
+  summary: string;
+  supporting_evidence_ids: string[];
+  contradicting_evidence_ids: string[];
+  analysis?: Record<string, unknown>;
+  unresolved_questions: string[];
+  created_at: string;
+};
+
+export type ResearchReport = {
+  report_id: string;
+  project_id: string;
+  version: number;
+  title: string;
+  body_markdown: string;
+  body_html?: string | null;
+  evidence_ids: string[];
+  source_ids: string[];
+  model_profile?: Record<string, unknown>;
+  generation_trace?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ResearchProjectCreate = {
+  title?: string | null;
+  topic: string;
+  objective?: string;
+  depth?: string;
+  allowWeb?: boolean;
+  respectRobotsTxt?: boolean;
+  modelProfile?: Record<string, unknown> | null;
+  budget?: Partial<ResearchBudget> | null;
+  localScopes?: string[];
+  seedSources?: string[];
+};
+

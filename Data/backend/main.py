@@ -60,7 +60,18 @@ from Data.modules.neuro import (
 from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
-from Data.modules.training import PreferenceBridge, TrainingRecipeRegistry, TrainingRegistry
+from Data.modules.training import (
+    PreferenceBridge,
+    TrainingRecipeRegistry,
+    TrainingRegistry,
+    TrainingService,
+)
+from Data.modules.datasets import DatasetService
+from Data.modules.research import ResearchService
+from Data.modules.common.corpus import build_corpus_layout
+from Data.backend.routes.datasets import build_datasets_router
+from Data.backend.routes.training import build_training_router
+from Data.backend.routes.research import build_research_router
 from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
@@ -185,6 +196,14 @@ isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
 training_recipes = TrainingRecipeRegistry()
 preference_bridge = PreferenceBridge(training_registry)
+corpus_layout = build_corpus_layout(settings)
+dataset_service = DatasetService.from_settings(settings, knowledge=knowledge)
+training_service = TrainingService(settings, corpus=corpus_layout)
+research_service = ResearchService.from_settings(
+    settings,
+    db_path=settings.database_path,
+    knowledge=knowledge,
+)
 neuro_soak = NeuroSoakHarness()
 browser_stub = BrowserAutomationStub()
 media_stub = MediaAutomationStub()
@@ -485,6 +504,10 @@ async def lifespan(_: FastAPI):
             payload={"error": str(exc)},
             level="warning",
         )
+    dataset_service.reconcile()
+    dataset_service.runner.start_background()
+    training_service.reconcile()
+    research_service.recover()
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
@@ -516,12 +539,16 @@ async def lifespan(_: FastAPI):
                         module_manager.shutdown(managed.manifest.module_id)
                     except ModuleManagerError:
                         pass
+        dataset_service.runner.stop_background()
         job_runtime.stop_background_worker()
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.52.0-models", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.53.0-mds-train-research", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
+app.include_router(build_datasets_router(dataset_service))
+app.include_router(build_training_router(training_service))
+app.include_router(build_research_router(research_service))
 
 
 class ConversationCreate(BaseModel):
@@ -2180,7 +2207,18 @@ class TrainingCreateRequest(BaseModel):
 
 @app.get("/api/training")
 def list_training() -> dict:
-    return {"jobs": [item.public_dict() for item in training_registry.list()]}
+    """Legacy listing: preference-bridge registry intents (registered ≠ trained).
+
+    Durable training jobs live under ``/api/training/jobs``.
+    """
+    return {
+        "jobs": [item.public_dict() for item in training_registry.list()],
+        "durable_jobs": [item.public_dict() for item in training_service.list_jobs(limit=50)],
+        "truth": {
+            "registered_is_not_trained": True,
+            "durable_jobs_path": "/api/training/jobs",
+        },
+    }
 
 
 @app.get("/api/training/recipes")
@@ -2214,25 +2252,15 @@ def training_preferences_from_verification(payload: PreferenceFromVerificationRe
 
 @app.post("/api/training")
 def create_training(payload: TrainingCreateRequest) -> dict:
+    """Legacy preference/intent registration — does not start real training."""
     job = training_registry.register(name=payload.name, objective=payload.objective)
-    return {"job": job.public_dict()}
-
-
-@app.get("/api/training/{job_id}")
-def get_training(job_id: str) -> dict:
-    job = training_registry.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Training job not found")
-    return {"job": job.public_dict()}
-
-
-@app.post("/api/training/{job_id}/start")
-def start_training(job_id: str) -> dict:
-    try:
-        job = training_registry.start_unsupported(job_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Training job not found") from exc
-    raise HTTPException(status_code=501, detail=job.public_dict())
+    return {
+        "job": job.public_dict(),
+        "truth": {
+            "registered_is_not_trained": True,
+            "start_real_training_at": "/api/training/jobs",
+        },
+    }
 
 
 class BrowserRequest(BaseModel):
