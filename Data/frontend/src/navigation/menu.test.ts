@@ -44,7 +44,9 @@ describe("navigation menu", () => {
     const media = findMainMenuByPath("/media");
     expect(findSubMenuItem(media, "/media", null)?.id).toBe("overzicht");
     expect(findSubMenuItem(media, "/media", "youtube")?.id).toBe("youtube");
-    expect(submenuHref(media, media.submenu[1])).toBe("/media?tab=youtube");
+    expect(submenuHref(media, media.submenu[1])).toBe("/media/youtube");
+    expect(findMainMenuByPath("/media/youtube").id).toBe("media");
+    expect(findMainMenuByPath("/agents").id).toBe("agents");
   });
 
   it("leaves dashboard submenu inactive on Hades landing", () => {

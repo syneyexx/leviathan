@@ -11,6 +11,10 @@ import "./styles/pages.css";
 import "./styles/analytics.css";
 import "./styles/trading.css";
 import "./styles/training.css";
+import "./styles/media-platform.css";
+// Hooks for page-specific sheets (imported by pages when implemented):
+// import "./styles/media-control.css";
+// import "./styles/agents.css";
 
 const root = document.getElementById("root");
 if (!root) {
