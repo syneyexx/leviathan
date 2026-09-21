@@ -7,7 +7,6 @@ import {
   MetricCard,
   Panel,
   PlatformIcon,
-  ProgressBar,
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
@@ -15,58 +14,95 @@ import { MediaPlatformShell } from "../../layouts/MediaPlatformShell";
 import { useAppToast } from "../../state/useAppToast";
 
 const TILES = platformTiles.facebook;
-const GROWTH = [0.9, 0.95, 0.98, 1.02, 1.05, 1.08, 1.12, 1.14, 1.16, 1.19, 1.22, 1.24];
-const GROWTH_TABS = ["Followers", "Reach", "Engagement", "Page Views"] as const;
+const FOLLOWERS = [0.86, 0.9, 0.92, 0.98, 1.04, 1.08, 1.12, 1.15, 1.18, 1.2, 1.22, 1.24];
+const TABS = ["Followers", "Reach", "Engagement", "Page Views"] as const;
 
-const LATEST = [
-  { title: "A Higher Humanity Is Possible", when: "Oct 26 · 2:14 PM", reactions: "18.4K", comments: "1.2K", shares: "864", growth: "+28%", thumb: TILES[0] },
-  { title: "Discipline Builds Freedom", when: "Oct 24 · 11:02 AM", reactions: "12.1K", comments: "842", shares: "512", growth: "+19%", thumb: TILES[1] },
-  { title: "People Build Stronger Worlds", when: "Oct 22 · 6:40 PM", reactions: "9.6K", comments: "610", shares: "388", growth: "+14%", thumb: TILES[2] },
-  { title: "Ideas Today, Brighter Tomorrow", when: "Oct 20 · 9:15 AM", reactions: "7.8K", comments: "420", shares: "296", growth: "+11%", thumb: TILES[3] },
+const POSTS = [
+  { title: "A Higher Humanity Is Possible", when: "Oct 26 · Video", likes: "48.2K", comments: "3.1K", shares: "6.4K", growth: "+28%", thumb: TILES[0] },
+  { title: "People Build Stronger Worlds", when: "Oct 24 · Image", likes: "36.8K", comments: "2.4K", shares: "4.9K", growth: "+19%", thumb: TILES[1] },
+  { title: "Discipline Creates Freedom", when: "Oct 21 · Reel", likes: "29.1K", comments: "1.8K", shares: "3.6K", growth: "+14%", thumb: TILES[2] },
+  { title: "Community Turns Vision Into Reality", when: "Oct 18 · Carousel", likes: "22.4K", comments: "1.2K", shares: "2.8K", growth: "+11%", thumb: TILES[3] },
 ] as const;
 
 const CALENDAR = [
-  { date: "Oct 28", type: "Video Post", title: "New World Series — Ep. 4", time: "10:00 AM", thumb: TILES[0] },
-  { date: "Oct 29", type: "Live Video", title: "Community Roundtable", time: "7:00 PM", thumb: TILES[1] },
-  { date: "Oct 31", type: "Carousel", title: "Civilization Frames", time: "12:00 PM", thumb: TILES[2] },
-  { date: "Nov 1", type: "Image Post", title: "Discipline Protocol", time: "9:00 AM", thumb: TILES[3] },
-  { date: "Nov 2", type: "User Story", title: "Audience Spotlights", time: "4:00 PM", thumb: TILES[4] },
+  { date: "Oct 28", title: "New World Series", meta: "Video Post · 10:00 AM", thumb: TILES[0] },
+  { date: "Oct 29", title: "Community Q&A", meta: "Live Video · 7:00 PM", thumb: TILES[1] },
+  { date: "Oct 30", title: "Higher Minds Still", meta: "Image Post · 12:00 PM", thumb: TILES[2] },
+  { date: "Oct 31", title: "Discipline Series", meta: "Carousel · 3:00 PM", thumb: TILES[3] },
+  { date: "Nov 1", title: "Leviathan Community", meta: "Video Post · 6:00 PM", thumb: TILES[4] },
+  { date: "Nov 2", title: "Ideas Today", meta: "User Story · 9:00 AM", thumb: TILES[5] },
 ] as const;
 
 const TOP = [
-  { rank: 1, title: "A Higher Humanity Is Possible", type: "Video", reach: "1.8M", engagement: "142K", er: "10.3%", thumb: TILES[0] },
-  { rank: 2, title: "Discipline Builds Freedom", type: "Reel", reach: "1.4M", engagement: "118K", er: "9.2%", thumb: TILES[1] },
-  { rank: 3, title: "People Build Stronger Worlds", type: "Image", reach: "986K", engagement: "74K", er: "8.1%", thumb: TILES[2] },
-  { rank: 4, title: "Community Turns Vision", type: "Video", reach: "812K", engagement: "58K", er: "7.4%", thumb: TILES[3] },
-  { rank: 5, title: "Ideas Today", type: "Carousel", reach: "640K", engagement: "41K", er: "6.1%", thumb: TILES[4] },
+  { rank: 1, title: "A Higher Humanity Is Possible", type: "Video", reach: "1.24M", eng: "86.4K", er: "7.0%", thumb: TILES[0] },
+  { rank: 2, title: "People Build Stronger Worlds", type: "Image", reach: "964K", eng: "62.1K", er: "6.4%", thumb: TILES[1] },
+  { rank: 3, title: "Discipline Creates Freedom", type: "Reel", reach: "812K", eng: "54.8K", er: "6.7%", thumb: TILES[2] },
+  { rank: 4, title: "Attention Moves Humanity", type: "Video", reach: "701K", eng: "41.2K", er: "5.9%", thumb: TILES[4] },
+  { rank: 5, title: "Create a Higher Reality", type: "Image", reach: "628K", eng: "36.9K", er: "5.9%", thumb: TILES[5] },
 ] as const;
 
 const ADS = [
-  { name: "Higher Minds Campaign", spend: "$1,284", reach: "4.2M", growth: "+18%" },
-  { name: "Leviathan Community", spend: "$864", reach: "2.8M", growth: "+12%" },
-  { name: "Discipline Series", spend: "$612", reach: "1.9M", growth: "+9%" },
+  { name: "Higher Minds Campaign", spend: "$12.4K", reach: "1.8M", trend: "+24%" },
+  { name: "Leviathan Community", spend: "$8.6K", reach: "1.1M", trend: "+18%" },
+  { name: "Discipline Series", spend: "$6.2K", reach: "842K", trend: "+15%" },
 ] as const;
 
 const AGES = [
-  { label: "13–17", value: 7 },
-  { label: "18–24", value: 24 },
-  { label: "25–34", value: 38 },
-  { label: "35–44", value: 21 },
-  { label: "45+", value: 10 },
+  { label: "13-17", pct: 7 },
+  { label: "18-24", pct: 24 },
+  { label: "25-34", pct: 38 },
+  { label: "35-44", pct: 21 },
+  { label: "45+", pct: 10 },
 ] as const;
 
-const ACTIONS = [
-  "Create Post",
-  "Create Reel",
-  "Go Live",
-  "Create Event",
-  "Create Ad",
-  "Boost Post",
-] as const;
+const ACTIONS = ["Create Post", "Create Reel", "Go Live", "Create Event", "Create Ad", "Boost Post"] as const;
+
+function GenderDonut() {
+  const size = 118;
+  const stroke = 14;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const segments = [
+    { pct: 58, color: "#1877f2" },
+    { pct: 38, color: "#60a5fa" },
+    { pct: 4, color: "#93c5fd" },
+  ];
+  let offset = 0;
+
+  return (
+    <svg className="mp-fb-gender-donut" width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="1.24M followers">
+      {segments.map((seg) => {
+        const length = (seg.pct / 100) * circumference;
+        const node = (
+          <circle
+            key={seg.color}
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke={seg.color}
+            strokeWidth={stroke}
+            strokeDasharray={`${length} ${circumference - length}`}
+            strokeDashoffset={-offset}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        );
+        offset += length;
+        return node;
+      })}
+      <text x="50%" y="46%" textAnchor="middle" fill="#e8e4dc" fontSize="16" fontWeight="700">
+        1.24M
+      </text>
+      <text x="50%" y="60%" textAnchor="middle" fill="rgba(138,134,128,0.95)" fontSize="9">
+        followers
+      </text>
+    </svg>
+  );
+}
 
 export function FacebookPage() {
   const toast = useAppToast();
-  const [growthTab, setGrowthTab] = useState<(typeof GROWTH_TABS)[number]>("Followers");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("Followers");
 
   return (
     <MediaPlatformShell
@@ -82,10 +118,10 @@ export function FacebookPage() {
         { label: "Community Guidelines", value: "No Issues" },
       ]}
     >
-      <div className="mp-page">
-        <section className="mp-hero">
+      <div className="mp-page mp-fb">
+        <section className="mp-hero mp-fb-hero">
           <div className="mp-hero-media">
-            <img src={mediaControlCrops.facebookHero} alt="" />
+            <img src={mediaControlCrops.facebookHero} alt="" draggable={false} />
           </div>
           <div className="mp-hero-shade" />
           <div className="mp-hero-content">
@@ -102,100 +138,76 @@ export function FacebookPage() {
           </div>
         </section>
 
-        <section className="mp-profile">
-          <div className="mp-profile-avatar" aria-hidden="true">
+        <section className="mp-profile mp-fb-profile">
+          <div className="mp-profile-avatar">
             <BrandMark id="fb-profile" />
           </div>
           <div className="mp-profile-meta">
             <div className="mp-profile-name">
               LEVIATHAN <VerifiedBadge />
             </div>
-            <div className="mp-profile-handle">@LeviathanOfficial · Public Figure · Higher Humanity</div>
+            <div className="mp-profile-handle">@LeviathanOfficial</div>
+            <div className="mp-fb-cat">Public Figure · Higher Humanity</div>
             <div className="mp-profile-bio">A higher humanity through greater minds.</div>
           </div>
           <div className="mp-profile-actions">
             <button className="mp-btn" type="button" onClick={() => toast("View Page")}>
-              View Page
-              <svg viewBox="0 0 24 24">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M14 5h5v5M19 5l-9 9M10 5H5v14h14v-5" />
               </svg>
+              View Page
             </button>
             <button className="mp-btn" type="button" onClick={() => toast("Page Settings")}>
-              Page Settings
-              <svg viewBox="0 0 24 24">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
                 <circle cx="12" cy="12" r="3" />
-                <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2" />
+                <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6.1 6.1l1.6 1.6M16.3 16.3l1.6 1.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6" />
               </svg>
+              Page Settings
             </button>
           </div>
         </section>
 
-        <div className="mp-metrics" style={{ gridTemplateColumns: "repeat(5, minmax(0,1fr))" }}>
-          <MetricCard
-            label="Page Followers"
-            value="1.24M"
-            absolute="+18.3K"
-            percent="+1.5%"
-            sparkline={[40, 42, 45, 48, 52, 55, 58, 62]}
-            sparkStroke="#1877F2"
-          />
-          <MetricCard
-            label="Post Reach"
-            value="4.82M"
-            absolute="+612K"
-            percent="+14.5%"
-            sparkline={[30, 38, 35, 48, 44, 58, 52, 66]}
-            sparkStroke="#1877F2"
-          />
-          <MetricCard
-            label="Post Engagement"
-            value="386.7K"
-            absolute="+28.4K"
-            percent="+7.9%"
-            sparkline={[20, 35, 28, 48, 40, 55, 60, 58]}
-            sparkStroke="#1877F2"
-          />
-          <MetricCard
-            label="Video Views"
-            value="2.1M"
-            absolute="+420K"
-            percent="+25.0%"
-            sparkline={[22, 28, 30, 36, 40, 48, 52, 60]}
-            sparkStroke="#1877F2"
-          />
-          <MetricCard
-            label="Link Clicks"
-            value="124.6K"
-            absolute="+11.2K"
-            percent="+9.9%"
-            sparkline={[18, 24, 28, 32, 36, 42, 48, 55]}
-            sparkStroke="#d6a957"
-          />
+        <div className="mp-metrics mp-fb-metrics">
+          <MetricCard label="Page Followers" value="1.24M" absolute="+18.3K" percent="+1.5%" sparkline={FOLLOWERS} sparkStroke="#1877f2" />
+          <MetricCard label="Post Reach" value="4.82M" absolute="+612K" percent="+14.5%" sparkline={[3, 3.4, 3.8, 4, 4.2, 4.4, 4.6, 4.82]} sparkStroke="#1877f2" />
+          <MetricCard label="Post Engagement" value="386.7K" absolute="+28.4K" percent="+7.9%" sparkline={[250, 280, 300, 320, 340, 360, 370, 386]} sparkStroke="#1877f2" />
+          <MetricCard label="Video Views" value="2.1M" absolute="+420K" percent="+25.0%" sparkline={[1.2, 1.4, 1.5, 1.6, 1.7, 1.85, 2.0, 2.1]} sparkStroke="#d6a957" />
+          <MetricCard label="Link Clicks" value="124.6K" absolute="+11.2K" percent="+9.9%" sparkline={[80, 90, 95, 100, 108, 114, 120, 124]} sparkStroke="#d6a957" />
         </div>
 
-        <div className="mp-grid-3">
+        <div className="mp-grid-3 mp-fb-mid">
           <Panel
             title="Audience Growth"
             action={
               <div className="mp-tabs">
-                {GROWTH_TABS.map((tab) => (
+                {TABS.map((t) => (
                   <button
-                    key={tab}
+                    key={t}
                     type="button"
-                    className={`mp-tab${growthTab === tab ? " is-active" : ""}`}
-                    onClick={() => setGrowthTab(tab)}
+                    className={`mp-tab${tab === t ? " is-active" : ""}`}
+                    onClick={() => {
+                      setTab(t);
+                      toast(`${t} growth`);
+                    }}
                   >
-                    {tab}
+                    {t}
                   </button>
                 ))}
               </div>
             }
           >
+            <div className="mp-fb-chart-meta">
+              <button type="button" className="mp-fb-range" onClick={() => toast("Last 28 days")}>
+                Last 28 days
+              </button>
+              <span className="mp-fb-tooltip-chip">Oct 17 · 1.24M followers</span>
+            </div>
             <div className="mp-chart-wrap">
               <LineChart
-                series={[{ id: "growth", color: "#1877F2", fill: "rgba(24,119,242,0.14)", values: GROWTH }]}
+                series={[{ id: "f", color: "#1877f2", fill: "rgba(24,119,242,0.16)", values: FOLLOWERS }]}
                 labels={["Oct 1", "Oct 8", "Oct 15", "Oct 22", "Oct 28"]}
-                height={190}
+                height={180}
+                marker={{ index: 6, label: "1.24M followers" }}
               />
               <div className="mp-side-stats">
                 {[
@@ -203,238 +215,172 @@ export function FacebookPage() {
                   ["New Followers", "186.3K", "+22%"],
                   ["Post Reach", "4.82M", "+14.5%"],
                   ["Engagements", "386.7K", "+7.9%"],
-                ].map(([label, value, pct]) => (
-                  <div key={label} className="mp-side-stat">
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                    <GrowthDelta percent={pct} />
+                ].map(([l, v, p]) => (
+                  <div key={l} className="mp-side-stat">
+                    <span>{l}</span>
+                    <strong>{v}</strong>
+                    <GrowthDelta percent={p} />
                   </div>
                 ))}
               </div>
             </div>
           </Panel>
 
-          <Panel
-            title="Latest Posts"
-            action={
-              <button className="mp-link-btn" type="button" onClick={() => toast("View All Posts")}>
-                View All
-              </button>
-            }
-          >
+          <Panel title="Latest Posts">
             <div className="mp-list">
-              {LATEST.map((item) => (
-                <div key={item.title} className="mp-list-row">
-                  <img className="mp-thumb" src={item.thumb} alt="" />
+              {POSTS.map((p) => (
+                <button key={p.title} type="button" className="mp-fb-post-row" onClick={() => toast(p.title)}>
+                  <img className="mp-thumb square" src={p.thumb} alt="" draggable={false} />
                   <div className="mp-list-copy">
-                    <div className="mp-list-title">{item.title}</div>
+                    <div className="mp-list-title">{p.title}</div>
+                    <div className="mp-list-meta">{p.when}</div>
                     <div className="mp-list-meta">
-                      {item.when} · ♥ {item.reactions} · 💬 {item.comments} · ↗ {item.shares}
+                      👍 {p.likes} · 💬 {p.comments} · ↗ {p.shares}
                     </div>
                   </div>
-                  <span className="mp-badge is-green">{item.growth}</span>
-                </div>
+                  <GrowthDelta percent={p.growth} />
+                </button>
               ))}
             </div>
           </Panel>
 
-          <Panel
-            title="Content Calendar"
-            action={
-              <button className="mp-link-btn" type="button" onClick={() => toast("View Calendar")}>
-                View Calendar
-              </button>
-            }
-          >
+          <Panel title="Content Calendar">
             <div className="mp-list">
-              {CALENDAR.map((item) => (
-                <div key={item.date + item.title} className="mp-list-row">
-                  <img className="mp-thumb" src={item.thumb} alt="" />
+              {CALENDAR.map((c) => (
+                <button key={c.date} type="button" className="mp-fb-cal-row" onClick={() => toast(c.title)}>
+                  <div className="mp-fb-cal-date">{c.date}</div>
+                  <img className="mp-thumb" src={c.thumb} alt="" draggable={false} />
                   <div className="mp-list-copy">
-                    <div className="mp-list-title">{item.title}</div>
-                    <div className="mp-list-meta">
-                      {item.date} · {item.type} · {item.time}
-                    </div>
+                    <div className="mp-list-title">{c.title}</div>
+                    <div className="mp-list-meta">{c.meta}</div>
                   </div>
-                  <span className="mp-badge is-muted">Scheduled</span>
-                </div>
+                  <span className="mp-badge is-green">Scheduled</span>
+                </button>
               ))}
-              <button className="mp-btn" type="button" onClick={() => toast("Add scheduled post")}>
-                + Add to calendar
-              </button>
             </div>
           </Panel>
         </div>
 
-        <div className="mp-grid-4" style={{ gridTemplateColumns: "1.4fr 0.9fr 0.95fr 0.75fr" }}>
-          <Panel title="Top Performing Content">
-            <table className="mp-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Post</th>
-                  <th>Type</th>
-                  <th>Reach</th>
-                  <th>Engagement</th>
-                  <th>ER</th>
-                </tr>
-              </thead>
-              <tbody>
-                {TOP.map((row) => (
-                  <tr key={row.rank}>
-                    <td>{row.rank}</td>
-                    <td>
-                      <div className="mp-list-row">
-                        <img className="mp-thumb" src={row.thumb} alt="" />
-                        <span className="mp-list-title">{row.title}</span>
-                      </div>
-                    </td>
-                    <td>{row.type}</td>
-                    <td>{row.reach}</td>
-                    <td>{row.engagement}</td>
-                    <td>{row.er}</td>
+        <div className="mp-grid-4 mp-fb-lower">
+          <div className="mp-fb-table-span">
+            <Panel title="Top Performing Content">
+              <table className="mp-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Post</th>
+                    <th>Type</th>
+                    <th>Reach</th>
+                    <th>Engagement</th>
+                    <th>ER</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
+                </thead>
+                <tbody>
+                  {TOP.map((r) => (
+                    <tr key={r.title}>
+                      <td>{r.rank}</td>
+                      <td>
+                        <button type="button" className="mp-fb-table-post" onClick={() => toast(r.title)}>
+                          <img className="mp-thumb" src={r.thumb} alt="" draggable={false} />
+                          <span className="mp-list-title">{r.title}</span>
+                        </button>
+                      </td>
+                      <td>{r.type}</td>
+                      <td>{r.reach}</td>
+                      <td>{r.eng}</td>
+                      <td>{r.er}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+          </div>
 
-          <Panel
-            title="Ad Campaigns"
-            action={
-              <button className="mp-link-btn" type="button" onClick={() => toast("View All Ads")}>
-                View All
-              </button>
-            }
-          >
+          <Panel title="Ad Campaigns">
             <div className="mp-list">
-              {ADS.map((ad) => (
-                <div key={ad.name} className="mp-list-row">
+              {ADS.map((a) => (
+                <button key={a.name} type="button" className="mp-fb-ad-row" onClick={() => toast(a.name)}>
                   <div className="mp-list-copy">
-                    <div className="mp-list-title">{ad.name}</div>
+                    <div className="mp-list-title">{a.name}</div>
                     <div className="mp-list-meta">
-                      Spend {ad.spend} · Reach {ad.reach}
+                      Spend {a.spend} · Reach {a.reach}
                     </div>
                   </div>
-                  <GrowthDelta percent={ad.growth} />
-                </div>
+                  <GrowthDelta percent={a.trend} />
+                </button>
               ))}
             </div>
           </Panel>
 
           <Panel title="Audience Demographics">
-            <div className="mp-demo-wrap">
-              <div className="mp-gender-block">
-                <GenderDonut />
-                <div className="mp-legend">
-                  <span>
-                    <i style={{ background: "#1877F2" }} /> Men 58%
-                  </span>
-                  <span>
-                    <i style={{ background: "#63B3ED" }} /> Women 38%
-                  </span>
-                  <span>
-                    <i style={{ background: "#4A5568" }} /> Other 4%
-                  </span>
+            <div className="mp-fb-demo">
+              <GenderDonut />
+              <ul className="mp-fb-legend">
+                <li>
+                  <span className="is-men" /> Men 58%
+                </li>
+                <li>
+                  <span className="is-women" /> Women 38%
+                </li>
+                <li>
+                  <span className="is-other" /> Other 4%
+                </li>
+              </ul>
+            </div>
+            <div className="mp-ig-subhead mp-fb-subhead">Top Age Groups</div>
+            {AGES.map((a) => (
+              <div key={a.label} className="mp-bar-row">
+                <span>{a.label}</span>
+                <div className="mp-bar-track">
+                  <div className="mp-bar-fill mp-fb-bar" style={{ width: `${Math.min(100, a.pct * 2.2)}%` }} />
                 </div>
+                <span>{a.pct}%</span>
               </div>
+            ))}
+          </Panel>
+        </div>
+
+        <div className="mp-grid-2 mp-fb-sentiment-row">
+          <Panel title="Community Sentiment">
+            <div className="mp-fb-sentiment">
+              <DonutChart value={92} color="#20dc8c" label="92%" size={100} />
               <div className="mp-stack">
-                {AGES.map((row) => (
-                  <ProgressBar key={row.label} value={row.value} label={row.label} tone="teal" />
-                ))}
+                <div className="mp-list-title">92% Positive</div>
+                <div className="mp-list-meta">Neutral 6%</div>
+                <div className="mp-list-meta">Negative 2%</div>
               </div>
             </div>
           </Panel>
-
-          <div className="mp-stack">
-            <Panel title="Community Sentiment">
-              <div className="mp-sentiment">
-                <DonutChart value={92} size={96} stroke={10} color="#20dc8c" label="92%" />
-                <div className="mp-legend">
-                  <span>
-                    <i style={{ background: "#20dc8c" }} /> Positive 92%
-                  </span>
-                  <span>
-                    <i style={{ background: "#1877F2" }} /> Neutral 6%
-                  </span>
-                  <span>
-                    <i style={{ background: "#e53935" }} /> Negative 2%
-                  </span>
-                </div>
-              </div>
-            </Panel>
-            <Panel title="Inbox & Comments">
-              <div className="mp-inbox-summary">
-                <button type="button" onClick={() => toast("Unread Messages")}>
-                  <strong>128</strong>
-                  <span>Unread Messages</span>
+          <Panel title="Inbox & Comments">
+            <div className="mp-list">
+              {[
+                ["128", "Unread Messages"],
+                ["24", "Comments to Review"],
+                ["7", "Mentions"],
+              ].map(([n, l]) => (
+                <button key={l} type="button" className="mp-fb-inbox-row" onClick={() => toast(l)}>
+                  <strong className="mp-fb-inbox-n">{n}</strong>
+                  <span className="mp-list-title">{l}</span>
                 </button>
-                <button type="button" onClick={() => toast("Comments to Review")}>
-                  <strong>24</strong>
-                  <span>Comments to Review</span>
-                </button>
-                <button type="button" onClick={() => toast("Mentions")}>
-                  <strong>7</strong>
-                  <span>Mentions</span>
-                </button>
-              </div>
-            </Panel>
-          </div>
+              ))}
+            </div>
+          </Panel>
         </div>
 
-        <div className="mp-action-bar">
-          <div className="mp-footer-quote" style={{ marginLeft: 0 }}>
+        <div className="mp-action-bar mp-fb-actionbar">
+          <span className="mp-footer-quote" style={{ marginLeft: 0 }}>
             Community turns vision into reality
+          </span>
+          <div className="mp-fb-actions">
+            {ACTIONS.map((label) => (
+              <button key={label} className="mp-btn mp-fb-action-btn" type="button" onClick={() => toast(label)}>
+                {label}
+              </button>
+            ))}
           </div>
-          {ACTIONS.map((action) => (
-            <button key={action} className="mp-btn" type="button" onClick={() => toast(action)}>
-              {action}
-            </button>
-          ))}
-          <div className="mp-footer-quote">Ideas today · A brighter tomorrow</div>
+          <span className="mp-footer-quote">Ideas today · A brighter tomorrow</span>
         </div>
       </div>
     </MediaPlatformShell>
-  );
-}
-
-function GenderDonut() {
-  const size = 88;
-  const stroke = 12;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const men = 0.58 * c;
-  const women = 0.38 * c;
-  const other = 0.04 * c;
-
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Gender split">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#4A5568" strokeWidth={stroke} strokeDasharray={`${other} ${c - other}`} strokeDashoffset={0} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        stroke="#63B3ED"
-        strokeWidth={stroke}
-        strokeDasharray={`${women} ${c - women}`}
-        strokeDashoffset={-other}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        stroke="#1877F2"
-        strokeWidth={stroke}
-        strokeDasharray={`${men} ${c - men}`}
-        strokeDashoffset={-(other + women)}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-      <text x="50%" y="50%" dominantBaseline="middle" textAnchor="middle" fill="#e8e4dc" fontSize="11" fontWeight="600">
-        58%
-      </text>
-    </svg>
   );
 }
