@@ -96,6 +96,9 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/cognition/` | **Cognitive Runtime** — TaskModel, BeliefState, WorkingMemory, Perception, MetaController, iterative loop, experience |
 | `Data/backend/routes/cognition.py` | Cognition HTTP API (`/api/cognition/*`) |
 | `Data/docs/cognitive_runtime.md` | Cognitive Runtime architecture reference |
+| `Data/modules/settings/` | **Settings Control Plane** — catalog, overrides, validation, hot/restart apply |
+| `Data/backend/routes/settings.py` | Settings HTTP API (`/api/settings*`) |
+| `Data/docs/settings_control_plane.md` | Settings ownership, precedence, secrets |
 | `Data/modules/context/` | ContextBuilder |
 | `Data/modules/model_runtime/` | OpenAICompatibleLLM |
 | `Data/modules/models/` | **Model Control Plane** (registry, profiles, gateway, router, providers, downloads) |

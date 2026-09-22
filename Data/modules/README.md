@@ -8,6 +8,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 |---|---|
 | `reasoning/` | `ReasoningEngine`, `ReasoningPlan` (legacy classifier) |
 | `cognition/` | **Cognitive Runtime** — TaskModel, BeliefState, WorkingMemory, Perception, MetaController, loop, VerifiedExperience |
+| `settings/` | **Settings Control Plane** — operator catalog, SQLite overrides, hot/restart apply |
 | `context/` | `ContextBuilder`, `ContextPack` |
 | `model_runtime/` | `OpenAICompatibleLLM`, `LLMUnavailable` |
 | `run/` | `RunStore`, Run lifecycle + events |

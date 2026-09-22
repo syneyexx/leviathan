@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
+from Data.backend.routes.settings import build_settings_router
+from Data.modules.settings import SettingsControlPlane
+from Data.modules.settings.bindings import bind_default_consumers
 from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
 from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
 from Data.modules.coding import CodingControlPlane
@@ -610,6 +613,7 @@ migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 model_plane = ModelControlPlane(settings, observability=observability)
+settings_plane = SettingsControlPlane(settings)
 
 cognition_store = CognitionStore(settings.database_path)
 cognition_delegation = DelegationService()
@@ -641,9 +645,43 @@ cognition_runtime = CognitiveRuntime(
 )
 
 
+def live_settings():
+    """Effective settings after Settings Control Plane overrides."""
+    return settings_plane.effective
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     migrations.apply_all()
+    settings_plane.start()
+    bind_default_consumers(
+        settings_plane,
+        resource_manager=resource_manager,
+        function_runtime=function_runtime,
+        knowledge=knowledge,
+        deep_recall=deep_recall_service,
+        why_library=why_library,
+        mcp_bridge=mcp_bridge,
+        cognition_runtime=cognition_runtime,
+        agent_runtime=agent_runtime,
+        coding_service=coding_service,
+        research_service=research_service,
+        isolation_guard=isolation_guard,
+        chaos=chaos,
+        model_plane=model_plane,
+        llm=llm,
+        neuro_advisor=neuro_advisor,
+        neuro_critic=neuro_critic,
+        neuro_soak=neuro_soak,
+        module_manager=module_manager,
+        market_sim_service=market_sim_service,
+    )
+    settings_plane._run_callbacks_for_all_hot()
+    observability.emit(
+        "settings",
+        "control_plane.started",
+        payload={"override_count": len(settings_plane._overrides)},
+    )
     db.initialize()
     knowledge.initialize()
     atlas_store.initialize()
@@ -691,22 +729,22 @@ async def lifespan(_: FastAPI):
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
                 database_path=str(settings.database_path),
-                data_root=str(settings.knowledge.data_root),
+                data_root=str(live_settings().knowledge.data_root),
                 feature_flags={
-                    "neuro_enabled": settings.features.neuro_enabled,
-                    "neuro_cortex": settings.features.neuro_cortex,
-                    "neuro_memory_tiers": settings.features.neuro_memory_tiers,
-                    "neuro_residual_injection": settings.features.neuro_residual_injection,
-                    "module_manager_enabled": settings.features.module_manager_enabled,
-                    "mcp_enabled": settings.features.mcp_enabled,
-                    "rag_v3": settings.features.rag_v3,
-                    "deep_recall": settings.features.deep_recall,
-                    "why_library": settings.features.why_library,
-                    "residual_production": settings.features.residual_production,
+                    "neuro_enabled": live_settings().features.neuro_enabled,
+                    "neuro_cortex": live_settings().features.neuro_cortex,
+                    "neuro_memory_tiers": live_settings().features.neuro_memory_tiers,
+                    "neuro_residual_injection": live_settings().features.neuro_residual_injection,
+                    "module_manager_enabled": live_settings().features.module_manager_enabled,
+                    "mcp_enabled": live_settings().features.mcp_enabled,
+                    "rag_v3": live_settings().features.rag_v3,
+                    "deep_recall": live_settings().features.deep_recall,
+                    "why_library": live_settings().features.why_library,
+                    "residual_production": live_settings().features.residual_production,
                 },
             )
         )
-        if settings.features.mcp_enabled:
+        if live_settings().features.mcp_enabled:
             for managed in ready:
                 try:
                     register_module_mcp(
@@ -739,7 +777,7 @@ async def lifespan(_: FastAPI):
         if module_manager.enabled:
             for managed in list(module_manager.list()):
                 if managed.status.value in {"READY", "INITIALIZED", "LOADED", "EXECUTING"}:
-                    if settings.features.mcp_enabled:
+                    if live_settings().features.mcp_enabled:
                         unregister_module_mcp(mcp_bridge, managed.manifest.module_id)
                     try:
                         module_manager.shutdown(managed.manifest.module_id)
@@ -752,7 +790,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.61.0-cognition", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.62.0-settings", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -761,6 +799,7 @@ app.include_router(build_coding_router(coding_service))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_cognition_router(cognition_runtime))
+app.include_router(build_settings_router(settings_plane))
 
 
 class ConversationCreate(BaseModel):
@@ -816,7 +855,8 @@ async def health() -> dict:
             "dist_ready": (FRONTEND_DIST / "index.html").is_file(),
             "dist_path": str(FRONTEND_DIST),
         },
-        "config": settings.public_summary(),
+        "config": live_settings().public_summary(),
+
         "knowledge": {
             "data_root": str(settings.knowledge.data_root),
             "documents": len(knowledge.list_documents(limit=10_000)),
@@ -1044,7 +1084,7 @@ async def chat(payload: ChatRequest, request: Request):
     cognition_meta: dict | None = None
     if settings.features.cognition_enabled:
         try:
-            history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
+            history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
             history = [
                 {"role": m["role"], "content": m["content"]}
                 for m in history_rows
@@ -1094,7 +1134,7 @@ async def chat(payload: ChatRequest, request: Request):
                 DeepRecallRequest(
                     current_question=message,
                     maximum_context_budget=economy.deep_recall_budget,
-                    hydrate_limit=settings.knowledge_top_k,
+                    hydrate_limit=live_settings().knowledge_top_k,
                     required_precision="high" if plan.complexity == "high" else "normal",
                 )
             )
@@ -1125,7 +1165,7 @@ async def chat(payload: ChatRequest, request: Request):
             if plan.use_atlas and settings.features.rag_v3:
                 atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
             hits = retriever.search(
-                RetrievalQuery(text=message, limit=settings.knowledge_top_k)
+                RetrievalQuery(text=message, limit=live_settings().knowledge_top_k)
             )
             knowledge_hits = [hit.as_context_document() for hit in hits]
         if settings.features.why_library:
@@ -1141,7 +1181,7 @@ async def chat(payload: ChatRequest, request: Request):
         )
         runs.transition(run.run_id, RunState.EXECUTING)
 
-    history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
+    history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
     knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]

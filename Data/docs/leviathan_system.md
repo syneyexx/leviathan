@@ -91,7 +91,7 @@ Responsibilities:
 
 ## 3.2 Configuration — `Data/backend/config.py`
 
-`Settings` dataclass loaded from environment / `.env`:
+`Settings` dataclass loaded from environment / `.env`, then merged with SQLite `settings_overrides` when present (`load_settings()`). Operator mutations go through the **Settings Control Plane** (`Data/modules/settings/`) — see `Data/docs/settings_control_plane.md`.
 
 | Setting | Env var | Default |
 |---|---|---|

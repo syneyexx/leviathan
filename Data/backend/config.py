@@ -274,11 +274,27 @@ class ChaosSettings:
 
 
 @dataclass(frozen=True)
+class ResearchIntegrationSettings:
+    """External data/research integration knobs (secrets + endpoints)."""
+
+    hf_token: str = ""
+    web_search_endpoint: str | None = None
+    web_search_api_key: str = ""
+    training_fixture: bool = False
+    corpus_root: str = ""
+
+
+@dataclass(frozen=True)
 class Settings:
     """Canonical LEVIATHAN settings.
 
-    Precedence today:
-      hard safety defaults → environment variables (.env loaded)
+    Precedence (Settings Control Plane):
+      hard safety invariants
+        > persisted operator overrides (when allowed)
+        > environment / .env defaults
+
+    Bootstrap-critical values (especially database_path) remain environment-owned
+    and are never sourced from the SQLite override store.
 
     Nested domains are the source of truth. Flat compatibility properties
     preserve existing callers until they migrate.
@@ -298,6 +314,7 @@ class Settings:
     artifacts: ArtifactSettings
     backup: BackupSettings
     chaos: ChaosSettings
+    research_integration: ResearchIntegrationSettings
     database_path: Path
 
     # --- Compatibility accessors (Step 1 call sites) ---
@@ -435,6 +452,15 @@ class Settings:
                 "enabled": self.chaos.enabled,
                 "latency_ms": self.chaos.latency_ms,
                 "error_rate": self.chaos.error_rate,
+            },
+            "research_integration": {
+                "hf_token_configured": bool(self.research_integration.hf_token.strip()),
+                "web_search_endpoint": self.research_integration.web_search_endpoint,
+                "web_search_key_configured": bool(
+                    self.research_integration.web_search_api_key.strip()
+                ),
+                "training_fixture": self.research_integration.training_fixture,
+                "corpus_root": self.research_integration.corpus_root or None,
             },
             "database_path": str(self.database_path),
         }
@@ -667,6 +693,15 @@ class Settings:
                 latency_ms=chaos_latency,
                 error_rate=chaos_error_rate,
             ),
+            research_integration=ResearchIntegrationSettings(
+                hf_token=(_env_raw("LEVIATHAN_HF_TOKEN", "") or "").strip(),
+                web_search_endpoint=(
+                    (_env_raw("LEVIATHAN_WEB_SEARCH_ENDPOINT", "") or "").strip() or None
+                ),
+                web_search_api_key=(_env_raw("LEVIATHAN_WEB_SEARCH_API_KEY", "") or "").strip(),
+                training_fixture=_env_bool("LEVIATHAN_TRAINING_FIXTURE", False),
+                corpus_root=(_env_raw("LEVIATHAN_CORPUS_ROOT", "") or "").strip(),
+            ),
             database_path=database_path,
         )
         settings.validate()
@@ -839,7 +874,18 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    return Settings.from_env()
+    """Load env defaults, then merge SQLite operator overrides when available.
+
+    ``database_path`` itself is never taken from the override store (bootstrap-only).
+    """
+    base = Settings.from_env()
+    try:
+        from Data.modules.settings.service import merge_db_overrides_if_available
+
+        return merge_db_overrides_if_available(base)
+    except Exception:
+        # Settings module / DB unavailable during early import or tests — env only.
+        return base
 
 
 settings = load_settings()

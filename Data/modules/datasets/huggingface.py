@@ -85,7 +85,13 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
 
 
 def _auth_headers(token: str | None) -> dict[str, str]:
-    tok = (token or os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN") or "").strip()
+    tok = (
+        token
+        or os.getenv("LEVIATHAN_HF_TOKEN")
+        or os.getenv("HF_TOKEN")
+        or os.getenv("HUGGING_FACE_HUB_TOKEN")
+        or ""
+    ).strip()
     if not tok:
         return {}
     return {"Authorization": f"Bearer {tok}"}

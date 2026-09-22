@@ -6,6 +6,30 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Settings Control Plane — PASS
+
+### Objective
+Replace the decorative Settings UI with a real Settings Control Plane: typed catalog, SQLite overrides, validation/feature hierarchy, hot vs restart-required apply, secret redaction, and one `/settings` page with in-page categories.
+
+### Added / changed
+- **Module:** `Data/modules/settings/` — catalog, store, validation, service, bindings
+- **Migration v20:** `settings_overrides`
+- **API:** `/api/settings*`
+- **Frontend:** single Settings page; category nav no longer routes to placeholder pages; legacy `/settings/*` redirects
+- **Config:** `ResearchIntegrationSettings` (HF token, web search, corpus root, training fixture); boot merges DB overrides via `load_settings()`
+- **Docs:** `Data/docs/settings_control_plane.md`
+- **Version:** `0.62.0-settings`
+- **Tests:** `test_settings_control_plane.py`
+
+### Non-duplication
+- Models / MCP servers / training jobs / trading strategies remain on domain pages
+- Empty categories (Algemeen, Benchmarks, Mediacenter, Console, Logs) stay honest when no global knobs exist
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Phase 55 Cognitive Runtime (contracts + shadow + loop) — PASS
 
 ### Objective
