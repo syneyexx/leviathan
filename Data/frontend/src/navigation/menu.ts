@@ -35,12 +35,14 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     id: "llm",
     label: "LLM",
     to: "/models",
-    match: ["/models", "/training", "/agents", "/analytics"],
+    match: ["/models", "/training", "/agents", "/analytics", "/dataset-management", "/offline-datasets"],
     submenu: [
       { id: "modellen", label: "Modellen", to: "/models" },
-      { id: "training", label: "Model Training", to: "/training" },
       { id: "agents", label: "Agents", to: "/agents" },
-      { id: "stats", label: "Stats", to: "/analytics" },
+      { id: "training", label: "Training", to: "/training" },
+      { id: "dataset-management", label: "Dataset Management", to: "/dataset-management" },
+      { id: "offline-datasets", label: "Offline Datasets", to: "/offline-datasets" },
+      { id: "stats", label: "Statestieken", to: "/analytics" },
     ],
   },
   {
@@ -87,7 +89,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "geheugen", label: "Geheugen", to: "/memory" },
       { id: "knowledge", label: "Knowledge Library", to: "/knowledge" },
       { id: "evidence", label: "Evidence Vault", to: "/evidence" },
-      { id: "bestanden", label: "Bestanden", to: "/datasets" },
+      { id: "datasets", label: "Datasets", to: "/datasets" },
     ],
   },
   {
