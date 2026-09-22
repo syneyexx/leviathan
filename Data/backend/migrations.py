@@ -1703,6 +1703,108 @@ def _m23_observability_events(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m24_durable_kernel(conn: sqlite3.Connection) -> None:
+    """Wave 0 durable kernel: job leases/idempotency + Behavior/Authority profile tables."""
+
+    def _add_column(table: str, name: str, ddl: str) -> None:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if name not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            capability_id TEXT NOT NULL,
+            arguments_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            run_id TEXT,
+            approval_id TEXT,
+            requested_by TEXT NOT NULL,
+            result_json TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    _add_column("jobs", "trace_id", "trace_id TEXT")
+    _add_column("jobs", "idempotency_key", "idempotency_key TEXT")
+    _add_column("jobs", "lease_owner", "lease_owner TEXT")
+    _add_column("jobs", "lease_expires_at", "lease_expires_at TEXT")
+    _add_column("jobs", "last_heartbeat_at", "last_heartbeat_at TEXT")
+    _add_column("jobs", "attempt_number", "attempt_number INTEGER NOT NULL DEFAULT 1")
+    _add_column("jobs", "budget_json", "budget_json TEXT NOT NULL DEFAULT '{}'")
+    _add_column("jobs", "latency_class", "latency_class TEXT NOT NULL DEFAULT 'background'")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency "
+        "ON jobs(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_lease_expires ON jobs(lease_expires_at, state)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS effect_ledger (
+            effect_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            side_effects_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            provider_kind TEXT,
+            provider_ref TEXT,
+            approval_id TEXT,
+            run_id TEXT,
+            job_id TEXT,
+            observation_id TEXT,
+            error TEXT
+        )
+        """
+    )
+    _add_column("effect_ledger", "idempotency_key", "idempotency_key TEXT")
+    _add_column("effect_ledger", "trace_id", "trace_id TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_effect_ledger_idempotency "
+        "ON effect_ledger(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS behavior_profiles (
+            id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            system_prompt TEXT NOT NULL,
+            overlays_json TEXT NOT NULL DEFAULT '{}',
+            reasoning_mode_default TEXT NOT NULL DEFAULT 'standard',
+            tool_use_style TEXT NOT NULL DEFAULT 'balanced',
+            hash TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS authority_profiles (
+            id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            capability_scopes_json TEXT NOT NULL DEFAULT '[]',
+            side_effect_policy TEXT NOT NULL DEFAULT 'standard',
+            approval_mode TEXT NOT NULL DEFAULT 'standard',
+            resource_ceilings_json TEXT NOT NULL DEFAULT '{}',
+            network_scopes_json TEXT NOT NULL DEFAULT '[]',
+            filesystem_scopes_json TEXT NOT NULL DEFAULT '[]',
+            credential_grants_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1727,6 +1829,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=21, name="conversation_pinned", apply=_m21_conversation_pinned),
     Migration(version=22, name="agent_fleet", apply=_m22_agent_fleet),
     Migration(version=23, name="observability_events", apply=_m23_observability_events),
+    Migration(version=24, name="durable_kernel", apply=_m24_durable_kernel),
 )
 
 

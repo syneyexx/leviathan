@@ -21,6 +21,13 @@ class RunRecord:
     output: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Wave 0 durable kernel fields (U002 / U017)
+    trace_id: str | None = None
+    attempt_number: int = 1
+    transition_reason: str | None = None
+    cancellation_cause: str | None = None
+    retryable: bool | None = None
+    recovery_metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -37,4 +44,10 @@ class RunRecord:
             "output": self.output,
             "error": self.error,
             "metadata": self.metadata,
+            "trace_id": self.trace_id,
+            "attempt_number": self.attempt_number,
+            "transition_reason": self.transition_reason,
+            "cancellation_cause": self.cancellation_cause,
+            "retryable": self.retryable,
+            "recovery_metadata": self.recovery_metadata,
         }

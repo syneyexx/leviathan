@@ -51,9 +51,18 @@ class JobRuntime:
         approval_id: str | None = None,
         requested_by: str = "api",
         metadata: dict[str, Any] | None = None,
+        trace_id: str | None = None,
+        idempotency_key: str | None = None,
+        budget: dict[str, Any] | None = None,
+        latency_class: str = "background",
     ) -> JobRecord:
         if self.gateway.get_capability(capability_id) is None:
             raise KeyError(f"Unknown capability: {capability_id}")
+        if idempotency_key:
+            existing = self.store.get_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                self.telemetry["idempotent_hits"] = int(self.telemetry.get("idempotent_hits", 0)) + 1
+                return existing
         job = self.store.create(
             capability_id=capability_id,
             arguments=arguments,
@@ -61,11 +70,16 @@ class JobRuntime:
             approval_id=approval_id,
             requested_by=requested_by,
             metadata=metadata,
+            trace_id=trace_id,
+            idempotency_key=idempotency_key,
+            budget=budget,
+            latency_class=latency_class,
         )
-        job = self.store.transition(job.job_id, JobState.QUEUED)
-        self._cancel_flags[job.job_id] = threading.Event()
-        self.telemetry["enqueued"] += 1
-        self._wake.set()
+        if job.state == JobState.CREATED:
+            job = self.store.transition(job.job_id, JobState.QUEUED)
+            self._cancel_flags[job.job_id] = threading.Event()
+            self.telemetry["enqueued"] += 1
+            self._wake.set()
         return job
 
     def get(self, job_id: str) -> JobRecord | None:
@@ -167,6 +181,8 @@ class JobRuntime:
                 self.telemetry["cancelled"] += 1
                 return record
 
+            # Lease the in-process worker slot so expired remote claims are detectable.
+            self.store.acquire_lease(job.job_id, worker_id="job-runtime-local", ttl_seconds=60.0)
             cap_result = self.gateway.execute(
                 CapabilityRequest(
                     capability_id=job.capability_id,
@@ -176,6 +192,8 @@ class JobRuntime:
                     job_id=job.job_id,
                     requested_by=job.requested_by,
                     request_id=job.job_id,
+                    trace_id=job.trace_id,
+                    idempotency_key=job.idempotency_key,
                 )
             )
 
@@ -217,5 +235,9 @@ class JobRuntime:
             self.telemetry["failed"] += 1
             return record
         finally:
+            try:
+                self.store.release_lease(job.job_id, worker_id="job-runtime-local")
+            except Exception:  # noqa: BLE001
+                pass
             self.resources.release(job.job_id)
             self._cancel_flags.pop(job.job_id, None)

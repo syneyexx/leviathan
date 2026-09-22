@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of the **Cognitive Runtime** (migration v19) on Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of **Wave 0 Durable Kernel** (migration v24) on Cognitive Runtime (v19) + Settings Control Plane (v20) + Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,17 +12,18 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, and a **Universal MCP Bridge** for Tools.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, and **Wave 0 durable kernel guardrails** (canonical Run/Job/Event contracts, ownership conformance, BehaviorProfile vs AuthorityProfile).
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.57.0-mcp`);
+- FastAPI backend composition root (`0.64.0-wave0-kernel`);
+- **Wave 0 durable kernel** — `EventEnvelope`, job leases/idempotency/budgets, correlation IDs, Frontier Capability Manifest, architecture ownership API + conformance tests;
 - **Universal MCP Bridge** (`Data/modules/mcp/`) — one bridge, many stdio/HTTP sessions; tools → CapabilityCatalog (`provider_kind=MCP`); invoke only via ExecutionGateway;
 - **Coding Agent** (`Data/modules/coding/`) — sessions, XML capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker;
 - **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v17**;
+- SQLite persistence + migrations through **v24**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
 - React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, **Market Sim** `/trading`, and **MCP** `/mcp` UI;
@@ -78,7 +79,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.61.0-cognition`).
+FastAPI application (`version=0.64.0-wave0-kernel`).
 
 Responsibilities:
 
@@ -108,7 +109,7 @@ Path constants: `PROJECT_ROOT`, `DATA_ROOT`, `BACKEND_ROOT`, `FRONTEND_ROOT`, `F
 
 ## 3.3 Persistence — `Data/backend/database.py` + migrations
 
-SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v19**).
+SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v24**).
 
 Core chat tables (also ensured in `Database.initialize`):
 
@@ -215,6 +216,24 @@ Owner: `Data/modules/knowledge/`. See also `Data/docs/rag_v3_architecture.md`.
 - reasoning flag;
 - frontend dist readiness;
 - LLM availability (honest unavailable state).
+
+## 3.8b Wave 0 durable kernel
+
+Canonical owners:
+
+- `Data/modules/run/` — parent lifecycle + versioned `EventEnvelope`
+- `Data/modules/jobs/` — schedulable work, leases, idempotency, budgets
+- `Data/modules/execution/` — CapabilityCatalog + ExecutionGateway + FrontierCapabilityManifest
+- `Data/modules/settings/behavior.py` — BehaviorProfile (SYSTEM_PROMPT)
+- `Data/modules/approvals/authority.py` — AuthorityProfile (technical scopes)
+- `Data/modules/common/ownership.py` — encoded ownership matrix for conformance tests
+
+API:
+
+- `GET /api/architecture/ownership`
+- `GET /api/architecture/capability-manifest`
+
+Invariant: BehaviorProfile is not AuthorityProfile. UI must not invent capability availability.
 
 ## 3.9 Frontend serving
 

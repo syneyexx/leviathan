@@ -80,6 +80,9 @@ class CapabilityRequest:
     job_id: str | None = None
     approval_id: str | None = None
     requested_by: str = "api"
+    # Wave 0 correlation + idempotency (U006 / U017)
+    trace_id: str | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass

@@ -6,6 +6,40 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Wave 0 Durable Kernel / Architecture Guardrails — PASS
+
+### Objective
+Freeze canonical Run/Job/Event ownership, encode the ownership matrix in tests, separate BehaviorProfile vs AuthorityProfile, and add correlation + Frontier Capability Manifest foundations — without rebuilding Leviathan or proliferating registries/databases.
+
+### Added / changed
+- **Run:** versioned `EventEnvelope`, transition metadata (attempt/reason/cancellation/retryable/recovery), `trace_id` on runs/events
+- **Jobs:** durable leases/heartbeats/expiry, idempotency keys, `ResourceBudgetEnvelope`, worker protocol negotiation (`WORKER_VERSION_MISMATCH`)
+- **Execution:** `FrontierCapabilityManifest` from live `CapabilityCatalog` (UNMEASURED ≠ PASS)
+- **Approvals:** `AuthorityProfile` (technical scopes; not content policy)
+- **Settings:** `BehaviorProfile` (SYSTEM_PROMPT; not capability grant)
+- **Common:** `CorrelationIds` + encoded `CANONICAL_OWNERSHIP` / singleton-class owners
+- **Migration v24:** job lease/idempotency columns + `behavior_profiles` / `authority_profiles` tables
+- **Flag:** `LEVIATHAN_FEATURE_DURABLE_KERNEL` (advanced takeover paths; contracts always present)
+- **API:** `GET /api/architecture/ownership`, `GET /api/architecture/capability-manifest`
+- **Tests:** `test_architecture_wave0.py` (ownership + singleton conformance exit gate)
+- **Version:** `0.64.0-wave0-kernel`
+
+### EXTERNAL-FIRST review
+- Wave 0 is control-plane/contracts only — no new parallel worker infrastructure
+- Leases prepare JobRuntime for external workers without a second fleet manager
+- No second CapabilityCatalog / ExecutionGateway / ModelControlPlane / truth DB
+
+### Explicitly NOT claimed
+- Full cognitive hydration/resume (Wave 1)
+- Outbox/inbox delivery (U007) beyond effect ledger columns
+- Production remote worker transport
+- UI worker-status pages consuming the manifest end-to-end
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Settings Control Plane — PASS
 
 ### Objective

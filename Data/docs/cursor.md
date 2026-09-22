@@ -103,13 +103,16 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/model_runtime/` | OpenAICompatibleLLM |
 | `Data/modules/models/` | **Model Control Plane** (registry, profiles, gateway, router, providers, downloads) |
 | `Data/backend/routes/models.py` | Models HTTP API surface (included from `main.py`) |
-| `Data/modules/run/` | RunStore / events / transitions |
+| `Data/modules/run/` | RunStore / EventEnvelope / transitions + correlation |
+| `Data/modules/jobs/` | JobStore / JobRuntime / leases / budgets / ResourceManager |
+| `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway / FrontierCapabilityManifest |
+| `Data/modules/approvals/` | Policy + ApprovalService + AuthorityProfile |
+| `Data/modules/settings/` | Settings Control Plane + BehaviorProfile |
+| `Data/modules/common/` | CorrelationIds + ownership matrix |
+| `Data/backend/tests/test_architecture_wave0.py` | Wave 0 architecture conformance exit gate |
 | `Data/modules/artifacts/` | ArtifactStore |
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
 | `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |
-| `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway |
-| `Data/modules/approvals/` | PolicyEngine / ApprovalStore / ApprovalService |
-| `Data/modules/jobs/` | JobStore / JobRuntime / ResourceManager |
 | `Data/modules/observations/` | ToolObservation / Effect ledger |
 | `Data/modules/evidence/` | EvidenceStore / EvidenceService |
 | `Data/modules/memory/` | MemoryStore |

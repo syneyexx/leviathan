@@ -190,6 +190,8 @@ class FeatureFlags:
     cognition_adaptive_depth: bool
     cognition_delegation: bool
     cognition_experience_learning: bool
+    # Wave 0 — durable kernel / architecture guardrails (leases takeover, full envelope emission)
+    durable_kernel: bool
 
 
 @dataclass(frozen=True)
@@ -408,6 +410,7 @@ class Settings:
                 "cognition_adaptive_depth": self.features.cognition_adaptive_depth,
                 "cognition_delegation": self.features.cognition_delegation,
                 "cognition_experience_learning": self.features.cognition_experience_learning,
+                "durable_kernel": self.features.durable_kernel,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -534,6 +537,7 @@ class Settings:
         cognition_adaptive = _env_bool("LEVIATHAN_FEATURE_COGNITION_ADAPTIVE_DEPTH", False)
         cognition_delegation = _env_bool("LEVIATHAN_FEATURE_COGNITION_DELEGATION", False)
         cognition_experience = _env_bool("LEVIATHAN_FEATURE_COGNITION_EXPERIENCE_LEARNING", False)
+        durable_kernel = _env_bool("LEVIATHAN_FEATURE_DURABLE_KERNEL", False)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -626,6 +630,7 @@ class Settings:
                 cognition_adaptive_depth=cognition_adaptive,
                 cognition_delegation=cognition_delegation,
                 cognition_experience_learning=cognition_experience,
+                durable_kernel=durable_kernel,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,
