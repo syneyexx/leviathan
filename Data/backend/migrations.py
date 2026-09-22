@@ -1553,6 +1553,65 @@ def _m21_conversation_pinned(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m22_observability_events(conn: sqlite3.Connection) -> None:
+    """Durable bounded console/runtime event history."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS observability_events (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            created_at_ms REAL NOT NULL,
+            level TEXT NOT NULL,
+            category TEXT NOT NULL,
+            subsystem TEXT NOT NULL,
+            name TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            source TEXT NOT NULL DEFAULT '',
+            request_id TEXT,
+            correlation_id TEXT,
+            parent_correlation_id TEXT,
+            actor TEXT,
+            run_id TEXT,
+            job_id TEXT,
+            workflow_id TEXT,
+            workflow_run_id TEXT,
+            workflow_step_id TEXT,
+            module_id TEXT,
+            mcp_server_id TEXT,
+            tool_id TEXT,
+            capability_id TEXT,
+            research_project_id TEXT,
+            dataset_id TEXT,
+            evidence_id TEXT,
+            duration_ms REAL,
+            success INTEGER,
+            redacted INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_created "
+        "ON observability_events(created_at_ms DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_level "
+        "ON observability_events(level, created_at_ms DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_category "
+        "ON observability_events(category, created_at_ms DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_correlation "
+        "ON observability_events(correlation_id, sequence)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_subsystem "
+        "ON observability_events(subsystem, created_at_ms DESC)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1575,6 +1634,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=19, name="cognitive_runtime", apply=_m19_cognitive_runtime),
     Migration(version=20, name="settings_overrides", apply=_m20_settings_overrides),
     Migration(version=21, name="conversation_pinned", apply=_m21_conversation_pinned),
+    Migration(version=22, name="observability_events", apply=_m22_observability_events),
 )
 
 

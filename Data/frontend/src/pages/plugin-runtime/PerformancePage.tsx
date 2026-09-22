@@ -1,468 +1,367 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { pluginRuntimeHeroes } from "../../assets/pluginRuntimeAssets";
+import { api } from "../../api/client";
+import { useSystemTelemetry } from "../../hooks/useSystemTelemetry";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
-import {
-  PERF_ALERTS,
-  PERF_CACHE_IO,
-  PERF_COMPONENTS,
-  PERF_HEALTH,
-  PERF_HOT_PATHS,
-  PERF_KPIS,
-  PERF_RESOURCE_ALLOC,
-  PERF_TOOLS,
-  PERF_WORKER_POOLS,
-  type PerfComponentStatus,
-} from "./mocks";
+import type { PerformanceSnapshot } from "../../types/api";
 import { Bar, Panel, Pill, PrHero, Spark, type PillTone } from "./shared";
 
-const TYPE_OPTIONS = ["Alle types", ...Array.from(new Set(PERF_COMPONENTS.map((c) => c.type)))];
-const STATUS_OPTIONS = ["Alle statussen", "Gezond", "Belast", "Waarschuwing"] as const;
-
-const NAME_ICON_COLORS = [
-  "#8B5CF6",
-  "#FBBF24",
-  "#38BDF8",
-  "#F97316",
-  "#34D399",
-  "#F472B6",
-  "#60A5FA",
-  "#A78BFA",
-];
-
-function deltaArrow(delta: string): string {
-  if (delta.startsWith("-")) return "↓";
-  if (delta.startsWith("+")) return "↑";
-  return "";
+function statusPillTone(status: string): PillTone {
+  const s = status.toLowerCase();
+  if (s === "healthy" || s === "ok") return "ok";
+  if (s === "degraded" || s === "belast" || s === "warning") return "gold";
+  if (s === "failed" || s === "error" || s === "unavailable") return "err";
+  return "muted";
 }
 
-function statusPillTone(tone: string): PillTone {
-  if (tone === "ok") return "ok";
-  if (tone === "warn" || tone === "gold") return "gold";
-  if (tone === "err") return "err";
-  return "muted";
+function statusLabel(status: string): string {
+  const s = status.toLowerCase();
+  if (s === "healthy") return "Gezond";
+  if (s === "degraded") return "Belast";
+  if (s === "unavailable" || s === "stopped") return "Unavailable";
+  if (s === "failed") return "Failed";
+  return status;
 }
 
 function IconBtn({
   label,
   onClick,
   children,
+  disabled,
 }: {
   label: string;
   onClick: () => void;
   children: ReactNode;
+  disabled?: boolean;
 }) {
   return (
-    <button type="button" className="lv-pr-icon-btn" aria-label={label} title={label} onClick={onClick}>
+    <button
+      type="button"
+      className="lv-pr-icon-btn"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
     </button>
   );
 }
 
-function KpiCard({ k }: { k: (typeof PERF_KPIS)[number] }) {
-  const hasSpark = "spark" in k && Array.isArray(k.spark);
-  const hasBar = "pct" in k && typeof k.pct === "number";
-  const hasDelta = "delta" in k && typeof k.delta === "string";
-  const warn = "warn" in k && k.warn;
-  const sub = "sub" in k ? k.sub : undefined;
-  const showSubInline = k.id === "throughput";
-  const showSubMeta = Boolean(sub) && !showSubInline;
-
-  return (
-    <article className={`lv-pr-kpi${warn ? " is-warn" : ""}`}>
-      <div className="lv-pr-kpi-label">{k.label}</div>
-      <div className="lv-pr-kpi-value">
-        {k.value}
-        {showSubInline ? <span className="lv-pr-kpi-unit"> {sub}</span> : null}
-      </div>
-      <div className="lv-pr-kpi-foot">
-        <div className="lv-pr-kpi-meta">
-          {showSubMeta ? (
-            <span className="lv-pr-kpi-sub">
-              {sub}
-              {k.id === "ram" && hasBar ? ` (${k.pct}%)` : null}
-              {k.id === "workers" && hasDelta ? (
-                <span className={`lv-pr-kpi-delta ${k.deltaGood ? "is-good" : "is-bad"}`}> [{k.delta}]</span>
-              ) : null}
-            </span>
-          ) : hasDelta && k.id !== "workers" ? (
-            <span className={`lv-pr-kpi-delta ${k.deltaGood ? "is-good" : "is-bad"}`}>
-              {deltaArrow(k.delta)} {k.delta}
-            </span>
-          ) : (
-            <span />
-          )}
-        </div>
-        {hasBar && !hasSpark ? (
-          <Bar pct={k.pct!} tone={"barTone" in k && k.barTone ? k.barTone : "cyan"} className="lv-pr-kpi-bar" />
-        ) : hasSpark ? (
-          <Spark points={k.spark!} color={warn ? "#F87171" : "#00E5FF"} width={56} height={18} />
-        ) : null}
-      </div>
-      {k.id === "workers" && hasBar ? (
-        <Bar pct={k.pct!} tone={"barTone" in k && k.barTone ? k.barTone : "cyan"} className="lv-pr-kpi-bar" />
-      ) : null}
-    </article>
-  );
+function formatMs(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${Math.round(v)} ms`;
 }
 
 export function PerformancePage() {
   const toast = useAppToast();
-  const [activeTool, setActiveTool] = useState<string>(PERF_TOOLS.find((t) => t.active)?.id ?? PERF_TOOLS[0].id);
-  const [query, setQuery] = useState("");
+  const { sample, history, error: telemetryError, refresh: refreshTelemetry } = useSystemTelemetry({
+    enabled: true,
+    intervalMs: 1500,
+  });
+  const [snap, setSnap] = useState<PerformanceSnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState("Alle types");
-  const [statusFilter, setStatusFilter] = useState<string>("Alle statussen");
+  const [statusFilter, setStatusFilter] = useState("Alle statussen");
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return PERF_COMPONENTS.filter((row) => {
-      if (typeFilter !== "Alle types" && row.type !== typeFilter) return false;
-      if (statusFilter !== "Alle statussen" && row.status !== statusFilter) return false;
-      if (!q) return true;
-      return (
-        row.name.toLowerCase().includes(q) ||
-        row.type.toLowerCase().includes(q) ||
-        row.status.toLowerCase().includes(q)
-      );
-    });
-  }, [query, typeFilter, statusFilter]);
+  const load = useCallback(async () => {
+    try {
+      const data = await api.performanceSnapshot();
+      setSnap(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Performance unavailable");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const id = window.setInterval(() => void load(), 3000);
+    return () => window.clearInterval(id);
+  }, [load]);
+
+  const cpuSpark = useMemo(() => history.map((h) => h.cpuPct ?? 0), [history]);
+  const gpuSpark = useMemo(() => history.map((h) => h.gpuPct ?? 0), [history]);
+
+  const kpis = useMemo(() => {
+    const cpu = sample?.dashboard.cpuPct;
+    const ram = sample?.dashboard.ramPct;
+    const gpu = sample?.dashboard.gpuPct;
+    const http = snap?.latency?.http;
+    const counters = snap?.metrics?.counters ?? {};
+    const gauges = snap?.metrics?.gauges ?? {};
+    const jobsQueued = typeof gauges.jobs_queued === "number" ? gauges.jobs_queued : null;
+    const errCount = typeof counters["http.errors"] === "number" ? counters["http.errors"] : null;
+    const reqCount = typeof counters["http.requests"] === "number" ? counters["http.requests"] : null;
+
+    return [
+      {
+        id: "cpu",
+        label: "CPU gebruik",
+        value: cpu == null ? "Unavailable" : `${Math.round(cpu)}%`,
+        spark: cpuSpark.length > 1 ? cpuSpark : undefined,
+        available: cpu != null,
+      },
+      {
+        id: "ram",
+        label: "RAM gebruik",
+        value: ram == null ? "Unavailable" : `${Math.round(ram)}%`,
+        pct: ram ?? undefined,
+        sub:
+          sample?.memory?.usedBytes != null && sample?.memory?.totalBytes != null
+            ? `${(sample.memory.usedBytes / 1e9).toFixed(1)} GB van ${(sample.memory.totalBytes / 1e9).toFixed(1)} GB`
+            : undefined,
+        available: ram != null,
+      },
+      {
+        id: "gpu",
+        label: "GPU / Accelerator",
+        value: gpu == null ? "Unavailable" : `${Math.round(gpu)}%`,
+        spark: gpu != null && gpuSpark.length > 1 ? gpuSpark : undefined,
+        available: gpu != null,
+      },
+      {
+        id: "workers",
+        label: "Jobs queued",
+        value: jobsQueued == null ? "—" : String(jobsQueued),
+        available: jobsQueued != null,
+      },
+      {
+        id: "latency",
+        label: "HTTP p95",
+        value: http?.p95 == null ? "—" : formatMs(http.p95),
+        available: http?.p95 != null,
+      },
+      {
+        id: "throughput",
+        label: "HTTP requests",
+        value: reqCount == null ? "—" : String(reqCount),
+        sub: "since process start",
+        available: reqCount != null,
+      },
+      {
+        id: "error",
+        label: "HTTP errors",
+        value: errCount == null ? "—" : String(errCount),
+        warn: (errCount ?? 0) > 0,
+        available: errCount != null,
+      },
+      {
+        id: "uptime",
+        label: "Uptime",
+        value:
+          typeof gauges.uptime_seconds === "number"
+            ? `${Math.round(gauges.uptime_seconds)} s`
+            : "—",
+        available: typeof gauges.uptime_seconds === "number",
+      },
+    ];
+  }, [cpuSpark, gpuSpark, sample, snap]);
+
+  const components = useMemo(() => {
+    let rows = snap?.components ?? [];
+    if (typeFilter !== "Alle types") {
+      rows = rows.filter((c) => c.type === typeFilter);
+    }
+    if (statusFilter !== "Alle statussen") {
+      const want = statusFilter.toLowerCase();
+      rows = rows.filter((c) => statusLabel(c.status).toLowerCase() === want || c.status.toLowerCase() === want);
+    }
+    return rows;
+  }, [snap, statusFilter, typeFilter]);
+
+  const typeOptions = useMemo(
+    () => ["Alle types", ...Array.from(new Set((snap?.components ?? []).map((c) => c.type)))],
+    [snap],
+  );
+
+  const hotPaths = snap?.hot_paths ?? [];
+  const obs = snap?.observability as { subscribers?: number; durable?: boolean; buffered?: number } | undefined;
 
   return (
     <AppShell
-      modeLabel="Plugin Mode"
-      searchPlaceholder="Zoek datasets, plugins..."
-      systemItems={["LLM", "NEURAL", "MEMORY", "TOOLS"]}
+      activeMode="explore"
+      modeLabel="Performance Mode"
+      searchPlaceholder="Search components..."
+      systemItems={["LLM", "Neural", "Memory", "Runtime"]}
       layout="wide"
       pageClass="lv-app--plugin-runtime"
     >
       <main className="lv-main lv-pr-main">
-        <PrHero title="PERFORMANCE" image={pluginRuntimeHeroes.performance} imageOnly objectPosition="center 35%" />
+        <PrHero
+          title="Performance"
+          kicker="Measured system and application performance — unavailable metrics stay unavailable."
+          image={pluginRuntimeHeroes.performance}
+        />
 
-        <section className="lv-pr-kpi-row" aria-label="Performance KPIs">
-          {PERF_KPIS.map((k) => (
-            <KpiCard key={k.id} k={k} />
+        <div className="lv-pr-toolbar">
+          <div className="lv-pr-toolbar-left">
+            <span className="lv-pr-toolbar-meta">
+              {loading ? "Loading…" : error ? error : telemetryError ? telemetryError : "Live samples"}
+              {obs?.durable ? " · durable events" : ""}
+            </span>
+          </div>
+          <div className="lv-pr-toolbar-right">
+            <IconBtn
+              label="Refresh"
+              onClick={() => {
+                void load();
+                void refreshTelemetry();
+                toast("Refreshed");
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19.5 12a7.5 7.5 0 11-2.2-5.3" />
+                <path d="M19.5 5v4.5H15" />
+              </svg>
+            </IconBtn>
+          </div>
+        </div>
+
+        <section className="lv-pr-kpi-grid" aria-label="Performance KPIs">
+          {kpis.map((k) => (
+            <article key={k.id} className={`lv-pr-kpi${k.warn ? " is-warn" : ""}`}>
+              <div className="lv-pr-kpi-label">{k.label}</div>
+              <div className="lv-pr-kpi-value">
+                {k.value}
+                {"sub" in k && k.sub ? <span className="lv-pr-kpi-unit"> {k.sub}</span> : null}
+              </div>
+              <div className="lv-pr-kpi-foot">
+                <div className="lv-pr-kpi-meta">
+                  {!k.available ? <span className="lv-pr-kpi-sub">Not measured</span> : <span />}
+                </div>
+                {"pct" in k && typeof k.pct === "number" ? (
+                  <Bar pct={k.pct} tone="cyan" className="lv-pr-kpi-bar" />
+                ) : k.spark && k.spark.length > 1 ? (
+                  <Spark points={k.spark} color={k.warn ? "#F87171" : "#00E5FF"} width={56} height={18} />
+                ) : null}
+              </div>
+            </article>
           ))}
         </section>
 
-        <section className="lv-pr-perf-mid" aria-label="Performance tools and components">
-          <Panel title="Performance Tools" className="lv-pr-perf-tools">
-            <div className="lv-pr-tools-list">
-              {PERF_TOOLS.map((tool) => (
-                <button
-                  key={tool.id}
-                  type="button"
-                  className={`lv-pr-tool-btn${activeTool === tool.id ? " is-active" : ""}`}
-                  onClick={() => {
-                    setActiveTool(tool.id);
-                    toast(tool.label);
-                  }}
-                >
-                  {tool.label}
-                </button>
-              ))}
+        <div className="lv-pr-grid">
+          <Panel title="Component health" className="lv-pr-panel">
+            <div className="lv-pr-filters">
+              <label>
+                Type
+                <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                  {typeOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Status
+                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                  {["Alle statussen", "Gezond", "Belast", "Unavailable", "Failed"].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-          </Panel>
-
-          <Panel
-            title="Plugins & Runtime Componenten"
-            className="lv-pr-perf-components"
-            action={
-              <div className="lv-pr-perf-toolbar">
-                <label className="lv-pr-search">
-                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                    <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                    <path d="M16 16l4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  </svg>
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Zoek componenten..."
-                    aria-label="Zoek componenten"
-                  />
-                </label>
-                <select
-                  className="lv-pr-select"
-                  value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value)}
-                  aria-label="Filter op type"
-                >
-                  {TYPE_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="lv-pr-select"
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  aria-label="Filter op status"
-                >
-                  {STATUS_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" className="lv-pr-refresh" onClick={() => toast("Componenten vernieuwd")}>
-                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                    <path
-                      d="M4 12a8 8 0 0 1 13.5-5.8M20 12a8 8 0 0 1-13.5 5.8"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                    />
-                    <path d="M17 3v4h4M7 21v-4H3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  </svg>
-                  Vernieuwen
-                </button>
-                <IconBtn label="Rasterweergave" onClick={() => toast("Rasterweergave")}>
-                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                    <rect x="3" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                    <rect x="14" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                    <rect x="3" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                    <rect x="14" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                  </svg>
-                </IconBtn>
-                <IconBtn label="Kolommen" onClick={() => toast("Kolominstellingen")}>
-                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                    <path d="M4 7h16M4 12h16M4 17h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  </svg>
-                </IconBtn>
-              </div>
-            }
-          >
             <div className="lv-pr-table-wrap">
-              <table className="lv-pr-table lv-pr-perf-table">
+              <table className="lv-pr-table">
                 <thead>
                   <tr>
-                    <th>Naam</th>
+                    <th>Component</th>
                     <th>Type</th>
                     <th>Status</th>
-                    <th>Gem. latentie</th>
-                    <th>P95 latentie</th>
-                    <th>Throughput</th>
-                    <th>Geheugen</th>
-                    <th>CPU</th>
-                    <th>Errors</th>
-                    <th>Laatst actief</th>
-                    <th>Acties</th>
+                    <th>Detail</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((row, i) => (
-                    <tr key={row.id}>
-                      <td className="is-name">
-                        <span
-                          className="lv-pr-name-icon"
-                          style={{ background: NAME_ICON_COLORS[i % NAME_ICON_COLORS.length] }}
-                          aria-hidden="true"
-                        />
-                        {row.name}
-                      </td>
-                      <td>{row.type}</td>
-                      <td>
-                        <Pill tone={statusPillTone(row.statusTone)}>{row.status as PerfComponentStatus}</Pill>
-                      </td>
-                      <td>{row.avgLatency}</td>
-                      <td className={row.p95Latency.includes("s") && !row.p95Latency.startsWith("0") ? "is-warn" : undefined}>
-                        {row.p95Latency}
-                      </td>
-                      <td>{row.throughput}</td>
-                      <td>{row.memory}</td>
-                      <td>{row.cpu}</td>
-                      <td className={row.errors > 0 ? "is-err" : undefined}>{row.errors}</td>
-                      <td>{row.lastActive}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="lv-pr-more"
-                          aria-label={`Acties voor ${row.name}`}
-                          onClick={() => toast(`Acties · ${row.name}`)}
-                        >
-                          ⋮
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {filtered.length === 0 ? (
+                  {components.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="lv-pr-empty">
-                        Geen componenten gevonden
-                      </td>
+                      <td colSpan={4}>{loading ? "Loading…" : "No component health signals"}</td>
                     </tr>
-                  ) : null}
+                  ) : (
+                    components.map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.name}</td>
+                        <td>{c.type}</td>
+                        <td>
+                          <Pill tone={statusPillTone(c.status)}>{statusLabel(c.status)}</Pill>
+                        </td>
+                        <td>{c.detail || "—"}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
           </Panel>
-        </section>
 
-        <section className="lv-pr-perf-bottom" aria-label="Performance widgets">
-          <Panel title="Hot Paths / Traagste Operaties" className="lv-pr-perf-hot">
+          <Panel title="Hot paths (measured)" className="lv-pr-panel">
             <div className="lv-pr-table-wrap">
               <table className="lv-pr-table">
                 <thead>
                   <tr>
-                    <th>Naam</th>
-                    <th>Gem. tijd</th>
-                    <th>Aantal</th>
-                    <th>Trend</th>
+                    <th>Path</th>
+                    <th>Count</th>
+                    <th>Avg</th>
+                    <th>p95</th>
+                    <th>p99</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {PERF_HOT_PATHS.map((row) => (
-                    <tr key={row.id}>
-                      <td className="is-name">{row.name}</td>
-                      <td>{row.avg}</td>
-                      <td>{row.count}</td>
-                      <td>
-                        <Spark points={row.spark} color="#F87171" width={52} height={16} />
-                      </td>
+                  {hotPaths.length === 0 ? (
+                    <tr>
+                      <td colSpan={5}>No latency samples yet — traffic will populate this table.</td>
                     </tr>
-                  ))}
+                  ) : (
+                    hotPaths.map((h) => (
+                      <tr key={h.name}>
+                        <td>{h.name}</td>
+                        <td>{h.count}</td>
+                        <td>{formatMs(h.avg_ms)}</td>
+                        <td>{formatMs(h.p95_ms)}</td>
+                        <td>{formatMs(h.p99_ms)}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
           </Panel>
+        </div>
 
-          <Panel title="Worker Pools / Runtime Queues" className="lv-pr-perf-workers">
-            <div className="lv-pr-table-wrap">
-              <table className="lv-pr-table">
-                <thead>
-                  <tr>
-                    <th>Pool</th>
-                    <th>Actief / Max</th>
-                    <th>Queue</th>
-                    <th>Gebruik</th>
+        <Panel title="Latency percentiles" className="lv-pr-panel">
+          <div className="lv-pr-table-wrap">
+            <table className="lv-pr-table">
+              <thead>
+                <tr>
+                  <th>Track</th>
+                  <th>Count</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>p99</th>
+                  <th>Avg</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(snap?.latency ?? {}).map(([name, stats]) => (
+                  <tr key={name}>
+                    <td>{name}</td>
+                    <td>{stats.count}</td>
+                    <td>{formatMs(stats.p50)}</td>
+                    <td>{formatMs(stats.p95)}</td>
+                    <td>{formatMs(stats.p99)}</td>
+                    <td>{formatMs(stats.avg)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {PERF_WORKER_POOLS.map((row) => (
-                    <tr key={row.id}>
-                      <td className="is-name">{row.name}</td>
-                      <td>
-                        {row.active} / {row.max}
-                      </td>
-                      <td className={row.queue >= 10 ? "is-err" : undefined}>{row.queue}</td>
-                      <td className="lv-pr-usage-cell">
-                        <Bar pct={row.pct} tone={row.barTone} />
-                        <span className="lv-pr-usage-pct">{row.pct}%</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-
-          <div className="lv-pr-perf-stack">
-            <Panel title="Plugin & Runtime Health">
-              <div className="lv-pr-table-wrap">
-                <table className="lv-pr-table">
-                  <thead>
-                    <tr>
-                      <th>Component</th>
-                      <th>Status</th>
-                      <th>Trend</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {PERF_HEALTH.map((row) => (
-                      <tr key={row.id}>
-                        <td className="is-name">{row.name}</td>
-                        <td>
-                          <Pill tone={statusPillTone(row.tone)}>{row.status}</Pill>
-                        </td>
-                        <td>
-                          <Spark
-                            points={row.spark}
-                            color={row.tone === "ok" ? "#00E5FF" : row.tone === "warn" ? "#FBBF24" : "#F87171"}
-                            width={48}
-                            height={14}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-
-            <Panel title="Cache & I/O">
-              <div className="lv-pr-table-wrap">
-                <table className="lv-pr-table">
-                  <thead>
-                    <tr>
-                      <th>Metriek</th>
-                      <th>Waarde</th>
-                      <th>Trend</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {PERF_CACHE_IO.map((row) => (
-                      <tr key={row.id}>
-                        <td>{row.label}</td>
-                        <td className="is-name">{row.value}</td>
-                        <td>
-                          <Spark points={row.spark} color="#00E5FF" width={48} height={14} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-          </div>
-
-          <div className="lv-pr-perf-stack">
-            <Panel title="Resource Allocatie">
-              <div className="lv-pr-table-wrap">
-                <table className="lv-pr-table">
-                  <thead>
-                    <tr>
-                      <th>Instelling</th>
-                      <th>Huidig</th>
-                      <th>Max</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {PERF_RESOURCE_ALLOC.map((row) => (
-                      <tr key={row.id}>
-                        <td>{row.label}</td>
-                        <td className="is-name">{row.current}</td>
-                        <td>{row.max}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="lv-pr-panel-foot">
-                <button type="button" className="lv-pr-ghost-btn" onClick={() => toast("Instellingen aanpassen")}>
-                  ⚙ Instellingen aanpassen
-                </button>
-              </div>
-            </Panel>
-
-            <Panel title="Recente Performance Alerts">
-              <ul className="lv-pr-alert-list">
-                {PERF_ALERTS.map((alert) => (
-                  <li key={alert.id}>
-                    <span className="time">{alert.time}</span>
-                    <Pill tone={statusPillTone(alert.tone)}>{alert.label}</Pill>
-                    <span>{alert.message}</span>
-                  </li>
                 ))}
-              </ul>
-              <div className="lv-pr-panel-foot">
-                <button type="button" className="lv-pr-link" onClick={() => toast("Alle incidenten")}>
-                  Toon alle incidenten →
-                </button>
-              </div>
-            </Panel>
+              </tbody>
+            </table>
           </div>
-        </section>
+        </Panel>
       </main>
     </AppShell>
   );
