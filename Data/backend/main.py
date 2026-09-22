@@ -71,6 +71,8 @@ from Data.modules.observability import (
 from Data.modules.metrics import MetricsCollector, TimeSeriesStore
 from Data.backend.routes.observability import build_observability_router
 from Data.backend.routes.system import build_system_telemetry_router
+from Data.backend.routes.brain import build_brain_router
+from Data.modules.brain import BrainQueryFacade
 from Data.modules.neuro import (
     ContrastiveRetrievalHead,
     CortexPlanner,
@@ -745,6 +747,23 @@ operator_registry = build_default_operator_registry(
     }
 )
 
+brain_facade = BrainQueryFacade(
+    knowledge_list=lambda: knowledge.list_documents(limit=200),
+    evidence_list=lambda: evidence_store.list(limit=200),
+    research_list=lambda: research_service.list_projects(limit=100),
+    dataset_list=lambda: dataset_service.list_datasets(limit=100),
+    module_list=lambda: module_manager.list(),
+    capability_list=lambda: capability_catalog.list(),
+    mcp_servers=lambda: mcp_bridge.list_servers() if settings.features.mcp_enabled else [],
+    mcp_tools=lambda: (
+        mcp_bridge.list_tools() if hasattr(mcp_bridge, "list_tools") and settings.features.mcp_enabled else []
+    ),
+    workflow_list=lambda: workflow_store.list(limit=100),
+    atlas_list=lambda: atlas_store.search("", limit=100) if settings.features.rag_v3 else [],
+    max_nodes=250,
+    max_edges=500,
+)
+
 
 def live_settings():
     """Effective settings after Settings Control Plane overrides."""
@@ -928,6 +947,7 @@ app.include_router(
         component_health_fn=_component_health,
     )
 )
+app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_cognition_router(cognition_runtime))

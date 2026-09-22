@@ -1507,3 +1507,76 @@ export type ModuleSnapshot = {
   discovery_roots?: string[];
   truth?: Record<string, boolean>;
 };
+
+/* ---------- Workflows ---------- */
+
+export type WorkflowState = "CREATED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+
+export type WorkflowStepDef = {
+  step_id: string;
+  capability_id: string;
+  arguments?: Record<string, unknown>;
+  approval_id?: string | null;
+};
+
+export type WorkflowStepResult = {
+  step_id: string;
+  capability_id: string;
+  status: string;
+  result?: Record<string, unknown>;
+};
+
+export type WorkflowRecord = {
+  workflow_id: string;
+  name: string;
+  state: WorkflowState | string;
+  steps: WorkflowStepDef[];
+  created_at: string;
+  updated_at: string;
+  current_step?: number;
+  run_id?: string | null;
+  step_results?: WorkflowStepResult[];
+  error?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type WorkflowCreatePayload = {
+  name: string;
+  run_id?: string | null;
+  steps: Array<{
+    step_id?: string;
+    capability_id: string;
+    arguments?: Record<string, unknown>;
+    approval_id?: string | null;
+  }>;
+};
+
+/* ---------- Schedules ---------- */
+
+export type ScheduleStatus = "ACTIVE" | "PAUSED" | "DISABLED";
+
+export type ScheduleTargetKind = "WORKFLOW" | "JOB";
+
+export type ScheduleRecord = {
+  schedule_id: string;
+  name: string;
+  status: ScheduleStatus | string;
+  target_kind: ScheduleTargetKind | string;
+  target_ref: string;
+  interval_seconds: number;
+  created_at: string;
+  updated_at: string;
+  next_run_at: string;
+  last_run_at?: string | null;
+  target_payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+};
+
+export type ScheduleCreatePayload = {
+  name: string;
+  target_kind?: string;
+  target_ref: string;
+  interval_seconds?: number;
+  target_payload?: Record<string, unknown>;
+  start_after_seconds?: number;
+};

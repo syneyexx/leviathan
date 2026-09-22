@@ -1,498 +1,315 @@
-import { useMemo, useState } from "react";
-import { media } from "../assets/media";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { api } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
-import { BRAIN_VIEWS, type BrainView } from "./brain/brain-mock";
-import { BrainHeader, BrainViewTabs } from "./brain/brain-shared";
-import { BrainAnalyticsView } from "./brain/BrainAnalyticsView";
-import { BrainClustersView } from "./brain/BrainClustersView";
-import { BrainTimelineView } from "./brain/BrainTimelineView";
-import { BrainTreeView } from "./brain/BrainTreeView";
 
-type NodeType = {
+type BrainNode = {
   id: string;
-  label: string;
-  count: string;
-  color: string;
-};
-
-type GraphNode = {
-  id: string;
-  label: string;
-  x: number;
-  y: number;
-  r: number;
-  color: string;
   type: string;
-  core?: boolean;
+  label: string;
+  created_at?: string | null;
+  meta?: Record<string, unknown>;
 };
 
-const NODE_TYPES: NodeType[] = [
-  { id: "concept", label: "Concept", count: "3.2K", color: "#F0C875" },
-  { id: "memory", label: "Memory", count: "2.1K", color: "#22C9D6" },
-  { id: "project", label: "Project", count: "184", color: "#D6A957" },
-  { id: "model", label: "Model", count: "96", color: "#9B8CFF" },
-  { id: "dataset", label: "Dataset", count: "412", color: "#E45959" },
-  { id: "tool", label: "Tool", count: "78", color: "#DB8A34" },
-  { id: "agent", label: "Agent", count: "54", color: "#4285E8" },
-  { id: "code", label: "Code", count: "1.4K", color: "#20DC8C" },
-];
-
-const GRAPH_NODES: GraphNode[] = [
-  { id: "hades", label: "HADES", x: 500, y: 280, r: 28, color: "#F0C875", type: "concept", core: true },
-  { id: "leviathan", label: "LEVIATHAN", x: 360, y: 160, r: 16, color: "#D6A957", type: "project" },
-  { id: "roadmap", label: "Roadmap", x: 280, y: 230, r: 12, color: "#D6A957", type: "project" },
-  { id: "tasks", label: "Tasks", x: 320, y: 320, r: 11, color: "#D6A957", type: "project" },
-  { id: "python", label: "Python", x: 620, y: 140, r: 14, color: "#4285E8", type: "code" },
-  { id: "cpp", label: "C++", x: 700, y: 200, r: 12, color: "#4285E8", type: "code" },
-  { id: "codegen", label: "Code Gen", x: 660, y: 280, r: 13, color: "#4285E8", type: "code" },
-  { id: "apis", label: "APIs", x: 720, y: 340, r: 11, color: "#4285E8", type: "code" },
-  { id: "market", label: "Market Analysis", x: 420, y: 420, r: 14, color: "#20DC8C", type: "concept" },
-  { id: "risk", label: "Risk Mgmt", x: 520, y: 450, r: 12, color: "#20DC8C", type: "concept" },
-  { id: "training", label: "Model Training", x: 620, y: 400, r: 14, color: "#9B8CFF", type: "model" },
-  { id: "rag", label: "RAG", x: 700, y: 430, r: 12, color: "#9B8CFF", type: "model" },
-  { id: "embed", label: "Embeddings", x: 760, y: 360, r: 11, color: "#9B8CFF", type: "model" },
-  { id: "hf", label: "HuggingFace", x: 380, y: 360, r: 12, color: "#E45959", type: "dataset" },
-  { id: "local", label: "Local Datasets", x: 300, y: 400, r: 11, color: "#E45959", type: "dataset" },
-  { id: "web", label: "Web Search", x: 240, y: 300, r: 12, color: "#DB8A34", type: "tool" },
-  { id: "mcp", label: "MCP", x: 220, y: 180, r: 11, color: "#DB8A34", type: "tool" },
-  { id: "computer", label: "Computer Use", x: 180, y: 250, r: 12, color: "#DB8A34", type: "tool" },
-];
-
-const EDGES: [string, string][] = [
-  ["hades", "leviathan"],
-  ["hades", "roadmap"],
-  ["hades", "tasks"],
-  ["hades", "python"],
-  ["hades", "cpp"],
-  ["hades", "codegen"],
-  ["hades", "apis"],
-  ["hades", "market"],
-  ["hades", "risk"],
-  ["hades", "training"],
-  ["hades", "rag"],
-  ["hades", "embed"],
-  ["hades", "hf"],
-  ["hades", "local"],
-  ["hades", "web"],
-  ["hades", "mcp"],
-  ["hades", "computer"],
-  ["leviathan", "roadmap"],
-  ["python", "codegen"],
-  ["training", "rag"],
-  ["market", "risk"],
-];
-
-const NODE_DETAILS: Record<
-  string,
-  { description: string; created: string; updated: string; connections: string; relevance: number; tags: string[] }
-> = {
-  hades: {
-    description:
-      "Central intelligence nucleus connecting projects, models, datasets, tools, and memory into one dynamic knowledge network.",
-    created: "2025-11-02",
-    updated: "2 minutes ago",
-    connections: "1,842",
-    relevance: 100,
-    tags: ["Core", "Concept"],
-  },
+type BrainEdge = {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
 };
 
-const DEFAULT_DETAIL = {
-  description: "Linked knowledge node in the Leviathan brain graph. Mock metadata for UI preview.",
-  created: "2026-01-14",
-  updated: "1 hour ago",
-  connections: "48",
-  relevance: 72,
-  tags: ["Linked"],
+const TYPE_COLORS: Record<string, string> = {
+  "knowledge.document": "#F0C875",
+  evidence: "#22C9D6",
+  "research.project": "#D6A957",
+  dataset: "#E45959",
+  module: "#9B8CFF",
+  capability: "#DB8A34",
+  "mcp.server": "#4285E8",
+  "mcp.tool": "#60A5FA",
+  workflow: "#20DC8C",
+  atlas: "#F472B6",
+  run: "#94A3B8",
 };
+
+function colorFor(type: string): string {
+  return TYPE_COLORS[type] || "#A1A1AA";
+}
+
+function deepLink(node: BrainNode): string | null {
+  if (node.type === "knowledge.document") return `/knowledge`;
+  if (node.type === "evidence") return `/evidence?evidence=${encodeURIComponent(node.id.replace(/^evidence:/, ""))}`;
+  if (node.type === "research.project")
+    return `/research?project=${encodeURIComponent(node.id.replace(/^research:project:/, ""))}`;
+  if (node.type === "dataset") return `/datasets?dataset=${encodeURIComponent(node.id.replace(/^dataset:/, ""))}`;
+  if (node.type === "module") return `/modules?module=${encodeURIComponent(node.id.replace(/^module:/, ""))}`;
+  if (node.type.startsWith("mcp.")) return `/mcp`;
+  if (node.type === "workflow") return `/workflows`;
+  if (node.type === "capability") return `/tools`;
+  return null;
+}
 
 export function BrainPage() {
   const toast = useAppToast();
-  const [view, setView] = useState<BrainView>("Graph");
-  const [activeTypes, setActiveTypes] = useState<Set<string>>(
-    () => new Set(NODE_TYPES.map((item) => item.id)),
-  );
-  const [selectedId, setSelectedId] = useState("hades");
-  const [showLabels, setShowLabels] = useState(true);
-  const [query, setQuery] = useState("");
+  const [nodes, setNodes] = useState<BrainNode[]>([]);
+  const [edges, setEdges] = useState<BrainEdge[]>([]);
+  const [stats, setStats] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<"graph" | "tree" | "timeline" | "analytics">("graph");
 
-  const visibleNodes = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return GRAPH_NODES.filter((node) => {
-      if (!activeTypes.has(node.type) && !node.core) return false;
-      if (!q) return true;
-      return node.label.toLowerCase().includes(q);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.brainGraph({
+        limit: 200,
+        q: q.trim() || undefined,
+        types: typeFilter || undefined,
+      });
+      setNodes(data.nodes);
+      setEdges(data.edges);
+      setStats(data.stats);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Brain graph unavailable");
+      setNodes([]);
+      setEdges([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [q, typeFilter]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const selected = useMemo(() => nodes.find((n) => n.id === selectedId) ?? null, [nodes, selectedId]);
+
+  const layout = useMemo(() => {
+    // Deterministic circular/grid layout — no fake physics loop
+    const w = 900;
+    const h = 520;
+    const cx = w / 2;
+    const cy = h / 2;
+    const byType = new Map<string, BrainNode[]>();
+    for (const n of nodes) {
+      const list = byType.get(n.type) ?? [];
+      list.push(n);
+      byType.set(n.type, list);
+    }
+    const types = Array.from(byType.keys());
+    const positions = new Map<string, { x: number; y: number; r: number; color: string }>();
+    types.forEach((type, ti) => {
+      const group = byType.get(type) ?? [];
+      const ring = 80 + ti * 45;
+      group.forEach((n, i) => {
+        const angle = (i / Math.max(group.length, 1)) * Math.PI * 2 + ti * 0.3;
+        positions.set(n.id, {
+          x: cx + Math.cos(angle) * ring,
+          y: cy + Math.sin(angle) * ring * 0.72,
+          r: 8 + Math.min(10, (n.label?.length || 4) / 6),
+          color: colorFor(n.type),
+        });
+      });
     });
-  }, [activeTypes, query]);
+    return { w, h, positions };
+  }, [nodes]);
 
-  const nodeMap = useMemo(() => new Map(GRAPH_NODES.map((node) => [node.id, node])), []);
-  const selected = nodeMap.get(selectedId) ?? GRAPH_NODES[0];
-  const detail = NODE_DETAILS[selected.id] ?? {
-    ...DEFAULT_DETAIL,
-    tags: [selected.type],
-  };
+  const typeCounts = (stats?.by_type as Record<string, number> | undefined) ?? {};
+  const typeOptions = Object.keys(typeCounts).sort();
 
-  const toggleType = (id: string) => {
-    setActiveTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const timeline = useMemo(() => {
+    return [...nodes]
+      .filter((n) => n.created_at)
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+      .slice(-40)
+      .reverse();
+  }, [nodes]);
 
-  const viewTabs = (
-    <BrainViewTabs
-      view={view}
-      onChange={setView}
-      trailing={
-        <>
-          <select className="lv-br-select" style={{ width: "auto" }} defaultValue="default" aria-label="View preset">
-            <option value="default">Default View</option>
-            <option value="global">Global Graph</option>
-            <option value="cluster">Cluster View</option>
-          </select>
-          <button className="lv-br-btn is-gold" type="button" onClick={() => toast("Add Node")}>
-            + Add Node
-          </button>
-        </>
-      }
-    />
-  );
-
-  if (view !== "Graph") {
-    return (
-      <AppShell
-        activeMode="explore"
-        modeLabel="Brain Mode"
-        searchPlaceholder="Search nodes, concepts, memories, datasets..."
-        layout="wide"
-        pageClass="lv-app--brain-views"
-      >
-        <main className="lv-main lv-br-main">
-          <BrainHeader
-            quote={
-              view === "Analytics"
-                ? "“Knowledge compounds. Intelligence emerges.”"
-                : "“Everything is connected.”"
-            }
-          />
-          {viewTabs}
-          {view === "Tree" ? <BrainTreeView onToast={toast} /> : null}
-          {view === "Timeline" ? <BrainTimelineView onToast={toast} /> : null}
-          {view === "Clusters" ? <BrainClustersView onToast={toast} /> : null}
-          {view === "Analytics" ? <BrainAnalyticsView onToast={toast} /> : null}
-        </main>
-      </AppShell>
-    );
-  }
+  const treeGroups = useMemo(() => {
+    const groups: Record<string, BrainNode[]> = {};
+    for (const n of nodes) {
+      const key = n.type.split(".")[0];
+      groups[key] = groups[key] ?? [];
+      groups[key].push(n);
+    }
+    return groups;
+  }, [nodes]);
 
   return (
     <AppShell
       activeMode="explore"
       modeLabel="Brain Mode"
-      searchPlaceholder="Search nodes, concepts, memories, datasets..."
-      pageClass="lv-app--brain"
+      searchPlaceholder="Search brain graph…"
+      systemItems={["LLM", "Neural", "Memory", "Runtime"]}
+      layout="wide"
     >
-      <main className="lv-main">
-        <section className="lv-page-hero">
-          <div className="lv-hero-media">
-            <img src={media.architectureBg} alt="" width={1400} height={380} />
+      <main className="lv-main" style={{ padding: "1.25rem", display: "grid", gap: "1rem" }}>
+        <header style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+          <div>
+            <h1 style={{ margin: 0 }}>Brain</h1>
+            <p style={{ opacity: 0.75, margin: "0.35rem 0 0" }}>
+              Bounded projection over Knowledge, Evidence, Research, Datasets, and Runtime — not a second database.
+            </p>
           </div>
-          <div className="lv-hero-shade" />
-          <div className="lv-hero-content">
-            <div className="lv-hero-kicker">
-              <span />
-              Dynamic Knowledge Network
-              <span />
-            </div>
-            <h1 className="lv-hero-title">Brain</h1>
-            <p className="lv-page-quote">“All knowledge is connected.”</p>
-          </div>
-          <div className="lv-hero-rail" aria-hidden="true">
-            <span>Graph</span>
-            <span>Memory</span>
-            <span>Reason</span>
-            <span>Link</span>
-          </div>
-        </section>
-        <div className="lv-toolbar">
-          <div className="lv-tabs" role="tablist">
-            {BRAIN_VIEWS.map((item) => (
-              <button
-                key={item}
-                className={`lv-tab${view === item ? " is-active" : ""}`}
-                type="button"
-                onClick={() => setView(item)}
-              >
-                {item === "Graph" ? <span className="lv-tab-dot" /> : null}
-                {item}
-              </button>
-            ))}
-          </div>
-          <input
-            className="lv-input"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter graph…"
-            aria-label="Filter graph"
-          />
-          <select className="lv-select" defaultValue="all" aria-label="Domain">
-            <option value="all">All Domains</option>
-            <option value="projects">Projects</option>
-            <option value="models">Models</option>
-            <option value="tools">Tools</option>
-          </select>
-          <button className="lv-btn" type="button" onClick={() => toast("Zoom out")}>
-            −
-          </button>
-          <button className="lv-btn" type="button">
-            100%
-          </button>
-          <button className="lv-btn" type="button" onClick={() => toast("Zoom in")}>
-            +
-          </button>
-          <button className="lv-btn-gold lv-btn" type="button" onClick={() => toast("Add Node")}>
-            + Add Node
-          </button>
-        </div>
-
-        <div className="lv-brain-layout">
-          <aside className="lv-panel lv-brain-filters">
-            <div className="lv-section-label">Filter Nodes</div>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <input
-              className="lv-input"
-              style={{ width: "100%" }}
-              placeholder="Search types…"
-              aria-label="Search node types"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Filter…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void load();
+              }}
             />
-            <div className="lv-filter-list">
-              {NODE_TYPES.map((type) => (
-                <button
-                  key={type.id}
-                  className={`lv-filter-item${activeTypes.has(type.id) ? " is-active" : ""}`}
-                  type="button"
-                  onClick={() => toggleType(type.id)}
-                >
-                  <span className="lv-filter-swatch" style={{ color: type.color, background: type.color }} />
-                  <span>{type.label}</span>
-                  <span>{type.count}</span>
-                </button>
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+              <option value="">All types</option>
+              {typeOptions.map((t) => (
+                <option key={t} value={t}>
+                  {t} ({typeCounts[t]})
+                </option>
               ))}
-            </div>
-            <button className="lv-toggle" type="button" onClick={() => setShowLabels((value) => !value)}>
-              <span className={`lv-switch${showLabels ? " is-on" : ""}`} />
-              Show Labels
+            </select>
+            <button type="button" onClick={() => void load()}>
+              Refresh
             </button>
-            <button className="lv-toggle" type="button" onClick={() => toast("Show Clusters")}>
-              <span className="lv-switch is-on" />
-              Show Clusters
-            </button>
-            <button className="lv-toggle" type="button" onClick={() => toast("Physics Layout")}>
-              <span className="lv-switch is-on" />
-              Physics Layout
-            </button>
-          </aside>
-
-          <div className="lv-brain-workspace">
-            <div className="lv-graph-canvas" aria-label="Knowledge graph">
-              <svg viewBox="0 0 900 520" preserveAspectRatio="xMidYMid meet">
-                {EDGES.map(([from, to]) => {
-                  const a = nodeMap.get(from);
-                  const b = nodeMap.get(to);
-                  if (!a || !b) return null;
-                  if (!visibleNodes.some((n) => n.id === from) || !visibleNodes.some((n) => n.id === to)) {
-                    return null;
-                  }
-                  return (
-                    <line
-                      key={`${from}-${to}`}
-                      x1={a.x}
-                      y1={a.y}
-                      x2={b.x}
-                      y2={b.y}
-                      stroke="rgba(214,169,87,0.22)"
-                      strokeWidth={from === "hades" ? 1.4 : 1}
-                    />
-                  );
-                })}
-                {visibleNodes.map((node) => (
-                  <g
-                    key={node.id}
-                    className={`lv-graph-node${selectedId === node.id ? " is-active" : ""}`}
-                    onClick={() => setSelectedId(node.id)}
-                  >
-                    <circle
-                      cx={node.x}
-                      cy={node.y}
-                      r={selectedId === node.id ? node.r + 3 : node.r}
-                      fill={node.core ? "rgba(214,169,87,0.18)" : "rgba(8,10,9,0.85)"}
-                      stroke={node.color}
-                      strokeWidth={node.core ? 2.2 : 1.4}
-                    />
-                    {node.core ? (
-                      <circle cx={node.x} cy={node.y} r={8} fill={node.color} opacity={0.9} />
-                    ) : (
-                      <circle cx={node.x} cy={node.y} r={3.5} fill={node.color} />
-                    )}
-                    {showLabels ? (
-                      <text
-                        className={`lv-graph-label${node.core ? " core" : ""}`}
-                        x={node.x}
-                        y={node.y + node.r + 16}
-                        textAnchor="middle"
-                      >
-                        {node.label}
-                      </text>
-                    ) : null}
-                  </g>
-                ))}
-              </svg>
-            </div>
-
-            <div className="lv-brain-bottom">
-              <article className="lv-panel lv-card">
-                <div className="lv-section-label">Selected Nodes</div>
-                <p className="lv-node-desc">
-                  {selected.label} · {selected.type}
-                </p>
-              </article>
-              <article className="lv-panel lv-card">
-                <div className="lv-section-label">Quick Actions</div>
-                <div className="lv-quick-actions">
-                  {[
-                    { label: "Add Node", icon: <path d="M12 5v14M5 12h14" /> },
-                    { label: "Create Cluster", icon: <circle cx="12" cy="12" r="7" /> },
-                    {
-                      label: "Find Related",
-                      icon: (
-                        <>
-                          <circle cx="11" cy="11" r="6" />
-                          <path d="M20 20l-3-3" />
-                        </>
-                      ),
-                    },
-                    { label: "Analyze Graph", icon: <path d="M5 19V9M12 19V5M19 19v-7" /> },
-                  ].map((action) => (
-                    <button
-                      key={action.label}
-                      className="lv-quick-action"
-                      type="button"
-                      onClick={() => toast(action.label)}
-                    >
-                      <svg className="lv-icon" viewBox="0 0 24 24">
-                        {action.icon}
-                      </svg>
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              </article>
-              <article className="lv-panel lv-card">
-                <div className="lv-section-label">Graph Statistics</div>
-                <div className="lv-stat-strip">
-                  <div className="lv-stat-card">
-                    <strong>12.4K</strong>
-                    <span>Nodes</span>
-                  </div>
-                  <div className="lv-stat-card">
-                    <strong>28</strong>
-                    <span>Clusters</span>
-                  </div>
-                  <div className="lv-stat-card">
-                    <strong>342.8K</strong>
-                    <span>Links</span>
-                  </div>
-                  <div className="lv-stat-card">
-                    <strong>10</strong>
-                    <span>Domains</span>
-                  </div>
-                </div>
-              </article>
-            </div>
           </div>
+        </header>
+
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {(["graph", "tree", "timeline", "analytics"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              style={{ fontWeight: view === v ? 700 : 400 }}
+            >
+              {v}
+            </button>
+          ))}
+          <span style={{ marginLeft: "auto", opacity: 0.7 }}>
+            {loading ? "Loading…" : `${nodes.length} nodes · ${edges.length} edges`}
+          </span>
         </div>
 
-        <p className="lv-footer-quote">“A greater mind is a more connected mind.” — LEVIATHAN</p>
-      </main>
+        {error ? <div role="alert">{error}</div> : null}
 
-      <aside className="lv-right">
-        <article className="lv-panel lv-panel-premium lv-node-details">
-          <div className="lv-node-details-head">
-            <h2>Node Details</h2>
-            <button className="lv-icon-btn" type="button" aria-label="Close" onClick={() => toast("Close")}>
-              <svg className="lv-icon" viewBox="0 0 24 24">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>
+        {view === "graph" ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: "1rem" }}>
+            <svg viewBox={`0 0 ${layout.w} ${layout.h}`} width="100%" style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8 }}>
+              {edges.map((e) => {
+                const a = layout.positions.get(e.source);
+                const b = layout.positions.get(e.target);
+                if (!a || !b) return null;
+                return (
+                  <line
+                    key={e.id}
+                    x1={a.x}
+                    y1={a.y}
+                    x2={b.x}
+                    y2={b.y}
+                    stroke="rgba(255,255,255,0.18)"
+                    strokeWidth={1}
+                  />
+                );
+              })}
+              {nodes.map((n) => {
+                const p = layout.positions.get(n.id);
+                if (!p) return null;
+                return (
+                  <g key={n.id} onClick={() => setSelectedId(n.id)} style={{ cursor: "pointer" }}>
+                    <circle
+                      cx={p.x}
+                      cy={p.y}
+                      r={p.r}
+                      fill={p.color}
+                      opacity={selectedId === n.id ? 1 : 0.85}
+                      stroke={selectedId === n.id ? "#fff" : "transparent"}
+                      strokeWidth={2}
+                    />
+                    <title>{`${n.label} (${n.type})`}</title>
+                  </g>
+                );
+              })}
+            </svg>
+            <aside>
+              <h3>Node detail</h3>
+              {!selected ? (
+                <p>Select a node</p>
+              ) : (
+                <div style={{ display: "grid", gap: "0.4rem" }}>
+                  <strong>{selected.label}</strong>
+                  <div style={{ fontSize: "0.85rem", opacity: 0.75 }}>{selected.id}</div>
+                  <div>Type: {selected.type}</div>
+                  <div>Created: {selected.created_at || "—"}</div>
+                  <pre style={{ fontSize: "0.75rem", overflow: "auto" }}>
+                    {JSON.stringify(selected.meta ?? {}, null, 2)}
+                  </pre>
+                  {deepLink(selected) ? (
+                    <Link to={deepLink(selected)!}>Open authoritative page</Link>
+                  ) : null}
+                </div>
+              )}
+              {!loading && nodes.length === 0 ? (
+                <p>No entities yet — ingest knowledge, run research, or connect MCP.</p>
+              ) : null}
+            </aside>
           </div>
-          <h3 className="lv-node-title">{selected.label}</h3>
-          <div className="lv-toolbar">
-            {detail.tags.map((tag) => (
-              <span key={tag} className="lv-tag gold">
-                {tag}
-              </span>
+        ) : null}
+
+        {view === "tree" ? (
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            {Object.entries(treeGroups).map(([group, items]) => (
+              <details key={group} open>
+                <summary>
+                  {group} ({items.length})
+                </summary>
+                <ul>
+                  {items.map((n) => (
+                    <li key={n.id}>
+                      <button type="button" onClick={() => setSelectedId(n.id)}>
+                        {n.label} <span style={{ opacity: 0.6 }}>{n.type}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             ))}
           </div>
-          <p className="lv-node-desc">{detail.description}</p>
-          <div className="lv-tabs">
-            <button className="lv-tab is-active" type="button">
-              Overview
-            </button>
-            <button className="lv-tab" type="button" onClick={() => toast("Relations")}>
-              Relations (184)
-            </button>
-            <button className="lv-tab" type="button" onClick={() => toast("Content")}>
-              Content
-            </button>
-            <button className="lv-tab" type="button" onClick={() => toast("Metrics")}>
-              Metrics
-            </button>
-          </div>
-          <div className="lv-meta-grid">
-            <div className="lv-meta-item">
-              <span>Type</span>
-              <strong>{selected.type}</strong>
-            </div>
-            <div className="lv-meta-item">
-              <span>Created</span>
-              <strong>{detail.created}</strong>
-            </div>
-            <div className="lv-meta-item">
-              <span>Updated</span>
-              <strong>{detail.updated}</strong>
-            </div>
-            <div className="lv-meta-item">
-              <span>Connections</span>
-              <strong>{detail.connections}</strong>
-            </div>
-          </div>
-          <div className="lv-relevance">
-            <div className="lv-meta-item">
-              <span>Relevance</span>
-              <strong>{detail.relevance}%</strong>
-            </div>
-            <div className="lv-relevance-bar">
-              <span style={{ width: `${detail.relevance}%` }} />
-            </div>
-          </div>
-          <div className="lv-detail-actions">
-            <button className="lv-btn" type="button" onClick={() => toast("Open in Chat")}>
-              Open in Chat
-            </button>
-            <button className="lv-btn" type="button" onClick={() => toast("Expand Node")}>
-              Expand Node
-            </button>
-            <button className="lv-btn" type="button" onClick={() => toast("Add Relation")}>
-              Add Relation
-            </button>
-            <button className="lv-btn-gold lv-btn" type="button" onClick={() => toast("Edit Node")}>
-              Edit Node
+        ) : null}
+
+        {view === "timeline" ? (
+          <ul>
+            {timeline.length === 0 ? <li>No timestamped entities</li> : null}
+            {timeline.map((n) => (
+              <li key={n.id}>
+                <code>{n.created_at}</code> — {n.label} ({n.type})
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {view === "analytics" ? (
+          <div>
+            <h3>Graph statistics</h3>
+            <pre>{JSON.stringify(stats, null, 2)}</pre>
+            <p style={{ opacity: 0.7 }}>
+              Counts are from the bounded projection response, not invented neuroscience metrics.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                toast("Brain is a read projection — use Knowledge/Research/Datasets to mutate.");
+              }}
+            >
+              Add Node (disabled — use authoritative pages)
             </button>
           </div>
-        </article>
-      </aside>
+        ) : null}
+      </main>
     </AppShell>
   );
 }

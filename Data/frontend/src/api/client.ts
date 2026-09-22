@@ -83,6 +83,10 @@ import type {
   KnowledgeChunk,
   KnowledgeSearchHit,
   EvidenceRecord,
+  WorkflowRecord,
+  WorkflowCreatePayload,
+  ScheduleRecord,
+  ScheduleCreatePayload,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -469,27 +473,51 @@ export const api = {
     });
   },
 
-  listWorkflows(limit = 100): Promise<{ workflows: unknown[] }> {
+  listWorkflows(limit = 100): Promise<{ workflows: WorkflowRecord[] }> {
     return request(`/api/workflows?limit=${encodeURIComponent(String(limit))}`);
   },
 
-  createWorkflow(payload: {
-    name: string;
-    steps: Array<{ step_id?: string; capability_id: string; arguments?: Record<string, unknown> }>;
-  }): Promise<{ workflow: unknown }> {
+  createWorkflow(payload: WorkflowCreatePayload): Promise<{ workflow: WorkflowRecord }> {
     return request("/api/workflows", { method: "POST", body: JSON.stringify(payload) });
   },
 
-  getWorkflow(workflowId: string): Promise<{ workflow: unknown }> {
+  getWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
     return request(`/api/workflows/${encodeURIComponent(workflowId)}`);
   },
 
-  runWorkflow(workflowId: string): Promise<{ workflow: unknown }> {
+  runWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
     return request(`/api/workflows/${encodeURIComponent(workflowId)}/run`, { method: "POST" });
   },
 
-  cancelWorkflow(workflowId: string): Promise<{ workflow: unknown }> {
+  cancelWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
     return request(`/api/workflows/${encodeURIComponent(workflowId)}/cancel`, { method: "POST" });
+  },
+
+  listSchedules(opts?: {
+    status?: string;
+    limit?: number;
+  }): Promise<{ schedules: ScheduleRecord[]; telemetry?: Record<string, unknown> }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/schedules${q ? `?${q}` : ""}`);
+  },
+
+  createSchedule(payload: ScheduleCreatePayload): Promise<{ schedule: ScheduleRecord }> {
+    return request("/api/schedules", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  getSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}`);
+  },
+
+  pauseSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}/pause`, { method: "POST" });
+  },
+
+  resumeSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}/resume`, { method: "POST" });
   },
 
   listEvidence(opts?: {
@@ -1507,5 +1535,40 @@ export const api = {
     return request(`/api/settings/reset-category/${encodeURIComponent(category)}`, {
       method: "POST",
     });
+  },
+
+  brainGraph(opts?: {
+    limit?: number;
+    q?: string;
+    types?: string;
+    root?: string;
+  }): Promise<{
+    nodes: Array<{
+      id: string;
+      type: string;
+      label: string;
+      created_at?: string | null;
+      meta?: Record<string, unknown>;
+    }>;
+    edges: Array<{ id: string; source: string; target: string; relation: string }>;
+    stats: {
+      node_count: number;
+      edge_count: number;
+      by_type?: Record<string, number>;
+      by_relation?: Record<string, number>;
+    };
+    truth?: Record<string, boolean>;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.types) params.set("types", opts.types);
+    if (opts?.root) params.set("root", opts.root);
+    const q = params.toString();
+    return request(`/api/brain/graph${q ? `?${q}` : ""}`);
+  },
+
+  brainStats(): Promise<{ stats: Record<string, unknown>; truth?: Record<string, boolean> }> {
+    return request("/api/brain/stats");
   },
 };

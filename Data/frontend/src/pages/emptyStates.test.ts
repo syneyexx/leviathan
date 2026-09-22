@@ -21,6 +21,10 @@ function codingEmptyCopy(count: number): string | null {
   return count === 0 ? "NO CODING SESSIONS" : null;
 }
 
+function workflowsEmptyCopy(count: number): string | null {
+  return count === 0 ? "NO WORKFLOWS" : null;
+}
+
 describe("page empty states", () => {
   it("datasets shows honest empty title when API returns []", () => {
     expect(datasetsEmptyCopy(0)).toBe("NO DATASETS");
@@ -40,5 +44,10 @@ describe("page empty states", () => {
   it("coding agent shows honest empty sessions", () => {
     expect(codingEmptyCopy(0)).toBe("NO CODING SESSIONS");
     expect(codingEmptyCopy(1)).toBeNull();
+  });
+
+  it("workflows stays empty until real API data", () => {
+    expect(workflowsEmptyCopy(0)).toBe("NO WORKFLOWS");
+    expect(workflowsEmptyCopy(1)).toBeNull();
   });
 });
