@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of the **Coding Agent** control plane (migration v15) on the Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of the **Market Simulation** control plane (migration v16) on the Coding Agent + Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,24 +12,25 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–51, a full **Model Control Plane**, Datasets/Training/Research (v14), and a **Coding Agent** for `/coding`.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–51, a full **Model Control Plane**, Datasets/Training/Research (v14), a **Coding Agent** for `/coding`, and a **Market Simulation** paper research plane for `/trading`.
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.54.0-coding`);
+- FastAPI backend composition root (`0.55.0-market-sim`);
 - **Coding Agent** (`Data/modules/coding/`) — sessions, XML capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker;
+- **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
 - SQLite persistence + migrations through **v15**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
-- React + TypeScript + Vite frontend with operator `/status`, production `/models`, and **Coding Agent** `/coding` UI;
+- React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, and live **Market Sim** `/trading` surfaces;
 - typed frontend API client;
 - honest failure semantics (no fabricated success).
 
 **Not claimed:**
 
-- Real browser/media/voice/native/trading runtimes;
+- Real browser/media/voice/native runtimes; live broker trading;
 - Real MCP network clients; **weight-backed HF residual inject**; production GPU residual hooks;
 - Programmatic LM Studio load/unload (external management);
 - Managed llama.cpp inference engine;

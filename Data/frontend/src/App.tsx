@@ -18,6 +18,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { TradingCenterPage } from "./pages/TradingCenterPage";
+import { StrategieenPage } from "./pages/trading/StrategieenPage";
+import { MarktdataPage } from "./pages/trading/MarktdataPage";
 import { TrainingPage } from "./pages/TrainingPage";
 
 export default function App() {
@@ -49,6 +51,8 @@ export default function App() {
       <Route path="/console" element={<PlaceholderPage title="Console" modeLabel="Runtime Mode" />} />
       <Route path="/analytics" element={<AnalyticsPage />} />
       <Route path="/trading" element={<TradingCenterPage />} />
+      <Route path="/trading/strategieen" element={<StrategieenPage />} />
+      <Route path="/trading/marktdata" element={<MarktdataPage />} />
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/chat.html" element={<Navigate to="/chat" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />

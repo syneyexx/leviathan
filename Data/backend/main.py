@@ -15,6 +15,8 @@ from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
 from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
 from Data.modules.coding import CodingControlPlane
 from Data.backend.routes.coding import build_coding_router
+from Data.modules.market_sim import MarketSimControlPlane
+from Data.backend.routes.market_sim import build_market_sim_router
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
 from Data.modules.execution import (
@@ -219,6 +221,15 @@ coding_service = CodingControlPlane.from_settings(
 )
 agent_runtime.coding = coding_service
 agent_runtime.coding_enabled = settings.features.coding_enabled
+market_sim_service = MarketSimControlPlane.from_settings(
+    settings,
+    db_path=settings.database_path,
+    knowledge=knowledge,
+    memory=memory_store,
+    evidence=evidence_store,
+    neuro=neuro_advisor,
+    observability_emit=observability.emit,
+)
 neuro_soak = NeuroSoakHarness()
 browser_stub = BrowserAutomationStub()
 media_stub = MediaAutomationStub()
@@ -537,6 +548,7 @@ async def lifespan(_: FastAPI):
     training_service.reconcile()
     research_service.recover()
     coding_service.start_background()
+    market_sim_service.start_background()
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
@@ -570,16 +582,18 @@ async def lifespan(_: FastAPI):
                         pass
         dataset_service.runner.stop_background()
         coding_service.stop_background()
+        market_sim_service.stop_background()
         job_runtime.stop_background_worker()
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.54.0-coding", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.55.0-market-sim", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
+app.include_router(build_market_sim_router(market_sim_service))
 
 
 class ConversationCreate(BaseModel):

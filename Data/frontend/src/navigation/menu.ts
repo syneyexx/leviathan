@@ -79,8 +79,8 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/trading"],
     submenu: [
       { id: "simulatie", label: "Simulatie", to: "/trading" },
-      { id: "strategieen", label: "Strategieen" },
-      { id: "marktdata", label: "Marktdata" },
+      { id: "strategieen", label: "Strategieen", to: "/trading/strategieen" },
+      { id: "marktdata", label: "Marktdata", to: "/trading/marktdata" },
       { id: "portefeuille", label: "Portefeuille" },
       { id: "paper", label: "PAPER trading" },
       { id: "broker", label: "BROKER trading" },

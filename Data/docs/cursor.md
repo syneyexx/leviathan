@@ -243,6 +243,7 @@ SQLite persistence
 | Verification | `Data/modules/verification/` |
 | Agents | `Data/modules/agents/` (requires feature flag) |
 | Coding Agent | `Data/modules/coding/` + `/coding` UI (requires `LEVIATHAN_FEATURE_AGENTS` + `LEVIATHAN_FEATURE_CODING`) |
+| Market Sim | `Data/modules/market_sim/` + `/trading` UI (requires `LEVIATHAN_FEATURE_MARKET_SIM`; paper/causal only) |
 | Workflows | `Data/modules/workflows/` |
 | Schedules | `Data/modules/schedules/` |
 | Observability | `Data/modules/observability/` |
