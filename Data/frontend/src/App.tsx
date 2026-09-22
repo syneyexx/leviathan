@@ -4,6 +4,7 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { BrainPage } from "./pages/BrainPage";
 import { ChatPage } from "./pages/ChatPage";
 import { CodingPage } from "./pages/CodingPage";
+import { CognitionPage } from "./pages/CognitionPage";
 import { CommandPage } from "./pages/CommandPage";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
@@ -69,6 +70,7 @@ export default function App() {
 
       <Route path="/research" element={<ResearchPixelPage />} />
       <Route path="/brain" element={<BrainPage />} />
+      <Route path="/cognition" element={<CognitionPage />} />
       <Route path="/memory" element={<SectionPage title="Geheugen" />} />
       <Route path="/knowledge" element={<SectionPage title="Knowledge Library" />} />
       <Route path="/evidence" element={<EvidenceVaultPage />} />

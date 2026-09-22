@@ -1,0 +1,17 @@
+{
+  "module_id": "cognition.runtime",
+  "name": "Cognitive Runtime",
+  "version": "0.61.0",
+  "entrypoint": null,
+  "capabilities": [],
+  "permissions": ["cognition.read", "cognition.orchestrate"],
+  "side_effects": ["READ"],
+  "isolation": "INPROC",
+  "hot_reload": false,
+  "execution_mode": "in_process",
+  "metadata": {
+    "first_party": true,
+    "authority": "orchestration",
+    "external_first_note": "Heavy domain work must delegate to supervised workers; Core owns cognition authority"
+  }
+}
