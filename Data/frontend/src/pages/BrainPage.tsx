@@ -1,14 +1,13 @@
 import { useMemo, useState } from "react";
-import {
-  BRAIN_PIXEL_VIEWS,
-  brainViewContent,
-  brainViewHasGraphTab,
-  brainViewHotspots,
-  type BrainPixelView,
-} from "../assets/brainPagesAssets";
 import { media } from "../assets/media";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
+import { BRAIN_VIEWS, type BrainView } from "./brain/brain-mock";
+import { BrainHeader, BrainViewTabs } from "./brain/brain-shared";
+import { BrainAnalyticsView } from "./brain/BrainAnalyticsView";
+import { BrainClustersView } from "./brain/BrainClustersView";
+import { BrainTimelineView } from "./brain/BrainTimelineView";
+import { BrainTreeView } from "./brain/BrainTreeView";
 
 type NodeType = {
   id: string;
@@ -84,12 +83,6 @@ const EDGES: [string, string][] = [
   ["market", "risk"],
 ];
 
-const VIEWS = ["Graph", "Tree", "Timeline", "Clusters", "Analytics"] as const;
-
-function isBrainPixelView(view: (typeof VIEWS)[number]): view is BrainPixelView {
-  return (BRAIN_PIXEL_VIEWS as readonly string[]).includes(view);
-}
-
 const NODE_DETAILS: Record<
   string,
   { description: string; created: string; updated: string; connections: string; relevance: number; tags: string[] }
@@ -116,7 +109,7 @@ const DEFAULT_DETAIL = {
 
 export function BrainPage() {
   const toast = useAppToast();
-  const [view, setView] = useState<(typeof VIEWS)[number]>("Graph");
+  const [view, setView] = useState<BrainView>("Graph");
   const [activeTypes, setActiveTypes] = useState<Set<string>>(
     () => new Set(NODE_TYPES.map((item) => item.id)),
   );
@@ -149,60 +142,47 @@ export function BrainPage() {
     });
   };
 
-  if (isBrainPixelView(view)) {
-    const src = brainViewContent[view];
-    const hotspots = brainViewHotspots[view];
-    const showGraphBack = !brainViewHasGraphTab[view];
+  const viewTabs = (
+    <BrainViewTabs
+      view={view}
+      onChange={setView}
+      trailing={
+        <>
+          <select className="lv-br-select" style={{ width: "auto" }} defaultValue="default" aria-label="View preset">
+            <option value="default">Default View</option>
+            <option value="global">Global Graph</option>
+            <option value="cluster">Cluster View</option>
+          </select>
+          <button className="lv-br-btn is-gold" type="button" onClick={() => toast("Add Node")}>
+            + Add Node
+          </button>
+        </>
+      }
+    />
+  );
 
+  if (view !== "Graph") {
     return (
       <AppShell
         activeMode="explore"
         modeLabel="Brain Mode"
         searchPlaceholder="Search nodes, concepts, memories, datasets..."
         layout="wide"
-        pageClass="lv-app--brain-pixel"
+        pageClass="lv-app--brain-views"
       >
-        <main className="lv-main lv-brain-pixel-main">
-          <section className="lv-brain-pixel-frame" aria-label={`Brain ${view} view`}>
-            <div className="lv-brain-pixel-stage">
-              <img
-                className="lv-brain-pixel-shot"
-                src={src}
-                alt={`Brain ${view}`}
-                width={1450}
-                height={863}
-              />
-              {showGraphBack ? (
-                <button
-                  className="lv-brain-pixel-graph-back"
-                  type="button"
-                  onClick={() => setView("Graph")}
-                >
-                  ← Graph View
-                </button>
-              ) : null}
-              <ul className="lv-brain-pixel-hotspots" role="tablist" aria-label="Brain views">
-                {hotspots.map((spot) => (
-                  <li key={spot.view}>
-                    <button
-                      className="lv-brain-pixel-hotspot"
-                      type="button"
-                      role="tab"
-                      aria-selected={view === spot.view}
-                      aria-label={spot.view === "Graph" ? "Graph View" : spot.view}
-                      style={{
-                        left: `${spot.left}%`,
-                        top: `${spot.top}%`,
-                        width: `${spot.width}%`,
-                        height: `${spot.height}%`,
-                      }}
-                      onClick={() => setView(spot.view)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </section>
+        <main className="lv-main lv-br-main">
+          <BrainHeader
+            quote={
+              view === "Analytics"
+                ? "“Knowledge compounds. Intelligence emerges.”"
+                : "“Everything is connected.”"
+            }
+          />
+          {viewTabs}
+          {view === "Tree" ? <BrainTreeView onToast={toast} /> : null}
+          {view === "Timeline" ? <BrainTimelineView onToast={toast} /> : null}
+          {view === "Clusters" ? <BrainClustersView onToast={toast} /> : null}
+          {view === "Analytics" ? <BrainAnalyticsView onToast={toast} /> : null}
         </main>
       </AppShell>
     );
@@ -239,7 +219,7 @@ export function BrainPage() {
         </section>
         <div className="lv-toolbar">
           <div className="lv-tabs" role="tablist">
-            {VIEWS.map((item) => (
+            {BRAIN_VIEWS.map((item) => (
               <button
                 key={item}
                 className={`lv-tab${view === item ? " is-active" : ""}`}
@@ -301,11 +281,7 @@ export function BrainPage() {
                 </button>
               ))}
             </div>
-            <button
-              className="lv-toggle"
-              type="button"
-              onClick={() => setShowLabels((value) => !value)}
-            >
+            <button className="lv-toggle" type="button" onClick={() => setShowLabels((value) => !value)}>
               <span className={`lv-switch${showLabels ? " is-on" : ""}`} />
               Show Labels
             </button>
@@ -378,7 +354,9 @@ export function BrainPage() {
             <div className="lv-brain-bottom">
               <article className="lv-panel lv-card">
                 <div className="lv-section-label">Selected Nodes</div>
-                <p className="lv-node-desc">{selected.label} · {selected.type}</p>
+                <p className="lv-node-desc">
+                  {selected.label} · {selected.type}
+                </p>
               </article>
               <article className="lv-panel lv-card">
                 <div className="lv-section-label">Quick Actions</div>
