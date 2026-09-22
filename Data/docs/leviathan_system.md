@@ -188,17 +188,19 @@ POST /api/coding/sessions + /turn
 
 Workspace default: `LEVIATHAN_CODING_WORKSPACE` (`D:/leviathan/codingworkspace`). HADES paths denied. No private shell/FS/DB.
 
-## 3.7 Knowledge V2
+## 3.7 Knowledge V2 / RAG V3
 
-Owner: `Data/modules/knowledge/`.
+Owner: `Data/modules/knowledge/`. See also `Data/docs/rag_v3_architecture.md`.
 
 - Documents with ingest status (`DISCOVERED`…`READY`/`FAILED`/…), content hash, provenance path/mtime, parser metadata
-- Chunks with hashes; document becomes READY only after successful chunk/index write
+- Chunks with hashes, span offsets, confidence, source_type, provenance JSON; READY only after successful chunk/index write
 - Lexical chunk FTS (LIKE fallback); metadata `source` filter
-- `EmbeddingProvider` interface + `NullEmbeddingProvider` (no fabricated vectors)
-- `HybridRetriever` — lexical now; vector fusion only when a real provider is available
-- Incremental file ingest under `LEVIATHAN_DATA_ROOT` with change detection
-- API: CRUD, search (`hits`+`documents`), document+chunks, `ingest/path`, `ingest/scan`
+- `EmbeddingProvider` interface: `NullEmbeddingProvider`, `LocalHashEmbeddingProvider`, optional SentenceTransformers
+- `HybridRetriever` V3 — lexical + dense fusion + optional reranker; never fabricates vectors when unavailable
+- Cold Atlas (mutable interpretation) + Deep Recall + Why Library behind feature flags
+- Directional relation atoms + chunk embeddings in central SQLite (no parallel vector DB)
+- Incremental file ingest under `LEVIATHAN_DATA_ROOT` with change detection / re-chunk on edit
+- API: CRUD, search, atlas, deep-recall, why, document+chunks, `ingest/path`, `ingest/scan`
 
 ## 3.8 Health
 

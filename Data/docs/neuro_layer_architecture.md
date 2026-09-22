@@ -1,8 +1,8 @@
 # LEVIATHAN Phase 46+ — Top-Tier Frontier Neuro Layer
 
-> **Status:** Phase 52 Grok-level depth jump implemented (residual quality + cortex + memory + honest training)  
+> **Status:** Phase 52 Grok-level depth jump + RAG V3 / Neural production path upgrade  
 > **Baseline:** Phase 51 operational completion  
-> **Current version marker:** `0.55.0-phase52`  
+> **Current version marker:** `0.58.0-rag-v3`  
 > **Authority:** This document is the design contract. Executable code and tests win when they disagree; update this doc when architecture changes.
 
 ---

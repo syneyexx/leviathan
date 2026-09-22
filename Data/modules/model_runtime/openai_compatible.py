@@ -95,6 +95,9 @@ class OpenAICompatibleLLM:
         observations: list[dict] | None = None,
         evidence: list[dict] | None = None,
         neuro: list[dict] | None = None,
+        atlas: list[dict] | None = None,
+        why: list[dict] | None = None,
+        contradictions: list[dict] | str | None = None,
         model_id: str | None = None,
         endpoint: str | None = None,
         api_key: str | None = None,
@@ -113,6 +116,9 @@ class OpenAICompatibleLLM:
             observations=observations,
             evidence=evidence,
             neuro=neuro,
+            atlas=atlas,
+            why=why,
+            contradictions=contradictions,  # type: ignore[arg-type]
         )
         messages = list(pack.messages)
         if system_prompt and system_prompt.strip():

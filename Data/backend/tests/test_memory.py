@@ -39,6 +39,25 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(archived.status, MemoryStatus.ARCHIVED)
         self.assertEqual(self.store.list(status=MemoryStatus.ACTIVE), [])
 
+    def test_new_kinds_and_budgeted_retrieve(self) -> None:
+        self.store.create(content="Decision to keep SQLite central", kind=MemoryKind.DECISION)
+        self.store.create(content="Relation atom: A like B", kind=MemoryKind.RELATION)
+        self.store.create(content="Summary of last research lane", kind=MemoryKind.SUMMARY)
+        self.store.create(content="Residue leftover taxonomy", kind=MemoryKind.RESIDUE)
+        hits = self.store.budgeted_retrieve("SQLite central", token_budget=50, limit=10)
+        self.assertTrue(hits)
+        self.assertTrue(any(h.kind == MemoryKind.DECISION for h in hits))
+
+    def test_snapshot_restore_lock_safe(self) -> None:
+        created = self.store.create(content="Snapshot me", kind=MemoryKind.EPISODIC, tags=["t"])
+        snap = self.store.snapshot(label="test")
+        self.assertTrue(snap["snapshot_id"])
+        self.store.set_status(created.memory_id, MemoryStatus.ARCHIVED)
+        restored = self.store.restore_snapshot(snap["snapshot_id"], replace_active=False)
+        self.assertGreaterEqual(restored, 1)
+        active = self.store.list(status=MemoryStatus.ACTIVE)
+        self.assertTrue(any(item.content == "Snapshot me" for item in active))
+
 
 if __name__ == "__main__":
     unittest.main()

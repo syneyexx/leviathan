@@ -12,12 +12,29 @@ class MemoryKind(str, Enum):
     PROCEDURE = "PROCEDURE"
     EPISODIC = "EPISODIC"
     DECISION = "DECISION"
+    RELATION = "RELATION"
+    SUMMARY = "SUMMARY"
+    RESIDUE = "RESIDUE"
 
 
 class MemoryStatus(str, Enum):
     ACTIVE = "ACTIVE"
     ARCHIVED = "ARCHIVED"
     REVOKED = "REVOKED"
+
+
+# Higher = keep longer under budget pressure.
+MEMORY_KIND_PRIORITY: dict[MemoryKind, float] = {
+    MemoryKind.DECISION: 1.0,
+    MemoryKind.PREFERENCE: 0.95,
+    MemoryKind.FACT: 0.85,
+    MemoryKind.PROCEDURE: 0.8,
+    MemoryKind.EPISODIC: 0.7,
+    MemoryKind.RELATION: 0.65,
+    MemoryKind.SUMMARY: 0.55,
+    MemoryKind.NOTE: 0.4,
+    MemoryKind.RESIDUE: 0.25,
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +53,7 @@ class MemoryRecord:
     conversation_id: str | None = None
     tags: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    priority: float = 0.5
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +69,7 @@ class MemoryRecord:
             "conversation_id": self.conversation_id,
             "tags": list(self.tags),
             "metadata": self.metadata,
+            "priority": self.priority,
             "truth": {
                 "model_output_is_not_automatic_memory": True,
                 "memory_is_not_knowledge": True,
@@ -63,4 +82,5 @@ class MemoryRecord:
             "content": f"[{self.kind.value}/{self.trust}] {self.content}",
             "status": self.status.value,
             "kind": self.kind.value,
+            "priority": self.priority,
         }

@@ -119,6 +119,11 @@ class KnowledgeSettings:
     data_root: Path
     chunk_max_chars: int = 1200
     chunk_overlap: int = 120
+    embedding_provider: str = "null"
+    embedding_model: str | None = None
+    embedding_hash_dimensions: int = 256
+    reranker_model: str | None = None
+    deep_recall_budget: int = 800
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,10 @@ class FeatureFlags:
     mcp_http: bool
     mcp_auto_expand_modules: bool
     market_sim_enabled: bool
+    rag_v3: bool
+    deep_recall: bool
+    why_library: bool
+    residual_production: bool
 
 
 @dataclass(frozen=True)
@@ -301,6 +310,10 @@ class Settings:
                 "data_root": str(self.knowledge.data_root),
                 "chunk_max_chars": self.knowledge.chunk_max_chars,
                 "chunk_overlap": self.knowledge.chunk_overlap,
+                "embedding_provider": self.knowledge.embedding_provider,
+                "embedding_model": self.knowledge.embedding_model,
+                "reranker_model": self.knowledge.reranker_model,
+                "deep_recall_budget": self.knowledge.deep_recall_budget,
             },
             "reasoning": {"enabled": self.reasoning.enabled},
             "features": {
@@ -321,6 +334,10 @@ class Settings:
                 "mcp_http": self.features.mcp_http,
                 "mcp_auto_expand_modules": self.features.mcp_auto_expand_modules,
                 "market_sim_enabled": self.features.market_sim_enabled,
+                "rag_v3": self.features.rag_v3,
+                "deep_recall": self.features.deep_recall,
+                "why_library": self.features.why_library,
+                "residual_production": self.features.residual_production,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -419,6 +436,15 @@ class Settings:
             _env_bool("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES", True) if mcp_enabled else False
         )
         market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", False)
+        rag_v3 = _env_bool("LEVIATHAN_FEATURE_RAG_V3", False)
+        deep_recall = _env_bool("LEVIATHAN_FEATURE_DEEP_RECALL", False)
+        why_library = _env_bool("LEVIATHAN_FEATURE_WHY_LIBRARY", False)
+        residual_production = _env_bool("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION", False)
+        embedding_provider = (
+            _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
+        ).strip().lower()
+        embedding_model = (_env_raw("LEVIATHAN_EMBEDDING_MODEL", "") or "").strip() or None
+        reranker_model = (_env_raw("LEVIATHAN_RERANKER_MODEL", "") or "").strip() or None
         coding_workspace_raw = (
             _env_raw("LEVIATHAN_CODING_WORKSPACE", "D:/leviathan/codingworkspace")
             or "D:/leviathan/codingworkspace"
@@ -454,6 +480,15 @@ class Settings:
                 data_root=data_root,
                 chunk_max_chars=chunk_max,
                 chunk_overlap=chunk_overlap,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                embedding_hash_dimensions=_env_int(
+                    "LEVIATHAN_EMBEDDING_HASH_DIMENSIONS", 256, minimum=32, maximum=4096
+                ),
+                reranker_model=reranker_model,
+                deep_recall_budget=_env_int(
+                    "LEVIATHAN_DEEP_RECALL_BUDGET", 800, minimum=64, maximum=20_000
+                ),
             ),
             reasoning=ReasoningSettings(enabled=_env_bool("LEVIATHAN_REASONING_ENABLED", True)),
             features=FeatureFlags(
@@ -474,6 +509,10 @@ class Settings:
                 mcp_http=mcp_http,
                 mcp_auto_expand_modules=mcp_auto_expand,
                 market_sim_enabled=market_sim_enabled,
+                rag_v3=rag_v3,
+                deep_recall=deep_recall,
+                why_library=why_library,
+                residual_production=residual_production,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,
@@ -584,6 +623,37 @@ class Settings:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_MCP=true requires MCP_STDIO and/or MCP_HTTP"
             )
+        if self.features.deep_recall and not self.features.rag_v3:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_DEEP_RECALL requires LEVIATHAN_FEATURE_RAG_V3=true"
+            )
+        if self.features.why_library and not self.features.rag_v3:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_WHY_LIBRARY requires LEVIATHAN_FEATURE_RAG_V3=true"
+            )
+        if self.features.residual_production and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.residual_production and not self.features.neuro_residual_injection:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION=true"
+            )
+        emb = self.knowledge.embedding_provider
+        if emb not in {
+            "null",
+            "none",
+            "off",
+            "hash",
+            "local_hash",
+            "local",
+            "sentence_transformers",
+            "st",
+            "sbert",
+            "huggingface",
+            "hf",
+        }:
+            raise ConfigurationError(f"LEVIATHAN_EMBEDDING_PROVIDER invalid: {emb!r}")
         kind = self.neuro_runtime.residual_kind
         if kind not in {
             "unsupported",

@@ -1,0 +1,7 @@
+# Optional Knowledge embedding / reranker dependencies.
+# Not required for Core boot. Install only when using:
+#   LEVIATHAN_EMBEDDING_PROVIDER=sentence_transformers
+#   and/or LEVIATHAN_RERANKER_MODEL=<cross-encoder id>
+#
+# Default RAG_V3 dense path uses LocalHashEmbeddingProvider (stdlib only).
+sentence-transformers>=3.0.0,<4

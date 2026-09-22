@@ -1802,3 +1802,32 @@ After every major phase:
 - update `cursor.md` if ownership/file locations change;
 - update `leviathan_system.md` if the target architecture or HADES reference lessons materially change;
 - do not document unimplemented functionality as finished.
+
+---
+
+# Chronological entry — RAG V3 + Neural Layer upgrade (0.58.0-rag-v3)
+
+Shipped:
+
+- Knowledge V3 chunk provenance (offsets, confidence, source_type, provenance JSON).
+- `directional_relation_atoms` + `knowledge_chunk_embeddings` in central SQLite (migration 18).
+- HybridRetriever V3: lexical + dense fusion + optional reranker; Null/unavailable stay honest.
+- LocalHashEmbeddingProvider (default when RAG_V3) + optional SentenceTransformers provider.
+- Cold Atlas store (mutable) with revise-without-rewriting-evidence.
+- DeepRecallService with budget/stop conditions + logs.
+- Why Library (evidence-gated parent inheritance) + Cognitive Economy Governor.
+- Memory kinds RELATION/SUMMARY/RESIDUE, budgeted retrieve, lock-safe snapshot/restore.
+- Feature flags: RAG_V3, DEEP_RECALL, WHY_LIBRARY, RESIDUAL_PRODUCTION (parent/child validated).
+- ContextBuilder sections: atlas / exact evidence IDs / why / contradictions.
+- ReasoningEngine deep-recall / atlas steps; chat path integration.
+- ResidualReceiptStore + Status UI knowledge/RAG health surfaces.
+- Docs: `rag_v3_architecture.md`; optional `requirements-embeddings.txt`.
+
+Honesty:
+
+- Missing embeddings/reranker/deep-recall/residual → UNAVAILABLE, never fabricated success.
+- Atlas ≠ evidence; neural / why / residual ≠ authority.
+- No second database / vector DB.
+
+Tests: `test_knowledge_v2`, `test_memory`, `test_config`, `test_migrations`, neuro suites green.
+
