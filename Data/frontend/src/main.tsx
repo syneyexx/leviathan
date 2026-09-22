@@ -16,10 +16,10 @@ import "./styles/coding.css";
 import "./styles/media-platform.css";
 import "./styles/media-pages.css";
 import "./styles/media-control.css";
+import "./styles/media-research-pages.css";
 import "./styles/agents.css";
 import "./styles/media-instagram.css";
 import "./styles/media-facebook.css";
-import "./styles/pixel-mock-pages.css";
 
 const root = document.getElementById("root");
 if (!root) {

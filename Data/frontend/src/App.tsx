@@ -19,7 +19,7 @@ import { MediaViralPage } from "./pages/media/MediaViralPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
 import { YouTubePage } from "./pages/media/YouTubePage";
 import { ModelsPage } from "./pages/ModelsPage";
-import { ResearchPixelPage } from "./pages/ResearchPixelPage";
+import { ResearchMockPage } from "./pages/ResearchMockPage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
@@ -68,7 +68,7 @@ export default function App() {
       <Route path="/trading/paper" element={<PaperTradingPage />} />
       <Route path="/trading/broker" element={<BrokerTradingPage />} />
 
-      <Route path="/research" element={<ResearchPixelPage />} />
+      <Route path="/research" element={<ResearchMockPage />} />
       <Route path="/brain" element={<BrainPage />} />
       <Route path="/cognition" element={<CognitionPage />} />
       <Route path="/memory" element={<SectionPage title="Geheugen" />} />
