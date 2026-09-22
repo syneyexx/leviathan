@@ -1,9 +1,12 @@
 /**
  * Leviathan Visual Builder — pointer machine.
  * idle | select | drag | resize | rotate | pan | reparent | marquee | measure
+ *
+ * Resize/move math lives in geometry.resizeRect; capture/promote in layout.
+ * P0: never parseFloat(style.left)||0 for resize origins — promote first.
  */
 
-import { collectGuides, intersects, snapRect } from "./geometry.js";
+import { collectGuides, intersects, resizeRect, roundLayoutBox, snapRect } from "./geometry.js";
 
 export function createInteractions(ctx) {
   let press = null;
@@ -136,18 +139,22 @@ export function createInteractions(ctx) {
   function startDrag(event) {
     const els = ctx.selection.mutable("move");
     if (!els.length) return;
-    for (const el of els) ctx.layout.ensurePositioned(el);
+    const origins = [];
+    for (const el of els) {
+      const box = ctx.layout.ensureFreeTransform(el);
+      if (!box) {
+        ctx.content.setStatus("Verplaatsen geannuleerd — box niet vastgelegd", "dirty");
+        return;
+      }
+      origins.push({ el, left: box.left, top: box.top, width: box.width, height: box.height });
+    }
     ctx.commands.beginGesture("verplaatsen");
     press = {
       kind: "drag",
       x: event.clientX,
       y: event.clientY,
       z: ctx.store.getState().zoom || 1,
-      origins: els.map((el) => ({
-        el,
-        left: parseFloat(el.style.left) || 0,
-        top: parseFloat(el.style.top) || 0,
-      })),
+      origins,
     };
     setPhase("drag");
   }
@@ -182,8 +189,9 @@ export function createInteractions(ctx) {
     const fdx = dx + snap.dx / z;
     const fdy = dy + snap.dy / z;
     for (const origin of press.origins) {
-      origin.el.style.left = `${Math.round(origin.left + fdx)}px`;
-      origin.el.style.top = `${Math.round(origin.top + fdy)}px`;
+      // Keep floats during the gesture; round on pointer-up via commitBox.
+      origin.el.style.left = `${origin.left + fdx}px`;
+      origin.el.style.top = `${origin.top + fdy}px`;
     }
     ctx.chrome.setGuides(snap);
     if (event.altKey) {
@@ -232,20 +240,49 @@ export function createInteractions(ctx) {
     const el = ctx.session.primary;
     if (!el || ctx.selection.isLocked(el)) return;
     const region = ctx.selection.regionFor(el);
-    ctx.commands.beginGesture(region?.varKey ? "shell" : "formaat");
+    const z = ctx.store.getState().zoom || 1;
     const rect = el.getBoundingClientRect();
+
+    // Shell regions keep CSS-variable resize — never free-transform math.
+    if (region?.varKey) {
+      ctx.commands.beginGesture("shell");
+      press = {
+        kind: "resize",
+        x: event.clientX,
+        y: event.clientY,
+        dir,
+        region,
+        z,
+        width: rect.width,
+        height: rect.height,
+        el,
+      };
+      try {
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+      } catch {
+        /* capture optional */
+      }
+      setPhase("resize");
+      return;
+    }
+
+    if (!ctx.selection.canMutate(el)) return;
+    const box = ctx.layout.ensureFreeTransform(el);
+    if (!box) {
+      ctx.content.setStatus("Formaat geannuleerd — box niet vastgelegd", "dirty");
+      return;
+    }
+    ctx.commands.beginGesture("formaat");
     press = {
       kind: "resize",
       x: event.clientX,
       y: event.clientY,
       dir,
-      region,
-      z: ctx.store.getState().zoom || 1,
-      width: rect.width,
-      height: rect.height,
-      left: parseFloat(el.style.left) || 0,
-      top: parseFloat(el.style.top) || 0,
+      region: null,
+      z,
       el,
+      start: { left: box.left, top: box.top, width: box.width, height: box.height },
+      aspect: box.width && box.height ? box.width / box.height : 1,
     };
     setPhase("resize");
   }
@@ -256,53 +293,66 @@ export function createInteractions(ctx) {
     const dx = (event.clientX - press.x) / z;
     const dy = (event.clientY - press.y) / z;
     if (press.region?.varKey) {
-      const dw = (event.clientX - press.x) / z;
-      const dh = (event.clientY - press.y) / z;
       let px;
-      if (press.region.edge === "e") px = press.width / z + dw;
-      else if (press.region.edge === "w") px = press.width / z - dw;
-      else if (press.region.edge === "s") px = press.height / z + dh;
-      else px = press.height / z - dh;
+      if (press.region.edge === "e") px = press.width / z + dx;
+      else if (press.region.edge === "w") px = press.width / z - dx;
+      else if (press.region.edge === "s") px = press.height / z + dy;
+      else px = press.height / z - dy;
       px = Math.min(press.region.max, Math.max(press.region.min, px));
       ctx.content.setRegionPx(press.region, px);
       ctx.chrome.schedulePaint();
       return;
     }
-    if (!ctx.selection.canMutate(el)) return;
-    ctx.layout.ensurePositioned(el);
-    const baseW = press.width / z;
-    const baseH = press.height / z;
-    let w = baseW;
-    let h = baseH;
-    let left = press.left;
-    let top = press.top;
-    if (press.dir.includes("e")) w = baseW + dx;
-    if (press.dir.includes("w")) {
-      w = baseW - dx;
-      left = press.left + dx;
-    }
-    if (press.dir.includes("s")) h = baseH + dy;
-    if (press.dir.includes("n")) {
-      h = baseH - dy;
-      top = press.top + dy;
-    }
-    if (ctx.session.aspectLock && ctx.session.aspect) {
-      if (press.dir.includes("e") || press.dir.includes("w")) h = w / ctx.session.aspect;
-      else w = h * ctx.session.aspect;
-    }
-    w = Math.max(16, Math.round(w));
-    h = Math.max(16, Math.round(h));
-    el.style.width = `${w}px`;
-    el.style.height = `${h}px`;
-    if (press.dir.includes("w") || press.dir.includes("n")) {
-      el.style.left = `${Math.round(left)}px`;
-      el.style.top = `${Math.round(top)}px`;
-    }
+    if (!el || !press.start || !ctx.selection.canMutate(el)) return;
+
+    // Aspect lock ONLY when Shift is held OR inspector lock is explicitly ON.
+    const lockAspect = event.shiftKey || !!ctx.session.aspectLock;
+    const aspect = lockAspect ? (ctx.session.aspectLock && ctx.session.aspect ? ctx.session.aspect : press.aspect) : null;
+
+    const next = resizeRect({
+      start: press.start,
+      dir: press.dir,
+      dx,
+      dy,
+      minW: 16,
+      minH: 16,
+      aspect,
+      fromCenter: event.altKey,
+    });
+
+    const dir = press.dir || "se";
+    const hasE = dir.includes("e");
+    const hasW = dir.includes("w");
+    const hasN = dir.includes("n");
+    const hasS = dir.includes("s");
+    const corner = (hasE || hasW) && (hasN || hasS);
+    const writeW = hasE || hasW || (aspect && (hasN || hasS));
+    const writeH = hasN || hasS || corner || (aspect && (hasE || hasW));
+
+    // Opposite-edge / fromCenter may move left or top — write when changed.
+    if (next.left !== press.start.left) el.style.left = `${next.left}px`;
+    if (next.top !== press.start.top) el.style.top = `${next.top}px`;
+    if (writeW) el.style.width = `${next.width}px`;
+    // Width-only unlocked: do NOT set height (keeps frozen promote height / auto semantics).
+    if (writeH) el.style.height = `${next.height}px`;
+
     ctx.chrome.schedulePaint();
   }
 
   function finishResize() {
-    if (!press?.region?.varKey && press?.el) ctx.layout.commitBox(press.el);
+    if (!press?.region?.varKey && press?.el) {
+      const el = press.el;
+      const written = ctx.layout.readWrittenBox(el);
+      if (written) {
+        const rounded = roundLayoutBox(written);
+        el.style.left = `${rounded.left}px`;
+        el.style.top = `${rounded.top}px`;
+        el.style.width = `${rounded.width}px`;
+        // Only round height if it was explicitly set (width-only may leave prior height).
+        if (el.style.height) el.style.height = `${rounded.height}px`;
+      }
+      ctx.layout.commitBox(el);
+    }
     ctx.commands.endGesture();
   }
 
@@ -389,6 +439,11 @@ export function createInteractions(ctx) {
       event.preventDefault();
       event.stopPropagation();
       startResize(event, handle.dataset.dir || "se");
+      try {
+        handle.setPointerCapture?.(event.pointerId);
+      } catch {
+        /* optional */
+      }
       return;
     }
     const el = ctx.session.primary;
@@ -462,6 +517,10 @@ export function createInteractions(ctx) {
       { id: "insert-image", label: "Image toevoegen…", run: () => ctx.registry.run("insert-image") },
       { id: "front", label: "Naar voren", run: () => ctx.registry.run("forward") },
       { id: "back", label: "Naar achter", run: () => ctx.registry.run("backward") },
+      { id: "group", label: "Groeperen", kbd: "⌘G", run: () => ctx.registry.run("group") },
+      { id: "ungroup", label: "Degroeperen", run: () => ctx.registry.run("ungroup") },
+      { id: "copy-style", label: "Kopieer stijl", run: () => ctx.registry.run("copy-style") },
+      { id: "paste-style", label: "Plak stijl", run: () => ctx.registry.run("paste-style") },
     ];
   }
 

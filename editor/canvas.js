@@ -78,6 +78,7 @@ const ctx = {
     uiEpoch: 0,
     aspectLock: false,
     aspect: 1,
+    styleClipboard: null,
     link: { padding: true, margin: true, radius: true },
     layerQuery: "",
     layerState: new Map(),
