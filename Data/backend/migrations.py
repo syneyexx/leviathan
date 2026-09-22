@@ -1553,7 +1553,98 @@ def _m21_conversation_pinned(conn: sqlite3.Connection) -> None:
     )
 
 
-def _m22_observability_events(conn: sqlite3.Connection) -> None:
+def _m22_agent_fleet(conn: sqlite3.Connection) -> None:
+    """Durable agent definitions, missions, and fleet events for LLM Agents page."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_definitions (
+            agent_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            archived INTEGER NOT NULL DEFAULT 0,
+            model_ref TEXT,
+            system_policy TEXT,
+            capabilities_json TEXT NOT NULL DEFAULT '[]',
+            knowledge_sources_json TEXT NOT NULL DEFAULT '[]',
+            memory_policy TEXT NOT NULL DEFAULT 'default',
+            dataset_access TEXT NOT NULL DEFAULT 'none',
+            approval_mode TEXT NOT NULL DEFAULT 'inherit',
+            autonomy INTEGER NOT NULL DEFAULT 50,
+            max_concurrency INTEGER NOT NULL DEFAULT 1,
+            timeout_s INTEGER,
+            max_retries INTEGER NOT NULL DEFAULT 0,
+            token_budget INTEGER,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            version INTEGER NOT NULL DEFAULT 1,
+            orchestrator_json TEXT,
+            health TEXT NOT NULL DEFAULT 'unknown',
+            health_reason TEXT,
+            last_run_at TEXT,
+            last_mission_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_definitions_kind ON agent_definitions(kind, enabled)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_missions (
+            mission_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            request TEXT NOT NULL,
+            status TEXT NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'med',
+            progress REAL NOT NULL DEFAULT 0,
+            parent_mission_id TEXT,
+            run_id TEXT,
+            job_ids_json TEXT NOT NULL DEFAULT '[]',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            trace_id TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(agent_id) REFERENCES agent_definitions(agent_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_missions_status ON agent_missions(status, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_missions_agent ON agent_missions(agent_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_events (
+            event_id TEXT PRIMARY KEY,
+            agent_id TEXT,
+            mission_id TEXT,
+            category TEXT NOT NULL,
+            message TEXT NOT NULL,
+            level TEXT NOT NULL DEFAULT 'info',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_events_created ON agent_events(created_at)"
+    )
+
+
+def _m23_observability_events(conn: sqlite3.Connection) -> None:
     """Durable bounded console/runtime event history."""
     conn.execute(
         """
@@ -1634,7 +1725,8 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=19, name="cognitive_runtime", apply=_m19_cognitive_runtime),
     Migration(version=20, name="settings_overrides", apply=_m20_settings_overrides),
     Migration(version=21, name="conversation_pinned", apply=_m21_conversation_pinned),
-    Migration(version=22, name="observability_events", apply=_m22_observability_events),
+    Migration(version=22, name="agent_fleet", apply=_m22_agent_fleet),
+    Migration(version=23, name="observability_events", apply=_m23_observability_events),
 )
 
 

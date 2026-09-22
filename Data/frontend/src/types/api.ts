@@ -1583,3 +1583,218 @@ export type ScheduleCreatePayload = {
   target_payload?: Record<string, unknown>;
   start_after_seconds?: number;
 };
+
+/* ---------- Agent fleet ---------- */
+
+export type OperationalJobStatus =
+  | "queued"
+  | "starting"
+  | "running"
+  | "pausing"
+  | "paused"
+  | "cancelling"
+  | "cancelled"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "disabled"
+  | "unknown";
+
+export type AgentDefinitionKind =
+  | "generic"
+  | "coding"
+  | "research"
+  | "orchestrator"
+  | "specialist";
+
+export type AgentHealth = "unknown" | "idle" | "busy" | "disabled" | "error" | "archived";
+
+export type OrchestratorConfig = {
+  memberAgentIds: string[];
+  strategy: string;
+  routingRules: Record<string, unknown>[];
+  maxDelegationDepth: number;
+  parallelismLimit: number;
+  fanOutPolicy: string;
+  retryPolicy: Record<string, unknown>;
+  perNodeTimeoutS?: number | null;
+  overallTimeoutS?: number | null;
+  approvalEscalation: string;
+  failureStrategy: string;
+  verificationRequired: boolean;
+  aggregationAgentId?: string | null;
+  defaultModelFallback?: string | null;
+};
+
+export type AgentDefinition = {
+  agentId: string;
+  name: string;
+  kind: AgentDefinitionKind | string;
+  description: string;
+  role: string;
+  enabled: boolean;
+  archived: boolean;
+  modelRef?: string | null;
+  systemPolicy?: string | null;
+  capabilities: string[];
+  knowledgeSources: string[];
+  memoryPolicy: string;
+  datasetAccess: string;
+  approvalMode: string;
+  autonomy: number;
+  maxConcurrency: number;
+  timeoutS?: number | null;
+  maxRetries: number;
+  tokenBudget?: number | null;
+  tags: string[];
+  version: number;
+  orchestrator?: OrchestratorConfig | null;
+  health: AgentHealth | string;
+  healthReason?: string | null;
+  lastRunAt?: string | null;
+  lastMissionId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type AgentMission = {
+  missionId: string;
+  agentId: string;
+  title: string;
+  request: string;
+  status: string;
+  priority: string;
+  progress: number;
+  parentMissionId?: string | null;
+  runId?: string | null;
+  jobIds: string[];
+  result?: Record<string, unknown>;
+  error?: string | null;
+  cancelRequested?: boolean;
+  traceId?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  updatedAt: string;
+  finishedAt?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type AgentEvent = {
+  eventId: string;
+  agentId?: string | null;
+  missionId?: string | null;
+  category: string;
+  message: string;
+  level: string;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AgentFleetSummary = {
+  agentsEnabled: boolean;
+  agentCount: number;
+  orchestratorCount: number;
+  health: Record<string, number>;
+  activeMissions: number;
+  recentMissions: number;
+  truth?: Record<string, boolean>;
+};
+
+export type AgentCreatePayload = {
+  name: string;
+  kind?: string;
+  description?: string;
+  role?: string;
+  enabled?: boolean;
+  modelRef?: string | null;
+  systemPolicy?: string | null;
+  capabilities?: string[];
+  knowledgeSources?: string[];
+  memoryPolicy?: string;
+  datasetAccess?: string;
+  approvalMode?: string;
+  autonomy?: number;
+  maxConcurrency?: number;
+  timeoutS?: number | null;
+  maxRetries?: number;
+  tokenBudget?: number | null;
+  tags?: string[];
+  orchestrator?: Partial<OrchestratorConfig> | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type AgentMissionLaunchPayload = {
+  request: string;
+  title?: string;
+  priority?: string;
+  useJobs?: boolean;
+  dryRun?: boolean;
+};
+
+/* ---------- Analytics ---------- */
+
+export type AnalyticsOverview = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  totals: Record<string, { total?: number; completed?: number; failed?: number; running?: number; cancelled?: number; other?: number } | number>;
+  statusBreakdown?: Record<string, Record<string, number>>;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsAgentsResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  agents: Array<{
+    agentId: string;
+    name?: string | null;
+    total: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    active: number;
+  }>;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsTrainingResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  byStatus: Record<string, number>;
+  byMethod: Array<{ method: string; count: number }>;
+  checkpoints: number;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsDatasetsResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  inventory: { datasets: number; versions: number; indexes: number };
+  jobsByStatus: Record<string, number>;
+  jobsByType: Array<{ jobType: string; count: number }>;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsToolsResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  capabilities: Array<{
+    capabilityId: string;
+    total: number;
+    completed: number;
+    failed: number;
+  }>;
+  approvals: { total: number };
+  truth?: Record<string, boolean>;
+};

@@ -15,10 +15,19 @@ from .migrations import MigrationRunner
 from Data.backend.routes.settings import build_settings_router
 from Data.modules.settings import SettingsControlPlane
 from Data.modules.settings.bindings import bind_default_consumers
-from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
+from Data.modules.agents import (
+    AgentFleetService,
+    AgentFleetStore,
+    AgentKind,
+    AgentRuntime,
+    MultiAgentCoordinator,
+)
+from Data.modules.analytics import AnalyticsService
 from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
 from Data.modules.coding import CodingControlPlane
 from Data.backend.routes.coding import build_coding_router
+from Data.backend.routes.agents import build_agents_router
+from Data.backend.routes.analytics import build_analytics_router
 from Data.modules.market_sim import MarketSimControlPlane
 from Data.backend.routes.market_sim import build_market_sim_router
 from Data.modules.artifacts import ArtifactStore
@@ -199,6 +208,9 @@ agent_runtime = AgentRuntime(
     agents_enabled=settings.features.agents_enabled,
 )
 multi_agents = MultiAgentCoordinator(agent_runtime)
+agent_fleet_store = AgentFleetStore(settings.database_path)
+agent_fleet = AgentFleetService(agent_fleet_store, agent_runtime)
+analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
 schedule_store = ScheduleStore(settings.database_path)
@@ -843,6 +855,8 @@ async def lifespan(_: FastAPI):
     dataset_service.reconcile()
     dataset_service.runner.start_background()
     training_service.reconcile()
+    agent_fleet.initialize(seed_defaults=True)
+    agent_fleet.reconcile()
     research_service.recover()
     coding_service.start_background()
     mcp_bridge.initialize()
@@ -936,6 +950,8 @@ app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
+app.include_router(build_agents_router(agent_fleet))
+app.include_router(build_analytics_router(analytics_service))
 app.include_router(build_system_telemetry_router(system_telemetry_sampler))
 app.include_router(
     build_observability_router(

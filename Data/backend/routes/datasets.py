@@ -71,6 +71,22 @@ class ExportBody(BaseModel):
 class IndexBody(BaseModel):
     scope: str = "dataset"
     maxRecords: int | None = None
+    offlineOnly: bool = False
+    sourceFingerprint: str | None = None
+
+
+class OfflineBrainIndexBody(BaseModel):
+    datasetId: str
+    versionId: str
+    scope: str = "dataset"
+    maxRecords: int | None = None
+    sourceFingerprint: str | None = None
+
+
+class OfflinePreflightBody(BaseModel):
+    datasetId: str
+    versionId: str
+    offlineOnly: bool = True
 
 
 class HfListBody(BaseModel):
@@ -377,7 +393,49 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         body = body or IndexBody()
         try:
             job = service.enqueue_index(
-                dataset_id, version_id, scope=body.scope, max_records=body.maxRecords
+                dataset_id,
+                version_id,
+                scope=body.scope,
+                max_records=body.maxRecords,
+                offline_only=body.offlineOnly,
+                source_fingerprint=body.sourceFingerprint,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.get("/api/datasets/offline/discover")
+    def offline_discover(maxFiles: int = 500) -> dict:
+        return service.discover_offline_sources(max_files=max(1, min(maxFiles, 2000)))
+
+    @router.get("/api/datasets/offline/indexes")
+    def offline_indexes(limit: int = 100) -> dict:
+        return {"indexes": service.list_brain_indexes(limit=limit)}
+
+    @router.post("/api/datasets/offline/preflight")
+    def offline_preflight(body: OfflinePreflightBody) -> dict:
+        try:
+            return {
+                "preflight": service.offline_brain_preflight(
+                    body.datasetId,
+                    body.versionId,
+                    offline_only=body.offlineOnly,
+                )
+            }
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.post("/api/datasets/offline/index")
+    def offline_index(body: OfflineBrainIndexBody) -> dict:
+        try:
+            job = service.enqueue_offline_brain_index(
+                body.datasetId,
+                body.versionId,
+                scope=body.scope,
+                max_records=body.maxRecords,
+                source_fingerprint=body.sourceFingerprint,
             )
         except DatasetError as exc:
             _raise(exc)

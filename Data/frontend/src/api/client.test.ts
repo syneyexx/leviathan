@@ -174,6 +174,48 @@ describe("api client — datasets / training / research / model test", () => {
     expect(delCap.init?.method).toBe("DELETE");
   });
 
+  it("analyticsOverview hits /api/analytics/overview with rangeKey", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(
+      200,
+      {
+        overview: {
+          range: "7d",
+          from: "a",
+          to: "b",
+          collectedAt: "b",
+          totals: { trainingJobs: { total: 0 } },
+        },
+      },
+      capture,
+    );
+    const res = await api.analyticsOverview("30d");
+    expect(capture.url).toBe("/api/analytics/overview?rangeKey=30d");
+    expect(res.overview.range).toBe("7d");
+  });
+
+  it("listAgents hits /api/agents", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(
+      200,
+      {
+        agents: [],
+        summary: {
+          agentsEnabled: true,
+          agentCount: 0,
+          orchestratorCount: 0,
+          health: {},
+          activeMissions: 0,
+          recentMissions: 0,
+        },
+      },
+      capture,
+    );
+    const res = await api.listAgents();
+    expect(capture.url).toBe("/api/agents");
+    expect(res.agents).toEqual([]);
+  });
+
   it("systemTelemetry hits /api/system/telemetry", async () => {
     const capture: { url?: string } = {};
     mockFetch(

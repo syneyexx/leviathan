@@ -1,4 +1,15 @@
 import type {
+  AgentCreatePayload,
+  AgentDefinition,
+  AgentEvent,
+  AgentFleetSummary,
+  AgentMission,
+  AgentMissionLaunchPayload,
+  AnalyticsAgentsResponse,
+  AnalyticsDatasetsResponse,
+  AnalyticsOverview,
+  AnalyticsToolsResponse,
+  AnalyticsTrainingResponse,
   ApiErrorBody,
   BackupManifest,
   ChatResponse,
@@ -1007,6 +1018,43 @@ export const api = {
     return request("/api/datasets/jobs/reconcile", { method: "POST" });
   },
 
+  discoverOfflineDatasets(maxFiles = 500): Promise<{
+    roots: Array<{ id: string; path: string }>;
+    sources: Array<Record<string, unknown>>;
+    count: number;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/datasets/offline/discover?maxFiles=${encodeURIComponent(String(maxFiles))}`);
+  },
+
+  listOfflineBrainIndexes(limit = 100): Promise<{ indexes: DatasetIndex[] }> {
+    return request(`/api/datasets/offline/indexes?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  offlineBrainPreflight(payload: {
+    datasetId: string;
+    versionId: string;
+    offlineOnly?: boolean;
+  }): Promise<{ preflight: Record<string, unknown> }> {
+    return request("/api/datasets/offline/preflight", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  enqueueOfflineBrainIndex(payload: {
+    datasetId: string;
+    versionId: string;
+    scope?: string;
+    maxRecords?: number | null;
+    sourceFingerprint?: string | null;
+  }): Promise<{ job: DatasetJob }> {
+    return request("/api/datasets/offline/index", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   /* ---------- Training ---------- */
 
   trainingCapabilities(): Promise<{ capabilities: TrainingCapabilities }> {
@@ -1570,5 +1618,137 @@ export const api = {
 
   brainStats(): Promise<{ stats: Record<string, unknown>; truth?: Record<string, boolean> }> {
     return request("/api/brain/stats");
+  },
+
+  /* ---------- Agent fleet ---------- */
+
+  listAgents(opts?: {
+    includeArchived?: boolean;
+    kind?: string;
+  }): Promise<{ agents: AgentDefinition[]; summary: AgentFleetSummary }> {
+    const params = new URLSearchParams();
+    if (opts?.includeArchived) params.set("includeArchived", "true");
+    if (opts?.kind) params.set("kind", opts.kind);
+    const q = params.toString();
+    return request(`/api/agents${q ? `?${q}` : ""}`);
+  },
+
+  getAgentFleetSummary(): Promise<{ summary: AgentFleetSummary }> {
+    return request("/api/agents/summary");
+  },
+
+  getAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}`);
+  },
+
+  createAgent(payload: AgentCreatePayload): Promise<{ agent: AgentDefinition }> {
+    return request("/api/agents", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updateAgent(
+    agentId: string,
+    payload: Partial<AgentCreatePayload> & { enabled?: boolean },
+  ): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  cloneAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/clone`, { method: "POST" });
+  },
+
+  enableAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/enable`, { method: "POST" });
+  },
+
+  disableAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/disable`, { method: "POST" });
+  },
+
+  archiveAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/archive`, { method: "POST" });
+  },
+
+  launchAgentMission(
+    agentId: string,
+    payload: AgentMissionLaunchPayload,
+  ): Promise<{ mission: AgentMission }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/missions`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listAgentMissions(opts?: {
+    agentId?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<{ missions: AgentMission[] }> {
+    const params = new URLSearchParams();
+    if (opts?.agentId) params.set("agentId", opts.agentId);
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/missions${q ? `?${q}` : ""}`);
+  },
+
+  getAgentMission(missionId: string): Promise<{
+    mission: AgentMission;
+    children: AgentMission[];
+    events: AgentEvent[];
+  }> {
+    return request(`/api/agents/missions/${encodeURIComponent(missionId)}`);
+  },
+
+  cancelAgentMission(missionId: string): Promise<{ mission: AgentMission }> {
+    return request(`/api/agents/missions/${encodeURIComponent(missionId)}/cancel`, {
+      method: "POST",
+    });
+  },
+
+  listAgentEvents(opts?: {
+    agentId?: string;
+    missionId?: string;
+    category?: string;
+    limit?: number;
+  }): Promise<{ events: AgentEvent[] }> {
+    const params = new URLSearchParams();
+    if (opts?.agentId) params.set("agentId", opts.agentId);
+    if (opts?.missionId) params.set("missionId", opts.missionId);
+    if (opts?.category) params.set("category", opts.category);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/events${q ? `?${q}` : ""}`);
+  },
+
+  reconcileAgents(): Promise<{ updated: string[]; count: number }> {
+    return request("/api/agents/reconcile", { method: "POST" });
+  },
+
+  /* ---------- Analytics ---------- */
+
+  analyticsOverview(rangeKey = "7d"): Promise<{ overview: AnalyticsOverview }> {
+    return request(`/api/analytics/overview?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsAgents(rangeKey = "7d"): Promise<{ agents: AnalyticsAgentsResponse }> {
+    return request(`/api/analytics/agents?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsTraining(rangeKey = "7d"): Promise<{ training: AnalyticsTrainingResponse }> {
+    return request(`/api/analytics/training?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsDatasets(rangeKey = "7d"): Promise<{ datasets: AnalyticsDatasetsResponse }> {
+    return request(`/api/analytics/datasets?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsTools(rangeKey = "7d"): Promise<{ tools: AnalyticsToolsResponse }> {
+    return request(`/api/analytics/tools?rangeKey=${encodeURIComponent(rangeKey)}`);
   },
 };

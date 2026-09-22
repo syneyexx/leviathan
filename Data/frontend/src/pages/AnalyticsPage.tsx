@@ -1,7 +1,15 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { media } from "../assets/media";
+import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
-import { useAppToast } from "../state/useAppToast";
+import type {
+  AnalyticsAgentsResponse,
+  AnalyticsDatasetsResponse,
+  AnalyticsOverview,
+  AnalyticsToolsResponse,
+  AnalyticsTrainingResponse,
+  SystemTelemetryResponse,
+} from "../types/api";
 
 const TABS = [
   "Overview",
@@ -14,80 +22,43 @@ const TABS = [
   "Custom",
 ] as const;
 
-const RANGES = ["24h", "7d", "30d", "90d", "1y"] as const;
+const RANGES = ["1h", "24h", "7d", "30d", "90d"] as const;
 
-const KPI = [
-  { label: "Total Requests", value: "12,482", delta: "+18.4%", good: true },
-  { label: "Avg. Response Time", value: "1.24s", delta: "-22.1%", good: true, down: true },
-  { label: "Total Tokens", value: "4.8M", delta: "+36.7%", good: true },
-  { label: "Active Agents", value: "6 / 10", delta: "+2", good: true },
-  { label: "Tool Executions", value: "3,421", delta: "+28.3%", good: true },
-] as const;
+function errMsg(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
 
-const REQUEST_VOLUME = [
-  { day: "Sep 10", requests: 980, tokens: 620 },
-  { day: "Sep 11", requests: 1240, tokens: 780 },
-  { day: "Sep 12", requests: 1520, tokens: 940 },
-  { day: "Sep 13", requests: 1180, tokens: 710 },
-  { day: "Sep 14", requests: 1680, tokens: 1100 },
-  { day: "Sep 15", requests: 1420, tokens: 880 },
-  { day: "Sep 16", requests: 1860, tokens: 1280 },
-  { day: "Sep 17", requests: 1602, tokens: 1020 },
-] as const;
+function formatCollectedAt(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const ageMs = Date.now() - t;
+  const sec = Math.floor(ageMs / 1000);
+  if (sec < 60) return `${sec}s geleden`;
+  const min = Math.floor(sec / 60);
+  if (min < 120) return `${min}m geleden`;
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return `${hr}h geleden`;
+  return new Date(t).toLocaleString();
+}
 
-const RESPONSE_TIME = [2.4, 1.9, 2.8, 1.6, 1.35, 1.8, 1.1, 1.24] as const;
+function jobTotal(
+  entry: { total?: number } | number | undefined,
+): number {
+  if (entry == null) return 0;
+  if (typeof entry === "number") return entry;
+  return entry.total ?? 0;
+}
 
-const RESOURCES = [
-  { label: "CPU Usage", value: "32%", pct: 32 },
-  { label: "Memory Usage", value: "6.8 / 32 GB", pct: 21 },
-  { label: "VRAM Usage", value: "4.2 / 16 GB", pct: 26 },
-  { label: "Disk Usage", value: "124 / 512 GB", pct: 24 },
-] as const;
-
-const MODEL_USAGE = [
-  { name: "Qwen3-14B", pct: 38.2, color: "#22C9D6" },
-  { name: "Llama3.1-8B", pct: 24.1, color: "#4285E8" },
-  { name: "Hermes-3", pct: 18.6, color: "#D6A957" },
-  { name: "Qwen2.5-7B", pct: 12.4, color: "#20DC8C" },
-  { name: "Others", pct: 6.7, color: "#696964" },
-] as const;
-
-const AGENT_ACTIVITY = [
-  { name: "Research", pct: 42 },
-  { name: "Trading", pct: 28 },
-  { name: "Analysis", pct: 18 },
-  { name: "System", pct: 8 },
-  { name: "Coding", pct: 6 },
-  { name: "Others", pct: 4 },
-] as const;
-
-const TOOL_USAGE = [
-  { name: "Web Search", count: "1,482", icon: "search" },
-  { name: "File System", count: "892", icon: "folder" },
-  { name: "Data Analysis", count: "641", icon: "chart" },
-  { name: "Browser", count: "420", icon: "globe" },
-  { name: "Code Execution", count: "318", icon: "code" },
-  { name: "Knowledge Base", count: "276", icon: "book" },
-] as const;
-
-const TOKEN_SERIES = [1.8, 2.2, 2.9, 2.4, 3.6, 3.1, 4.4, 4.8] as const;
-const COST_SERIES = [2.1, 3.4, 4.8, 3.2, 5.6, 4.9, 6.8, 5.4] as const;
-
-const RECENT = [
-  { time: "2m ago", text: "Research agent completed analysis", tone: "ok" },
-  { time: "8m ago", text: "Model Qwen3-14B loaded into VRAM", tone: "info" },
-  { time: "14m ago", text: "Tool Web Search executed (142ms)", tone: "ok" },
-  { time: "21m ago", text: "Trading agent paused — approval pending", tone: "warn" },
-  { time: "36m ago", text: "Knowledge index rebuilt (+128 docs)", tone: "ok" },
-] as const;
-
-const TOP_CHATS = [
-  { title: "Trading strategy analysis", messages: 482 },
-  { title: "HADES architecture review", messages: 313 },
-  { title: "Market regime classification", messages: 268 },
-  { title: "Agent tool-routing design", messages: 214 },
-  { title: "Neuro residual calibration", messages: 187 },
-] as const;
+function formatWindow(from: string, to: string): string {
+  try {
+    const f = new Date(from);
+    const t = new Date(to);
+    return `${f.toLocaleDateString()} – ${t.toLocaleDateString()}`;
+  } catch {
+    return `${from} – ${to}`;
+  }
+}
 
 function ToolIcon({ kind }: { kind: string }) {
   switch (kind) {
@@ -107,97 +78,189 @@ function ToolIcon({ kind }: { kind: string }) {
       );
     case "chart":
       return <path d="M5 19V10M12 19V6M19 19v-5" />;
-    case "globe":
-      return (
-        <>
-          <circle cx="12" cy="12" r="8" />
-          <path d="M4 12h16M12 4c2.5 2.8 2.5 13.2 0 16M12 4c-2.5 2.8-2.5 13.2 0 16" />
-        </>
-      );
-    case "code":
-      return <path d="M8 8l-4 4 4 4M16 8l4 4-4 4M13 6l-2 12" />;
     default:
       return <path d="M7 5h10v14H7zM9 8h6M9 12h6M9 16h4" />;
   }
 }
 
-function Donut({
-  segments,
-  center,
-  sub,
-}: {
-  segments: readonly { pct: number; color: string }[];
-  center: string;
-  sub: string;
-}) {
-  const r = 42;
-  const c = 2 * Math.PI * r;
-  const arcs = segments.reduce<Array<{ color: string; len: number; offset: number }>>((acc, seg) => {
-    const len = (seg.pct / 100) * c;
-    const offset = acc.reduce((sum, item) => sum + item.len, 0);
-    acc.push({ color: seg.color, len, offset });
-    return acc;
-  }, []);
+function EmptyCard({ title, message }: { title: string; message: string }) {
   return (
-    <svg className="lv-an-donut" viewBox="0 0 120 120" aria-hidden="true">
-      <circle cx="60" cy="60" r={r} fill="none" stroke="rgba(214,169,87,0.12)" strokeWidth="12" />
-      {arcs.map((arc, i) => (
-        <circle
-          key={i}
-          cx="60"
-          cy="60"
-          r={r}
-          fill="none"
-          stroke={arc.color}
-          strokeWidth="12"
-          strokeDasharray={`${arc.len} ${c - arc.len}`}
-          strokeDashoffset={-arc.offset}
-          strokeLinecap="butt"
-          transform="rotate(-90 60 60)"
-        />
-      ))}
-      <text x="60" y="56" textAnchor="middle" className="lv-an-donut-value">
-        {center}
-      </text>
-      <text x="60" y="72" textAnchor="middle" className="lv-an-donut-sub">
-        {sub}
-      </text>
-    </svg>
+    <article className="lv-panel lv-an-card">
+      <div className="lv-an-card-head">
+        <div className="lv-section-label">{title}</div>
+      </div>
+      <p className="lv-muted" style={{ padding: "1rem", margin: 0 }}>{message}</p>
+    </article>
   );
 }
 
-function SuccessRing({ value }: { value: number }) {
-  const r = 28;
-  const c = 2 * Math.PI * r;
-  const len = (value / 100) * c;
+type JobStatusCounts = {
+  total: number;
+  completed: number;
+  failed: number;
+  running: number;
+  cancelled: number;
+  other?: number;
+};
+
+function asJobCounts(raw: Record<string, number> | undefined): JobStatusCounts {
+  if (!raw) {
+    return { total: 0, completed: 0, failed: 0, running: 0, cancelled: 0 };
+  }
+  return {
+    total: raw.total ?? 0,
+    completed: raw.completed ?? 0,
+    failed: raw.failed ?? 0,
+    running: raw.running ?? 0,
+    cancelled: raw.cancelled ?? 0,
+    other: raw.other ?? 0,
+  };
+}
+
+function StatusBars({
+  title,
+  counts,
+}: {
+  title: string;
+  counts: JobStatusCounts;
+}) {
+  const denom = counts.total || 1;
+  const rows = [
+    { label: "Completed", n: counts.completed, color: "#20DC8C" },
+    { label: "Running", n: counts.running, color: "#22C9D6" },
+    { label: "Failed", n: counts.failed, color: "#e05c5c" },
+    { label: "Cancelled", n: counts.cancelled, color: "#696964" },
+  ];
   return (
-    <svg className="lv-an-success-ring" viewBox="0 0 72 72" aria-hidden="true">
-      <circle cx="36" cy="36" r={r} fill="none" stroke="rgba(34,201,214,0.15)" strokeWidth="6" />
-      <circle
-        cx="36"
-        cy="36"
-        r={r}
-        fill="none"
-        stroke="#22C9D6"
-        strokeWidth="6"
-        strokeDasharray={`${len} ${c - len}`}
-        strokeLinecap="round"
-        transform="rotate(-90 36 36)"
-        filter="drop-shadow(0 0 6px rgba(34,201,214,0.55))"
-      />
-      <text x="36" y="39" textAnchor="middle" className="lv-an-success-text">
-        {value.toFixed(1)}%
-      </text>
-    </svg>
+    <article className="lv-panel lv-an-card">
+      <div className="lv-an-card-head">
+        <div className="lv-section-label">{title}</div>
+        <span className="lv-muted">{counts.total} in window</span>
+      </div>
+      {counts.total === 0 ? (
+        <p className="lv-muted" style={{ padding: "1rem" }}>Geen records in dit bereik.</p>
+      ) : (
+        <div className="lv-an-agent-bars" style={{ padding: "0 1rem 1rem" }}>
+          {rows.map((row) => (
+            <div key={row.label} className="lv-an-agent-row">
+              <span>{row.label}</span>
+              <div className="lv-an-bar">
+                <span style={{ width: `${(row.n / denom) * 100}%`, background: row.color }} />
+              </div>
+              <strong>{row.n}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </article>
   );
 }
 
 export function AnalyticsPage() {
-  const toast = useAppToast();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Overview");
   const [range, setRange] = useState<(typeof RANGES)[number]>("7d");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const maxReq = useMemo(() => Math.max(...REQUEST_VOLUME.map((d) => d.requests)), []);
+  const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
+  const [agentsData, setAgentsData] = useState<AnalyticsAgentsResponse | null>(null);
+  const [trainingData, setTrainingData] = useState<AnalyticsTrainingResponse | null>(null);
+  const [datasetsData, setDatasetsData] = useState<AnalyticsDatasetsResponse | null>(null);
+  const [toolsData, setToolsData] = useState<AnalyticsToolsResponse | null>(null);
+  const [telemetry, setTelemetry] = useState<SystemTelemetryResponse | null>(null);
+
+  const collectedAt = useMemo(() => {
+    switch (tab) {
+      case "Agent Activity":
+        return agentsData?.collectedAt ?? overview?.collectedAt;
+      case "Tasks & Tools":
+        return toolsData?.collectedAt ?? overview?.collectedAt;
+      case "Knowledge Growth":
+        return datasetsData?.collectedAt ?? overview?.collectedAt;
+      case "Usage":
+        return trainingData?.collectedAt ?? overview?.collectedAt;
+      case "System Resources":
+        return telemetry?.collectedAt ?? overview?.collectedAt;
+      default:
+        return overview?.collectedAt;
+    }
+  }, [tab, overview, agentsData, trainingData, datasetsData, toolsData, telemetry]);
+
+  const loadOverview = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.analyticsOverview(range);
+      setOverview(res.overview);
+    } catch (err) {
+      setOverview(null);
+      setError(errMsg(err, "Analytics overview unavailable"));
+    } finally {
+      setLoading(false);
+    }
+  }, [range]);
+
+  const loadTabData = useCallback(async () => {
+    try {
+      if (tab === "Agent Activity") {
+        const res = await api.analyticsAgents(range);
+        setAgentsData(res.agents);
+      } else if (tab === "Usage") {
+        const res = await api.analyticsTraining(range);
+        setTrainingData(res.training);
+      } else if (tab === "Knowledge Growth") {
+        const res = await api.analyticsDatasets(range);
+        setDatasetsData(res.datasets);
+      } else if (tab === "Tasks & Tools") {
+        const res = await api.analyticsTools(range);
+        setToolsData(res.tools);
+      } else if (tab === "System Resources") {
+        const res = await api.systemTelemetry();
+        setTelemetry(res);
+      }
+    } catch (err) {
+      setError(errMsg(err, "Failed to load analytics section"));
+    }
+  }, [tab, range]);
+
+  useEffect(() => {
+    void loadOverview();
+  }, [loadOverview]);
+
+  useEffect(() => {
+    void loadTabData();
+  }, [loadTabData]);
+
+  const kpis = useMemo(() => {
+    if (!overview) return [];
+    const t = overview.totals;
+    return [
+      { label: "Training jobs", value: String(jobTotal(t.trainingJobs)) },
+      { label: "Dataset jobs", value: String(jobTotal(t.datasetJobs)) },
+      { label: "Agent missions", value: String(jobTotal(t.agentMissions)) },
+      { label: "Capability jobs", value: String(jobTotal(t.capabilityJobs)) },
+      { label: "Approvals", value: String(jobTotal(t.approvals)) },
+      { label: "Verification reports", value: String(jobTotal(t.verificationReports)) },
+    ];
+  }, [overview]);
+
+  const agentBars = useMemo(() => {
+    const rows = agentsData?.agents ?? [];
+    const total = rows.reduce((s, a) => s + a.total, 0) || 1;
+    return rows.map((a) => ({
+      name: a.name ?? a.agentId,
+      pct: Math.round((a.total / total) * 1000) / 10,
+      total: a.total,
+      completed: a.completed,
+      failed: a.failed,
+    }));
+  }, [agentsData]);
+
+  const toolRows = useMemo(() => toolsData?.capabilities ?? [], [toolsData]);
+
+  const trainingMethods = useMemo(() => trainingData?.byMethod ?? [], [trainingData]);
+
+  const windowLabel = overview ? formatWindow(overview.from, overview.to) : "—";
 
   return (
     <AppShell
@@ -220,10 +283,7 @@ export function AnalyticsPage() {
                 role="tab"
                 aria-selected={tab === item}
                 className={`lv-an-tab${tab === item ? " is-active" : ""}`}
-                onClick={() => {
-                  setTab(item);
-                  if (item !== "Overview") toast(item);
-                }}
+                onClick={() => setTab(item)}
               >
                 {item}
               </button>
@@ -240,316 +300,261 @@ export function AnalyticsPage() {
                 {item}
               </button>
             ))}
-            <button type="button" className="lv-an-date" onClick={() => toast("Date range")}>
+            <span className="lv-an-date" style={{ cursor: "default" }}>
               <svg className="lv-icon" viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="4" y="5" width="16" height="15" rx="2" />
                 <path d="M8 3v4M16 3v4M4 10h16" />
               </svg>
-              <span>Sep 10, 2026 – Sep 17, 2026</span>
-              <svg className="lv-icon lv-an-chev" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M7 10l5 5 5-5" />
-              </svg>
-            </button>
+              <span>{windowLabel}</span>
+            </span>
           </div>
         </div>
 
-        <section className="lv-an-kpi-row">
-          {KPI.map((item) => (
-            <article key={item.label} className="lv-an-kpi">
-              <div className="lv-an-kpi-label">{item.label}</div>
-              <div className="lv-an-kpi-value">{item.value}</div>
-              <div className={`lv-an-kpi-delta${item.good ? " is-good" : ""}`}>
-                <span aria-hidden="true">{"down" in item && item.down ? "↓" : "↑"}</span>
-                {item.delta}
+        <p className="lv-muted" style={{ margin: "0 0 1rem", fontSize: "0.85rem" }} role="status">
+          {loading ? "Loading…" : null}
+          {error ? <span style={{ color: "var(--lv-red, #c44)" }}>{error}</span> : null}
+          {!loading && !error && collectedAt ? (
+            <span>
+              Data collected {collectedAt} · stale {formatCollectedAt(collectedAt)}
+            </span>
+          ) : null}
+        </p>
+
+        {tab === "Overview" && (
+          <>
+            <section className="lv-an-kpi-row">
+              {overview ? (
+                kpis.map((item) => (
+                  <article key={item.label} className="lv-an-kpi">
+                    <div className="lv-an-kpi-label">{item.label}</div>
+                    <div className="lv-an-kpi-value">{item.value}</div>
+                    <div className="lv-an-kpi-delta">window total</div>
+                  </article>
+                ))
+              ) : (
+                <EmptyCard title="Overview" message="Overview data not available." />
+              )}
+            </section>
+
+            {overview?.statusBreakdown ? (
+              <section className="lv-an-lower" style={{ marginTop: "1rem" }}>
+                <StatusBars title="Training jobs" counts={asJobCounts(overview.statusBreakdown.training)} />
+                <StatusBars title="Dataset jobs" counts={asJobCounts(overview.statusBreakdown.datasets)} />
+                <StatusBars title="Agent missions" counts={asJobCounts(overview.statusBreakdown.agents)} />
+                <StatusBars title="Capability jobs" counts={asJobCounts(overview.statusBreakdown.jobs)} />
+              </section>
+            ) : null}
+
+            <section className="lv-an-bottom" style={{ marginTop: "1rem" }}>
+              <EmptyCard
+                title="Cost estimation"
+                message="Cost is not collected by the analytics API (no invented dollars)."
+              />
+            </section>
+          </>
+        )}
+
+        {tab === "Usage" && (
+          <section className="lv-an-lower">
+            {trainingData ? (
+              <>
+                <StatusBars title="Training jobs by status" counts={asJobCounts(trainingData.byStatus)} />
+                <article className="lv-panel lv-an-card">
+                  <div className="lv-an-card-head">
+                    <div className="lv-section-label">Methods</div>
+                    <span className="lv-muted">{trainingData.checkpoints} checkpoints in window</span>
+                  </div>
+                  {trainingMethods.length === 0 ? (
+                    <p className="lv-muted" style={{ padding: "1rem" }}>No training methods recorded.</p>
+                  ) : (
+                    <ul className="lv-an-tool-list">
+                      {trainingMethods.map((m) => (
+                        <li key={m.method}>
+                          <span>{m.method}</span>
+                          <strong>{m.count}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              </>
+            ) : (
+              <EmptyCard title="Usage" message="Training analytics unavailable." />
+            )}
+          </section>
+        )}
+
+        {tab === "Model Performance" && (
+          <EmptyCard
+            title="Model Performance"
+            message="No model performance time series is exposed yet. Request volume, response time, and token charts are not synthesized."
+          />
+        )}
+
+        {tab === "Agent Activity" && (
+          <section className="lv-an-lower">
+            <article className="lv-panel lv-an-card">
+              <div className="lv-an-card-head">
+                <div className="lv-section-label">Missions by agent</div>
               </div>
+              {agentBars.length === 0 ? (
+                <p className="lv-muted" style={{ padding: "1rem" }}>No agent missions in this window.</p>
+              ) : (
+                <div className="lv-an-agent-bars">
+                  {agentBars.map((item) => (
+                    <div key={item.name} className="lv-an-agent-row">
+                      <span>{item.name}</span>
+                      <div className="lv-an-bar">
+                        <span style={{ width: `${item.pct}%` }} />
+                      </div>
+                      <strong>{item.total}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
             </article>
-          ))}
-          <article className="lv-an-kpi lv-an-kpi--success">
-            <div>
-              <div className="lv-an-kpi-label">Success Rate</div>
-              <div className="lv-an-kpi-value">98.7%</div>
-              <div className="lv-an-kpi-delta is-good">
-                <span aria-hidden="true">↑</span>+0.9%
-              </div>
-            </div>
-            <SuccessRing value={98.7} />
-          </article>
-        </section>
+          </section>
+        )}
 
-        <section className="lv-an-mid">
-          <article className="lv-panel lv-an-card lv-an-card--volume">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Request Volume</div>
-              <div className="lv-an-legend">
-                <span>
-                  <i className="lv-an-swatch cyan" />
-                  Requests
-                </span>
-                <span>
-                  <i className="lv-an-swatch gold" />
-                  Tokens
-                </span>
-              </div>
-            </div>
-            <div className="lv-an-chart">
-              <svg viewBox="0 0 520 180" className="lv-an-svg" role="img" aria-label="Request volume chart">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <line
-                    key={i}
-                    x1="36"
-                    x2="508"
-                    y1={20 + i * 32}
-                    y2={20 + i * 32}
-                    stroke="rgba(214,169,87,0.1)"
-                    strokeWidth="1"
-                  />
-                ))}
-                {REQUEST_VOLUME.map((d, i) => {
-                  const x = 52 + i * 58;
-                  const hReq = (d.requests / maxReq) * 120;
-                  const hTok = (d.tokens / maxReq) * 120;
-                  return (
-                    <g key={d.day}>
-                      <rect x={x} y={148 - hReq} width="16" height={hReq} rx="3" fill="#22C9D6" opacity="0.92" />
-                      <rect x={x + 20} y={148 - hTok} width="16" height={hTok} rx="3" fill="#D6A957" opacity="0.75" />
-                      <text x={x + 18} y="168" textAnchor="middle" className="lv-an-axis">
-                        {d.day.replace("Sep ", "")}
-                      </text>
-                    </g>
-                  );
-                })}
-                <text x="28" y="28" textAnchor="end" className="lv-an-axis">
-                  2K
-                </text>
-                <text x="28" y="92" textAnchor="end" className="lv-an-axis">
-                  1K
-                </text>
-                <text x="28" y="152" textAnchor="end" className="lv-an-axis">
-                  0
-                </text>
-              </svg>
-            </div>
-          </article>
-
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Response Time</div>
-            </div>
-            <div className="lv-an-chart">
-              <svg viewBox="0 0 280 180" className="lv-an-svg" role="img" aria-label="Response time chart">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <line
-                    key={i}
-                    x1="28"
-                    x2="268"
-                    y1={24 + i * 30}
-                    y2={24 + i * 30}
-                    stroke="rgba(214,169,87,0.1)"
-                    strokeWidth="1"
-                  />
-                ))}
-                <polyline
-                  fill="none"
-                  stroke="#22C9D6"
-                  strokeWidth="2"
-                  points={RESPONSE_TIME.map((v, i) => {
-                    const x = 40 + i * 30;
-                    const y = 144 - (v / 4) * 110;
-                    return `${x},${y}`;
-                  }).join(" ")}
-                />
-                {RESPONSE_TIME.map((v, i) => {
-                  const x = 40 + i * 30;
-                  const y = 144 - (v / 4) * 110;
-                  return <circle key={i} cx={x} cy={y} r="3.2" fill="#0a0c0b" stroke="#22C9D6" strokeWidth="1.6" />;
-                })}
-                <text x="20" y="28" textAnchor="end" className="lv-an-axis">
-                  4s
-                </text>
-                <text x="20" y="148" textAnchor="end" className="lv-an-axis">
-                  0s
-                </text>
-              </svg>
-            </div>
-          </article>
-
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">System Resources</div>
-            </div>
-            <div className="lv-an-resources">
-              {RESOURCES.map((item) => (
-                <div key={item.label} className="lv-an-resource">
-                  <div className="lv-an-resource-meta">
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                  </div>
-                  <div className="lv-an-bar">
-                    <span style={{ width: `${item.pct}%` }} />
-                  </div>
-                </div>
-              ))}
-              <div className="lv-an-network">
-                <div className="lv-an-resource-meta">
-                  <span>Network</span>
-                  <strong>12.4 ↑ / 3.1 ↓ MB/s</strong>
-                </div>
-                <svg viewBox="0 0 200 28" className="lv-an-spark" aria-hidden="true">
-                  <polyline
-                    fill="none"
-                    stroke="#22C9D6"
-                    strokeWidth="1.5"
-                    points="0,20 20,16 40,18 60,10 80,14 100,8 120,12 140,6 160,11 180,7 200,9"
-                  />
-                </svg>
-              </div>
-            </div>
-          </article>
-        </section>
-
-        <section className="lv-an-lower">
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Model Usage</div>
-            </div>
-            <div className="lv-an-model-usage">
-              <Donut segments={MODEL_USAGE} center="4.8M" sub="Tokens" />
-              <ul className="lv-an-legend-list">
-                {MODEL_USAGE.map((m) => (
-                  <li key={m.name}>
-                    <i style={{ background: m.color }} />
-                    <span>{m.name}</span>
-                    <strong>{m.pct}%</strong>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </article>
-
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Agent Activity</div>
-            </div>
-            <div className="lv-an-agent-bars">
-              {AGENT_ACTIVITY.map((item) => (
-                <div key={item.name} className="lv-an-agent-row">
-                  <span>{item.name}</span>
-                  <div className="lv-an-bar">
-                    <span style={{ width: `${item.pct}%` }} />
-                  </div>
-                  <strong>{item.pct}%</strong>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Tool Usage</div>
-            </div>
-            <ul className="lv-an-tool-list">
-              {TOOL_USAGE.map((item) => (
-                <li key={item.name}>
-                  <span className="lv-an-tool-icon">
-                    <svg className="lv-icon" viewBox="0 0 24 24">
-                      <ToolIcon kind={item.icon} />
-                    </svg>
+        {tab === "System Resources" && (
+          <section className="lv-an-mid">
+            {telemetry ? (
+              <article className="lv-panel lv-an-card">
+                <div className="lv-an-card-head">
+                  <div className="lv-section-label">Live telemetry</div>
+                  <span className="lv-muted">
+                    {telemetry.truth.measured ? "measured" : "unavailable"}
+                    {telemetry.truth.synthetic ? " (partial)" : ""}
                   </span>
-                  <span>{item.name}</span>
-                  <strong>{item.count}</strong>
-                </li>
-              ))}
-            </ul>
-          </article>
-
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Recent Activity</div>
-            </div>
-            <ul className="lv-an-activity">
-              {RECENT.map((item) => (
-                <li key={item.time + item.text}>
-                  <span className={`lv-an-dot ${item.tone}`} />
-                  <div>
-                    <strong>{item.text}</strong>
-                    <small>{item.time}</small>
+                </div>
+                <div className="lv-an-resources">
+                  <div className="lv-an-resource">
+                    <div className="lv-an-resource-meta">
+                      <span>CPU</span>
+                      <strong>
+                        {telemetry.dashboard.cpuPct != null ? `${telemetry.dashboard.cpuPct.toFixed(1)}%` : "—"}
+                      </strong>
+                    </div>
+                    <div className="lv-an-bar">
+                      <span style={{ width: `${telemetry.dashboard.cpuPct ?? 0}%` }} />
+                    </div>
                   </div>
-                </li>
-              ))}
-            </ul>
-          </article>
-        </section>
+                  <div className="lv-an-resource">
+                    <div className="lv-an-resource-meta">
+                      <span>Memory</span>
+                      <strong>
+                        {telemetry.dashboard.ramPct != null ? `${telemetry.dashboard.ramPct.toFixed(1)}%` : "—"}
+                      </strong>
+                    </div>
+                    <div className="lv-an-bar">
+                      <span style={{ width: `${telemetry.dashboard.ramPct ?? 0}%` }} />
+                    </div>
+                  </div>
+                  <div className="lv-an-resource">
+                    <div className="lv-an-resource-meta">
+                      <span>GPU</span>
+                      <strong>
+                        {telemetry.dashboard.gpuPct != null ? `${telemetry.dashboard.gpuPct.toFixed(1)}%` : "—"}
+                      </strong>
+                    </div>
+                    <div className="lv-an-bar">
+                      <span style={{ width: `${telemetry.dashboard.gpuPct ?? 0}%` }} />
+                    </div>
+                  </div>
+                  {telemetry.gpu.devices.map((d) => (
+                    <div key={d.index} className="lv-an-resource">
+                      <div className="lv-an-resource-meta">
+                        <span>{d.name}</span>
+                        <strong>
+                          {d.vramUtilizationPct != null ? `${d.vramUtilizationPct.toFixed(0)}% VRAM` : "VRAM —"}
+                        </strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ) : (
+              <EmptyCard title="System Resources" message="Telemetry not available on this host." />
+            )}
+          </section>
+        )}
 
-        <section className="lv-an-bottom">
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Token Usage Over Time</div>
-            </div>
-            <div className="lv-an-chart">
-              <svg viewBox="0 0 420 140" className="lv-an-svg" role="img" aria-label="Token usage over time">
-                <defs>
-                  <linearGradient id="tokFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#22C9D6" stopOpacity="0.45" />
-                    <stop offset="100%" stopColor="#22C9D6" stopOpacity="0.02" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d={`M28,${120 - (TOKEN_SERIES[0] / 5) * 90} ${TOKEN_SERIES.map((v, i) => {
-                    const x = 28 + i * 52;
-                    const y = 120 - (v / 5) * 90;
-                    return `L${x},${y}`;
-                  }).join(" ")} L${28 + 7 * 52},128 L28,128 Z`}
-                  fill="url(#tokFill)"
-                />
-                <polyline
-                  fill="none"
-                  stroke="#22C9D6"
-                  strokeWidth="2"
-                  points={TOKEN_SERIES.map((v, i) => `${28 + i * 52},${120 - (v / 5) * 90}`).join(" ")}
-                />
-              </svg>
-            </div>
-          </article>
+        {tab === "Tasks & Tools" && (
+          <section className="lv-an-lower">
+            <article className="lv-panel lv-an-card">
+              <div className="lv-an-card-head">
+                <div className="lv-section-label">Capability executions</div>
+                {toolsData ? (
+                  <span className="lv-muted">{toolsData.approvals.total ?? 0} approvals in window</span>
+                ) : null}
+              </div>
+              {toolRows.length === 0 ? (
+                <p className="lv-muted" style={{ padding: "1rem" }}>No capability jobs in this window.</p>
+              ) : (
+                <ul className="lv-an-tool-list">
+                  {toolRows.map((item) => (
+                    <li key={item.capabilityId}>
+                      <span className="lv-an-tool-icon">
+                        <svg className="lv-icon" viewBox="0 0 24 24">
+                          <ToolIcon kind="code" />
+                        </svg>
+                      </span>
+                      <span>{item.capabilityId}</span>
+                      <strong>{item.total}</strong>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </article>
+          </section>
+        )}
 
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Cost Estimation</div>
-            </div>
-            <div className="lv-an-chart">
-              <svg viewBox="0 0 320 140" className="lv-an-svg" role="img" aria-label="Daily cost estimation">
-                {COST_SERIES.map((v, i) => {
-                  const h = (v / 8) * 100;
-                  const x = 28 + i * 36;
-                  return (
-                    <rect key={i} x={x} y={118 - h} width="22" height={h} rx="3" fill="#20DC8C" opacity="0.85" />
-                  );
-                })}
-                <text x="16" y="24" className="lv-an-axis">
-                  $8
-                </text>
-                <text x="16" y="120" className="lv-an-axis">
-                  $0
-                </text>
-              </svg>
-            </div>
-          </article>
+        {tab === "Knowledge Growth" && (
+          <section className="lv-an-lower">
+            {datasetsData ? (
+              <>
+                <section className="lv-an-kpi-row">
+                  <article className="lv-an-kpi">
+                    <div className="lv-an-kpi-label">Datasets</div>
+                    <div className="lv-an-kpi-value">{datasetsData.inventory.datasets}</div>
+                  </article>
+                  <article className="lv-an-kpi">
+                    <div className="lv-an-kpi-label">Versions</div>
+                    <div className="lv-an-kpi-value">{datasetsData.inventory.versions}</div>
+                  </article>
+                  <article className="lv-an-kpi">
+                    <div className="lv-an-kpi-label">Indexes</div>
+                    <div className="lv-an-kpi-value">{datasetsData.inventory.indexes}</div>
+                  </article>
+                </section>
+                <StatusBars title="Dataset jobs" counts={asJobCounts(datasetsData.jobsByStatus)} />
+                <article className="lv-panel lv-an-card">
+                  <div className="lv-an-card-head">
+                    <div className="lv-section-label">Job types</div>
+                  </div>
+                  {datasetsData.jobsByType.length === 0 ? (
+                    <p className="lv-muted" style={{ padding: "1rem" }}>No dataset jobs in window.</p>
+                  ) : (
+                    <ul className="lv-an-tool-list">
+                      {datasetsData.jobsByType.map((j) => (
+                        <li key={j.jobType}>
+                          <span>{j.jobType}</span>
+                          <strong>{j.count}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              </>
+            ) : (
+              <EmptyCard title="Knowledge Growth" message="Dataset analytics unavailable." />
+            )}
+          </section>
+        )}
 
-          <article className="lv-panel lv-an-card">
-            <div className="lv-an-card-head">
-              <div className="lv-section-label">Top Conversations</div>
-            </div>
-            <ul className="lv-an-top-chats">
-              {TOP_CHATS.map((item) => (
-                <li key={item.title}>
-                  <button type="button" onClick={() => toast(item.title)}>
-                    <span>{item.title}</span>
-                    <strong>{item.messages}</strong>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </article>
-        </section>
+        {tab === "Custom" && (
+          <EmptyCard title="Custom" message="No custom analytics views configured." />
+        )}
 
         <p className="lv-footer-quote">“What gets measured, gets mastered.” — LEVIATHAN</p>
       </main>
