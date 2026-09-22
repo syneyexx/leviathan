@@ -6,13 +6,19 @@ import { ChatPage } from "./pages/ChatPage";
 import { CodingPage } from "./pages/CodingPage";
 import { CommandPage } from "./pages/CommandPage";
 import { DatasetsPage } from "./pages/DatasetsPage";
+import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
 import { FacebookPage } from "./pages/media/FacebookPage";
 import { InstagramPage } from "./pages/media/InstagramPage";
+import { MediaCalendarPage } from "./pages/media/MediaCalendarPage";
 import { MediaControlPage } from "./pages/media/MediaControlPage";
+import { MediaLibraryPage } from "./pages/media/MediaLibraryPage";
+import { MediaPersonasPage } from "./pages/media/MediaPersonasPage";
+import { MediaQueuePage } from "./pages/media/MediaQueuePage";
+import { MediaViralPage } from "./pages/media/MediaViralPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
 import { YouTubePage } from "./pages/media/YouTubePage";
 import { ModelsPage } from "./pages/ModelsPage";
-import { ResearchPage } from "./pages/ResearchPage";
+import { ResearchPixelPage } from "./pages/ResearchPixelPage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
@@ -46,12 +52,12 @@ export default function App() {
       <Route path="/media/tiktok" element={<TikTokPage />} />
       <Route path="/media/instagram" element={<InstagramPage />} />
       <Route path="/media/facebook" element={<FacebookPage />} />
-      <Route path="/media/queue" element={<SectionPage title="Algemene publicatiewachtrij" />} />
-      <Route path="/media/viral" element={<SectionPage title="Viral radar" />} />
-      <Route path="/media/calendar" element={<SectionPage title="Calender" />} />
+      <Route path="/media/queue" element={<MediaQueuePage />} />
+      <Route path="/media/viral" element={<MediaViralPage />} />
+      <Route path="/media/calendar" element={<MediaCalendarPage />} />
       <Route path="/media/analytics" element={<SectionPage title="Media Analytics" />} />
-      <Route path="/media/library" element={<SectionPage title="Bibliotheek" />} />
-      <Route path="/media/personas" element={<SectionPage title="Personas" />} />
+      <Route path="/media/library" element={<MediaLibraryPage />} />
+      <Route path="/media/personas" element={<MediaPersonasPage />} />
 
       <Route path="/trading" element={<Navigate to="/trading/simulatie" replace />} />
       <Route path="/trading/simulatie" element={<SimulatiePage />} />
@@ -61,11 +67,11 @@ export default function App() {
       <Route path="/trading/paper" element={<PaperTradingPage />} />
       <Route path="/trading/broker" element={<BrokerTradingPage />} />
 
-      <Route path="/research" element={<ResearchPage />} />
+      <Route path="/research" element={<ResearchPixelPage />} />
       <Route path="/brain" element={<BrainPage />} />
       <Route path="/memory" element={<SectionPage title="Geheugen" />} />
       <Route path="/knowledge" element={<SectionPage title="Knowledge Library" />} />
-      <Route path="/evidence" element={<SectionPage title="Evidence Vault" />} />
+      <Route path="/evidence" element={<EvidenceVaultPage />} />
       <Route path="/datasets" element={<DatasetsPage />} />
 
       <Route path="/performance" element={<SectionPage title="Performance" />} />
