@@ -59,6 +59,10 @@ def parse_manifest(data: dict[str, Any], *, source_path: Path | None = None) -> 
     except ValueError as exc:
         raise ManifestError(f"Unknown isolation: {isolation_raw}") from exc
 
+    metadata = dict(data.get("metadata") or {})
+    if isinstance(data.get("mcp"), dict):
+        metadata = {**metadata, "mcp": data["mcp"]}
+
     return ModuleManifest(
         module_id=module_id,
         name=name,
@@ -71,7 +75,7 @@ def parse_manifest(data: dict[str, Any], *, source_path: Path | None = None) -> 
         hot_reload=bool(data.get("hot_reload", False)),
         neuro_hooks=_as_tuple_str(data.get("neuro_hooks")),
         source_path=str(source_path) if source_path is not None else None,
-        metadata=dict(data.get("metadata") or {}),
+        metadata=metadata,
     )
 
 

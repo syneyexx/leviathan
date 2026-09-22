@@ -17,6 +17,7 @@ import { ResearchPage } from "./pages/ResearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
+import { McpPage } from "./pages/McpPage";
 import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
 import { MarktdataPage } from "./pages/trading/MarktdataPage";
 import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
@@ -50,7 +51,7 @@ export default function App() {
       <Route path="/agents" element={<AgentsPage />} />
       <Route path="/tools" element={<ToolsPage />} />
       <Route path="/performance" element={<PlaceholderPage title="Performance" modeLabel="Runtime Mode" />} />
-      <Route path="/mcp" element={<PlaceholderPage title="MCP" modeLabel="Runtime Mode" />} />
+      <Route path="/mcp" element={<McpPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/console" element={<PlaceholderPage title="Console" modeLabel="Runtime Mode" />} />
       <Route path="/analytics" element={<AnalyticsPage />} />

@@ -6,6 +6,36 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Universal MCP Bridge (one bridge / many servers) — PASS
+
+### Objective
+Give LEVIATHAN first-class Model Context Protocol support through **ONE** universal MCP bridge that manages many MCP servers and tools while preserving CapabilityCatalog, ExecutionGateway, Approvals, Evidence, and central SQLite invariants. No per-server wrapper proliferation. No HADES copy.
+
+### Added / changed
+- **Module:** `Data/modules/mcp/` — `McpBridge`, sessions, stdio+HTTP transports, protocol, catalog sync, provider, store, module.json integration
+- **Capability model:** `provider_kind=MCP`; catalog `upsert` / availability / `search`+`inspect`; gateway MCP dispatch
+- **Migration v16:** `mcp_servers`, `mcp_tools`, `mcp_tool_calls`
+- **Flags:** `LEVIATHAN_FEATURE_MCP` (+ STDIO / HTTP / AUTO_EXPAND_MODULES children)
+- **API:** `/api/mcp/*` — register/lifecycle/tools/calls; `POST /api/mcp/call` via ExecutionGateway only
+- **Frontend:** `/mcp` operator page (real supervisor-backed state)
+- **Docs:** `Data/docs/mcp_bridge.md`
+- **Tests:** `test_mcp_bridge.py` (protocol, gateway, multi-server, circuit, limits, secrets, isolation, module ownership, feature-off)
+
+### Verification
+- `python3 -m unittest Data.backend.tests.test_mcp_bridge` → PASS
+- Related: plugins / execution_gateway / config / migrations / module_manager → PASS
+
+### Explicitly NOT claimed
+- Legacy SSE transport (explicit unsupported)
+- Real OS container/sandbox adapter
+- MCP resources/prompts/sampling families (architecture extensible)
+- Environment-dependent real upstream MCP servers (filesystem/git/fetch) unless installed
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Phase 52 — Neuro Layer Grok-level depth jump — PASS
 
 ### Objective

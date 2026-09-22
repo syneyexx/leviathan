@@ -966,6 +966,88 @@ def _m15_coding_agent(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m16_mcp_bridge(conn: sqlite3.Connection) -> None:
+    """Universal MCP bridge tables — servers, tools cache, call history."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+            server_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            owner_module_id TEXT,
+            transport TEXT NOT NULL,
+            command TEXT,
+            args_json TEXT NOT NULL DEFAULT '[]',
+            url TEXT,
+            cwd TEXT,
+            env_public_json TEXT NOT NULL DEFAULT '{}',
+            secret_refs_json TEXT NOT NULL DEFAULT '{}',
+            enabled INTEGER NOT NULL DEFAULT 0,
+            trust TEXT NOT NULL DEFAULT 'untrusted',
+            requested_isolation TEXT NOT NULL DEFAULT 'subprocess',
+            effective_isolation TEXT NOT NULL DEFAULT 'subprocess',
+            timeout_seconds REAL NOT NULL DEFAULT 30,
+            max_concurrent_calls INTEGER NOT NULL DEFAULT 4,
+            eager_connect INTEGER NOT NULL DEFAULT 0,
+            expand_tools INTEGER NOT NULL DEFAULT 1,
+            semantic_effects_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            current_state TEXT NOT NULL DEFAULT 'DISCONNECTED',
+            last_connected_at TEXT,
+            last_seen_at TEXT,
+            last_error_code TEXT,
+            last_error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(source_kind, source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS mcp_tools (
+            capability_id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL,
+            external_name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            input_schema_json TEXT NOT NULL DEFAULT '{}',
+            schema_hash TEXT NOT NULL,
+            semantic_effects_json TEXT NOT NULL DEFAULT '[]',
+            availability TEXT NOT NULL DEFAULT 'unavailable',
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            server_version TEXT,
+            protocol_version TEXT,
+            UNIQUE(server_id, external_name),
+            FOREIGN KEY(server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_tools_server
+            ON mcp_tools(server_id, external_name);
+
+        CREATE TABLE IF NOT EXISTS mcp_tool_calls (
+            call_id TEXT PRIMARY KEY,
+            trace_id TEXT,
+            server_id TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            external_tool_name TEXT NOT NULL,
+            requester TEXT NOT NULL,
+            status TEXT NOT NULL,
+            duration_ms REAL,
+            approval_id TEXT,
+            arguments_summary TEXT,
+            result_summary TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            schema_hash TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_tool_calls_started
+            ON mcp_tool_calls(started_at DESC);
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -982,6 +1064,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=13, name="model_control_plane", apply=_m13_model_control_plane),
     Migration(version=14, name="datasets_training_research", apply=_m14_datasets_training_research),
     Migration(version=15, name="coding_agent", apply=_m15_coding_agent),
+    Migration(version=16, name="mcp_bridge", apply=_m16_mcp_bridge),
 )
 
 

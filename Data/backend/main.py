@@ -78,6 +78,9 @@ from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
 from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
+from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_mcp, unregister_module_mcp
+from Data.backend.routes.mcp import build_mcp_router
+from Data.modules.mcp.errors import McpError
 from Data.modules.security import SecurityAuditor, SecurityFinding
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
@@ -197,6 +200,19 @@ module_manager = ModuleManager(
 )
 plugin_registry = PluginRegistry(capability_catalog)
 plugin_registry.register_echo_mcp_stub()
+mcp_store = McpStore(settings.database_path)
+mcp_bridge = McpBridge(
+    store=mcp_store,
+    catalog=capability_catalog,
+    plugin_registry=plugin_registry,
+    enabled=settings.features.mcp_enabled,
+    stdio_enabled=settings.features.mcp_stdio,
+    http_enabled=settings.features.mcp_http,
+    auto_expand_modules=settings.features.mcp_auto_expand_modules,
+    allow_outbound=settings.network.allow_outbound,
+)
+mcp_provider = McpProvider(mcp_bridge)
+execution_gateway.mcp_executor = mcp_provider
 evaluation_harness = EvaluationHarness(
     catalog=capability_catalog,
     evidence=evidence_store,
@@ -545,6 +561,7 @@ async def lifespan(_: FastAPI):
     training_service.reconcile()
     research_service.recover()
     coding_service.start_background()
+    mcp_bridge.initialize()
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
@@ -556,9 +573,29 @@ async def lifespan(_: FastAPI):
                     "neuro_memory_tiers": settings.features.neuro_memory_tiers,
                     "neuro_residual_injection": settings.features.neuro_residual_injection,
                     "module_manager_enabled": settings.features.module_manager_enabled,
+                    "mcp_enabled": settings.features.mcp_enabled,
                 },
             )
         )
+        if settings.features.mcp_enabled:
+            for managed in ready:
+                try:
+                    register_module_mcp(
+                        mcp_bridge,
+                        module_id=managed.manifest.module_id,
+                        manifest_path=managed.manifest.source_path,
+                    )
+                except McpError as exc:
+                    observability.emit(
+                        "mcp",
+                        "module_expand_failed",
+                        payload={
+                            "module_id": managed.manifest.module_id,
+                            "error": exc.code,
+                            "message": exc.message,
+                        },
+                        level="warning",
+                    )
         observability.emit(
             "module_manager",
             "startup",
@@ -569,9 +606,12 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        mcp_bridge.shutdown()
         if module_manager.enabled:
             for managed in list(module_manager.list()):
                 if managed.status.value in {"READY", "INITIALIZED", "LOADED", "EXECUTING"}:
+                    if settings.features.mcp_enabled:
+                        unregister_module_mcp(mcp_bridge, managed.manifest.module_id)
                     try:
                         module_manager.shutdown(managed.manifest.module_id)
                     except ModuleManagerError:
@@ -582,12 +622,13 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.55.0-phase52", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.56.0-mcp", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
+app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 
 
 class ConversationCreate(BaseModel):
@@ -706,6 +747,7 @@ async def health() -> dict:
         "plugins": {
             "registered": len(plugin_registry.list()),
         },
+        "mcp": mcp_bridge.health_summary().public_dict(),
         "isolation": isolation_guard.evaluate().public_dict(),
         "training": {
             "registered": len(training_registry.list()),
@@ -1208,11 +1250,36 @@ def cancel_function_call(call_id: str) -> dict:
 
 
 @app.get("/api/capabilities")
-def list_capabilities() -> dict:
+def list_capabilities(q: str | None = None, limit: int = Query(200, ge=1, le=500)) -> dict:
+    if q:
+        items = capability_catalog.search(q, limit=limit)
+    else:
+        items = execution_gateway.list_capabilities()[:limit]
     return {
-        "capabilities": [item.public_dict() for item in execution_gateway.list_capabilities()],
+        "capabilities": [item.public_dict() for item in items],
         "telemetry": dict(execution_gateway.telemetry),
         "effects_recorded": len(execution_gateway.effect_ledger),
+        "truth": {"capability_search_avoids_prompt_schema_explosion": True},
+    }
+
+
+@app.get("/api/capabilities/search")
+def search_capabilities(q: str = Query("", max_length=240), limit: int = Query(20, ge=1, le=100)) -> dict:
+    items = capability_catalog.search(q, limit=limit)
+    return {
+        "query": q,
+        "capabilities": [
+            {
+                "id": item.id,
+                "name": item.name,
+                "description": item.description,
+                "provider_kind": item.provider_kind.value,
+                "available": item.available,
+                "side_effects": [e.value for e in item.side_effects],
+            }
+            for item in items
+        ],
+        "truth": {"shortlist_not_full_schema_dump": True},
     }
 
 
