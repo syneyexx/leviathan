@@ -21,6 +21,7 @@ import "./styles/agents.css";
 import "./styles/media-instagram.css";
 import "./styles/media-facebook.css";
 import "./styles/brain-pages.css";
+import "./styles/pixel-pages.css";
 
 const root = document.getElementById("root");
 if (!root) {

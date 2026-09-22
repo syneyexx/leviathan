@@ -6,7 +6,14 @@ import { ChatPage } from "./pages/ChatPage";
 import { CodingPage } from "./pages/CodingPage";
 import { CognitionPage } from "./pages/CognitionPage";
 import { CommandPage } from "./pages/CommandPage";
-import { DatasetsPage } from "./pages/DatasetsPage";
+import {
+  DatasetManagementPixelPage,
+  DatasetsHubPixelPage,
+  KnowledgeLibraryPixelPage,
+  ModelsPixelPage,
+  OfflineDatasetsPixelPage,
+  TrainingPixelPage,
+} from "./pages/pixel";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
 import { FacebookPage } from "./pages/media/FacebookPage";
 import { InstagramPage } from "./pages/media/InstagramPage";
@@ -18,7 +25,6 @@ import { MediaQueuePage } from "./pages/media/MediaQueuePage";
 import { MediaViralPage } from "./pages/media/MediaViralPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
 import { YouTubePage } from "./pages/media/YouTubePage";
-import { ModelsPage } from "./pages/ModelsPage";
 import { ResearchMockPage } from "./pages/ResearchMockPage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -31,7 +37,6 @@ import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
 import { PortefeuillePage } from "./pages/trading/PortefeuillePage";
 import { SimulatiePage } from "./pages/trading/SimulatiePage";
 import { StrategieenPage } from "./pages/trading/StrategieenPage";
-import { TrainingPage } from "./pages/TrainingPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
 
 export default function App() {
@@ -43,8 +48,10 @@ export default function App() {
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/coding" element={<CodingPage />} />
 
-      <Route path="/models" element={<ModelsPage />} />
-      <Route path="/training" element={<TrainingPage />} />
+      <Route path="/models" element={<ModelsPixelPage />} />
+      <Route path="/training" element={<TrainingPixelPage />} />
+      <Route path="/dataset-management" element={<DatasetManagementPixelPage />} />
+      <Route path="/offline-datasets" element={<OfflineDatasetsPixelPage />} />
       <Route path="/agents" element={<AgentsPage />} />
       <Route path="/analytics" element={<AnalyticsPage />} />
 
@@ -72,9 +79,9 @@ export default function App() {
       <Route path="/brain" element={<BrainPage />} />
       <Route path="/cognition" element={<CognitionPage />} />
       <Route path="/memory" element={<SectionPage title="Geheugen" />} />
-      <Route path="/knowledge" element={<SectionPage title="Knowledge Library" />} />
+      <Route path="/knowledge" element={<KnowledgeLibraryPixelPage />} />
       <Route path="/evidence" element={<EvidenceVaultPage />} />
-      <Route path="/datasets" element={<DatasetsPage />} />
+      <Route path="/datasets" element={<DatasetsHubPixelPage />} />
 
       <Route path="/performance" element={<SectionPage title="Performance" />} />
       <Route path="/tools" element={<ToolsPage />} />
