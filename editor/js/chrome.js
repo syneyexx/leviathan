@@ -1,9 +1,10 @@
 /**
  * Leviathan Visual Builder — docks, tabs, floats, selection chrome.
+ * Paint is delegated to ctx.renderer (WebGPU scene-graph or DOM fallback).
  */
 
-import { BREAKPOINTS, HANDLE_DIRS, LAYOUT_STORAGE_KEY } from "./constants.js";
-import { unionRect } from "./geometry.js";
+import { BREAKPOINTS, LAYOUT_STORAGE_KEY } from "./constants.js";
+import { EDITOR_PAGES } from "./pages.js";
 
 const LAYOUT_KEY = LAYOUT_STORAGE_KEY;
 
@@ -49,6 +50,7 @@ export function createChrome(ctx, panels) {
     ui.columns = $("[data-role='column-grid']");
     ui.file = $("[data-role='file']");
     ui.palette = $("[data-role='palette']");
+    ui.pageSwitch = $("[data-role='page-switch']");
 
     for (const panel of panels) {
       if (panel.zone === "modal") {
@@ -72,6 +74,7 @@ export function createChrome(ctx, panels) {
     wire();
     syncChrome();
     invalidateAll();
+    ctx.renderer?.init?.(root)?.then?.(() => schedulePaint());
   }
 
   function shellHtml() {
@@ -82,6 +85,13 @@ export function createChrome(ctx, panels) {
         <button type="button" class="lvb-btn" data-nav="/chat">Chat</button>
         <button type="button" class="lvb-btn" data-nav="/research">Research</button>
         <button type="button" class="lvb-btn" data-nav="/settings">Settings</button>
+        <div class="lvb-sep"></div>
+        <label class="lvb-page-switch" title="Leviathan pagina">
+          <span>Pagina</span>
+          <select data-role="page-switch">
+            ${EDITOR_PAGES.map((p) => `<option value="${p.path}">${p.label}</option>`).join("")}
+          </select>
+        </label>
         <div class="lvb-sep"></div>
         <button type="button" class="lvb-btn" data-insert="text" title="Tekst">+T</button>
         <button type="button" class="lvb-btn" data-act="add-image" title="Image">+Img</button>
@@ -191,6 +201,13 @@ export function createChrome(ctx, panels) {
     document.body.classList.toggle("lvb-editing", s.enabled !== false);
     document.body.classList.remove("lvb-tool-select", "lvb-tool-hand", "lvb-tool-rotate", "lvb-tool-measure");
     document.body.classList.add(`lvb-tool-${s.tool || "select"}`);
+    if (ui.pageSwitch) {
+      const path = ctx.pages?.currentPage?.() || s.page || location.pathname || "/";
+      const key = String(path).replace(/\/$/, "") || "/";
+      if (ui.pageSwitch.value !== key && [...ui.pageSwitch.options].some((o) => o.value === key || o.value === path)) {
+        ui.pageSwitch.value = [...ui.pageSwitch.options].find((o) => o.value === key || o.value === path)?.value || key;
+      }
+    }
     placeFrame();
     ui.tabs.innerHTML = rightTabs()
       .map((panel) => `<button type="button" class="lvb-tab${s.rightTab === panel.id ? " is-on" : ""}" data-tab="${panel.id}">${panel.title}</button>`)
@@ -238,193 +255,32 @@ export function createChrome(ctx, panels) {
     if (paintRaf) return;
     paintRaf = requestAnimationFrame(() => {
       paintRaf = 0;
-      paintSelection();
-      paintMeasure();
+      ctx.renderer?.paint?.(ui);
     });
   }
 
-  function placeBox(node, rect) {
-    node.style.left = `${rect.left}px`;
-    node.style.top = `${rect.top}px`;
-    node.style.width = `${Math.max(rect.width, 8)}px`;
-    node.style.height = `${Math.max(rect.height, 8)}px`;
-    node.hidden = false;
-  }
-
-  function paintSelection() {
-    const s = ctx.store.getState();
-    if (!s.enabled || ctx.session.inlineEl) {
-      ui.hover.hidden = true;
-      ui.select.hidden = true;
-      ui.multis.innerHTML = "";
-      return;
-    }
-    const hover = ctx.session.hoverEl;
-    if (hover && hover !== ctx.session.primary && !ctx.session.selected.includes(hover)) {
-      placeBox(ui.hover, hover.getBoundingClientRect());
-      ui.hoverLabel.textContent = ctx.selection.labelFor(hover);
-    } else ui.hover.hidden = true;
-
-    const selected = ctx.session.selected.filter((el) => el.isConnected);
-    const primary = ctx.session.primary?.isConnected ? ctx.session.primary : null;
-
-    // Multi outlines + shared AABB when N>1
-    const others = selected.filter((el) => el !== primary);
-    if (others.length) {
-      ui.multis.innerHTML = others
-        .map((el) => {
-          const r = el.getBoundingClientRect();
-          return `<div class="lvb-multi" style="left:${r.left}px;top:${r.top}px;width:${Math.max(r.width, 4)}px;height:${Math.max(r.height, 4)}px"></div>`;
-        })
-        .join("");
-      const union = unionRect(selected);
-      if (union && selected.length > 1) {
-        ui.multis.insertAdjacentHTML(
-          "beforeend",
-          `<div class="lvb-multi-bounds" style="left:${union.left}px;top:${union.top}px;width:${union.width}px;height:${union.height}px"></div>`,
-        );
-      }
-    } else ui.multis.innerHTML = "";
-
-    if (!primary) {
-      ui.select.hidden = true;
-      return;
-    }
-    const rect = primary.getBoundingClientRect();
-    placeBox(ui.select, rect);
-
-    // Stable handles: rebuild only when dirs / lock / rotate presence change
-    const region = ctx.selection.regionFor(primary);
-    const dirs = region?.edge ? [region.edge] : HANDLE_DIRS.slice();
-    const locked = ctx.selection.isLocked(primary);
-    const showRotate = !locked && !region?.edge && !ctx.selection.isShell(primary);
-    const sig = `${dirs.join("")}|${locked ? 1 : 0}|${showRotate ? 1 : 0}`;
-    if (ui.select.dataset.handleSig !== sig) {
-      ui.select.dataset.handleSig = sig;
-      ui.select.querySelectorAll(".lvb-handle, .lvb-rotate").forEach((n) => n.remove());
-      if (!locked) {
-        for (const dir of dirs) {
-          const handle = document.createElement("div");
-          handle.className = "lvb-handle";
-          handle.dataset.dir = dir;
-          ui.select.appendChild(handle);
-        }
-        if (showRotate) {
-          const rot = document.createElement("div");
-          rot.className = "lvb-rotate";
-          rot.title = "Roteren (Shift = 15°)";
-          ui.select.appendChild(rot);
-        }
-      }
-    }
-
-    const count = selected.length;
-    const lock = locked ? " 🔒" : "";
-    const rot = primary.style.rotate ? ` · ${primary.style.rotate}` : "";
-    ui.selectLabel.textContent = `${ctx.selection.labelFor(primary)}${lock}${rot}${count > 1 ? ` +${count - 1}` : ""}`;
-    if (rect.top < 36) ui.selectLabel.style.top = "2px";
-    else ui.selectLabel.style.top = "-22px";
-  }
-
-  function paintMeasure() {
-    const m = ctx.session.measure;
-    if (!m?.a && !m?.live) {
-      ui.measure.hidden = true;
-      return;
-    }
-    ui.measure.hidden = false;
-    ui.measure.setAttribute("width", String(window.innerWidth));
-    ui.measure.setAttribute("height", String(window.innerHeight));
-
-    // Element↔element spacing overlay (Alt-hover measure)
-    if (m.between) {
-      const { labelX, labelY, dist, dx, dy } = m.between;
-      const parts = [];
-      if (labelX) {
-        parts.push(`<line class="is-dim" x1="${labelX.x1}" y1="${labelX.y}" x2="${labelX.x2}" y2="${labelX.y}" />
-          <text x="${(labelX.x1 + labelX.x2) / 2}" y="${labelX.y - 6}">${labelX.value}px</text>`);
-      }
-      if (labelY) {
-        parts.push(`<line class="is-dim" x1="${labelY.x}" y1="${labelY.y1}" x2="${labelY.x}" y2="${labelY.y2}" />
-          <text x="${labelY.x + 8}" y="${(labelY.y1 + labelY.y2) / 2}">${labelY.value}px</text>`);
-      }
-      if (!labelX && !labelY) {
-        parts.push(`<text x="24" y="48">${dist}px · Δ${dx},${dy}</text>`);
-      }
-      ui.measure.innerHTML = parts.join("");
-      return;
-    }
-
-    const a = ctx.camera.localToScreen(m.a.x, m.a.y);
-    const end = m.b || m.live;
-    const b = end ? ctx.camera.localToScreen(end.x, end.y) : null;
-    if (!b) {
-      ui.measure.innerHTML = `<circle cx="${a.x}" cy="${a.y}" r="4" />`;
-      return;
-    }
-    const dx = Math.round(end.x - m.a.x);
-    const dy = Math.round(end.y - m.a.y);
-    const dist = Math.round(Math.hypot(dx, dy));
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    // Orthogonal guides + hypotenuse
-    ui.measure.innerHTML = `
-      <line class="is-ghost" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${a.y}" />
-      <line class="is-ghost" x1="${b.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
-      <line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
-      <circle cx="${a.x}" cy="${a.y}" r="3.5" /><circle cx="${b.x}" cy="${b.y}" r="3.5" />
-      <text x="${mx + 8}" y="${my - 8}">${dist}px</text>
-      <text x="${(a.x + b.x) / 2}" y="${a.y - 8}">Δx ${dx}</text>
-      <text x="${b.x + 8}" y="${(a.y + b.y) / 2}">Δy ${dy}</text>`;
-  }
-
+  /** Session mirrors consumed by renderer (GPU or DOM). */
   function setGuides(snap) {
-    const lines = [];
-    if (snap?.lineX != null) {
-      lines.push(`<div class="lvb-guide is-x is-${snap.kindX || "edge"}" style="left:${snap.lineX}px"></div>`);
-      if (snap.gapX != null) {
-        lines.push(`<div class="lvb-guide-label is-x" style="left:${snap.lineX}px;top:50%">${Math.round(snap.gapX)}px</div>`);
-      }
-    }
-    if (snap?.lineY != null) {
-      lines.push(`<div class="lvb-guide is-y is-${snap.kindY || "edge"}" style="top:${snap.lineY}px"></div>`);
-      if (snap.gapY != null) {
-        lines.push(`<div class="lvb-guide-label is-y" style="top:${snap.lineY}px;left:50%">${Math.round(snap.gapY)}px</div>`);
-      }
-    }
-    ui.guides.innerHTML = lines.join("");
+    ctx.session._snapGuides = snap || null;
+    schedulePaint();
   }
 
   function clearGuides() {
-    ui.guides.innerHTML = "";
-    ui.drop.hidden = true;
+    ctx.session._snapGuides = null;
+    ctx.session.dropEl = null;
+    if (ui.guides) ui.guides.innerHTML = "";
+    if (ui.drop) ui.drop.hidden = true;
+    schedulePaint();
   }
 
   function showMarquee(rect) {
-    if (!rect) {
-      ui.marquee.hidden = true;
-      return;
-    }
-    ui.marquee.hidden = false;
-    ui.marquee.style.left = `${rect.left}px`;
-    ui.marquee.style.top = `${rect.top}px`;
-    ui.marquee.style.width = `${rect.width}px`;
-    ui.marquee.style.height = `${rect.height}px`;
+    ctx.session._marquee = rect || null;
+    schedulePaint();
   }
 
   function showDrop(el) {
-    if (!el) {
-      ui.drop.hidden = true;
-      ctx.session.dropEl = null;
-      return;
-    }
-    ctx.session.dropEl = el;
-    const r = el.getBoundingClientRect();
-    ui.drop.hidden = false;
-    ui.drop.style.left = `${r.left}px`;
-    ui.drop.style.top = `${r.top}px`;
-    ui.drop.style.width = `${r.width}px`;
-    ui.drop.style.height = `${r.height}px`;
+    ctx.session.dropEl = el || null;
+    schedulePaint();
   }
 
   function syncCamera() {
@@ -604,10 +460,15 @@ export function createChrome(ctx, panels) {
 
   function wire() {
     window.addEventListener("resize", placeFrame);
+    ui.pageSwitch?.addEventListener("change", () => {
+      const path = ui.pageSwitch.value;
+      if (path) ctx.pages?.go?.(path);
+    });
     root.addEventListener("click", (event) => {
       const nav = event.target.closest("[data-nav]");
       if (nav) {
-        window.location.assign(nav.dataset.nav);
+        event.preventDefault();
+        ctx.pages?.go?.(nav.dataset.nav) || window.location.assign(nav.dataset.nav);
         return;
       }
       const tab = event.target.closest("[data-tab]");
@@ -711,6 +572,7 @@ export function createChrome(ctx, panels) {
       invalidateAll();
     });
     window.addEventListener("resize", () => {
+      ctx.renderer?.resize?.();
       syncCamera();
       schedulePaint();
     });

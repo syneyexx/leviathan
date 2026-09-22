@@ -10,12 +10,15 @@ import { createCommands } from "./js/commands.js";
 import { FILES } from "./js/constants.js";
 import { createContent } from "./js/content.js";
 import { createChrome } from "./js/chrome.js";
+import { createDiagnostics } from "./js/diagnostics.js";
 import { createInteractions } from "./js/interactions.js";
 import { createLayout } from "./js/layout.js";
+import { createPages } from "./js/pages.js";
 import { createPalette } from "./js/palette.js";
 import { createAi } from "./js/panels/ai.js";
 import { createCode } from "./js/panels/code.js";
 import { createComponents } from "./js/panels/components.js";
+import { createDiagnosticsPanel } from "./js/panels/diagnostics.js";
 import { createHelp } from "./js/panels/help.js";
 import { createInsert } from "./js/panels/insert.js";
 import { createInspector } from "./js/panels/inspector.js";
@@ -23,6 +26,7 @@ import { createLayers } from "./js/panels/layers.js";
 import { createMedia } from "./js/panels/media.js";
 import { createTokensPanel } from "./js/panels/tokens.js";
 import { createRegistry } from "./js/registry.js";
+import { createRenderer } from "./js/renderer.js";
 import { createSelection } from "./js/selection.js";
 import { createStore } from "./js/state.js";
 import { parseTokens } from "./js/util.js";
@@ -43,6 +47,7 @@ const store = createStore({
   showColumns: false,
   autoSave: true,
   breakpoint: "desktop",
+  page: typeof location !== "undefined" ? location.pathname || "/" : "/",
   files: Object.fromEntries(FILES.map((name) => [name, ""])),
   saved: Object.fromEntries(FILES.map((name) => [name, ""])),
   dirtyFiles: Object.fromEntries(FILES.map((name) => [name, false])),
@@ -88,6 +93,9 @@ const ctx = {
     applying: false,
     swallow: false,
     dragLayer: "",
+    _snapGuides: null,
+    _marquee: null,
+    dropEl: null,
   },
 };
 
@@ -107,6 +115,9 @@ ctx.layout = createLayout(ctx);
 ctx.widgets = createWidgets(ctx);
 ctx.registry = createRegistry(ctx);
 ctx.palette = createPalette(ctx);
+ctx.renderer = createRenderer(ctx);
+ctx.diagnostics = createDiagnostics(ctx);
+ctx.pages = createPages(ctx);
 
 const panels = [
   createLayers(ctx),
@@ -115,6 +126,7 @@ const panels = [
   createTokensPanel(ctx),
   createComponents(ctx),
   createAi(ctx),
+  createDiagnosticsPanel(ctx),
   createHelp(ctx),
   createCode(ctx),
   createMedia(ctx),
@@ -127,6 +139,7 @@ function boot() {
   try {
     registerBuiltins(ctx);
     ctx.chrome.build();
+    ctx.pages.attach();
     ctx.registry.attach();
     ctx.interactions.attach();
     ctx.camera.apply();
