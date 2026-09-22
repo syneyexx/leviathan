@@ -38,9 +38,13 @@ Baseline for this ledger: `d66c044` + frontier work on `cursor/editor-frontier-d
 | zoom-handles | verified (unit) | west/north zoom cases |
 | equal-spacing-snap | implemented but unverified | guides + density |
 | media-library-meta | implemented but unverified | dims/bytes/mtime/usage badge |
-| change-impact-review | unavailable | not started this slice |
-| layout-intent-lens | unavailable | not started this slice |
-| design-preflight | unavailable | not started this slice |
+| change-impact-review | partial | `planImpact` / `planTokenRename` + confirm before apply; recipes/import not fully wired |
+| layout-intent-lens | unavailable | not started |
+| design-preflight | unavailable | not started |
+| stress-lab | partial | labeled **container-probe**; unsupported MQ/vw/fixed reported; gen stamped |
+| content-scenarios | partial | text-200 scoped to `#root` (no parent `<html>` font-size) |
+| token-theme-studio | partial | rename with impact preview; not full theme authoring |
+| visual-compare | partial | returns `{ kind: "document-diff", visualCompare: false }` |
 
 ## Browser / Windows / GPU
 

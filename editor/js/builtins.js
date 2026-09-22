@@ -122,7 +122,9 @@ export function registerBuiltins(ctx) {
     ctx.content.setStatus(`Orphan cleanup: ${used.size} assets in use — select unused in Media (no auto-delete)`, "ok");
   });
   go("stress-lab", "Responsive Stress Lab", null, "Studio", () => {
-    ctx.studio?.runStressLab?.().then((r) => ctx.content.setStatus(`${r.findings?.length || 0} stress findings`, "ok"));
+    ctx.studio?.runStressLab?.().then((r) =>
+      ctx.content.setStatus(`${r.findings?.length || 0} container-probe findings (geen viewport MQ)`, "ok"),
+    );
   });
   go("stress-lab-multi", "Stress: multi-resize + image + undo", null, "Studio", () => {
     ctx.studio?.runMultiPageGestureStress?.().then((r) => {

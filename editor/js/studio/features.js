@@ -54,9 +54,14 @@ export function createStudioFeatures(ctx) {
     registerFixture({ id: "missing-img", label: "Ontbrekende afbeelding", scenario: "missing-img" });
   }
 
-  /** A — Responsive Stress Lab (isolated width probes, no 20 live apps) */
+  /**
+   * Responsive Stress Lab — CONTAINER WIDTH PROBE only.
+   * Does not vary viewport media queries, vw units, or fixed positioning.
+   * Findings are heuristic until a real iframe viewport runner replaces this.
+   */
   async function runStressLab({ from = 320, to = 1920, step = 80, fixtureId = null } = {}) {
     const findings = [];
+    const generation = ctx.save?.getState?.()?.localGeneration ?? ctx.store.getState().saveRevision ?? 0;
     const host = document.createElement("div");
     host.className = "lvb-stress-lab";
     host.style.cssText = "position:fixed;left:-99999px;top:0;pointer-events:none;opacity:0;";
@@ -64,7 +69,13 @@ export function createStudioFeatures(ctx) {
     const sample = document.querySelector(".lv-main") || document.getElementById("root");
     if (!sample) {
       host.remove();
-      return { findings: [], error: "Geen documentroot" };
+      return {
+        findings: [],
+        error: "Geen documentroot",
+        kind: "container-probe",
+        unsupported: ["viewport-media-queries", "vw-units", "position-fixed"],
+        generation,
+      };
     }
     const clone = sample.cloneNode(true);
     clone.querySelectorAll("script").forEach((n) => n.remove());
@@ -73,6 +84,7 @@ export function createStudioFeatures(ctx) {
         el.textContent = `${el.textContent || ""} — Lang Nederlands label voor stress`;
       });
     }
+    // Scope text-scale to the probe clone — never the parent document root
     if (fixtureId === "text-200") clone.style.fontSize = "200%";
     host.appendChild(clone);
     for (let w = from; w <= to; w += step) {
@@ -87,8 +99,10 @@ export function createStudioFeatures(ctx) {
           rule: "horizontal-overflow",
           severity: "error",
           deterministic: true,
-          message: `Horizontale overflow bij ${w}px`,
+          kind: "container-probe",
+          message: `Horizontale overflow bij container ${w}px (geen viewport MQ)`,
           evidence: `scrollWidth ${scrollW} > clientWidth ${clientW}`,
+          generation,
         });
       }
       clone.querySelectorAll("button, a, [role='button']").forEach((el) => {
@@ -99,16 +113,28 @@ export function createStudioFeatures(ctx) {
             rule: "min-target-size",
             severity: "warning",
             deterministic: true,
-            message: `Doelgrootte < 24px bij ${w}px`,
+            kind: "container-probe",
+            message: `Doelgrootte < 24px bij container ${w}px`,
             nodeHint: el.className || el.tagName,
             evidence: `${Math.round(r.width)}×${Math.round(r.height)}`,
+            generation,
           });
         }
       });
     }
     host.remove();
-    ctx.store.setState({ stressFindings: findings, stressEpoch: Date.now() });
-    return { findings, from, to, step, fixtureId };
+    const result = {
+      findings,
+      from,
+      to,
+      step,
+      fixtureId,
+      kind: "container-probe",
+      unsupported: ["viewport-media-queries", "vw-units", "position-fixed"],
+      generation,
+    };
+    ctx.store.setState({ stressFindings: findings, stressEpoch: Date.now(), stressMeta: result });
+    return result;
   }
 
   /** B — Why is this here? */
@@ -142,11 +168,17 @@ export function createStudioFeatures(ctx) {
     return ctx.commands.namedCheckpoint(name || `Checkpoint ${new Date().toLocaleString()}`);
   }
 
-  /** E — compare against checkpoint snapshot in command history */
+  /** E — document diff against checkpoint (NOT rendered visual compare) */
   function compareToCheckpoint(cmd) {
     if (!cmd?.snapshot) return null;
     const now = ctx.content.snapshot();
-    return diffSnapshots(cmd.snapshot, now);
+    const patch = diffSnapshots(cmd.snapshot, now);
+    return {
+      kind: "document-diff",
+      visualCompare: false,
+      reason: "Rendered before/after captures are not available in this path",
+      patch,
+    };
   }
 
   /** F — design branches */
@@ -221,13 +253,19 @@ export function createStudioFeatures(ctx) {
     } else style.textContent = "";
   }
 
-  /** H — content scenarios */
+  /** H — content scenarios (scoped to #root; never enlarge editor chrome via <html> font-size) */
   function applyFixture(id) {
     seedFixtures();
     const fx = listFixtures().find((f) => f.id === id);
+    const root = document.getElementById("root");
     document.documentElement.dataset.lvbFixture = fx?.scenario || "";
-    if (fx?.scenario === "text-200") document.documentElement.style.fontSize = "200%";
-    else document.documentElement.style.fontSize = "";
+    // Clear any legacy root font-size side effect from earlier builds
+    document.documentElement.style.fontSize = "";
+    if (root) {
+      if (fx?.scenario === "text-200") root.style.fontSize = "200%";
+      else root.style.fontSize = "";
+      root.dataset.lvbFixture = fx?.scenario || "";
+    }
     ctx.store.setState({ activeFixture: id || null });
     return fx || { unavailable: true, reason: "Geen adapter voor deze route" };
   }
@@ -235,7 +273,83 @@ export function createStudioFeatures(ctx) {
   function clearFixture() {
     delete document.documentElement.dataset.lvbFixture;
     document.documentElement.style.fontSize = "";
+    const root = document.getElementById("root");
+    if (root) {
+      delete root.dataset.lvbFixture;
+      root.style.fontSize = "";
+    }
     ctx.store.setState({ activeFixture: null });
+  }
+
+  /**
+   * Change Impact Review — plan a patch and summarize affected scope before apply.
+   * Counts come from the planned patch only (never invented).
+   */
+  function planImpact(before, after, { label = "wijziging" } = {}) {
+    const patch = diffSnapshots(before, after);
+    const summary = {
+      label,
+      entries: Object.keys(patch.entries || {}).length,
+      nodeOps: (patch.nodeOps || []).length,
+      componentOps: (patch.componentOps || []).length,
+      metaKeys: Object.keys(patch.metaDiff || {}).length,
+      files: Object.keys(patch.files || {}),
+      pages: [],
+    };
+    const pages = new Set();
+    for (const pair of Object.values(patch.entries || {})) {
+      const e = pair.after || pair.before;
+      if (e?.page && e.page !== "*") pages.add(e.page);
+    }
+    for (const op of patch.nodeOps || []) {
+      const n = op.after || op.before;
+      if (n?.page && n.page !== "*") pages.add(n.page);
+    }
+    summary.pages = [...pages];
+    return { patch, summary, empty: !summary.entries && !summary.nodeOps && !summary.componentOps && !summary.metaKeys && !summary.files.length };
+  }
+
+  function applyImpact(plan, label) {
+    if (!plan || plan.empty) return { ok: false, reason: "geen wijzigingen" };
+    ctx.commands.capture(label || plan.summary?.label || "impact", () => {
+      const s = ctx.store.getState();
+      const next = applyPatch({ content: s.content, files: s.files }, plan.patch, "forward");
+      ctx.store.setState({ content: next.content, files: next.files, contentDirty: true });
+      ctx.content.markContentDirty?.();
+      ctx.content.reapply?.();
+    });
+    return { ok: true, summary: plan.summary };
+  }
+
+  /**
+   * Token rename — updates var(--old) references only inside token/CSS files
+   * and content style entries that contain the exact var() form. Not a raw
+   * global source replace.
+   */
+  function planTokenRename(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return { empty: true, error: "ongeldige namen" };
+    if (!/^--[\w-]+$/.test(oldName) || !/^--[\w-]+$/.test(newName)) {
+      return { empty: true, error: "token namen moeten --ident zijn" };
+    }
+    const before = ctx.content.snapshot();
+    const after = JSON.parse(JSON.stringify(before));
+    const needle = `var(${oldName})`;
+    const replacement = `var(${newName})`;
+    const reDecl = new RegExp(`(^|[\\s;{])${oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`, "g");
+    for (const [name, text] of Object.entries(after.files || {})) {
+      let next = String(text || "").split(needle).join(replacement);
+      next = next.replace(reDecl, `$1${newName}:`);
+      after.files[name] = next;
+    }
+    for (const [key, entry] of Object.entries(after.content.entries || {})) {
+      if (!entry?.styles) continue;
+      for (const [prop, value] of Object.entries(entry.styles)) {
+        if (typeof value === "string" && value.includes(needle)) {
+          entry.styles[prop] = value.split(needle).join(replacement);
+        }
+      }
+    }
+    return planImpact(before, after, { label: `Token hernoemen ${oldName} → ${newName}` });
   }
 
   /** K — recipes */
@@ -413,9 +527,10 @@ export function createStudioFeatures(ctx) {
     }
   }
 
-  // Autosave recovery draft on dirty
+  // Autosave recovery draft on dirty — never while an uncommitted gesture is open
   if (typeof window !== "undefined") {
     setInterval(() => {
+      if (ctx.commands?.isGesturing?.()) return;
       if (ctx.save?.isDirty?.()) writeRecoveryDraft();
     }, 5000);
   }
@@ -436,6 +551,9 @@ export function createStudioFeatures(ctx) {
     previewState,
     applyFixture,
     clearFixture,
+    planImpact,
+    applyImpact,
+    planTokenRename,
     dryRunRecipe,
     applyRecipe,
     exportChangePackage,
