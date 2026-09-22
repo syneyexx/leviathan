@@ -182,6 +182,7 @@ class NeuroRuntimeSettings:
     residual_model_id: str | None
     residual_device: str
     absorb_default_limit: int
+    residual_load_weights: bool = False  # high-memory / dev-only HF weight load
 
 
 @dataclass(frozen=True)
@@ -332,6 +333,7 @@ class Settings:
                 "residual_model_id": self.neuro_runtime.residual_model_id,
                 "residual_device": self.neuro_runtime.residual_device,
                 "absorb_default_limit": self.neuro_runtime.absorb_default_limit,
+                "residual_load_weights": self.neuro_runtime.residual_load_weights,
             },
             "resources": {
                 "max_model_concurrency": self.resources.max_model_concurrency,
@@ -483,6 +485,7 @@ class Settings:
                 residual_model_id=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_MODEL", "") or "").strip() or None,
                 residual_device=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_DEVICE", "cpu") or "cpu").strip(),
                 absorb_default_limit=_env_int("LEVIATHAN_NEURO_ABSORB_LIMIT", 50, minimum=1, maximum=5000),
+                residual_load_weights=_env_bool("LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS", False),
             ),
             resources=ResourceLimits(
                 max_model_concurrency=_env_int("LEVIATHAN_MAX_MODEL_CONCURRENCY", 1, minimum=1, maximum=64),

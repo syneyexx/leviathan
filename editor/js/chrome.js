@@ -1,10 +1,12 @@
 /**
  * Leviathan Visual Builder — docks, tabs, floats, selection chrome.
+ * Paint is delegated to ctx.renderer (WebGPU scene-graph or DOM fallback).
  */
 
-import { BREAKPOINTS } from "./constants.js";
+import { BREAKPOINTS, LAYOUT_STORAGE_KEY } from "./constants.js";
+import { EDITOR_PAGES } from "./pages.js";
 
-const LAYOUT_KEY = "lvb.dock.v1";
+const LAYOUT_KEY = LAYOUT_STORAGE_KEY;
 
 export function createChrome(ctx, panels) {
   const panelMap = new Map(panels.map((panel) => [panel.id, panel]));
@@ -48,6 +50,7 @@ export function createChrome(ctx, panels) {
     ui.columns = $("[data-role='column-grid']");
     ui.file = $("[data-role='file']");
     ui.palette = $("[data-role='palette']");
+    ui.pageSwitch = $("[data-role='page-switch']");
 
     for (const panel of panels) {
       if (panel.zone === "modal") {
@@ -71,6 +74,7 @@ export function createChrome(ctx, panels) {
     wire();
     syncChrome();
     invalidateAll();
+    ctx.renderer?.init?.(root)?.then?.(() => schedulePaint());
   }
 
   function shellHtml() {
@@ -81,6 +85,13 @@ export function createChrome(ctx, panels) {
         <button type="button" class="lvb-btn" data-nav="/chat">Chat</button>
         <button type="button" class="lvb-btn" data-nav="/research">Research</button>
         <button type="button" class="lvb-btn" data-nav="/settings">Settings</button>
+        <div class="lvb-sep"></div>
+        <label class="lvb-page-switch" title="Leviathan pagina">
+          <span>Pagina</span>
+          <select data-role="page-switch">
+            ${EDITOR_PAGES.map((p) => `<option value="${p.path}">${p.label}</option>`).join("")}
+          </select>
+        </label>
         <div class="lvb-sep"></div>
         <button type="button" class="lvb-btn" data-insert="text" title="Tekst">+T</button>
         <button type="button" class="lvb-btn" data-act="add-image" title="Image">+Img</button>
@@ -165,8 +176,20 @@ export function createChrome(ctx, panels) {
     ui.zoom.textContent = `${Math.round((s.zoom || 1) * 100)}%`;
     const tools = { select: "Selecteren", hand: "Hand", rotate: "Roteren", measure: "Meten" };
     ui.toolLabel.textContent = tools[s.tool] || "Selecteren";
-    ui.status.textContent = s.status || "";
-    ui.status.className = `lvb-status${s.statusKind ? ` is-${s.statusKind}` : ""}`;
+    const primary = ctx.session.primary;
+    const count = ctx.session.selected.length;
+    let selInfo = "";
+    if (primary?.isConnected) {
+      const r = primary.getBoundingClientRect();
+      const z = s.zoom || 1;
+      const w = Math.round(r.width / z);
+      const h = Math.round(r.height / z);
+      selInfo = count > 1 ? `${count} geselecteerd · ${w}×${h}` : `${w}×${h}`;
+    }
+    const dirty = s.contentDirty || Object.values(s.dirtyFiles || {}).some(Boolean);
+    const base = s.status || "";
+    ui.status.textContent = [selInfo, dirty ? "● niet opgeslagen" : "", base].filter(Boolean).join(" · ");
+    ui.status.className = `lvb-status${s.statusKind ? ` is-${s.statusKind}` : ""}${dirty ? " is-dirty" : ""}`;
     root.querySelectorAll("[data-tool]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.tool === s.tool));
     root.querySelectorAll("[data-bp]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.bp === s.breakpoint));
     root.querySelector("[data-act='toggle-snap']")?.classList.toggle("is-on", s.snap);
@@ -178,6 +201,13 @@ export function createChrome(ctx, panels) {
     document.body.classList.toggle("lvb-editing", s.enabled !== false);
     document.body.classList.remove("lvb-tool-select", "lvb-tool-hand", "lvb-tool-rotate", "lvb-tool-measure");
     document.body.classList.add(`lvb-tool-${s.tool || "select"}`);
+    if (ui.pageSwitch) {
+      const path = ctx.pages?.currentPage?.() || s.page || location.pathname || "/";
+      const key = String(path).replace(/\/$/, "") || "/";
+      if (ui.pageSwitch.value !== key && [...ui.pageSwitch.options].some((o) => o.value === key || o.value === path)) {
+        ui.pageSwitch.value = [...ui.pageSwitch.options].find((o) => o.value === key || o.value === path)?.value || key;
+      }
+    }
     placeFrame();
     ui.tabs.innerHTML = rightTabs()
       .map((panel) => `<button type="button" class="lvb-tab${s.rightTab === panel.id ? " is-on" : ""}" data-tab="${panel.id}">${panel.title}</button>`)
@@ -225,128 +255,32 @@ export function createChrome(ctx, panels) {
     if (paintRaf) return;
     paintRaf = requestAnimationFrame(() => {
       paintRaf = 0;
-      paintSelection();
-      paintMeasure();
+      ctx.renderer?.paint?.(ui);
     });
   }
 
-  function placeBox(node, rect) {
-    node.style.left = `${rect.left}px`;
-    node.style.top = `${rect.top}px`;
-    node.style.width = `${Math.max(rect.width, 8)}px`;
-    node.style.height = `${Math.max(rect.height, 8)}px`;
-    node.hidden = false;
-  }
-
-  function paintSelection() {
-    const s = ctx.store.getState();
-    if (!s.enabled || ctx.session.inlineEl) {
-      ui.hover.hidden = true;
-      ui.select.hidden = true;
-      ui.multis.innerHTML = "";
-      return;
-    }
-    const hover = ctx.session.hoverEl;
-    if (hover && hover !== ctx.session.primary && !ctx.session.selected.includes(hover)) {
-      placeBox(ui.hover, hover.getBoundingClientRect());
-      ui.hoverLabel.textContent = ctx.selection.labelFor(hover);
-    } else ui.hover.hidden = true;
-
-    ui.multis.innerHTML = ctx.session.selected
-      .filter((el) => el !== ctx.session.primary && el.isConnected)
-      .map((el) => {
-        const r = el.getBoundingClientRect();
-        return `<div class="lvb-multi" style="left:${r.left}px;top:${r.top}px;width:${Math.max(r.width, 4)}px;height:${Math.max(r.height, 4)}px"></div>`;
-      })
-      .join("");
-
-    const el = ctx.session.primary;
-    if (!el || !el.isConnected) {
-      ui.select.hidden = true;
-      return;
-    }
-    const rect = el.getBoundingClientRect();
-    placeBox(ui.select, rect);
-    ui.select.querySelectorAll(".lvb-handle, .lvb-rotate").forEach((n) => n.remove());
-    const region = ctx.selection.regionFor(el);
-    const dirs = region?.edge ? [region.edge] : ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
-    if (!ctx.selection.isLocked(el)) {
-      for (const dir of dirs) {
-        const handle = document.createElement("div");
-        handle.className = "lvb-handle";
-        handle.dataset.dir = dir;
-        ui.select.appendChild(handle);
-      }
-    }
-    const count = ctx.session.selected.length;
-    const lock = ctx.selection.isLocked(el) ? " 🔒" : "";
-    ui.selectLabel.textContent = `${ctx.selection.selectorFor(el)}${lock}${count > 1 ? ` +${count - 1}` : ""}`;
-    if (rect.top < 28) ui.selectLabel.style.top = "2px";
-    else ui.selectLabel.style.top = "-22px";
-  }
-
-  function paintMeasure() {
-    const m = ctx.session.measure;
-    if (!m?.a) {
-      ui.measure.hidden = true;
-      return;
-    }
-    const a = ctx.camera.localToScreen(m.a.x, m.a.y);
-    const b = m.b ? ctx.camera.localToScreen(m.b.x, m.b.y) : null;
-    ui.measure.hidden = false;
-    ui.measure.setAttribute("width", String(window.innerWidth));
-    ui.measure.setAttribute("height", String(window.innerHeight));
-    if (!b) {
-      ui.measure.innerHTML = `<circle cx="${a.x}" cy="${a.y}" r="4" />`;
-      return;
-    }
-    const dx = Math.round((m.b.x - m.a.x));
-    const dy = Math.round((m.b.y - m.a.y));
-    const dist = Math.round(Math.hypot(dx, dy));
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    ui.measure.innerHTML = `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
-      <circle cx="${a.x}" cy="${a.y}" r="3.5" /><circle cx="${b.x}" cy="${b.y}" r="3.5" />
-      <text x="${mx + 8}" y="${my - 8}">${dist}px  Δ${dx},${dy}</text>`;
-  }
-
+  /** Session mirrors consumed by renderer (GPU or DOM). */
   function setGuides(snap) {
-    const lines = [];
-    if (snap?.lineX != null) lines.push(`<div class="lvb-guide is-x is-${snap.kindX || "edge"}" style="left:${snap.lineX}px"></div>`);
-    if (snap?.lineY != null) lines.push(`<div class="lvb-guide is-y is-${snap.kindY || "edge"}" style="top:${snap.lineY}px"></div>`);
-    ui.guides.innerHTML = lines.join("");
+    ctx.session._snapGuides = snap || null;
+    schedulePaint();
   }
 
   function clearGuides() {
-    ui.guides.innerHTML = "";
-    ui.drop.hidden = true;
+    ctx.session._snapGuides = null;
+    ctx.session.dropEl = null;
+    if (ui.guides) ui.guides.innerHTML = "";
+    if (ui.drop) ui.drop.hidden = true;
+    schedulePaint();
   }
 
   function showMarquee(rect) {
-    if (!rect) {
-      ui.marquee.hidden = true;
-      return;
-    }
-    ui.marquee.hidden = false;
-    ui.marquee.style.left = `${rect.left}px`;
-    ui.marquee.style.top = `${rect.top}px`;
-    ui.marquee.style.width = `${rect.width}px`;
-    ui.marquee.style.height = `${rect.height}px`;
+    ctx.session._marquee = rect || null;
+    schedulePaint();
   }
 
   function showDrop(el) {
-    if (!el) {
-      ui.drop.hidden = true;
-      ctx.session.dropEl = null;
-      return;
-    }
-    ctx.session.dropEl = el;
-    const r = el.getBoundingClientRect();
-    ui.drop.hidden = false;
-    ui.drop.style.left = `${r.left}px`;
-    ui.drop.style.top = `${r.top}px`;
-    ui.drop.style.width = `${r.width}px`;
-    ui.drop.style.height = `${r.height}px`;
+    ctx.session.dropEl = el || null;
+    schedulePaint();
   }
 
   function syncCamera() {
@@ -445,9 +379,11 @@ export function createChrome(ctx, panels) {
   function applyPreset(name) {
     if (name === "focus") ctx.store.setState({ showLeft: false, showRight: false, showCode: false });
     if (name === "studio") ctx.store.setState({ showLeft: true, showRight: true, showCode: false, rightTab: "inspector" });
-    if (name === "code") ctx.store.setState({ showLeft: true, showRight: true, showCode: true, rightTab: "inspector" });
+    if (name === "code") ctx.store.setState({ showLeft: true, showRight: true, showCode: true, rightTab: "code" });
+    if (name === "full") ctx.store.setState({ showLeft: true, showRight: true, showCode: true, rightTab: "inspector", leftW: 280, rightW: 360 });
     saveLayout();
-    ctx.content.setStatus(name === "focus" ? "Focus" : name === "code" ? "Code-layout" : "Studio-layout", "ok");
+    const labels = { focus: "Focus", code: "Code-layout", full: "Volledig", studio: "Studio-layout" };
+    ctx.content.setStatus(labels[name] || "Studio-layout", "ok");
   }
 
   function saveLayout() {
@@ -456,6 +392,7 @@ export function createChrome(ctx, panels) {
       id: el.dataset.panel,
       x: parseFloat(el.style.left) || 80,
       y: parseFloat(el.style.top) || 80,
+      w: parseFloat(el.style.width) || 0,
     }));
     try {
       localStorage.setItem(
@@ -487,6 +424,22 @@ export function createChrome(ctx, panels) {
         leftW: saved.leftW || 260,
         rightW: saved.rightW || 320,
       });
+      // Rehydrate floats after panels are mounted
+      queueMicrotask(() => {
+        for (const f of saved.floats || []) {
+          if (!f?.id || !panelMap.get(f.id)) continue;
+          const was = ctx.store.getState().rightTab;
+          ctx.store.setState({ rightTab: f.id });
+          floatTab();
+          const win = root.querySelector(`.lvb-float[data-panel="${f.id}"]`);
+          if (win) {
+            win.style.left = `${f.x || 96}px`;
+            win.style.top = `${f.y || 96}px`;
+            if (f.w) win.style.width = `${f.w}px`;
+          }
+          ctx.store.setState({ rightTab: was });
+        }
+      });
     } catch {
       /* ignore broken layout */
     }
@@ -507,10 +460,15 @@ export function createChrome(ctx, panels) {
 
   function wire() {
     window.addEventListener("resize", placeFrame);
+    ui.pageSwitch?.addEventListener("change", () => {
+      const path = ui.pageSwitch.value;
+      if (path) ctx.pages?.go?.(path);
+    });
     root.addEventListener("click", (event) => {
       const nav = event.target.closest("[data-nav]");
       if (nav) {
-        window.location.assign(nav.dataset.nav);
+        event.preventDefault();
+        ctx.pages?.go?.(nav.dataset.nav) || window.location.assign(nav.dataset.nav);
         return;
       }
       const tab = event.target.closest("[data-tab]");
@@ -614,6 +572,7 @@ export function createChrome(ctx, panels) {
       invalidateAll();
     });
     window.addEventListener("resize", () => {
+      ctx.renderer?.resize?.();
       syncCamera();
       schedulePaint();
     });

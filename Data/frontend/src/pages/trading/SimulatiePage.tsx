@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { tradingHeroes } from "../../assets/tradingAssets";
 import { ApiError, api } from "../../api/client";
+import { SubMenu } from "../../components/SubMenu";
+import { AppShell } from "../../layouts/AppShell";
+import { useAppToast } from "../../state/useAppToast";
 import type {
   MarketDataSource,
   MarketSimLiveState,
@@ -7,40 +11,15 @@ import type {
   MarketSimStatusResponse,
   MarketStrategy,
 } from "../../types/api";
-import { useAppToast } from "../../state/useAppToast";
-import { TradingShell, fmtMoney, hashShort, metricValue } from "./shared";
+import { LineSeries, Panel, Tone, TradingHero, fmtMoney, hashShort, metricValue } from "./shared";
 
-function EquitySpark({ points }: { points: number[] }) {
-  if (points.length < 2) {
-    return <div className="lv-tr-empty">No equity points yet</div>;
-  }
-  const max = Math.max(...points);
-  const min = Math.min(...points);
-  const path = points
-    .map((v, i) => {
-      const x = (i / (points.length - 1)) * 620;
-      const y = 200 - ((v - min) / (max - min || 1)) * 160;
-      return `${i === 0 ? "M" : "L"}${x},${y}`;
-    })
-    .join(" ");
-  return (
-    <svg className="lv-tr-chart-svg" viewBox="0 0 640 220" role="img" aria-label="Equity curve">
-      {[0, 1, 2, 3, 4].map((i) => (
-        <line key={i} x1="20" x2="620" y1={20 + i * 40} y2={20 + i * 40} stroke="rgba(214,169,87,0.08)" />
-      ))}
-      <path d={path} fill="none" stroke="#D6A957" strokeWidth="1.6" transform="translate(20,0)" />
-      <text x="28" y="28" className="lv-tr-axis">
-        {fmtMoney(max)}
-      </text>
-      <text x="28" y="188" className="lv-tr-axis">
-        {fmtMoney(min)}
-      </text>
-    </svg>
-  );
-}
+const SPEEDS = ["0.1x", "0.5x", "1x", "2x", "5x", "10x"] as const;
+const TFS = ["1m", "5m", "15m", "1h", "4h", "1D"] as const;
 
 export function SimulatiePage() {
   const toast = useAppToast();
+  const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>("1x");
+  const [tf, setTf] = useState<(typeof TFS)[number]>("1h");
   const [status, setStatus] = useState<MarketSimStatusResponse | null>(null);
   const [sources, setSources] = useState<MarketDataSource[]>([]);
   const [strategies, setStrategies] = useState<MarketStrategy[]>([]);
@@ -69,18 +48,15 @@ export function SimulatiePage() {
       if (!activeRunId && runList.runs[0]) setActiveRunId(runList.runs[0].run_id);
       setError(st.enabled ? null : "Market sim disabled — set LEVIATHAN_FEATURE_MARKET_SIM=true");
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "Failed to load market sim status";
-      setError(msg);
+      setError(err instanceof ApiError ? err.message : "Failed to load market sim status");
     }
   }, [activeRunId, sourceId, strategyId]);
 
   const refreshLive = useCallback(async () => {
     if (!activeRunId || !status?.enabled) return;
     try {
-      const state = await api.getMarketSimLive(activeRunId);
-      setLive(state);
+      setLive(await api.getMarketSimLive(activeRunId));
     } catch (err) {
-      // keep last live snapshot; surface soft error
       if (err instanceof ApiError && err.status === 404) setLive(null);
     }
   }, [activeRunId, status?.enabled]);
@@ -97,7 +73,23 @@ export function SimulatiePage() {
   }, [activeRunId, refreshLive]);
 
   const run = live?.run;
-  const equityPoints = useMemo(() => (live?.equity ?? []).map((p) => p.equity), [live]);
+  const selectedSource = sources.find((s) => s.source_id === sourceId);
+  const progressPct =
+    run && run.bar_count > 0 ? Math.min(100, Math.round((run.bar_index / run.bar_count) * 100)) : 0;
+  const equityPoints = useMemo(() => {
+    const pts = (live?.equity ?? []).map((p) => p.equity);
+    if (pts.length >= 2) return pts;
+    return run ? [run.initial_cash, run.equity] : [100_000];
+  }, [live, run]);
+  const drawdownPoints = useMemo(() => {
+    let peak = equityPoints[0] ?? 0;
+    return equityPoints.map((v) => {
+      peak = Math.max(peak, v);
+      return peak > 0 ? -((peak - v) / peak) * 100 : 0;
+    });
+  }, [equityPoints]);
+  const brainTotal = (run?.brain_hits ?? 0) + (run?.brain_misses ?? 0);
+  const playing = run?.status === "RUNNING" || run?.status === "QUEUED";
 
   async function createAndStart() {
     if (!sourceId) {
@@ -106,10 +98,12 @@ export function SimulatiePage() {
     }
     setBusy(true);
     try {
+      const speedNum = Number.parseFloat(speed.replace("x", "")) || 1;
       const { run: created } = await api.createMarketSimRun({
         sourceId,
         strategyId: strategyId || undefined,
         seed: 42,
+        speed: speedNum,
         deliberationEveryN: 5,
       });
       await api.startMarketSimRun(created.run_id);
@@ -141,97 +135,48 @@ export function SimulatiePage() {
     }
   }
 
-  const brainTotal = (run?.brain_hits ?? 0) + (run?.brain_misses ?? 0);
-
   return (
-    <TradingShell title="Simulatie">
-      {error ? (
-        <article className="lv-panel lv-tr-card">
-          <div className="lv-section-label">Market Sim</div>
-          <p>{error}</p>
-          <p className="lv-muted">
-            Sources ready: {status?.health.sources_ready ?? 0} · Root configured:{" "}
-            {status?.health.configured ? "yes" : "no"}
-          </p>
-        </article>
-      ) : null}
+    <AppShell
+      activeMode="explore"
+      modeLabel="Simulation Mode"
+      searchPlaceholder="Search markets, assets, strategies, or run simulations..."
+      systemItems={[
+        status?.enabled ? "MARKET SIM ON" : "MARKET SIM OFF",
+        run?.status ? `RUN ${run.status}` : "NO RUN",
+      ]}
+      layout="wide"
+      pageClass="lv-app--trading"
+    >
+      <main className="lv-main lv-tp-main">
+        <TradingHero
+          title="MARKT SIMULATIE"
+          kicker="REPLAY. ANALYZE. ADAPT."
+          quote="“The markets always speak. Simulation lets you listen more carefully.” — LEVIATHAN"
+          image={tradingHeroes.simulatie}
+          objectPosition="center 32%"
+        />
 
-      <section className="lv-tr-kpi-row">
-        {[
-          { label: "Equity", value: fmtMoney(run?.equity), delta: run?.status ?? "—" },
-          { label: "Cash", value: fmtMoney(run?.cash), delta: "paper" },
-          {
-            label: "Position",
-            value: run ? run.position_qty.toFixed(4) : "—",
-            delta: run?.symbol ?? "",
-          },
-          {
-            label: "Realized PnL",
-            value: fmtMoney(run?.realized_pnl),
-            delta: run && run.realized_pnl >= 0 ? "ok" : "",
-          },
-          {
-            label: "Causality Violations",
-            value: String(run?.causality_violations ?? 0),
-            delta: "must be 0",
-          },
-          {
-            label: "Brain Hit Rate",
-            value: brainTotal ? `${(((run?.brain_hits ?? 0) / brainTotal) * 100).toFixed(0)}%` : "UNMEASURED",
-            delta: `${run?.brain_hits ?? 0}h / ${run?.brain_misses ?? 0}m`,
-          },
-        ].map((item) => (
-          <article key={item.label} className="lv-tr-kpi">
-            <div className="lv-tr-kpi-label">{item.label}</div>
-            <div className="lv-tr-kpi-value">{item.value}</div>
-            <div className="lv-tr-kpi-foot">
-              <span>{item.delta}</span>
-            </div>
-          </article>
-        ))}
-      </section>
+        <SubMenu />
 
-      <section className="lv-tr-mid">
-        <article className="lv-panel lv-tr-card lv-tr-card--chart">
-          <div className="lv-tr-chart-head">
-            <div>
-              <strong>{run?.symbol ?? "No run"}</strong>
-              <span className="lv-tr-price">{run?.clock_ts ?? "clock idle"}</span>
-              <span>
-                bar {run?.bar_index ?? 0}/{run?.bar_count ?? 0}
-              </span>
-            </div>
-            <div className="lv-tr-tf">
-              <button type="button" disabled={busy} onClick={() => void createAndStart()}>
-                New Run
-              </button>
-              <button type="button" disabled={busy || !activeRunId} onClick={() => void control("start")}>
-                Play
-              </button>
-              <button type="button" disabled={busy || !activeRunId} onClick={() => void control("pause")}>
-                Pause
-              </button>
-              <button type="button" disabled={busy || !activeRunId} onClick={() => void control("step")}>
-                Step
-              </button>
-              <button type="button" disabled={busy || !activeRunId} onClick={() => void control("stop")}>
-                Stop
-              </button>
-            </div>
-          </div>
-          <EquitySpark points={equityPoints} />
-          <div className="lv-tr-ma">
-            <span>Data hash {hashShort(run?.data_hash)}</span>
-            <span>Seed {run?.seed ?? "—"}</span>
-            <span>Status {run?.status ?? "—"}</span>
-          </div>
-        </article>
+        {error ? (
+          <Panel title="Market Sim">
+            <p>{error}</p>
+            <p className="lv-tp-muted">
+              Sources ready: {status?.health.sources_ready ?? 0} · Root:{" "}
+              {status?.health.markets_root ?? "—"}
+            </p>
+          </Panel>
+        ) : null}
 
-        <article className="lv-panel lv-tr-card lv-tr-order">
-          <div className="lv-section-label">Scenario</div>
-          <label className="lv-tr-field">
-            <span>Market data</span>
-            <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+        <section className="lv-sim-config" aria-label="Simulation configuration">
+          <article className="lv-sim-config-card">
+            <div className="lbl">Market data</div>
+            <select
+              className="lv-tp-select"
+              value={sourceId}
+              onChange={(e) => setSourceId(e.target.value)}
+              style={{ width: "100%", marginTop: 6 }}
+            >
               <option value="">Select source…</option>
               {sources.map((s) => (
                 <option key={s.source_id} value={s.source_id}>
@@ -239,10 +184,33 @@ export function SimulatiePage() {
                 </option>
               ))}
             </select>
-          </label>
-          <label className="lv-tr-field">
-            <span>Strategy</span>
-            <select value={strategyId} onChange={(e) => setStrategyId(e.target.value)}>
+            <p>{selectedSource ? hashShort(selectedSource.content_hash) : "Register files on Marktdata"}</p>
+          </article>
+          <article className="lv-sim-config-card">
+            <div className="lbl">Asset / Market</div>
+            <strong>{run?.symbol ?? selectedSource?.symbol ?? "—"}</strong>
+            <p>
+              {run?.timeframe ?? selectedSource?.timeframe ?? "—"} · paper sim only
+            </p>
+          </article>
+          <article className="lv-sim-config-card">
+            <div className="lbl">Historical window</div>
+            <strong>
+              {run?.start_ts?.slice(0, 10) ?? selectedSource?.start_ts?.slice(0, 10) ?? "—"} —{" "}
+              {run?.end_ts?.slice(0, 10) ?? selectedSource?.end_ts?.slice(0, 10) ?? "—"}
+            </strong>
+            <p>
+              Clock {run?.clock_ts ?? "idle"} · bar {run?.bar_index ?? 0}/{run?.bar_count ?? 0}
+            </p>
+          </article>
+          <article className="lv-sim-config-card">
+            <div className="lbl">Strategy</div>
+            <select
+              className="lv-tp-select"
+              value={strategyId}
+              onChange={(e) => setStrategyId(e.target.value)}
+              style={{ width: "100%", marginTop: 6 }}
+            >
               <option value="">Default MA cross</option>
               {strategies.map((s) => (
                 <option key={s.strategy_id} value={s.strategy_id}>
@@ -250,149 +218,306 @@ export function SimulatiePage() {
                 </option>
               ))}
             </select>
-          </label>
-          <label className="lv-tr-field">
-            <span>Active run</span>
-            <select
-              value={activeRunId ?? ""}
-              onChange={(e) => setActiveRunId(e.target.value || null)}
+            <button
+              type="button"
+              className="lv-tp-btn lv-tp-btn--accent"
+              style={{ marginTop: 8 }}
+              disabled={busy}
+              onClick={() => void createAndStart()}
             >
-              <option value="">None</option>
-              {runs.map((r) => (
-                <option key={r.run_id} value={r.run_id}>
-                  {r.symbol} · {r.status} · {r.run_id.slice(0, 8)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="lv-tr-est">
-            <span>
-              Workers active <strong>{status?.active_runs ?? 0}</strong>
-            </span>
-            <span>
-              Sources ready <strong>{status?.health.sources_ready ?? 0}</strong>
-            </span>
-          </div>
-        </article>
-
-        <div className="lv-tr-rightcol">
-          <article className="lv-panel lv-tr-card">
-            <div className="lv-section-label">Metrics</div>
-            <ul className="lv-tr-activity">
-              {[
-                ["Total return", metricValue(run?.metrics, "total_return")],
-                ["Sharpe", metricValue(run?.metrics, "sharpe")],
-                ["Max drawdown", metricValue(run?.metrics, "max_drawdown")],
-                ["Buy & hold", metricValue(run?.metrics, "buy_and_hold_return")],
-                ["Fees paid", metricValue(run?.metrics, "fees_paid")],
-              ].map(([label, value]) => (
-                <li key={label}>
-                  <span className="lv-tr-dot info" />
-                  <div>
-                    <strong>
-                      {label}: {value}
-                    </strong>
-                  </div>
-                </li>
-              ))}
-            </ul>
+              New Run
+            </button>
           </article>
-        </div>
-      </section>
+        </section>
 
-      <section className="lv-tr-tables">
-        <article className="lv-panel lv-tr-card">
-          <div className="lv-section-label">Fills</div>
-          <div className="lv-tr-table-wrap">
-            <table className="lv-tr-table">
+        <section className="lv-sim-playback" aria-label="Playback controls">
+          <div className="lv-sim-controls">
+            <button type="button" disabled={busy || !activeRunId} onClick={() => void control("stop")} aria-label="Stop">
+              ⏹
+            </button>
+            <button type="button" disabled={busy || !activeRunId} onClick={() => void control("step")} aria-label="Step">
+              ⏭
+            </button>
+            <button
+              type="button"
+              className={playing ? "is-active" : ""}
+              disabled={busy || !activeRunId}
+              onClick={() => void control(playing ? "pause" : "start")}
+              aria-label="Play/Pause"
+            >
+              {playing ? "⏸" : "▶"}
+            </button>
+            <button type="button" disabled={busy || !activeRunId} onClick={() => void control("start")} aria-label="Resume">
+              ⏭⏭
+            </button>
+          </div>
+          <div className="lv-sim-speeds">
+            {SPEEDS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`lv-tp-chip${speed === s ? " is-active" : ""}`}
+                onClick={() => setSpeed(s)}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <div className="lv-sim-timeline">
+            <div className="lv-sim-timeline-meta">
+              <span>{run?.clock_ts ?? "No active clock"}</span>
+              <span className="lv-tp-muted">
+                Bar {run?.bar_index ?? 0}/{run?.bar_count ?? 0} · {progressPct}%
+              </span>
+            </div>
+            <div className="lv-sim-seek" role="slider" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>
+              <span style={{ width: `${progressPct}%` }} />
+            </div>
+          </div>
+          <select
+            className="lv-tp-select"
+            value={activeRunId ?? ""}
+            onChange={(e) => setActiveRunId(e.target.value || null)}
+          >
+            <option value="">Select run…</option>
+            {runs.map((r) => (
+              <option key={r.run_id} value={r.run_id}>
+                {r.symbol} · {r.status} · {r.run_id.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+        </section>
+
+        <section className="lv-sim-chart-grid">
+          <Panel
+            title={`${run?.symbol ?? "Market"} · Equity Replay`}
+            action={
+              <div className="lv-tp-tabs">
+                {TFS.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`lv-tp-chip${tf === t ? " is-active" : ""}`}
+                    onClick={() => setTf(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            <div className="lv-sim-chart-head">
+              <div>
+                <strong>{run?.symbol ?? "—"}</strong>
+                <span className="lv-tp-mono">{fmtMoney(run?.equity)}</span>
+                <Tone value={(run?.equity ?? 0) - (run?.initial_cash ?? 0)}>
+                  {run ? `${(((run.equity - run.initial_cash) / run.initial_cash) * 100).toFixed(2)}%` : "—"}
+                </Tone>
+              </div>
+              <div className="lv-tp-muted">
+                Causality violations: {run?.causality_violations ?? 0} · hash {hashShort(run?.data_hash)}
+              </div>
+            </div>
+            <LineSeries series={[{ values: equityPoints, color: "#D6A957" }]} height={240} />
+          </Panel>
+
+          <Panel title="Order Book">
+            <p className="lv-tp-muted">
+              L2 order book UNAVAILABLE for this run — no order-book snapshots registered. Fill model uses
+              conservative bar close ± slippage.
+            </p>
+          </Panel>
+
+          <Panel title="Simulated Fills (Tape)">
+            <div className="lv-sim-tape">
+              {(live?.fills ?? [])
+                .slice(-24)
+                .reverse()
+                .map((f) => (
+                  <div key={f.fill_id} className="lv-sim-tape-row">
+                    <span className="lv-tp-muted">bar {f.bar_index}</span>
+                    <span className={f.side === "BUY" ? "is-good" : "is-bad"}>{f.side}</span>
+                    <span>{f.price.toFixed(2)}</span>
+                    <span>{f.qty.toFixed(4)}</span>
+                  </div>
+                ))}
+              {!live?.fills?.length ? (
+                <div className="lv-sim-tape-row">
+                  <span className="lv-tp-muted">No fills yet — paper sim only</span>
+                </div>
+              ) : null}
+            </div>
+          </Panel>
+        </section>
+
+        <section className="lv-sim-stats">
+          <Panel title="Simulated Portfolio Value">
+            <div style={{ fontSize: 28, fontWeight: 700, color: "var(--lv-text-bright)" }}>
+              {fmtMoney(run?.equity)}
+            </div>
+            <Tone value={(run?.equity ?? 0) - (run?.initial_cash ?? 0)}>
+              {metricValue(run?.metrics, "total_return")}
+            </Tone>
+            <div className="lv-sim-metric-grid" style={{ marginTop: 10 }}>
+              <div>
+                <span>Initial Capital</span>
+                <strong>{fmtMoney(run?.initial_cash)}</strong>
+              </div>
+              <div>
+                <span>Unrealized P&amp;L</span>
+                <strong>{fmtMoney(run?.unrealized_pnl)}</strong>
+              </div>
+              <div>
+                <span>Realized P&amp;L</span>
+                <strong>{fmtMoney(run?.realized_pnl)}</strong>
+              </div>
+              <div>
+                <span>Cash</span>
+                <strong>{fmtMoney(run?.cash)}</strong>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="Strategy Performance">
+            <div className="lv-sim-metric-grid">
+              {[
+                ["Total Return", metricValue(run?.metrics, "total_return")],
+                ["Sharpe", metricValue(run?.metrics, "sharpe")],
+                ["Sortino", metricValue(run?.metrics, "sortino")],
+                ["Max Drawdown", metricValue(run?.metrics, "max_drawdown")],
+                ["Buy & Hold", metricValue(run?.metrics, "buy_and_hold_return")],
+                ["Fees Paid", metricValue(run?.metrics, "fees_paid")],
+                ["Win Rate", metricValue(run?.metrics, "win_rate")],
+                [
+                  "Brain Hit Rate",
+                  brainTotal
+                    ? `${(((run?.brain_hits ?? 0) / brainTotal) * 100).toFixed(0)}%`
+                    : "UNMEASURED",
+                ],
+              ].map(([k, v]) => (
+                <div key={String(k)}>
+                  <span>{k}</span>
+                  <strong>{v}</strong>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Equity Curve">
+            <LineSeries series={[{ values: equityPoints, color: "#22c9d6" }]} height={120} />
+            <div className="lv-tp-muted" style={{ marginTop: 4 }}>
+              Live equity from simulation worker
+            </div>
+          </Panel>
+
+          <Panel title="Drawdown Analysis">
+            <LineSeries series={[{ values: drawdownPoints, color: "#f87171" }]} height={90} />
+            <div className="lv-sim-metric-grid" style={{ marginTop: 8 }}>
+              <div>
+                <span>Max Drawdown</span>
+                <strong className="is-bad">{metricValue(run?.metrics, "max_drawdown")}</strong>
+              </div>
+              <div>
+                <span>Position</span>
+                <strong>{run ? run.position_qty.toFixed(4) : "—"}</strong>
+              </div>
+              <div>
+                <span>Seed</span>
+                <strong>{run?.seed ?? "—"}</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <strong>{run?.status ?? "—"}</strong>
+              </div>
+            </div>
+          </Panel>
+        </section>
+
+        <section className="lv-sim-bottom">
+          <Panel title="Agent Deliberation">
+            <table className="lv-tp-table">
               <thead>
                 <tr>
                   <th>Bar</th>
-                  <th>Side</th>
-                  <th>Qty</th>
-                  <th>Price</th>
-                  <th>Fee</th>
-                  <th>Agent</th>
+                  <th>Kind</th>
+                  <th>Role</th>
+                  <th>Content</th>
+                  <th>Conf</th>
                 </tr>
               </thead>
               <tbody>
-                {(live?.fills ?? []).slice(-20).reverse().map((f) => (
-                  <tr key={f.fill_id}>
-                    <td>{f.bar_index}</td>
-                    <td>
-                      <span className={`lv-tr-side ${f.side.toLowerCase()}`}>{f.side}</span>
-                    </td>
-                    <td>{f.qty.toFixed(4)}</td>
-                    <td>{f.price.toFixed(2)}</td>
-                    <td>{f.fee.toFixed(4)}</td>
-                    <td>{f.agent_id ?? "—"}</td>
-                  </tr>
-                ))}
-                {!live?.fills?.length ? (
+                {(live?.messages ?? [])
+                  .slice(-20)
+                  .reverse()
+                  .map((m) => (
+                    <tr key={m.message_id}>
+                      <td>{m.bar_index}</td>
+                      <td>{m.kind}</td>
+                      <td>{m.role}</td>
+                      <td>{m.content}</td>
+                      <td>{(m.confidence * 100).toFixed(0)}%</td>
+                    </tr>
+                  ))}
+                {!live?.messages?.length ? (
                   <tr>
-                    <td colSpan={6}>No fills yet — paper sim only, no fabricated orders</td>
+                    <td colSpan={5}>No deliberation yet</td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
-          </div>
-        </article>
+          </Panel>
 
-        <article className="lv-panel lv-tr-card">
-          <div className="lv-section-label">Agent deliberation</div>
-          <ul className="lv-tr-activity">
-            {(live?.messages ?? [])
-              .slice(-30)
-              .reverse()
-              .map((m) => (
-                <li key={m.message_id}>
-                  <span className={`lv-tr-dot ${m.kind === "veto" ? "info" : "ok"}`} />
-                  <div>
-                    <strong>
-                      [{m.kind}] {m.role}: {m.content}
-                    </strong>
-                    <small>
-                      bar {m.bar_index} · conf {(m.confidence * 100).toFixed(0)}%
-                      {m.brain_refs?.length ? ` · brain ${m.brain_refs.length}` : ""}
-                    </small>
+          <Panel title="Agents on Run">
+            {(run?.agents ?? []).map((w) => (
+              <div key={String(w.agent_id ?? w.role)} className="lv-sim-worker">
+                <strong>{String(w.agent_id ?? w.role)}</strong>
+                <div>
+                  <div>{String(w.label ?? w.role)}</div>
+                  <div className="lv-tp-bar" style={{ marginTop: 4 }}>
+                    <span style={{ width: `${progressPct}%` }} />
                   </div>
-                </li>
-              ))}
-            {!live?.messages?.length ? (
-              <li>
-                <span className="lv-tr-dot info" />
-                <div>
-                  <strong>No deliberation yet</strong>
-                  <small>Messages appear when multi-agent rounds run</small>
                 </div>
-              </li>
-            ) : null}
-          </ul>
-        </article>
-
-        <article className="lv-panel lv-tr-card">
-          <div className="lv-section-label">Agents on run</div>
-          <ul className="lv-tr-agents">
-            {(run?.agents ?? []).map((a) => (
-              <li key={String(a.agent_id ?? a.role)}>
-                <div>
-                  <strong>{String(a.label ?? a.role)}</strong>
-                  <small>{String(a.role)}</small>
+                <div style={{ textAlign: "right" }}>
+                  <span className={`lv-tp-pill${playing ? " is-live" : ""}`}>{run?.status ?? "—"}</span>
                 </div>
-                <span>{String(a.strategy_id ?? "shared").slice(0, 8)}</span>
-              </li>
+              </div>
             ))}
             {!run?.agents?.length ? (
-              <li>
-                <div>
-                  <strong>Single-strategy mode</strong>
-                  <small>No agent roster on this run</small>
-                </div>
-              </li>
+              <p className="lv-tp-muted">Single-strategy mode or no run selected</p>
             ) : null}
-          </ul>
-        </article>
-      </section>
-    </TradingShell>
+          </Panel>
+
+          <Panel title="Simulation Summary" className="lv-sim-summary">
+            <dl>
+              <dt>Initial Capital</dt>
+              <dd>{fmtMoney(run?.initial_cash ?? 100_000)}</dd>
+              <dt>Active workers</dt>
+              <dd>{status?.active_runs ?? 0}</dd>
+              <dt>Fee model</dt>
+              <dd>bps + slippage (paper)</dd>
+              <dt>Data hash</dt>
+              <dd>{hashShort(run?.data_hash)}</dd>
+              <dt>Brain hits / misses</dt>
+              <dd>
+                {run?.brain_hits ?? 0} / {run?.brain_misses ?? 0}
+              </dd>
+              <dt>Causality violations</dt>
+              <dd>{run?.causality_violations ?? 0}</dd>
+              <dt>Fill model</dt>
+              <dd>Bar close ± slippage</dd>
+              <dt>Benchmark</dt>
+              <dd>Buy &amp; hold</dd>
+            </dl>
+          </Panel>
+        </section>
+
+        <footer className="lv-sim-foot">
+          <span>Same markets. A sharper you. — LEVIATHAN</span>
+          <span className={`lv-tp-pill${playing ? " is-live" : ""}`}>
+            {run?.status ?? "Idle"} · paper only
+          </span>
+        </footer>
+      </main>
+    </AppShell>
   );
 }

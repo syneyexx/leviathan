@@ -265,6 +265,8 @@ export function createContent(ctx) {
         ...node,
         html: el.outerHTML,
         parent: node.parent || ctx.selection.selectorFor(el.parentElement) || ".lv-main",
+        componentId: el.dataset.lvbComponentId || node.componentId,
+        variant: el.dataset.lvbVariant || node.variant,
         styles: {
           ...(node.styles || {}),
           position: el.style.position || node.styles?.position,
@@ -272,6 +274,10 @@ export function createContent(ctx) {
           top: el.style.top || node.styles?.top,
           width: el.style.width || node.styles?.width,
           height: el.style.height || node.styles?.height,
+          rotate: el.style.rotate || node.styles?.rotate,
+          scale: el.style.scale || node.styles?.scale,
+          "max-width": el.style.maxWidth || node.styles?.["max-width"],
+          margin: el.style.margin || node.styles?.margin,
           zIndex: el.style.zIndex || node.styles?.zIndex,
         },
       };

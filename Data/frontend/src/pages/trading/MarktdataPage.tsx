@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
+import { tradingHeroes } from "../../assets/tradingAssets";
 import { ApiError, api } from "../../api/client";
-import type { MarketDataSource, MarketSimStatusResponse } from "../../types/api";
+import { SubMenu } from "../../components/SubMenu";
+import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
-import { TradingShell, hashShort } from "./shared";
+import type { MarketDataSource, MarketSimStatusResponse } from "../../types/api";
+import { Panel, TradingHero, hashShort } from "./shared";
 
 export function MarktdataPage() {
   const toast = useAppToast();
   const [status, setStatus] = useState<MarketSimStatusResponse | null>(null);
   const [sources, setSources] = useState<MarketDataSource[]>([]);
   const [path, setPath] = useState("BTCUSDT_1h.csv");
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,6 +23,8 @@ export function MarktdataPage() {
       if (st.enabled) {
         const { sources: list } = await api.listMarketData();
         setSources(list);
+      } else {
+        setSources([]);
       }
       setError(st.enabled ? null : "LEVIATHAN_FEATURE_MARKET_SIM is OFF");
     } catch (err) {
@@ -57,113 +63,193 @@ export function MarktdataPage() {
     }
   }
 
+  const filtered = sources.filter(
+    (s) =>
+      !query ||
+      s.symbol.toLowerCase().includes(query.toLowerCase()) ||
+      s.path.toLowerCase().includes(query.toLowerCase()),
+  );
+  const ready = sources.filter((s) => s.status === "READY").length;
+  const invalid = sources.filter((s) => s.status === "INVALID").length;
+
   return (
-    <TradingShell title="Marktdata">
-      <section className="lv-tr-kpi-row">
-        <article className="lv-tr-kpi">
-          <div className="lv-tr-kpi-label">Markets root</div>
-          <div className="lv-tr-kpi-value" style={{ fontSize: "0.85rem" }}>
-            {status?.health.markets_root ?? "—"}
-          </div>
-          <div className="lv-tr-kpi-foot">
-            <span>{status?.health.exists ? "exists" : "missing"}</span>
-          </div>
-        </article>
-        <article className="lv-tr-kpi">
-          <div className="lv-tr-kpi-label">Indexed</div>
-          <div className="lv-tr-kpi-value">{status?.health.sources_indexed ?? 0}</div>
-        </article>
-        <article className="lv-tr-kpi">
-          <div className="lv-tr-kpi-label">Ready</div>
-          <div className="lv-tr-kpi-value">{status?.health.sources_ready ?? 0}</div>
-        </article>
-        <article className="lv-tr-kpi">
-          <div className="lv-tr-kpi-label">Feature</div>
-          <div className="lv-tr-kpi-value">{status?.enabled ? "ON" : "OFF"}</div>
-        </article>
-      </section>
+    <AppShell
+      activeMode="explore"
+      modeLabel="Trading Mode"
+      searchPlaceholder="Search symbols, markets, data sources, or instruments..."
+      systemItems={[
+        status?.enabled ? "MARKET SIM ON" : "MARKET SIM OFF",
+        `${ready} READY`,
+        status?.health.exists ? "ROOT EXISTS" : "ROOT MISSING",
+      ]}
+      layout="wide"
+      pageClass="lv-app--trading"
+    >
+      <main className="lv-main lv-tp-main">
+        <TradingHero
+          title="MARKTDATA"
+          kicker="INGEST. STREAM. INTERPRET."
+          quote="“Information is the raw material of alpha.” — LEVIATHAN"
+          image={tradingHeroes.marktdata}
+          rails={["MORE SIGNALS", "DEEPER CONTEXT", "GLOBAL MARKETS", "REAL-TIME EDGE"]}
+          objectPosition="center 32%"
+        />
 
-      {error ? (
-        <article className="lv-panel lv-tr-card">
-          <p>{error}</p>
-        </article>
-      ) : null}
+        <SubMenu />
 
-      <section className="lv-tr-mid">
-        <article className="lv-panel lv-tr-card">
-          <div className="lv-section-label">Register / scan</div>
-          <p>
-            Place real OHLCV CSV files under the markets root. Columns: timestamp, open, high, low, close,
-            volume. Parquet is optional (requires pyarrow).
-          </p>
-          <label className="lv-tr-field">
-            <span>Relative path under markets root</span>
-            <input value={path} onChange={(e) => setPath(e.target.value)} />
-          </label>
-          <div className="lv-tr-actions">
-            <button type="button" disabled={busy} onClick={() => void register()}>
-              Validate & register
-            </button>
-            <button type="button" disabled={busy} onClick={() => void scan()}>
-              Scan folder
-            </button>
-          </div>
-        </article>
+        {error ? (
+          <Panel title="Market data">
+            <p>{error}</p>
+          </Panel>
+        ) : null}
 
-        <article className="lv-panel lv-tr-card" style={{ gridColumn: "span 2" }}>
-          <div className="lv-section-label">Sources</div>
-          <div className="lv-tr-table-wrap">
-            <table className="lv-tr-table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>TF</th>
-                  <th>Status</th>
-                  <th>Bars</th>
-                  <th>Range</th>
-                  <th>Hash</th>
-                  <th>Path</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map((s) => (
-                  <tr key={s.source_id}>
-                    <td>{s.symbol}</td>
-                    <td>{s.timeframe}</td>
-                    <td>{s.status}</td>
-                    <td>{s.bar_count}</td>
-                    <td>
-                      {s.start_ts ?? "—"} → {s.end_ts ?? "—"}
-                    </td>
-                    <td title={s.content_hash}>{hashShort(s.content_hash)}</td>
-                    <td>{s.path}</td>
-                  </tr>
-                ))}
-                {!sources.length ? (
+        <section className="lv-tp-ticker" aria-label="Market data health">
+          {[
+            { name: "Markets root", price: status?.health.markets_root ?? "—", change: status?.health.exists ? "exists" : "missing", up: !!status?.health.exists },
+            { name: "Indexed", price: String(status?.health.sources_indexed ?? sources.length), change: "filesystem + hash", up: true },
+            { name: "Ready", price: String(status?.health.sources_ready ?? ready), change: "validated OHLCV", up: ready > 0 },
+            { name: "Invalid", price: String(invalid), change: "failed validation", up: invalid === 0 },
+            { name: "Feature", price: status?.enabled ? "ON" : "OFF", change: "LEVIATHAN_FEATURE_MARKET_SIM", up: !!status?.enabled },
+            { name: "Parquet", price: "optional", change: "pyarrow if installed", up: true },
+          ].map((item) => (
+            <article key={item.name} className="lv-tp-tick">
+              <div className="lv-tp-tick-label">{item.name}</div>
+              <div className="lv-tp-tick-value" style={{ fontSize: item.name === "Markets root" ? "0.75rem" : undefined }}>
+                {item.price}
+              </div>
+              <div className="lv-tp-tick-foot">
+                <span className={item.up ? "is-good" : "is-bad"}>{item.change}</span>
+              </div>
+            </article>
+          ))}
+        </section>
+
+        <section className="lv-tp-md-mid">
+          <Panel
+            title="Register / scan OHLCV files"
+            action={
+              <div className="lv-tp-tf">
+                <button type="button" className="lv-tp-mini" disabled={busy} onClick={() => void scan()}>
+                  Scan folder
+                </button>
+                <button type="button" className="lv-tp-mini" disabled={busy} onClick={() => void register()}>
+                  Validate & register
+                </button>
+              </div>
+            }
+          >
+            <p className="lv-tp-muted">
+              Place CSV files under the markets root. Required columns: timestamp, open, high, low, close, volume.
+              Large files stay on disk; DB stores metadata + content hash only.
+            </p>
+            <div className="lv-tp-search-box" style={{ marginTop: 8 }}>
+              <input
+                type="text"
+                placeholder="Relative path under markets root"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+              />
+            </div>
+          </Panel>
+
+          <Panel title="Indexed sources">
+            <div className="lv-tp-search-box">
+              <input
+                type="search"
+                placeholder="Filter symbol or path..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <div className="lv-tp-table-wrap">
+              <table className="lv-tp-table">
+                <thead>
                   <tr>
-                    <td colSpan={7}>No sources indexed — drop CSV files and scan</td>
+                    <th>Symbol</th>
+                    <th>TF</th>
+                    <th>Status</th>
+                    <th>Bars</th>
+                    <th>Range</th>
+                    <th>Hash</th>
+                    <th>Path</th>
                   </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-          {sources.some((s) => s.validation_error) ? (
-            <ul className="lv-tr-activity">
+                </thead>
+                <tbody>
+                  {filtered.map((s) => (
+                    <tr key={s.source_id}>
+                      <td className="sym">{s.symbol}</td>
+                      <td>{s.timeframe}</td>
+                      <td>
+                        <span className={`lv-tp-pill${s.status === "READY" ? " is-live" : ""}`}>{s.status}</span>
+                      </td>
+                      <td>{s.bar_count}</td>
+                      <td>
+                        {s.start_ts?.slice(0, 10) ?? "—"} → {s.end_ts?.slice(0, 10) ?? "—"}
+                      </td>
+                      <td title={s.content_hash}>{hashShort(s.content_hash)}</td>
+                      <td>{s.path}</td>
+                    </tr>
+                  ))}
+                  {!filtered.length ? (
+                    <tr>
+                      <td colSpan={7}>No sources indexed — drop CSV files and scan</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Validation errors">
+            <ul className="lv-tp-alert-list">
               {sources
                 .filter((s) => s.validation_error)
                 .map((s) => (
                   <li key={s.source_id}>
-                    <span className="lv-tr-dot info" />
+                    <span className="ico err" />
                     <div>
                       <strong>{s.path}</strong>
-                      <small>{s.validation_error}</small>
+                      {s.validation_error}
                     </div>
                   </li>
                 ))}
+              {!sources.some((s) => s.validation_error) ? (
+                <li>
+                  <span className="ico info" />
+                  <div>
+                    <strong>No validation errors</strong>
+                    Ready sources passed OHLCV checks
+                  </div>
+                </li>
+              ) : null}
             </ul>
-          ) : null}
-        </article>
-      </section>
-    </TradingShell>
+          </Panel>
+
+          <Panel title="Not claimed">
+            <ul className="lv-tp-src-list">
+              <li>
+                <strong>Live tick stream</strong>
+                <span>UNAVAILABLE</span>
+                <span>historical files only</span>
+              </li>
+              <li>
+                <strong>L2 order book</strong>
+                <span>OPTIONAL</span>
+                <span>graceful if missing</span>
+              </li>
+              <li>
+                <strong>Vendor feeds</strong>
+                <span>NOT WIRED</span>
+                <span>no fabricated latency</span>
+              </li>
+            </ul>
+          </Panel>
+        </section>
+
+        <p className="lv-footer-quote">
+          “Better data. Clearer markets. A more intelligent tomorrow.” — LEVIATHAN
+        </p>
+      </main>
+    </AppShell>
   );
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { layoutBoxFromScreen, resizeRect, roundLayoutBox } from "../js/geometry.js";
+import { layoutBoxFromScreen, measureBetween, resizeRect, roundLayoutBox } from "../js/geometry.js";
 
 const start = { left: 100, top: 50, width: 240, height: 120 };
 
@@ -128,4 +128,12 @@ test("west must not touch top; north must not touch left", () => {
 test("roundLayoutBox rounds on commit", () => {
   const rounded = roundLayoutBox({ left: 10.4, top: 20.6, width: 100.2, height: 50.8 });
   assert.deepEqual(rounded, { left: 10, top: 21, width: 100, height: 51 });
+});
+
+test("measureBetween reports horizontal gap labels", () => {
+  const a = { left: 0, top: 0, width: 10, height: 10, right: 10, bottom: 10 };
+  const b = { left: 30, top: 0, width: 10, height: 10, right: 40, bottom: 10 };
+  const m = measureBetween(a, b);
+  assert.equal(m.dx, 20);
+  assert.equal(m.labelX.value, 20);
 });

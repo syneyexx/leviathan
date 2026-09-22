@@ -6,6 +6,8 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+---
+
 ## 2026-09-22 — Market simulation (causal multi-agent, EXTERNAL-FIRST) — PASS
 
 ### Objective
@@ -16,10 +18,10 @@ Replace mock Trading Center numbers with a rigorous paper market simulator: real
 - Migration **v16** — market_data_sources, market_strategies/versions, market_sim_runs/fills/messages/equity/events
 - API: `Data/backend/routes/market_sim.py` under `/api/market-sim/*`
 - Flag: `LEVIATHAN_FEATURE_MARKET_SIM` (default false); `LEVIATHAN_MARKETS_ROOT`
-- Frontend: `/trading` Simulatie live room, `/trading/strategieen`, `/trading/marktdata`
+- Frontend: live binding intended for `/trading/simulatie`, `/trading/strategieen`, `/trading/marktdata` (see merge note vs pixel-exact TradingCenter pages)
 - Docs: `Data/docs/market_sim.md`
 - Tests: `Data/backend/tests/test_market_sim.py` + fixture BTC OHLCV
-- App version `0.55.0-market-sim`
+- App version `0.56.0-market-sim` (after Phase 52 `0.55.0`)
 
 ### Architecture fit
 - EXTERNAL-FIRST: worker executes bars; Core owns lifecycle/state
@@ -31,6 +33,35 @@ Replace mock Trading Center numbers with a rigorous paper market simulator: real
 - Real broker / live money
 - Perfect L2 microstructure without L2 data
 - Guaranteed alpha / in-loop foundation training
+
+---
+
+## 2026-09-22 — Phase 52 — Neuro Layer Grok-level depth jump — PASS
+
+### Objective
+Elevate the Neuro Layer from Phase 51 operational completion to frontier-feeling local reasoning quality while preserving every honesty invariant (neural signal ≠ authority, residual optional/degradable, registered ≠ trained, unmeasured ≠ passed).
+
+### Added / changed
+- **Residual:** weight-backed `HFTransformersResidualAdapter` behind `LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS`; ADDITIVE/GATED/DISABLED modes; provenance receipts (`implemented`/`applied`/`degraded_to_chat_completions`/`reason`); richer vLLM/llama.cpp stubs; telemetry on read/inject/forward
+- **Cortex:** smarter `CortexPlanner` (budget, residual, memory coverage/quality, WM load); `CortexRuntime` mid-forward critic re-steer + residual replay; depth metadata signals (advisory only)
+- **Critic:** grounding collapses without Evidence/Knowledge ID citations
+- **Memory:** Tier0 priority eviction; high-trust Verification/human writes; budgeted retrieve; lock-safe snapshot/restore; contrastive head uses EmbeddingProvider when available
+- **Training:** `TrainingRecipeRegistry.execute` status machine with fixture trainer; refuse fabricated COMPLETED; human preference bridge
+- **Observability/status:** neuro category events; status residual posture + WM load
+- Version `0.55.0-phase52`; Master `phase_span=0-52`
+- Tests: `test_neuro_phase52.py` (+ existing Phase 46–51 suites)
+
+### Verification
+- Full backend `pytest Data/backend/tests` → **229 passed**
+
+### Explicitly NOT claimed
+- Default production path is weight-backed GPU residual (still opt-in / env-dependent)
+- Multi-hour HBM/power SLO
+- Automatic preference fabrication
+- “Thought harder” as authority
+
+### Status
+**PASS**
 
 ---
 

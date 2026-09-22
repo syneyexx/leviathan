@@ -6,7 +6,6 @@ from typing import Any, Sequence
 from .critic import CriticScore, ProcessCritic
 from .residual import (
     ResidualForwardRequest,
-    ResidualForwardResult,
     ResidualHookPoint,
     ResidualInjectRequest,
     ResidualReadRequest,
@@ -41,11 +40,15 @@ class CortexRunReport:
     forward: dict[str, Any] | None
     degraded: bool
     detail: str
+    path: str = "lean"
+    residual_replay_layers: tuple[int, ...] = ()
+    mid_forward_interventions: int = 0
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "engaged": self.engaged,
             "depth": self.depth,
+            "path": self.path,
             "blocks": [item.public_dict() for item in self.blocks],
             "critic_scores": list(self.critic_scores),
             "residual_reads": list(self.residual_reads),
@@ -53,15 +56,22 @@ class CortexRunReport:
             "forward": self.forward,
             "degraded": self.degraded,
             "detail": self.detail,
+            "residual_replay_layers": list(self.residual_replay_layers),
+            "mid_forward_interventions": self.mid_forward_interventions,
             "truth": {
                 "cortex_run_is_not_completion_authority": True,
                 "neural_signal_is_not_authority": True,
+                "depth_is_not_authority": True,
             },
         }
 
 
 class CortexRuntime:
-    """Execute cortex blocks against a ResidualStreamPort with bounded critic loops."""
+    """Execute cortex blocks against a ResidualStreamPort with bounded critic loops.
+
+    Mid-forward ProcessCritic may re-steer residual injects up to K rounds when
+    consistency / grounding scores fall below thresholds. Advisory only.
+    """
 
     def __init__(
         self,
@@ -70,11 +80,15 @@ class CortexRuntime:
         critic: ProcessCritic | None = None,
         max_depth: int = 2,
         max_critic_rounds: int = 2,
+        consistency_floor: float = 0.45,
+        grounding_floor: float = 0.35,
     ) -> None:
         self.residual_port = residual_port
         self.critic = critic or ProcessCritic(enabled=True)
         self.max_depth = max(0, max_depth)
         self.max_critic_rounds = max(0, max_critic_rounds)
+        self.consistency_floor = consistency_floor
+        self.grounding_floor = grounding_floor
 
     def build_blocks(self, depth: int) -> tuple[CortexBlockSpec, ...]:
         hooks = list(self.residual_port.list_hook_points())
@@ -108,6 +122,7 @@ class CortexRuntime:
                 forward=None,
                 degraded=True,
                 detail="Residual port unsupported — cortex degraded",
+                path="lean",
             )
 
         depth = min(max(0, depth), self.max_depth)
@@ -116,6 +131,9 @@ class CortexRuntime:
         reads: list[dict[str, Any]] = []
         scores: list[dict[str, Any]] = []
         receipts: list[dict[str, Any]] = []
+        inject_list = list(inject)
+        interventions = 0
+        replay_layers: list[int] = []
 
         for block in blocks:
             hook = ResidualHookPoint(layer_index=block.layer_index, name=block.block_id, site="block_out")
@@ -128,19 +146,57 @@ class CortexRuntime:
                 evidence_ids=evidence_ids,
             )
             scores.append(score.public_dict())
+            replay_layers.append(block.layer_index)
 
-        inject_list = list(inject)
-        for _ in range(critic_rounds):
-            # Re-score latest text-ish note from residual metadata; keep advisory.
+        # Bounded mid-forward critic loop — re-steer residual path when scores are weak.
+        for round_idx in range(critic_rounds):
+            probe_text = ""
             if reads:
-                last_note = str(reads[-1].get("note") or "")
-                score = self.critic.score(
-                    last_note,
-                    plan_steps=plan_steps,
-                    knowledge_ids=knowledge_ids,
-                    evidence_ids=evidence_ids,
+                probe_text = str(reads[-1].get("note") or "")
+            if not probe_text and messages:
+                probe_text = str(messages[-1].get("content") or "")
+            score = self.critic.score(
+                probe_text,
+                plan_steps=plan_steps,
+                knowledge_ids=knowledge_ids,
+                evidence_ids=evidence_ids,
+            )
+            scores.append(score.public_dict())
+            needs_steer = (
+                score.consistency < self.consistency_floor
+                or score.factual_grounding < self.grounding_floor
+            )
+            if needs_steer and blocks:
+                target = blocks[min(round_idx, len(blocks) - 1)]
+                hook = ResidualHookPoint(
+                    layer_index=target.layer_index,
+                    name=f"{target.block_id}_resteer",
+                    site="block_out",
                 )
-                scores.append(score.public_dict())
+                # Prefer evidence/knowledge payload refs when available.
+                payload = None
+                if evidence_ids:
+                    payload = str(evidence_ids[0])
+                elif knowledge_ids:
+                    payload = str(knowledge_ids[0])
+                scale = 0.15 + 0.05 * (round_idx + 1)
+                mode = "GATED" if score.factual_grounding < self.grounding_floor else "ADDITIVE"
+                req = ResidualInjectRequest(
+                    hook=hook,
+                    mode=mode,
+                    scale=scale,
+                    source="neuro.cortex.mid_forward_critic",
+                    payload_ref=payload,
+                )
+                receipt = self.residual_port.inject(req)
+                receipts.append(receipt.public_dict())
+                inject_list.append(req)
+                interventions += 1
+                # Residual replay of selected layer after steer.
+                replay = self.residual_port.read(ResidualReadRequest(hook=hook))
+                reads.append(replay.public_dict())
+                if target.layer_index not in replay_layers:
+                    replay_layers.append(target.layer_index)
 
         forward = self.residual_port.run_forward(
             ResidualForwardRequest(
@@ -163,4 +219,7 @@ class CortexRuntime:
             forward=forward.public_dict(),
             degraded=forward.degraded_to_chat_completions,
             detail="Cortex runtime completed against residual port",
+            path="complex" if depth > 0 else "lean",
+            residual_replay_layers=tuple(replay_layers),
+            mid_forward_interventions=interventions,
         )

@@ -23,7 +23,9 @@ export function registerBuiltins(ctx) {
   go("flip-v", "Spiegel verticaal", null, "Selectie", () => ctx.widgets.flip("y"));
   go("copy-style", "Kopieer stijl", null, "Selectie", () => ctx.widgets.copyStyle());
   go("paste-style", "Plak stijl", null, "Selectie", () => ctx.widgets.pasteStyle());
+  go("detach", "Detach component", null, "Componenten", () => ctx.widgets.detachComponent());
   go("component-create", "Maak component", "Mod+Alt+K", "Componenten", () => ctx.widgets.createComponent());
+  go("preset-full", "Layout volledig", null, "Panelen", () => ctx.chrome.applyPreset("full"));
 
   go("tool-select", "Selecteren", "V", "Weergave", () => ctx.store.setState({ tool: "select" }));
   go("tool-hand", "Hand", "H", "Weergave", () => ctx.store.setState({ tool: "hand" }));
@@ -73,9 +75,15 @@ export function registerBuiltins(ctx) {
   tab("panel-tokens", "Tokens", "Mod+Alt+T", "tokens");
   tab("panel-components", "Componenten", null, "components");
   tab("panel-ai", "AI-instructie", "Mod+Alt+A", "ai");
+  tab("panel-diagnostics", "Diagnostics", "Mod+Alt+D", "diagnostics");
   tab("panel-help", "Help / shortcuts", "Mod+/", "help");
   go("panel-code", "Codepaneel", "Mod+Alt+C", "Panelen", () => ctx.store.setState({ showCode: !ctx.store.getState().showCode }));
   go("preset-studio", "Layout studio", null, "Panelen", () => ctx.chrome.applyPreset("studio"));
   go("preset-focus", "Layout focus", null, "Panelen", () => ctx.chrome.applyPreset("focus"));
   go("preset-code", "Layout code", null, "Panelen", () => ctx.chrome.applyPreset("code"));
+
+  for (const page of ctx.pages?.EDITOR_PAGES || []) {
+    const id = `page-${(page.path || "/").replace(/\W+/g, "_") || "root"}`;
+    go(id, `Pagina: ${page.label}`, null, "Pagina's", () => ctx.pages.go(page.path));
+  }
 }

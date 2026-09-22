@@ -82,6 +82,31 @@ export function createInspector(ctx) {
     return ctx.session.primary;
   }
 
+  /** All mutable targets for batch property writes (multi-select aware). */
+  function targets() {
+    const list = ctx.selection.mutable("edit");
+    return list.length ? list : el() ? [el()] : [];
+  }
+
+  function readMixed(prop) {
+    const nodes = targets();
+    if (!nodes.length) return { value: "", mixed: false, hint: "" };
+    const first = ctx.content.readProp(nodes[0], prop);
+    let mixed = false;
+    for (let i = 1; i < nodes.length; i += 1) {
+      const next = ctx.content.readProp(nodes[i], prop);
+      if ((next.value || "") !== (first.value || "")) {
+        mixed = true;
+        break;
+      }
+    }
+    return { value: mixed ? "" : first.value, mixed, hint: first.hint || "", placeholder: mixed ? "Gemengd" : first.hint || "" };
+  }
+
+  function applyAll(prop, value) {
+    for (const node of targets()) ctx.content.applyProp(node, prop, value);
+  }
+
   function onInput(event) {
     const t = event.target;
     const node = el();
@@ -122,20 +147,21 @@ export function createInspector(ctx) {
       if (t.dataset.role === "color-hex") value = syncColorAlpha(t);
       if (t.dataset.role === "color-alpha") value = syncColorAlpha(t);
       if (t.dataset.role === "position-mode" || t.dataset.prop === "position") {
-        ctx.layout.setPositionMode(node, value);
+        for (const n of targets()) ctx.layout.setPositionMode(n, value);
         ctx.chrome.schedulePaint();
         return;
       }
       if (t.dataset.prop === "width" && ctx.session.aspectLock && ctx.session.aspect) {
-        ctx.content.applyProp(node, "width", value);
+        applyAll("width", value);
         const w = numFrom(value);
-        if (w != null) ctx.content.applyProp(node, "height", `${Math.round(w / ctx.session.aspect)}px`);
+        if (w != null) applyAll("height", `${Math.round(w / ctx.session.aspect)}px`);
+        ctx.chrome.schedulePaint();
         return;
       }
       if (t.dataset.prop === "left" || t.dataset.prop === "top" || t.dataset.prop === "width" || t.dataset.prop === "height") {
-        ctx.layout.ensureFreeTransform(node);
+        for (const n of targets()) ctx.layout.ensureFreeTransform(n);
       }
-      ctx.content.applyProp(node, t.dataset.prop, value);
+      applyAll(t.dataset.prop, value);
       ctx.chrome.schedulePaint();
     }
   }
@@ -190,7 +216,12 @@ export function createInspector(ctx) {
     }
     const setProp = event.target.closest("[data-set-prop]");
     if (setProp && node) {
-      ctx.commands.capture(setProp.dataset.setProp, () => ctx.content.applyProp(node, setProp.dataset.setProp, setProp.dataset.setValue));
+      const nodes = ctx.selection.mutable("edit");
+      ctx.commands.capture(setProp.dataset.setProp, () => {
+        for (const n of nodes.length ? nodes : [node]) {
+          ctx.content.applyProp(n, setProp.dataset.setProp, setProp.dataset.setValue);
+        }
+      });
       bumpRender(ctx);
       return;
     }
@@ -240,6 +271,7 @@ export function createInspector(ctx) {
     if (act === "duplicate") ctx.widgets.duplicateSelection();
     if (act === "delete") ctx.widgets.deleteSelection();
     if (act === "component") ctx.widgets.createComponent();
+    if (act === "detach") ctx.widgets.detachComponent(node);
     if (act === "clear") {
       ctx.commands.capture("reset-styles", () => ctx.content.clearStyles(node));
       ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
@@ -390,10 +422,15 @@ function renderInspector(ctx) {
   const selector = ctx.selection.selectorFor(node);
   const crumbs = ctx.selection.path(node);
   const bp = ctx.store.getState().breakpoint;
+  const multi = ctx.session.selected.length;
   let html = `<div class="lvb-crumbs">${crumbs
     .map((part) => `<button type="button" data-crumb="${escapeHtml(ctx.selection.selectorFor(part))}">${escapeHtml(ctx.selection.labelFor(part))}</button>`)
     .join("<span>/</span>")}</div>`;
-  html += `<h3>${escapeHtml(selector)}</h3>`;
+  if (multi > 1) {
+    html += `<h3>${multi} elementen</h3><p class="lvb-muted">Gemengde waarden tonen “Gemengd”. Wijzigingen gelden voor alle geselecteerde elementen.</p>`;
+  } else {
+    html += `<h3>${escapeHtml(selector)}</h3>`;
+  }
   if (bp !== "desktop") html += `<p class="lvb-flag">Overrides voor ${escapeHtml(bp)} → content JSON</p>`;
   if (node.tagName === "IMG") {
     const fit = ctx.content.readProp(node, "object-fit").value || "cover";
@@ -458,6 +495,7 @@ function renderInspector(ctx) {
       <button type="button" class="lvb-chip" data-act="copy-style">Kopieer stijl</button>
       <button type="button" class="lvb-chip" data-act="paste-style">Plak stijl</button>
       <button type="button" class="lvb-chip" data-act="component">Maak component</button>
+      <button type="button" class="lvb-chip" data-act="detach">Detach</button>
       <button type="button" class="lvb-chip" data-act="clear">Reset styles</button>
     </div>`;
   return html;
@@ -506,26 +544,30 @@ function sideInput(box, side, value) {
 }
 
 function sectionSize(ctx, node) {
-  const width = ctx.content.readProp(node, "width");
-  const height = ctx.content.readProp(node, "height");
-  const minW = ctx.content.readProp(node, "min-width");
-  const maxW = ctx.content.readProp(node, "max-width");
-  const minH = ctx.content.readProp(node, "min-height");
-  const maxH = ctx.content.readProp(node, "max-height");
-  // Images default unlocked — "Ratio vrij" until the operator locks.
+  const nodes = ctx.session.selected.filter((el) => ctx.selection.canMutate(el));
+  const mix = (prop) => {
+    if (nodes.length < 2) return ctx.content.readProp(node, prop);
+    const first = ctx.content.readProp(nodes[0], prop);
+    for (let i = 1; i < nodes.length; i += 1) {
+      if ((ctx.content.readProp(nodes[i], prop).value || "") !== (first.value || "")) {
+        return { value: "", mixed: true, hint: first.hint, placeholder: "Gemengd" };
+      }
+    }
+    return first;
+  };
   const lockLabel = ctx.session.aspectLock ? "Ratio vast" : "Ratio vrij (ontgrendeld)";
   return `<div class="lvb-section">Formaat</div>
     <div class="lvb-row">
-      ${numField("W", "width", width, true)}
-      ${numField("H", "height", height, true)}
+      ${numField("W", "width", mix("width"), true)}
+      ${numField("H", "height", mix("height"), true)}
     </div>
     <button type="button" class="lvb-btn ${ctx.session.aspectLock ? "is-on" : ""}" data-act="aspect">${lockLabel}</button>
     <p class="lvb-muted">Shift tijdens resize = tijdelijk ratio. Inspectorknop = vast.</p>
     <div class="lvb-row">
-      ${numField("Min W", "min-width", minW, true)}
-      ${numField("Max W", "max-width", maxW, true)}
-      ${numField("Min H", "min-height", minH, true)}
-      ${numField("Max H", "max-height", maxH, true)}
+      ${numField("Min W", "min-width", mix("min-width"), true)}
+      ${numField("Max W", "max-width", mix("max-width"), true)}
+      ${numField("Min H", "min-height", mix("min-height"), true)}
+      ${numField("Max H", "max-height", mix("max-height"), true)}
     </div>`;
 }
 
@@ -533,9 +575,10 @@ function numField(label, prop, read, px) {
   const raw = fieldValue(read);
   const shown = px && raw.endsWith("px") ? raw.slice(0, -2) : raw;
   const bound = isTokenValue(raw);
-  return `<label class="lvb-field ${bound ? "is-bound" : ""}"><span>${label}</span>
+  const mixed = read.mixed ? " is-mixed" : "";
+  return `<label class="lvb-field ${bound ? "is-bound" : ""}${mixed}"><span>${label}</span>
       <span class="lvb-inline">
-        <input data-live="1" data-prop="${prop}" ${px ? 'data-unit="px"' : ""} value="${escapeHtml(bound ? raw : shown)}" placeholder="${escapeHtml(read.hint || "")}" />
+        <input data-live="1" data-prop="${prop}" ${px ? 'data-unit="px"' : ""} value="${escapeHtml(bound ? raw : shown)}" placeholder="${escapeHtml(read.placeholder || read.hint || (read.mixed ? "Gemengd" : ""))}" />
         <button type="button" class="lvb-mini" data-token-for="${prop}">var</button>
         ${bound ? `<button type="button" class="lvb-mini" data-detach="${prop}">×</button>` : ""}
       </span>
@@ -549,6 +592,8 @@ function sectionType(ctx, node) {
   const ls = ctx.content.readProp(node, "letter-spacing");
   const family = ctx.content.readProp(node, "font-family");
   const align = ctx.content.readProp(node, "text-align").value || "left";
+  const transform = ctx.content.readProp(node, "text-transform").value || "none";
+  const decoration = ctx.content.readProp(node, "text-decoration").value || "none";
   return `<div class="lvb-section">Typografie</div>
     <div class="lvb-row">
       ${numField("Grootte", "font-size", size, true)}
@@ -570,6 +615,12 @@ function sectionType(ctx, node) {
     </label>
     <div class="lvb-seg" data-seg="text-align">
       ${["left", "center", "right", "justify"].map((v) => `<button type="button" class="lvb-mini ${align === v ? "is-on" : ""}" data-set-prop="text-align" data-set-value="${v}">${v === "left" ? "Links" : v === "center" ? "Midden" : v === "right" ? "Rechts" : "Uitvul"}</button>`).join("")}
+    </div>
+    <div class="lvb-seg">
+      ${["none", "uppercase", "lowercase", "capitalize"].map((v) => `<button type="button" class="lvb-mini ${transform === v ? "is-on" : ""}" data-set-prop="text-transform" data-set-value="${v}">${v === "none" ? "Aa" : v}</button>`).join("")}
+    </div>
+    <div class="lvb-seg">
+      ${["none", "underline", "line-through"].map((v) => `<button type="button" class="lvb-mini ${decoration === v ? "is-on" : ""}" data-set-prop="text-decoration" data-set-value="${v}">${v === "none" ? "Geen" : v}</button>`).join("")}
     </div>`;
 }
 

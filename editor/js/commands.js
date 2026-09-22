@@ -122,6 +122,18 @@ export function createCommands(ctx) {
     emit();
   }
 
+  function exportStack() {
+    return { history: history.slice(), index };
+  }
+
+  function importStack(bag) {
+    endGesture();
+    history = Array.isArray(bag?.history) ? bag.history.slice() : [];
+    index = typeof bag?.index === "number" ? Math.min(bag.index, history.length - 1) : history.length - 1;
+    if (index < -1) index = -1;
+    emit();
+  }
+
   return {
     execute,
     undo,
@@ -130,6 +142,8 @@ export function createCommands(ctx) {
     endGesture,
     capture,
     reset,
+    exportStack,
+    importStack,
     isGesturing: () => !!gesture,
     isSuppressed: () => suppress > 0,
     _debug: () => ({ length: history.length, index }),

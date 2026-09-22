@@ -151,6 +151,7 @@ residual_runtime = build_residual_runtime(
     kind=settings.neuro_runtime.residual_kind,
     model_id=settings.neuro_runtime.residual_model_id,
     device=settings.neuro_runtime.residual_device,
+    load_weights=settings.neuro_runtime.residual_load_weights,
 )
 neuro_memory = NeuroMemoryFacade(
     enabled=settings.features.neuro_enabled and settings.features.neuro_memory_tiers,
@@ -158,11 +159,13 @@ neuro_memory = NeuroMemoryFacade(
     knowledge_store=knowledge,
     knowledge_retriever=retriever,
     snapshot_store=neuro_snapshots,
+    use_embeddings=bool(retriever.embeddings.available()),
 )
 neuro_absorb = NeuroAbsorbService(knowledge)
 neuro_contrastive = ContrastiveRetrievalHead(
     neuro_memory,
-    embeddings_available=False,
+    embeddings_available=bool(retriever.embeddings.available()),
+    embedding_provider=retriever.embeddings if retriever.embeddings.available() else None,
 )
 neuro_critic = ProcessCritic(enabled=settings.features.neuro_process_critic)
 cortex_runtime = CortexRuntime(
@@ -178,8 +181,13 @@ neuro_advisor = NeuroAdvisor(
     memory_tiers_enabled=settings.features.neuro_memory_tiers,
     residual_port=residual_runtime,
     memory_facade=neuro_memory,
-    cortex_planner=CortexPlanner(enabled=settings.features.neuro_cortex),
+    cortex_planner=CortexPlanner(
+        enabled=settings.features.neuro_cortex,
+        default_token_budget=settings.context.token_budget,
+    ),
     critic=neuro_critic,
+    token_budget=settings.context.token_budget,
+    observability=observability,
 )
 module_manager = ModuleManager(
     discovery_roots=(
@@ -587,7 +595,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.55.0-market-sim", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.56.0-market-sim", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -687,7 +695,18 @@ async def health() -> dict:
             "memory_tiers": settings.features.neuro_memory_tiers,
             "residual_supported": residual_runtime.supports_residuals(),
             "residual_kind": settings.neuro_runtime.residual_kind,
+            "residual_load_weights": settings.neuro_runtime.residual_load_weights,
+            "residual_runtime": (
+                residual_runtime.runtime_info()
+                if hasattr(residual_runtime, "runtime_info")
+                else {"kind": settings.neuro_runtime.residual_kind}
+            ),
+            "working_memory_load": neuro_memory.working.load if neuro_memory.enabled else 0.0,
             "absorb": dict(neuro_absorb.telemetry),
+            "truth": {
+                "neural_signal_is_not_authority": True,
+                "residual_implemented": residual_runtime.supports_residuals(),
+            },
         },
         "module_manager": {
             "enabled": settings.features.module_manager_enabled,

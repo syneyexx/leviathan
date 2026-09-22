@@ -76,7 +76,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.51.0-phase51`).
+FastAPI application (`version=0.55.0-phase52`).
 
 Responsibilities:
 
@@ -437,6 +437,7 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 49 — Cortex + recipes | PASS | CortexRuntime; training recipes registered ≠ trained |
 | Phase 50 — Harden | PASS | Subprocess isolation flag; neuro release/master gates |
 | Phase 51 — Neuro ops complete | PASS | Chat/context wire; absorb schedule; soak; Status UI; stubs |
+| Phase 52 — Neuro Grok-level depth | PASS | Weight-backed HF opt-in; smarter cortex/critic/memory; honest recipe execute |
 
 ---
 

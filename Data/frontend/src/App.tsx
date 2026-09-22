@@ -17,10 +17,14 @@ import { ResearchPage } from "./pages/ResearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
-import { TradingCenterPage } from "./pages/TradingCenterPage";
-import { StrategieenPage } from "./pages/trading/StrategieenPage";
+import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
 import { MarktdataPage } from "./pages/trading/MarktdataPage";
+import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
+import { PortefeuillePage } from "./pages/trading/PortefeuillePage";
+import { SimulatiePage } from "./pages/trading/SimulatiePage";
+import { StrategieenPage } from "./pages/trading/StrategieenPage";
 import { TrainingPage } from "./pages/TrainingPage";
+import { WorkflowsPage } from "./pages/WorkflowsPage";
 
 export default function App() {
   return (
@@ -47,12 +51,16 @@ export default function App() {
       <Route path="/tools" element={<ToolsPage />} />
       <Route path="/performance" element={<PlaceholderPage title="Performance" modeLabel="Runtime Mode" />} />
       <Route path="/mcp" element={<PlaceholderPage title="MCP" modeLabel="Runtime Mode" />} />
-      <Route path="/workflows" element={<PlaceholderPage title="Workflows" modeLabel="Runtime Mode" />} />
+      <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/console" element={<PlaceholderPage title="Console" modeLabel="Runtime Mode" />} />
       <Route path="/analytics" element={<AnalyticsPage />} />
-      <Route path="/trading" element={<TradingCenterPage />} />
+      <Route path="/trading" element={<Navigate to="/trading/simulatie" replace />} />
+      <Route path="/trading/simulatie" element={<SimulatiePage />} />
       <Route path="/trading/strategieen" element={<StrategieenPage />} />
       <Route path="/trading/marktdata" element={<MarktdataPage />} />
+      <Route path="/trading/portefeuille" element={<PortefeuillePage />} />
+      <Route path="/trading/paper" element={<PaperTradingPage />} />
+      <Route path="/trading/broker" element={<BrokerTradingPage />} />
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/chat.html" element={<Navigate to="/chat" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />

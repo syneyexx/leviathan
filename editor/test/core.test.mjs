@@ -74,6 +74,52 @@ test("commands undo redo and cap history", () => {
   assert.equal(commands._debug().length, 100);
 });
 
+test("commands exportStack / importStack scopes history bags", () => {
+  const store = createStore({ canUndo: false, canRedo: false, historyLabel: "" });
+  let current = 0;
+  const ctx = {
+    store,
+    session: {},
+    content: {
+      snapshot: () => current,
+      sameSnap: (a, b) => a === b,
+      restore: (v) => {
+        current = v;
+      },
+      setStatus: () => {},
+    },
+  };
+  const commands = createCommands(ctx);
+  commands.execute({
+    label: "inc",
+    do: () => {
+      current += 1;
+    },
+    undo: () => {
+      current -= 1;
+    },
+  });
+  const bag = commands.exportStack();
+  assert.equal(bag.history.length, 1);
+  commands.reset();
+  assert.equal(commands._debug().length, 0);
+  commands.importStack(bag);
+  assert.equal(commands._debug().length, 1);
+  assert.equal(commands._debug().index, 0);
+  commands.undo();
+  assert.equal(current, 0);
+});
+
+test("scene-graph accumulates drawable nodes", async () => {
+  const { createScene, rect, line, label, COLORS, NodeType } = await import("../js/scene-graph.js");
+  const scene = createScene();
+  scene.push(rect(1, 2, 3, 4, COLORS.gold), line(0, 0, 5, 5, COLORS.cyan, 2), label(9, 9, "hi"));
+  assert.equal(scene.count, 3);
+  assert.equal(scene.nodes[0].type, NodeType.RECT);
+  scene.clear();
+  assert.equal(scene.count, 0);
+});
+
 test("gesture snapshots once", () => {
   let current = "a";
   const store = createStore({});

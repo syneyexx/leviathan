@@ -6,7 +6,8 @@
  * P0: never parseFloat(style.left)||0 for resize origins — promote first.
  */
 
-import { collectGuides, intersects, resizeRect, roundLayoutBox, snapRect } from "./geometry.js";
+import { collectGuides, intersects, measureBetween, resizeRect, roundLayoutBox, snapRect } from "./geometry.js";
+import { SNAP_THRESHOLD } from "./constants.js";
 
 export function createInteractions(ctx) {
   let press = null;
@@ -69,6 +70,7 @@ export function createInteractions(ctx) {
     if (ctx.session.phase === "resize") return resizeMove(event);
     if (ctx.session.phase === "rotate") return rotateMove(event);
     if (ctx.session.phase === "marquee") return marqueeMove(event);
+    if (ctx.session.phase === "measure") return measureMove(event);
     if (!press) return;
     if (Math.hypot(event.clientX - press.x, event.clientY - press.y) < 4) return;
     if (press.kind === "marquee") {
@@ -96,7 +98,13 @@ export function createInteractions(ctx) {
     else if (phase === "rotate") finishRotate();
     else if (phase === "marquee") finishMarquee(event);
     else if (phase === "pan") setPhase("idle");
-    else if (press?.kind === "press") {
+    else if (phase === "measure") {
+      // Stay in measure until second click completes (handled in addMeasure).
+      press = null;
+      ctx.session.swallow = true;
+      ctx.chrome.schedulePaint();
+      return;
+    } else if (press?.kind === "press") {
       if (press.shift) ctx.selection.toggle(press.hit);
       else ctx.selection.set([press.hit], press.hit);
     } else if (press?.kind === "marquee") {
@@ -137,8 +145,19 @@ export function createInteractions(ctx) {
   }
 
   function startDrag(event) {
-    const els = ctx.selection.mutable("move");
+    let els = ctx.selection.mutable("move");
     if (!els.length) return;
+
+    // Alt at drag start → duplicate in place, then drag the clones (Figma-style).
+    // Ctrl/Meta during drag → reparent (see dragMove).
+    if (event.altKey) {
+      const clones = ctx.widgets.duplicateInPlace?.(els) || [];
+      if (clones.length) {
+        ctx.selection.set(clones, clones[0]);
+        els = clones.filter((el) => ctx.selection.canMutate(el, "move"));
+      }
+    }
+
     const origins = [];
     for (const el of els) {
       const box = ctx.layout.ensureFreeTransform(el);
@@ -148,13 +167,18 @@ export function createInteractions(ctx) {
       }
       origins.push({ el, left: box.left, top: box.top, width: box.width, height: box.height });
     }
-    ctx.commands.beginGesture("verplaatsen");
+    ctx.commands.beginGesture(event.altKey ? "dupliceren+verplaatsen" : "verplaatsen");
+    const ignore = new Set(origins.map((o) => o.el));
+    const guides = ctx.store.getState().snap
+      ? collectGuides(origins[0].el, ignore, { peers: [], includeViewport: true })
+      : { guidesX: [], guidesY: [] };
     press = {
       kind: "drag",
       x: event.clientX,
       y: event.clientY,
       z: ctx.store.getState().zoom || 1,
       origins,
+      guideCache: guides,
     };
     setPhase("drag");
   }
@@ -168,33 +192,41 @@ export function createInteractions(ctx) {
       if (Math.abs(event.clientX - press.x) > Math.abs(event.clientY - press.y)) dy = 0;
       else dx = 0;
     }
+
     const primary = press.origins[0];
+    const minL = Math.min(...press.origins.map((o) => o.left));
+    const minT = Math.min(...press.origins.map((o) => o.top));
+    const maxR = Math.max(...press.origins.map((o) => o.left + o.width));
+    const maxB = Math.max(...press.origins.map((o) => o.top + o.height));
+    const groupW = maxR - minL;
+    const groupH = maxB - minT;
+
     const base = primary.el.getBoundingClientRect();
     const curLeft = parseFloat(primary.el.style.left) || 0;
     const curTop = parseFloat(primary.el.style.top) || 0;
-    const proposedLeft = primary.left + dx;
-    const proposedTop = primary.top + dy;
+    // Screen rect of the whole selection AABB after proposed delta
     const rect = {
-      left: base.left + (proposedLeft - curLeft) * z,
-      top: base.top + (proposedTop - curTop) * z,
-      width: base.width,
-      height: base.height,
+      left: base.left + (primary.left + dx - curLeft) * z - (primary.left - minL) * z,
+      top: base.top + (primary.top + dy - curTop) * z - (primary.top - minT) * z,
+      width: groupW * z,
+      height: groupH * z,
     };
+
     let snap = { dx: 0, dy: 0, lineX: null, lineY: null, kindX: null, kindY: null };
     if (ctx.store.getState().snap) {
-      const ignore = new Set(press.origins.map((o) => o.el));
-      const guides = collectGuides(primary.el, ignore);
-      snap = snapRect(rect, guides.guidesX, guides.guidesY, 6);
+      const guides = press.guideCache || collectGuides(primary.el, new Set(press.origins.map((o) => o.el)));
+      snap = snapRect(rect, guides.guidesX, guides.guidesY, SNAP_THRESHOLD);
     }
     const fdx = dx + snap.dx / z;
     const fdy = dy + snap.dy / z;
     for (const origin of press.origins) {
-      // Keep floats during the gesture; round on pointer-up via commitBox.
       origin.el.style.left = `${origin.left + fdx}px`;
       origin.el.style.top = `${origin.top + fdy}px`;
     }
     ctx.chrome.setGuides(snap);
-    if (event.altKey) {
+
+    // Ctrl/Meta = reparent widgets (Alt is reserved for duplicate-on-start)
+    if (event.ctrlKey || event.metaKey) {
       const drop = findDrop(event, press.origins.map((o) => o.el));
       setPhase("reparent");
       ctx.chrome.showDrop(drop);
@@ -336,6 +368,33 @@ export function createInteractions(ctx) {
     // Width-only unlocked: do NOT set height (keeps frozen promote height / auto semantics).
     if (writeH) el.style.height = `${next.height}px`;
 
+    // Snap resized edges to guides (screen space)
+    if (ctx.store.getState().snap && !event.altKey) {
+      const screen = el.getBoundingClientRect();
+      const guides = collectGuides(el, new Set([el]), { includeViewport: true });
+      const snap = snapRect(screen, guides.guidesX, guides.guidesY, SNAP_THRESHOLD);
+      if (snap.dx || snap.dy) {
+        const zl = z;
+        if ((hasE || hasW) && snap.dx) {
+          if (hasW && !hasE) {
+            el.style.left = `${parseFloat(el.style.left) + snap.dx / zl}px`;
+            el.style.width = `${parseFloat(el.style.width) - snap.dx / zl}px`;
+          } else if (hasE) {
+            el.style.width = `${parseFloat(el.style.width) + snap.dx / zl}px`;
+          }
+        }
+        if ((hasN || hasS) && snap.dy) {
+          if (hasN && !hasS) {
+            el.style.top = `${parseFloat(el.style.top) + snap.dy / zl}px`;
+            el.style.height = `${parseFloat(el.style.height) - snap.dy / zl}px`;
+          } else if (hasS) {
+            el.style.height = `${parseFloat(el.style.height) + snap.dy / zl}px`;
+          }
+        }
+        ctx.chrome.setGuides(snap);
+      } else ctx.chrome.clearGuides();
+    }
+
     ctx.chrome.schedulePaint();
   }
 
@@ -359,13 +418,16 @@ export function createInteractions(ctx) {
   function startRotate(event, el) {
     ctx.commands.beginGesture("rotatie");
     const rect = el.getBoundingClientRect();
+    const read = ctx.content.readProp?.(el, "rotate");
+    const fromProp = parseFloat(String(read?.value || "").replace("deg", ""));
+    const start = Number.isFinite(fromProp) ? fromProp : parseFloat(el.style.rotate) || 0;
     press = {
       kind: "rotate",
       el,
       cx: rect.left + rect.width / 2,
       cy: rect.top + rect.height / 2,
       a0: Math.atan2(event.clientY - (rect.top + rect.height / 2), event.clientX - (rect.left + rect.width / 2)),
-      start: parseFloat(el.style.rotate) || 0,
+      start,
     };
     setPhase("rotate");
   }
@@ -374,7 +436,7 @@ export function createInteractions(ctx) {
     const a1 = Math.atan2(event.clientY - press.cy, event.clientX - press.cx);
     let deg = press.start + ((a1 - press.a0) * 180) / Math.PI;
     if (event.shiftKey) deg = Math.round(deg / 15) * 15;
-    press.el.style.rotate = `${Math.round(deg)}deg`;
+    press.el.style.rotate = `${Math.round(deg * 10) / 10}deg`;
     ctx.chrome.schedulePaint();
   }
 
@@ -397,8 +459,11 @@ export function createInteractions(ctx) {
     const root = document.getElementById("root");
     if (!root) return;
     const hits = [];
-    root.querySelectorAll("*").forEach((el) => {
+    // Prefer editable candidates over querySelectorAll("*")
+    const candidates = root.querySelectorAll("[data-lvb-id], img, [class*='lv-']");
+    candidates.forEach((el) => {
       if (ctx.selection.isBuilderNode(el) || ctx.selection.isShell(el)) return;
+      if (!ctx.selection.canMutate(el) && ctx.selection.isLocked(el)) return;
       const box = el.getBoundingClientRect();
       if (box.width < 2 || box.height < 2) return;
       if (intersects(rect, box)) hits.push(el);
@@ -422,18 +487,45 @@ export function createInteractions(ctx) {
   function addMeasure(event) {
     const local = ctx.camera.screenToLocal(event.clientX, event.clientY);
     const point = { x: local.x, y: local.y };
-    if (!ctx.session.measure?.a || ctx.session.measure.b) ctx.session.measure = { a: point, b: null };
-    else {
+    if (!ctx.session.measure?.a || ctx.session.measure.b) {
+      ctx.session.measure = { a: point, b: null, live: null, between: null };
+      setPhase("measure");
+      press = { kind: "measure", x: event.clientX, y: event.clientY };
+    } else {
       ctx.session.measure.b = point;
+      ctx.session.measure.live = null;
       const dx = Math.round(point.x - ctx.session.measure.a.x);
       const dy = Math.round(point.y - ctx.session.measure.a.y);
       ctx.content.setStatus(`Meet ${Math.round(Math.hypot(dx, dy))}px · Δx ${dx} · Δy ${dy}`, "ok");
+      setPhase("idle");
     }
+    ctx.chrome.schedulePaint();
+  }
+
+  function measureMove(event) {
+    if (!ctx.session.measure?.a || ctx.session.measure.b) return;
+    const local = ctx.camera.screenToLocal(event.clientX, event.clientY);
+    ctx.session.measure.live = { x: local.x, y: local.y };
     ctx.chrome.schedulePaint();
   }
 
   function onSelectChrome(event) {
     if (!enabled()) return;
+    const rotateHandle = event.target.closest?.(".lvb-rotate");
+    if (rotateHandle) {
+      event.preventDefault();
+      event.stopPropagation();
+      const el = ctx.session.primary;
+      if (el && ctx.selection.canMutate(el)) {
+        startRotate(event, el);
+        try {
+          rotateHandle.setPointerCapture?.(event.pointerId);
+        } catch {
+          /* optional */
+        }
+      }
+      return;
+    }
     const handle = event.target.closest?.(".lvb-handle");
     if (handle) {
       event.preventDefault();
@@ -521,6 +613,7 @@ export function createInteractions(ctx) {
       { id: "ungroup", label: "Degroeperen", run: () => ctx.registry.run("ungroup") },
       { id: "copy-style", label: "Kopieer stijl", run: () => ctx.registry.run("copy-style") },
       { id: "paste-style", label: "Plak stijl", run: () => ctx.registry.run("paste-style") },
+      { id: "detach", label: "Detach component", run: () => ctx.registry.run("detach"), disabled: !el?.dataset?.lvbComponentId },
     ];
   }
 
@@ -626,9 +719,24 @@ export function createInteractions(ctx) {
     }, true);
     document.addEventListener("mousemove", (event) => {
       if (!enabled() || ctx.session.phase !== "idle" || ctx.session.inlineEl) return;
-      if (ctx.selection.isBuilderNode(event.target)) ctx.session.hoverEl = null;
-      else ctx.session.hoverEl = ctx.selection.pickEditable(event.target);
-      ctx.chrome.schedulePaint();
+      if (ctx.selection.isBuilderNode(event.target)) {
+        ctx.session.hoverEl = null;
+      } else {
+        const next = ctx.selection.pickEditable(event.target);
+        if (next !== ctx.session.hoverEl) {
+          ctx.session.hoverEl = next;
+          ctx.chrome.schedulePaint();
+        }
+      }
+      // Alt+hover over another element while something is selected → spacing measure
+      if (event.altKey && ctx.session.primary && ctx.session.hoverEl && ctx.session.hoverEl !== ctx.session.primary) {
+        const between = measureBetween(ctx.session.primary.getBoundingClientRect(), ctx.session.hoverEl.getBoundingClientRect());
+        ctx.session.measure = { ...(ctx.session.measure || {}), between, a: ctx.session.measure?.a || null, b: ctx.session.measure?.b || null };
+        ctx.chrome.schedulePaint();
+      } else if (ctx.session.measure?.between) {
+        ctx.session.measure.between = null;
+        ctx.chrome.schedulePaint();
+      }
     }, true);
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
