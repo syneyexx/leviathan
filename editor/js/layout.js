@@ -8,6 +8,7 @@
  */
 
 import { alignItems, distributeItems, layoutBoxFromScreen, resizeGroupMembers, resizeRect, roundLayoutBox } from "./geometry.js";
+import { captureElementChrome, restoreElementChrome } from "./gesture-draft.js";
 
 export function createLayout(ctx) {
   /** @deprecated use ensureFreeTransform — kept for any stray callers */
@@ -105,11 +106,16 @@ export function createLayout(ctx) {
   /**
    * Promote a non-shell element to the free-transform model (absolute box)
    * without a visual jump. Returns the writable layout box or null on abort.
+   * On failure, restores exact prior style/attribute chrome (P0-D).
    */
   function ensureFreeTransform(el) {
     if (!(el instanceof Element)) return null;
     if (ctx.selection?.isShell?.(el)) return null;
     if (ctx.selection?.isBuilderNode?.(el)) return null;
+
+    // Register with open gesture draft before first mutation
+    ctx.commands?.gestureDraft?.note?.(el);
+    const pre = captureElementChrome(el);
 
     const z = zoom();
     const before = el.getBoundingClientRect();
@@ -130,6 +136,7 @@ export function createLayout(ctx) {
     const box = captureLayoutBox(el);
     if (!box || !Number.isFinite(box.left) || !Number.isFinite(box.top)) {
       ctx.content?.setStatus?.("Kan box niet vastleggen", "dirty");
+      if (pre) restoreElementChrome(pre);
       return null;
     }
 
@@ -153,6 +160,7 @@ export function createLayout(ctx) {
       Math.abs(check.height - before.height) > 1
     ) {
       ctx.content?.setStatus?.("Transform vastleggen mislukt — geen sprong toegestaan", "dirty");
+      if (pre) restoreElementChrome(pre);
       return null;
     }
 

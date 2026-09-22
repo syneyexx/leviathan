@@ -193,16 +193,17 @@ export function createInteractions(ctx) {
       }
     }
 
+    ctx.commands.beginGesture(event.altKey ? "dupliceren+verplaatsen" : "verplaatsen");
     const origins = [];
     for (const el of els) {
       const box = ctx.layout.ensureFreeTransform(el);
       if (!box) {
+        ctx.commands.cancelGesture?.();
         ctx.content.setStatus("Verplaatsen geannuleerd — box niet vastgelegd", "dirty");
         return;
       }
       origins.push({ el, left: box.left, top: box.top, width: box.width, height: box.height });
     }
-    ctx.commands.beginGesture(event.altKey ? "dupliceren+verplaatsen" : "verplaatsen");
     const ignore = new Set(origins.map((o) => o.el));
     const guides = ctx.store.getState().snap
       ? collectGuides(origins[0].el, ignore, { peers: [], includeViewport: true })
@@ -335,11 +336,15 @@ export function createInteractions(ctx) {
 
     if (!ctx.selection.canMutate(el)) return;
 
+    // Open gesture draft BEFORE promotion so failed promote restores DOM + model
+    ctx.commands.beginGesture("formaat");
+
     const candidates = ctx.selection.mutable("edit").filter((node) => !ctx.selection.regionFor(node)?.varKey);
     const origins = [];
     for (const node of candidates.length ? candidates : [el]) {
       const box = ctx.layout.ensureFreeTransform(node);
       if (!box) {
+        ctx.commands.cancelGesture?.();
         ctx.content.setStatus("Formaat geannuleerd — box niet vastgelegd", "dirty");
         return;
       }
@@ -356,7 +361,6 @@ export function createInteractions(ctx) {
 
     const primaryIndex = Math.max(0, origins.findIndex((o) => o.el === el));
     const constraints = ctx.layout.readConstraints?.(origins[primaryIndex].el) || { minW: 16, minH: 16, maxW: null, maxH: null };
-    ctx.commands.beginGesture("formaat");
     ctx.session._resizeLive = null;
     press = {
       kind: "resize",
@@ -807,14 +811,8 @@ export function createInteractions(ctx) {
     if (event.key === "Escape") {
       ctx.chrome.hideMenu();
       // Pin last measurement until cleared — Escape clears pin only when idle
-      if (ctx.session.phase && ctx.session.phase !== "idle") {
-        restorePressOrigins();
-        ctx.commands.cancelGesture?.();
-        press = null;
-        ctx.session._resizeLive = null;
-        setPhase("idle");
-        ctx.chrome.clearGuides?.();
-        ctx.chrome.schedulePaint();
+      if ((ctx.session.phase && ctx.session.phase !== "idle") || ctx.commands?.isGesturing?.()) {
+        cancelActiveGesture();
         return;
       }
       if (ctx.session.measure?.pinned) {
@@ -902,8 +900,9 @@ export function createInteractions(ctx) {
   }
 
   function cancelActiveGesture() {
-    if (!press && ctx.session.phase === "idle") return;
-    restorePressOrigins();
+    if (!press && ctx.session.phase === "idle" && !ctx.commands?.isGesturing?.()) return;
+    // Full DOM+model restore via gesture draft (pre-promotion chrome).
+    // Do not re-apply press origins afterward — those are post-promotion boxes.
     ctx.commands.cancelGesture?.();
     press = null;
     ctx.session._resizeLive = null;

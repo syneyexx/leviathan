@@ -57,7 +57,9 @@ def main() -> None:
         with mock.patch.object(srv, "CONTENT_FILE", content), mock.patch.object(srv, "META_FILE", meta), mock.patch.object(
             srv, "CHECKPOINT_DIR", tmp_path / "cp"
         ), mock.patch.object(srv, "JOURNAL_DIR", tmp_path / "journal"):
+            # Align empty meta hash with canonical disk state for honest concurrency
             srv.load_meta()
+            srv.save_meta({"revision": 0, "hash": srv.canonical_persisted_hash()})
             httpd, port = serve()
             try:
                 status, health = req(port, "/api/health")
@@ -68,11 +70,8 @@ def main() -> None:
                 token = session["token"]
                 auth = {"X-LVB-Session": token}
 
-                status, content_res = req(port, "/api/content")
-                assert content_res["content"]["version"] >= 2
-
                 # mutation without token → 401
-                status, err = req(port, "/api/save", "POST", {"content": srv.default_content(), "files": {}})
+                status, err = req(port, "/api/save", "POST", {"content": srv.default_content(), "files": {}, "baseRevision": 0})
                 assert status == 401
 
                 # bad origin → 403
@@ -80,19 +79,23 @@ def main() -> None:
                     port,
                     "/api/save",
                     "POST",
-                    {"content": srv.default_content(), "files": {}},
+                    {"content": srv.default_content(), "files": {}, "baseRevision": 0},
                     headers={**auth, "Origin": "http://evil.example"},
                 )
                 assert status == 403
 
-                # valid save
+                # valid save — use server-reported hash as concurrency token
+                status, content_res = req(port, "/api/content")
+                assert content_res["content"]["version"] >= 2
+                base_hash = content_res.get("hash") or ""
+
                 doc = srv.default_content()
                 doc["entries"] = {"node:test1": {"text": "hello", "nodeId": "test1", "scope": "page", "page": "/"}}
                 status, saved = req(
                     port,
                     "/api/save",
                     "POST",
-                    {"content": doc, "files": {}, "baseRevision": 0, "baseHash": ""},
+                    {"content": doc, "files": {}, "baseRevision": content_res["revision"], "baseHash": base_hash},
                     headers=auth,
                 )
                 assert status == 200 and saved["ok"] is True
@@ -107,6 +110,16 @@ def main() -> None:
                     headers=auth,
                 )
                 assert status == 409
+
+                # missing baseRevision rejected
+                status, bad = req(
+                    port,
+                    "/api/save",
+                    "POST",
+                    {"content": doc, "files": {}},
+                    headers=auth,
+                )
+                assert status == 400
 
                 # replace-text disabled
                 status, gone = req(port, "/api/replace-text", "POST", {"old": "ab", "new": "cd"}, headers=auth)

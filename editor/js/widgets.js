@@ -558,8 +558,70 @@ export function createWidgets(ctx) {
     });
   }
 
+  /** Replace IMG src or background-image; never auto-deletes the old asset.
+   * Captures stable target identity at initiation so async completion cannot
+   * redirect to a later selection.
+   */
+  function hasBackgroundImage(el) {
+    if (!(el instanceof Element) || el.tagName === "IMG") return false;
+    try {
+      const bg = getComputedStyle(el).backgroundImage;
+      return !!(bg && bg !== "none");
+    } catch {
+      return false;
+    }
+  }
+
+  async function replaceImageWithUrl(url, { targetEl, targetKey, generation } = {}) {
+    const token = {
+      key: targetKey || null,
+      generation: generation ?? ctx.session.uiEpoch ?? 0,
+    };
+    let el = targetEl || null;
+    if (!el && token.key) {
+      el = document.querySelector(`[data-lvb-node="${CSS.escape(token.key)}"], [data-lvb-id="${CSS.escape(token.key)}"]`);
+    }
+    if (!el) el = ctx.session.primary;
+    if (!el) {
+      ctx.content.setStatus("Vervangen geannuleerd — geen doel", "dirty");
+      return { ok: false, reason: "no-target" };
+    }
+    // Re-resolve by stable id; cancel if deleted or ineligible
+    const id = el.dataset?.lvbNode || el.dataset?.lvbId || null;
+    if (token.key && id && token.key !== id) {
+      ctx.content.setStatus("Vervangen geannuleerd — doel gewijzigd", "dirty");
+      return { ok: false, reason: "target-changed" };
+    }
+    if (!el.isConnected) {
+      ctx.content.setStatus("Vervangen geannuleerd — doel verwijderd", "dirty");
+      return { ok: false, reason: "target-gone" };
+    }
+    if (el.tagName === "IMG") {
+      ctx.commands.capture("image", () => {
+        el.setAttribute("src", url);
+        ctx.content.patchEntry(ctx.selection.selectorFor(el), { src: url });
+      });
+      ctx.content.setStatus("Image vervangen", "ok");
+      return { ok: true, el, mode: "img" };
+    }
+    if (hasBackgroundImage(el)) {
+      const value = `url("${url}")`;
+      ctx.commands.capture("image", () => {
+        ctx.content.applyProp(el, "background-image", value);
+      });
+      ctx.content.setStatus("Achtergrondimage vervangen", "ok");
+      return { ok: true, el, mode: "background" };
+    }
+    ctx.content.setStatus("Vervangen geannuleerd — geen image-doel", "dirty");
+    return { ok: false, reason: "ineligible" };
+  }
+
   async function uploadFile(file, mode = "insert", { signal } = {}) {
     if (signal?.aborted) throw new Error("Upload geannuleerd");
+    const primary = ctx.session.primary;
+    const targetKey = primary?.dataset?.lvbNode || primary?.dataset?.lvbId || null;
+    const generation = ctx.session.uiEpoch ?? 0;
+    const targetEl = primary;
     ctx.content.setStatus("Image uploaden…", "");
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -572,43 +634,14 @@ export function createWidgets(ctx) {
     });
     if (signal?.aborted) throw new Error("Upload geannuleerd");
     const uploaded = await ctx.api.upload(file.name, dataUrl);
+    if (signal?.aborted) throw new Error("Upload geannuleerd");
     if (mode === "replace") {
-      await replaceImageWithUrl(uploaded.url);
+      const result = await replaceImageWithUrl(uploaded.url, { targetEl, targetKey, generation });
+      if (!result.ok) return null;
     } else {
       insertImageAtUrl(uploaded.url, file.name);
     }
     return uploaded.url;
-  }
-
-  function hasBackgroundImage(el) {
-    if (!(el instanceof Element) || el.tagName === "IMG") return false;
-    try {
-      const bg = getComputedStyle(el).backgroundImage;
-      return !!(bg && bg !== "none");
-    } catch {
-      return false;
-    }
-  }
-
-  /** Replace IMG src or background-image; never auto-deletes the old asset. */
-  async function replaceImageWithUrl(url) {
-    const el = ctx.session.primary;
-    if (!el) return;
-    if (el.tagName === "IMG") {
-      ctx.commands.capture("image", () => {
-        el.setAttribute("src", url);
-        ctx.content.patchEntry(ctx.selection.selectorFor(el), { src: url });
-      });
-      ctx.content.setStatus("Image vervangen", "ok");
-      return;
-    }
-    if (hasBackgroundImage(el)) {
-      const value = `url("${url}")`;
-      ctx.commands.capture("image", () => {
-        ctx.content.applyProp(el, "background-image", value);
-      });
-      ctx.content.setStatus("Achtergrondimage vervangen", "ok");
-    }
   }
 
   /**

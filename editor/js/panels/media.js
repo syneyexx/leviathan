@@ -38,6 +38,8 @@ export function createMedia(ctx) {
     place: "dock",
     host: null,
     mode: "insert",
+    _targetKey: null,
+    _targetEl: null,
     _sig: null,
     signature() {
       return this.mode;
@@ -74,8 +76,12 @@ export function createMedia(ctx) {
         const url = item.dataset.assetUrl;
         try {
           if (this.mode === "replace") {
-            await ctx.widgets.replaceImageWithUrl(url);
-            ctx.widgets.offerImageFit?.(ctx.session.primary);
+            await ctx.widgets.replaceImageWithUrl(url, {
+              targetEl: this._targetEl,
+              targetKey: this._targetKey,
+              generation: ctx.session.uiEpoch ?? 0,
+            });
+            ctx.widgets.offerImageFit?.(this._targetEl || ctx.session.primary);
           } else {
             ctx.widgets.insertImageAtUrl(url, item.title || "Image");
           }
@@ -87,6 +93,10 @@ export function createMedia(ctx) {
     },
     async open(mode = "insert") {
       this.mode = mode;
+      // Capture target identity at open so later selection changes cannot redirect replace
+      const primary = ctx.session.primary;
+      this._targetEl = primary || null;
+      this._targetKey = primary?.dataset?.lvbNode || primary?.dataset?.lvbId || null;
       usageCache = null;
       if (!this.host) return;
       this.host.hidden = false;
