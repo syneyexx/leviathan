@@ -61,3 +61,18 @@ Camera transform stays on `#root` and is never written into exported document CS
 ## Recovery
 
 `localStorage` key `lvb.recovery.v1` — draft with base revision/hash; user chooses apply / compare / discard via Studio menu.
+
+## AI / OmniRoute Editor Gateway
+
+See `AI_EDITOR_ARCHITECTURE.md`.
+
+Preview-first AI mutations:
+
+1. Context collector builds Editor Context Protocol v1 (no giant DOM dumps).
+2. Optional page/selection snapshots (ephemeral).
+3. `POST /api/editor-ai` → gateway → provider → normalized result.
+4. Preview state only — **no** document write.
+5. Accept → promote temp asset → `commands.capture` → normal dirty/save path.
+6. Reject → cleanup temps, no undo entry.
+
+HADES Coding OmniRoute remains a separate coding-LLM boundary; Studio uses capability adapters.

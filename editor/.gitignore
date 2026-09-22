@@ -1,4 +1,5 @@
 .studio-journal/
 .studio-checkpoints/
+.studio-ai-temp/
 artifacts/*.png
 artifacts/*.webm

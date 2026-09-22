@@ -759,9 +759,23 @@ export function createInteractions(ctx) {
         ? [
             { id: "replace-image", label: "Vervang image…", run: () => ctx.registry.run("replace-image") },
             { id: "image-fit", label: "Fit / Fill / Stretch…", run: () => ctx.registry.run("image-fit-menu") },
+            { id: "ai-replace", label: "AI: Generate replacement", run: () => ctx.registry.run("ai-replace-image") },
+            { id: "ai-restyle", label: "AI: Restyle with AI", run: () => {
+              ctx.store.setState({ rightTab: "ai", showRight: true });
+              ctx.ai?.patch?.({ task: "restyle_image" });
+            }},
+            { id: "ai-variants", label: "AI: Generate variants", run: () => ctx.registry.run("ai-variants") },
             { sep: true },
           ]
-        : []),
+        : el
+          ? [
+              { id: "ai-generate-here", label: "AI: Generate image here", run: () => ctx.registry.run("ai-generate-image") },
+              ...(el && /^(H[1-6]|P|BUTTON|A|LABEL|SPAN)$/.test(el.tagName)
+                ? [{ id: "ai-rewrite", label: "AI: Rewrite text", run: () => ctx.registry.run("ai-rewrite-text") }]
+                : []),
+              { sep: true },
+            ]
+          : []),
       { id: "align-left", label: "Links uitlijnen", kbd: "Alt+L", run: () => ctx.registry.run("align-left") },
       { id: "align-center", label: "Horizontaal midden", kbd: "Alt+C", run: () => ctx.registry.run("align-center") },
       { id: "align-right", label: "Rechts uitlijnen", kbd: "Alt+R", run: () => ctx.registry.run("align-right") },

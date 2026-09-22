@@ -158,6 +158,17 @@ export function registerBuiltins(ctx) {
   go("preset-focus", "Layout focus", null, "Panelen", () => ctx.chrome.applyPreset("focus"));
   go("preset-code", "Layout code", null, "Panelen", () => ctx.chrome.applyPreset("code"));
 
+  function openAi(task) {
+    ctx.store.setState({ rightTab: "ai", showRight: true });
+    if (task) ctx.ai?.patch?.({ task });
+    ctx.ai?.syncDimensionsFromSelection?.();
+  }
+  go("ai-generate-image", "AI: Generate image", null, "AI", () => openAi("generate_image"));
+  go("ai-replace-image", "AI: Replace selected image", null, "AI", () => openAi("replace_image"));
+  go("ai-rewrite-text", "AI: Rewrite text", null, "AI", () => openAi("rewrite_text"));
+  go("ai-analyze-style", "AI: Analyze current style", null, "AI", () => openAi("analyze_style"));
+  go("ai-variants", "AI: Generate variants", null, "AI", () => openAi("image_variants"));
+
   for (const page of ctx.pages?.EDITOR_PAGES || []) {
     const id = `page-${(page.path || "/").replace(/\W+/g, "_") || "root"}`;
     go(id, `Pagina: ${page.label}`, null, "Pagina's", () => ctx.pages.go(page.path));
