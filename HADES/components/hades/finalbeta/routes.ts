@@ -15,6 +15,9 @@ export const FINALBETA_PAGES: FinalBetaPageId[] = [
   "model-training",
   "agents",
   "llm-stats",
+  "dataset-management",
+  "offline-datasets",
+  "datasets",
   "media",
   "youtube",
   "tiktok",
@@ -67,9 +70,12 @@ export const FINALBETA_PAGE_LABELS: Record<FinalBetaPageId, string> = {
   coding: "Coding",
   tasks: "Taken",
   models: "Modellen",
-  "model-training": "Model Training",
+  "model-training": "Training",
   agents: "Agents",
-  "llm-stats": "Stats",
+  "llm-stats": "Statestieken",
+  "dataset-management": "Dataset Management",
+  "offline-datasets": "Offline Datasets",
+  datasets: "Datasets",
   media: "Overzicht",
   youtube: "Youtube",
   tiktok: "Tiktok",
@@ -119,6 +125,7 @@ export function resolveFinalBetaPageId(page: FinalBetaPageId): FinalBetaPageId {
   if (page === "mission-control") return "tasks";
   if (page === "settings") return "settings-general";
   if (page === "system") return "settings-console";
+  if (page === "files") return "datasets";
   return page;
 }
 
@@ -144,9 +151,11 @@ export const FINALBETA_HOOFDMENU: FinalBetaHoofdmenuSection[] = [
     home: "models",
     submenu: [
       { id: "models", label: "Modellen", icon: "database", desc: "Lokale modelcatalogus" },
-      { id: "model-training", label: "Model Training", icon: "bolt", desc: "Fine-tune & ATME" },
       { id: "agents", label: "Agents", icon: "users", desc: "Specialisten" },
-      { id: "llm-stats", label: "Stats", icon: "chart", desc: "Tokens, geheugen & training" },
+      { id: "model-training", label: "Training", icon: "bolt", desc: "Fine-tune & ATME" },
+      { id: "dataset-management", label: "Dataset Management", icon: "folder", desc: "Bibliotheek & imports" },
+      { id: "offline-datasets", label: "Offline Datasets", icon: "download", desc: "Lokale packages & sync" },
+      { id: "llm-stats", label: "Statestieken", icon: "chart", desc: "Tokens, geheugen & training" },
     ],
   },
   {
@@ -191,7 +200,7 @@ export const FINALBETA_HOOFDMENU: FinalBetaHoofdmenuSection[] = [
       { id: "memory", label: "Geheugen", icon: "book", desc: "Langetermijngeheugen" },
       { id: "knowledge", label: "Knowledge Library", icon: "book", desc: "Kennisbank" },
       { id: "evidence", label: "Evidence Vault", icon: "shield", desc: "Bewijsstukken" },
-      { id: "files", label: "Bestanden", icon: "folder", desc: "Workspace-bestanden" },
+      { id: "datasets", label: "Datasets", icon: "database", desc: "Data hub & bronnen" },
     ],
   },
   {

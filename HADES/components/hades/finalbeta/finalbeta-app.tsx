@@ -5,9 +5,10 @@ import { FinalBetaShell } from "./shell/finalbeta-shell";
 import { finalBetaHash, luxHashToFinalBetaRedirect, readFinalBetaPageFromHash, resolveFinalBetaPageId } from "./routes";
 import type { FinalBetaPageId, FinalBetaPageRender } from "./types";
 import {
+  DatasetManagementPage,
+  DatasetsPage,
   EvidencePage,
   FacebookPage,
-  FilesPage,
   InstagramPage,
   KnowledgePage,
   McpPage,
@@ -17,6 +18,7 @@ import {
   MediaQueuePage,
   MediaViralPage,
   ModelTrainingPage,
+  OfflineDatasetsPage,
   PerformancePage,
   ResearchPage,
   TiktokPage,
@@ -90,6 +92,9 @@ type ShellPageId = Exclude<
   | "trading-broker"
   | "evidence"
   | "files"
+  | "datasets"
+  | "dataset-management"
+  | "offline-datasets"
   | "knowledge"
   | "research"
   | "performance"
@@ -256,10 +261,26 @@ export function FinalBetaApp() {
     );
   }
 
-  if (page === "files") {
+  if (page === "datasets") {
     return (
       <div className="fb-root" data-finalbeta="pixel-reference">
-        <FilesPage onNavigate={navigate} />
+        <DatasetsPage onNavigate={navigate} />
+      </div>
+    );
+  }
+
+  if (page === "dataset-management") {
+    return (
+      <div className="fb-root" data-finalbeta="pixel-reference">
+        <DatasetManagementPage onNavigate={navigate} />
+      </div>
+    );
+  }
+
+  if (page === "offline-datasets") {
+    return (
+      <div className="fb-root" data-finalbeta="pixel-reference">
+        <OfflineDatasetsPage onNavigate={navigate} />
       </div>
     );
   }

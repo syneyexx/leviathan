@@ -11,6 +11,8 @@
 @import "./v2/coding-tabs-a.css";
 @import "./v2/tasks.css";
 @import "./v2/model-training.css";
+@import "./v2/models-pixel.css";
+@import "./v2/training-pixel.css";
 @import "./v2/memory.css";
 @import "./v2/brain.css";
 @import "./v2/login.css";
@@ -32,7 +34,11 @@
 @import "./v2/files.css";
 @import "./v2/evidence.css";
 @import "./v2/knowledge.css";
+@import "./v2/knowledge-library-pixel.css";
+@import "./v2/offline-datasets.css";
+@import "./v2/dataset-management.css";
 @import "./v2/research.css";
+@import "./v2/datasets-hub.css";
 @import "./v2/plugin-runtime.css";
 @import "./v2/pr-performance.css";
 @import "./v2/pr-plugins.css";

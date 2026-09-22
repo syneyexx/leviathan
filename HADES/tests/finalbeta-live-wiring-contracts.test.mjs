@@ -16,16 +16,22 @@ const ALLOWLIST = new Map([
   ["tools-page.tsx", [/from ["']\.\.\/mocks\/pr-plugins["']/]],
   // Presentation field labels still used alongside live settings.
   ["finalbeta-settings-page.tsx", [/from ["']\.\.\/mocks\/settings["']/]],
-  // Training tab ids only (runtime data must come from API).
-  ["model-training-page.tsx", [/from ["']\.\.\/mocks\/model-training["']/]],
+  // Pixel mock training page (intentional UI mock).
+  ["model-training-page.tsx", [/from ["']\.\.\/mocks\/training-pixel["']/]],
   // MCP tab labels only — servers/tools come from useHadesMcp.
   ["mcp-page.tsx", [/from ["']\.\.\/mocks\/pr-mcp["']/]],
   // Tasks column/tab chrome — kanban cards mapped from useHadesTasks.
   ["tasks-page.tsx", [/from ["']\.\.\/mocks\/tasks["']/]],
   // Memory presentation labels (tags/actions/health chrome).
   ["memory-page.tsx", [/from ["']\.\.\/mocks\/memory["']/]],
-  // Knowledge presentation labels (filters/tags/actions).
-  ["knowledge-page.tsx", [/from ["']\.\.\/mocks\/knowledge["']/]],
+  // Pixel mock knowledge library (intentional UI mock).
+  ["knowledge-page.tsx", [/from ["']\.\.\/mocks\/knowledge-library-pixel["']/]],
+  // Pixel mock models registry (intentional UI mock).
+  ["models-page.tsx", [/from ["']\.\.\/mocks\/models-pixel["']/]],
+  // Pixel mock dataset pages (intentional UI mocks).
+  ["dataset-management-page.tsx", [/from ["']\.\.\/mocks\/dataset-management["']/]],
+  ["offline-datasets-page.tsx", [/from ["']\.\.\/mocks\/offline-datasets["']/]],
+  ["datasets-page.tsx", [/from ["']\.\.\/mocks\/datasets-hub["']/]],
   // Research chip/tab labels only — projects/sources from useHadesResearch.
   ["research-page.tsx", [/from ["']\.\.\/mocks\/research["']/]],
   // Performance period/tab chrome only — metrics from useDashboardLive.
@@ -61,11 +67,15 @@ test("FINALBETA production pages do not import mock runtime modules (allowlist)"
         const allowOk =
           (base === "tools-page.tsx" && mockModule.includes("pr-plugins")) ||
           (base === "finalbeta-settings-page.tsx" && mockModule.includes("settings")) ||
-          (base === "model-training-page.tsx" && mockModule.includes("model-training")) ||
+          (base === "model-training-page.tsx" && mockModule.includes("training-pixel")) ||
           (base === "mcp-page.tsx" && mockModule.includes("pr-mcp")) ||
           (base === "tasks-page.tsx" && mockModule.includes("tasks")) ||
           (base === "memory-page.tsx" && mockModule.includes("memory")) ||
-          (base === "knowledge-page.tsx" && mockModule.includes("knowledge")) ||
+          (base === "knowledge-page.tsx" && mockModule.includes("knowledge-library-pixel")) ||
+          (base === "models-page.tsx" && mockModule.includes("models-pixel")) ||
+          (base === "dataset-management-page.tsx" && mockModule.includes("dataset-management")) ||
+          (base === "offline-datasets-page.tsx" && mockModule.includes("offline-datasets")) ||
+          (base === "datasets-page.tsx" && mockModule.includes("datasets-hub")) ||
           (base === "research-page.tsx" && mockModule.includes("research")) ||
           (base === "performance-page.tsx" && mockModule.includes("pr-performance"));
         if (allowOk) continue;
@@ -82,12 +92,10 @@ test("FINALBETA production pages do not import mock runtime modules (allowlist)"
     "dashboard-page.tsx",
     "tools-page.tsx",
     "finalbeta-settings-page.tsx",
-    "models-page.tsx",
     "agents-page.tsx",
     "mcp-page.tsx",
     "tasks-page.tsx",
     "memory-page.tsx",
-    "knowledge-page.tsx",
     "brain-page.tsx",
     "research-page.tsx",
     "llm-stats-page.tsx",
@@ -113,7 +121,6 @@ test("FINALBETA production pages do not import mock runtime modules (allowlist)"
     "mcp-page.tsx": /pr-mcp/,
     "tasks-page.tsx": /mocks\/tasks/,
     "memory-page.tsx": /mocks\/memory/,
-    "knowledge-page.tsx": /mocks\/knowledge/,
     "research-page.tsx": /mocks\/research/,
     "performance-page.tsx": /mocks\/pr-performance/,
   };
@@ -137,6 +144,10 @@ test("FINALBETA production pages do not import mock runtime modules (allowlist)"
       !o.startsWith("research-page") &&
       !o.startsWith("memory-page") &&
       !o.startsWith("knowledge-page") &&
+      !o.startsWith("models-page") &&
+      !o.startsWith("dataset-management-page") &&
+      !o.startsWith("offline-datasets-page") &&
+      !o.startsWith("datasets-page") &&
       !o.startsWith("performance-page") &&
       !o.includes("model-training-page.tsx"),
   );
@@ -167,7 +178,7 @@ test("FINALBETA Settings page patches real policies", async () => {
   assert.match(source, /settings\.patch/);
 });
 
-test("FINALBETA Memory/Knowledge/Brain/MCP/Tasks pages use live hooks", async () => {
+test("FINALBETA Memory/Brain/MCP/Tasks pages use live hooks", async () => {
   const memory = await readFile(path.join(pagesDir, "memory-page.tsx"), "utf8");
   const knowledge = await readFile(path.join(pagesDir, "knowledge-page.tsx"), "utf8");
   const brain = await readFile(path.join(pagesDir, "brain-page.tsx"), "utf8");
@@ -178,10 +189,8 @@ test("FINALBETA Memory/Knowledge/Brain/MCP/Tasks pages use live hooks", async ()
   assert.match(memory, /data-live="memory"/);
   assert.doesNotMatch(memory, /mockMemories/);
 
-  assert.match(knowledge, /useHadesKnowledge/);
-  assert.match(knowledge, /data-live="knowledge"/);
-  assert.match(knowledge, /searchKnowledge/);
-  assert.doesNotMatch(knowledge, /mockKnowledgeDocs/);
+  assert.match(knowledge, /klib-app|knowledge-library-pixel/);
+  assert.doesNotMatch(knowledge, /useHadesKnowledge/);
 
   assert.match(brain, /useHadesBrain/);
   assert.match(brain, /data-live="brain"/);
@@ -225,12 +234,12 @@ test("FINALBETA Files page uses live files hook", async () => {
   assert.doesNotMatch(source, /from ["']\.\.\/mocks\/files["']/);
 });
 
-test("FINALBETA Models and Agents pages use live APIs", async () => {
+test("FINALBETA Models page uses pixel mock; Agents stay live", async () => {
   const models = await readFile(path.join(pagesDir, "models-page.tsx"), "utf8");
   const agents = await readFile(path.join(pagesDir, "agents-page.tsx"), "utf8");
-  assert.match(models, /data-live="models"/);
-  assert.match(models, /hadesApi\.models/);
-  assert.doesNotMatch(models, /qwen3-14b-instruct/);
+  assert.match(models, /mdl-app|models-pixel/);
+  assert.match(models, /from ["']\.\.\/mocks\/models-pixel["']/);
+  assert.doesNotMatch(models, /hadesApi\.models/);
   assert.match(agents, /data-live="agents"/);
   assert.match(agents, /hadesApi\.agents/);
   assert.doesNotMatch(agents, /ONTWERPVOORBEELD/);
@@ -252,11 +261,12 @@ test("FINALBETA Evidence page uses claim register", async () => {
   assert.doesNotMatch(source, /EVIDENCE_STATS/);
 });
 
-test("FINALBETA Memory and Knowledge stay on live hooks", async () => {
+test("FINALBETA Memory stays live; Knowledge uses pixel mock", async () => {
   const memory = await readFile(path.join(pagesDir, "memory-page.tsx"), "utf8");
   const knowledge = await readFile(path.join(pagesDir, "knowledge-page.tsx"), "utf8");
   assert.match(memory, /useHadesMemory/);
-  assert.match(knowledge, /useHadesKnowledge/);
+  assert.match(knowledge, /knowledge-library-pixel|klib-app/);
+  assert.doesNotMatch(knowledge, /useHadesKnowledge/);
 });
 
 test("FINALBETA Research page wires live research APIs (useHadesResearch)", async () => {
