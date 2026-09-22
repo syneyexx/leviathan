@@ -182,6 +182,14 @@ class FeatureFlags:
     residual_production: bool
     chat_streaming: bool
     chat_sse: bool
+    cognition_enabled: bool
+    cognition_shadow: bool
+    cognition_iterative_loop: bool
+    cognition_belief_state: bool
+    cognition_neuro: bool
+    cognition_adaptive_depth: bool
+    cognition_delegation: bool
+    cognition_experience_learning: bool
 
 
 @dataclass(frozen=True)
@@ -375,6 +383,14 @@ class Settings:
                 "residual_production": self.features.residual_production,
                 "chat_streaming": self.features.chat_streaming,
                 "chat_sse": self.features.chat_sse,
+                "cognition_enabled": self.features.cognition_enabled,
+                "cognition_shadow": self.features.cognition_shadow,
+                "cognition_iterative_loop": self.features.cognition_iterative_loop,
+                "cognition_belief_state": self.features.cognition_belief_state,
+                "cognition_neuro": self.features.cognition_neuro,
+                "cognition_adaptive_depth": self.features.cognition_adaptive_depth,
+                "cognition_delegation": self.features.cognition_delegation,
+                "cognition_experience_learning": self.features.cognition_experience_learning,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -483,6 +499,15 @@ class Settings:
         residual_production = _env_bool("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION", False)
         chat_streaming = _env_bool("LEVIATHAN_FEATURE_CHAT_STREAMING", False)
         chat_sse = _env_bool("LEVIATHAN_FEATURE_CHAT_SSE", False)
+        cognition_enabled = _env_bool("LEVIATHAN_FEATURE_COGNITION", False)
+        # Children are read independently; hierarchy enforced in validate().
+        cognition_shadow = _env_bool("LEVIATHAN_FEATURE_COGNITION_SHADOW", False)
+        cognition_iterative = _env_bool("LEVIATHAN_FEATURE_COGNITION_ITERATIVE_LOOP", False)
+        cognition_belief = _env_bool("LEVIATHAN_FEATURE_COGNITION_BELIEF_STATE", False)
+        cognition_neuro = _env_bool("LEVIATHAN_FEATURE_COGNITION_NEURO", False)
+        cognition_adaptive = _env_bool("LEVIATHAN_FEATURE_COGNITION_ADAPTIVE_DEPTH", False)
+        cognition_delegation = _env_bool("LEVIATHAN_FEATURE_COGNITION_DELEGATION", False)
+        cognition_experience = _env_bool("LEVIATHAN_FEATURE_COGNITION_EXPERIENCE_LEARNING", False)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -567,6 +592,14 @@ class Settings:
                 residual_production=residual_production,
                 chat_streaming=chat_streaming,
                 chat_sse=chat_sse,
+                cognition_enabled=cognition_enabled,
+                cognition_shadow=cognition_shadow,
+                cognition_iterative_loop=cognition_iterative,
+                cognition_belief_state=cognition_belief,
+                cognition_neuro=cognition_neuro,
+                cognition_adaptive_depth=cognition_adaptive,
+                cognition_delegation=cognition_delegation,
+                cognition_experience_learning=cognition_experience,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,
@@ -731,6 +764,38 @@ class Settings:
         if self.features.residual_production and not self.features.neuro_residual_injection:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION=true"
+            )
+        if self.features.cognition_shadow and not self.features.cognition_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_SHADOW requires LEVIATHAN_FEATURE_COGNITION=true"
+            )
+        if self.features.cognition_iterative_loop and not self.features.cognition_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_ITERATIVE_LOOP requires LEVIATHAN_FEATURE_COGNITION=true"
+            )
+        if self.features.cognition_belief_state and not self.features.cognition_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_BELIEF_STATE requires LEVIATHAN_FEATURE_COGNITION=true"
+            )
+        if self.features.cognition_neuro and not self.features.cognition_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_NEURO requires LEVIATHAN_FEATURE_COGNITION=true"
+            )
+        if self.features.cognition_neuro and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_NEURO requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.cognition_adaptive_depth and not self.features.cognition_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_ADAPTIVE_DEPTH requires LEVIATHAN_FEATURE_COGNITION=true"
+            )
+        if self.features.cognition_delegation and not self.features.cognition_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_DELEGATION requires LEVIATHAN_FEATURE_COGNITION=true"
+            )
+        if self.features.cognition_experience_learning and not self.features.cognition_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_COGNITION_EXPERIENCE_LEARNING requires LEVIATHAN_FEATURE_COGNITION=true"
             )
         emb = self.knowledge.embedding_provider
         if emb not in {

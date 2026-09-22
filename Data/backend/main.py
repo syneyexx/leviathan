@@ -96,7 +96,16 @@ from Data.modules.voice import VoiceAction, VoiceRuntimeStub
 from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
 from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_mcp, unregister_module_mcp
 from Data.backend.routes.mcp import build_mcp_router
+from Data.backend.routes.cognition import build_cognition_router
 from Data.modules.mcp.errors import McpError
+from Data.modules.cognition import (
+    CognitionStore,
+    CognitiveRuntime,
+    DelegationService,
+    ExperienceStore,
+    PerceptionService,
+    CapabilityBroker,
+)
 from Data.modules.security import SecurityAuditor, SecurityFinding
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
@@ -602,6 +611,35 @@ reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 model_plane = ModelControlPlane(settings, observability=observability)
 
+cognition_store = CognitionStore(settings.database_path)
+cognition_delegation = DelegationService()
+cognition_runtime = CognitiveRuntime(
+    enabled=settings.features.cognition_enabled,
+    shadow=settings.features.cognition_shadow,
+    iterative=settings.features.cognition_iterative_loop,
+    belief_enabled=settings.features.cognition_belief_state,
+    neuro_enabled=settings.features.cognition_neuro,
+    adaptive_depth=settings.features.cognition_adaptive_depth,
+    delegation_enabled=settings.features.cognition_delegation,
+    experience_learning=settings.features.cognition_experience_learning,
+    perception=PerceptionService(
+        knowledge_store=knowledge,
+        memory_store=memory_store,
+        evidence_service=evidence_service,
+        capability_catalog=capability_catalog,
+        neuro_advisor=neuro_advisor if settings.features.cognition_neuro else None,
+    ),
+    broker=CapabilityBroker(capability_catalog),
+    delegation=cognition_delegation,
+    experience_store=ExperienceStore(store=cognition_store),
+    store=cognition_store,
+    neuro_advisor=neuro_advisor if settings.features.cognition_neuro else None,
+    verification_engine=verification_engine,
+    execution_gateway=execution_gateway,
+    observability=observability,
+    resource_pressure_fn=lambda: 0.0,
+)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -623,6 +661,15 @@ async def lifespan(_: FastAPI):
     verification_reports.initialize()
     workflow_store.initialize()
     schedule_store.initialize()
+    try:
+        cognition_store.reconcile_interrupted()
+    except Exception as exc:  # noqa: BLE001
+        observability.emit(
+            "cognition",
+            "reconcile.failed",
+            payload={"error": str(exc)},
+            level="warning",
+        )
     model_plane.bootstrap()
     try:
         await model_plane.reconcile_startup()
@@ -705,7 +752,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.60.0-phase54", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.61.0-cognition", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -713,6 +760,7 @@ app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
+app.include_router(build_cognition_router(cognition_runtime))
 
 
 class ConversationCreate(BaseModel):
@@ -852,6 +900,7 @@ async def health() -> dict:
                 if settings.features.chat_streaming
                 else "disabled"
             ),
+            "cognition": cognition_runtime.health(),
             "residual_applied_count": int(
                 residual_orchestrator.telemetry.get("injects_applied") or 0
             ),
@@ -991,6 +1040,41 @@ async def chat(payload: ChatRequest, request: Request):
         EventType.REASONING_COMPLETED,
         {**plan.public_summary(), "economy": economy.public_dict()},
     )
+
+    cognition_meta: dict | None = None
+    if settings.features.cognition_enabled:
+        try:
+            history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
+            history = [
+                {"role": m["role"], "content": m["content"]}
+                for m in history_rows
+                if m.get("role") in {"user", "assistant"} and m.get("content")
+            ]
+            cognition_meta = cognition_runtime.submit(
+                message,
+                conversation_id=conversation_id,
+                history=history,
+                has_knowledge=has_knowledge,
+                shadow=True if settings.features.cognition_shadow else False,
+                metadata={"chat_run_id": run.run_id},
+                run=True,
+            )
+            observability.emit(
+                "cognition",
+                "chat.shadow" if settings.features.cognition_shadow else "chat.active",
+                payload={
+                    "run_id": cognition_meta.get("run_id"),
+                    "status": cognition_meta.get("status"),
+                    "mode": cognition_meta.get("mode"),
+                    "strategy": cognition_meta.get("strategy"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — cognition must not break chat
+            cognition_meta = {
+                "error": f"{type(exc).__name__}: {exc}",
+                "truth": {"cognition_failure_does_not_fail_chat": True},
+            }
+
     runs.transition(
         run.run_id,
         RunState.RETRIEVING if plan.use_knowledge else RunState.EXECUTING,
@@ -1339,6 +1423,7 @@ async def chat(payload: ChatRequest, request: Request):
             "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
             "neuro": neuro.public_dict(),
             "cortex": cortex_report,
+            "cognition": cognition_meta,
             "streamed": use_sse,
             "truth": chat_truth(
                 streaming_degraded=streaming_degraded,

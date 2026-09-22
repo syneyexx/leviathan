@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of the **Universal MCP Bridge** (migration v17) on Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of the **Cognitive Runtime** (migration v19) on Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -78,13 +78,13 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.60.0-phase54`).
+FastAPI application (`version=0.61.0-cognition`).
 
 Responsibilities:
 
 - lifespan DB initialize + optional ModuleManager discover/load/initialize;
-- `/api/*` route registration;
-- wire shared stores, gateway, neuro advisor, module manager;
+- `/api/*` route registration including `/api/cognition/*`;
+- wire shared stores, gateway, neuro advisor, cognitive runtime, module manager;
 - serve the Vite production build from `Data/frontend/dist`.
 
 `main.py` must remain composition-oriented. Domain logic belongs in dedicated modules/services as the system grows.
@@ -108,7 +108,7 @@ Path constants: `PROJECT_ROOT`, `DATA_ROOT`, `BACKEND_ROOT`, `FRONTEND_ROOT`, `F
 
 ## 3.3 Persistence — `Data/backend/database.py` + migrations
 
-SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v15**).
+SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v19**).
 
 Core chat tables (also ensured in `Database.initialize`):
 
@@ -127,15 +127,19 @@ Coding Agent (migration v15):
 
 Additional domain tables from earlier migrations: artifacts, approvals, jobs, observations/effects, evidence, memory, workflows, schedules, verification_reports, neuro_memory_snapshots.
 
-## 3.4 Reasoning — `Data/backend/reasoning.py`
+## 3.4 Reasoning + Cognitive Runtime
 
-`ReasoningEngine.analyze(message, has_knowledge) → ReasoningPlan`.
+`ReasoningEngine.analyze(message, has_knowledge) → ReasoningPlan` remains the lightweight classifier (intent/complexity/knowledge steps). Public summary only — **no private chain-of-thought**.
 
-`ReasoningPlan` fields: `intent`, `complexity`, `use_knowledge`, `steps`.
+**Cognitive Runtime** (`Data/modules/cognition/`, flag `LEVIATHAN_FEATURE_COGNITION`) owns top-level orchestration:
 
-Public summary only — **no private chain-of-thought persistence**.
+- TaskModel, Perception, BeliefState, WorkingMemory
+- MetaController budgets, structured plans, iterative loop
+- Capability broker (search/shortlist; not keyword-gated)
+- Delegation envelope; CompletionEngine; VerifiedExperience admission
+- Persistence via migration v19; see `Data/docs/cognitive_runtime.md`
 
-Deterministic keyword/heuristic classification. Not authoritative for security or side effects.
+Neuro remains advisory. Side effects still require ExecutionGateway + Approvals.
 
 ## 3.5 Model client + Model Control Plane
 

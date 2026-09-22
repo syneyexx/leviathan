@@ -6,6 +6,38 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Phase 55 Cognitive Runtime (contracts + shadow + loop) — PASS
+
+### Objective
+Establish LEVIATHAN's canonical Cognitive Runtime as orchestration authority: TaskModel, Perception, BeliefState, WorkingMemory, Context V3, MetaController, iterative loop, delegation envelope, completion, VerifiedExperience — without duplicating Gateway / Approvals / Model Control Plane / Evidence / Verification / Neuro authority.
+
+### Added / changed
+- **Module:** `Data/modules/cognition/` — runtime, task model, perception, beliefs, working memory, context v3, meta controller, planner, action selector, capability broker, delegation, completion, experience, store, errors
+- **Migration v19:** `cognitive_runs`, `cognitive_events`, `cognitive_beliefs`, `verified_experiences`
+- **Flags:** `LEVIATHAN_FEATURE_COGNITION` + children (shadow / iterative / belief / neuro / adaptive / delegation / experience)
+- **API:** `/api/cognition/*` operator surface
+- **Chat:** optional cognition submit (shadow-safe; failures do not break chat); response includes `cognition` metadata
+- **Docs:** `Data/docs/cognitive_runtime.md`; cursor/system/buildplan/modules README updates
+- **Version:** `0.61.0-cognition`; Master `phase_span=0-55`
+- **Tests:** `test_cognitive_runtime.py`
+
+### EXTERNAL-FIRST review
+- Cognition Core = control/orchestration; heavy coding/research remain specialist/worker candidates via DelegationService
+- No second SQLite / gateway / approvals / model client / evidence system
+- Neuro remains advisory; neural associations cannot become exact facts
+- Experience admission refuses unverified learning; auto-promote forbidden
+
+### Explicitly NOT claimed
+- Default-on replacement of legacy chat orchestration
+- Full live Coding/Research worker auto-registration in this phase
+- Frontend cognition inspector page (API ready)
+- Automatic model promotion from experiences
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Phase 54 Residual Production + Contrastive Memory + Chat SSE — PASS
 
 ### Objective

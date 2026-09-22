@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 0.61.0-cognition — 2026-09-22
+
+### Cognitive Runtime (Phase 55)
+
+- **Module:** `Data/modules/cognition/` — TaskModel, Perception, BeliefState, WorkingMemory, Context V3, MetaController, iterative loop, capability broker, delegation, CompletionEngine, VerifiedExperience.
+- **Migration v19:** `cognitive_runs`, `cognitive_events`, `cognitive_beliefs`, `verified_experiences`.
+- **Flags:** `LEVIATHAN_FEATURE_COGNITION` + hierarchical children (shadow/iterative/belief/neuro/adaptive/delegation/experience).
+- **API:** `/api/cognition/*`; chat attaches optional `cognition` metadata (shadow-safe).
+- **Docs:** `cognitive_runtime.md`; Master `phase_span=0-55`.
+- **Tests:** `test_cognitive_runtime.py`.
+
+### Explicitly NOT claimed
+- Default-on replacement of legacy chat path; auto-registered coding/research workers; frontend inspector page; automatic model promotion.
+
+---
+
 ## 0.60.0-phase54 — 2026-09-22
 
 ### Residual production + Contrastive InfoNCE + Chat SSE

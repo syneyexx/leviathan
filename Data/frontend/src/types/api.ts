@@ -35,6 +35,7 @@ export type ChatResponse = {
   knowledge_sources: KnowledgeSource[];
   neuro?: unknown;
   cortex?: unknown;
+  cognition?: CognitionRunStatus | { error?: string; truth?: Record<string, boolean> };
   streamed?: boolean;
   truth?: {
     neural_signal_is_not_authority?: boolean;
@@ -44,6 +45,50 @@ export type ChatResponse = {
     model_output_is_not_evidence?: boolean;
     [key: string]: boolean | undefined;
   };
+};
+
+export type CognitionHealth = {
+  enabled: boolean;
+  shadow_default: boolean;
+  iterative: boolean;
+  belief_enabled: boolean;
+  neuro_enabled: boolean;
+  delegation_enabled: boolean;
+  experience_learning: boolean;
+  active_runs: number;
+  tracked_runs: number;
+  delegation_handlers: string[];
+  truth?: Record<string, boolean>;
+};
+
+export type CognitionRunStatus = {
+  run_id: string;
+  task_id?: string;
+  status: string;
+  stage?: string;
+  mode?: string | null;
+  strategy?: string | null;
+  goal?: string;
+  domain?: string;
+  uncertainty?: number;
+  belief_counts?: Record<string, number>;
+  working_memory_count?: number;
+  budgets?: Record<string, number>;
+  usage?: Record<string, number>;
+  plan?: {
+    strategy?: string;
+    steps?: Array<{ step_id: string; objective: string; status: string }>;
+  } | null;
+  observations?: Array<{ kind: string; summary: string; success?: boolean | null }>;
+  actions?: Array<{ kind: string; rationale?: string | null }>;
+  cancel_requested?: boolean;
+  cancel_acknowledged?: boolean;
+  shadow?: boolean;
+  error?: string | null;
+  verification_passed?: boolean | null;
+  completion?: Record<string, unknown> | null;
+  response_preview?: string;
+  truth?: Record<string, boolean>;
 };
 
 export type HealthResponse = {
