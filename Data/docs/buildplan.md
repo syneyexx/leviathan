@@ -6,6 +6,35 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Phase 52 — Neuro Layer Grok-level depth jump — PASS
+
+### Objective
+Elevate the Neuro Layer from Phase 51 operational completion to frontier-feeling local reasoning quality while preserving every honesty invariant (neural signal ≠ authority, residual optional/degradable, registered ≠ trained, unmeasured ≠ passed).
+
+### Added / changed
+- **Residual:** weight-backed `HFTransformersResidualAdapter` behind `LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS`; ADDITIVE/GATED/DISABLED modes; provenance receipts (`implemented`/`applied`/`degraded_to_chat_completions`/`reason`); richer vLLM/llama.cpp stubs; telemetry on read/inject/forward
+- **Cortex:** smarter `CortexPlanner` (budget, residual, memory coverage/quality, WM load); `CortexRuntime` mid-forward critic re-steer + residual replay; depth metadata signals (advisory only)
+- **Critic:** grounding collapses without Evidence/Knowledge ID citations
+- **Memory:** Tier0 priority eviction; high-trust Verification/human writes; budgeted retrieve; lock-safe snapshot/restore; contrastive head uses EmbeddingProvider when available
+- **Training:** `TrainingRecipeRegistry.execute` status machine with fixture trainer; refuse fabricated COMPLETED; human preference bridge
+- **Observability/status:** neuro category events; status residual posture + WM load
+- Version `0.55.0-phase52`; Master `phase_span=0-52`
+- Tests: `test_neuro_phase52.py` (+ existing Phase 46–51 suites)
+
+### Verification
+- Full backend `pytest Data/backend/tests` → **229 passed**
+
+### Explicitly NOT claimed
+- Default production path is weight-backed GPU residual (still opt-in / env-dependent)
+- Multi-hour HBM/power SLO
+- Automatic preference fabrication
+- “Thought harder” as authority
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-21 — Coding Agent control plane + /coding operator UI — PASS
 
 ### Objective

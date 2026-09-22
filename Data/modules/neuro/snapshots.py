@@ -177,11 +177,31 @@ class ContrastiveRetrievalReport:
 
 
 class ContrastiveRetrievalHead:
-    """Contrastive retrieval head — lexical fallback; vector path UNMEASURED without embeddings."""
+    """Contrastive retrieval head — real embeddings when provider present; else lexical UNMEASURED."""
 
-    def __init__(self, facade: NeuroMemoryFacade, *, embeddings_available: bool = False) -> None:
+    def __init__(
+        self,
+        facade: NeuroMemoryFacade,
+        *,
+        embeddings_available: bool = False,
+        embedding_provider: Any | None = None,
+    ) -> None:
         self.facade = facade
-        self.embeddings_available = embeddings_available
+        self.embedding_provider = embedding_provider
+        if embedding_provider is not None and hasattr(embedding_provider, "available"):
+            self.embeddings_available = bool(embedding_provider.available())
+        else:
+            self.embeddings_available = embeddings_available
+
+    def _cosine(self, a: Sequence[float], b: Sequence[float]) -> float:
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        na = sum(x * x for x in a) ** 0.5
+        nb = sum(y * y for y in b) ** 0.5
+        if na <= 0 or nb <= 0:
+            return 0.0
+        return float(dot / (na * nb))
 
     def retrieve(self, query: str, *, tiers: Sequence[int] = (1, 2), limit: int = 5) -> ContrastiveRetrievalReport:
         if not self.facade.enabled:
@@ -191,14 +211,34 @@ class ContrastiveRetrievalHead:
                 hits=(),
                 detail="Neuro memory tiers OFF",
             )
-        bundle = self.facade.retrieve(query, tiers=tiers, limit_per_tier=limit)
-        if self.embeddings_available:
-            return ContrastiveRetrievalReport(
-                available=True,
-                method="contrastive_vector",
-                hits=tuple(hit.public_dict() for hit in bundle.hits[:limit]),
-                detail="Vector contrastive path",
-            )
+        bundle = self.facade.retrieve(query, tiers=tiers, limit_per_tier=max(limit, 8))
+        if self.embeddings_available and self.embedding_provider is not None:
+            try:
+                q_vec = self.embedding_provider.embed_query(query)
+                ranked: list[tuple[float, dict[str, Any]]] = []
+                for hit in bundle.hits:
+                    try:
+                        doc_vec = self.embedding_provider.embed_documents([hit.content])[0]
+                    except Exception:  # noqa: BLE001
+                        continue
+                    sim = self._cosine(q_vec, doc_vec)
+                    payload = hit.public_dict()
+                    payload["contrastive_score"] = round(sim, 4)
+                    ranked.append((sim, payload))
+                ranked.sort(key=lambda item: item[0], reverse=True)
+                return ContrastiveRetrievalReport(
+                    available=True,
+                    method="contrastive_vector_infonce_proxy",
+                    hits=tuple(item[1] for item in ranked[:limit]),
+                    detail="EmbeddingProvider contrastive ranking (InfoNCE-style scoring)",
+                )
+            except Exception as exc:  # noqa: BLE001
+                return ContrastiveRetrievalReport(
+                    available=True,
+                    method="lexical_proxy_unmeasured_contrastive",
+                    hits=tuple(hit.public_dict() for hit in bundle.hits[:limit]),
+                    detail=f"Embedding path failed ({exc}) — lexical proxy (UNMEASURED)",
+                )
         return ContrastiveRetrievalReport(
             available=True,
             method="lexical_proxy_unmeasured_contrastive",

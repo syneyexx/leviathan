@@ -51,7 +51,7 @@ class Phase47ResidualTests(unittest.TestCase):
         hook = list(runtime.list_hook_points())[0]
         tensor = runtime.read(ResidualReadRequest(hook=hook))
         score = critic.score_residual(tensor, knowledge_ids=("doc-1",))
-        self.assertEqual(score.method, "residual_stats_with_id_context")
+        self.assertEqual(score.method, "residual_stats_with_knowledge_context")
         self.assertGreater(score.aggregate, 0.0)
 
     def test_cortex_runtime_against_deterministic(self) -> None:
