@@ -9,7 +9,8 @@ import {
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
-import { MediaPlatformShell } from "../../layouts/MediaPlatformShell";
+import { SubMenu } from "../../components/SubMenu";
+import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
 const TILES = platformTiles.tiktok;
@@ -93,19 +94,15 @@ export function TikTokPage() {
   const [crossPost, setCrossPost] = useState(true);
 
   return (
-    <MediaPlatformShell
-      activePlatform="tiktok"
-      searchPlaceholder="Search videos, creators, sounds, hashtags, or anything..."
-      createAccent="red"
-      promo={{ platform: "tiktok", caption: "Ideas today. A brighter tomorrow." }}
-      sidebarCaption="Short ideas. Bigger audiences. A higher humanity."
-      statusItems={[
-        { label: "Channel Status", value: "Healthy" },
-        { label: "Monetization", value: "Enabled" },
-        { label: "Content Quality", value: "Excellent" },
-        { label: "Community Growth", value: "On Track" },
-      ]}
+    <AppShell
+      activeMode="explore"
+      modeLabel="Media Mode"
+      searchPlaceholder="Search videos, creators, sounds, hashtags, or ask Leviathan..."
+      systemItems={["MEMORY ONLINE", "SYSTEMS OPERATIONAL"]}
+      layout="wide"
+      pageClass="lv-app--media-platform"
     >
+      <main className="lv-main mp-main-in-shell" data-accent="red">
       <div className="mp-page">
         <section className="mp-hero">
           <div className="mp-hero-media">
@@ -126,6 +123,8 @@ export function TikTokPage() {
             </div>
           </div>
         </section>
+
+        <SubMenu />
 
         <section className="mp-profile">
           <div className="mp-profile-avatar" aria-hidden="true">
@@ -503,6 +502,7 @@ export function TikTokPage() {
           Attention is a force · Ideas today · A brighter tomorrow
         </div>
       </div>
-    </MediaPlatformShell>
+      </main>
+    </AppShell>
   );
 }

@@ -10,7 +10,8 @@ import {
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
-import { MediaPlatformShell } from "../../layouts/MediaPlatformShell";
+import { SubMenu } from "../../components/SubMenu";
+import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
 const VIEW_SERIES = [1.1, 1.25, 1.4, 1.55, 1.8, 1.7, 2.0, 2.15, 2.05, 2.25, 2.35, 2.4];
@@ -52,18 +53,15 @@ export function YouTubePage() {
   const [perfTab, setPerfTab] = useState<(typeof PERF_TABS)[number]>("Views");
 
   return (
-    <MediaPlatformShell
-      activePlatform="youtube"
-      searchPlaceholder="Search videos, titles, topics, or anything..."
-      createAccent="red"
-      promo={{ platform: "youtube", caption: "The message reaches further." }}
-      statusItems={[
-        { label: "Channel Status", value: "Healthy" },
-        { label: "Monetization", value: "Enabled" },
-        { label: "Community", value: "Good" },
-        { label: "Content Warnings", value: "None" },
-      ]}
+    <AppShell
+      activeMode="explore"
+      modeLabel="Media Mode"
+      searchPlaceholder="Search videos, titles, topics, or ask Leviathan..."
+      systemItems={["MEMORY ONLINE", "SYSTEMS OPERATIONAL"]}
+      layout="wide"
+      pageClass="lv-app--media-platform"
     >
+      <main className="lv-main mp-main-in-shell" data-accent="red">
       <div className="mp-page">
         <section className="mp-hero">
           <div className="mp-hero-media">
@@ -84,6 +82,8 @@ export function YouTubePage() {
             </div>
           </div>
         </section>
+
+        <SubMenu />
 
         <section className="mp-profile">
           <div className="mp-profile-avatar" aria-hidden="true">
@@ -370,6 +370,7 @@ export function YouTubePage() {
           <div className="mp-footer-quote">Ideas today · A brighter tomorrow</div>
         </div>
       </div>
-    </MediaPlatformShell>
+      </main>
+    </AppShell>
   );
 }

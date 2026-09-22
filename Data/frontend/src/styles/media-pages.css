@@ -1,5 +1,44 @@
 /* Shared dashboard page patterns for media platforms + agents */
 
+.lv-app--media-platform .lv-body {
+  grid-template-columns: var(--lv-sidebar-width) minmax(0, 1fr);
+}
+
+.mp-main-in-shell {
+  gap: clamp(6px, 0.7vh, 10px);
+  padding-bottom: 12px;
+}
+
+.mp-main-in-shell[data-accent="red"] {
+  --mp-create-accent: var(--mp-red);
+}
+
+.mp-main-in-shell[data-accent="blue"] {
+  --mp-create-accent: var(--mp-blue);
+}
+
+.mp-main-in-shell[data-accent="gold"] {
+  --mp-create-accent: var(--mp-gold-bright);
+}
+
+.mp-inline-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 8px 12px;
+  border-radius: var(--lv-radius-md, 8px);
+  border: 1px solid var(--mp-border);
+  background: var(--mp-surface);
+  font-size: 11px;
+  color: var(--mp-text-muted);
+}
+
+.mp-inline-health strong {
+  color: var(--mp-gold-bright);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
 .mp-page {
   display: flex;
   flex-direction: column;

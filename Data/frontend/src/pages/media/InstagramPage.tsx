@@ -9,7 +9,8 @@ import {
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
-import { MediaPlatformShell } from "../../layouts/MediaPlatformShell";
+import { SubMenu } from "../../components/SubMenu";
+import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
 const TILES = platformTiles.instagram;
@@ -82,13 +83,6 @@ const DEALS = [
 const SCHEDULER_TABS = ["Post", "Reel", "Story", "Carousel"] as const;
 const ASSET_TABS = ["All", "Images", "Reels", "Templates", "Brand", "AI Assets"] as const;
 
-const IG_STATUS = [
-  { label: "Profile Status", value: "Healthy" },
-  { label: "Content Flow", value: "On Track" },
-  { label: "Engagement", value: "Excellent" },
-  { label: "Growth Trend", value: "+32%" },
-] as const;
-
 export function InstagramPage() {
   const toast = useAppToast();
   const [schedulerTab, setSchedulerTab] = useState<(typeof SCHEDULER_TABS)[number]>("Reel");
@@ -98,14 +92,15 @@ export function InstagramPage() {
   const feedCells = [...TILES, mediaControlCrops.instagramReel1, TILES[0], TILES[1]].slice(0, 8);
 
   return (
-    <MediaPlatformShell
-      activePlatform="instagram"
-      searchPlaceholder="Search content, hashtags, captions, or anything..."
-      createAccent="gold"
-      promo={{ platform: "instagram", caption: "Visuals move people. Ideas change the world." }}
-      sidebarCaption="Bigger audiences. A higher humanity."
-      statusItems={IG_STATUS}
+    <AppShell
+      activeMode="explore"
+      modeLabel="Media Mode"
+      searchPlaceholder="Search content, hashtags, captions, or ask Leviathan..."
+      systemItems={["MEMORY ONLINE", "SYSTEMS OPERATIONAL"]}
+      layout="wide"
+      pageClass="lv-app--media-platform"
     >
+      <main className="lv-main mp-main-in-shell" data-accent="gold">
       <div className="mp-page mp-ig">
         <section className="mp-hero mp-ig-hero">
           <div className="mp-hero-media">
@@ -126,6 +121,8 @@ export function InstagramPage() {
             </div>
           </div>
         </section>
+
+        <SubMenu />
 
         <section className="mp-profile mp-ig-profile">
           <div className="mp-profile-avatar">
@@ -410,6 +407,7 @@ export function InstagramPage() {
           </Panel>
         </div>
       </div>
-    </MediaPlatformShell>
+      </main>
+    </AppShell>
   );
 }

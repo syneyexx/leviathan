@@ -10,7 +10,8 @@ import {
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
-import { MediaPlatformShell } from "../../layouts/MediaPlatformShell";
+import { SubMenu } from "../../components/SubMenu";
+import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
 const TILES = platformTiles.facebook;
@@ -105,19 +106,15 @@ export function FacebookPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Followers");
 
   return (
-    <MediaPlatformShell
-      activePlatform="facebook"
-      searchPlaceholder="Search posts, comments, campaigns, or anything..."
-      createAccent="blue"
-      promo={{ platform: "facebook", caption: "Real people. Bigger possibilities." }}
-      sidebarCaption="Bigger audiences. A higher humanity."
-      statusItems={[
-        { label: "Page Status", value: "Healthy" },
-        { label: "Monetization", value: "Enabled" },
-        { label: "Page Quality", value: "Good" },
-        { label: "Community Guidelines", value: "No Issues" },
-      ]}
+    <AppShell
+      activeMode="explore"
+      modeLabel="Media Mode"
+      searchPlaceholder="Search posts, comments, campaigns, or ask Leviathan..."
+      systemItems={["MEMORY ONLINE", "SYSTEMS OPERATIONAL"]}
+      layout="wide"
+      pageClass="lv-app--media-platform"
     >
+      <main className="lv-main mp-main-in-shell" data-accent="blue">
       <div className="mp-page mp-fb">
         <section className="mp-hero mp-fb-hero">
           <div className="mp-hero-media">
@@ -137,6 +134,8 @@ export function FacebookPage() {
             </div>
           </div>
         </section>
+
+        <SubMenu />
 
         <section className="mp-profile mp-fb-profile">
           <div className="mp-profile-avatar">
@@ -381,6 +380,7 @@ export function FacebookPage() {
           <span className="mp-footer-quote">Ideas today · A brighter tomorrow</span>
         </div>
       </div>
-    </MediaPlatformShell>
+      </main>
+    </AppShell>
   );
 }
