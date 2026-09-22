@@ -1,4 +1,11 @@
 import { useMemo, useState } from "react";
+import {
+  BRAIN_PIXEL_VIEWS,
+  brainViewContent,
+  brainViewHasGraphTab,
+  brainViewHotspots,
+  type BrainPixelView,
+} from "../assets/brainPagesAssets";
 import { media } from "../assets/media";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
@@ -79,6 +86,10 @@ const EDGES: [string, string][] = [
 
 const VIEWS = ["Graph", "Tree", "Timeline", "Clusters", "Analytics"] as const;
 
+function isBrainPixelView(view: (typeof VIEWS)[number]): view is BrainPixelView {
+  return (BRAIN_PIXEL_VIEWS as readonly string[]).includes(view);
+}
+
 const NODE_DETAILS: Record<
   string,
   { description: string; created: string; updated: string; connections: string; relevance: number; tags: string[] }
@@ -138,6 +149,65 @@ export function BrainPage() {
     });
   };
 
+  if (isBrainPixelView(view)) {
+    const src = brainViewContent[view];
+    const hotspots = brainViewHotspots[view];
+    const showGraphBack = !brainViewHasGraphTab[view];
+
+    return (
+      <AppShell
+        activeMode="explore"
+        modeLabel="Brain Mode"
+        searchPlaceholder="Search nodes, concepts, memories, datasets..."
+        layout="wide"
+        pageClass="lv-app--brain-pixel"
+      >
+        <main className="lv-main lv-brain-pixel-main">
+          <section className="lv-brain-pixel-frame" aria-label={`Brain ${view} view`}>
+            <div className="lv-brain-pixel-stage">
+              <img
+                className="lv-brain-pixel-shot"
+                src={src}
+                alt={`Brain ${view}`}
+                width={1450}
+                height={863}
+              />
+              {showGraphBack ? (
+                <button
+                  className="lv-brain-pixel-graph-back"
+                  type="button"
+                  onClick={() => setView("Graph")}
+                >
+                  ← Graph View
+                </button>
+              ) : null}
+              <ul className="lv-brain-pixel-hotspots" role="tablist" aria-label="Brain views">
+                {hotspots.map((spot) => (
+                  <li key={spot.view}>
+                    <button
+                      className="lv-brain-pixel-hotspot"
+                      type="button"
+                      role="tab"
+                      aria-selected={view === spot.view}
+                      aria-label={spot.view === "Graph" ? "Graph View" : spot.view}
+                      style={{
+                        left: `${spot.left}%`,
+                        top: `${spot.top}%`,
+                        width: `${spot.width}%`,
+                        height: `${spot.height}%`,
+                      }}
+                      onClick={() => setView(spot.view)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        </main>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
       activeMode="explore"
@@ -174,10 +244,7 @@ export function BrainPage() {
                 key={item}
                 className={`lv-tab${view === item ? " is-active" : ""}`}
                 type="button"
-                onClick={() => {
-                  setView(item);
-                  if (item !== "Graph") toast(`${item} view (mock)`);
-                }}
+                onClick={() => setView(item)}
               >
                 {item === "Graph" ? <span className="lv-tab-dot" /> : null}
                 {item}
