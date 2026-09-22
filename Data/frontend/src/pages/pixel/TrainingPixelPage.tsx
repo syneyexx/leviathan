@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
 import { AppShell } from "../../layouts/AppShell";
+import {
+  TRAINING_DATASET_PREVIEW,
+  TRAINING_PIXEL_DATASET_PREVIEW_TABS,
+  TRAINING_PIXEL_TABS,
+  TRAINING_SAFETY_TOGGLES,
+  type TrainingPixelTab,
+} from "../../mocks/training-pixel";
 import { useAppToast } from "../../state/useAppToast";
 import type {
   HardwareSnapshot,
@@ -13,10 +20,7 @@ import type {
   TrainingMetric,
   TrainingPlan,
 } from "../../types/api";
-import { chartPolyline, PxHero, PxIcon, PxKpi } from "./pixel-shared";
-
-const PIXEL_TABS = ["General", "Model", "Dataset", "Training", "Advanced"] as const;
-type PixelTab = (typeof PIXEL_TABS)[number];
+import { chartPolyline, PxHero, PxIcon, PxKpi, PxSwitch } from "./pixel-shared";
 
 const ACTIVE = new Set(["queued", "preflight", "running", "evaluating", "exporting", "cancelling"]);
 const RESUMABLE = new Set(["interrupted", "queued"]);
@@ -82,7 +86,9 @@ function LineChart({
 
 export function TrainingPixelPage() {
   const toast = useAppToast();
-  const [tab, setTab] = useState<PixelTab>("General");
+  const [tab, setTab] = useState<TrainingPixelTab>("General");
+  const [dsPreviewTab, setDsPreviewTab] =
+    useState<(typeof TRAINING_PIXEL_DATASET_PREVIEW_TABS)[number]>("Voorbeeld");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,6 +102,8 @@ export function TrainingPixelPage() {
   const [metrics, setMetrics] = useState<TrainingMetric[]>([]);
   const [logs, setLogs] = useState<TrainingLogs | null>(null);
   const [checkpoints, setCheckpoints] = useState<TrainingCheckpoint[]>([]);
+  const [evaluation, setEvaluation] = useState<Record<string, unknown> | null>(null);
+  const [exportResult, setExportResult] = useState<Record<string, unknown> | null>(null);
 
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [plan, setPlan] = useState<TrainingPlan | null>(null);
@@ -111,6 +119,9 @@ export function TrainingPixelPage() {
   const [maxSeq, setMaxSeq] = useState("512");
   const [precision, setPrecision] = useState("fp32");
   const [fixtureSteps, setFixtureSteps] = useState("5");
+  const [saveSteps, setSaveSteps] = useState("500");
+  const [gradientCheckpointing, setGradientCheckpointing] = useState(false);
+  const [loadIn4bit, setLoadIn4bit] = useState(false);
 
   const selectedJob = useMemo(
     () => jobs.find((j) => j.jobId === selectedJobId) ?? null,
@@ -130,6 +141,9 @@ export function TrainingPixelPage() {
       max_seq_length: Number(maxSeq) || 512,
       precision,
       fixture_steps: Number(fixtureSteps) || 5,
+      save_steps: Number(saveSteps) || 500,
+      gradient_checkpointing: gradientCheckpointing,
+      load_in_4bit: loadIn4bit,
     }),
     [
       name,
@@ -143,6 +157,9 @@ export function TrainingPixelPage() {
       maxSeq,
       precision,
       fixtureSteps,
+      saveSteps,
+      gradientCheckpointing,
+      loadIn4bit,
     ],
   );
 
@@ -261,7 +278,7 @@ export function TrainingPixelPage() {
       const res = await api.createTrainingJob({ ...payload, auto_start: start });
       setSelectedJobId(res.job.jobId);
       await loadJobs();
-      setTab("General");
+      setTab("Training");
     }, start ? "Job aangemaakt en gestart" : "Job aangemaakt");
   }
 
@@ -276,8 +293,33 @@ export function TrainingPixelPage() {
     return null;
   }, [capabilities, capsError, method]);
 
-  const methodBlocked =
-    Boolean(methodDisabledReason && method !== "fixture" && method !== "sft");
+  const methodBlocked = Boolean(
+    methodDisabledReason && method !== "fixture" && method !== "sft",
+  );
+
+  const trainActions = (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+      <button type="button" className="lv-px-btn" disabled={busy} onClick={() => void onPreflight()}>
+        Preflight
+      </button>
+      <button
+        type="button"
+        className="lv-px-btn"
+        disabled={busy || methodBlocked}
+        onClick={() => void onCreate(false)}
+      >
+        Job aanmaken
+      </button>
+      <button
+        type="button"
+        className="lv-px-btn is-gold"
+        disabled={busy || methodBlocked || preflight?.verdict === "BLOCKED"}
+        onClick={() => void onCreate(true)}
+      >
+        <PxIcon name="play" /> Start training
+      </button>
+    </div>
+  );
 
   const activeCount = jobs.filter((j) => ACTIVE.has(j.status)).length;
   const queuedCount = jobs.filter((j) => j.status === "queued").length;
@@ -432,7 +474,7 @@ export function TrainingPixelPage() {
 
           <div className="lv-px-filters" style={{ justifyContent: "space-between" }}>
             <nav className="lv-px-tabs" aria-label="Training secties">
-              {PIXEL_TABS.map((item) => (
+              {TRAINING_PIXEL_TABS.map((item) => (
                 <button
                   key={item}
                   type="button"
@@ -564,29 +606,7 @@ export function TrainingPixelPage() {
                   {methodDisabledReason ? (
                     <p style={{ fontSize: 9, color: "var(--lv-text-muted)", marginTop: 8 }}>{methodDisabledReason}</p>
                   ) : null}
-                  {tab === "Training" && (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-                      <button type="button" className="lv-px-btn" disabled={busy} onClick={() => void onPreflight()}>
-                        Preflight
-                      </button>
-                      <button
-                        type="button"
-                        className="lv-px-btn"
-                        disabled={busy || methodBlocked}
-                        onClick={() => void onCreate(false)}
-                      >
-                        Job aanmaken
-                      </button>
-                      <button
-                        type="button"
-                        className="lv-px-btn is-gold"
-                        disabled={busy || methodBlocked || preflight?.verdict === "BLOCKED"}
-                        onClick={() => void onCreate(true)}
-                      >
-                        <PxIcon name="play" /> Aanmaken &amp; starten
-                      </button>
-                    </div>
-                  )}
+                  {(tab === "Training" || tab === "General") && trainActions}
                 </section>
               )}
 
@@ -640,9 +660,77 @@ export function TrainingPixelPage() {
                       />
                     </div>
                   </div>
+                  <div className="lv-px-tabs" style={{ marginTop: 8 }}>
+                    {TRAINING_PIXEL_DATASET_PREVIEW_TABS.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        className={`lv-px-tab${dsPreviewTab === t ? " is-active" : ""}`}
+                        onClick={() => setDsPreviewTab(t)}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                  {dsPreviewTab === "Voorbeeld" ? (
+                    <pre className="lv-px-code" style={{ marginTop: 8 }}>
+                      {TRAINING_DATASET_PREVIEW}
+                    </pre>
+                  ) : (
+                    <p style={{ fontSize: 9, color: "var(--lv-text-muted)", marginTop: 8 }}>
+                      {dsPreviewTab === "Statistieken"
+                        ? "Statistieken komen van de gekozen datasetversie op Datasets."
+                        : "Token distributie vereist dataset-analyse op Datasets."}
+                    </p>
+                  )}
                   <p style={{ fontSize: 9, color: "var(--lv-text-muted)", marginTop: 8 }}>
                     Voorbereiding en validatie gebeuren op de Datasets-pagina.
                   </p>
+                </section>
+              )}
+
+              {(tab === "General" || tab === "Advanced") && (
+                <section className="lv-px-panel">
+                  <h2 className="lv-px-panel-title">Veiligheid &amp; limieten</h2>
+                  {TRAINING_SAFETY_TOGGLES.map((toggle) => (
+                    <div key={toggle.id} className="lv-px-toggle-row">
+                      <div>
+                        <strong>{toggle.label}</strong>
+                        <span>{toggle.description}</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="lv-px-toggle-row">
+                    <div>
+                      <strong>Gradient checkpointing</strong>
+                      <span>Minder VRAM, langzamere stappen</span>
+                    </div>
+                    <PxSwitch
+                      label="Gradient checkpointing"
+                      on={gradientCheckpointing}
+                      onToggle={() => setGradientCheckpointing((v) => !v)}
+                    />
+                  </div>
+                  <div className="lv-px-toggle-row">
+                    <div>
+                      <strong>Load in 4-bit</strong>
+                      <span>Voor QLoRA wanneer ondersteund</span>
+                    </div>
+                    <PxSwitch label="Load in 4-bit" on={loadIn4bit} onToggle={() => setLoadIn4bit((v) => !v)} />
+                  </div>
+                  <dl className="lv-px-meta-grid" style={{ marginTop: 8 }}>
+                    <dt>Checkpoint interval</dt>
+                    <dd>
+                      <input
+                        value={saveSteps}
+                        onChange={(e) => setSaveSteps(e.target.value)}
+                        disabled={busy}
+                        aria-label="Checkpoint interval"
+                      />
+                    </dd>
+                    <dt>Max epochs</dt>
+                    <dd>{epochs}</dd>
+                  </dl>
                 </section>
               )}
 
@@ -681,6 +769,53 @@ export function TrainingPixelPage() {
                   </ul>
                 </section>
               )}
+
+              {tab === "Advanced" && selectedJob ? (
+                <section className="lv-px-panel">
+                  <h2 className="lv-px-panel-title">Evaluatie &amp; export</h2>
+                  <p style={{ fontSize: 10, color: "var(--lv-text-muted)" }}>
+                    {selectedJob.name} · {selectedJob.status}
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="lv-px-btn is-gold"
+                      disabled={busy || ACTIVE.has(selectedJob.status)}
+                      onClick={() =>
+                        void withBusy(async () => {
+                          const res = await api.evaluateTrainingJob(selectedJob.jobId);
+                          setEvaluation(res.evaluation);
+                        }, "Evaluatie voltooid")
+                      }
+                    >
+                      Evalueer run
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-px-btn"
+                      disabled={busy || selectedJob.status !== "completed"}
+                      onClick={() =>
+                        void withBusy(async () => {
+                          const res = await api.exportTrainingJob(selectedJob.jobId);
+                          setExportResult(res.export);
+                        }, "Export voltooid")
+                      }
+                    >
+                      Exporteer artifact
+                    </button>
+                  </div>
+                  {evaluation ? (
+                    <pre className="lv-px-code" style={{ marginTop: 8, maxHeight: 200, overflow: "auto" }}>
+                      {JSON.stringify(evaluation, null, 2)}
+                    </pre>
+                  ) : null}
+                  {exportResult ? (
+                    <pre className="lv-px-code" style={{ marginTop: 8, maxHeight: 200, overflow: "auto" }}>
+                      {JSON.stringify(exportResult, null, 2)}
+                    </pre>
+                  ) : null}
+                </section>
+              ) : null}
             </div>
 
             <aside className="lv-px-stack">
@@ -852,6 +987,7 @@ export function TrainingPixelPage() {
                     </table>
                   </div>
                 )}
+                {jobs.length > 0 ? trainActions : null}
               </section>
             </aside>
           </div>
