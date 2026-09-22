@@ -883,10 +883,23 @@ export function DatasetManagementPixelPage() {
                         <PxIcon name="file" />
                         <span>Voorbeeld bekijken</span>
                       </button>
-                      <Link to="/training" style={{ textDecoration: "none", display: "contents" }}>
+                      <Link
+                        to={
+                          selectedVersionId
+                            ? `/training?datasetVersionId=${encodeURIComponent(selectedVersionId)}`
+                            : "/training"
+                        }
+                        style={{ textDecoration: "none", display: "contents" }}
+                      >
                         <button type="button">
                           <PxIcon name="play" />
                           <span>Gebruik in training</span>
+                        </button>
+                      </Link>
+                      <Link to="/offline-datasets" style={{ textDecoration: "none", display: "contents" }}>
+                        <button type="button">
+                          <PxIcon name="database" />
+                          <span>Offline / Brain</span>
                         </button>
                       </Link>
                     </div>

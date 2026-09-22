@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
 import { AppShell } from "../../layouts/AppShell";
 import {
@@ -108,10 +108,11 @@ export function TrainingPixelPage() {
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [plan, setPlan] = useState<TrainingPlan | null>(null);
 
+  const [searchParams] = useSearchParams();
   const [name, setName] = useState("training-run");
   const [method, setMethod] = useState("fixture");
   const [baseModel, setBaseModel] = useState("unspecified");
-  const [datasetVersionId, setDatasetVersionId] = useState("");
+  const [datasetVersionId, setDatasetVersionId] = useState(() => searchParams.get("datasetVersionId") ?? "");
   const [datasetPath, setDatasetPath] = useState("");
   const [epochs, setEpochs] = useState("1");
   const [batchSize, setBatchSize] = useState("1");
@@ -453,8 +454,14 @@ export function TrainingPixelPage() {
                 <button type="button" className="lv-px-btn" disabled={busy} onClick={() => void loadJobs()}>
                   Jobs verversen
                 </button>
-                <Link to="/datasets" className="lv-px-btn is-gold">
+                <Link to="/dataset-management" className="lv-px-btn is-gold">
                   Datasets
+                </Link>
+                <Link to="/offline-datasets" className="lv-px-btn">
+                  Offline
+                </Link>
+                <Link to="/analytics" className="lv-px-btn">
+                  Stats
                 </Link>
               </div>
             }

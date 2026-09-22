@@ -43,8 +43,8 @@ def probe_training_capabilities() -> TrainingCapabilities:
     )
     can_lora = len(missing_lora) == 0
     can_qlora = can_lora and ok("bitsandbytes")
-    # DPO needs preference data + same stack; capability only reflects packages.
-    can_dpo = can_lora
+    # DPO is not a complete worker vertical slice yet — do not advertise as runnable.
+    can_dpo = False
     notes: list[str] = []
     if not can_lora:
         notes.append(
@@ -53,6 +53,7 @@ def probe_training_capabilities() -> TrainingCapabilities:
         )
     if can_lora and not can_qlora:
         notes.append("QLoRA unavailable — bitsandbytes not installed.")
+    notes.append("DPO method is not yet a complete vertical slice — capability gated OFF.")
 
     ready = can_lora or True  # fixture always available
     return TrainingCapabilities(
