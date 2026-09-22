@@ -35,6 +35,15 @@ export type ChatResponse = {
   knowledge_sources: KnowledgeSource[];
   neuro?: unknown;
   cortex?: unknown;
+  streamed?: boolean;
+  truth?: {
+    neural_signal_is_not_authority?: boolean;
+    residual_implemented?: boolean;
+    residual_applied?: boolean;
+    streaming_degraded?: boolean;
+    model_output_is_not_evidence?: boolean;
+    [key: string]: boolean | undefined;
+  };
 };
 
 export type HealthResponse = {
@@ -77,6 +86,13 @@ export type HealthResponse = {
     working_memory_slots?: number;
     memory_tier0_max_slots?: number;
     absorb?: Record<string, number>;
+    contrastive_ready?: boolean;
+    contrastive_method_default?: string;
+    chat_streaming?: boolean;
+    chat_sse?: boolean;
+    streaming_posture?: string;
+    residual_applied_count?: number;
+    residual_degraded_count?: number;
     truth?: Record<string, boolean>;
   };
   knowledge?: {

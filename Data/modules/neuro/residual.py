@@ -84,8 +84,13 @@ class ResidualInjectReceipt:
             "reason": self.reason or self.detail,
             "degraded_to_chat_completions": self.degraded_to_chat_completions,
             "truth": {
+                "neural_signal_is_not_authority": True,
                 "residual_injection_is_not_authority": True,
+                "residual_implemented": bool(self.implemented),
+                "residual_applied": bool(self.applied),
                 "unapplied_is_not_success": True,
+                "unsupported_is_not_failure_of_core": True,
+                "streaming_degraded": False,
             },
         }
 
@@ -122,7 +127,17 @@ class ResidualForwardResult:
             "reason": self.reason or self.detail,
             "receipts": [item.public_dict() for item in self.receipts],
             "metadata": self.metadata,
-            "truth": {"model_output_is_not_evidence": True},
+            "truth": {
+                "model_output_is_not_evidence": True,
+                "neural_signal_is_not_authority": True,
+                "residual_implemented": bool(self.implemented),
+                "residual_applied": any(r.applied for r in self.receipts),
+                "unapplied_is_not_success": True,
+                "unsupported_is_not_failure_of_core": True,
+                "streaming_degraded": bool(
+                    (self.metadata or {}).get("streaming_degraded", False)
+                ),
+            },
         }
 
 
@@ -147,12 +162,16 @@ class UnsupportedResidualRuntime:
     def supports_residuals(self) -> bool:
         return False
 
+    def supports_streaming_forward(self) -> bool:
+        return False
+
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "unsupported",
             "protocol_version": self.protocol_version,
             "production_grade": False,
             "available": False,
+            "supports_streaming_forward": False,
             "truth": {
                 "residual_injection_is_not_authority": True,
                 "unsupported_is_not_failure_of_core": True,

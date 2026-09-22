@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 0.60.0-phase54 — 2026-09-22
+
+### Residual production + Contrastive InfoNCE + Chat SSE
+
+- **Residual production path:** vLLM / llama.cpp adapters require `/v1/residuals/hooks` before `supports_residuals()`; HTTP read/inject/forward when confirmed; receipts always carry implemented/applied/degraded/reason/truth; health≠support.
+- **ResidualOrchestrator:** mid/late layer policy, `max_total_alpha` budgeting, multi-inject coordination, degrade_reasons telemetry, `streaming_degraded` truth when adapters cannot stream forward.
+- **Contrastive:** EmbeddingProvider InfoNCE-style ranking (`method=embedding`); lexical UNMEASURED fallback; EXTERNAL-FIRST ephemeral recipe worker unchanged honesty.
+- **Chat SSE:** `LEVIATHAN_FEATURE_CHAT_STREAMING` + child `CHAT_SSE`; real token stream on `/api/chat`; frontend consumes SSE; residual+stream degrades honestly.
+- **API/UI:** `GET /api/neuro/status`; Status panel posture; Master `phase_span=0-54`.
+- **Tests:** `test_neuro_phase54.py`.
+
+### Explicitly NOT claimed
+- Default production GPU residual path; multi-hour HBM/power SLO; residual-aware stream without degrade; contrastive always improves retrieval.
+
+---
+
 ## 0.55.0-phase52 — 2026-09-22
 
 ### Neuro Layer — Grok-level depth jump (local-first, honest)

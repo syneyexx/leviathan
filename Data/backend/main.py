@@ -3,8 +3,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -40,7 +40,7 @@ from Data.modules.knowledge import (
     build_embedding_provider,
 )
 from Data.modules.memory import MemoryKind, MemoryStatus, MemoryStore
-from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM
+from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM, chat_truth, sse_encode
 from Data.modules.models import ModelControlError, ModelControlPlane
 from Data.backend.routes.models import build_models_router
 from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
@@ -705,7 +705,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.59.0-phase53", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.60.0-phase54", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -724,6 +724,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     model_id: str | None = None
     preferred_role: str | None = None
+    stream: bool = False
 
 
 class KnowledgeWrite(BaseModel):
@@ -837,13 +838,37 @@ async def health() -> dict:
             ),
             "orchestrator_telemetry": dict(residual_orchestrator.telemetry),
             "absorb": dict(neuro_absorb.telemetry),
+            "contrastive_ready": bool(
+                settings.features.neuro_contrastive_training
+                and neuro_contrastive.embeddings_available
+            ),
+            "contrastive_method_default": (
+                "embedding" if neuro_contrastive.embeddings_available else "lexical"
+            ),
+            "chat_streaming": settings.features.chat_streaming,
+            "chat_sse": settings.features.chat_sse,
+            "streaming_posture": (
+                "sse_ready"
+                if settings.features.chat_streaming
+                else "disabled"
+            ),
+            "residual_applied_count": int(
+                residual_orchestrator.telemetry.get("injects_applied") or 0
+            ),
+            "residual_degraded_count": int(
+                residual_orchestrator.telemetry.get("degraded") or 0
+            ),
             "truth": {
                 "neural_signal_is_not_authority": True,
                 "residual_implemented": residual_runtime.supports_residuals(),
+                "residual_applied": bool(
+                    residual_orchestrator.telemetry.get("injects_applied")
+                ),
                 "discoverable_is_not_authorized": True,
                 "unapplied_is_not_success": True,
                 "model_output_is_not_evidence": True,
                 "unsupported_is_not_failure_of_core": True,
+                "streaming_degraded": False,
             },
         },
         "module_manager": {
@@ -910,7 +935,7 @@ def get_conversation(conversation_id: str) -> dict:
 
 
 @app.post("/api/chat")
-async def chat(payload: ChatRequest) -> dict:
+async def chat(payload: ChatRequest, request: Request):
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=422, detail="Message cannot be empty")
@@ -1039,6 +1064,7 @@ async def chat(payload: ChatRequest) -> dict:
     neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
     neuro_context: list[dict] = []
     cortex_report = None
+    residual_applied_any = False
     if neuro.enabled:
         observability.emit(
             "neuro",
@@ -1072,6 +1098,17 @@ async def chat(payload: ChatRequest) -> dict:
                         "kind": f"neuro_tier_{hit.tier}",
                     }
                 )
+            if settings.features.neuro_contrastive_training:
+                contrastive = neuro_contrastive.retrieve(message, tiers=(1, 2), limit=3)
+                for hit in contrastive.hits[:3]:
+                    memory_hits.append(
+                        {
+                            "memory_id": hit.get("ref_id") or hit.get("memory_id") or "contrastive",
+                            "content": f"[contrastive:{contrastive.method}] {hit.get('content') or ''}",
+                            "status": "ACTIVE",
+                            "kind": "neuro_contrastive",
+                        }
+                    )
         if settings.features.neuro_cortex:
             engagement = next((s for s in neuro.signals if s.kind == "cortex_engagement"), None)
             depth = 0
@@ -1112,6 +1149,8 @@ async def chat(payload: ChatRequest) -> dict:
                             ),
                             metadata={"run_id": run.run_id, "source": "cortex_runtime"},
                         )
+                        if receipt_dict.get("applied"):
+                            residual_applied_any = True
                 if settings.features.neuro_residual_orchestrator:
                     orch = residual_orchestrator.orchestrate(
                         messages=[{"role": "user", "content": message}],
@@ -1126,6 +1165,8 @@ async def chat(payload: ChatRequest) -> dict:
                             receipt,
                             metadata={"run_id": run.run_id, "source": "residual_orchestrator"},
                         )
+                        if receipt.applied:
+                            residual_applied_any = True
                     neuro_context.append(
                         {
                             "id": f"residual-orch-{run.run_id}",
@@ -1154,11 +1195,28 @@ async def chat(payload: ChatRequest) -> dict:
                     }
                 )
 
+    # Streaming posture: residual-aware forward rarely streams — degrade honestly.
+    accept = (request.headers.get("accept") or "").lower()
+    wants_sse = payload.stream or ("text/event-stream" in accept)
+    stream_enabled = bool(settings.features.chat_streaming)
+    residual_wants_stream = residual_runtime.supports_residuals() and bool(
+        settings.features.neuro_residual_injection or settings.features.residual_production
+    )
+    residual_can_stream = bool(
+        getattr(residual_runtime, "supports_streaming_forward", lambda: False)()
+    )
+    streaming_degraded = bool(
+        wants_sse and stream_enabled and residual_wants_stream and not residual_can_stream
+    )
+    use_sse = bool(wants_sse and stream_enabled)
+
     runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     route_meta: dict | None = None
     call_id: str | None = None
     provider_id_for_release = "unknown"
     model_id_for_release = "unknown"
+    routed: dict | None = None
+    profile = None
     try:
         routed = model_plane.resolve_for_chat(
             explicit_model_id=payload.model_id,
@@ -1178,28 +1236,6 @@ async def chat(payload: ChatRequest) -> dict:
             "traceId": call_id,
         }
         runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
-        # Chat HTTP path is non-SSE today; streaming preference is stored for future stream endpoints.
-        answer, model = await llm.chat(
-            history=history,
-            knowledge=knowledge_hits,
-            plan=plan,
-            memory=memory_hits,
-            neuro=neuro_context or None,
-            atlas=atlas_hits or None,
-            why=why_hits or None,
-            contradictions=contradictions or None,
-            model_id=routed["provider_model_id"],
-            endpoint=routed["endpoint"],
-            api_key=routed["api_key"],
-            temperature=profile.temperature,
-            max_tokens=profile.max_tokens,
-            top_p=profile.top_p,
-            system_prompt=profile.system_prompt or None,
-            stream=False,
-        )
-        model_plane.registry.touch_used(model_id_for_release)
-        model_plane.gateway.release(model_id=model_id_for_release, provider_id=provider_id_for_release)
-        call_id = None
     except ModelControlError as exc:
         if call_id:
             model_plane.gateway.release(
@@ -1207,33 +1243,208 @@ async def chat(payload: ChatRequest) -> dict:
                 provider_id=provider_id_for_release,
                 error=exc.code,
             )
-        # Fall back to legacy settings-based client when registry empty / router exhausted
+            call_id = None
         if exc.code in {"ROUTER_EXHAUSTED", "MODEL_NOT_FOUND"} and not payload.model_id:
-            try:
-                answer, model = await llm.chat(
-                    history=history,
-                    knowledge=knowledge_hits,
-                    plan=plan,
-                    memory=memory_hits,
-                    neuro=neuro_context or None,
-                    atlas=atlas_hits or None,
-                    why=why_hits or None,
-                    contradictions=contradictions or None,
-                )
-                route_meta = {
-                    "decision": {
-                        "reason": "legacy_settings_fallback",
-                        "fallbackUsed": True,
-                        "fallbackReason": exc.code,
-                    }
+            routed = None
+            profile = None
+            route_meta = {
+                "decision": {
+                    "reason": "legacy_settings_fallback",
+                    "fallbackUsed": True,
+                    "fallbackReason": exc.code,
                 }
-                model_plane.gateway.record_fallback(exc.code)
-            except LLMUnavailable as llm_exc:
-                runs.transition(run.run_id, RunState.FAILED, error=str(llm_exc))
-                raise HTTPException(status_code=503, detail=str(llm_exc)) from llm_exc
+            }
+            model_plane.gateway.record_fallback(exc.code)
         else:
             runs.transition(run.run_id, RunState.FAILED, error=str(exc))
             raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
+
+    llm_kwargs = dict(
+        history=history,
+        knowledge=knowledge_hits,
+        plan=plan,
+        memory=memory_hits,
+        neuro=neuro_context or None,
+        atlas=atlas_hits or None,
+        why=why_hits or None,
+        contradictions=contradictions or None,
+    )
+    if routed is not None and profile is not None:
+        llm_kwargs.update(
+            model_id=routed["provider_model_id"],
+            endpoint=routed["endpoint"],
+            api_key=routed["api_key"],
+            temperature=profile.temperature,
+            max_tokens=profile.max_tokens,
+            top_p=profile.top_p,
+            system_prompt=profile.system_prompt or None,
+        )
+
+    def _finalize_chat(answer: str, model: str) -> dict:
+        nonlocal call_id
+        if call_id and routed is not None:
+            model_plane.registry.touch_used(model_id_for_release)
+            model_plane.gateway.release(
+                model_id=model_id_for_release, provider_id=provider_id_for_release
+            )
+            call_id = None
+        runs.append_event(
+            run.run_id,
+            EventType.MODEL_COMPLETED,
+            {"model": model, **(route_meta or {})},
+        )
+        assistant_message = db.add_message(conversation_id, "assistant", answer)
+        observability.emit(
+            "chat",
+            "completed",
+            payload={
+                "run_id": run.run_id,
+                "model": model,
+                "memory_hits": len(memory_hits),
+                "route": route_meta,
+                "streamed": use_sse,
+                "streaming_degraded": streaming_degraded,
+            },
+        )
+        completed = runs.transition(
+            run.run_id,
+            RunState.COMPLETED,
+            selected_model=model,
+            output=answer,
+        )
+        return {
+            "conversation_id": conversation_id,
+            "run_id": completed.run_id,
+            "run_state": completed.state.value,
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            "model": model,
+            "routing": route_meta,
+            "reasoning": plan.public_summary(),
+            "knowledge_sources": [
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "source": item["source"],
+                    "chunk_id": item.get("chunk_id"),
+                }
+                for item in knowledge_hits
+            ],
+            "atlas_sources": [
+                {"atlas_id": item.get("atlas_id"), "title": item.get("title")} for item in atlas_hits
+            ],
+            "deep_recall": deep_recall_result.public_dict() if deep_recall_result else None,
+            "economy": economy.public_dict(),
+            "why_sources": [{"id": item.get("id"), "kind": item.get("kind")} for item in why_hits],
+            "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
+            "neuro": neuro.public_dict(),
+            "cortex": cortex_report,
+            "streamed": use_sse,
+            "truth": chat_truth(
+                streaming_degraded=streaming_degraded,
+                residual_implemented=residual_runtime.supports_residuals(),
+                residual_applied=residual_applied_any,
+            ),
+        }
+
+    if use_sse:
+
+        async def _sse_events():
+            nonlocal call_id
+            yield sse_encode(
+                "meta",
+                {
+                    "conversation_id": conversation_id,
+                    "run_id": run.run_id,
+                    "user_message": user_message,
+                    "reasoning": plan.public_summary(),
+                    "model": (routed or {}).get("provider_model_id") if routed else None,
+                    "streaming_degraded": streaming_degraded,
+                    "truth": chat_truth(
+                        streaming_degraded=streaming_degraded,
+                        residual_implemented=residual_runtime.supports_residuals(),
+                        residual_applied=residual_applied_any,
+                    ),
+                },
+            )
+            parts: list[str] = []
+            model_name = "unknown"
+            try:
+                async for delta, model_name in llm.chat_stream(**llm_kwargs):
+                    parts.append(delta)
+                    yield sse_encode("token", {"text": delta, "model": model_name})
+                answer = "".join(parts).strip()
+                if not answer:
+                    raise LLMUnavailable("LLM stream produced empty text")
+                done_payload = _finalize_chat(answer, model_name)
+                yield sse_encode("done", done_payload)
+            except LLMUnavailable as stream_exc:
+                # Honest degrade: non-stream completion still via real provider path.
+                try:
+                    answer, model_name = await llm.chat(**llm_kwargs, stream=False)
+                    done_payload = _finalize_chat(answer, model_name)
+                    done_payload["truth"] = chat_truth(
+                        streaming_degraded=True,
+                        residual_implemented=residual_runtime.supports_residuals(),
+                        residual_applied=residual_applied_any,
+                    )
+                    done_payload["streamed"] = False
+                    yield sse_encode(
+                        "meta",
+                        {
+                            "streaming_degraded": True,
+                            "detail": str(stream_exc),
+                            "truth": done_payload["truth"],
+                        },
+                    )
+                    yield sse_encode("token", {"text": answer, "model": model_name})
+                    yield sse_encode("done", done_payload)
+                except LLMUnavailable as llm_exc:
+                    if call_id:
+                        model_plane.gateway.release(
+                            model_id=model_id_for_release,
+                            provider_id=provider_id_for_release,
+                            error=str(llm_exc),
+                        )
+                        call_id = None
+                    runs.transition(run.run_id, RunState.FAILED, error=str(llm_exc))
+                    yield sse_encode(
+                        "error",
+                        {
+                            "detail": str(llm_exc),
+                            "truth": chat_truth(streaming_degraded=True),
+                        },
+                    )
+            except Exception as exc:  # noqa: BLE001
+                if call_id:
+                    model_plane.gateway.release(
+                        model_id=model_id_for_release,
+                        provider_id=provider_id_for_release,
+                        error=str(exc),
+                    )
+                    call_id = None
+                runs.transition(run.run_id, RunState.FAILED, error=str(exc))
+                yield sse_encode(
+                    "error",
+                    {
+                        "detail": str(exc),
+                        "truth": chat_truth(streaming_degraded=streaming_degraded),
+                    },
+                )
+
+        return StreamingResponse(
+            _sse_events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # Non-stream path (default / when feature flag OFF).
+    try:
+        answer, model = await llm.chat(**llm_kwargs, stream=False)
     except LLMUnavailable as exc:
         if call_id:
             model_plane.gateway.release(
@@ -1244,56 +1455,62 @@ async def chat(payload: ChatRequest) -> dict:
         runs.transition(run.run_id, RunState.FAILED, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    runs.append_event(
-        run.run_id,
-        EventType.MODEL_COMPLETED,
-        {"model": model, **(route_meta or {})},
-    )
-    assistant_message = db.add_message(conversation_id, "assistant", answer)
-    observability.emit(
-        "chat",
-        "completed",
-        payload={
-            "run_id": run.run_id,
-            "model": model,
-            "memory_hits": len(memory_hits),
-            "route": route_meta,
-        },
-    )
-    # Chat completion contract: model returned usable text AND assistant message persisted.
-    completed = runs.transition(
-        run.run_id,
-        RunState.COMPLETED,
-        selected_model=model,
-        output=answer,
+    result = _finalize_chat(answer, model)
+    if wants_sse and not stream_enabled:
+        result["truth"] = chat_truth(
+            streaming_degraded=True,
+            residual_implemented=residual_runtime.supports_residuals(),
+            residual_applied=residual_applied_any,
+        )
+        result["stream_note"] = (
+            "stream requested but LEVIATHAN_FEATURE_CHAT_STREAMING is OFF — non-stream response"
+        )
+    return result
+
+
+@app.get("/api/neuro/status")
+def neuro_status() -> dict:
+    """Residual + contrastive + streaming posture (supervisor/runtime-backed)."""
+    contrastive_ready = bool(
+        settings.features.neuro_enabled
+        and settings.features.neuro_contrastive_training
+        and neuro_contrastive.embeddings_available
     )
     return {
-        "conversation_id": conversation_id,
-        "run_id": completed.run_id,
-        "run_state": completed.state.value,
-        "user_message": user_message,
-        "assistant_message": assistant_message,
-        "model": model,
-        "routing": route_meta,
-        "reasoning": plan.public_summary(),
-        "knowledge_sources": [
-            {
-                "id": item["id"],
-                "title": item["title"],
-                "source": item["source"],
-                "chunk_id": item.get("chunk_id"),
-            }
-            for item in knowledge_hits
-        ],
-        "atlas_sources": [
-            {"atlas_id": item.get("atlas_id"), "title": item.get("title")} for item in atlas_hits
-        ],
-        "deep_recall": deep_recall_result.public_dict() if deep_recall_result else None,
-        "economy": economy.public_dict(),
-        "why_sources": [{"id": item.get("id"), "kind": item.get("kind")} for item in why_hits],
-        "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
-        "neuro": neuro.public_dict(),
-        "cortex": cortex_report,
+        "enabled": settings.features.neuro_enabled,
+        "residual": {
+            "supports_residuals": residual_runtime.supports_residuals(),
+            "kind": settings.neuro_runtime.residual_kind,
+            "production": settings.features.residual_production,
+            "orchestrator": settings.features.neuro_residual_orchestrator,
+            "applied_count": int(residual_orchestrator.telemetry.get("injects_applied") or 0),
+            "degraded_count": int(residual_orchestrator.telemetry.get("degraded") or 0),
+            "degrade_reasons": dict(residual_orchestrator.telemetry.get("degrade_reasons") or {}),
+            "supports_streaming_forward": bool(
+                getattr(residual_runtime, "supports_streaming_forward", lambda: False)()
+            ),
+            "runtime": (
+                residual_runtime.runtime_info()
+                if hasattr(residual_runtime, "runtime_info")
+                else {}
+            ),
+        },
+        "contrastive": {
+            "flag": settings.features.neuro_contrastive_training,
+            "embeddings_available": neuro_contrastive.embeddings_available,
+            "ready": contrastive_ready,
+            "method": "embedding" if neuro_contrastive.embeddings_available else "lexical",
+        },
+        "streaming": {
+            "chat_streaming": settings.features.chat_streaming,
+            "chat_sse": settings.features.chat_sse,
+            "posture": "sse_ready" if settings.features.chat_streaming else "disabled",
+        },
+        "truth": chat_truth(
+            streaming_degraded=False,
+            residual_implemented=residual_runtime.supports_residuals(),
+            residual_applied=bool(residual_orchestrator.telemetry.get("injects_applied")),
+        ),
     }
 
 

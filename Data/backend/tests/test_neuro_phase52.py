@@ -288,14 +288,16 @@ class Phase52MemoryTests(unittest.TestCase):
             facade.write_episodic("gateway evidence link", kind=MemoryKind.DECISION)
             lexical = ContrastiveRetrievalHead(facade, embeddings_available=False)
             report = lexical.retrieve("gateway")
-            self.assertIn("unmeasured", report.method)
+            self.assertEqual(report.method, "lexical")
+            self.assertFalse(report.measured)
 
             vector = ContrastiveRetrievalHead(
                 facade,
                 embedding_provider=_FakeEmbeddingProvider(),
             )
             vreport = vector.retrieve("gateway")
-            self.assertIn("contrastive_vector", vreport.method)
+            self.assertEqual(vreport.method, "embedding")
+            self.assertTrue(vreport.measured)
             self.assertTrue(vreport.available)
 
 

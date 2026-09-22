@@ -33,10 +33,13 @@ class SoakReport:
     long_soak_enabled: bool = False
 
     def public_dict(self) -> dict[str, Any]:
+        total = self.passed + self.failed
+        error_rate = (self.failed / total) if total else 0.0
         return {
             "iterations": self.iterations,
             "passed": self.passed,
             "failed": self.failed,
+            "error_rate": round(error_rate, 4),
             "duration_ms": self.duration_ms,
             "steps": [item.public_dict() for item in self.steps],
             "notes": list(self.notes),

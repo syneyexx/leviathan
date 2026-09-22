@@ -117,8 +117,10 @@ class Phase48MemoryAbsorbTests(unittest.TestCase):
             facade.write_episodic("decision gateway only", kind=MemoryKind.DECISION)
             head = ContrastiveRetrievalHead(facade, embeddings_available=False)
             report = head.retrieve("gateway")
-            self.assertIn("unmeasured", report.method)
+            self.assertEqual(report.method, "lexical")
+            self.assertFalse(report.measured)
             self.assertTrue(report.public_dict()["truth"]["unmeasured_embeddings_are_not_passed"])
+            self.assertTrue(report.public_dict()["truth"]["unmeasured_is_not_passed"])
 
     def test_knowledge_ingest_scan_capability_requires_approval(self) -> None:
         catalog = build_default_catalog()

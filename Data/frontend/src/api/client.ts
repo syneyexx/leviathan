@@ -178,6 +178,117 @@ export const api = {
     });
   },
 
+  /**
+   * Stream chat via SSE when backend CHAT_STREAMING is ON.
+   * Falls back to non-stream chat() when the response is JSON (feature off / degrade).
+   */
+  async chatStream(
+    message: string,
+    conversationId: string | null,
+    handlers: {
+      onMeta?: (data: Record<string, unknown>) => void;
+      onToken?: (text: string, model?: string) => void;
+      onDone?: (data: ChatResponse) => void;
+      onError?: (detail: string) => void;
+    },
+  ): Promise<ChatResponse> {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        message,
+        conversation_id: conversationId,
+        stream: true,
+      }),
+    });
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    if (!response.ok) {
+      let detail = `Request failed (${response.status})`;
+      try {
+        const body = (await response.json()) as ApiErrorBody;
+        detail = detailMessage(body, response.status);
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+
+    // Feature flag OFF → normal JSON response.
+    if (!contentType.includes("text/event-stream")) {
+      const data = (await response.json()) as ChatResponse;
+      handlers.onDone?.(data);
+      return data;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new ApiError(503, "Streaming response body missing");
+    }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let donePayload: ChatResponse | null = null;
+    let eventName = "message";
+
+    const flushBlock = (block: string) => {
+      const lines = block.split("\n");
+      let dataLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+      if (!dataLines.length) return;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (eventName === "meta") {
+        handlers.onMeta?.(parsed);
+      } else if (eventName === "token") {
+        const text = typeof parsed.text === "string" ? parsed.text : "";
+        const model = typeof parsed.model === "string" ? parsed.model : undefined;
+        if (text) handlers.onToken?.(text, model);
+      } else if (eventName === "done") {
+        donePayload = parsed as unknown as ChatResponse;
+        handlers.onDone?.(donePayload);
+      } else if (eventName === "error") {
+        const detail =
+          typeof parsed.detail === "string" ? parsed.detail : "stream error";
+        handlers.onError?.(detail);
+        throw new ApiError(503, detail);
+      }
+      eventName = "message";
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep = buffer.indexOf("\n\n");
+      while (sep >= 0) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        flushBlock(block);
+        sep = buffer.indexOf("\n\n");
+      }
+    }
+    if (buffer.trim()) {
+      flushBlock(buffer);
+    }
+    if (!donePayload) {
+      throw new ApiError(503, "Stream ended without done event");
+    }
+    return donePayload;
+  },
+
   listCapabilities(): Promise<{ capabilities: unknown[] }> {
     return request<{ capabilities: unknown[] }>("/api/capabilities");
   },
@@ -247,6 +358,16 @@ export const api = {
 
   neuroResidual(): Promise<NeuroResidualStatus> {
     return request<NeuroResidualStatus>("/api/neuro/residual");
+  },
+
+  neuroStatus(): Promise<{
+    enabled: boolean;
+    residual: Record<string, unknown>;
+    contrastive: Record<string, unknown>;
+    streaming: Record<string, unknown>;
+    truth?: Record<string, boolean>;
+  }> {
+    return request("/api/neuro/status");
   },
 
   neuroAbsorb(limit = 50): Promise<{ ingested: number; truth?: Record<string, boolean> }> {

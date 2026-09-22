@@ -6,6 +6,40 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Phase 54 Residual Production + Contrastive Memory + Chat SSE — PASS
+
+### Objective
+Elevate Phase 53 Neuro to a measurable production residual path, InfoNCE contrastive retrieval via EmbeddingProvider, and real `/api/chat` SSE token streaming — without authority theater or fake success.
+
+### Added / changed
+- **Residual production path:** vLLM / llama.cpp adapters keep mandatory `/v1/residuals/hooks` probe; HTTP read/inject/forward when confirmed; receipts always include implemented/applied/degraded/reason/truth; health≠support; `supports_streaming_forward=False` by default
+- **ResidualOrchestrator harden:** mid/late layer policy, α/`max_total_alpha` budgeting, multi-inject one-forward coordination, degrade_reasons telemetry, truth fields (`residual_implemented`, `residual_applied`, `streaming_degraded`)
+- **Contrastive:** `ContrastiveRetrievalHead` methods `embedding` | `lexical`; InfoNCE-style softmax weights via EmbeddingProvider; UNMEASURED when embeddings absent; Tier2 chat path can surface contrastive hits
+- **Training:** contrastive recipe still via `EphemeralRecipeWorkerTrainer` (EXTERNAL-FIRST); no fabricated COMPLETED
+- **Chat SSE:** `LEVIATHAN_FEATURE_CHAT_STREAMING` + child `LEVIATHAN_FEATURE_CHAT_SSE`; `OpenAICompatibleLLM.chat_stream`; `/api/chat` returns `text/event-stream` (meta/token/done/error); residual+stream degrades honestly with `truth.streaming_degraded`
+- **API:** `GET /api/neuro/status` (residual/contrastive/streaming posture); health neuro block expanded
+- **Frontend:** Chat UI consumes SSE tokens; Status neuro panel shows contrastive readiness, stream posture, applied/degraded counts
+- **Version:** `0.60.0-phase54`; Master `phase_span=0-54`
+- **Tests:** `test_neuro_phase54.py`
+
+### EXTERNAL-FIRST review
+- Residual mutation stays on adapters / external residual servers; Core orchestrates
+- Contrastive training worker = ephemeral subprocess; Core keeps registry authority
+- Chat streaming is transport over existing model_runtime client — no second model client
+- No second SQLite / gateway / approvals / evidence system
+
+### Explicitly NOT claimed
+- Default production GPU residual path
+- Multi-hour power/HBM SLO
+- Residual-aware token streaming when adapter cannot stream forward (degrades)
+- Contrastive training always improves retrieval without metrics
+- Legacy MCP SSE transport
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Phase 53+ Neuro Layer (EXTERNAL-FIRST residual / cortex / training) — PASS
 
 ### Objective

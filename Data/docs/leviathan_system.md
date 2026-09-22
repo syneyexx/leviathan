@@ -78,7 +78,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.59.0-phase53`).
+FastAPI application (`version=0.60.0-phase54`).
 
 Responsibilities:
 
