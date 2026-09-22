@@ -62,7 +62,8 @@ from Data.modules.schedules import (
     ScheduleStore,
     ScheduleTargetKind,
 )
-from Data.modules.observability import ObservabilityHub
+from Data.modules.observability import ObservabilityHub, SystemTelemetrySampler
+from Data.backend.routes.system import build_system_telemetry_router
 from Data.modules.neuro import (
     ContrastiveRetrievalHead,
     CortexPlanner,
@@ -199,6 +200,7 @@ schedule_runner = ScheduleRunner(
     workflows=workflow_runtime,
 )
 observability = ObservabilityHub(capacity=500)
+system_telemetry_sampler = SystemTelemetrySampler(interval_s=1.0, gpu_interval_s=2.0)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001
     "knowledge", name, payload=payload
 )
@@ -769,10 +771,12 @@ async def lifespan(_: FastAPI):
             payload={"ready": len(ready), "telemetry": dict(module_manager.telemetry)},
         )
     job_runtime.start_background_worker()
+    system_telemetry_sampler.start()
     metrics.incr("lifespan_starts")
     try:
         yield
     finally:
+        system_telemetry_sampler.stop()
         mcp_bridge.shutdown()
         if module_manager.enabled:
             for managed in list(module_manager.list()):
@@ -796,6 +800,7 @@ app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
+app.include_router(build_system_telemetry_router(system_telemetry_sampler))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_cognition_router(cognition_runtime))
@@ -804,6 +809,11 @@ app.include_router(build_settings_router(settings_plane))
 
 class ConversationCreate(BaseModel):
     title: str = Field(default="New conversation", min_length=1, max_length=120)
+
+
+class ConversationUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    pinned: bool | None = None
 
 
 class ChatRequest(BaseModel):
@@ -1003,8 +1013,8 @@ def metrics_snapshot() -> dict:
 
 
 @app.get("/api/conversations")
-def list_conversations() -> dict:
-    return {"conversations": db.list_conversations()}
+def list_conversations(q: str | None = None, limit: int = Query(50, ge=1, le=200)) -> dict:
+    return {"conversations": db.list_conversations(limit=limit, q=q)}
 
 
 @app.post("/api/conversations")
@@ -1021,6 +1031,27 @@ def get_conversation(conversation_id: str) -> dict:
         "conversation": conversation,
         "messages": db.get_messages(conversation_id, limit=200),
     }
+
+
+@app.patch("/api/conversations/{conversation_id}")
+def update_conversation(conversation_id: str, payload: ConversationUpdate) -> dict:
+    if payload.title is None and payload.pinned is None:
+        raise HTTPException(status_code=422, detail="No conversation fields to update")
+    conversation = db.update_conversation(
+        conversation_id,
+        title=payload.title.strip() if payload.title is not None else None,
+        pinned=payload.pinned,
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"conversation": conversation}
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str) -> dict:
+    if not db.delete_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"deleted": True, "id": conversation_id}
 
 
 @app.post("/api/chat")

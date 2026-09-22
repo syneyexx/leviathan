@@ -59,6 +59,39 @@ function renderDiff(diff: string): Array<{ cls: string; text: string }> {
   });
 }
 
+function workspaceBasename(root?: string | null): string {
+  if (!root) return "—";
+  const cleaned = root.replace(/[/\\]+$/, "");
+  const parts = cleaned.split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || cleaned;
+}
+
+function stepOutput(step: CodingStep | undefined): Record<string, unknown> {
+  if (!step) return {};
+  const raw = step.output ?? step.output_json;
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+}
+
+function resolvePending(detail: CodingSessionDetail): { approvalId: string; capabilityId?: string } | null {
+  const fromSession = detail.session.pending_capability;
+  if (fromSession?.approval_id) {
+    return {
+      approvalId: String(fromSession.approval_id),
+      capabilityId: fromSession.capability_id ? String(fromSession.capability_id) : undefined,
+    };
+  }
+  const pending = detail.steps.find(
+    (s) => s.approval_id && (s.status === "PENDING" || s.kind === "WAIT_APPROVAL"),
+  );
+  if (!pending?.approval_id) return null;
+  return {
+    approvalId: pending.approval_id,
+    capabilityId: pending.capability_id ?? undefined,
+  };
+}
+
+const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "UNVERIFIED", "CANCELLED", "DISABLED"]);
+
 export function CodingPage() {
   const toast = useAppToast();
   const [status, setStatus] = useState<CodingStatusResponse | null>(null);
@@ -67,16 +100,14 @@ export function CodingPage() {
   const [detail, setDetail] = useState<CodingSessionDetail | null>(null);
   const [tree, setTree] = useState<CodingWorkspaceEntry[]>([]);
   const [wsTab, setWsTab] = useState<"files" | "changes" | "notes">("files");
-  const [termTab, setTermTab] = useState<"terminal" | "logs" | "tests" | "lsp">("terminal");
-  const [diffTab, setDiffTab] = useState<"staged" | "modified" | "all">("modified");
+  const [termTab, setTermTab] = useState<"terminal" | "logs" | "tests">("terminal");
+  const [diffTab, setDiffTab] = useState<"applied" | "pending" | "all">("pending");
   const [reviewTab, setReviewTab] = useState<"summary" | "tests" | "review">("summary");
-  const [memTab, setMemTab] = useState<"memory" | "rules" | "instructions" | "constraints">("memory");
   const [selectedPatchId, setSelectedPatchId] = useState<string | null>(null);
   const [goal, setGoal] = useState(
     "Implement a risk analysis and position sizing engine for our trading system.\n\nRequirements:\n- Support multiple risk models\n- Position sizing constraints\n- Unit tests\n- Update documentation",
   );
   const [mission, setMission] = useState<CodingMission>("GENERIC");
-  const [commitMsg, setCommitMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -143,9 +174,12 @@ export function CodingPage() {
     }
   }, [selectedPatchId]);
 
-  const loadTree = useCallback(async () => {
+  const loadTree = useCallback(async (sessionId?: string | null) => {
     try {
-      const res = await api.codingWorkspaceTree({ recursive: false });
+      const res = await api.codingWorkspaceTree({
+        recursive: false,
+        ...(sessionId ? { sessionId } : {}),
+      });
       setTree(res.entries);
     } catch {
       setTree([]);
@@ -155,15 +189,16 @@ export function CodingPage() {
   useEffect(() => {
     void loadStatus();
     void loadSessions();
-    void loadTree();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
+      void loadTree(null);
       return;
     }
     void loadDetail(selectedId);
+    void loadTree(selectedId);
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -171,6 +206,7 @@ export function CodingPage() {
     const id = window.setInterval(() => {
       void loadDetail(selectedId);
       void loadSessions();
+      void loadTree(selectedId);
     }, 1000);
     return () => window.clearInterval(id);
   }, [selectedId, selected?.status]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -181,6 +217,11 @@ export function CodingPage() {
       toast("Describe a coding task first");
       return;
     }
+    if (busy) return;
+    if (status != null && !status.enabled) {
+      toast(status.error?.trim() || "Coding agent is disabled");
+      return;
+    }
     setBusy(true);
     try {
       const created = await api.createCodingSession({ goal: text, mission });
@@ -188,6 +229,7 @@ export function CodingPage() {
       await api.codingTurn(created.session.session_id, { message: text });
       await loadSessions();
       await loadDetail(created.session.session_id);
+      await loadTree(created.session.session_id);
       toast("Coding agent launched");
     } catch (err) {
       toast(errMsg(err, "Failed to launch coding agent"));
@@ -197,18 +239,21 @@ export function CodingPage() {
   };
 
   const approvePending = async () => {
-    if (!selectedId || !detail) return;
-    const pending = detail.steps.find((s) => s.status === "PENDING" || s.kind === "WAIT_APPROVAL");
-    const approvalId = pending?.approval_id;
-    if (!approvalId) {
+    if (!selectedId || !detail || busy) return;
+    const pending = resolvePending(detail);
+    if (!pending) {
       toast("No pending approval");
       return;
     }
     setBusy(true);
     try {
-      await api.approveApproval(approvalId);
-      await api.codingTurn(selectedId, { approval_id: approvalId, capability_id: pending?.capability_id ?? undefined });
+      await api.approveApproval(pending.approvalId);
+      await api.codingTurn(selectedId, {
+        approvalId: pending.approvalId,
+        capabilityId: pending.capabilityId,
+      });
       await loadDetail(selectedId);
+      await loadTree(selectedId);
       toast("Approved");
     } catch (err) {
       toast(errMsg(err, "Approve failed"));
@@ -218,19 +263,41 @@ export function CodingPage() {
   };
 
   const denyPending = async () => {
-    if (!selectedId || !detail) return;
-    const pending = detail.steps.find((s) => s.approval_id && (s.status === "PENDING" || s.kind === "WAIT_APPROVAL"));
-    if (!pending?.approval_id) {
+    if (!selectedId || !detail || busy) return;
+    const pending = resolvePending(detail);
+    if (!pending) {
       toast("No pending approval");
       return;
     }
     setBusy(true);
     try {
-      await api.denyApproval(pending.approval_id);
+      await api.denyApproval(pending.approvalId);
+      await api.codingTurn(selectedId, {
+        approvalId: pending.approvalId,
+        capabilityId: pending.capabilityId,
+      });
       await loadDetail(selectedId);
+      await loadTree(selectedId);
       toast("Denied");
     } catch (err) {
       toast(errMsg(err, "Deny failed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelSession = async () => {
+    if (!selectedId || busy) return;
+    if (!selected || !ACTIVE.has(selected.status)) return;
+    setBusy(true);
+    try {
+      await api.cancelCodingSession(selectedId);
+      await loadSessions();
+      await loadDetail(selectedId);
+      await loadTree(selectedId);
+      toast("Session cancelled");
+    } catch (err) {
+      toast(errMsg(err, "Cancel failed"));
     } finally {
       setBusy(false);
     }
@@ -240,11 +307,11 @@ export function CodingPage() {
     const testSteps = steps.filter((s) => s.capability_id === "coding.run_tests");
     const last = testSteps[testSteps.length - 1];
     if (termTab === "tests" || (termTab === "terminal" && last)) {
-      const out = (last?.output_json ?? {}) as Record<string, unknown>;
+      const out = stepOutput(last);
       const stdout = String(out.stdout ?? out.output ?? "");
       const stderr = String(out.stderr ?? "");
       const exit = out.exit_code;
-      const cmd = String(out.command ?? "python -m pytest -q");
+      const cmd = out.command != null ? String(out.command) : null;
       if (!stdout && !stderr && !last) {
         return null;
       }
@@ -263,6 +330,41 @@ export function CodingPage() {
     }
     return null;
   }, [steps, termTab]);
+
+  const filteredPatches = useMemo(() => {
+    if (diffTab === "applied") return patches.filter((p) => p.applied);
+    if (diffTab === "pending") return patches.filter((p) => !p.applied);
+    return patches;
+  }, [patches, diffTab]);
+
+  const launchDisabled = busy || (status != null && !status.enabled);
+  const launchDisabledReason =
+    status != null && !status.enabled
+      ? status.error?.trim() || "Coding agent disabled (LEVIATHAN_FEATURE_CODING)"
+      : busy
+        ? "Launch already in progress"
+        : undefined;
+  const cancelDisabled =
+    busy || !selectedId || !selected || TERMINAL_STATUSES.has(selected.status) || !ACTIVE.has(selected.status);
+  const repoLabel = workspaceBasename(selected?.workspace_root);
+  const healthLabel =
+    status == null
+      ? "Status unknown"
+      : [
+          status.enabled ? "Coding enabled" : "Coding disabled",
+          status.agents_enabled ? "Agents enabled" : "Agents disabled",
+        ].join(" · ");
+  const verificationOutcome = verification?.outcome;
+  const memoryNotes =
+    neuro?.notes?.length
+      ? neuro.notes
+      : selected
+        ? [
+            `Session: ${selected.title || selected.session_id}`,
+            selected.user_goal ? `Goal: ${selected.user_goal}` : null,
+            `Status: ${selected.status}`,
+          ].filter((n): n is string => Boolean(n))
+        : ["No session memory yet — notes appear from neuro advisory when available."];
 
   const contextPct = neuro?.progress != null ? Math.round(Number(neuro.progress) * 100) : null;
 
@@ -345,24 +447,48 @@ export function CodingPage() {
                 </div>
                 <div className="lv-ca-field">
                   <label htmlFor="ca-repo">Repository</label>
-                  <input id="ca-repo" value="codingworkspace" readOnly aria-label="Repository" />
+                  <input id="ca-repo" value={repoLabel} readOnly aria-label="Repository" />
                 </div>
                 <div className="lv-ca-field">
                   <label htmlFor="ca-branch">Branch</label>
-                  <input id="ca-branch" value="workspace" readOnly aria-label="Branch" />
+                  <input id="ca-branch" value="N/A" readOnly aria-label="Branch" title="Branch is not measured for coding sessions" />
                 </div>
               </div>
               <div className="lv-ca-intake-actions">
-                <button type="button" className="lv-ca-btn-ghost" onClick={() => toast("Attach files — coming via approvals")}>
+                <button
+                  type="button"
+                  className="lv-ca-btn-ghost"
+                  disabled
+                  title="Attach Files is unavailable — file attachment is not wired for coding sessions"
+                >
                   Attach Files
                 </button>
-                <button type="button" className="lv-ca-btn-ghost" onClick={() => toast("Add context — use knowledge.search via agent")}>
+                <button
+                  type="button"
+                  className="lv-ca-btn-ghost"
+                  disabled
+                  title="Add Context is unavailable — context injection is not wired for coding sessions"
+                >
                   Add Context
                 </button>
                 <button
                   type="button"
+                  className="lv-ca-btn-ghost"
+                  disabled={cancelDisabled}
+                  title={
+                    cancelDisabled
+                      ? "Cancel available only while session is RUNNING or WAITING_APPROVAL"
+                      : "Cancel / stop the coding session"
+                  }
+                  onClick={() => void cancelSession()}
+                >
+                  Cancel / Stop
+                </button>
+                <button
+                  type="button"
                   className="lv-ca-btn-launch"
-                  disabled={busy || (status != null && !status.enabled)}
+                  disabled={launchDisabled}
+                  title={launchDisabledReason}
                   onClick={() => void launch()}
                 >
                   ▶ Launch Agent <kbd>⌘↵</kbd>
@@ -392,7 +518,7 @@ export function CodingPage() {
                       : selected?.status ?? "Idle"}
                 </dd>
                 <dt>Active Model</dt>
-                <dd>{selected?.model_id ?? "—"}</dd>
+                <dd>{selected?.model_id?.trim() || "Router default"}</dd>
                 <dt>Approval Mode</dt>
                 <dd>Plan &amp; Execute (Ask on Write)</dd>
                 <dt>Workspace</dt>
@@ -401,8 +527,22 @@ export function CodingPage() {
                 <dd className="is-live">Isolated · gateway-only</dd>
                 <dt>Sessions</dt>
                 <dd>
-                  {sessions.length} total
-                  {codingEmptySessionsCopy(sessions.length) ? " · empty" : ""}
+                  {sessions.length === 0 ? (
+                    codingEmptySessionsCopy(0) ?? "0"
+                  ) : (
+                    <select
+                      aria-label="Select coding session"
+                      value={selectedId ?? ""}
+                      onChange={(e) => setSelectedId(e.target.value || null)}
+                      style={{ maxWidth: "100%", font: "inherit", color: "inherit", background: "transparent" }}
+                    >
+                      {sessions.map((s) => (
+                        <option key={s.session_id} value={s.session_id}>
+                          {(s.title || s.session_id).slice(0, 40)} · {s.status}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </dd>
                 <dt>Current Phase</dt>
                 <dd>
@@ -413,10 +553,10 @@ export function CodingPage() {
                 <dt>Health</dt>
                 <dd>
                   <div className="lv-ca-health">
-                    <span />
-                    <span />
-                    <span />
-                    <small>{status?.enabled ? "Ready" : "Disabled"}</small>
+                    <span title={status?.enabled ? "Coding enabled" : "Coding disabled"} />
+                    <span title={status?.agents_enabled ? "Agents enabled" : "Agents disabled"} />
+                    <span title={status?.workspace_configured ? "Workspace configured" : "Workspace not configured"} />
+                    <small>{healthLabel}</small>
                   </div>
                 </dd>
               </dl>
@@ -589,7 +729,6 @@ export function CodingPage() {
                     ["terminal", "Terminal"],
                     ["logs", "Agent Logs"],
                     ["tests", "Test Output"],
-                    ["lsp", "LSP"],
                   ] as const
                 ).map(([id, label]) => (
                   <button
@@ -605,17 +744,17 @@ export function CodingPage() {
             </header>
             <div className="lv-ca-panel-body">
               <div className="lv-ca-terminal" aria-label="Terminal output">
-                {termTab === "lsp" ? (
-                  <span className="lv-ca-dim">LSP output is not wired — honest UNMEASURED.</span>
-                ) : terminalText ? (
+                {terminalText ? (
                   <>
-                    <div className="lv-ca-cmd">$ {terminalText.cmd}</div>
+                    {terminalText.cmd ? <div className="lv-ca-cmd">$ {terminalText.cmd}</div> : null}
                     {terminalText.stdout ? <div>{terminalText.stdout}</div> : null}
                     {terminalText.stderr ? <div className="lv-ca-fail">{terminalText.stderr}</div> : null}
                     {terminalText.exit != null ? (
                       <div className={Number(terminalText.exit) === 0 ? "lv-ca-ok" : "lv-ca-fail"}>
                         exit {String(terminalText.exit)} · {terminalText.status}
                       </div>
+                    ) : terminalText.status ? (
+                      <div className="lv-ca-dim">{terminalText.status}</div>
                     ) : null}
                   </>
                 ) : (
@@ -633,9 +772,9 @@ export function CodingPage() {
               <div className="lv-ca-tabs">
                 {(
                   [
-                    ["staged", `Staged (${patches.filter((p) => p.applied).length})`],
-                    ["modified", `Modified (${patches.length})`],
-                    ["all", "All Changes"],
+                    ["applied", `Applied (${patches.filter((p) => p.applied).length})`],
+                    ["pending", `Pending (${patches.filter((p) => !p.applied).length})`],
+                    ["all", `All Patches (${patches.length})`],
                   ] as const
                 ).map(([id, label]) => (
                   <button
@@ -651,14 +790,12 @@ export function CodingPage() {
             </header>
             <div className="lv-ca-panel-body">
               <div className="lv-ca-diff-files">
-                {patches.length === 0 ? (
+                {filteredPatches.length === 0 ? (
                   <div className="lv-ca-empty" style={{ padding: 8 }}>
                     No diffs
                   </div>
                 ) : (
-                  patches
-                    .filter((p) => (diffTab === "staged" ? p.applied : true))
-                    .map((p) => {
+                  filteredPatches.map((p) => {
                       const c = countDiffLines(p.diff_unified);
                       return (
                         <button
@@ -676,7 +813,7 @@ export function CodingPage() {
                 )}
               </div>
               <div className="lv-ca-diff-view" aria-label="Unified diff">
-                {selectedPatch ? (
+                {selectedPatch && filteredPatches.some((p) => p.patch_id === selectedPatch.patch_id) ? (
                   renderDiff(selectedPatch.diff_unified).map((line, i) => (
                     <div key={`${selectedPatch.patch_id}-${i}`} className={line.cls}>
                       {line.text || " "}
@@ -688,16 +825,18 @@ export function CodingPage() {
               </div>
               <div className="lv-ca-commit-row">
                 <input
-                  value={commitMsg}
-                  onChange={(e) => setCommitMsg(e.target.value)}
-                  placeholder="Commit message…"
+                  value=""
+                  readOnly
+                  disabled
+                  placeholder="Commit unavailable"
                   aria-label="Commit message"
+                  title="Commit Changes is unavailable — git commit is not wired from this page"
                 />
                 <button
                   type="button"
                   className="lv-ca-btn-gold"
-                  disabled={!commitMsg.trim() || !selected}
-                  onClick={() => toast("git.commit requires explicit operator request + approval")}
+                  disabled
+                  title="Commit Changes is unavailable — git commit is not wired from this page"
                 >
                   Commit Changes
                 </button>
@@ -733,13 +872,15 @@ export function CodingPage() {
               {reviewTab === "summary" ? (
                 <>
                   <p className="lv-ca-intake-hint" style={{ color: "var(--lv-text)" }}>
-                    {verification
-                      ? `Verification ${verification.outcome}`
-                      : selected?.status === "WAITING_APPROVAL"
-                        ? "Awaiting operator approval for gated WRITE/EXECUTE."
-                        : selected
-                          ? `Session ${selected.status}`
-                          : "No active review."}
+                    {verificationOutcome
+                      ? `Verification ${verificationOutcome}`
+                      : verification?.verification_id
+                        ? `Verification recorded (${verification.verification_id}) — outcome unmeasured`
+                        : selected?.status === "WAITING_APPROVAL"
+                          ? "Awaiting operator approval for gated WRITE/EXECUTE."
+                          : selected
+                            ? `Session ${selected.status}`
+                            : "No active review."}
                   </p>
                   <div className="lv-ca-review-stat">
                     <article>
@@ -763,12 +904,14 @@ export function CodingPage() {
                       <span className="ok">✓</span> HADES paths excluded
                     </li>
                     <li>
-                      <span className={verification?.outcome === "PASSED" ? "ok" : "warn"}>
-                        {verification?.outcome === "PASSED" ? "✓" : "!"}
+                      <span className={verificationOutcome === "PASSED" ? "ok" : "warn"}>
+                        {verificationOutcome === "PASSED" ? "✓" : "!"}
                       </span>
-                      {verification
-                        ? `Evidence ${verification.outcome}`
-                        : "Unmeasured until VerificationEngine reports"}
+                      {verificationOutcome
+                        ? `Evidence ${verificationOutcome}`
+                        : verification?.verification_id
+                          ? "Verification id present — outcome unmeasured"
+                          : "Unmeasured until VerificationEngine reports"}
                     </li>
                   </ul>
                 </>
@@ -804,6 +947,19 @@ export function CodingPage() {
                 >
                   Request Revision / Deny
                 </button>
+                <button
+                  type="button"
+                  className="lv-ca-btn-ghost"
+                  disabled={cancelDisabled}
+                  title={
+                    cancelDisabled
+                      ? "Cancel available only while session is RUNNING or WAITING_APPROVAL"
+                      : "Cancel / stop the coding session"
+                  }
+                  onClick={() => void cancelSession()}
+                >
+                  Cancel / Stop
+                </button>
               </div>
             </div>
           </article>
@@ -816,32 +972,13 @@ export function CodingPage() {
               <h2 className="lv-ca-panel-title">
                 <span className="lv-ca-num">8</span> Memory / Context
               </h2>
-              <div className="lv-ca-tabs">
-                {(
-                  [
-                    ["memory", "Agent Memory"],
-                    ["rules", "Project Rules"],
-                    ["instructions", "Reusable Instructions"],
-                    ["constraints", "Constraints"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`lv-ca-tab${memTab === id ? " is-active" : ""}`}
-                    onClick={() => setMemTab(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
             </header>
             <div className="lv-ca-panel-body">
               <div className="lv-ca-memory-grid">
                 <div className="lv-ca-memory-card">
-                  <h4>Flight Rules</h4>
-                  <p>Model output ≠ evidence. WRITE requires approval. Unmeasured ≠ passed.</p>
-                  <small>Always on</small>
+                  <h4>Session Memory</h4>
+                  <p>{memoryNotes[0]}</p>
+                  <small>Read-only · from session / neuro</small>
                 </div>
                 <div className="lv-ca-memory-card">
                   <h4>Neuro Advisory</h4>
@@ -853,13 +990,12 @@ export function CodingPage() {
                   <small>Advisory only — never authority</small>
                 </div>
                 <div className="lv-ca-memory-card">
-                  <h4>Residual</h4>
+                  <h4>Notes</h4>
                   <p>
-                    {status?.residual_supported || neuro?.residual_supported
-                      ? "Residual port supported"
-                      : "Residual unsupported — honest provenance, no fake inject"}
+                    {memoryNotes.slice(1).join(" · ") ||
+                      (neuro?.notes?.length ? neuro.notes.join(" · ") : "No additional notes")}
                   </p>
-                  <small>Degrades cleanly</small>
+                  <small>Not an online memory store</small>
                 </div>
                 <div className="lv-ca-memory-card">
                   <h4>Catalog</h4>
@@ -871,7 +1007,12 @@ export function CodingPage() {
                 </div>
               </div>
               <div className="lv-ca-memory-foot">
-                <button type="button" className="lv-ca-btn-ghost" onClick={() => toast("Memory writes go through MemoryStore (trust≠model_output)")}>
+                <button
+                  type="button"
+                  className="lv-ca-btn-ghost"
+                  disabled
+                  title="Add to Memory is unavailable — MemoryStore writes are not wired from this page"
+                >
                   + Add to Memory
                 </button>
               </div>

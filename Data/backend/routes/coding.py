@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from Data.modules.coding import CodingControlPlane, CodingError
 
@@ -15,22 +15,45 @@ def raise_coding_error(exc: CodingError) -> None:
 
 
 class SessionCreate(BaseModel):
+    """Canonical request fields are camelCase; snake_case aliases accepted for migration."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
     goal: str
     mission: str | None = None
-    workspaceRoot: str | None = None
-    modelId: str | None = None
-    conversationId: str | None = None
+    workspaceRoot: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("workspaceRoot", "workspace_root"),
+    )
+    modelId: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("modelId", "model_id"),
+    )
+    conversationId: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("conversationId", "conversation_id"),
+    )
     title: str | None = None
 
 
 class TurnRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     message: str | None = None
-    approvalId: str | None = None
-    capabilityId: str | None = None
+    approvalId: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("approvalId", "approval_id"),
+    )
+    capabilityId: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("capabilityId", "capability_id"),
+    )
 
 
 class ApprovalCreate(BaseModel):
-    sessionId: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    sessionId: str = Field(validation_alias=AliasChoices("sessionId", "session_id"))
 
 
 def build_coding_router(service: CodingControlPlane) -> APIRouter:

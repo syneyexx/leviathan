@@ -984,6 +984,17 @@ img { display: block; max-width: 100%; }
   background: #0a0c0a;
 }
 
+.lv-thumb-icon {
+  display: grid;
+  place-items: center;
+  color: var(--lv-cyan);
+}
+
+.lv-thumb-icon .lv-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .lv-project-row span,
 .lv-agent-row span:nth-child(2) {
   display: flex;
