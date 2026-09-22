@@ -215,6 +215,8 @@ function paint(ctx, host, fromScroll = false) {
         <button type="button" class="lvb-icon" data-layer-twist="${escapeHtml(row.selector)}" data-open="${row.open ? "1" : "0"}">${row.kids ? (row.open ? "▾" : "▸") : ""}</button>
         <span class="lvb-layer-type" title="${escapeHtml(row.el.tagName)}">${row.icon}</span>
         <button type="button" class="lvb-layer-name" data-layer-select="${escapeHtml(row.selector)}">${escapeHtml(row.label)}</button>
+        ${row.el.dataset?.lvbNode ? `<span class="lvb-layer-badge" title="node id">node:${escapeHtml(row.el.dataset.lvbNode.slice(0, 8))}</span>` : ""}
+        ${row.shell ? `<span class="lvb-layer-badge is-shell">shell</span>` : ""}
       </div>`;
     })
     .join("");
@@ -375,8 +377,19 @@ function layerMenu(ctx, el) {
     { id: "rename", label: "Hernoemen", kbd: "F2", run: () => {
       ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
       ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
-      // rename triggers on next render via F2 focus path — select first
       if (el) ctx.selection.set([el], el);
+    }},
+    { id: "select-parent", label: "Select parent", run: () => {
+      const parent = el?.parentElement;
+      if (parent && !ctx.selection.isBuilderNode(parent) && parent.id !== "root") {
+        ctx.selection.set([parent], parent);
+      }
+    }},
+    { id: "select-children", label: "Select children", run: () => {
+      const kids = [...(el?.children || [])].filter(
+        (c) => c instanceof Element && !ctx.selection.isBuilderNode(c) && !ctx.selection.isShell(c),
+      );
+      if (kids.length) ctx.selection.set(kids, kids[0]);
     }},
     { id: "duplicate", label: "Dupliceren", kbd: "⌘D", run: () => ctx.registry.run("duplicate") },
     { id: "delete", label: "Verwijderen", kbd: "Del", run: () => ctx.registry.run("delete") },

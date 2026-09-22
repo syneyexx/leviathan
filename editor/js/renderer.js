@@ -6,7 +6,7 @@
 import { createWebGpuBackend } from "./renderer-webgpu.js";
 import { COLORS, circle, createScene, label, line, rect } from "./scene-graph.js";
 import { HANDLE_DIRS } from "./constants.js";
-import { unionRect } from "./geometry.js";
+import { handleHitPx, unionRect } from "./geometry.js";
 
 /**
  * @param {object} ctx
@@ -165,13 +165,15 @@ function buildScene(scene, ctx, s) {
     const locked = ctx.selection.isLocked(primary);
     const region = ctx.selection.regionFor(primary);
     const dirs = region?.edge ? [region.edge] : HANDLE_DIRS;
+    const zoom = s.zoom || 1;
     if (!locked) {
       for (const dir of dirs) {
-        const h = handleRect(r, dir);
+        const h = handleRect(r, dir, zoom);
         scene.push(rect(h.x, h.y, h.w, h.h, COLORS.handle));
       }
       if (!region?.edge && !ctx.selection.isShell(primary)) {
-        scene.push(circle(r.left + r.width / 2, r.top - 22, 6, COLORS.handle));
+        const hs = handleHitPx(zoom).visual;
+        scene.push(circle(r.left + r.width / 2, r.top - 22, hs / 2, COLORS.handle));
         scene.push(line(r.left + r.width / 2, r.top - 16, r.left + r.width / 2, r.top, COLORS.gold, 1));
       }
     }
@@ -179,7 +181,10 @@ function buildScene(scene, ctx, s) {
     const lock = locked ? " · lock" : "";
     const rot = primary.style.rotate ? ` · ${primary.style.rotate}` : "";
     const text = `${ctx.selection.labelFor(primary)}${lock}${rot}${count > 1 ? ` +${count - 1}` : ""}`;
+    const dw = Math.round(r.width / zoom);
+    const dh = Math.round(r.height / zoom);
     scene.push(label(r.left, r.top < 36 ? r.top + 14 : r.top - 12, text, COLORS.gold));
+    scene.push(label(r.left + r.width / 2, r.bottom + 14, `${dw} × ${dh}`, COLORS.cyan, "center"));
   }
 
   // Guides from last snap payload
@@ -238,11 +243,66 @@ function buildScene(scene, ctx, s) {
   }
 }
 
-function handleRect(r, dir) {
-  const s = 10;
-  const hx = { n: r.left + r.width / 2 - 5, s: r.left + r.width / 2 - 5, e: r.right - 5, w: r.left - 5, ne: r.right - 5, nw: r.left - 5, se: r.right - 5, sw: r.left - 5 };
-  const hy = { n: r.top - 5, s: r.bottom - 5, e: r.top + r.height / 2 - 5, w: r.top + r.height / 2 - 5, ne: r.top - 5, nw: r.top - 5, se: r.bottom - 5, sw: r.bottom - 5 };
-  return { x: hx[dir] ?? r.left, y: hy[dir] ?? r.top, w: s, h: s };
+function handleRect(r, dir, zoom = 1) {
+  const { visual } = handleHitPx(zoom);
+  const half = visual / 2;
+  const hx = {
+    n: r.left + r.width / 2 - half,
+    s: r.left + r.width / 2 - half,
+    e: r.right - half,
+    w: r.left - half,
+    ne: r.right - half,
+    nw: r.left - half,
+    se: r.right - half,
+    sw: r.left - half,
+  };
+  const hy = {
+    n: r.top - half,
+    s: r.bottom - half,
+    e: r.top + r.height / 2 - half,
+    w: r.top + r.height / 2 - half,
+    ne: r.top - half,
+    nw: r.top - half,
+    se: r.bottom - half,
+    sw: r.bottom - half,
+  };
+  return { x: hx[dir] ?? r.left, y: hy[dir] ?? r.top, w: visual, h: visual };
+}
+
+function layoutDomHandles(selectEl, dirs, showRotate, zoom) {
+  const { visual, hit } = handleHitPx(zoom);
+  const pad = Math.max(0, (hit - visual) / 2);
+  selectEl.querySelectorAll(".lvb-handle").forEach((handle) => {
+    const dir = handle.dataset.dir;
+    handle.style.width = `${visual}px`;
+    handle.style.height = `${visual}px`;
+    handle.style.margin = "0";
+    handle.style.padding = `${pad}px`;
+    handle.style.boxSizing = "content-box";
+    // Position relative to select box (0,0 = top-left of selection)
+    const map = {
+      n: { left: "50%", top: "0%", tx: "-50%", ty: "-50%" },
+      s: { left: "50%", top: "100%", tx: "-50%", ty: "-50%" },
+      e: { left: "100%", top: "50%", tx: "-50%", ty: "-50%" },
+      w: { left: "0%", top: "50%", tx: "-50%", ty: "-50%" },
+      ne: { left: "100%", top: "0%", tx: "-50%", ty: "-50%" },
+      nw: { left: "0%", top: "0%", tx: "-50%", ty: "-50%" },
+      se: { left: "100%", top: "100%", tx: "-50%", ty: "-50%" },
+      sw: { left: "0%", top: "100%", tx: "-50%", ty: "-50%" },
+    };
+    const pos = map[dir] || map.se;
+    handle.style.left = pos.left;
+    handle.style.top = pos.top;
+    handle.style.transform = `translate(${pos.tx}, ${pos.ty})`;
+  });
+  const rot = selectEl.querySelector(".lvb-rotate");
+  if (rot) {
+    rot.style.width = `${visual}px`;
+    rot.style.height = `${visual}px`;
+    rot.style.left = "50%";
+    rot.style.top = "-28px";
+    rot.style.transform = "translateX(-50%)";
+  }
 }
 
 /** Keep DOM handles for pointer capture when GPU paints visuals. */
@@ -264,7 +324,7 @@ function syncInteractiveHandles(ui, ctx, s) {
   const dirs = region?.edge ? [region.edge] : HANDLE_DIRS.slice();
   const locked = ctx.selection.isLocked(primary);
   const showRotate = !locked && !region?.edge && !ctx.selection.isShell(primary);
-  const sig = `gpu|${dirs.join("")}|${locked ? 1 : 0}|${showRotate ? 1 : 0}`;
+  const sig = `gpu|${dirs.join("")}|${locked ? 1 : 0}|${showRotate ? 1 : 0}|${Math.round((s.zoom || 1) * 100)}`;
   if (ui.select.dataset.handleSig !== sig) {
     ui.select.dataset.handleSig = sig;
     ui.select.querySelectorAll(".lvb-handle, .lvb-rotate, .lvb-label").forEach((n) => n.remove());
@@ -283,6 +343,7 @@ function syncInteractiveHandles(ui, ctx, s) {
       }
     }
   }
+  layoutDomHandles(ui.select, dirs, showRotate, s.zoom || 1);
 }
 
 function hideDomChrome(ui, clear, opts = {}) {
@@ -350,7 +411,7 @@ function paintDomFallback(ui, ctx, s) {
   const dirs = region?.edge ? [region.edge] : HANDLE_DIRS.slice();
   const locked = ctx.selection.isLocked(primary);
   const showRotate = !locked && !region?.edge && !ctx.selection.isShell(primary);
-  const sig = `dom|${dirs.join("")}|${locked ? 1 : 0}|${showRotate ? 1 : 0}`;
+  const sig = `dom|${dirs.join("")}|${locked ? 1 : 0}|${showRotate ? 1 : 0}|${Math.round((s.zoom || 1) * 100)}`;
   if (ui.select.dataset.handleSig !== sig) {
     ui.select.dataset.handleSig = sig;
     ui.select.querySelectorAll(".lvb-handle, .lvb-rotate").forEach((n) => n.remove());
@@ -369,11 +430,15 @@ function paintDomFallback(ui, ctx, s) {
       }
     }
   }
+  layoutDomHandles(ui.select, dirs, showRotate, s.zoom || 1);
   const count = selected.length;
-  const lock = locked ? " 🔒" : "";
+  const lock = locked ? " · lock" : "";
   const rot = primary.style.rotate ? ` · ${primary.style.rotate}` : "";
+  const z = s.zoom || 1;
+  const dw = Math.round(rect.width / z);
+  const dh = Math.round(rect.height / z);
   if (ui.selectLabel) {
-    ui.selectLabel.textContent = `${ctx.selection.labelFor(primary)}${lock}${rot}${count > 1 ? ` +${count - 1}` : ""}`;
+    ui.selectLabel.textContent = `${ctx.selection.labelFor(primary)}${lock}${rot}${count > 1 ? ` +${count - 1}` : ""} · ${dw}×${dh}`;
     ui.selectLabel.style.top = rect.top < 36 ? "2px" : "-22px";
   }
 
@@ -436,26 +501,47 @@ function paintDomGuides(ui, ctx) {
 function paintDomMeasure(ui, ctx) {
   const m = ctx.session.measure;
   if (!ui.measure) return;
-  if (!m?.a && !m?.live && !m?.between) {
+  if (!m?.a && !m?.live && !m?.between && !m?.pinned) {
     ui.measure.hidden = true;
     return;
   }
   ui.measure.hidden = false;
   ui.measure.setAttribute("width", String(window.innerWidth));
   ui.measure.setAttribute("height", String(window.innerHeight));
+  const label = (x, y, text) =>
+    `<g class="lvb-measure-label">
+      <rect x="${x - 4}" y="${y - 12}" width="${Math.max(28, String(text).length * 7)}" height="16" rx="2" />
+      <text x="${x}" y="${y}">${text}</text>
+    </g>`;
   if (m.between) {
     const { labelX, labelY, dist, dx, dy } = m.between;
     const parts = [];
     if (labelX) {
       parts.push(`<line class="is-dim" x1="${labelX.x1}" y1="${labelX.y}" x2="${labelX.x2}" y2="${labelX.y}" />
-        <text x="${(labelX.x1 + labelX.x2) / 2}" y="${labelX.y - 6}">${labelX.value}px</text>`);
+        ${label((labelX.x1 + labelX.x2) / 2, labelX.y - 6, `${labelX.value}px`)}`);
     }
     if (labelY) {
       parts.push(`<line class="is-dim" x1="${labelY.x}" y1="${labelY.y1}" x2="${labelY.x}" y2="${labelY.y2}" />
-        <text x="${labelY.x + 8}" y="${(labelY.y1 + labelY.y2) / 2}">${labelY.value}px</text>`);
+        ${label(labelY.x + 8, (labelY.y1 + labelY.y2) / 2, `${labelY.value}px`)}`);
     }
-    if (!labelX && !labelY) parts.push(`<text x="24" y="48">${dist}px · Δ${dx},${dy}</text>`);
+    if (!labelX && !labelY) parts.push(label(24, 48, `${dist}px · Δ${dx},${dy}`));
     ui.measure.innerHTML = parts.join("");
+    return;
+  }
+  // Permanent pin survives tool switch
+  if (m.pinned && !m.a) {
+    const a = ctx.camera.localToScreen(m.pinned.a.x, m.pinned.a.y);
+    const b = ctx.camera.localToScreen(m.pinned.b.x, m.pinned.b.y);
+    ui.measure.innerHTML = `
+      <line class="is-ghost" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${a.y}" />
+      <line class="is-ghost" x1="${b.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
+      <line class="is-pin" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
+      <circle cx="${a.x}" cy="${a.y}" r="3.5" /><circle cx="${b.x}" cy="${b.y}" r="3.5" />
+      ${label((a.x + b.x) / 2 + 8, (a.y + b.y) / 2 - 8, `${m.pinned.dist}px`)}`;
+    return;
+  }
+  if (!m.a) {
+    ui.measure.hidden = true;
     return;
   }
   const a = ctx.camera.localToScreen(m.a.x, m.a.y);
@@ -473,7 +559,7 @@ function paintDomMeasure(ui, ctx) {
     <line class="is-ghost" x1="${b.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
     <line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
     <circle cx="${a.x}" cy="${a.y}" r="3.5" /><circle cx="${b.x}" cy="${b.y}" r="3.5" />
-    <text x="${(a.x + b.x) / 2 + 8}" y="${(a.y + b.y) / 2 - 8}">${dist}px</text>
-    <text x="${(a.x + b.x) / 2}" y="${a.y - 8}">Δx ${dx}</text>
-    <text x="${b.x + 8}" y="${(a.y + b.y) / 2}">Δy ${dy}</text>`;
+    ${label((a.x + b.x) / 2 + 8, (a.y + b.y) / 2 - 8, `${dist}px`)}
+    ${label((a.x + b.x) / 2, a.y - 8, `Δx ${dx}`)}
+    ${label(b.x + 8, (a.y + b.y) / 2, `Δy ${dy}`)}`;
 }

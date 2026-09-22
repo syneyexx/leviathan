@@ -137,6 +137,100 @@ export function createIssues(ctx) {
         return out;
       },
     });
+    registerCheck({
+      id: "missing-assets",
+      category: "Media",
+      severity: "warning",
+      run(doc, { document: docEl }) {
+        if (!docEl) return [];
+        const out = [];
+        docEl.querySelectorAll("img").forEach((img) => {
+          if (img.closest?.("#lvb-root")) return;
+          if (img.complete && img.naturalWidth === 0 && img.getAttribute("src")) {
+            out.push({
+              id: `asset-${img.dataset.lvbNode || img.src}`,
+              rule: "missing-assets",
+              category: "Media",
+              severity: "warning",
+              message: "Ontbrekende of ongeldige afbeelding",
+              nodeKey: img.dataset.lvbNode ? `node:${img.dataset.lvbNode}` : null,
+              evidence: img.getAttribute("src") || "",
+            });
+          }
+        });
+        return out;
+      },
+    });
+    registerCheck({
+      id: "constraint-violations",
+      category: "Layout",
+      severity: "warning",
+      run(doc) {
+        const out = [];
+        for (const [key, entry] of Object.entries(doc.entries || {})) {
+          const styles = entry.styles || {};
+          const w = parseFloat(styles.width || entry.width);
+          const maxW = parseFloat(styles["max-width"]);
+          const minW = parseFloat(styles["min-width"]);
+          if (Number.isFinite(w) && Number.isFinite(maxW) && w > maxW + 0.5) {
+            out.push({
+              id: `cmax-${key}`,
+              rule: "constraint-violations",
+              category: "Layout",
+              severity: "warning",
+              message: `Width ${w}px overschrijdt max-width ${maxW}px`,
+              nodeKey: key,
+              evidence: `width>${maxW}`,
+            });
+          }
+          if (Number.isFinite(w) && Number.isFinite(minW) && w + 0.5 < minW) {
+            out.push({
+              id: `cmin-${key}`,
+              rule: "constraint-violations",
+              category: "Layout",
+              severity: "warning",
+              message: `Width ${w}px onder min-width ${minW}px`,
+              nodeKey: key,
+              evidence: `width<${minW}`,
+            });
+          }
+        }
+        return out;
+      },
+    });
+    registerCheck({
+      id: "visual-jump-risk",
+      category: "Layout",
+      severity: "warning",
+      run(doc) {
+        const out = [];
+        for (const [key, entry] of Object.entries(doc.entries || {})) {
+          const styles = entry.styles || {};
+          const pos = styles.position;
+          const hasBox = styles.left || styles.top || styles.width || styles.height;
+          if (pos === "static" && hasBox) {
+            out.push({
+              id: `jump-${key}`,
+              rule: "visual-jump-risk",
+              category: "Layout",
+              severity: "warning",
+              message: "Static + offsets: promote naar absolute kan visual jump risk geven",
+              nodeKey: key,
+              evidence: "position:static with box props",
+            });
+          }
+        }
+        return (doc.meta?.promoteFailures || []).map((f) => ({
+          id: `promote-${f.key || f.at}`,
+          rule: "visual-jump-risk",
+          category: "Layout",
+          severity: "warning",
+          message: f.message || "Transform vastleggen mislukt — geen sprong toegestaan",
+          nodeKey: f.key || null,
+          evidence: f.evidence || "ensureFreeTransform abort",
+        })).concat(out);
+      },
+    });
   }
 
   function scanNow() {

@@ -63,6 +63,80 @@ export function registerBuiltins(ctx) {
   go("insert-button", "Invoegen knop", null, "Invoegen", () => ctx.widgets.insertPreset("button"));
   go("insert-divider", "Invoegen lijn", null, "Invoegen", () => ctx.widgets.insertPreset("divider"));
   go("insert-image", "Image toevoegen", "I", "Invoegen", () => ctx.chrome.openMedia("insert"));
+  go("replace-image", "Image vervangen", null, "Invoegen", () => {
+    const el = ctx.session.primary;
+    if (!el) {
+      ctx.content.setStatus("Selecteer een image", "dirty");
+      return;
+    }
+    if (el.tagName !== "IMG" && !ctx.widgets.hasBackgroundImage?.(el)) {
+      ctx.content.setStatus("Selectie is geen image", "dirty");
+      return;
+    }
+    ctx.chrome.openMedia("replace");
+  });
+  go("image-fit-menu", "Image Fit / Fill / Stretch", null, "Invoegen", () => ctx.widgets.offerImageFit?.(ctx.session.primary));
+  go("image-fit", "Image fit (contain)", null, "Invoegen", () => ctx.widgets.applyImageFit?.(ctx.session.primary, "fit"));
+  go("image-fill", "Image fill (cover)", null, "Invoegen", () => ctx.widgets.applyImageFit?.(ctx.session.primary, "fill"));
+  go("image-stretch", "Image stretch", null, "Invoegen", () => ctx.widgets.applyImageFit?.(ctx.session.primary, "stretch"));
+  go("image-original", "Image original size", null, "Invoegen", () => ctx.widgets.applyImageFit?.(ctx.session.primary, "original"));
+  go("aspect-lock", "Aspect ratio lock", "Shift+A", "Layout", () => {
+    const node = ctx.session.primary;
+    ctx.session.aspectLock = !ctx.session.aspectLock;
+    if (node) {
+      const z = ctx.store.getState().zoom || 1;
+      const r = node.getBoundingClientRect();
+      ctx.session.aspect = r.height ? (r.width / z) / (r.height / z) : 1;
+    }
+    ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
+    ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
+    ctx.content.setStatus(ctx.session.aspectLock ? "Aspect vast" : "Aspect vrij", "ok");
+  });
+  go("group-resize-scale", "Group resize: Scale group", null, "Layout", () => {
+    ctx.session.groupResizeMode = "scale";
+    ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
+    ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
+    ctx.content.setStatus("Group resize: scale", "ok");
+  });
+  go("group-resize-independent", "Group resize: Resize independently", null, "Layout", () => {
+    ctx.session.groupResizeMode = "independent";
+    ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
+    ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
+    ctx.content.setStatus("Group resize: independent", "ok");
+  });
+  go("snap-density", "Snap density cycle", null, "Weergave", () => {
+    const order = ["off", "sparse", "dense"];
+    const cur = ctx.store.getState().snapDensity || "sparse";
+    const next = order[(order.indexOf(cur) + 1) % order.length];
+    ctx.store.setState({ snapDensity: next, snap: next !== "off" });
+    ctx.content.setStatus(`Snap: ${next}`, "ok");
+  });
+  go("clear-measure-pin", "Clear last measurement pin", null, "Weergave", () => {
+    ctx.session.measure = { a: null, b: null, pinned: null, between: null };
+    ctx.chrome.schedulePaint();
+    ctx.content.setStatus("Measurement pin cleared", "ok");
+  });
+  go("orphan-cleanup", "Orphan media cleanup…", null, "Media", () => {
+    const used = ctx.widgets.referencedAssetUrls?.() || new Set();
+    ctx.chrome.openMedia("insert");
+    ctx.content.setStatus(`Orphan cleanup: ${used.size} assets in use — select unused in Media (no auto-delete)`, "ok");
+  });
+  go("stress-lab", "Responsive Stress Lab", null, "Studio", () => {
+    ctx.studio?.runStressLab?.().then((r) => ctx.content.setStatus(`${r.findings?.length || 0} stress findings`, "ok"));
+  });
+  go("stress-lab-multi", "Stress: multi-resize + image + undo", null, "Studio", () => {
+    ctx.studio?.runMultiPageGestureStress?.().then((r) => {
+      ctx.content.setStatus(r?.ok ? `Stress multi OK (${r.steps || 0} steps)` : `Stress multi: ${r?.error || "fail"}`, r?.ok ? "ok" : "dirty");
+    });
+  });
+  go("recovery-show", "Show recovery draft", null, "Studio", () => {
+    const d = ctx.studio?.readRecoveryDraft?.();
+    ctx.content.setStatus(d ? `Recovery ${new Date(d.savedAt).toLocaleString()}` : "Geen recovery", d ? "ok" : "dirty");
+  });
+  go("panel-problems", "Problems panel", null, "Panelen", () => {
+    ctx.store.setState({ showRight: true, rightTab: "problems" });
+    ctx.chrome.invalidate("problems");
+  });
 
   const tab = (id, title, key, panel) =>
     go(id, title, key, "Panelen", () => {

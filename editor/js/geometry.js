@@ -46,6 +46,8 @@ export function layoutBoxFromScreen(rect, zoom = 1) {
  * @param {number} dy
  * @param {number} [minW=1]
  * @param {number} [minH=1]
+ * @param {number|null} [maxW=null]
+ * @param {number|null} [maxH=null]
  * @param {number|null} [aspect=null]  width/height when locked
  * @param {boolean} [fromCenter=false]  Alt — grow around start center
  */
@@ -56,6 +58,8 @@ export function resizeRect({
   dy = 0,
   minW = 1,
   minH = 1,
+  maxW = null,
+  maxH = null,
   aspect = null,
   fromCenter = false,
 }) {
@@ -104,8 +108,36 @@ export function resizeRect({
 
   // Clamp first — then derive left/top from the anchored opposite edge.
   // NEVER apply leftover dx to left after clamp.
+  const softMaxW = maxW != null && Number.isFinite(maxW) && maxW > 0 ? maxW : null;
+  const softMaxH = maxH != null && Number.isFinite(maxH) && maxH > 0 ? maxH : null;
+  const hitMinW = width < minW;
+  const hitMinH = height < minH;
+  const hitMaxW = softMaxW != null && width > softMaxW;
+  const hitMaxH = softMaxH != null && height > softMaxH;
+  if (softMaxW != null) width = Math.min(softMaxW, width);
+  if (softMaxH != null) height = Math.min(softMaxH, height);
   width = Math.max(minW, width);
   height = Math.max(minH, height);
+  // Re-apply aspect after clamp so ratio stays honest at the limit.
+  if (ratio) {
+    const affectsW = hasE || hasW;
+    const affectsH = hasN || hasS;
+    if (affectsW && !affectsH) height = width / ratio;
+    else if (affectsH && !affectsW) width = height * ratio;
+    else if (affectsW && affectsH) {
+      const nextH = width / ratio;
+      if (softMaxH != null && nextH > softMaxH) {
+        height = softMaxH;
+        width = height * ratio;
+      } else {
+        height = nextH;
+      }
+    }
+    if (softMaxW != null) width = Math.min(softMaxW, width);
+    if (softMaxH != null) height = Math.min(softMaxH, height);
+    width = Math.max(minW, width);
+    height = Math.max(minH, height);
+  }
 
   let left = start.left;
   let top = start.top;
@@ -127,7 +159,174 @@ export function resizeRect({
     }
   }
 
-  return { left, top, width, height };
+  return {
+    left,
+    top,
+    width,
+    height,
+    hitLimit: hitMinW || hitMinH || hitMaxW || hitMaxH,
+    hitMinW,
+    hitMinH,
+    hitMaxW,
+    hitMaxH,
+  };
+}
+
+/** Union AABB of layout boxes (not screen). */
+export function groupAabb(boxes) {
+  if (!boxes?.length) return null;
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const b of boxes) {
+    left = Math.min(left, b.left);
+    top = Math.min(top, b.top);
+    right = Math.max(right, b.left + b.width);
+    bottom = Math.max(bottom, b.top + b.height);
+  }
+  return { left, top, width: right - left, height: bottom - top, right, bottom };
+}
+
+/**
+ * Multi-select resize math.
+ * - mode "scale": resize the group AABB, then scale/offset each member proportionally.
+ * - mode "independent": only primary (members[primaryIndex]) takes the resizeRect result;
+ *   others stay at their start boxes.
+ *
+ * @param {{ members: Array<{left:number,top:number,width:number,height:number}>, primaryIndex?: number, dir: string, dx: number, dy: number, mode?: 'scale'|'independent', aspect?: number|null, fromCenter?: boolean, minW?: number, minH?: number, maxW?: number|null, maxH?: number|null }} opts
+ */
+export function resizeGroupMembers({
+  members,
+  primaryIndex = 0,
+  dir = "se",
+  dx = 0,
+  dy = 0,
+  mode = "scale",
+  aspect = null,
+  fromCenter = false,
+  minW = 1,
+  minH = 1,
+  maxW = null,
+  maxH = null,
+}) {
+  if (!members?.length) return [];
+  const primary = members[Math.min(Math.max(0, primaryIndex), members.length - 1)];
+
+  if (mode === "independent" || members.length === 1) {
+    return members.map((m, i) => {
+      if (i !== primaryIndex && members.length > 1) {
+        return { left: m.left, top: m.top, width: m.width, height: m.height, hitLimit: false };
+      }
+      return resizeRect({
+        start: m,
+        dir,
+        dx,
+        dy,
+        minW,
+        minH,
+        maxW,
+        maxH,
+        aspect,
+        fromCenter,
+      });
+    });
+  }
+
+  // Scale group: resize the union AABB, then map each member into the new AABB.
+  const groupStart = groupAabb(members);
+  const groupNext = resizeRect({
+    start: groupStart,
+    dir,
+    dx,
+    dy,
+    minW: Math.max(minW, members.length),
+    minH: Math.max(minH, members.length),
+    maxW,
+    maxH,
+    aspect,
+    fromCenter,
+  });
+  const sx = groupStart.width > 0 ? groupNext.width / groupStart.width : 1;
+  const sy = groupStart.height > 0 ? groupNext.height / groupStart.height : 1;
+  return members.map((m) => {
+    const left = groupNext.left + (m.left - groupStart.left) * sx;
+    const top = groupNext.top + (m.top - groupStart.top) * sy;
+    const width = Math.max(minW, m.width * sx);
+    const height = Math.max(minH, m.height * sy);
+    return {
+      left,
+      top,
+      width,
+      height,
+      hitLimit: !!groupNext.hitLimit,
+      sx,
+      sy,
+    };
+  });
+}
+
+/**
+ * Constant screen-space handle size (min 10px) so handles stay usable at 25% and 400%.
+ * Select chrome is already in screen coords — do not divide by zoom for the drawn size.
+ */
+export function handleScreenPx(_zoom = 1) {
+  return 10;
+}
+
+/** Visual + hit sizes in screen px (hit ≥ visual ≥ 10). */
+export function handleHitPx(zoom = 1) {
+  const z = zoom > 0 ? zoom : 1;
+  const visual = 10;
+  // At 25% zoom the box is tiny — enlarge the hit pad so west/north stay grabable.
+  const hit = Math.max(10, Math.ceil(10 / Math.min(Math.max(z, 0.25), 1)));
+  return { visual, hit };
+}
+
+/** Snap threshold by density setting: off | sparse | dense. */
+export function snapThresholdForDensity(density = "sparse", base = 6) {
+  if (density === "off" || density === false) return 0;
+  if (density === "dense") return base + 4;
+  return base;
+}
+
+/**
+ * Equal-spacing guides for 3+ sibling boxes along an axis.
+ * Returns candidate snap positions (mid-gap targets) when the moving rect would
+ * create equal gaps between three consecutive items.
+ */
+export function equalSpacingGuides(boxes, axis = "x") {
+  if (!boxes || boxes.length < 2) return [];
+  const key = axis === "x" ? "left" : "top";
+  const size = axis === "x" ? "width" : "height";
+  const sorted = [...boxes].sort((a, b) => a[key] - b[key]);
+  const gaps = [];
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+    const gap = b[key] - (a[key] + a[size]);
+    if (gap >= 0) gaps.push({ i, gap, after: a[key] + a[size], before: b[key] });
+  }
+  const guides = [];
+  // For each known gap, propose a placement that matches that gap on the other side.
+  for (const g of gaps) {
+    guides.push({
+      at: g.after + g.gap / 2,
+      kind: "spacing",
+      gap: g.gap,
+      axis,
+    });
+  }
+  // Triple equal-spacing: if A—B gap equals B—C gap, expose those midpoints.
+  for (let i = 0; i < gaps.length - 1; i += 1) {
+    const g0 = gaps[i];
+    const g1 = gaps[i + 1];
+    if (Math.abs(g0.gap - g1.gap) <= 1) {
+      guides.push({ at: g0.after + g0.gap / 2, kind: "equal-spacing", gap: g0.gap, axis });
+      guides.push({ at: g1.after + g1.gap / 2, kind: "equal-spacing", gap: g1.gap, axis });
+    }
+  }
+  return guides;
 }
 
 /** Round a layout box to whole pixels (pointer-up / commit). */
@@ -334,6 +533,16 @@ export function collectGuides(el, ignore, opts = {}) {
         const mid = (b.bottom + a.top) / 2;
         guidesY.push({ at: mid, kind: "spacing", gap: a.top - b.bottom });
       }
+    }
+  }
+
+  // Equal spacing for 3+ siblings (smart-guide density can filter later)
+  if (boxes.length >= 3) {
+    for (const g of equalSpacingGuides(boxes, "x")) {
+      guidesX.push({ at: g.at, kind: g.kind, gap: g.gap });
+    }
+    for (const g of equalSpacingGuides(boxes, "y")) {
+      guidesY.push({ at: g.at, kind: g.kind, gap: g.gap });
     }
   }
 

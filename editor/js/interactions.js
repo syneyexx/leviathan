@@ -6,14 +6,23 @@
  * P0: never parseFloat(style.left)||0 for resize origins — promote first.
  */
 
-import { collectGuides, intersects, measureBetween, resizeRect, roundLayoutBox, snapRect } from "./geometry.js";
+import { collectGuides, intersects, measureBetween, resizeGroupMembers, roundLayoutBox, snapRect, snapThresholdForDensity } from "./geometry.js";
 import { SNAP_THRESHOLD } from "./constants.js";
 
 export function createInteractions(ctx) {
   let press = null;
+  let paintThrottle = 0;
 
   function enabled() {
     return ctx.store.getState().enabled !== false;
+  }
+
+  function scheduleLivePaint() {
+    if (paintThrottle) return;
+    paintThrottle = requestAnimationFrame(() => {
+      paintThrottle = 0;
+      ctx.chrome.schedulePaint();
+    });
   }
 
   function setPhase(phase) {
@@ -26,6 +35,32 @@ export function createInteractions(ctx) {
     if (!(el instanceof Element)) return false;
     if (el.closest("#lvb-root")) return el.matches("input, textarea") || el.isContentEditable;
     return el.matches("input, textarea") || el.isContentEditable;
+  }
+
+  function restorePressOrigins() {
+    if (!press) return;
+    if (press.kind === "resize" && press.origins?.length) {
+      for (const origin of press.origins) {
+        if (!origin.el?.isConnected) continue;
+        origin.el.style.left = `${origin.left}px`;
+        origin.el.style.top = `${origin.top}px`;
+        origin.el.style.width = `${origin.width}px`;
+        if (origin.height != null) origin.el.style.height = `${origin.height}px`;
+      }
+    } else if (press.kind === "resize" && press.start && press.el) {
+      press.el.style.left = `${press.start.left}px`;
+      press.el.style.top = `${press.start.top}px`;
+      press.el.style.width = `${press.start.width}px`;
+      press.el.style.height = `${press.start.height}px`;
+    } else if ((press.kind === "drag" || press.kind === "reparent") && press.origins?.length) {
+      for (const origin of press.origins) {
+        if (!origin.el?.isConnected) continue;
+        origin.el.style.left = `${origin.left}px`;
+        origin.el.style.top = `${origin.top}px`;
+      }
+    } else if (press.kind === "rotate" && press.el && press.start != null) {
+      press.el.style.rotate = `${press.start}deg`;
+    }
   }
 
   function onPointerDown(event) {
@@ -46,7 +81,7 @@ export function createInteractions(ctx) {
     }
     const background = ctx.selection.isBackgroundHit(event.target);
     if (background && tool === "select") {
-      press = { kind: "marquee", x: event.clientX, y: event.clientY, shift: event.shiftKey };
+      press = { kind: "marquee", x: event.clientX, y: event.clientY, shift: event.shiftKey, alt: event.altKey };
       setPhase("select");
       event.preventDefault();
       return;
@@ -54,7 +89,7 @@ export function createInteractions(ctx) {
     const deep = event.metaKey || (event.ctrlKey && !event.shiftKey);
     const hit = ctx.selection.resolveHit(event.target, { deep });
     if (!hit) {
-      press = { kind: "marquee", x: event.clientX, y: event.clientY, shift: event.shiftKey };
+      press = { kind: "marquee", x: event.clientX, y: event.clientY, shift: event.shiftKey, alt: event.altKey };
       setPhase("select");
       return;
     }
@@ -299,12 +334,30 @@ export function createInteractions(ctx) {
     }
 
     if (!ctx.selection.canMutate(el)) return;
-    const box = ctx.layout.ensureFreeTransform(el);
-    if (!box) {
-      ctx.content.setStatus("Formaat geannuleerd — box niet vastgelegd", "dirty");
-      return;
+
+    const candidates = ctx.selection.mutable("edit").filter((node) => !ctx.selection.regionFor(node)?.varKey);
+    const origins = [];
+    for (const node of candidates.length ? candidates : [el]) {
+      const box = ctx.layout.ensureFreeTransform(node);
+      if (!box) {
+        ctx.content.setStatus("Formaat geannuleerd — box niet vastgelegd", "dirty");
+        return;
+      }
+      origins.push({
+        el: node,
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        wroteHeight: !!node.style.height,
+      });
     }
+    if (!origins.length) return;
+
+    const primaryIndex = Math.max(0, origins.findIndex((o) => o.el === el));
+    const constraints = ctx.layout.readConstraints?.(origins[primaryIndex].el) || { minW: 16, minH: 16, maxW: null, maxH: null };
     ctx.commands.beginGesture("formaat");
+    ctx.session._resizeLive = null;
     press = {
       kind: "resize",
       x: event.clientX,
@@ -312,10 +365,23 @@ export function createInteractions(ctx) {
       dir,
       region: null,
       z,
-      el,
-      start: { left: box.left, top: box.top, width: box.width, height: box.height },
-      aspect: box.width && box.height ? box.width / box.height : 1,
+      el: origins[primaryIndex].el,
+      start: {
+        left: origins[primaryIndex].left,
+        top: origins[primaryIndex].top,
+        width: origins[primaryIndex].width,
+        height: origins[primaryIndex].height,
+      },
+      origins,
+      primaryIndex,
+      constraints,
+      aspect: origins[primaryIndex].width && origins[primaryIndex].height
+        ? origins[primaryIndex].width / origins[primaryIndex].height
+        : 1,
+      groupMode: ctx.session.groupResizeMode === "independent" ? "independent" : "scale",
     };
+    // Capture free-transform mid-gesture for crash recovery.
+    ctx.studio?.captureFreeTransformState?.(origins);
     setPhase("resize");
   }
 
@@ -332,7 +398,7 @@ export function createInteractions(ctx) {
       else px = press.height / z - dy;
       px = Math.min(press.region.max, Math.max(press.region.min, px));
       ctx.content.setRegionPx(press.region, px);
-      ctx.chrome.schedulePaint();
+      scheduleLivePaint();
       return;
     }
     if (!el || !press.start || !ctx.selection.canMutate(el)) return;
@@ -340,39 +406,73 @@ export function createInteractions(ctx) {
     // Aspect lock ONLY when Shift is held OR inspector lock is explicitly ON.
     const lockAspect = event.shiftKey || !!ctx.session.aspectLock;
     const aspect = lockAspect ? (ctx.session.aspectLock && ctx.session.aspect ? ctx.session.aspect : press.aspect) : null;
-
-    const next = resizeRect({
-      start: press.start,
-      dir: press.dir,
-      dx,
-      dy,
-      minW: 16,
-      minH: 16,
-      aspect,
-      fromCenter: event.altKey,
-    });
-
+    const constraints = press.constraints || { minW: 16, minH: 16, maxW: null, maxH: null };
     const dir = press.dir || "se";
     const hasE = dir.includes("e");
     const hasW = dir.includes("w");
     const hasN = dir.includes("n");
     const hasS = dir.includes("s");
     const corner = (hasE || hasW) && (hasN || hasS);
-    const writeW = hasE || hasW || (aspect && (hasN || hasS));
-    const writeH = hasN || hasS || corner || (aspect && (hasE || hasW));
 
-    // Opposite-edge / fromCenter may move left or top — write when changed.
-    if (next.left !== press.start.left) el.style.left = `${next.left}px`;
-    if (next.top !== press.start.top) el.style.top = `${next.top}px`;
-    if (writeW) el.style.width = `${next.width}px`;
-    // Width-only unlocked: do NOT set height (keeps frozen promote height / auto semantics).
-    if (writeH) el.style.height = `${next.height}px`;
+    const mode = press.origins?.length > 1 ? press.groupMode || "scale" : "independent";
+    const members = (press.origins || [{ ...press.start, el }]).map((o) => ({
+      left: o.left,
+      top: o.top,
+      width: o.width,
+      height: o.height,
+    }));
+    const nexts = resizeGroupMembers({
+      members,
+      primaryIndex: press.primaryIndex || 0,
+      dir,
+      dx,
+      dy,
+      mode,
+      aspect,
+      fromCenter: event.altKey,
+      minW: constraints.minW,
+      minH: constraints.minH,
+      maxW: constraints.maxW,
+      maxH: constraints.maxH,
+    });
 
-    // Snap resized edges to guides (screen space)
-    if (ctx.store.getState().snap && !event.altKey) {
+    const origins = press.origins || [{ el, ...press.start, wroteHeight: !!el.style.height }];
+    origins.forEach((origin, i) => {
+      const next = nexts[i];
+      if (!next || !origin.el) return;
+      const writeW = hasE || hasW || (aspect && (hasN || hasS)) || mode === "scale";
+      const writeH = hasN || hasS || corner || (aspect && (hasE || hasW)) || mode === "scale";
+      if (next.left !== origin.left) origin.el.style.left = `${next.left}px`;
+      if (next.top !== origin.top) origin.el.style.top = `${next.top}px`;
+      if (writeW) origin.el.style.width = `${next.width}px`;
+      // Width-only unlocked on images: do NOT set height (keeps promote / object-fit).
+      const imgWidthOnly = origin.el.tagName === "IMG" && !aspect && (hasE || hasW) && !hasN && !hasS && mode !== "scale";
+      if (writeH && !imgWidthOnly) origin.el.style.height = `${next.height}px`;
+    });
+
+    const primaryNext = nexts[press.primaryIndex || 0];
+    ctx.session._resizeLive = primaryNext
+      ? {
+          width: primaryNext.width,
+          height: primaryNext.height,
+          dw: primaryNext.width - press.start.width,
+          dh: primaryNext.height - press.start.height,
+          aspect: primaryNext.height ? primaryNext.width / primaryNext.height : null,
+          hitLimit: !!primaryNext.hitLimit,
+          dir,
+        }
+      : null;
+    if (primaryNext?.hitLimit) {
+      ctx.session._limitFlashUntil = performance.now() + 180;
+    }
+
+    // Snap resized edges to guides (screen space) — primary only
+    const density = ctx.store.getState().snapDensity || "sparse";
+    const threshold = snapThresholdForDensity(density, SNAP_THRESHOLD);
+    if (ctx.store.getState().snap && threshold > 0 && !event.altKey) {
       const screen = el.getBoundingClientRect();
-      const guides = collectGuides(el, new Set([el]), { includeViewport: true });
-      const snap = snapRect(screen, guides.guidesX, guides.guidesY, SNAP_THRESHOLD);
+      const guides = collectGuides(el, new Set(origins.map((o) => o.el)), { includeViewport: true });
+      const snap = snapRect(screen, guides.guidesX, guides.guidesY, threshold);
       if (snap.dx || snap.dy) {
         const zl = z;
         if ((hasE || hasW) && snap.dx) {
@@ -395,11 +495,25 @@ export function createInteractions(ctx) {
       } else ctx.chrome.clearGuides();
     }
 
-    ctx.chrome.schedulePaint();
+    scheduleLivePaint();
   }
 
   function finishResize() {
-    if (!press?.region?.varKey && press?.el) {
+    if (!press?.region?.varKey && press?.origins?.length) {
+      for (const origin of press.origins) {
+        const el = origin.el;
+        if (!el) continue;
+        const written = ctx.layout.readWrittenBox(el);
+        if (written) {
+          const rounded = roundLayoutBox(written);
+          el.style.left = `${rounded.left}px`;
+          el.style.top = `${rounded.top}px`;
+          el.style.width = `${rounded.width}px`;
+          if (el.style.height) el.style.height = `${rounded.height}px`;
+        }
+        ctx.layout.commitBox(el);
+      }
+    } else if (!press?.region?.varKey && press?.el) {
       const el = press.el;
       const written = ctx.layout.readWrittenBox(el);
       if (written) {
@@ -407,11 +521,12 @@ export function createInteractions(ctx) {
         el.style.left = `${rounded.left}px`;
         el.style.top = `${rounded.top}px`;
         el.style.width = `${rounded.width}px`;
-        // Only round height if it was explicitly set (width-only may leave prior height).
         if (el.style.height) el.style.height = `${rounded.height}px`;
       }
       ctx.layout.commitBox(el);
     }
+    ctx.session._resizeLive = null;
+    ctx.studio?.clearFreeTransformState?.();
     ctx.commands.endGesture();
   }
 
@@ -463,7 +578,7 @@ export function createInteractions(ctx) {
     const candidates = root.querySelectorAll("[data-lvb-id], img, [class*='lv-']");
     candidates.forEach((el) => {
       if (ctx.selection.isBuilderNode(el) || ctx.selection.isShell(el)) return;
-      if (!ctx.selection.canMutate(el) && ctx.selection.isLocked(el)) return;
+      if (ctx.selection.isLocked(el)) return;
       const box = el.getBoundingClientRect();
       if (box.width < 2 || box.height < 2) return;
       if (intersects(rect, box)) hits.push(el);
@@ -477,7 +592,11 @@ export function createInteractions(ctx) {
       }
       return true;
     });
-    if (press.shift) {
+    if (press.alt) {
+      // Alt = subtract from selection
+      const remaining = ctx.session.selected.filter((el) => !top.includes(el));
+      ctx.selection.set(remaining, remaining[remaining.length - 1] || null);
+    } else if (press.shift) {
       const merged = [...ctx.session.selected];
       for (const el of top) if (!merged.includes(el)) merged.push(el);
       ctx.selection.set(merged, merged[merged.length - 1] || null);
@@ -488,7 +607,13 @@ export function createInteractions(ctx) {
     const local = ctx.camera.screenToLocal(event.clientX, event.clientY);
     const point = { x: local.x, y: local.y };
     if (!ctx.session.measure?.a || ctx.session.measure.b) {
-      ctx.session.measure = { a: point, b: null, live: null, between: null };
+      ctx.session.measure = {
+        a: point,
+        b: null,
+        live: null,
+        between: null,
+        pinned: ctx.session.measure?.pinned || null,
+      };
       setPhase("measure");
       press = { kind: "measure", x: event.clientX, y: event.clientY };
     } else {
@@ -496,7 +621,15 @@ export function createInteractions(ctx) {
       ctx.session.measure.live = null;
       const dx = Math.round(point.x - ctx.session.measure.a.x);
       const dy = Math.round(point.y - ctx.session.measure.a.y);
-      ctx.content.setStatus(`Meet ${Math.round(Math.hypot(dx, dy))}px · Δx ${dx} · Δy ${dy}`, "ok");
+      const pinned = {
+        a: { ...ctx.session.measure.a },
+        b: { ...point },
+        dx,
+        dy,
+        dist: Math.round(Math.hypot(dx, dy)),
+      };
+      ctx.session.measure.pinned = pinned;
+      ctx.content.setStatus(`Meet ${pinned.dist}px · Δx ${dx} · Δy ${dy} (pinned)`, "ok");
       setPhase("idle");
     }
     ctx.chrome.schedulePaint();
@@ -549,7 +682,17 @@ export function createInteractions(ctx) {
   function onDoubleClick(event) {
     if (!enabled() || ctx.selection.isBuilderNode(event.target)) return;
     const primary = ctx.session.primary;
-    const next = ctx.selection.resolveHit(event.target, { drillFrom: primary });
+    const hit = ctx.selection.resolveHit(event.target, { drillFrom: primary });
+    // Double-click image → replace modal
+    const imgTarget = hit?.tagName === "IMG" ? hit : event.target?.closest?.("img");
+    if (imgTarget && !ctx.selection.isBuilderNode(imgTarget) && ctx.selection.canMutate(imgTarget)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!ctx.session.selected.includes(imgTarget)) ctx.selection.set([imgTarget], imgTarget);
+      ctx.chrome.openMedia("replace");
+      return;
+    }
+    const next = hit;
     if (next && next !== primary) {
       event.preventDefault();
       event.stopPropagation();
@@ -591,6 +734,15 @@ export function createInteractions(ctx) {
 
   function menuItems() {
     const el = ctx.session.primary;
+    const isImg = el?.tagName === "IMG";
+    const hasBg = !!(el && !isImg && (() => {
+      try {
+        const bg = getComputedStyle(el).backgroundImage;
+        return bg && bg !== "none";
+      } catch {
+        return false;
+      }
+    })());
     return [
       { id: "copy", label: "Kopiëren", kbd: "⌘C", run: () => ctx.registry.run("copy") },
       { id: "paste", label: "Plakken", kbd: "⌘V", run: () => ctx.registry.run("paste") },
@@ -599,6 +751,13 @@ export function createInteractions(ctx) {
       { id: "delete", label: "Verwijderen", kbd: "Del", disabled: el && !ctx.selection.canMutate(el, "delete"), run: () => ctx.registry.run("delete") },
       { id: "lock", label: el && ctx.selection.isLocked(el) ? "Unlock" : "Lock", run: () => ctx.registry.run("lock") },
       { sep: true },
+      ...(isImg || hasBg
+        ? [
+            { id: "replace-image", label: "Vervang image…", run: () => ctx.registry.run("replace-image") },
+            { id: "image-fit", label: "Fit / Fill / Stretch…", run: () => ctx.registry.run("image-fit-menu") },
+            { sep: true },
+          ]
+        : []),
       { id: "align-left", label: "Links uitlijnen", kbd: "Alt+L", run: () => ctx.registry.run("align-left") },
       { id: "align-center", label: "Horizontaal midden", kbd: "Alt+C", run: () => ctx.registry.run("align-center") },
       { id: "align-right", label: "Rechts uitlijnen", kbd: "Alt+R", run: () => ctx.registry.run("align-right") },
@@ -632,19 +791,36 @@ export function createInteractions(ctx) {
     if (arrows[event.key]) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      ctx.layout.nudge(...arrows[event.key]);
+      if (event.altKey) {
+        // Alt+arrows = keyboard resize through resizeRect
+        const dirMap = { ArrowLeft: "w", ArrowRight: "e", ArrowUp: "n", ArrowDown: "s" };
+        const fromCenter = event.metaKey || event.ctrlKey;
+        ctx.layout.resizeByKeyboard(dirMap[event.key], step, {
+          fromCenter,
+          aspect: ctx.session.aspectLock ? ctx.session.aspect || null : null,
+        });
+      } else {
+        ctx.layout.nudge(...arrows[event.key]);
+      }
       return;
     }
     if (event.key === "Escape") {
       ctx.chrome.hideMenu();
-      ctx.session.measure = { a: null, b: null };
+      // Pin last measurement until cleared — Escape clears pin only when idle
       if (ctx.session.phase && ctx.session.phase !== "idle") {
+        restorePressOrigins();
         ctx.commands.cancelGesture?.();
         press = null;
+        ctx.session._resizeLive = null;
         setPhase("idle");
         ctx.chrome.clearGuides?.();
         ctx.chrome.schedulePaint();
         return;
+      }
+      if (ctx.session.measure?.pinned) {
+        ctx.session.measure = { a: null, b: null, pinned: null, between: null };
+      } else {
+        ctx.session.measure = { a: null, b: null, pinned: ctx.session.measure?.pinned || null };
       }
       if (ctx.session.inlineEl) ctx.session.inlineEl.blur();
       else ctx.selection.clear();
@@ -664,7 +840,21 @@ export function createInteractions(ctx) {
     const file = [...(event.dataTransfer?.files || [])].find((item) => item.type.startsWith("image/"));
     if (!file) return;
     event.preventDefault();
-    ctx.widgets.uploadFile(file, "insert").then(() => {
+    const primary = ctx.session.primary;
+    const dropHit = ctx.selection.pickEditable?.(event.target) || primary;
+    const replaceTarget =
+      dropHit?.tagName === "IMG" && ctx.session.selected.includes(dropHit)
+        ? dropHit
+        : primary?.tagName === "IMG" && ctx.session.selected.includes(primary)
+          ? primary
+          : null;
+    const mode = replaceTarget ? "replace" : "insert";
+    if (replaceTarget && replaceTarget !== primary) ctx.selection.set([replaceTarget], replaceTarget);
+    ctx.widgets.uploadFile(file, mode).then(() => {
+      if (mode === "replace") {
+        ctx.widgets.offerImageFit?.(ctx.session.primary);
+        return;
+      }
       const el = ctx.session.primary;
       const parent = el?.parentElement;
       if (!el || !parent) return;
@@ -713,10 +903,13 @@ export function createInteractions(ctx) {
 
   function cancelActiveGesture() {
     if (!press && ctx.session.phase === "idle") return;
+    restorePressOrigins();
     ctx.commands.cancelGesture?.();
     press = null;
+    ctx.session._resizeLive = null;
     setPhase("idle");
     ctx.chrome.clearGuides?.();
+    ctx.chrome.showMarquee?.(null);
     ctx.chrome.schedulePaint();
   }
 
@@ -729,6 +922,9 @@ export function createInteractions(ctx) {
       if (ctx.session.phase !== "idle") cancelActiveGesture();
     }, true);
     window.addEventListener("blur", () => cancelActiveGesture());
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") cancelActiveGesture();
+    });
     document.addEventListener("dblclick", onDoubleClick, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     document.addEventListener("click", (event) => {
@@ -753,7 +949,13 @@ export function createInteractions(ctx) {
       // Alt+hover over another element while something is selected → spacing measure
       if (event.altKey && ctx.session.primary && ctx.session.hoverEl && ctx.session.hoverEl !== ctx.session.primary) {
         const between = measureBetween(ctx.session.primary.getBoundingClientRect(), ctx.session.hoverEl.getBoundingClientRect());
-        ctx.session.measure = { ...(ctx.session.measure || {}), between, a: ctx.session.measure?.a || null, b: ctx.session.measure?.b || null };
+        ctx.session.measure = {
+          ...(ctx.session.measure || {}),
+          between,
+          a: ctx.session.measure?.a || null,
+          b: ctx.session.measure?.b || null,
+          pinned: ctx.session.measure?.pinned || null,
+        };
         ctx.chrome.schedulePaint();
       } else if (ctx.session.measure?.between) {
         ctx.session.measure.between = null;

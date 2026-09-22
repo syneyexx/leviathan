@@ -30,7 +30,16 @@ LEVIATHAN_EDITOR_NO_BROWSER=1 python3 editor/server.py
 # then open http://127.0.0.1:5173
 ```
 
-Visual checklist: workspace overview, selection+inspector, layers/components, Design/Preview breakpoints, command palette (⌘K), save conflict, AI unavailable state. Screenshots: `editor/artifacts/` when captured.
+Visual checklist: workspace overview, selection+inspector, layers/components, Design/Preview breakpoints, command palette (⌘K), save conflict, AI unavailable state, multi-select resize (Scale group / independent), image replace + Fit/Fill, dimension HUD. Screenshots: `editor/artifacts/` when captured.
+
+## User-facing behaviour notes (Studio polish)
+
+- **Multi-select resize**: Inspector toggle *Scale group* (default) vs *Resize independently*. Shift locks aspect per gesture; Alt resizes from center.
+- **Keyboard resize**: Alt+Arrows (Shift = 10px, Ctrl/Cmd = from center). Plain arrows still nudge.
+- **Image replace**: context menu / inspector / double-click image / drop file on selected IMG. After replace, Fit · Fill · Stretch · Original. Old assets are never auto-deleted; use Studio → Orphan cleanup.
+- **Smart guides**: status bar *Guides* cycles Off / Sparse / Dense; equal-spacing for 3+ siblings.
+- **Measurement pin**: completed measure stays pinned until Escape (idle) or *Clear last measurement pin*.
+- **Recovery**: `lvb.recovery.v1` also stores in-progress free-transform boxes mid-resize.
 
 ## Architecture
 

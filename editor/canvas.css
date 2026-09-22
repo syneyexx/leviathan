@@ -2,20 +2,21 @@
 
 #lvb-root {
   all: initial;
-  --studio-bg: #080B10;
+  --studio-bg: #0B0E14;
   --studio-surface: #10151D;
-  --studio-surface-raised: #171E28;
+  --studio-surface-raised: #151A23;
   --studio-border: #2A3442;
   --studio-text: #EDF2F8;
   --studio-text-muted: #A2AFC0;
-  --studio-accent: #72C7FF;
+  --studio-accent: #5B9FD4;
+  --studio-accent-bright: #7EC8E3;
   --studio-success: #63D6A0;
   --studio-warning: #F3BD69;
   --studio-danger: #FF7F89;
-  --studio-radius: 6px;
+  --studio-radius: 4px;
   --studio-space: 8px;
-  --studio-font: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --studio-mono: "Cascadia Mono", "Consolas", "Liberation Mono", monospace;
+  --studio-font: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --studio-mono: "IBM Plex Mono", "Cascadia Mono", "Consolas", "Liberation Mono", monospace;
   position: fixed;
   inset: 0;
   z-index: 2147483000;
@@ -78,7 +79,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  background: linear-gradient(180deg, #0d131b 0%, var(--studio-bg) 100%);
+  background: var(--studio-bg);
   border-bottom: 1px solid var(--studio-border);
   z-index: 5;
 }
@@ -92,7 +93,7 @@
   white-space: nowrap;
 }
 .lvb-brand span {
-  color: var(--studio-accent);
+  color: var(--studio-accent-bright);
   font-weight: 500;
   letter-spacing: 0.04em;
   margin-left: 6px;
@@ -637,10 +638,157 @@ body.lvb-panning:active {
 /* Handles drawn by renderer; DOM fallback handles */
 .lvb-handle {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   background: var(--studio-text);
   border: 1px solid var(--studio-bg);
   border-radius: 1px;
   pointer-events: auto;
+  z-index: 2;
+  box-shadow: 0 0 0 1px rgba(11, 14, 20, 0.65);
+}
+.lvb-rotate {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--studio-accent-bright);
+  border: 1px solid var(--studio-bg);
+  pointer-events: auto;
+  z-index: 2;
+}
+.lvb-select {
+  border: 1px solid var(--studio-accent-bright);
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(11, 14, 20, 0.5);
+}
+.lvb-dim-hud {
+  position: fixed;
+  z-index: 5;
+  pointer-events: none;
+  padding: 3px 8px;
+  font-family: var(--studio-mono);
+  font-size: 11px;
+  color: var(--studio-text);
+  background: rgba(21, 26, 35, 0.92);
+  border: 1px solid var(--studio-border);
+  border-radius: 2px;
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.lvb-dim-hud.is-limit {
+  border-color: var(--studio-warning);
+  color: var(--studio-warning);
+}
+.lvb-status-meta {
+  color: var(--studio-text-muted);
+  font-family: var(--studio-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.lvb-measure text {
+  fill: var(--studio-text);
+  font-family: var(--studio-mono);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: #0B0E14;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.lvb-measure-label rect {
+  fill: rgba(11, 14, 20, 0.88);
+  stroke: var(--studio-border);
+}
+.lvb-measure-label text {
+  fill: var(--studio-accent-bright);
+  stroke: none;
+  font-size: 11px;
+  font-family: var(--studio-mono);
+}
+.lvb-measure .is-pin {
+  stroke: var(--studio-accent-bright);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.lvb-media-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 6px;
+  border: 1px solid var(--studio-border);
+  background: var(--studio-bg);
+  border-radius: 4px;
+  cursor: pointer;
+  color: inherit;
+}
+.lvb-media-item.is-used {
+  border-color: var(--studio-accent);
+}
+.lvb-media-item img {
+  width: 100%;
+  height: 72px;
+  object-fit: cover;
+  background: #0B0E14;
+}
+.lvb-media-name {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lvb-media-meta {
+  font-size: 10px;
+  color: var(--studio-text-muted);
+  font-family: var(--studio-mono);
+}
+.lvb-media-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 9px;
+  padding: 2px 5px;
+  background: rgba(91, 159, 212, 0.9);
+  color: #0B0E14;
+  border-radius: 2px;
+  letter-spacing: 0.02em;
+}
+.lvb-upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  color: var(--studio-text-muted);
+}
+.lvb-layer-badge {
+  font-size: 9px;
+  font-family: var(--studio-mono);
+  color: var(--studio-text-muted);
+  border: 1px solid var(--studio-border);
+  padding: 0 4px;
+  border-radius: 2px;
+  margin-left: auto;
+}
+.lvb-layer-badge.is-shell {
+  color: var(--studio-accent-bright);
+  border-color: rgba(91, 159, 212, 0.45);
+}
+.lvb-inspector-section > summary {
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--studio-text-muted);
+  padding: 6px 0;
+}
+.lvb-dock,
+.lvb-float,
+.lvb-menu,
+.lvb-palette,
+.lvb-media,
+.lvb-hud {
+  backdrop-filter: blur(10px);
+  background: rgba(21, 26, 35, 0.92);
 }

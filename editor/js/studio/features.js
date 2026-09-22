@@ -6,6 +6,7 @@
 import { uid } from "../util.js";
 import { diffSnapshots, applyPatch, hashDocument } from "../patches.js";
 import { listFixtures, listRecipes, registerFixture, registerRecipe } from "../capabilities/registry.js";
+import { resizeGroupMembers } from "../geometry.js";
 
 export function createStudioFeatures(ctx) {
   const branches = new Map();
@@ -295,6 +296,26 @@ export function createStudioFeatures(ctx) {
   }
 
   /** N — recovery */
+  let freeTransformDraft = null;
+
+  function captureFreeTransformState(origins) {
+    freeTransformDraft = {
+      at: Date.now(),
+      boxes: (origins || []).map((o) => ({
+        id: o.el?.dataset?.lvbNode || o.el?.dataset?.lvbId || null,
+        left: o.left,
+        top: o.top,
+        width: o.width,
+        height: o.height,
+      })),
+    };
+    writeRecoveryDraft();
+  }
+
+  function clearFreeTransformState() {
+    freeTransformDraft = null;
+  }
+
   function writeRecoveryDraft() {
     try {
       const snap = ctx.content.snapshot();
@@ -305,6 +326,7 @@ export function createStudioFeatures(ctx) {
         baseHash: s.contentHash || "",
         docId: s.content?.docId,
         snap,
+        freeTransform: freeTransformDraft,
       };
       localStorage.setItem(recoveryKey, JSON.stringify(draft));
     } catch {
@@ -322,6 +344,73 @@ export function createStudioFeatures(ctx) {
 
   function clearRecoveryDraft() {
     localStorage.removeItem(recoveryKey);
+    freeTransformDraft = null;
+  }
+
+  /** Stress preset: multi-select resize + image replace + undo across three pages (synthetic). */
+  async function runMultiPageGestureStress() {
+    const pages = (ctx.pages?.EDITOR_PAGES || []).slice(0, 3).map((p) => p.path);
+    if (pages.length < 1) return { ok: false, error: "Geen pagina's" };
+    const findings = [];
+    let steps = 0;
+    const startSnap = ctx.content.snapshot();
+    try {
+      for (const path of pages) {
+        if (ctx.pages?.go) await ctx.pages.go(path);
+        const els = [...document.querySelectorAll("[data-lvb-id], .lvb-widget, img")].filter(
+          (el) => !el.closest?.("#lvb-root") && ctx.selection.canMutate?.(el),
+        );
+        if (els.length >= 2) {
+          ctx.selection.set(els.slice(0, Math.min(5, els.length)), els[0]);
+          const members = [];
+          for (const el of ctx.session.selected) {
+            const box = ctx.layout.ensureFreeTransform?.(el);
+            if (box) members.push({ el, ...box });
+          }
+          if (members.length >= 2) {
+            const starts = members.map(({ left, top, width, height }) => ({ left, top, width, height }));
+            const nexts = resizeGroupMembers({
+              members: starts,
+              primaryIndex: 0,
+              dir: "se",
+              dx: 8,
+              dy: 8,
+              mode: "scale",
+            });
+            ctx.commands.capture("stress-group-resize", () => {
+              members.forEach((m, i) => {
+                ctx.layout.writeLiveBox(m.el, nexts[i]);
+                ctx.layout.commitBox(m.el);
+              });
+            });
+            steps += 1;
+            ctx.commands.undo();
+            steps += 1;
+          }
+        }
+        const img = document.querySelector("img:not(#lvb-root img)");
+        if (img && ctx.selection.canMutate?.(img)) {
+          ctx.selection.set([img], img);
+          const prev = img.getAttribute("src");
+          ctx.commands.capture("stress-image", () => {
+            img.setAttribute("src", prev || img.src);
+            ctx.content.patchEntry(ctx.selection.selectorFor(img), { src: prev || img.getAttribute("src") });
+          });
+          steps += 1;
+          ctx.commands.undo();
+          steps += 1;
+        }
+      }
+      // Restore original document if still dirty from stress
+      const after = ctx.content.snapshot();
+      if (JSON.stringify(after.content) !== JSON.stringify(startSnap.content)) {
+        findings.push({ message: "Document drift after stress — restoring start snap" });
+        ctx.content.restorePatch?.(ctx.content.patchBetween(startSnap, after), "back");
+      }
+      return { ok: true, steps, findings, pages };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err), steps, findings };
+    }
   }
 
   // Autosave recovery draft on dirty
@@ -336,6 +425,7 @@ export function createStudioFeatures(ctx) {
 
   return {
     runStressLab,
+    runMultiPageGestureStress,
     explainLayout,
     createCheckpoint,
     compareToCheckpoint,
@@ -353,6 +443,8 @@ export function createStudioFeatures(ctx) {
     writeRecoveryDraft,
     readRecoveryDraft,
     clearRecoveryDraft,
+    captureFreeTransformState,
+    clearFreeTransformState,
     listRecipes: () => (seedRecipes(), listRecipes()),
     listFixtures: () => (seedFixtures(), listFixtures()),
     getBranches: () => [...branches.values()],
