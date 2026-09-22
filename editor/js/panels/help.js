@@ -40,7 +40,7 @@ export function createHelp(ctx) {
             .join("")}</div>`,
         )
         .join("");
-      this.host.innerHTML = `<p class="lvb-muted">Frontier studio. Klik een rij om het commando te draaien. Presets blijven in deze browser.</p>
+      this.host.innerHTML = `<p class="lvb-muted">Frontier studio met WebGPU chrome (DOM fallback). Klik een rij om het commando te draaien. Presets blijven in deze browser.</p>
         <div class="lvb-section">Gestures</div>
         <div class="lvb-help-list">
           <div class="lvb-help-row"><span>Shift + resize</span><kbd>aspect</kbd></div>
@@ -49,6 +49,12 @@ export function createHelp(ctx) {
           <div class="lvb-help-row"><span>Ctrl/⌘ + drag</span><kbd>reparent</kbd></div>
           <div class="lvb-help-row"><span>Alt + hover</span><kbd>afstand meten</kbd></div>
           <div class="lvb-help-row"><span>Shift + rotate</span><kbd>15°</kbd></div>
+        </div>
+        <div class="lvb-section">Studio</div>
+        <div class="lvb-help-list">
+          <div class="lvb-help-row"><span>Pagina-switcher</span><kbd>top bar</kbd></div>
+          <div class="lvb-help-row"><span>Diagnostics</span><kbd>Mod+Alt+D</kbd></div>
+          <div class="lvb-help-row"><span>WebGPU / DOM paint</span><kbd>auto</kbd></div>
         </div>
         <div class="lvb-chip-row">
           <button type="button" class="lvb-chip" data-preset="studio">Studio</button>

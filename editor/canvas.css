@@ -1215,3 +1215,124 @@ body.lvb-bp-tablet .lv-app { max-width: 834px !important; }
 body.lvb-bp-mobile .lv-app { max-width: 390px !important; }
 
 .lvb-code textarea { min-height: 140px; }
+
+/* —— WebGPU scene-graph chrome —— */
+.lvb-gpu-canvas,
+.lvb-label-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+.lvb-label-canvas { z-index: 2; }
+#lvb-root.lvb-gpu-on .lvb-hover,
+#lvb-root.lvb-gpu-on .lvb-multis,
+#lvb-root.lvb-gpu-on .lvb-guides,
+#lvb-root.lvb-gpu-on .lvb-marquee,
+#lvb-root.lvb-gpu-on .lvb-drop,
+#lvb-root.lvb-gpu-on .lvb-measure {
+  visibility: hidden !important;
+}
+.lvb-select.lvb-select-hitonly {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.lvb-select.lvb-select-hitonly .lvb-label { visibility: hidden; }
+.lvb-select.lvb-select-hitonly .lvb-handle,
+.lvb-select.lvb-select-hitonly .lvb-rotate {
+  opacity: 0.01;
+}
+
+/* —— Page switcher —— */
+.lvb-page-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+  font-size: 11px;
+  color: #b8b0a4;
+  white-space: nowrap;
+}
+.lvb-page-switch span {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8a8680;
+}
+.lvb-page-switch select {
+  pointer-events: auto;
+  appearance: none;
+  border: 1px solid rgba(214, 169, 87, 0.28);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f5dfa9;
+  border-radius: 8px;
+  padding: 5px 22px 5px 8px;
+  max-width: 140px;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, #d6a957 50%), linear-gradient(135deg, #d6a957 50%, transparent 50%);
+  background-position: calc(100% - 12px) calc(50% - 2px), calc(100% - 7px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.lvb-page-switch select:focus {
+  outline: 1px solid rgba(214, 169, 87, 0.55);
+}
+.lvb-page-switch select option {
+  background: #12110f;
+  color: #e8e4dc;
+}
+
+/* —— Diagnostics panel —— */
+.lvb-diag-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.lvb-diag-card {
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(214, 169, 87, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+}
+.lvb-diag-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8a8680;
+}
+.lvb-diag-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #f5dfa9;
+  margin: 4px 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+.lvb-diag-kv {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.lvb-diag-kv span { color: #8a8680; }
+.lvb-diag-kv b { color: #e8e4dc; font-weight: 600; text-align: right; }
+.lvb-spark { display: block; width: 100%; height: 32px; }
+.lvb-fold {
+  margin: 6px 0 10px;
+  border: 1px solid rgba(214, 169, 87, 0.15);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.lvb-fold summary {
+  cursor: pointer;
+  color: #d6a957;
+  font-size: 12px;
+}
+.lvb-rail,
+.lvb-statusbar {
+  pointer-events: auto;
+}
+
