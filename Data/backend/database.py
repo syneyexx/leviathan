@@ -37,7 +37,8 @@ class Database:
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    pinned INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS messages (
@@ -72,32 +73,69 @@ class Database:
             except sqlite3.OperationalError:
                 # Some stripped SQLite builds omit FTS5. Search falls back to LIKE.
                 pass
+            # Idempotent upgrade for DBs created before pinned column existed.
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+            if "pinned" not in cols:
+                conn.execute(
+                    "ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
+                )
+
+    def _conversation_row(self, row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        data = dict(row)
+        data["pinned"] = bool(data.get("pinned") or 0)
+        return data
 
     def create_conversation(self, title: str = "New conversation") -> dict:
         conversation_id = str(uuid.uuid4())
         now = utc_now()
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO conversations(id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, created_at, updated_at, pinned) VALUES (?, ?, ?, ?, 0)",
                 (conversation_id, title, now, now),
             )
-        return {"id": conversation_id, "title": title, "created_at": now, "updated_at": now}
+        return {
+            "id": conversation_id,
+            "title": title,
+            "created_at": now,
+            "updated_at": now,
+            "pinned": False,
+        }
 
-    def list_conversations(self, limit: int = 50) -> list[dict]:
+    def list_conversations(self, limit: int = 50, *, q: str | None = None) -> list[dict]:
         with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+            if q and q.strip():
+                like = f"%{q.strip()}%"
+                rows = conn.execute(
+                    """
+                    SELECT id, title, created_at, updated_at, pinned
+                    FROM conversations
+                    WHERE title LIKE ?
+                    ORDER BY pinned DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (like, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, title, created_at, updated_at, pinned
+                    FROM conversations
+                    ORDER BY pinned DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        return [self._conversation_row(row) for row in rows]  # type: ignore[misc]
 
     def get_conversation(self, conversation_id: str) -> dict | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?",
+                "SELECT id, title, created_at, updated_at, pinned FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
-        return dict(row) if row else None
+        return self._conversation_row(row)
 
     def set_conversation_title(self, conversation_id: str, title: str) -> None:
         with self.connect() as conn:
@@ -105,6 +143,32 @@ class Database:
                 "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
                 (title[:120], utc_now(), conversation_id),
             )
+
+    def update_conversation(
+        self,
+        conversation_id: str,
+        *,
+        title: str | None = None,
+        pinned: bool | None = None,
+    ) -> dict | None:
+        existing = self.get_conversation(conversation_id)
+        if existing is None:
+            return None
+        new_title = existing["title"] if title is None else title.strip()[:120]
+        new_pinned = existing["pinned"] if pinned is None else bool(pinned)
+        if not new_title:
+            new_title = existing["title"]
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE conversations SET title = ?, pinned = ?, updated_at = ? WHERE id = ?",
+                (new_title, 1 if new_pinned else 0, utc_now(), conversation_id),
+            )
+        return self.get_conversation(conversation_id)
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            return cursor.rowcount > 0
 
     def add_message(self, conversation_id: str, role: str, content: str) -> dict:
         now = utc_now()

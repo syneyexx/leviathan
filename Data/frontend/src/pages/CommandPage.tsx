@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { media } from "../assets/media";
+import { sparklinePath, useSystemTelemetry } from "../hooks/useSystemTelemetry";
 import { AppShell } from "../layouts/AppShell";
-import { useAppToast } from "../state/useAppToast";
-import type { HealthResponse } from "../types/api";
+import type { CodingStatusResponse, Conversation, HealthResponse } from "../types/api";
 
 const FEATURES = [
   {
     key: "research",
     title: "Deep Research",
     subtitle: "Analyze complex topics",
+    to: "/research",
     icon: (
       <>
         <circle cx="11" cy="11" r="7" />
@@ -22,70 +23,72 @@ const FEATURES = [
     key: "build",
     title: "Build Anything",
     subtitle: "Generate & improve code",
+    to: "/coding",
     icon: <path d="M4 18V8l8-4 8 4v10l-8 4-8-4z" />,
   },
   {
     key: "analyze",
     title: "Data Analysis",
-    subtitle: "Find insights in your data",
+    subtitle: "Explore datasets",
+    to: "/datasets",
     icon: <path d="M5 19V9M12 19V5M19 19v-7" />,
   },
   {
     key: "create",
-    title: "Create Content",
-    subtitle: "Images, video, text & more",
+    title: "Chat / Plan",
+    subtitle: "Start a conversation",
+    to: "/chat",
     icon: <path d="M5 19l4-8 3 4 3-6 4 10" />,
   },
 ] as const;
 
-const PROJECTS = [
-  { title: "Trading AI", meta: "Updated 2h ago", image: media.project1 },
-  { title: "Autonomous Agents", meta: "Updated 5h ago", image: media.project2 },
-  { title: "Market Analysis", meta: "Updated 1d ago", image: media.project3 },
-] as const;
+type AgentRow = {
+  title: string;
+  meta: string;
+  tone: string;
+  statusLabel: string;
+  online: boolean | null;
+  to: string;
+  icon: ReactNode;
+};
 
-const AGENTS = [
-  {
-    title: "Research Agent",
-    meta: "Feature-flagged · gateway-only when enabled",
-    tone: "blue",
-    icon: (
-      <>
-        <circle cx="11" cy="11" r="7" />
-        <path d="M20 20l-3-3" />
-      </>
-    ),
-  },
-  {
-    title: "Code Agent",
-    meta: "Plans VERIFY + optional CSV inspect",
-    tone: "cyan",
-    icon: (
-      <>
-        <path d="M8 7h8v10H8z" />
-        <path d="M10 10h4M10 13h3" />
-      </>
-    ),
-  },
-  {
-    title: "Trading Agent",
-    meta: "Stub — orders refused (no fabricated fills)",
-    tone: "warn",
-    icon: <path d="M5 19V9M12 19V5M19 19v-7" />,
-  },
-  {
-    title: "Media Agent",
-    meta: "Stub — media automation unsupported",
-    tone: "gold",
-    icon: <rect x="5" y="7" width="14" height="10" rx="2" />,
-  },
-] as const;
+function formatRelative(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function gaugeDisplay(value: number | null | undefined, available: boolean): string {
+  if (!available || value == null || !Number.isFinite(value)) return "N/A";
+  return `${Math.round(value)}%`;
+}
 
 export function CommandPage() {
   const navigate = useNavigate();
-  const toast = useAppToast();
   const [prompt, setPrompt] = useState("");
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsError, setConversationsError] = useState<string | null>(null);
+  const [codingStatus, setCodingStatus] = useState<CodingStatusResponse | null>(null);
+  const { sample, error: telemetryError, history } = useSystemTelemetry({ enabled: true });
+
+  const loadConversations = useCallback(async () => {
+    try {
+      const data = await api.listConversations({ limit: 5 });
+      setConversations(data.conversations.slice(0, 5));
+      setConversationsError(null);
+    } catch (err) {
+      setConversations([]);
+      setConversationsError(err instanceof Error ? err.message : "Unavailable");
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,10 +100,23 @@ export function CommandPage() {
       .catch(() => {
         if (!cancelled) setHealth(null);
       });
+    api
+      .codingStatus()
+      .then((value) => {
+        if (!cancelled) setCodingStatus(value);
+      })
+      .catch(() => {
+        if (!cancelled) setCodingStatus(null);
+      });
+    void loadConversations();
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadConversations();
+    }, 8000);
     return () => {
       cancelled = true;
+      window.clearInterval(id);
     };
-  }, []);
+  }, [loadConversations]);
 
   const sendToChat = () => {
     const text = prompt.trim();
@@ -112,8 +128,98 @@ export function CommandPage() {
   };
 
   const agentsEnabled = Boolean(health?.agents?.enabled);
+  const codingEnabled = Boolean(codingStatus?.enabled && codingStatus?.agents_enabled);
   const llmLabel = health?.llm.available ? health.llm.model ?? "Ready" : "Offline";
   const pendingApprovals = health?.approvals?.pending ?? 0;
+
+  const agents: AgentRow[] = [
+    {
+      title: "Research Agent",
+      meta: agentsEnabled ? "Agents runtime enabled" : "Agents runtime disabled",
+      tone: "blue",
+      statusLabel: agentsEnabled ? "Enabled" : "Disabled",
+      online: agentsEnabled,
+      to: "/agents",
+      icon: (
+        <>
+          <circle cx="11" cy="11" r="7" />
+          <path d="M20 20l-3-3" />
+        </>
+      ),
+    },
+    {
+      title: "Coding Agent",
+      meta: codingStatus
+        ? codingEnabled
+          ? "Coding control plane ready"
+          : "Coding feature disabled"
+        : "Coding status unknown",
+      tone: "cyan",
+      statusLabel: codingStatus == null ? "Unknown" : codingEnabled ? "Enabled" : "Disabled",
+      online: codingStatus == null ? null : codingEnabled,
+      to: "/coding",
+      icon: (
+        <>
+          <path d="M8 7h8v10H8z" />
+          <path d="M10 10h4M10 13h3" />
+        </>
+      ),
+    },
+    {
+      title: "LLM Gateway",
+      meta: health?.llm.available
+        ? health.llm.model ?? "Model ready"
+        : health?.llm.error ?? "LLM unavailable",
+      tone: "warn",
+      statusLabel: health?.llm.available ? "Ready" : "Unavailable",
+      online: health ? Boolean(health.llm.available) : null,
+      to: "/models",
+      icon: <path d="M5 19V9M12 19V5M19 19v-7" />,
+    },
+    {
+      title: "Approvals",
+      meta: `${pendingApprovals} pending`,
+      tone: "gold",
+      statusLabel: health ? "Measured" : "Unknown",
+      online: health ? true : null,
+      to: "/status",
+      icon: <rect x="5" y="7" width="14" height="10" rx="2" />,
+    },
+  ];
+
+  const dash = sample?.dashboard;
+  const gauges = [
+    {
+      label: "GPU",
+      value: dash?.gpuPct ?? null,
+      available: Boolean(sample?.gpu.available && dash?.gpuPct != null),
+      tone: "cyan",
+    },
+    {
+      label: "CPU",
+      value: dash?.cpuPct ?? null,
+      available: Boolean(sample?.cpu.available && dash?.cpuPct != null),
+      tone: "cyan",
+    },
+    {
+      label: "RAM",
+      value: dash?.ramPct ?? null,
+      available: Boolean(sample?.memory.available && dash?.ramPct != null),
+      tone: "cyan",
+    },
+    {
+      label: "VRAM",
+      value: dash?.vramPct ?? null,
+      available: Boolean(sample?.gpu.available && dash?.vramPct != null),
+      tone: "gold",
+    },
+  ] as const;
+
+  const spark = sparklinePath(history, "cpuPct");
+  const stale =
+    sample?.ageMs != null && sample.ageMs > 5000
+      ? ` · stale ${Math.round(sample.ageMs / 1000)}s`
+      : "";
 
   return (
     <AppShell activeMode="explore">
@@ -141,18 +247,7 @@ export function CommandPage() {
         </section>
 
         <section className="lv-command">
-
           <div className="lv-prompt">
-            <button
-              className="lv-prompt-attach"
-              type="button"
-              aria-label="Attach"
-              onClick={() => toast("Attach")}
-            >
-              <svg className="lv-icon" viewBox="0 0 24 24">
-                <path d="M8 12l6-6a3 3 0 114 4l-8 8a4.2 4.2 0 11-6-6l8-8" />
-              </svg>
-            </button>
             <textarea
               rows={1}
               placeholder="Ask Leviathan anything..."
@@ -166,12 +261,6 @@ export function CommandPage() {
                 }
               }}
             />
-            <button className="lv-auto" type="button" onClick={() => toast("Auto")}>
-              Auto{" "}
-              <svg className="lv-icon" viewBox="0 0 24 24">
-                <path d="M7 10l5 5 5-5" />
-              </svg>
-            </button>
             <button
               className="lv-prompt-send lv-button-primary"
               type="button"
@@ -190,7 +279,7 @@ export function CommandPage() {
                 key={feature.key}
                 className="lv-feature"
                 type="button"
-                onClick={() => toast(feature.title)}
+                onClick={() => navigate(feature.to)}
               >
                 <span className={`lv-feature-icon ${feature.key}`}>
                   <svg className="lv-icon" viewBox="0 0 24 24">
@@ -209,49 +298,78 @@ export function CommandPage() {
         <section className="lv-lower">
           <article className="lv-panel lv-card">
             <div className="lv-card-head">
-              <div className="lv-section-label">Recent Projects</div>
-              <button className="lv-link" type="button" onClick={() => toast("View all")}>
+              <div className="lv-section-label">Laatste gesprekken</div>
+              <button className="lv-link" type="button" onClick={() => navigate("/chat")}>
                 View all →
               </button>
             </div>
             <div className="lv-project-list">
-              {PROJECTS.map((project) => (
-                <button
-                  key={project.title}
-                  className="lv-project-row"
-                  type="button"
-                  onClick={() => toast(project.title)}
-                >
-                  <img className="lv-thumb" src={project.image} alt="" />
-                  <span>
-                    <strong>{project.title}</strong>
-                    <small>{project.meta}</small>
-                  </span>
-                  <svg className="lv-icon" viewBox="0 0 24 24">
-                    <path d="M9 6l6 6-6 6" />
-                  </svg>
-                </button>
-              ))}
+              {conversationsError ? (
+                <div className="lv-chat-empty" style={{ padding: "12px 4px" }}>
+                  <strong>Conversations unavailable</strong>
+                  <span>{conversationsError}</span>
+                </div>
+              ) : conversations.length === 0 ? (
+                <div className="lv-chat-empty" style={{ padding: "12px 4px" }}>
+                  <strong>Nog geen gesprekken</strong>
+                  <span>Start een nieuw gesprek</span>
+                  <button
+                    className="lv-link"
+                    type="button"
+                    style={{ marginTop: 8 }}
+                    onClick={() => navigate("/chat")}
+                  >
+                    Nieuw gesprek →
+                  </button>
+                </div>
+              ) : (
+                conversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    className="lv-project-row"
+                    type="button"
+                    onClick={() =>
+                      navigate(`/chat?conversation=${encodeURIComponent(conversation.id)}`)
+                    }
+                  >
+                    <span className="lv-thumb lv-thumb-icon" aria-hidden="true">
+                      <svg className="lv-icon" viewBox="0 0 24 24">
+                        <path d="M5 6h14v10H8l-3 3V6z" />
+                      </svg>
+                    </span>
+                    <span>
+                      <strong>{conversation.title}</strong>
+                      <small>
+                        {conversation.pinned ? "Pinned · " : ""}
+                        {formatRelative(conversation.updated_at)}
+                      </small>
+                    </span>
+                    <svg className="lv-icon" viewBox="0 0 24 24">
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                  </button>
+                ))
+              )}
             </div>
           </article>
 
           <article className="lv-panel lv-card">
             <div className="lv-card-head">
               <div className="lv-section-label">System Performance</div>
-              <button className="lv-link" type="button" onClick={() => toast("View all")}>
+              <button className="lv-link" type="button" onClick={() => navigate("/status")}>
                 View all →
               </button>
             </div>
-            <div className="lv-gauges">
-              {[
-                { label: "GPU", value: 34, tone: "cyan" },
-                { label: "CPU", value: 12, tone: "cyan" },
-                { label: "RAM", value: 28, tone: "cyan" },
-                { label: "VRAM", value: 41, tone: "gold" },
-              ].map((gauge) => (
+            <div className="lv-gauges" title={telemetryError ?? `Live telemetry${stale}`}>
+              {gauges.map((gauge) => (
                 <div className="lv-gauge" key={gauge.label}>
-                  <div className={`lv-ring ${gauge.tone}`} style={{ ["--p" as string]: gauge.value }}>
-                    <b>{gauge.value}%</b>
+                  <div
+                    className={`lv-ring ${gauge.tone}`}
+                    style={{
+                      ["--p" as string]: gauge.available ? Math.round(gauge.value ?? 0) : 0,
+                    }}
+                  >
+                    <b>{gaugeDisplay(gauge.value, gauge.available)}</b>
                   </div>
                   <span>{gauge.label}</span>
                 </div>
@@ -265,16 +383,21 @@ export function CommandPage() {
                     <stop offset="100%" stopColor="#22C9D6" stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                <path
-                  d="M0,42 L18,38 36,44 54,30 72,36 90,20 108,28 126,16 144,26 162,22 180,32 198,18 216,24 234,14 252,20 270,12 288,18 304,10 320,16 L320,60 L0,60 Z"
-                  fill="url(#sparkFill)"
-                />
-                <polyline
-                  fill="none"
-                  stroke="#22C9D6"
-                  strokeWidth="1.6"
-                  points="0,42 18,38 36,44 54,30 72,36 90,20 108,28 126,16 144,26 162,22 180,32 198,18 216,24 234,14 252,20 270,12 288,18 304,10 320,16"
-                />
+                {spark ? (
+                  <>
+                    <path d={spark.area} fill="url(#sparkFill)" />
+                    <polyline
+                      fill="none"
+                      stroke="#22C9D6"
+                      strokeWidth="1.6"
+                      points={spark.line}
+                    />
+                  </>
+                ) : (
+                  <text x="12" y="34" fill="currentColor" opacity="0.45" fontSize="11">
+                    Waiting for telemetry…
+                  </text>
+                )}
               </svg>
             </div>
           </article>
@@ -292,12 +415,12 @@ export function CommandPage() {
               </span>
             </div>
             <div className="lv-agent-list">
-              {AGENTS.map((agent) => (
+              {agents.map((agent) => (
                 <button
                   key={agent.title}
                   className="lv-agent-row"
                   type="button"
-                  onClick={() => navigate("/status")}
+                  onClick={() => navigate(agent.to)}
                 >
                   <span className={`lv-agent-icon ${agent.tone}`}>
                     <svg className="lv-icon" viewBox="0 0 24 24">
@@ -306,9 +429,20 @@ export function CommandPage() {
                   </span>
                   <span>
                     <strong>{agent.title}</strong>
-                    <small>{agent.meta}</small>
+                    <small>
+                      {agent.meta} · {agent.statusLabel}
+                    </small>
                   </span>
-                  <span className={agentsEnabled ? "lv-status-online" : "lv-status-offline"} />
+                  <span
+                    className={
+                      agent.online === true
+                        ? "lv-status-online"
+                        : agent.online === false
+                          ? "lv-status-offline"
+                          : "lv-status-offline"
+                    }
+                    title={agent.statusLabel}
+                  />
                   <svg className="lv-icon" viewBox="0 0 24 24">
                     <path d="M9 6l6 6-6 6" />
                   </svg>
@@ -328,7 +462,7 @@ export function CommandPage() {
           <div className="lv-world-stats">
             <div className="lv-world-stat">
               <span>Control plane</span>
-              <strong>{health?.ok ? "Online" : "Unknown"}</strong>
+              <strong>{health?.ok ? "Online" : health ? "Degraded" : "Unknown"}</strong>
             </div>
             <div className="lv-world-stat">
               <span>LLM</span>
@@ -348,10 +482,19 @@ export function CommandPage() {
         <div className="lv-section-label">Quick Tools</div>
         <div className="lv-tools-grid">
           {[
-            { label: "New Project", icon: <path d="M12 5v14M5 12h14" /> },
-            { label: "Upload", icon: <path d="M12 16V5M8 9l4-4 4 4M5 19h14" /> },
             {
-              label: "Web Search",
+              label: "Nieuw gesprek",
+              to: "/chat",
+              icon: <path d="M12 5v14M5 12h14" />,
+            },
+            {
+              label: "Coding Agent",
+              to: "/coding",
+              icon: <path d="M4 18V8l8-4 8 4v10l-8 4-8-4z" />,
+            },
+            {
+              label: "Deep Research",
+              to: "/research",
               icon: (
                 <>
                   <circle cx="11" cy="11" r="7" />
@@ -360,20 +503,16 @@ export function CommandPage() {
               ),
             },
             {
-              label: "Run Agent",
-              icon: (
-                <>
-                  <circle cx="12" cy="8" r="3" />
-                  <path d="M5 19c1.5-3 4-4.5 7-4.5S17.5 16 19 19" />
-                </>
-              ),
+              label: "Datasets",
+              to: "/datasets",
+              icon: <path d="M12 16V5M8 9l4-4 4 4M5 19h14" />,
             },
           ].map((tool) => (
             <button
               key={tool.label}
               className="lv-tool"
               type="button"
-              onClick={() => toast(tool.label)}
+              onClick={() => navigate(tool.to)}
             >
               <svg className="lv-icon" viewBox="0 0 24 24">
                 {tool.icon}

@@ -3,6 +3,7 @@ export type Conversation = {
   title: string;
   created_at: string;
   updated_at: string;
+  pinned?: boolean;
 };
 
 export type Message = {
@@ -11,6 +12,13 @@ export type Message = {
   role: "system" | "user" | "assistant";
   content: string;
   created_at: string;
+};
+
+export type ChatOptions = {
+  conversationId?: string | null;
+  modelId?: string | null;
+  preferredRole?: string | null;
+  stream?: boolean;
 };
 
 export type ReasoningSummary = {
@@ -939,6 +947,14 @@ export type CodingSession = {
   created_at: string;
   updated_at: string;
   run_id?: string | null;
+  pending_capability?: {
+    capability_id?: string;
+    approval_id?: string;
+    arguments?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+  feature_truth?: Record<string, unknown> | null;
+  round_count?: number;
 };
 
 export type CodingStep = {
@@ -947,6 +963,9 @@ export type CodingStep = {
   kind: string;
   capability_id: string | null;
   status: string;
+  /** Canonical backend field from CodingStep.public_dict(). */
+  output?: Record<string, unknown> | null;
+  /** @deprecated Prefer `output` — kept for transitional reads. */
   output_json?: Record<string, unknown> | null;
   error?: string | null;
   created_at?: string;
@@ -966,8 +985,9 @@ export type CodingPatch = {
 };
 
 export type CodingVerification = {
-  report_id: string;
-  outcome: "PASSED" | "FAILED" | "UNMEASURED";
+  verification_id?: string | null;
+  report_id?: string;
+  outcome?: "PASSED" | "FAILED" | "UNMEASURED";
   requirements?: Array<{ requirement_id: string; outcome: string; detail?: string | null }>;
 };
 
@@ -989,9 +1009,59 @@ export type CodingSessionDetail = {
   neuro: CodingNeuroSnapshot | null;
 };
 
+export type CodingTurnResponse = {
+  session: CodingSession;
+};
+
 export type CodingWorkspaceTreeResponse = {
   entries: Array<{ path: string; type: "file" | "dir"; size?: number; mark?: "M" | "A" | null }>;
   root?: string;
+};
+
+export type SystemTelemetryResponse = {
+  collectedAt: string | null;
+  ageMs: number | null;
+  cpu: { available: boolean; utilizationPct: number | null };
+  memory: {
+    available: boolean;
+    totalBytes: number | null;
+    usedBytes: number | null;
+    availableBytes: number | null;
+    utilizationPct: number | null;
+  };
+  gpu: {
+    available: boolean;
+    devices: Array<{
+      index: number;
+      name: string;
+      utilizationPct: number | null;
+      vramTotalBytes: number | null;
+      vramUsedBytes: number | null;
+      vramFreeBytes: number | null;
+      vramUtilizationPct: number | null;
+      driverVersion?: string | null;
+    }>;
+  };
+  notes?: string[];
+  truth: {
+    measured: boolean;
+    synthetic: boolean;
+    unavailableIsNotZero?: boolean;
+  };
+  dashboard: {
+    cpuPct: number | null;
+    ramPct: number | null;
+    gpuPct: number | null;
+    vramPct: number | null;
+  };
+};
+
+export type CapabilityListItem = {
+  capability_id: string;
+  description?: string;
+  side_effects?: string[];
+  policy?: string;
+  [key: string]: unknown;
 };
 
 
