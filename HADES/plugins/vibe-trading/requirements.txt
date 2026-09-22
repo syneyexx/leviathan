@@ -1,1 +1,0 @@
-vibe-trading-ai>=0.1.14

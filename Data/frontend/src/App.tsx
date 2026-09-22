@@ -26,11 +26,13 @@ import { MediaViralPage } from "./pages/media/MediaViralPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
 import { YouTubePage } from "./pages/media/YouTubePage";
 import { ResearchMockPage } from "./pages/ResearchMockPage";
+import { PerformancePage } from "./pages/PerformancePage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { McpPage } from "./pages/McpPage";
+import { ConsolePage } from "./pages/ConsolePage";
 import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
 import { MarktdataPage } from "./pages/trading/MarktdataPage";
 import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
@@ -83,11 +85,11 @@ export default function App() {
       <Route path="/evidence" element={<EvidenceVaultPage />} />
       <Route path="/datasets" element={<DatasetsHubPixelPage />} />
 
-      <Route path="/performance" element={<SectionPage title="Performance" />} />
+      <Route path="/performance" element={<PerformancePage />} />
       <Route path="/tools" element={<ToolsPage />} />
       <Route path="/mcp" element={<McpPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
-      <Route path="/console" element={<SectionPage title="Console" />} />
+      <Route path="/console" element={<ConsolePage />} />
 
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/settings/llm-gedrag" element={<Navigate to="/settings?section=llm_gedrag" replace />} />
