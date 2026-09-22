@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -71,8 +72,16 @@ from Data.modules.schedules import (
     ScheduleStore,
     ScheduleTargetKind,
 )
-from Data.modules.observability import ObservabilityHub, SystemTelemetrySampler
+from Data.modules.observability import (
+    ObservabilityHub,
+    SystemTelemetrySampler,
+    build_default_operator_registry,
+)
+from Data.modules.metrics import MetricsCollector, TimeSeriesStore
+from Data.backend.routes.observability import build_observability_router
 from Data.backend.routes.system import build_system_telemetry_router
+from Data.backend.routes.brain import build_brain_router
+from Data.modules.brain import BrainQueryFacade
 from Data.modules.neuro import (
     ContrastiveRetrievalHead,
     CortexPlanner,
@@ -123,7 +132,6 @@ from Data.modules.security import SecurityAuditor, SecurityFinding
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
 from Data.modules.backup import BackupError, BackupService
-from Data.modules.metrics import MetricsCollector
 from Data.modules.chaos import ChaosInjector, ChaosPlan
 from Data.modules.master import MasterGateCheck, MasterGateRunner, MasterGateStatus
 
@@ -211,8 +219,10 @@ schedule_runner = ScheduleRunner(
     jobs=job_runtime,
     workflows=workflow_runtime,
 )
-observability = ObservabilityHub(capacity=500)
+observability = ObservabilityHub(capacity=2000, db_path=settings.database_path)
 system_telemetry_sampler = SystemTelemetrySampler(interval_s=1.0, gpu_interval_s=2.0)
+metrics = MetricsCollector()
+timeseries = TimeSeriesStore(max_points_per_series=3_600)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001
     "knowledge", name, payload=payload
 )
@@ -504,7 +514,6 @@ backup_service = BackupService(
     artifacts_root=settings.artifacts.root,
     backup_root=settings.backup.root,
 )
-metrics = MetricsCollector()
 chaos = ChaosInjector(
     ChaosPlan(
         enabled=settings.chaos.enabled,
@@ -659,6 +668,115 @@ cognition_runtime = CognitiveRuntime(
 )
 
 
+def _component_health() -> list[dict]:
+    """Aggregate real component health for Performance page (no fabricated healthy)."""
+    components: list[dict] = []
+
+    def add(cid: str, name: str, ctype: str, status: str, detail: str = "") -> None:
+        components.append(
+            {
+                "id": cid,
+                "name": name,
+                "type": ctype,
+                "status": status,
+                "detail": detail,
+            }
+        )
+
+    add("backend", "backend", "Core", "healthy", "process up")
+    add(
+        "observability",
+        "observability",
+        "Runtime",
+        "healthy" if observability.store is not None else "degraded",
+        "durable" if observability.store is not None else "ring_buffer_only",
+    )
+    add(
+        "job_runtime",
+        "job-runtime",
+        "Runtime",
+        "healthy",
+        f"queued={len(job_runtime.list(state=JobState.QUEUED, limit=500))}",
+    )
+    add(
+        "module_manager",
+        "module-manager",
+        "Runtime",
+        "healthy" if module_manager.enabled else "stopped",
+        f"modules={len(module_manager.list())}",
+    )
+    if settings.features.mcp_enabled:
+        try:
+            servers = mcp_bridge.list_servers()
+            connected = sum(
+                1
+                for s in servers
+                if (s.get("connection_state") if isinstance(s, dict) else None) == "connected"
+                or (getattr(s, "connection_state", None) == "connected")
+            )
+            add(
+                "mcp_bridge",
+                "mcp-bridge",
+                "Bridge",
+                "healthy" if connected or not servers else "degraded",
+                f"servers={len(servers)} connected={connected}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            add("mcp_bridge", "mcp-bridge", "Bridge", "failed", type(exc).__name__)
+    else:
+        add("mcp_bridge", "mcp-bridge", "Bridge", "unavailable", "feature_disabled")
+
+    sample = system_telemetry_sampler.latest_public()
+    dash = sample.get("dashboard") if isinstance(sample, dict) else None
+    if isinstance(dash, dict) and dash.get("cpuPct") is None and dash.get("ramPct") is None:
+        add("system_telemetry", "system-telemetry", "Sampler", "degraded", "partial_unavailable")
+    else:
+        add("system_telemetry", "system-telemetry", "Sampler", "healthy", "sampling")
+
+    return components
+
+
+operator_registry = build_default_operator_registry(
+    deps={
+        "observability": observability,
+        "module_manager": module_manager,
+        "mcp_bridge": mcp_bridge,
+        "workflow_store": workflow_store,
+        "workflow_runtime": workflow_runtime,
+        "job_store": job_store,
+        "job_runtime": job_runtime,
+        "capability_catalog": capability_catalog,
+        "research_service": research_service,
+        "dataset_service": dataset_service,
+        "metrics": metrics,
+        "system_telemetry_sampler": system_telemetry_sampler,
+        "health_fn": lambda: {
+            "ok": True,
+            "modules": len(module_manager.list()),
+            "jobs_queued": len(job_runtime.list(state=JobState.QUEUED, limit=500)),
+            "observability": observability.snapshot(),
+        },
+    }
+)
+
+brain_facade = BrainQueryFacade(
+    knowledge_list=lambda: knowledge.list_documents(limit=200),
+    evidence_list=lambda: evidence_store.list(limit=200),
+    research_list=lambda: research_service.list_projects(limit=100),
+    dataset_list=lambda: dataset_service.list_datasets(limit=100),
+    module_list=lambda: module_manager.list(),
+    capability_list=lambda: capability_catalog.list(),
+    mcp_servers=lambda: mcp_bridge.list_servers() if settings.features.mcp_enabled else [],
+    mcp_tools=lambda: (
+        mcp_bridge.list_tools() if hasattr(mcp_bridge, "list_tools") and settings.features.mcp_enabled else []
+    ),
+    workflow_list=lambda: workflow_store.list(limit=100),
+    atlas_list=lambda: atlas_store.search("", limit=100) if settings.features.rag_v3 else [],
+    max_nodes=250,
+    max_edges=500,
+)
+
+
 def live_settings():
     """Effective settings after Settings Control Plane overrides."""
     return settings_plane.effective
@@ -695,6 +813,8 @@ async def lifespan(_: FastAPI):
         "settings",
         "control_plane.started",
         payload={"override_count": len(settings_plane._overrides)},
+        level="info",
+        message="Settings control plane started",
     )
     db.initialize()
     knowledge.initialize()
@@ -787,9 +907,25 @@ async def lifespan(_: FastAPI):
     job_runtime.start_background_worker()
     system_telemetry_sampler.start()
     metrics.incr("lifespan_starts")
+    observability.emit(
+        "backend",
+        "startup",
+        level="success",
+        message="Leviathan backend ready",
+        success=True,
+        source="lifespan",
+    )
     try:
         yield
     finally:
+        observability.emit(
+            "backend",
+            "shutdown",
+            level="info",
+            message="Leviathan backend shutting down",
+            source="lifespan",
+        )
+        observability.shutdown()
         system_telemetry_sampler.stop()
         mcp_bridge.shutdown()
         if module_manager.enabled:
@@ -808,7 +944,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.62.0-settings", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.63.0-observability", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -817,10 +953,71 @@ app.include_router(build_coding_router(coding_service))
 app.include_router(build_agents_router(agent_fleet))
 app.include_router(build_analytics_router(analytics_service))
 app.include_router(build_system_telemetry_router(system_telemetry_sampler))
+app.include_router(
+    build_observability_router(
+        observability=observability,
+        operator=operator_registry,
+        metrics=metrics,
+        timeseries=timeseries,
+        sampler=system_telemetry_sampler,
+        component_health_fn=_component_health,
+    )
+)
+app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_settings_router(settings_plane))
+
+
+@app.middleware("http")
+async def _observability_http_middleware(request: Request, call_next):
+    path = request.url.path
+    # Skip noisy static/frontend asset traffic
+    if path.startswith("/assets") or path in {"/", "/favicon.ico"}:
+        return await call_next(request)
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    started = time.perf_counter()
+    metrics.incr("http.requests")
+    timeseries.observe("http.requests", 1.0)
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        timeseries.observe_latency_ms("http.request", duration_ms)
+        metrics.incr(f"http.status.{status_code}")
+        if status_code >= 500:
+            metrics.incr("http.errors")
+        # Avoid flooding console with high-frequency polling endpoints
+        noisy = path in {
+            "/api/system/telemetry",
+            "/api/telemetry",
+            "/api/events",
+            "/api/metrics",
+            "/api/performance/snapshot",
+            "/api/health",
+        }
+        if not noisy and not path.startswith("/api/events/stream"):
+            level = "error" if status_code >= 500 else ("warning" if status_code >= 400 else "info")
+            observability.emit(
+                "http",
+                "request",
+                level=level,
+                message=f"{request.method} {path} → {status_code}",
+                payload={
+                    "method": request.method,
+                    "path": path,
+                    "status": status_code,
+                    "duration_ms": round(duration_ms, 2),
+                },
+                duration_ms=duration_ms,
+                success=status_code < 400,
+                source="http_middleware",
+            )
 
 
 class ConversationCreate(BaseModel):
@@ -2767,9 +2964,12 @@ def get_telemetry(
     return {
         "snapshot": observability.snapshot(),
         "events": [item.public_dict() for item in observability.recent(limit=limit, category=category)],
+        "latest_sequence": observability.latest_sequence(),
         "truth": {
-            "in_process_ring_buffer_only": True,
+            "in_process_ring_buffer_only": observability.store is None,
+            "durable_history": observability.store is not None,
             "not_a_production_apm": True,
+            "redacted": True,
         },
     }
 

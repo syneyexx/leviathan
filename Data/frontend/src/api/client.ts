@@ -85,6 +85,19 @@ import type {
   SettingsSnapshot,
   SettingState,
   SettingMutationResult,
+  RuntimeEvent,
+  EventsListResponse,
+  OperatorCommandResult,
+  PerformanceSnapshot,
+  ModuleSnapshot,
+  KnowledgeDocument,
+  KnowledgeChunk,
+  KnowledgeSearchHit,
+  EvidenceRecord,
+  WorkflowRecord,
+  WorkflowCreatePayload,
+  ScheduleRecord,
+  ScheduleCreatePayload,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -393,8 +406,186 @@ export const api = {
     });
   },
 
-  telemetry(): Promise<{ events: unknown[]; snapshot?: unknown }> {
-    return request<{ events: unknown[]; snapshot?: unknown }>("/api/telemetry");
+  telemetry(): Promise<{ events: RuntimeEvent[]; snapshot?: unknown; latest_sequence?: number }> {
+    return request<{ events: RuntimeEvent[]; snapshot?: unknown; latest_sequence?: number }>("/api/telemetry");
+  },
+
+  listEvents(opts?: {
+    limit?: number;
+    before?: number;
+    after?: number;
+    level?: string;
+    category?: string;
+    subsystem?: string;
+    source?: string;
+    correlation_id?: string;
+    q?: string;
+    since_ms?: number;
+    until_ms?: number;
+  }): Promise<EventsListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.before != null) params.set("before", String(opts.before));
+    if (opts?.after != null) params.set("after", String(opts.after));
+    if (opts?.level) params.set("level", opts.level);
+    if (opts?.category) params.set("category", opts.category);
+    if (opts?.subsystem) params.set("subsystem", opts.subsystem);
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.correlation_id) params.set("correlation_id", opts.correlation_id);
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.since_ms != null) params.set("since_ms", String(opts.since_ms));
+    if (opts?.until_ms != null) params.set("until_ms", String(opts.until_ms));
+    const q = params.toString();
+    return request<EventsListResponse>(`/api/events${q ? `?${q}` : ""}`);
+  },
+
+  listOperatorCommands(): Promise<{ commands: Array<{ name: string; help: string }> }> {
+    return request("/api/console/commands");
+  },
+
+  runOperatorCommand(command: string): Promise<{ result: OperatorCommandResult }> {
+    return request("/api/console/command", {
+      method: "POST",
+      body: JSON.stringify({ command }),
+    });
+  },
+
+  performanceSnapshot(): Promise<PerformanceSnapshot> {
+    return request<PerformanceSnapshot>("/api/performance/snapshot");
+  },
+
+  performanceSeries(
+    name: string,
+    opts?: { since_ms?: number; until_ms?: number; limit?: number },
+  ): Promise<{ name: string; points: Array<{ ts_ms: number; value: number }> }> {
+    const params = new URLSearchParams({ name });
+    if (opts?.since_ms != null) params.set("since_ms", String(opts.since_ms));
+    if (opts?.until_ms != null) params.set("until_ms", String(opts.until_ms));
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    return request(`/api/performance/series?${params.toString()}`);
+  },
+
+  listModules(): Promise<ModuleSnapshot> {
+    return request<ModuleSnapshot>("/api/modules");
+  },
+
+  discoverModules(): Promise<{ discovered: unknown[]; snapshot: ModuleSnapshot }> {
+    return request("/api/modules/discover", { method: "POST" });
+  },
+
+  executeModule(
+    moduleId: string,
+    operation: string,
+    arguments_: Record<string, unknown> = {},
+  ): Promise<{ result: unknown }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ operation, arguments: arguments_ }),
+    });
+  },
+
+  listWorkflows(limit = 100): Promise<{ workflows: WorkflowRecord[] }> {
+    return request(`/api/workflows?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createWorkflow(payload: WorkflowCreatePayload): Promise<{ workflow: WorkflowRecord }> {
+    return request("/api/workflows", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  getWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}`);
+  },
+
+  runWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/run`, { method: "POST" });
+  },
+
+  cancelWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/cancel`, { method: "POST" });
+  },
+
+  listSchedules(opts?: {
+    status?: string;
+    limit?: number;
+  }): Promise<{ schedules: ScheduleRecord[]; telemetry?: Record<string, unknown> }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/schedules${q ? `?${q}` : ""}`);
+  },
+
+  createSchedule(payload: ScheduleCreatePayload): Promise<{ schedule: ScheduleRecord }> {
+    return request("/api/schedules", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  getSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}`);
+  },
+
+  pauseSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}/pause`, { method: "POST" });
+  },
+
+  resumeSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}/resume`, { method: "POST" });
+  },
+
+  listEvidence(opts?: {
+    status?: string;
+    run_id?: string;
+    limit?: number;
+  }): Promise<{ evidence: EvidenceRecord[] }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.run_id) params.set("run_id", opts.run_id);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/evidence${q ? `?${q}` : ""}`);
+  },
+
+  getEvidence(evidenceId: string): Promise<{ evidence: EvidenceRecord }> {
+    return request(`/api/evidence/${encodeURIComponent(evidenceId)}`);
+  },
+
+  verifyEvidence(evidenceId: string): Promise<{ evidence: EvidenceRecord }> {
+    return request(`/api/evidence/${encodeURIComponent(evidenceId)}/verify`, { method: "POST" });
+  },
+
+  listKnowledgeDocuments(): Promise<{ documents: KnowledgeDocument[] }> {
+    return request("/api/knowledge");
+  },
+
+  getKnowledgeDocument(documentId: string): Promise<{ document: KnowledgeDocument; chunks: KnowledgeChunk[] }> {
+    return request(`/api/knowledge/${encodeURIComponent(documentId)}`);
+  },
+
+  createKnowledgeDocument(payload: {
+    id?: string;
+    title: string;
+    content: string;
+    source?: string;
+  }): Promise<{ document: KnowledgeDocument }> {
+    return request("/api/knowledge", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  deleteKnowledgeDocument(documentId: string): Promise<{ deleted: boolean; id: string }> {
+    return request(`/api/knowledge/${encodeURIComponent(documentId)}`, { method: "DELETE" });
+  },
+
+  searchKnowledge(opts: {
+    q: string;
+    limit?: number;
+    source?: string;
+  }): Promise<{ hits: KnowledgeSearchHit[]; documents: KnowledgeDocument[] }> {
+    const params = new URLSearchParams({ q: opts.q });
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.source) params.set("source", opts.source);
+    return request(`/api/knowledge/search?${params.toString()}`);
+  },
+
+  listFunctions(): Promise<{ functions: unknown[]; loaded?: unknown[]; telemetry?: unknown }> {
+    return request("/api/functions");
   },
 
   neuroAssess(text: string): Promise<NeuroAssessmentResponse> {
@@ -446,12 +637,6 @@ export const api = {
 
   neuroEvaluation(): Promise<{ report: unknown }> {
     return request<{ report: unknown }>("/api/evaluation/neuro", { method: "POST" });
-  },
-
-  listModules(): Promise<{ enabled?: boolean; modules?: unknown[]; truth?: Record<string, boolean> }> {
-    return request<{ enabled?: boolean; modules?: unknown[]; truth?: Record<string, boolean> }>(
-      "/api/modules",
-    );
   },
 
   listTrainingRecipes(): Promise<{ recipes: TrainingRecipe[] }> {
@@ -1149,6 +1334,16 @@ export const api = {
     return request<{ capabilities: CapabilityListItem[] }>(`/api/capabilities${q ? `?${q}` : ""}`);
   },
 
+  executeCapability(
+    capabilityId: string,
+    arguments_: Record<string, unknown> = {},
+  ): Promise<{ result: unknown }> {
+    return request(`/api/capabilities/${encodeURIComponent(capabilityId)}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ arguments: arguments_, requested_by: "ui" }),
+    });
+  },
+
   mcpServers(): Promise<{ servers: McpServerPublic[]; feature_enabled: boolean }> {
     return request("/api/mcp/servers");
   },
@@ -1388,6 +1583,41 @@ export const api = {
     return request(`/api/settings/reset-category/${encodeURIComponent(category)}`, {
       method: "POST",
     });
+  },
+
+  brainGraph(opts?: {
+    limit?: number;
+    q?: string;
+    types?: string;
+    root?: string;
+  }): Promise<{
+    nodes: Array<{
+      id: string;
+      type: string;
+      label: string;
+      created_at?: string | null;
+      meta?: Record<string, unknown>;
+    }>;
+    edges: Array<{ id: string; source: string; target: string; relation: string }>;
+    stats: {
+      node_count: number;
+      edge_count: number;
+      by_type?: Record<string, number>;
+      by_relation?: Record<string, number>;
+    };
+    truth?: Record<string, boolean>;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.types) params.set("types", opts.types);
+    if (opts?.root) params.set("root", opts.root);
+    const q = params.toString();
+    return request(`/api/brain/graph${q ? `?${q}` : ""}`);
+  },
+
+  brainStats(): Promise<{ stats: Record<string, unknown>; truth?: Record<string, boolean> }> {
+    return request("/api/brain/stats");
   },
 
   /* ---------- Agent fleet ---------- */

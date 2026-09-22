@@ -1,203 +1,216 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { mediaPageArt, mediaPageHeroes } from "../assets/mediaPagesAssets";
+import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
+import type { EvidenceRecord, EvidenceStatus } from "../types/api";
 import { BarRow, Donut, PageHero, Panel, Pill } from "./media/mr-shared";
 
-type EvType = "Web" | "Files" | "Images" | "Code" | "Reports" | "Logs" | "Conversations";
-type EvStatus = "Verified" | "Pending" | "Flagged" | "Review";
+type StatusFilter = "all" | "UNVERIFIED" | "VERIFIED" | "FAILED";
+type KindFilter = "All" | "ARTIFACT_HASH" | "OBSERVATION_REF" | "FILE_EXISTS" | "COMPOSITE";
 
-type EvidenceItem = {
-  id: string;
-  source: string;
-  type: EvType;
-  status: EvStatus;
-  timestamp: string;
-  confidence: number;
-  title: string;
-  hashes: { sha256: string; sha1: string; md5: string };
-  tags: string[];
+const KIND_CHIPS: KindFilter[] = ["All", "ARTIFACT_HASH", "OBSERVATION_REF", "FILE_EXISTS", "COMPOSITE"];
+
+const STATUS_TONE: Record<string, "green" | "gold" | "red" | "cyan" | "muted"> = {
+  VERIFIED: "green",
+  UNVERIFIED: "gold",
+  FAILED: "red",
 };
 
-const TYPE_CHIPS = ["All", "Web", "Files", "Images", "Code", "Reports", "Logs", "Conversations"] as const;
+function errMsg(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
 
-const GROWTH = [28, 36, 32, 44, 52, 48, 61, 70, 66, 78, 84, 92];
+function dash(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
 
-const ITEMS: EvidenceItem[] = [
-  {
-    id: "EV-2841",
-    source: "reuters.com",
-    type: "Web",
-    status: "Verified",
-    timestamp: "2026-09-22 14:12",
-    confidence: 96,
-    title: "Macro wire — funding compression",
-    hashes: {
-      sha256: "a3f1…9c2e8b71",
-      sha1: "7b91…c04d",
-      md5: "e2a1…19f0",
-    },
-    tags: ["markets", "liquidity"],
-  },
-  {
-    id: "EV-2838",
-    source: "vault/reports/q3.pdf",
-    type: "Reports",
-    status: "Verified",
-    timestamp: "2026-09-22 13:48",
-    confidence: 91,
-    title: "Q3 retention cohort brief",
-    hashes: {
-      sha256: "91cd…44aa012f",
-      sha1: "c881…2fe1",
-      md5: "0bb4…77ac",
-    },
-    tags: ["media", "retention"],
-  },
-  {
-    id: "EV-2834",
-    source: "sat-orbit/tile-12",
-    type: "Images",
-    status: "Pending",
-    timestamp: "2026-09-22 12:05",
-    confidence: 74,
-    title: "Satellite overlay — coastal grid",
-    hashes: {
-      sha256: "55e0…ab19d3c2",
-      sha1: "119a…88ef",
-      md5: "9f3c…0012",
-    },
-    tags: ["geo", "imagery"],
-  },
-  {
-    id: "EV-2829",
-    source: "github.com/lev/hades",
-    type: "Code",
-    status: "Verified",
-    timestamp: "2026-09-22 11:22",
-    confidence: 88,
-    title: "Chunker provenance patch",
-    hashes: {
-      sha256: "d014…6e91bb40",
-      sha1: "aa12…9c01",
-      md5: "71fe…cc09",
-    },
-    tags: ["code", "ingestion"],
-  },
-  {
-    id: "EV-2822",
-    source: "agent/chat-4921",
-    type: "Conversations",
-    status: "Review",
-    timestamp: "2026-09-21 22:40",
-    confidence: 69,
-    title: "Research session transcript",
-    hashes: {
-      sha256: "bb70…1188afe3",
-      sha1: "33cd…a190",
-      md5: "c4d2…55e8",
-    },
-    tags: ["chat", "research"],
-  },
-  {
-    id: "EV-2817",
-    source: "runtime/access.log",
-    type: "Logs",
-    status: "Flagged",
-    timestamp: "2026-09-21 19:03",
-    confidence: 58,
-    title: "Anomalous vault read burst",
-    hashes: {
-      sha256: "0fe2…9911ccaa",
-      sha1: "ee09…4412",
-      md5: "a190…77bd",
-    },
-    tags: ["security", "logs"],
-  },
-  {
-    id: "EV-2811",
-    source: "datasets/creator_vel.parquet",
-    type: "Files",
-    status: "Verified",
-    timestamp: "2026-09-21 16:18",
-    confidence: 93,
-    title: "Creator velocity dataset slice",
-    hashes: {
-      sha256: "88a1…c0ff2199",
-      sha1: "5d10…abce",
-      md5: "12ff…90aa",
-    },
-    tags: ["datasets", "creators"],
-  },
-];
+function formatTs(value: string | null | undefined): string {
+  if (!value) return "—";
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString();
+  } catch {
+    return value;
+  }
+}
 
-const STATUS_TONE: Record<EvStatus, "green" | "gold" | "red" | "cyan"> = {
-  Verified: "green",
-  Pending: "gold",
-  Flagged: "red",
-  Review: "cyan",
-};
+function shortHash(hash: string | null | undefined): string {
+  if (!hash) return "—";
+  if (hash.length <= 16) return hash;
+  return `${hash.slice(0, 8)}…${hash.slice(-6)}`;
+}
 
-const CATEGORIES = [
-  { label: "Web", value: 34, color: "#22c9d6" },
-  { label: "Files", value: 22, color: "#60a5fa" },
-  { label: "Images", value: 14, color: "#f0c875" },
-  { label: "Code", value: 11, color: "#4ade80" },
-  { label: "Reports", value: 9, color: "#c084fc" },
-  { label: "Logs", value: 6, color: "#f87171" },
-  { label: "Conversations", value: 4, color: "#94a3b8" },
-];
+function confidenceLabel(item: EvidenceRecord): string {
+  if (item.confidence == null || Number.isNaN(Number(item.confidence))) return "Not assessed";
+  const n = Number(item.confidence);
+  if (n <= 1) return `${Math.round(n * 100)}%`;
+  return `${Math.round(n)}%`;
+}
 
-const REVIEW_QUEUE = [
-  { id: "EV-2834", reason: "Imagery OCR incomplete", due: "Today" },
-  { id: "EV-2822", reason: "Needs human provenance check", due: "Today" },
-  { id: "EV-2817", reason: "Flagged access pattern", due: "Overdue" },
-  { id: "EV-2804", reason: "Hash mismatch vs mirror", due: "Tomorrow" },
-];
+function statusLabel(status: EvidenceStatus): string {
+  return String(status);
+}
 
-const EVENTS = [
-  { t: "14:12", text: "EV-2841 verified · SHA-256 matched" },
-  { t: "13:48", text: "Report ingested · 12 chunks" },
-  { t: "12:05", text: "Image tile queued for review" },
-  { t: "11:22", text: "Code evidence linked to PR #412" },
-  { t: "09:40", text: "Vault integrity sweep complete" },
-];
+function kindLabel(kind: string): string {
+  return kind.replace(/_/g, " ");
+}
 
 export function EvidenceVaultPage() {
   const toast = useAppToast();
-  const [chip, setChip] = useState<(typeof TYPE_CHIPS)[number]>("All");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [dateFilter, setDateFilter] = useState("7d");
+  const [items, setItems] = useState<EvidenceRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [kindFilter, setKindFilter] = useState<KindFilter>("All");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(ITEMS[0].id);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<EvidenceRecord | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.listEvidence({
+        status: statusFilter === "all" ? undefined : statusFilter,
+        limit: 200,
+      });
+      setItems(res.evidence);
+      if (res.evidence.length === 0) {
+        setSelectedId(null);
+      } else if (!selectedId || !res.evidence.some((e) => e.evidence_id === selectedId)) {
+        setSelectedId(res.evidence[0].evidence_id);
+      }
+    } catch (err) {
+      setError(errMsg(err, "Failed to load evidence"));
+      setItems([]);
+      setSelectedId(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedId, statusFilter]);
+
+  useEffect(() => {
+    void loadList();
+  }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps -- reload when status filter changes
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      setDetailError(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setDetailError(null);
+      try {
+        const res = await api.getEvidence(selectedId);
+        if (!cancelled) setDetail(res.evidence);
+      } catch (err) {
+        if (!cancelled) {
+          setDetail(null);
+          setDetailError(errMsg(err, "Failed to load evidence detail"));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
 
   const filtered = useMemo(() => {
-    return ITEMS.filter((item) => {
-      if (chip !== "All" && item.type !== chip) return false;
-      if (statusFilter !== "all" && item.status.toLowerCase() !== statusFilter) return false;
+    return items.filter((item) => {
+      if (kindFilter !== "All" && item.kind !== kindFilter) return false;
       if (!query.trim()) return true;
-      const hay = `${item.id} ${item.source} ${item.title} ${item.tags.join(" ")}`.toLowerCase();
+      const hay = [
+        item.evidence_id,
+        item.claim,
+        item.kind,
+        item.status,
+        item.path,
+        item.content_hash,
+        item.artifact_id,
+        item.observation_id,
+        item.run_id,
+        item.job_id,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
       return hay.includes(query.trim().toLowerCase());
     });
-  }, [chip, statusFilter, query]);
+  }, [items, kindFilter, query]);
 
-  const selected = ITEMS.find((i) => i.id === selectedId) ?? ITEMS[0];
+  const selected = detail?.evidence_id === selectedId ? detail : filtered.find((i) => i.evidence_id === selectedId) ?? null;
+
+  const counts = useMemo(() => {
+    const verified = items.filter((i) => i.status === "VERIFIED").length;
+    const unverified = items.filter((i) => i.status === "UNVERIFIED").length;
+    const failed = items.filter((i) => i.status === "FAILED").length;
+    const byKind = new Map<string, number>();
+    for (const item of items) {
+      byKind.set(item.kind, (byKind.get(item.kind) ?? 0) + 1);
+    }
+    return { verified, unverified, failed, byKind, total: items.length };
+  }, [items]);
+
+  const reviewQueue = useMemo(
+    () => items.filter((i) => i.status === "UNVERIFIED" || i.status === "FAILED").slice(0, 12),
+    [items],
+  );
+
+  const recent = useMemo(() => {
+    return [...items]
+      .sort((a, b) => String(b.verified_at || b.created_at).localeCompare(String(a.verified_at || a.created_at)))
+      .slice(0, 8);
+  }, [items]);
 
   const copyHash = async (label: string, value: string) => {
     try {
       await navigator.clipboard.writeText(value);
     } catch {
-      /* clipboard may be unavailable in some environments */
+      /* clipboard may be unavailable */
     }
     toast(`${label} copied`);
   };
+
+  async function onVerify(evidenceId: string) {
+    setBusy(true);
+    try {
+      const res = await api.verifyEvidence(evidenceId);
+      setDetail(res.evidence);
+      setItems((prev) => prev.map((e) => (e.evidence_id === evidenceId ? res.evidence : e)));
+      toast(`Verification: ${res.evidence.status}`);
+    } catch (err) {
+      toast(errMsg(err, "Verification failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const donutSlices = [
+    { value: counts.verified || 0, color: "#4ade80" },
+    { value: counts.unverified || 0, color: "#f0c875" },
+    { value: counts.failed || 0, color: "#f87171" },
+  ];
+  const donutTotal = donutSlices.reduce((s, x) => s + x.value, 0);
+  const verifiedPct = donutTotal === 0 ? "—" : `${Math.round((counts.verified / donutTotal) * 100)}%`;
 
   return (
     <AppShell
       activeMode="explore"
       modeLabel="Evidence Mode"
       searchPlaceholder="Search evidence, sources, content, hash, or tags..."
-      systemItems={["SYSTEMS OPERATIONAL", "LLM", "NEURAL", "MEMORY", "TOOLS"]}
+      systemItems={[
+        "SYSTEMS OPERATIONAL",
+        `${counts.total} ITEMS`,
+        loading ? "LOADING" : error ? "ERROR" : "LIVE",
+      ]}
       layout="wide"
       pageClass="lv-app--media-research"
     >
@@ -209,275 +222,351 @@ export function EvidenceVaultPage() {
             <input
               className="lv-mr-input"
               style={{ flex: 1, minWidth: 220 }}
-              placeholder="Search evidence, sources, hash, or tags…"
+              placeholder="Search evidence, claim, hash, path…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="Search evidence"
             />
             <select
               className="lv-mr-select"
-              value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value)}
-              aria-label="Date range"
-            >
-              <option value="24h">Last 24h</option>
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-              <option value="all">All time</option>
-            </select>
-            <select
-              className="lv-mr-select"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
               aria-label="Status filter"
             >
               <option value="all">All statuses</option>
-              <option value="verified">Verified</option>
-              <option value="pending">Pending</option>
-              <option value="flagged">Flagged</option>
-              <option value="review">Review</option>
+              <option value="VERIFIED">Verified</option>
+              <option value="UNVERIFIED">Unverified</option>
+              <option value="FAILED">Failed</option>
             </select>
+            <button
+              type="button"
+              className="lv-mr-btn"
+              disabled={busy || loading}
+              onClick={() => void loadList()}
+            >
+              Refresh
+            </button>
           </div>
-          <div className="lv-mr-tabs" role="tablist" aria-label="Evidence type">
-            {TYPE_CHIPS.map((c) => (
+          <div className="lv-mr-tabs" role="tablist" aria-label="Evidence kind">
+            {KIND_CHIPS.map((c) => (
               <button
                 key={c}
                 type="button"
                 role="tab"
-                className={`lv-mr-tab${chip === c ? " is-active" : ""}`}
-                onClick={() => setChip(c)}
+                className={`lv-mr-tab${kindFilter === c ? " is-active" : ""}`}
+                onClick={() => setKindFilter(c)}
               >
-                {c}
+                {c === "All" ? "All" : kindLabel(c)}
               </button>
             ))}
           </div>
         </Panel>
 
+        {error ? (
+          <Panel>
+            <div className="lv-models-banner is-error" role="alert">
+              <strong>Evidence unavailable</strong>
+              <span>{error}</span>
+            </div>
+          </Panel>
+        ) : null}
+
         <section className="lv-ev-kpis" aria-label="Evidence KPIs">
           <article className="lv-mr-kpi is-cyan">
             <div className="lbl">Evidence Items</div>
-            <div className="val">2,847</div>
+            <div className="val">{loading ? "…" : counts.total}</div>
             <div className="sub">
-              <span className="delta">↑ +128</span>
+              <span className="lv-mr-muted">from /api/evidence</span>
             </div>
           </article>
           <article className="lv-mr-kpi is-green">
-            <div className="lbl">Verification</div>
-            <div className="val">92.4%</div>
+            <div className="lbl">Verified</div>
+            <div className="val">{loading ? "…" : counts.verified}</div>
             <div className="sub">
-              <Pill tone="green">Healthy</Pill>
+              <Pill tone="green">{verifiedPct}</Pill>
             </div>
           </article>
           <article className="lv-mr-kpi is-gold">
-            <div className="lbl">Pending</div>
-            <div className="val">7</div>
+            <div className="lbl">Unverified</div>
+            <div className="val">{loading ? "…" : counts.unverified}</div>
             <div className="sub">
-              <span className="lv-mr-muted">in review</span>
+              <span className="lv-mr-muted">awaiting verify</span>
             </div>
           </article>
           <article className="lv-mr-kpi is-red">
-            <div className="lbl">Flagged</div>
-            <div className="val">3</div>
+            <div className="lbl">Failed</div>
+            <div className="val">{loading ? "…" : counts.failed}</div>
             <div className="sub">
-              <span className="lv-mr-bad">needs attention</span>
-            </div>
-          </article>
-          <article className="lv-mr-kpi is-gold">
-            <div className="lbl">Evidence Growth</div>
-            <div className="lv-ev-growth" aria-hidden="true">
-              {GROWTH.map((h, i) => (
-                <span key={i} style={{ height: `${h}%` }} />
-              ))}
+              <span className={counts.failed > 0 ? "lv-mr-bad" : "lv-mr-muted"}>
+                {counts.failed > 0 ? "needs attention" : "none"}
+              </span>
             </div>
           </article>
         </section>
 
         <section className="lv-mr-split">
           <Panel title={`Evidence Items · ${filtered.length}`}>
-            <div style={{ overflow: "auto" }}>
-              <table className="lv-ev-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Source</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Timestamp</th>
-                    <th>Confidence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((item) => (
-                    <tr
-                      key={item.id}
-                      className={item.id === selected.id ? "is-active" : undefined}
-                      onClick={() => setSelectedId(item.id)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <td>
-                        <strong>{item.id}</strong>
-                      </td>
-                      <td>{item.source}</td>
-                      <td>
-                        <Pill tone="muted">{item.type}</Pill>
-                      </td>
-                      <td>
-                        <Pill tone={STATUS_TONE[item.status]}>{item.status}</Pill>
-                      </td>
-                      <td className="lv-mr-muted">{item.timestamp}</td>
-                      <td>
-                        <div className="lv-ev-conf">
-                          <div className="lv-mr-bar">
-                            <span
-                              style={{
-                                width: `${item.confidence}%`,
-                                background:
-                                  item.confidence >= 90
-                                    ? "#4ade80"
-                                    : item.confidence >= 70
-                                      ? "#22c9d6"
-                                      : "#f0c875",
-                              }}
-                            />
-                          </div>
-                          <span>{item.confidence}%</span>
-                        </div>
-                      </td>
+            {loading ? (
+              <div className="lv-models-banner" role="status">
+                Loading evidence…
+              </div>
+            ) : null}
+            {!loading && filtered.length === 0 ? (
+              <div className="lv-models-empty">
+                <h2>NO EVIDENCE</h2>
+                <p>
+                  The vault is empty or nothing matches this filter. Evidence appears only after real claims are
+                  recorded — never fabricated.
+                </p>
+              </div>
+            ) : (
+              <div style={{ overflow: "auto" }}>
+                <table className="lv-ev-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Claim</th>
+                      <th>Kind</th>
+                      <th>Status</th>
+                      <th>Created</th>
+                      <th>Confidence</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {filtered.map((item) => (
+                      <tr
+                        key={item.evidence_id}
+                        className={item.evidence_id === selectedId ? "is-active" : undefined}
+                        onClick={() => setSelectedId(item.evidence_id)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <td>
+                          <strong>{item.evidence_id}</strong>
+                        </td>
+                        <td>{item.claim}</td>
+                        <td>
+                          <Pill tone="muted">{kindLabel(item.kind)}</Pill>
+                        </td>
+                        <td>
+                          <Pill tone={STATUS_TONE[item.status] ?? "muted"}>{statusLabel(item.status)}</Pill>
+                        </td>
+                        <td className="lv-mr-muted">{formatTs(item.created_at)}</td>
+                        <td>
+                          <span className="lv-mr-muted">{confidenceLabel(item)}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Panel>
 
           <Panel
             title="Evidence Details"
-            action={<Pill tone={STATUS_TONE[selected.status]}>{selected.status}</Pill>}
+            action={
+              selected ? (
+                <Pill tone={STATUS_TONE[selected.status] ?? "muted"}>{statusLabel(selected.status)}</Pill>
+              ) : undefined
+            }
           >
-            <div className="lv-ev-preview">
-              <img src={mediaPageArt.evidenceSat} alt="" />
-            </div>
-            <strong style={{ color: "#f0ebe3", marginTop: 8 }}>{selected.title}</strong>
-            <div className="lv-mr-muted" style={{ fontSize: 12, marginTop: 4 }}>
-              {selected.id} · {selected.source} · {selected.type}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-              {selected.tags.map((tag) => (
-                <Pill key={tag} tone="cyan">
-                  #{tag}
-                </Pill>
-              ))}
-            </div>
+            {detailError ? (
+              <div className="lv-models-banner is-error" role="alert">
+                {detailError}
+              </div>
+            ) : null}
+            {!selected ? (
+              <p className="lv-mr-muted" style={{ fontSize: 12 }}>
+                Select an evidence record to inspect provenance and verification.
+              </p>
+            ) : (
+              <>
+                <div className="lv-ev-preview">
+                  <img src={mediaPageArt.evidenceSat} alt="" />
+                </div>
+                <strong style={{ color: "#f0ebe3", marginTop: 8 }}>{selected.claim}</strong>
+                <div className="lv-mr-muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  {selected.evidence_id} · {kindLabel(selected.kind)}
+                </div>
 
-            <div className="lv-mr-panel-title" style={{ marginTop: 12 }}>
-              Metadata
-            </div>
-            <div style={{ fontSize: 12, display: "grid", gap: 6 }}>
-              <div className="lv-rs-active-item">
-                <span className="lv-mr-muted">Captured</span>
-                <span>{selected.timestamp}</span>
-              </div>
-              <div className="lv-rs-active-item">
-                <span className="lv-mr-muted">Confidence</span>
-                <span>{selected.confidence}%</span>
-              </div>
-              <div className="lv-rs-active-item">
-                <span className="lv-mr-muted">Date filter</span>
-                <span>{dateFilter}</span>
-              </div>
-            </div>
+                <div className="lv-mr-panel-title" style={{ marginTop: 12 }}>
+                  Metadata
+                </div>
+                <div style={{ fontSize: 12, display: "grid", gap: 6 }}>
+                  <div className="lv-rs-active-item">
+                    <span className="lv-mr-muted">Created</span>
+                    <span>{formatTs(selected.created_at)}</span>
+                  </div>
+                  <div className="lv-rs-active-item">
+                    <span className="lv-mr-muted">Verified at</span>
+                    <span>{formatTs(selected.verified_at)}</span>
+                  </div>
+                  <div className="lv-rs-active-item">
+                    <span className="lv-mr-muted">Confidence</span>
+                    <span>{confidenceLabel(selected)}</span>
+                  </div>
+                  <div className="lv-rs-active-item">
+                    <span className="lv-mr-muted">Path</span>
+                    <span>{dash(selected.path)}</span>
+                  </div>
+                  <div className="lv-rs-active-item">
+                    <span className="lv-mr-muted">Artifact</span>
+                    <span>{dash(selected.artifact_id)}</span>
+                  </div>
+                  <div className="lv-rs-active-item">
+                    <span className="lv-mr-muted">Observation</span>
+                    <span>{dash(selected.observation_id)}</span>
+                  </div>
+                  <div className="lv-rs-active-item">
+                    <span className="lv-mr-muted">Run / Job</span>
+                    <span>
+                      {dash(selected.run_id)} / {dash(selected.job_id)}
+                    </span>
+                  </div>
+                  {selected.error ? (
+                    <div className="lv-rs-active-item">
+                      <span className="lv-mr-muted">Error</span>
+                      <span className="lv-mr-bad">{selected.error}</span>
+                    </div>
+                  ) : null}
+                </div>
 
-            <div className="lv-mr-panel-title" style={{ marginTop: 12 }}>
-              Hashes
-            </div>
-            {(
-              [
-                ["SHA-256", selected.hashes.sha256],
-                ["SHA-1", selected.hashes.sha1],
-                ["MD5", selected.hashes.md5],
-              ] as const
-            ).map(([label, value]) => (
-              <div key={label} className="lv-ev-hash">
-                <span>
-                  <span className="lv-mr-muted">{label}</span> {value}
-                </span>
-                <button type="button" className="lv-mr-btn lv-mr-btn--ghost" onClick={() => copyHash(label, value)}>
-                  Copy
-                </button>
-              </div>
-            ))}
+                <div className="lv-mr-panel-title" style={{ marginTop: 12 }}>
+                  Content hash
+                </div>
+                <div className="lv-ev-hash">
+                  <span>
+                    <span className="lv-mr-muted">SHA / digest</span> {shortHash(selected.content_hash)}
+                  </span>
+                  {selected.content_hash ? (
+                    <button
+                      type="button"
+                      className="lv-mr-btn lv-mr-btn--ghost"
+                      onClick={() => void copyHash("Hash", selected.content_hash!)}
+                    >
+                      Copy
+                    </button>
+                  ) : null}
+                </div>
+                {selected.content_hash ? (
+                  <p className="lv-mr-muted" style={{ fontSize: 10, wordBreak: "break-all" }}>
+                    {selected.content_hash}
+                  </p>
+                ) : (
+                  <p className="lv-mr-muted" style={{ fontSize: 11 }}>
+                    No content hash on this record.
+                  </p>
+                )}
 
-            <div className="lv-mr-toolbar" style={{ marginTop: 10 }}>
-              <button type="button" className="lv-mr-btn lv-mr-btn--gold" onClick={() => toast("Marked verified")}>
-                Verify
-              </button>
-              <button type="button" className="lv-mr-btn" onClick={() => toast("Opened in vault")}>
-                Open
-              </button>
-              <button type="button" className="lv-mr-btn" onClick={() => toast("Exported evidence pack")}>
-                Export
-              </button>
-              <button type="button" className="lv-mr-btn" onClick={() => toast("Flagged for review")}>
-                Flag
-              </button>
-            </div>
+                <div className="lv-mr-toolbar" style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="lv-mr-btn lv-mr-btn--gold"
+                    disabled={busy}
+                    onClick={() => void onVerify(selected.evidence_id)}
+                  >
+                    Verify
+                  </button>
+                </div>
+              </>
+            )}
           </Panel>
         </section>
 
         <section className="lv-ev-bottom">
-          <Panel title="Categories">
-            {CATEGORIES.map((cat) => (
-              <div key={cat.label} className="lv-ev-cat-row">
-                <span>{cat.label}</span>
-                <div className="lv-mr-bar">
-                  <span style={{ width: `${cat.value * 2.5}%`, background: cat.color }} />
+          <Panel title="Kinds">
+            {counts.byKind.size === 0 ? (
+              <p className="lv-mr-muted" style={{ fontSize: 12 }}>
+                No kind distribution until evidence exists.
+              </p>
+            ) : (
+              [...counts.byKind.entries()].map(([label, value]) => {
+                const pct = counts.total === 0 ? 0 : Math.round((value / counts.total) * 100);
+                return (
+                  <div key={label} className="lv-ev-cat-row">
+                    <span>{kindLabel(label)}</span>
+                    <div className="lv-mr-bar">
+                      <span style={{ width: `${pct}%`, background: "#22c9d6" }} />
+                    </div>
+                    <strong>
+                      {value} · {pct}%
+                    </strong>
+                  </div>
+                );
+              })
+            )}
+          </Panel>
+
+          <Panel title="Status mix">
+            {donutTotal === 0 ? (
+              <p className="lv-mr-muted" style={{ fontSize: 12 }}>
+                Not assessed — no records.
+              </p>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Donut slices={donutSlices.filter((s) => s.value > 0)} center={verifiedPct} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
+                  <BarRow
+                    label="Verified"
+                    value={donutTotal ? Math.round((counts.verified / donutTotal) * 100) : 0}
+                    color="#4ade80"
+                  />
+                  <BarRow
+                    label="Unverified"
+                    value={donutTotal ? Math.round((counts.unverified / donutTotal) * 100) : 0}
+                    color="#f0c875"
+                  />
+                  <BarRow
+                    label="Failed"
+                    value={donutTotal ? Math.round((counts.failed / donutTotal) * 100) : 0}
+                    color="#f87171"
+                  />
                 </div>
-                <strong>{cat.value}%</strong>
               </div>
-            ))}
+            )}
           </Panel>
 
-          <Panel title="Credibility">
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <Donut
-                slices={[
-                  { value: 72, color: "#4ade80" },
-                  { value: 18, color: "#f0c875" },
-                  { value: 7, color: "#22c9d6" },
-                  { value: 3, color: "#f87171" },
-                ]}
-                center="92%"
-              />
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
-                <BarRow label="Verified" value={72} color="#4ade80" />
-                <BarRow label="Pending" value={18} color="#f0c875" />
-                <BarRow label="Review" value={7} color="#22c9d6" />
-                <BarRow label="Flagged" value={3} color="#f87171" />
-              </div>
-            </div>
+          <Panel title="Review queue">
+            {reviewQueue.length === 0 ? (
+              <p className="lv-mr-muted" style={{ fontSize: 12 }}>
+                Nothing pending verification.
+              </p>
+            ) : (
+              reviewQueue.map((row) => (
+                <button
+                  key={row.evidence_id}
+                  type="button"
+                  className="lv-rs-active-item"
+                  style={{ width: "100%", textAlign: "left", cursor: "pointer", background: "transparent", border: 0 }}
+                  onClick={() => setSelectedId(row.evidence_id)}
+                >
+                  <span>
+                    <strong>{row.evidence_id}</strong>
+                    <span className="lv-mr-muted"> · {row.claim}</span>
+                  </span>
+                  <Pill tone={STATUS_TONE[row.status] ?? "muted"}>{statusLabel(row.status)}</Pill>
+                </button>
+              ))
+            )}
           </Panel>
 
-          <Panel title="Review Queue">
-            {REVIEW_QUEUE.map((row) => (
-              <div key={row.id} className="lv-rs-active-item">
-                <span>
-                  <strong>{row.id}</strong>
-                  <span className="lv-mr-muted"> · {row.reason}</span>
-                </span>
-                <Pill tone={row.due === "Overdue" ? "red" : "gold"}>{row.due}</Pill>
-              </div>
-            ))}
-          </Panel>
-
-          <Panel title="Recent Events">
-            <ol className="lv-ev-timeline">
-              {EVENTS.map((ev) => (
-                <li key={ev.t + ev.text}>
-                  <time>{ev.t}</time>
-                  <span>{ev.text}</span>
-                </li>
-              ))}
-            </ol>
+          <Panel title="Recent activity">
+            {recent.length === 0 ? (
+              <p className="lv-mr-muted" style={{ fontSize: 12 }}>
+                No recent evidence events.
+              </p>
+            ) : (
+              <ol className="lv-ev-timeline">
+                {recent.map((ev) => (
+                  <li key={ev.evidence_id}>
+                    <time>{formatTs(ev.verified_at || ev.created_at)}</time>
+                    <span>
+                      {ev.evidence_id} · {statusLabel(ev.status)} · {ev.claim}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
           </Panel>
         </section>
 

@@ -241,4 +241,49 @@ describe("api client — datasets / training / research / model test", () => {
     expect(capture.url).toBe("/api/system/telemetry");
     expect(res.dashboard.gpuPct).toBeNull();
   });
+
+  it("listWorkflows returns empty list honestly", async () => {
+    mockFetch(200, { workflows: [] });
+    const res = await api.listWorkflows();
+    expect(res.workflows).toEqual([]);
+  });
+
+  it("createWorkflow / runWorkflow / cancelWorkflow hit workflow routes", async () => {
+    const createCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { workflow: { workflow_id: "w1", name: "demo", state: "CREATED", steps: [] } }, createCap);
+    await api.createWorkflow({
+      name: "demo",
+      steps: [{ capability_id: "knowledge.search", arguments: { query: "x" } }],
+    });
+    expect(createCap.url).toBe("/api/workflows");
+    expect(createCap.init?.method).toBe("POST");
+    expect(JSON.parse(String(createCap.init?.body))).toMatchObject({
+      name: "demo",
+      steps: [{ capability_id: "knowledge.search", arguments: { query: "x" } }],
+    });
+
+    const runCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { workflow: { workflow_id: "w1", state: "COMPLETED" } }, runCap);
+    await api.runWorkflow("w1");
+    expect(runCap.url).toBe("/api/workflows/w1/run");
+    expect(runCap.init?.method).toBe("POST");
+
+    const cancelCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { workflow: { workflow_id: "w1", state: "CANCELLED" } }, cancelCap);
+    await api.cancelWorkflow("w1");
+    expect(cancelCap.url).toBe("/api/workflows/w1/cancel");
+    expect(cancelCap.init?.method).toBe("POST");
+  });
+
+  it("listSchedules and pauseSchedule hit schedule routes", async () => {
+    mockFetch(200, { schedules: [] });
+    const listed = await api.listSchedules({ limit: 10 });
+    expect(listed.schedules).toEqual([]);
+
+    const pauseCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { schedule: { schedule_id: "s1", status: "PAUSED" } }, pauseCap);
+    await api.pauseSchedule("s1");
+    expect(pauseCap.url).toBe("/api/schedules/s1/pause");
+    expect(pauseCap.init?.method).toBe("POST");
+  });
 });

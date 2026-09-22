@@ -51,12 +51,24 @@ describe("navigation menu", () => {
     expect(findMainMenuByPath("/knowledge").id).toBe("research");
   });
 
-  it("renames plugins entry to Modules under Plugin & Runtime", () => {
+  it("splits Tools and Modules under Plugin & Runtime", () => {
     const section = findMainMenuByPath("/tools");
     expect(section.id).toBe("runtime");
+    const tools = section.submenu.find((item) => item.id === "tools");
+    expect(tools?.label).toBe("Tools");
+    expect(tools?.to).toBe("/tools");
     const modules = section.submenu.find((item) => item.id === "modules");
     expect(modules?.label).toBe("Modules");
-    expect(modules?.to).toBe("/tools");
+    expect(modules?.to).toBe("/modules");
+    expect(findMainMenuByPath("/modules").id).toBe("runtime");
+    expect(section.submenu.map((item) => item.label)).toEqual([
+      "Performance",
+      "Tools",
+      "Modules",
+      "MCP",
+      "Workflows",
+      "Console",
+    ]);
   });
 
   it("marks hoofdmenu active only for the owning section", () => {
