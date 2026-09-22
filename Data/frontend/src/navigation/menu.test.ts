@@ -56,8 +56,15 @@ describe("navigation menu", () => {
     expect(media.id).toBe("media");
     expect(findSubMenuItem(media, "/media")?.id).toBe("overzicht");
     expect(findSubMenuItem(media, "/media/youtube")?.id).toBe("youtube");
+    expect(findSubMenuItem(media, "/media/queue")?.id).toBe("queue");
+    expect(findSubMenuItem(media, "/media/viral")?.label).toBe("Viral Radar");
+    expect(findSubMenuItem(media, "/media/calendar")?.label).toBe("Calendar");
+    expect(findSubMenuItem(media, "/media/library")?.label).toBe("Bibliotheek");
+    expect(findSubMenuItem(media, "/media/personas")?.label).toBe("Personas");
     expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
     expect(findSubMenuItem(findMainMenuByPath("/trading/paper"), "/trading/paper")?.id).toBe("paper");
+    expect(findMainMenuByPath("/evidence").id).toBe("research");
+    expect(findSubMenuItem(findMainMenuByPath("/evidence"), "/evidence")?.label).toBe("Evidence Vault");
   });
 
   it("leaves dashboard submenu inactive on Hades landing", () => {
