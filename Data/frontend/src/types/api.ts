@@ -900,6 +900,70 @@ export type CodingWorkspaceTreeResponse = {
 };
 
 
+export type McpServerRuntime = {
+  server_id: string;
+  state: string;
+  effective_isolation: string;
+  protocol_version?: string | null;
+  server_version?: string | null;
+  tool_count: number;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  pid?: number | null;
+  circuit_open?: boolean;
+};
+
+export type McpServerPublic = {
+  server_id: string;
+  display_name: string;
+  source_kind: string;
+  source_key: string;
+  transport: string;
+  command?: string | null;
+  args: string[];
+  url?: string | null;
+  enabled: boolean;
+  trust: string;
+  requested_isolation: string;
+  secret_refs: Record<string, string>;
+  runtime?: McpServerRuntime;
+};
+
+export type McpToolRecord = {
+  server_id: string;
+  external_name: string;
+  capability_id: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  schema_hash: string;
+  semantic_effects: string[];
+  availability: string;
+  provider_kind?: string;
+};
+
+export type McpCallRecord = {
+  call_id: string;
+  server_id: string;
+  capability_id: string;
+  external_tool_name: string;
+  status: string;
+  duration_ms?: number | null;
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+};
+
+export type McpHealthSummary = {
+  registered_servers: number;
+  enabled_servers: number;
+  connected_servers: number;
+  ready_servers: number;
+  tool_count: number;
+  unavailable_tools: number;
+  last_error?: string | null;
+  feature_enabled: boolean;
+};
+
 /* ---------- Market Simulation ---------- */
 
 export type MarketSimStatusResponse = {

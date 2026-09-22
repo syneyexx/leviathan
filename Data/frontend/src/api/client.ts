@@ -56,6 +56,9 @@ import type {
   CodingSessionDetail,
   CodingMission,
   CodingWorkspaceTreeResponse,
+  McpCallRecord,
+  McpServerPublic,
+  McpToolRecord,
   MarketSimStatusResponse,
   MarketDataSource,
   MarketStrategy,
@@ -896,6 +899,60 @@ export const api = {
     if (opts?.recursive != null) params.set("recursive", String(opts.recursive));
     const q = params.toString();
     return request(`/api/coding/workspace/tree${q ? `?${q}` : ""}`);
+  },
+
+  mcpServers(): Promise<{ servers: McpServerPublic[]; feature_enabled: boolean }> {
+    return request("/api/mcp/servers");
+  },
+
+  mcpCreateServer(payload: Record<string, unknown>): Promise<{ server: McpServerPublic }> {
+    return request("/api/mcp/servers", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  mcpEnableServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/enable`, { method: "POST" });
+  },
+
+  mcpDisableServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/disable`, { method: "POST" });
+  },
+
+  mcpConnectServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: "POST" });
+  },
+
+  mcpDisconnectServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/disconnect`, {
+      method: "POST",
+    });
+  },
+
+  mcpRefreshTools(serverId: string): Promise<{ tools: McpToolRecord[] }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/refresh-tools`, {
+      method: "POST",
+    });
+  },
+
+  mcpDeleteServer(serverId: string): Promise<{ ok: boolean }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}`, { method: "DELETE" });
+  },
+
+  mcpTools(serverId?: string): Promise<{ tools: McpToolRecord[] }> {
+    const q = serverId ? `?server_id=${encodeURIComponent(serverId)}` : "";
+    return request(`/api/mcp/tools${q}`);
+  },
+
+  mcpCalls(limit = 100): Promise<{ calls: McpCallRecord[] }> {
+    return request(`/api/mcp/calls?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  mcpCall(payload: {
+    capability_id: string;
+    arguments?: Record<string, unknown>;
+    approval_id?: string;
+    approved_by_user?: boolean;
+  }): Promise<{ result: unknown; truth: Record<string, boolean> }> {
+    return request("/api/mcp/call", { method: "POST", body: JSON.stringify(payload) });
   },
 
   /* ---------- Market Simulation ---------- */

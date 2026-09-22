@@ -142,6 +142,10 @@ class FeatureFlags:
     module_manager_subprocess: bool
     agents_enabled: bool
     coding_enabled: bool
+    mcp_enabled: bool
+    mcp_stdio: bool
+    mcp_http: bool
+    mcp_auto_expand_modules: bool
     market_sim_enabled: bool
 
 
@@ -312,6 +316,10 @@ class Settings:
                 "module_manager_subprocess": self.features.module_manager_subprocess,
                 "agents_enabled": self.features.agents_enabled,
                 "coding_enabled": self.features.coding_enabled,
+                "mcp_enabled": self.features.mcp_enabled,
+                "mcp_stdio": self.features.mcp_stdio,
+                "mcp_http": self.features.mcp_http,
+                "mcp_auto_expand_modules": self.features.mcp_auto_expand_modules,
                 "market_sim_enabled": self.features.market_sim_enabled,
             },
             "coding": {
@@ -402,6 +410,14 @@ class Settings:
             raise ConfigurationError("LEVIATHAN_CHAOS_ERROR_RATE must be <= 1.0")
 
         coding_enabled = _env_bool("LEVIATHAN_FEATURE_CODING", False)
+        mcp_enabled = _env_bool("LEVIATHAN_FEATURE_MCP", False)
+        # Hierarchical children: default true only when parent is enabled; explicit
+        # child=true with parent=false is rejected in validate().
+        mcp_stdio = _env_bool("LEVIATHAN_FEATURE_MCP_STDIO", True) if mcp_enabled else False
+        mcp_http = _env_bool("LEVIATHAN_FEATURE_MCP_HTTP", True) if mcp_enabled else False
+        mcp_auto_expand = (
+            _env_bool("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES", True) if mcp_enabled else False
+        )
         market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", False)
         coding_workspace_raw = (
             _env_raw("LEVIATHAN_CODING_WORKSPACE", "D:/leviathan/codingworkspace")
@@ -453,6 +469,10 @@ class Settings:
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
                 coding_enabled=coding_enabled,
+                mcp_enabled=mcp_enabled,
+                mcp_stdio=mcp_stdio,
+                mcp_http=mcp_http,
+                mcp_auto_expand_modules=mcp_auto_expand,
                 market_sim_enabled=market_sim_enabled,
             ),
             coding=CodingSettings(
@@ -547,6 +567,22 @@ class Settings:
         if self.features.coding_enabled and not self.features.agents_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_CODING requires LEVIATHAN_FEATURE_AGENTS=true"
+            )
+        if self.features.mcp_stdio and not self.features.mcp_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP_STDIO requires LEVIATHAN_FEATURE_MCP=true"
+            )
+        if self.features.mcp_http and not self.features.mcp_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP_HTTP requires LEVIATHAN_FEATURE_MCP=true"
+            )
+        if self.features.mcp_auto_expand_modules and not self.features.mcp_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES requires LEVIATHAN_FEATURE_MCP=true"
+            )
+        if self.features.mcp_enabled and not self.features.mcp_stdio and not self.features.mcp_http:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP=true requires MCP_STDIO and/or MCP_HTTP"
             )
         kind = self.neuro_runtime.residual_kind
         if kind not in {
