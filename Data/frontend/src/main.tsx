@@ -20,7 +20,7 @@ import "./styles/media-research-pages.css";
 import "./styles/agents.css";
 import "./styles/media-instagram.css";
 import "./styles/media-facebook.css";
-import "./styles/brain-pixel.css";
+import "./styles/brain-pages.css";
 
 const root = document.getElementById("root");
 if (!root) {
