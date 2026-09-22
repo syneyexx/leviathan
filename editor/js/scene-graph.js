@@ -1,6 +1,6 @@
 /**
- * Leviathan Visual Builder — screen-space scene graph.
- * Drawable primitives consumed by WebGPU or DOM paint backends.
+ * LEVIATHAN STUDIO — screen-space scene graph.
+ * Colors map to studio tokens (ice blue accent, graphite).
  */
 
 export const NodeType = {
@@ -9,11 +9,6 @@ export const NodeType = {
   CIRCLE: "circle",
   LABEL: "label",
 };
-
-/** @typedef {{ type:string, x:number, y:number, w:number, h:number, color:number[], stroke?:number[], strokeW?:number }} RectNode */
-/** @typedef {{ type:string, x1:number, y1:number, x2:number, y2:number, color:number[], width?:number }} LineNode */
-/** @typedef {{ type:string, x:number, y:number, r:number, color:number[] }} CircleNode */
-/** @typedef {{ type:string, x:number, y:number, text:string, color?:number[], align?:string }} LabelNode */
 
 export function rect(x, y, w, h, color, extra = {}) {
   return { type: NodeType.RECT, x, y, w, h, color, ...extra };
@@ -27,29 +22,33 @@ export function circle(x, y, r, color) {
   return { type: NodeType.CIRCLE, x, y, r, color };
 }
 
-export function label(x, y, text, color = [0.94, 0.78, 0.45, 1], align = "left") {
+export function label(x, y, text, color = [0.929, 0.949, 0.973, 1], align = "left") {
   return { type: NodeType.LABEL, x, y, text: String(text || ""), color, align };
 }
 
+/** Studio semantic colors as RGBA 0–1 */
 export const COLORS = {
-  gold: [0.839, 0.663, 0.341, 1],
-  goldSoft: [0.839, 0.663, 0.341, 0.35],
-  goldFill: [0.839, 0.663, 0.341, 0.08],
-  magenta: [1, 0.31, 0.847, 1],
-  cyan: [0.494, 0.784, 1, 1],
-  handle: [0.941, 0.784, 0.459, 1],
-  ink: [0.094, 0.063, 0.02, 1],
-  white: [0.96, 0.94, 0.9, 1],
-  ghost: [0.839, 0.663, 0.341, 0.35],
-  drop: [0.494, 0.784, 1, 0.25],
-  marquee: [0.839, 0.663, 0.341, 0.12],
+  accent: [0.447, 0.78, 1, 1],
+  accentSoft: [0.447, 0.78, 1, 0.35],
+  accentFill: [0.447, 0.78, 1, 0.1],
+  // aliases for older gold references
+  gold: [0.447, 0.78, 1, 1],
+  goldSoft: [0.447, 0.78, 1, 0.35],
+  goldFill: [0.447, 0.78, 1, 0.1],
+  magenta: [1, 0.5, 0.535, 1],
+  cyan: [0.447, 0.78, 1, 1],
+  handle: [0.929, 0.949, 0.973, 1],
+  ink: [0.031, 0.043, 0.063, 1],
+  white: [0.929, 0.949, 0.973, 1],
+  ghost: [0.447, 0.78, 1, 0.35],
+  drop: [0.447, 0.78, 1, 0.25],
+  marquee: [0.447, 0.78, 1, 0.12],
+  success: [0.388, 0.839, 0.627, 1],
+  warning: [0.953, 0.741, 0.412, 1],
+  danger: [1, 0.498, 0.537, 1],
 };
 
-/**
- * Mutable scene for one paint frame.
- */
 export function createScene() {
-  /** @type {Array<RectNode|LineNode|CircleNode|LabelNode>} */
   const nodes = [];
   return {
     clear() {

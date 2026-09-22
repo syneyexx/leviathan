@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
-"""Standalone Leviathan visual builder — API + real Vite UI."""
+"""LEVIATHAN STUDIO — local editor API + Vite launcher.
+
+Security model (local admin tool):
+- Bound to 127.0.0.1
+- Mutating requests require session token issued by GET /api/session
+- Origin/Host allow-list (Vite + API)
+- Body size limits before full read
+- Atomic temp-file replace + journal for multi-file saves
+- No global source-string replace endpoint for visual edits
+"""
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import threading
@@ -26,10 +37,15 @@ PUBLIC = FRONTEND / "public"
 ASSETS = PUBLIC / "assets"
 UPLOADS = ASSETS / "uploads"
 CONTENT_FILE = PUBLIC / "lv-editor-content.json"
+META_FILE = PUBLIC / "lv-editor-meta.json"
+JOURNAL_DIR = ROOT / ".studio-journal"
+CHECKPOINT_DIR = ROOT / ".studio-checkpoints"
 SRC_ROOT = FRONTEND / "src"
 HOST = "127.0.0.1"
 PORT = 5199
 VITE_PORT = 5173
+MAX_BODY = 2_000_000
+MAX_UPLOAD = 12_000_000
 
 ALLOWED_FILES = {
     "tokens.css": STYLES / "tokens.css",
@@ -38,102 +54,236 @@ ALLOWED_FILES = {
     "chat.css": STYLES / "chat.css",
 }
 
-SOURCE_SUFFIXES = {".tsx", ".ts", ".jsx", ".js", ".css", ".html", ".json", ".md"}
 SAFE_NAME = re.compile(r"^[a-z0-9._-]+$", re.I)
 SAFE_UPLOAD = re.compile(r"^[a-zA-Z0-9._-]+$")
-CORS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+ALLOWED_ORIGINS = {
+    f"http://{HOST}:{VITE_PORT}",
+    f"http://127.0.0.1:{VITE_PORT}",
+    f"http://localhost:{VITE_PORT}",
+    f"http://{HOST}:{PORT}",
+    f"http://127.0.0.1:{PORT}",
+    f"http://localhost:{PORT}",
 }
 
 vite_proc: subprocess.Popen | None = None
+SESSION_TOKEN = secrets.token_urlsafe(32)
+WRITE_LOCK = threading.RLock()
+_doc_meta: dict = {"revision": 0, "hash": ""}
 
 
 def default_content() -> dict:
-    return {"version": 2, "entries": {}, "nodes": [], "components": []}
+    return {
+        "version": 3,
+        "revision": 0,
+        "entries": {},
+        "nodes": [],
+        "components": [],
+        "meta": {"ambiguous": []},
+        "docId": uuid.uuid4().hex[:12],
+    }
+
+
+def load_meta() -> dict:
+    global _doc_meta
+    if META_FILE.is_file():
+        try:
+            data = json.loads(META_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                _doc_meta = {
+                    "revision": int(data.get("revision") or 0),
+                    "hash": str(data.get("hash") or ""),
+                }
+                return _doc_meta
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+    _doc_meta = {"revision": 0, "hash": ""}
+    return _doc_meta
+
+
+def save_meta(meta: dict) -> None:
+    global _doc_meta
+    _doc_meta = {"revision": int(meta.get("revision") or 0), "hash": str(meta.get("hash") or "")}
+    META_FILE.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(META_FILE, json.dumps(_doc_meta, ensure_ascii=False, indent=2) + "\n")
+
+
+def content_hash(content: dict, files: dict | None = None) -> str:
+    payload = json.dumps(
+        {
+            "entries": content.get("entries") or {},
+            "nodes": content.get("nodes") or [],
+            "components": content.get("components") or [],
+            "files": files or {},
+            "revision": content.get("revision") or 0,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def read_content() -> dict:
     if not CONTENT_FILE.is_file():
         return default_content()
     try:
-        data = json.loads(CONTENT_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return default_content()
+        raw = CONTENT_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # Never silently replace with empty — restore checkpoint if possible
+        backup = CHECKPOINT_DIR / "last-good.json"
+        if backup.is_file():
+            try:
+                data = json.loads(backup.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    data.setdefault("meta", {})
+                    data["meta"]["recoveredFromCorrupt"] = True
+                    return normalize_content(data)
+            except (json.JSONDecodeError, OSError):
+                pass
+        raise ValueError(f"Corrupt content JSON: {exc}") from exc
     if not isinstance(data, dict):
-        return default_content()
-    data.setdefault("version", 2)
+        raise ValueError("Corrupt content JSON: root must be object")
+    return normalize_content(data)
+
+
+def normalize_content(data: dict) -> dict:
+    data = dict(data)
+    data.setdefault("version", 3)
     data.setdefault("entries", {})
     data.setdefault("nodes", [])
     data.setdefault("components", [])
+    data.setdefault("meta", {"ambiguous": []})
+    data.setdefault("revision", load_meta().get("revision", 0))
+    data.setdefault("docId", uuid.uuid4().hex[:12])
     if not isinstance(data["entries"], dict):
-        data["entries"] = {}
+        raise ValueError("entries must be an object")
     if not isinstance(data["nodes"], list):
-        data["nodes"] = []
+        raise ValueError("nodes must be a list")
     if not isinstance(data["components"], list):
-        data["components"] = []
+        raise ValueError("components must be a list")
     return data
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp.{uuid.uuid4().hex[:8]}")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp.{uuid.uuid4().hex[:8]}")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
 
 
 def write_content(data: dict) -> None:
     CONTENT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONTENT_FILE.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    atomic_write_text(CONTENT_FILE, text)
+    # Keep last-good checkpoint
+    atomic_write_text(CHECKPOINT_DIR / "last-good.json", text)
 
 
-def replace_in_sources(old: str, new: str) -> list[dict]:
-    """Replace exact string in frontend source files. Skips tiny strings."""
-    if not isinstance(old, str) or not isinstance(new, str):
-        return []
-    if old == new or len(old) < 2:
-        return []
-    changed: list[dict] = []
-    for path in SRC_ROOT.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
+def sanitize_svg(raw: bytes) -> bytes:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("SVG must be UTF-8") from exc
+    # Strip scripts / handlers / javascript URLs
+    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.I)
+    text = re.sub(r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", "", text, flags=re.I)
+    text = re.sub(r"(href|xlink:href)\s*=\s*([\"'])\s*javascript:[\s\S]*?\2", r'\1=#', text, flags=re.I)
+    text = re.sub(r"<(foreignObject)[\s\S]*?</\1>", "", text, flags=re.I)
+    return text.encode("utf-8")
+
+
+def validate_image_bytes(ext: str, raw: bytes) -> bytes:
+    if ext == ".svg":
+        return sanitize_svg(raw)
+    # Basic magic-byte checks for raster formats
+    if ext in {".png"} and not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("Invalid PNG")
+    if ext in {".jpg", ".jpeg"} and not raw.startswith(b"\xff\xd8"):
+        raise ValueError("Invalid JPEG")
+    if ext == ".gif" and not (raw.startswith(b"GIF87a") or raw.startswith(b"GIF89a")):
+        raise ValueError("Invalid GIF")
+    if ext == ".webp" and not (raw[0:4] == b"RIFF" and raw[8:12] == b"WEBP"):
+        raise ValueError("Invalid WEBP")
+    if ext == ".ico" and len(raw) < 6:
+        raise ValueError("Invalid ICO")
+    return raw
+
+
+def journal_begin(txn_id: str, files: dict[str, str], content: dict | None) -> Path:
+    JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "id": txn_id,
+        "started": time.time(),
+        "files": {},
+        "content": None,
+    }
+    for name, text in files.items():
+        path = ALLOWED_FILES[name]
+        prev = path.read_text(encoding="utf-8") if path.is_file() else ""
+        entry["files"][name] = {"previous": prev, "next": text}
+    if content is not None:
+        prev_c = read_content() if CONTENT_FILE.is_file() else default_content()
+        entry["content"] = {"previous": prev_c, "next": content}
+    path = JOURNAL_DIR / f"{txn_id}.json"
+    atomic_write_text(path, json.dumps(entry, ensure_ascii=False))
+    return path
+
+
+def journal_commit(txn_id: str) -> None:
+    path = JOURNAL_DIR / f"{txn_id}.json"
+    if path.is_file():
+        path.unlink()
+
+
+def journal_rollback(txn_id: str) -> None:
+    path = JOURNAL_DIR / f"{txn_id}.json"
+    if not path.is_file():
+        return
+    try:
+        entry = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    for name, pair in (entry.get("files") or {}).items():
+        if name not in ALLOWED_FILES:
             continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        if old not in text:
-            continue
-        count = text.count(old)
-        path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
-        changed.append({"path": str(path.relative_to(REPO)), "count": count})
-    # Also patch public content references in HTML if any
-    for path in PUBLIC.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in {".html", ".json", ".svg"}:
-            continue
-        if path.resolve() == CONTENT_FILE.resolve():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        if old not in text:
-            continue
-        count = text.count(old)
-        path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
-        changed.append({"path": str(path.relative_to(REPO)), "count": count})
-    return changed
+        atomic_write_text(ALLOWED_FILES[name], pair.get("previous") or "")
+    if entry.get("content"):
+        write_content(entry["content"]["previous"])
+    path.unlink(missing_ok=True)
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "LeviathanLayoutEditor/3.0"
+    server_version = "LeviathanStudio/4.0"
 
     def log_message(self, fmt: str, *args) -> None:
-        print(f"[editor] {self.address_string()} - {fmt % args}", flush=True)
+        print(f"[studio] {self.address_string()} - {fmt % args}", flush=True)
+
+    def _cors_headers(self) -> dict[str, str]:
+        origin = self.headers.get("Origin") or ""
+        allow = origin if origin in ALLOWED_ORIGINS else f"http://{HOST}:{VITE_PORT}"
+        return {
+            "Access-Control-Allow-Origin": allow,
+            "Access-Control-Allow-Methods": "GET, PUT, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-LVB-Session",
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
 
     def _send(self, code: int, body: bytes, content_type: str, extra: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        for key, value in CORS.items():
+        for key, value in self._cors_headers().items():
             self.send_header(key, value)
         if extra:
             for key, value in extra.items():
@@ -145,14 +295,32 @@ class Handler(BaseHTTPRequestHandler):
         data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self._send(code, data, "application/json; charset=utf-8")
 
-    def _read_body(self) -> bytes:
+    def _origin_ok(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            # non-CORS same-host tools (curl) — require Host match
+            host = (self.headers.get("Host") or "").split(":")[0]
+            return host in {"127.0.0.1", "localhost", HOST}
+        return origin in ALLOWED_ORIGINS
+
+    def _require_session(self) -> bool:
+        token = self.headers.get("X-LVB-Session") or ""
+        return secrets.compare_digest(token, SESSION_TOKEN)
+
+    def _read_body(self, limit: int = MAX_BODY) -> bytes | None:
         length = int(self.headers.get("Content-Length", "0") or "0")
+        if length < 0:
+            return None
+        if length > limit:
+            return None
         if length <= 0:
             return b""
         return self.rfile.read(length)
 
-    def _read_json(self) -> dict | None:
-        raw = self._read_body()
+    def _read_json(self, limit: int = MAX_BODY) -> dict | None:
+        raw = self._read_body(limit)
+        if raw is None:
+            return None
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -188,6 +356,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/api/health":
+            meta = load_meta()
             self._json(
                 200,
                 {
@@ -195,6 +364,22 @@ class Handler(BaseHTTPRequestHandler):
                     "styles": str(STYLES),
                     "content": str(CONTENT_FILE),
                     "repo": str(REPO),
+                    "vite": f"http://{HOST}:{VITE_PORT}/",
+                    "revision": meta["revision"],
+                    "hash": meta["hash"],
+                },
+            )
+            return
+
+        if path == "/api/session":
+            if not self._origin_ok():
+                self._json(403, {"error": "Origin niet toegestaan"})
+                return
+            self._json(
+                200,
+                {
+                    "token": SESSION_TOKEN,
+                    "expires": None,
                     "vite": f"http://{HOST}:{VITE_PORT}/",
                 },
             )
@@ -228,8 +413,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/content":
-            data = read_content()
-            self._json(200, {"content": data, "path": str(CONTENT_FILE)})
+            try:
+                data = read_content()
+            except ValueError as exc:
+                self._json(500, {"error": str(exc), "hint": "Herstel vanaf .studio-checkpoints/last-good.json"})
+                return
+            meta = load_meta()
+            self._json(
+                200,
+                {
+                    "content": data,
+                    "path": str(CONTENT_FILE),
+                    "revision": meta["revision"],
+                    "hash": meta["hash"] or content_hash(data),
+                },
+            )
             return
 
         if path == "/api/assets":
@@ -275,7 +473,18 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, data, mime)
 
     def do_PUT(self) -> None:
+        if not self._origin_ok():
+            self._json(403, {"error": "Origin niet toegestaan"})
+            return
+        if not self._require_session():
+            self._json(401, {"error": "Sessie vereist"})
+            return
+
         parsed = urlparse(self.path)
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length > MAX_BODY:
+            self._json(413, {"error": "Body te groot"})
+            return
 
         if parsed.path == "/api/file":
             qs = parse_qs(parsed.query)
@@ -291,12 +500,12 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(content, str):
                 self._json(400, {"error": "content must be a string"})
                 return
-            if len(content) > 2_000_000:
+            if len(content) > MAX_BODY:
                 self._json(400, {"error": "File too large"})
                 return
-            file_path = ALLOWED_FILES[name]
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content, encoding="utf-8", newline="\n")
+            with WRITE_LOCK:
+                file_path = ALLOWED_FILES[name]
+                atomic_write_text(file_path, content)
             self._json(
                 200,
                 {
@@ -317,20 +526,26 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(content, dict):
                 self._json(400, {"error": "content must be an object"})
                 return
-            content.setdefault("version", 2)
-            content.setdefault("entries", {})
-            content.setdefault("nodes", [])
-            content.setdefault("components", [])
-            if not isinstance(content["entries"], dict):
-                self._json(400, {"error": "entries must be an object"})
+            try:
+                content = normalize_content(content)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
                 return
-            if not isinstance(content.get("nodes"), list):
-                self._json(400, {"error": "nodes must be a list"})
+            base_rev = payload.get("baseRevision")
+            base_hash = payload.get("baseHash")
+            meta = load_meta()
+            if base_rev is not None and int(base_rev) != int(meta["revision"]):
+                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
                 return
-            if not isinstance(content.get("components"), list):
-                self._json(400, {"error": "components must be a list"})
+            if base_hash and meta["hash"] and base_hash != meta["hash"]:
+                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
                 return
-            write_content(content)
+            with WRITE_LOCK:
+                new_rev = int(meta["revision"]) + 1
+                content["revision"] = new_rev
+                h = content_hash(content)
+                write_content(content)
+                save_meta({"revision": new_rev, "hash": h})
             self._json(
                 200,
                 {
@@ -338,6 +553,8 @@ class Handler(BaseHTTPRequestHandler):
                     "path": str(CONTENT_FILE),
                     "entries": len(content["entries"]),
                     "nodes": len(content["nodes"]),
+                    "revision": new_rev,
+                    "hash": h,
                 },
             )
             return
@@ -347,7 +564,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
 
+        # AI may be probed without session for unavailable state, but still origin-check
         if parsed.path == "/api/editor-ai":
+            if not self._origin_ok():
+                self._json(403, {"error": "Origin niet toegestaan"})
+                return
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if length > MAX_BODY:
+                self._json(413, {"error": "Body te groot"})
+                return
             payload = self._read_json()
             if payload is None:
                 self._json(400, {"error": "Expected JSON body"})
@@ -360,36 +585,114 @@ class Handler(BaseHTTPRequestHandler):
                 501,
                 {
                     "error": "AI nog niet aangesloten",
-                    "notes": "Endpoint /api/editor-ai staat klaar. Koppel een Leviathan-model; tot die tijd wordt er niets geschreven.",
+                    "notes": "Geen Leviathan-modelcontract beschikbaar in deze omgeving. Er is niets geschreven.",
+                    "unavailable": True,
+                    "reason": "no-model-binding",
                     "contract": {
-                        "request": ["selectionHtml", "selectionCss", "instruction"],
-                        "response": ["html", "cssDecls", "notes"],
+                        "request": ["selectionHtml", "selectionCss", "instruction", "revision", "scope", "nodeIds"],
+                        "response": ["patches", "notes", "preview"],
                     },
                 },
             )
             return
 
+        if not self._origin_ok():
+            self._json(403, {"error": "Origin niet toegestaan"})
+            return
+        if not self._require_session():
+            self._json(401, {"error": "Sessie vereist"})
+            return
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length > max(MAX_BODY, MAX_UPLOAD):
+            self._json(413, {"error": "Body te groot"})
+            return
+
         if parsed.path == "/api/replace-text":
+            # Explicitly disabled — visual text lives in content entries
+            self._json(
+                410,
+                {
+                    "error": "Bronvervanging uitgeschakeld",
+                    "notes": "Tekstwijzigingen worden per stabiele node in lv-editor-content.json bewaard.",
+                },
+            )
+            return
+
+        if parsed.path == "/api/save":
             payload = self._read_json()
             if payload is None:
                 self._json(400, {"error": "Expected JSON body"})
                 return
-            old = payload.get("old")
-            new = payload.get("new")
-            if not isinstance(old, str) or not isinstance(new, str):
-                self._json(400, {"error": "old and new must be strings"})
+            content = payload.get("content")
+            files = payload.get("files") or {}
+            if content is not None and not isinstance(content, dict):
+                self._json(400, {"error": "content must be an object"})
                 return
-            if len(old) < 2:
-                self._json(400, {"error": "old text too short (min 2 chars)"})
+            if not isinstance(files, dict):
+                self._json(400, {"error": "files must be an object"})
                 return
-            changed = replace_in_sources(old, new)
-            self._json(200, {"ok": True, "changed": changed, "count": len(changed)})
+            for name, text in files.items():
+                if name not in ALLOWED_FILES or not SAFE_NAME.match(name):
+                    self._json(400, {"error": f"Unknown file: {name}"})
+                    return
+                if not isinstance(text, str) or len(text) > MAX_BODY:
+                    self._json(400, {"error": f"Invalid file body: {name}"})
+                    return
+            if content is not None:
+                try:
+                    content = normalize_content(content)
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+
+            meta = load_meta()
+            base_rev = payload.get("baseRevision")
+            base_hash = payload.get("baseHash")
+            if base_rev is not None and int(base_rev) != int(meta["revision"]):
+                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
+                return
+            if base_hash and meta["hash"] and str(base_hash) != str(meta["hash"]):
+                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
+                return
+
+            txn_id = uuid.uuid4().hex
+            with WRITE_LOCK:
+                try:
+                    journal_begin(txn_id, files, content)
+                    for name, text in files.items():
+                        atomic_write_text(ALLOWED_FILES[name], text)
+                    new_rev = int(meta["revision"]) + 1
+                    h = meta["hash"]
+                    if content is not None:
+                        content["revision"] = new_rev
+                        write_content(content)
+                        h = content_hash(content, files)
+                    else:
+                        h = content_hash(read_content(), files)
+                    save_meta({"revision": new_rev, "hash": h})
+                    journal_commit(txn_id)
+                except Exception as exc:
+                    journal_rollback(txn_id)
+                    self._json(500, {"error": f"Save mislukt: {exc}"})
+                    return
+
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "revision": new_rev,
+                    "hash": h,
+                    "files": list(files.keys()),
+                    "wroteContent": content is not None,
+                },
+            )
             return
 
         if parsed.path == "/api/upload":
-            payload = self._read_json()
+            payload = self._read_json(limit=MAX_UPLOAD + 100_000)
             if payload is None:
-                self._json(400, {"error": "Expected JSON body"})
+                self._json(400, {"error": "Expected JSON body or body too large"})
                 return
             filename = payload.get("filename") or "upload.bin"
             data_b64 = payload.get("data")
@@ -411,13 +714,18 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._json(400, {"error": "Invalid base64 data"})
                 return
-            if len(raw) > 12_000_000:
+            if len(raw) > MAX_UPLOAD:
                 self._json(400, {"error": "Image too large (max 12MB)"})
+                return
+            try:
+                raw = validate_image_bytes(ext, raw)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
                 return
             UPLOADS.mkdir(parents=True, exist_ok=True)
             out_name = f"{uuid.uuid4().hex[:10]}-{filename}"
             out_path = UPLOADS / out_name
-            out_path.write_bytes(raw)
+            atomic_write_bytes(out_path, raw)
             public_url = f"/assets/uploads/{out_name}"
             self._json(
                 200,
@@ -444,9 +752,9 @@ def ensure_frontend_deps() -> None:
     npm = which_npm()
     if not npm:
         raise SystemExit(
-            "[editor] npm niet gevonden. Installeer Node.js, daarna: cd Data/frontend && npm install"
+            "[studio] npm niet gevonden. Installeer Node.js, daarna: cd Data/frontend && npm install"
         )
-    print("[editor] npm install (eerste keer)…", flush=True)
+    print("[studio] npm install (eerste keer)…", flush=True)
     if os.name == "nt":
         subprocess.check_call(f'"{npm}" install', cwd=str(FRONTEND), shell=True)
     else:
@@ -456,11 +764,11 @@ def ensure_frontend_deps() -> None:
 def start_vite() -> subprocess.Popen:
     npm = which_npm()
     if not npm:
-        raise SystemExit("[editor] npm niet gevonden")
+        raise SystemExit("[studio] npm niet gevonden")
 
     env = os.environ.copy()
     env["LEVIATHAN_EDITOR"] = "1"
-    print(f"[editor] Start echte Leviathan UI op http://{HOST}:{VITE_PORT}/", flush=True)
+    print(f"[studio] Start echte Leviathan UI op http://{HOST}:{VITE_PORT}/", flush=True)
     if os.name == "nt":
         cmd = f'"{npm}" run dev -- --host {HOST} --port {VITE_PORT} --strictPort'
         return subprocess.Popen(cmd, cwd=str(FRONTEND), env=env, shell=True)
@@ -479,15 +787,15 @@ def wait_for_vite(timeout: float = 90.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if vite_proc and vite_proc.poll() is not None:
-            raise SystemExit("[editor] Vite is onverwacht gestopt")
+            raise SystemExit("[studio] Vite is onverwacht gestopt")
         try:
             with urllib.request.urlopen(url, timeout=1.5) as res:
                 if res.status < 500:
-                    print("[editor] Vite is klaar", flush=True)
+                    print("[studio] Vite is klaar", flush=True)
                     return
         except (urllib.error.URLError, TimeoutError):
             time.sleep(0.4)
-    raise SystemExit("[editor] Timeout: Vite startte niet")
+    raise SystemExit("[studio] Timeout: Vite startte niet")
 
 
 def stop_vite() -> None:
@@ -510,8 +818,12 @@ def main() -> None:
         raise SystemExit(f"Frontend folder missing: {FRONTEND}")
 
     UPLOADS.mkdir(parents=True, exist_ok=True)
+    JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    load_meta()
     if not CONTENT_FILE.is_file():
         write_content(default_content())
+        save_meta({"revision": 0, "hash": content_hash(default_content())})
 
     ensure_frontend_deps()
     vite_proc = start_vite()
@@ -521,7 +833,7 @@ def main() -> None:
     app_url = f"http://{HOST}:{VITE_PORT}/"
 
     print("=" * 60, flush=True)
-    print("  LEVIATHAN Visual Builder", flush=True)
+    print("  LEVIATHAN STUDIO", flush=True)
     print(f"  Echte UI + editor: {app_url}", flush=True)
     print(f"  Editor API:        {api_url}", flush=True)
     print(f"  CSS:               {STYLES}", flush=True)
@@ -543,7 +855,7 @@ def main() -> None:
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n[editor] stoppen…", flush=True)
+        print("\n[studio] stoppen…", flush=True)
     finally:
         httpd.server_close()
         stop_vite()

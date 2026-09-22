@@ -1,10 +1,24 @@
 /**
- * Leviathan Visual Builder — content, CSS files, live apply, save.
+ * LEVIATHAN STUDIO — content, CSS files, live apply, save coordination.
  * Breakpoint overrides live in content JSON. Desktop overrides also land in styles/*.css.
  */
 
 import { FILES } from "./constants.js";
 import {
+  DOC_VERSION,
+  SCOPE,
+  bindLegacyEntry,
+  cssSelectorForIdentity,
+  identityFor,
+  migrateContent,
+  pageKey,
+  queryForEntry,
+} from "./identity.js";
+import { applyPatch, diffSnapshots, hashDocument, patchIsEmpty } from "./patches.js";
+import { createSaveCoordinator } from "./save.js";
+import {
+  BEGIN,
+  END,
   cssFromPx,
   declsToText,
   escapeReg,
@@ -19,26 +33,42 @@ import {
 export function createContent(ctx) {
   let saveTimer = 0;
   const managed = new WeakMap();
+  const save = createSaveCoordinator(ctx);
+  ctx.save = save;
 
   function state() {
     return ctx.store.getState();
   }
 
   function ensure(content = state().content) {
-    content.version = 2;
-    content.entries = content.entries && typeof content.entries === "object" ? content.entries : {};
-    content.nodes = Array.isArray(content.nodes) ? content.nodes : [];
-    content.components = Array.isArray(content.components) ? content.components : [];
-    return content;
+    return migrateContent(content);
   }
 
   function setStatus(text, kind = "") {
     ctx.store.setState({ status: text, statusKind: kind });
   }
 
-  function getEntry(selector) {
-    if (!selector) return null;
-    return state().content.entries?.[selector] || null;
+  function currentPage() {
+    return ctx.pages?.currentPage?.() || pageKey();
+  }
+
+  function identityOf(el) {
+    return identityFor(el, { page: currentPage() });
+  }
+
+  function keyFor(el) {
+    return identityOf(el).key;
+  }
+
+  function getEntry(selectorOrKey) {
+    if (!selectorOrKey) return null;
+    const content = state().content;
+    if (content.entries?.[selectorOrKey]) return content.entries[selectorOrKey];
+    // legacy lookup by selector field
+    for (const entry of Object.values(content.entries || {})) {
+      if (entry?.legacyKey === selectorOrKey || entry?.selector === selectorOrKey) return entry;
+    }
+    return null;
   }
 
   function styleFileFor(selector = "") {
@@ -54,36 +84,37 @@ export function createContent(ctx) {
     const s = state();
     const dirtyFiles = { ...s.dirtyFiles, [name]: s.files[name] !== s.saved[name] };
     ctx.store.setState({ dirtyFiles });
-    refreshDirtyStatus();
+    save.markDirty();
     if (s.autoSave) scheduleSave();
   }
 
   function markContentDirty() {
     ctx.store.setState({ contentDirty: true });
-    refreshDirtyStatus();
+    save.markDirty();
     if (state().autoSave) scheduleSave();
   }
 
   function refreshDirtyStatus() {
-    const s = state();
-    const any = s.contentDirty || FILES.some((f) => s.files[f] !== s.saved[f]);
-    if (s.statusKind === "" && String(s.status || "").startsWith("Opslaan")) return;
-    setStatus(any ? "Niet opgeslagen · auto-save" : "Gesynchroniseerd", any ? "dirty" : "ok");
+    save.refreshStatus();
   }
 
   function scheduleSave() {
+    if (!state().autoSave) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveAll().catch((err) => setStatus(String(err.message || err), "dirty"));
     }, 550);
   }
 
+  /** Full snapshot for gestures — paired with scoped patch restore. */
   function snapshot() {
     const s = state();
     return {
       files: { ...s.files },
       content: JSON.parse(JSON.stringify(ensure())),
       selected: ctx.selection.keys(),
+      page: currentPage(),
+      scope: null,
     };
   }
 
@@ -93,6 +124,52 @@ export function createContent(ctx) {
       if (a.files[name] !== b.files[name]) return false;
     }
     return JSON.stringify(a.content) === JSON.stringify(b.content);
+  }
+
+  function patchBetween(before, after) {
+    return diffSnapshots(before, after);
+  }
+
+  /**
+   * Scoped restore: only reverse the delta of a command.
+   * Full snap restore kept for checkpoints / recovery.
+   */
+  function restorePatch(patch, direction = "back") {
+    if (!patch || patchIsEmpty(patch)) return;
+    const s = state();
+    const next = applyPatch(s, patch, direction);
+    const dirtyFiles = {};
+    for (const name of FILES) dirtyFiles[name] = next.files[name] !== s.saved[name];
+    ctx.store.setState({
+      files: next.files,
+      content: ensure(next.content),
+      contentDirty: true,
+      dirtyFiles,
+    });
+    save.markDirty();
+    reapply();
+    if (state().autoSave) scheduleSave();
+  }
+
+  function restore(snap) {
+    if (!snap) return;
+    if (snap._patch) {
+      restorePatch(snap._patch, snap._direction || "back");
+      if (snap.selected) ctx.selection.reselect(snap.selected);
+      return;
+    }
+    ctx.store.setState({
+      files: { ...snap.files },
+      content: JSON.parse(JSON.stringify(ensure(snap.content))),
+      contentDirty: true,
+    });
+    const dirtyFiles = {};
+    for (const name of FILES) dirtyFiles[name] = snap.files[name] !== state().saved[name];
+    ctx.store.setState({ dirtyFiles });
+    save.markDirty();
+    reapply();
+    ctx.selection.reselect(snap.selected || []);
+    if (state().autoSave) scheduleSave();
   }
 
   function applyTokensLive() {
@@ -135,6 +212,7 @@ export function createContent(ctx) {
 
   function syncElement(el, entry, bp) {
     if (!(el instanceof Element) || !entry) return;
+    if (entry.nodeId && !el.dataset.lvbNode) el.dataset.lvbNode = entry.nodeId;
     const prev = new Set([...(managed.get(el) || []), ...(el.dataset.lvbManaged || "").split(",").filter(Boolean)]);
     for (const prop of prev) el.style.removeProperty(prop);
     managed.set(el, new Set());
@@ -165,23 +243,33 @@ export function createContent(ctx) {
     else if (el.dataset.lvbLocked === "1" && entry.locked === false) delete el.dataset.lvbLocked;
   }
 
+  function entryAppliesToPage(entry, page) {
+    if (!entry) return false;
+    if (entry.scope === SCOPE.GLOBAL_SHELL || entry.scope === SCOPE.GLOBAL_TOKEN || entry.scope === SCOPE.COMPONENT_MASTER) {
+      return true;
+    }
+    if (!entry.page || entry.page === "*" || entry.page === page) return true;
+    return false;
+  }
+
   function applyContentOverrides() {
     const s = state();
     ctx.session.applying = true;
     try {
       const content = ensure();
       const bp = s.breakpoint || "desktop";
-      for (const [selector, entry] of Object.entries(content.entries)) {
-        let nodes;
-        try {
-          nodes = document.querySelectorAll(selector);
-        } catch {
+      const page = currentPage();
+      for (const [key, entry] of Object.entries(content.entries)) {
+        if (!entryAppliesToPage(entry, page)) continue;
+        const nodes = queryForEntry(key, entry);
+        if (!nodes.length && entry.ambiguous && entry.legacyKey) {
+          // leave for Problems panel
           continue;
         }
-        nodes.forEach((el) => {
-          if (!(el instanceof Element) || ctx.selection.isBuilderNode(el)) return;
+        for (const el of nodes) {
+          if (!(el instanceof Element) || ctx.selection.isBuilderNode(el)) continue;
           syncElement(el, entry, bp);
-        });
+        }
       }
     } finally {
       ctx.session.applying = false;
@@ -197,14 +285,15 @@ export function createContent(ctx) {
         if (!content.nodes.some((n) => n.id === el.dataset.lvbId)) el.remove();
       });
       for (const node of content.nodes) {
-        let el = document.querySelector(`[data-lvb-id="${node.id}"]`);
+        let el = document.querySelector(`[data-lvb-id="${CSS.escape(node.id)}"]`);
         if (el && ctx.selection.isBuilderNode(el)) el = null;
         if (!el) {
           const wrap = document.createElement("div");
-          wrap.innerHTML = node.html;
+          wrap.innerHTML = sanitizeWidgetHtml(node.html);
           el = wrap.firstElementChild;
           if (!el) continue;
           el.dataset.lvbId = node.id;
+          el.dataset.lvbNode = node.nodeId || node.id;
           if (node.label) el.dataset.lvbLabel = node.label;
           if (node.componentId) el.dataset.lvbComponentId = node.componentId;
           if (node.variant) el.dataset.lvbVariant = node.variant;
@@ -214,6 +303,8 @@ export function createContent(ctx) {
             document.getElementById("root") ||
             document.body;
           parent.appendChild(el);
+        } else if (!el.dataset.lvbNode) {
+          el.dataset.lvbNode = node.nodeId || node.id;
         }
         if (node.styles) {
           for (const [k, v] of Object.entries(node.styles)) {
@@ -224,6 +315,21 @@ export function createContent(ctx) {
     } finally {
       ctx.session.applying = false;
     }
+  }
+
+  function sanitizeWidgetHtml(html) {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = String(html || "");
+    wrap.querySelectorAll("script, iframe, object, embed").forEach((n) => n.remove());
+    wrap.querySelectorAll("*").forEach((el) => {
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith("on") || (name === "href" && /^\s*javascript:/i.test(attr.value))) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    });
+    return wrap.innerHTML;
   }
 
   function safeQuery(selector) {
@@ -241,30 +347,17 @@ export function createContent(ctx) {
     ctx.chrome?.schedulePaint?.();
   }
 
-  function restore(snap) {
-    if (!snap) return;
-    ctx.store.setState({
-      files: { ...snap.files },
-      content: JSON.parse(JSON.stringify(snap.content)),
-      contentDirty: true,
-    });
-    const dirtyFiles = {};
-    for (const name of FILES) dirtyFiles[name] = snap.files[name] !== state().saved[name];
-    ctx.store.setState({ dirtyFiles });
-    reapply();
-    ctx.selection.reselect(snap.selected || []);
-    scheduleSave();
-  }
-
   function syncNodesFromDom() {
     const content = ensure();
     content.nodes = content.nodes.map((node) => {
-      const el = document.querySelector(`[data-lvb-id="${node.id}"]`);
+      const el = document.querySelector(`[data-lvb-id="${CSS.escape(node.id)}"]`);
       if (!(el instanceof Element) || ctx.selection.isBuilderNode(el)) return node;
+      const parentIdent = el.parentElement ? identityOf(el.parentElement) : null;
       return {
         ...node,
         html: el.outerHTML,
-        parent: node.parent || ctx.selection.selectorFor(el.parentElement) || ".lv-main",
+        nodeId: el.dataset.lvbNode || node.nodeId || node.id,
+        parent: parentIdent?.key || node.parent || ".lv-main",
         componentId: el.dataset.lvbComponentId || node.componentId,
         variant: el.dataset.lvbVariant || node.variant,
         styles: {
@@ -285,68 +378,97 @@ export function createContent(ctx) {
     ctx.store.setState({ content });
   }
 
+  function upsertEntry(el, mutator) {
+    const ident = identityOf(el);
+    const content = ensure();
+    // If we still have a legacy ambiguous entry matching this element uniquely, bind it
+    for (const [key, entry] of Object.entries(content.entries)) {
+      if (!entry?.ambiguous) continue;
+      try {
+        const nodes = [...document.querySelectorAll(key)];
+        if (nodes.length === 1 && nodes[0] === el) {
+          bindLegacyEntry(el, key, content);
+          break;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    const key = keyFor(el);
+    const prev = { ...(content.entries[key] || {}) };
+    const next = mutator({ ...prev, nodeId: ident.nodeId || prev.nodeId, scope: ident.scope, page: ident.page });
+    content.entries[key] = next;
+    ctx.store.setState({ content });
+    return { key, entry: next, ident };
+  }
+
   function applyProp(el, prop, value) {
     if (!(el instanceof Element) || !prop) return;
-    const selector = ctx.selection.selectorFor(el);
     const s = state();
-    const content = ensure();
     const bp = s.breakpoint || "desktop";
-    const entry = { ...(content.entries[selector] || {}) };
     const next = value == null ? "" : String(value).trim();
+    const ident = identityOf(el);
+    const cssSel = cssSelectorForIdentity(ident);
 
     if (bp !== "desktop") {
-      const breakpoints = { ...(entry.breakpoints || {}) };
-      const decls = { ...(breakpoints[bp] || {}) };
-      if (!next) delete decls[prop];
-      else decls[prop] = next;
-      breakpoints[bp] = decls;
-      entry.breakpoints = breakpoints;
-      content.entries[selector] = entry;
+      upsertEntry(el, (entry) => {
+        const breakpoints = { ...(entry.breakpoints || {}) };
+        const decls = { ...(breakpoints[bp] || {}) };
+        if (!next) delete decls[prop];
+        else decls[prop] = next;
+        breakpoints[bp] = decls;
+        return { ...entry, breakpoints };
+      });
       if (next) writeInline(el, prop, next);
-      else if (entry.styles?.[prop]) writeInline(el, prop, entry.styles[prop]);
-      else writeInline(el, prop, "");
-      ctx.store.setState({ content });
+      else {
+        const entry = getEntry(keyFor(el));
+        if (entry?.styles?.[prop]) writeInline(el, prop, entry.styles[prop]);
+        else writeInline(el, prop, "");
+      }
       markContentDirty();
       return;
     }
 
-    const file = s.activeFile === "tokens.css" ? styleFileFor(selector) : styleFileFor(selector);
+    const file = styleFileFor(cssSel || "");
+    const selector = cssSel || keyFor(el);
     const decls = readOverrideDecls(s.files[file], selector);
-    const styles = { ...(entry.styles || {}) };
-    if (!next) {
-      delete decls[prop];
-      delete styles[prop];
-      writeInline(el, prop, "");
-    } else {
-      decls[prop] = next;
-      styles[prop] = next;
-      writeInline(el, prop, next);
-    }
+    upsertEntry(el, (entry) => {
+      const styles = { ...(entry.styles || {}) };
+      if (!next) {
+        delete decls[prop];
+        delete styles[prop];
+        writeInline(el, prop, "");
+      } else {
+        decls[prop] = next;
+        styles[prop] = next;
+        writeInline(el, prop, next);
+      }
+      const out = { ...entry, styles };
+      if (prop === "position") {
+        if (next) out.position = next;
+        else delete out.position;
+      }
+      if (prop === "left" || prop === "top" || prop === "width" || prop === "height") {
+        if (next) out[prop] = next;
+        else delete out[prop];
+      }
+      if (prop === "z-index") {
+        if (next) out.zIndex = next;
+        else delete out.zIndex;
+      }
+      return out;
+    });
     s.files[file] = upsertOverride(s.files[file] || "", selector, declsToText(decls));
-    entry.styles = styles;
-    if (prop === "position") {
-      if (next) entry.position = next;
-      else delete entry.position;
-    }
-    if (prop === "left" || prop === "top" || prop === "width" || prop === "height") {
-      if (next) entry[prop] = next;
-      else delete entry[prop];
-    }
-    if (prop === "z-index") {
-      if (next) entry.zIndex = next;
-      else delete entry.zIndex;
-    }
-    content.entries[selector] = entry;
-    ctx.store.setState({ files: s.files, content, activeFile: file });
+    ctx.store.setState({ files: s.files, activeFile: file });
     markFile(file);
     markContentDirty();
     applyTokensLive();
   }
 
   function readProp(el, prop) {
-    const selector = ctx.selection.selectorFor(el);
+    const key = keyFor(el);
     const s = state();
-    const entry = s.content.entries?.[selector] || {};
+    const entry = s.content.entries?.[key] || getEntry(key) || {};
     const bp = s.breakpoint || "desktop";
     if (bp !== "desktop" && entry.breakpoints?.[bp] && prop in entry.breakpoints[bp]) {
       return { value: entry.breakpoints[bp][prop] ?? "", source: "breakpoint" };
@@ -354,6 +476,8 @@ export function createContent(ctx) {
     if (entry.styles && prop in entry.styles) {
       return { value: entry.styles[prop] ?? "", source: "entry" };
     }
+    const ident = identityOf(el);
+    const selector = cssSelectorForIdentity(ident) || key;
     const file = styleFileFor(selector);
     const decls = readOverrideDecls(s.files[file], selector);
     if (prop in decls) return { value: decls[prop], source: "css" };
@@ -385,19 +509,32 @@ export function createContent(ctx) {
   }
 
   function clearStyles(el) {
-    const selector = ctx.selection.selectorFor(el);
+    const ident = identityOf(el);
+    const selector = cssSelectorForIdentity(ident) || keyFor(el);
     const s = state();
     const file = styleFileFor(selector);
     const re = new RegExp(`${escapeReg(BEGIN(selector))}[\\s\\S]*?${escapeReg(END(selector))}\\n?`);
     s.files[file] = (s.files[file] || "").replace(re, "");
     const content = ensure();
-    if (content.entries[selector]) {
-      content.entries[selector] = { ...content.entries[selector], styles: {}, breakpoints: {} };
-      delete content.entries[selector].position;
-      delete content.entries[selector].left;
-      delete content.entries[selector].top;
-      delete content.entries[selector].width;
-      delete content.entries[selector].height;
+    const key = keyFor(el);
+    if (content.entries[key]) {
+      const managedProps = [...(managed.get(el) || []), ...(el.dataset.lvbManaged || "").split(",").filter(Boolean)];
+      for (const prop of managedProps) el.style.removeProperty(prop);
+      managed.set(el, new Set());
+      delete el.dataset.lvbManaged;
+      content.entries[key] = {
+        ...content.entries[key],
+        styles: {},
+        breakpoints: {},
+        nodeId: ident.nodeId,
+        scope: ident.scope,
+        page: ident.page,
+      };
+      delete content.entries[key].position;
+      delete content.entries[key].left;
+      delete content.entries[key].top;
+      delete content.entries[key].width;
+      delete content.entries[key].height;
     }
     ctx.store.setState({ files: s.files, content });
     markFile(file);
@@ -406,49 +543,25 @@ export function createContent(ctx) {
   }
 
   function stageText(el, text) {
-    const selector = ctx.selection.selectorFor(el);
-    const content = ensure();
-    const prev = content.entries[selector] || {};
-    const baseline = prev.text != null ? prev.text : el.dataset.lvbOriginalText || el.textContent || "";
+    const baseline =
+      getEntry(keyFor(el))?.text != null
+        ? getEntry(keyFor(el)).text
+        : el.dataset.lvbOriginalText || el.textContent || "";
     if (!el.dataset.lvbOriginalText) el.dataset.lvbOriginalText = baseline;
     el.textContent = text;
-    content.entries[selector] = { ...prev, text, prevText: baseline };
-    ctx.store.setState({ content });
+    upsertEntry(el, (entry) => ({ ...entry, text, prevText: baseline }));
     markContentDirty();
     return baseline;
   }
 
-  async function replaceSource(oldText, newText) {
-    if (!oldText || oldText === newText || oldText.length < 2) return;
-    try {
-      const result = await ctx.api.replaceText(oldText, newText);
-      setStatus(result.changed?.length ? `Tekst in ${result.changed.length} bron(nen)` : "Tekst opgeslagen", "ok");
-    } catch (err) {
-      setStatus(String(err.message || err), "dirty");
-    }
+  /** Visual text edits must NOT globally rewrite source trees. */
+  async function replaceSource(_oldText, _newText) {
+    setStatus("Bronvervanging uitgeschakeld — tekst staat in documententries", "ok");
+    return { ok: false, disabled: true };
   }
 
-  async function saveAll() {
-    const s = state();
-    const dirty = FILES.filter((f) => s.files[f] !== s.saved[f]);
-    if (!dirty.length && !s.contentDirty) {
-      setStatus("Niets te opslaan", "ok");
-      return;
-    }
-    setStatus("Opslaan…", "");
-    syncNodesFromDom();
-    for (const name of dirty) {
-      const body = state().files[name];
-      await ctx.api.putFile(name, body);
-      const saved = { ...state().saved, [name]: body };
-      const dirtyFiles = { ...state().dirtyFiles, [name]: state().files[name] !== body };
-      ctx.store.setState({ saved, dirtyFiles });
-    }
-    if (state().contentDirty) {
-      await ctx.api.putContent(ensure());
-      ctx.store.setState({ contentDirty: false });
-    }
-    setStatus("Opgeslagen in Leviathan-bestanden", "ok");
+  async function saveAll(opts) {
+    return save.saveAll(opts);
   }
 
   async function loadAll() {
@@ -460,13 +573,19 @@ export function createContent(ctx) {
       saved[name] = data.content || "";
     }
     const contentRes = await ctx.api.getContent();
-    const content = ensure(contentRes.content || { version: 2, entries: {}, nodes: [], components: [] });
+    const content = ensure(contentRes.content || { version: DOC_VERSION, entries: {}, nodes: [], components: [] });
     ctx.store.setState({
       files,
       saved,
       dirtyFiles: Object.fromEntries(FILES.map((n) => [n, false])),
       content,
       contentDirty: false,
+      contentRevision: contentRes.revision ?? content.revision ?? 0,
+      contentHash: contentRes.hash || hashDocument(content, files),
+    });
+    save.adoptServer({
+      revision: contentRes.revision ?? content.revision ?? 0,
+      hash: contentRes.hash || hashDocument(content, files),
     });
     ctx.commands.reset();
     reapply();
@@ -492,19 +611,27 @@ export function createContent(ctx) {
     refreshDirtyStatus();
   }
 
-  function patchEntry(selector, patch) {
+  function patchEntry(selectorOrEl, patch) {
+    if (selectorOrEl instanceof Element) {
+      upsertEntry(selectorOrEl, (entry) => ({ ...entry, ...patch }));
+      markContentDirty();
+      return;
+    }
     const content = ensure();
-    content.entries[selector] = { ...(content.entries[selector] || {}), ...patch };
+    const key = selectorOrEl;
+    content.entries[key] = { ...(content.entries[key] || {}), ...patch };
     ctx.store.setState({ content });
     markContentDirty();
   }
 
   function rawDecls(el) {
-    const selector = ctx.selection.selectorFor(el);
+    const key = keyFor(el);
     const s = state();
     const bp = s.breakpoint || "desktop";
-    const entry = s.content.entries?.[selector] || {};
+    const entry = s.content.entries?.[key] || {};
     if (bp !== "desktop") return declsToText(entry.breakpoints?.[bp] || {});
+    const ident = identityOf(el);
+    const selector = cssSelectorForIdentity(ident) || key;
     const file = styleFileFor(selector);
     const fromFile = readOverrideDecls(s.files[file], selector);
     return declsToText({ ...fromFile, ...(entry.styles || {}) });
@@ -512,25 +639,37 @@ export function createContent(ctx) {
 
   function applyRaw(el, text) {
     const decls = parseDecls(text);
-    const selector = ctx.selection.selectorFor(el);
+    const key = keyFor(el);
     const bp = state().breakpoint || "desktop";
     if (bp !== "desktop") {
-      const content = ensure();
-      const entry = { ...(content.entries[selector] || {}) };
-      const breakpoints = { ...(entry.breakpoints || {}) };
-      breakpoints[bp] = decls;
-      entry.breakpoints = breakpoints;
-      content.entries[selector] = entry;
-      ctx.store.setState({ content });
+      upsertEntry(el, (entry) => {
+        const breakpoints = { ...(entry.breakpoints || {}) };
+        breakpoints[bp] = decls;
+        return { ...entry, breakpoints };
+      });
       markContentDirty();
-      syncElement(el, entry, bp);
+      syncElement(el, state().content.entries[key], bp);
       return;
     }
-    const props = Object.keys({ ...(state().content.entries?.[selector]?.styles || {}), ...readOverrideDecls(state().files[styleFileFor(selector)], selector) });
+    const ident = identityOf(el);
+    const selector = cssSelectorForIdentity(ident) || key;
+    const props = Object.keys({
+      ...(state().content.entries?.[key]?.styles || {}),
+      ...readOverrideDecls(state().files[styleFileFor(selector)], selector),
+    });
     for (const prop of props) {
       if (!(prop in decls)) applyProp(el, prop, "");
     }
     for (const [k, v] of Object.entries(decls)) applyProp(el, k, v);
+  }
+
+  // beforeunload warning for real dirty work
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", (event) => {
+      if (!save.isDirty() && save.getState().localRevision <= save.getState().savedRevision) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
   }
 
   return {
@@ -541,6 +680,8 @@ export function createContent(ctx) {
     snapshot,
     sameSnap,
     restore,
+    restorePatch,
+    patchBetween,
     reapply,
     applyTokensLive,
     applyContentOverrides,
@@ -563,5 +704,8 @@ export function createContent(ctx) {
     rawDecls,
     applyRaw,
     syncElement,
+    keyFor,
+    identityOf,
+    save,
   };
 }

@@ -1,7 +1,8 @@
 /**
- * Leviathan Visual Editor — page / route switcher.
+ * LEVIATHAN STUDIO — page / route switcher.
  * Navigates the real React SPA while keeping the editor overlay alive.
- * Undo history, selection keys, and camera are scoped per pathname.
+ * Selection + camera are scoped per pathname.
+ * History is GLOBAL with scoped patches (undo on A never clobbers later B edits incorrectly).
  */
 
 export const EDITOR_PAGES = [
@@ -38,6 +39,7 @@ export function createPages(ctx) {
   const pageBags = new Map();
   let current = location.pathname || "/";
   let navigating = false;
+  let readyWait = 0;
 
   function pathKey(p = location.pathname) {
     return String(p || "/").replace(/\/$/, "") || "/";
@@ -47,7 +49,6 @@ export function createPages(ctx) {
     const key = pathKey(current);
     pageBags.set(key, {
       selected: ctx.selection.keys(),
-      history: ctx.commands.exportStack?.() || null,
       zoom: ctx.store.getState().zoom,
       panX: ctx.store.getState().panX,
       panY: ctx.store.getState().panY,
@@ -56,8 +57,6 @@ export function createPages(ctx) {
 
   function restoreBag(bag) {
     if (!bag) return;
-    if (bag.history && ctx.commands.importStack) ctx.commands.importStack(bag.history);
-    else ctx.commands.reset?.();
     if (bag.zoom != null || bag.panX != null) {
       ctx.camera.setCamera({
         zoom: bag.zoom ?? 1,
@@ -66,6 +65,35 @@ export function createPages(ctx) {
       });
     }
     if (bag.selected?.length) ctx.selection.reselect(bag.selected);
+  }
+
+  function waitForRoute(done) {
+    clearTimeout(readyWait);
+    let frames = 0;
+    const tick = () => {
+      frames += 1;
+      const root = document.getElementById("root");
+      const ready = root && (root.querySelector(".lv-app, main, [data-page]") || frames > 12);
+      if (ready) {
+        done();
+        return;
+      }
+      readyWait = requestAnimationFrame(tick);
+    };
+    readyWait = requestAnimationFrame(tick);
+  }
+
+  function afterNavigate(next) {
+    waitForRoute(() => {
+      ctx.content.reapply?.();
+      const bag = pageBags.get(next);
+      if (bag) restoreBag(bag);
+      ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
+      ctx.store.setState({ uiEpoch: ctx.session.uiEpoch, page: next });
+      ctx.chrome?.schedulePaint?.();
+      ctx.chrome?.invalidateAll?.();
+      navigating = false;
+    });
   }
 
   function go(path) {
@@ -81,7 +109,6 @@ export function createPages(ctx) {
     ctx.session.dropEl = null;
     ctx.chrome?.clearGuides?.();
 
-    // Prefer React Router client navigation so the SPA stays mounted
     try {
       const state = { lvbEditor: true };
       window.history.pushState(state, "", next);
@@ -94,21 +121,7 @@ export function createPages(ctx) {
     current = next;
     ctx.store.setState({ page: next });
     ctx.content.setStatus(`Pagina ${labelFor(next)}`, "ok");
-
-    // Re-apply overrides after React paints the new route
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        ctx.content.reapply?.();
-        const bag = pageBags.get(next);
-        if (bag) restoreBag(bag);
-        else ctx.commands.reset?.();
-        ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
-        ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
-        ctx.chrome?.schedulePaint?.();
-        ctx.chrome?.invalidateAll?.();
-        navigating = false;
-      });
-    });
+    afterNavigate(next);
   }
 
   function labelFor(path) {
@@ -120,6 +133,13 @@ export function createPages(ctx) {
     return pathKey(location.pathname);
   }
 
+  /** Prefer live router routes when the app exposes them. */
+  function discoverRoutes() {
+    const fromApp = ctx.session?.routeList;
+    if (Array.isArray(fromApp) && fromApp.length) return fromApp;
+    return EDITOR_PAGES;
+  }
+
   function attach() {
     window.addEventListener("popstate", () => {
       if (navigating) return;
@@ -128,13 +148,7 @@ export function createPages(ctx) {
       stash();
       current = next;
       ctx.store.setState({ page: next });
-      requestAnimationFrame(() => {
-        ctx.content.reapply?.();
-        const bag = pageBags.get(next);
-        if (bag) restoreBag(bag);
-        ctx.chrome?.schedulePaint?.();
-        ctx.chrome?.invalidateAll?.();
-      });
+      afterNavigate(next);
     });
   }
 
@@ -145,5 +159,6 @@ export function createPages(ctx) {
     currentPage,
     attach,
     stash,
+    discoverRoutes,
   };
 }

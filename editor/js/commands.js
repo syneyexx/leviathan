@@ -1,21 +1,25 @@
 /**
- * Leviathan Visual Builder — command stack.
- * execute({ do, undo, label }) plus snapshot gestures (history on pointerup, not per move).
+ * LEVIATHAN STUDIO — command stack with scoped patches.
+ * Gestures produce one history entry; undo never clobbers unrelated pages.
  */
 
 import { HISTORY_MAX } from "./constants.js";
+import { patchIsEmpty } from "./patches.js";
 
 export function createCommands(ctx) {
   let history = [];
   let index = -1;
   let suppress = 0;
   let gesture = null;
+  /** @type {Array<object>} */
+  const timeline = [];
 
   function emit() {
     ctx.store.setState({
       canUndo: index >= 0,
       canRedo: index < history.length - 1,
       historyLabel: index >= 0 ? history[index].label : "",
+      historyDepth: history.length,
     });
   }
 
@@ -25,15 +29,25 @@ export function createCommands(ctx) {
     history.push(cmd);
     while (history.length > HISTORY_MAX) history.shift();
     index = history.length - 1;
+    timeline.push({
+      id: `h_${Date.now()}_${timeline.length}`,
+      label: cmd.label,
+      at: Date.now(),
+      page: cmd.page || null,
+      summary: cmd.summary || null,
+      checkpoint: !!cmd.checkpoint,
+    });
+    while (timeline.length > HISTORY_MAX * 2) timeline.shift();
     emit();
+    ctx.studio?.history?.onRecord?.(cmd);
   }
 
-  function execute({ label, do: apply, undo }) {
+  function execute({ label, do: apply, undo, page, summary }) {
     if (typeof apply !== "function" || typeof undo !== "function") {
       throw new Error("Command mist do/undo");
     }
     apply();
-    record({ label: label || "bewerken", undo, redo: apply });
+    record({ label: label || "bewerken", undo, redo: apply, page, summary });
   }
 
   function undo() {
@@ -92,11 +106,30 @@ export function createCommands(ctx) {
     gesture = null;
     const after = ctx.content.snapshot();
     if (ctx.content.sameSnap(before, after)) return;
+    const patch = ctx.content.patchBetween(before, after);
+    if (patchIsEmpty(patch)) return;
     record({
       label,
-      undo: () => ctx.content.restore(before),
-      redo: () => ctx.content.restore(after),
+      page: after.page,
+      summary: patch,
+      undo: () => ctx.content.restorePatch(patch, "back"),
+      redo: () => ctx.content.restorePatch(patch, "forward"),
     });
+  }
+
+  function cancelGesture() {
+    if (!gesture || !ctx.content) {
+      gesture = null;
+      return false;
+    }
+    const { before } = gesture;
+    gesture = null;
+    // Restore only what this gesture changed so far
+    const after = ctx.content.snapshot();
+    const patch = ctx.content.patchBetween(before, after);
+    if (!patchIsEmpty(patch)) ctx.content.restorePatch(patch, "back");
+    ctx.content.setStatus("Gesture geannuleerd", "ok");
+    return true;
   }
 
   function capture(label, fn) {
@@ -108,10 +141,14 @@ export function createCommands(ctx) {
     fn();
     const after = ctx.content.snapshot();
     if (ctx.content.sameSnap(before, after)) return;
+    const patch = ctx.content.patchBetween(before, after);
+    if (patchIsEmpty(patch)) return;
     record({
       label,
-      undo: () => ctx.content.restore(before),
-      redo: () => ctx.content.restore(after),
+      page: after.page,
+      summary: patch,
+      undo: () => ctx.content.restorePatch(patch, "back"),
+      redo: () => ctx.content.restorePatch(patch, "forward"),
     });
   }
 
@@ -122,6 +159,7 @@ export function createCommands(ctx) {
     emit();
   }
 
+  /** Page bags no longer swap history — selection/camera only. */
   function exportStack() {
     return { history: history.slice(), index };
   }
@@ -134,16 +172,38 @@ export function createCommands(ctx) {
     emit();
   }
 
+  function namedCheckpoint(name) {
+    const snap = ctx.content.snapshot();
+    record({
+      label: `Checkpoint: ${name}`,
+      checkpoint: true,
+      page: snap.page,
+      summary: { checkpoint: name },
+      undo: () => {},
+      redo: () => {},
+      snapshot: snap,
+      name,
+    });
+    return history[index];
+  }
+
+  function getTimeline() {
+    return timeline.slice();
+  }
+
   return {
     execute,
     undo,
     redo,
     beginGesture,
     endGesture,
+    cancelGesture,
     capture,
     reset,
     exportStack,
     importStack,
+    namedCheckpoint,
+    getTimeline,
     isGesturing: () => !!gesture,
     isSuppressed: () => suppress > 0,
     _debug: () => ({ length: history.length, index }),

@@ -13,7 +13,7 @@ export function createLayers(ctx) {
   let dropLine = null;
   const panel = {
     id: "layers",
-    title: "Lagen",
+    title: "Layers",
     zone: "left",
     place: "dock",
     host: null,
