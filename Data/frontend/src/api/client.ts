@@ -51,6 +51,11 @@ import type {
   TrainingRecipe,
   VerificationReport,
   VerifiedCapability,
+  CodingStatusResponse,
+  CodingSession,
+  CodingSessionDetail,
+  CodingMission,
+  CodingWorkspaceTreeResponse,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -161,6 +166,20 @@ export const api = {
   listApprovals(status?: string): Promise<{ approvals: unknown[] }> {
     const query = status ? `?status=${encodeURIComponent(status)}` : "";
     return request<{ approvals: unknown[] }>(`/api/approvals${query}`);
+  },
+
+  approveApproval(approvalId: string, reason?: string): Promise<{ approval: unknown }> {
+    return request(`/api/approvals/${encodeURIComponent(approvalId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
+  },
+
+  denyApproval(approvalId: string, reason?: string): Promise<{ approval: unknown }> {
+    return request(`/api/approvals/${encodeURIComponent(approvalId)}/deny`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? null }),
+    });
   },
 
   listJobs(): Promise<{ jobs: unknown[] }> {
@@ -808,5 +827,58 @@ export const api = {
     return request(
       `/api/research/${encodeURIComponent(projectId)}/export?format=${encodeURIComponent(format)}`,
     );
+  },
+
+  /* ---------- Coding Agent ---------- */
+
+  codingStatus(): Promise<CodingStatusResponse> {
+    return request("/api/coding/status");
+  },
+
+  listCodingSessions(limit = 50): Promise<{ sessions: CodingSession[] }> {
+    return request(`/api/coding/sessions?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createCodingSession(payload: {
+    goal: string;
+    mission?: CodingMission;
+    workspace_root?: string;
+    model_id?: string;
+  }): Promise<{ session: CodingSession }> {
+    return request("/api/coding/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getCodingSession(sessionId: string): Promise<CodingSessionDetail> {
+    return request(`/api/coding/sessions/${encodeURIComponent(sessionId)}`);
+  },
+
+  codingTurn(
+    sessionId: string,
+    payload: { message?: string; approval_id?: string; capability_id?: string },
+  ): Promise<CodingSessionDetail> {
+    return request(`/api/coding/sessions/${encodeURIComponent(sessionId)}/turn`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  cancelCodingSession(sessionId: string): Promise<{ session: CodingSession }> {
+    return request(`/api/coding/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+      method: "POST",
+    });
+  },
+
+  codingWorkspaceTree(opts?: {
+    path?: string;
+    recursive?: boolean;
+  }): Promise<CodingWorkspaceTreeResponse> {
+    const params = new URLSearchParams();
+    if (opts?.path) params.set("path", opts.path);
+    if (opts?.recursive != null) params.set("recursive", String(opts.recursive));
+    const q = params.toString();
+    return request(`/api/coding/workspace/tree${q ? `?${q}` : ""}`);
   },
 };

@@ -11,6 +11,7 @@ import "./styles/pages.css";
 import "./styles/analytics.css";
 import "./styles/trading.css";
 import "./styles/training.css";
+import "./styles/coding.css";
 import "./styles/media-platform.css";
 import "./styles/media-pages.css";
 import "./styles/media-control.css";

@@ -13,6 +13,8 @@ from .database import Database
 from .migrations import MigrationRunner
 from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
 from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
+from Data.modules.coding import CodingControlPlane
+from Data.backend.routes.coding import build_coding_router
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
 from Data.modules.execution import (
@@ -204,6 +206,19 @@ research_service = ResearchService.from_settings(
     db_path=settings.database_path,
     knowledge=knowledge,
 )
+coding_service = CodingControlPlane.from_settings(
+    settings,
+    db_path=settings.database_path,
+    gateway=execution_gateway,
+    approvals=approval_service,
+    llm=None,  # wired after OpenAICompatibleLLM / FakeLLM in tests
+    context_builder=None,
+    reasoning=None,
+    neuro=neuro_advisor,
+    verification=verification_engine,
+)
+agent_runtime.coding = coding_service
+agent_runtime.coding_enabled = settings.features.coding_enabled
 neuro_soak = NeuroSoakHarness()
 browser_stub = BrowserAutomationStub()
 media_stub = MediaAutomationStub()
@@ -211,7 +226,20 @@ voice_stub = VoiceRuntimeStub()
 
 
 def _gate_catalog_builtins() -> GateCheck:
-    required = {"file.read", "knowledge.search", "artifact.create_text", "knowledge.ingest_scan"}
+    required = {
+        "file.read",
+        "knowledge.search",
+        "artifact.create_text",
+        "knowledge.ingest_scan",
+        "workspace.list",
+        "workspace.search",
+        "file.write",
+        "file.patch",
+        "file.delete",
+        "coding.run_tests",
+        "git.status",
+        "git.diff",
+    }
     missing = sorted(required - {item.id for item in capability_catalog.list()})
     return GateCheck(
         gate_id="catalog_builtins",
@@ -508,6 +536,7 @@ async def lifespan(_: FastAPI):
     dataset_service.runner.start_background()
     training_service.reconcile()
     research_service.recover()
+    coding_service.start_background()
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
@@ -540,15 +569,17 @@ async def lifespan(_: FastAPI):
                     except ModuleManagerError:
                         pass
         dataset_service.runner.stop_background()
+        coding_service.stop_background()
         job_runtime.stop_background_worker()
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.53.0-mds-train-research", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.54.0-coding", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
+app.include_router(build_coding_router(coding_service))
 
 
 class ConversationCreate(BaseModel):

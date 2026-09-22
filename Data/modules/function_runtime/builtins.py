@@ -11,8 +11,8 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
         FunctionDefinition(
             id="text_file_read",
             name="Text File Read",
-            version="1.0.0",
-            description="Read a local UTF-8 text file with a size bound.",
+            version="1.1.0",
+            description="Read a local UTF-8 text file with line numbers and optional range.",
             entrypoint="Data.functions.text_file_read:run",
             input_schema={
                 "type": "object",
@@ -20,6 +20,8 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
                 "properties": {
                     "path": {"type": "string"},
                     "max_bytes": {"type": "integer"},
+                    "start_line": {"type": "integer"},
+                    "end_line": {"type": "integer"},
                 },
             },
             output_schema={
@@ -28,6 +30,7 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
                     "path": {"type": "string"},
                     "content": {"type": "string"},
                     "size_bytes": {"type": "integer"},
+                    "line_count": {"type": "integer"},
                 },
             },
             lifecycle_mode=LifecycleMode.ON_DEMAND,
@@ -95,6 +98,192 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
             timeout_seconds=60.0,
             ram_expectation_mb=256,
             warmup_cost="cold",
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="text_file_write",
+            name="Text File Write",
+            version="1.0.0",
+            description="Atomically write a UTF-8 text file.",
+            entrypoint="Data.functions.text_file_write:run",
+            input_schema={
+                "type": "object",
+                "required": ["path", "content"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                    "create_parents": {"type": "boolean"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.WRITE,),
+            filesystem_requirement=True,
+            timeout_seconds=20.0,
+            ram_expectation_mb=32,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="text_file_patch",
+            name="Text File Patch",
+            version="1.0.0",
+            description="Apply a unified diff fail-closed.",
+            entrypoint="Data.functions.text_file_patch:run",
+            input_schema={
+                "type": "object",
+                "required": ["path", "unified_diff"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "unified_diff": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.WRITE,),
+            filesystem_requirement=True,
+            timeout_seconds=20.0,
+            ram_expectation_mb=32,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="text_file_delete",
+            name="Text File Delete",
+            version="1.0.0",
+            description="Delete a local file.",
+            entrypoint="Data.functions.text_file_delete:run",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {"path": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.DELETE, SideEffect.DESTRUCTIVE),
+            filesystem_requirement=True,
+            timeout_seconds=15.0,
+            ram_expectation_mb=16,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="workspace_list",
+            name="Workspace List",
+            version="1.0.0",
+            description="List files/directories in the coding workspace.",
+            entrypoint="Data.functions.workspace_list:run",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "max_entries": {"type": "integer"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=20.0,
+            ram_expectation_mb=32,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="workspace_search",
+            name="Workspace Search",
+            version="1.0.0",
+            description="Search workspace file contents (ripgrep or Python fallback).",
+            entrypoint="Data.functions.workspace_search:run",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "path": {"type": "string"},
+                    "glob": {"type": "string"},
+                    "max_hits": {"type": "integer"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=30.0,
+            ram_expectation_mb=64,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="coding_run_tests",
+            name="Coding Run Tests",
+            version="1.0.0",
+            description="Run pytest or npm tests and capture exit code.",
+            entrypoint="Data.functions.coding_run_tests:run",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "selector": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                    "cwd": {"type": "string"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.EXECUTE,),
+            filesystem_requirement=True,
+            timeout_seconds=180.0,
+            ram_expectation_mb=256,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="git_status",
+            name="Git Status",
+            version="1.0.0",
+            description="Read git status; honest FAILED when .git missing.",
+            entrypoint="Data.functions.git_status:run",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {"path": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=20.0,
+            ram_expectation_mb=16,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="git_diff",
+            name="Git Diff",
+            version="1.0.0",
+            description="Read git diff; honest FAILED when .git missing.",
+            entrypoint="Data.functions.git_diff:run",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "path": {"type": "string"},
+                    "staged": {"type": "boolean"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=True,
+            timeout_seconds=30.0,
+            ram_expectation_mb=32,
         )
     )
     return registry
