@@ -124,7 +124,16 @@ export function createRenderer(ctx) {
     backend = null;
   }
 
-  return { init, resize, paint, getMode, getStats, dispose, scene };
+  return {
+    init,
+    resize,
+    paint,
+    getMode,
+    backend: () => mode || "dom",
+    getStats,
+    dispose,
+    scene,
+  };
 }
 
 function buildScene(scene, ctx, s) {

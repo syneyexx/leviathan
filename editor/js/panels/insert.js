@@ -7,8 +7,8 @@ import { escapeHtml } from "../util.js";
 export function createInsert(ctx) {
   return {
     id: "insert",
-    title: "Invoegen",
-    zone: "right",
+    title: "Insert",
+    zone: "left",
     place: "dock",
     host: null,
     _sig: null,

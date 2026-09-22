@@ -1,130 +1,115 @@
 /**
- * Leviathan Visual Builder — AI instructie (production-ready UI).
- * Apply only after explicit confirmation. 501 keeps the flow without writing.
+ * LEVIATHAN STUDIO — AI panel with Generate → Review → Apply.
  */
 
 export function createAi(ctx) {
-  let notes = "Nog geen resultaat. Niets wordt geschreven zonder Toepassen.";
-  let draft = "";
-  let preview = null;
+  let host;
+  let proposal = null;
+
   return {
     id: "ai",
     title: "AI",
     zone: "right",
-    place: "dock",
-    host: null,
-    _sig: null,
-    signature() {
-      return `${ctx.store.getState().sel}|${notes.length}|${preview ? 1 : 0}`;
+    bind(el) {
+      host = el;
     },
-    bind(host) {
-      this.host = host;
-      host.addEventListener("input", (event) => {
-        if (event.target.dataset?.role === "ai-instruction") draft = event.target.value;
-      });
-      host.addEventListener("click", async (event) => {
-        if (event.target.closest("[data-act='ai-clear']")) {
-          preview = null;
-          notes = "Concept gewist.";
-          this._sig = null;
-          this.render();
-          return;
-        }
-        if (!event.target.closest("[data-act='ai-apply']")) return;
-        const nodes = ctx.selection.mutable("edit");
-        const node = nodes[0] || ctx.session.primary;
-        const instruction = (host.querySelector("[data-role='ai-instruction']")?.value || draft).trim();
-        draft = instruction;
-        if (!instruction) {
-          notes = "Schrijf eerst een instructie.";
-          this._sig = null;
-          this.render();
-          return;
-        }
-        const selectionHtml = node ? node.outerHTML : "";
-        const selectionCss = node ? ctx.content.rawDecls(node) : "";
-        const scope = nodes.length > 1 ? `${nodes.length} elementen` : node ? ctx.selection.labelFor(node) : "geen selectie";
-        notes = `Bezig… (${scope})`;
-        preview = null;
-        this._sig = null;
-        this.render();
-        try {
-          const data = await ctx.api.editorAi({ selectionHtml, selectionCss, instruction, scope });
-          preview = {
-            cssDecls: data.cssDecls || null,
-            html: typeof data.html === "string" ? data.html : null,
-            notes: data.notes || "",
-          };
-          applyResult(ctx, nodes.length ? nodes : node ? [node] : [], data);
-          notes = data.notes || "Toegepast (undo beschikbaar).";
-          preview = null;
-        } catch (err) {
-          const status = err.status || err.payload?.status;
-          if (status === 501 || /501|not implemented|niet beschikbaar/i.test(String(err.message || ""))) {
-            notes = "AI-model niet verbonden (501). Instructie bewaard — er is niets geschreven.";
-          } else {
-            notes = err.payload?.notes || err.message || "AI niet beschikbaar";
-          }
-          ctx.content.setStatus(notes, "dirty");
-        }
-        this._sig = null;
-        this.render();
-      });
+    signature() {
+      return `${ctx.store.getState().sel}|${proposal?.id || ""}|${ctx.store.getState().uiEpoch}`;
     },
     render() {
-      if (!this.host) return;
-      const count = ctx.session.selected.length;
-      const label = count > 1 ? `${count} elementen` : ctx.session.primary ? ctx.selection.labelFor(ctx.session.primary) : "geen selectie";
-      this.host.innerHTML = `<p class="lvb-muted">Context: <b>${escapeNote(label)}</b>. Stuurt HTML + CSS + instructie. <b>Toepassen</b> is de enige write — undo blijft gelden.</p>
-        <textarea data-role="ai-instruction" rows="6" placeholder="Bijv. maak de titel gouden Cinzel en meer tracking…">${escapeNote(draft)}</textarea>
-        <div class="lvb-chip-row">
-          <button type="button" class="lvb-btn lvb-btn-primary" data-act="ai-apply">Toepassen</button>
-          <button type="button" class="lvb-chip" data-act="ai-clear">Wis</button>
+      if (!host) return;
+      const primary = ctx.session.primary;
+      host.innerHTML = `
+        <h3>AI Design Copilot</h3>
+        <p class="lvb-muted">Modes: Explain · Propose · Apply. Modelbeschikbaarheid is een expliciete capability.</p>
+        <div class="lvb-field"><label>Mode</label>
+          <select data-role="mode">
+            <option value="explain">Explain selection</option>
+            <option value="propose">Propose improvements</option>
+            <option value="apply">Apply instruction</option>
+          </select>
         </div>
-        ${preview?.cssDecls ? `<div class="lvb-section">Voorstel CSS</div><pre class="lvb-ai-preview">${escapeNote(JSON.stringify(preview.cssDecls, null, 2))}</pre>` : ""}
-        <p class="lvb-ai-notes">${escapeNote(notes)}</p>`;
+        <div class="lvb-field"><label>Scope</label>
+          <select data-role="scope">
+            <option value="selection">Selectie</option>
+            <option value="component">Component</option>
+            <option value="page">Pagina (expliciet)</option>
+          </select>
+        </div>
+        <div class="lvb-field" style="grid-template-columns:1fr"><label>Instructie</label>
+          <textarea data-role="instruction" rows="4" placeholder="Bijv. verbeter spacing zonder layout te breken"></textarea>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" class="lvb-btn lvb-btn-primary" data-role="generate">Genereren</button>
+          <button type="button" class="lvb-btn" data-role="apply" ${proposal ? "" : "disabled"}>Toepassen</button>
+          <button type="button" class="lvb-btn" data-role="cancel">Annuleren</button>
+        </div>
+        <div data-role="notes" class="lvb-muted" style="margin-top:10px"></div>
+        <pre data-role="diff" style="margin-top:8px;font-family:var(--studio-mono);font-size:11px;white-space:pre-wrap;color:var(--studio-text-muted)"></pre>`;
+
+      const notes = host.querySelector("[data-role='notes']");
+      const diff = host.querySelector("[data-role='diff']");
+      if (proposal) {
+        notes.textContent = proposal.notes || "Voorstel klaar voor review";
+        diff.textContent = JSON.stringify(proposal.preview || proposal.patches || {}, null, 2);
+      }
+
+      host.querySelector("[data-role='generate']").addEventListener("click", async () => {
+        const mode = host.querySelector("[data-role='mode']").value;
+        const scope = host.querySelector("[data-role='scope']").value;
+        const instruction = host.querySelector("[data-role='instruction']").value.trim();
+        notes.textContent = "Bezig…";
+        diff.textContent = "";
+        proposal = null;
+
+        if (mode === "explain") {
+          if (!primary) {
+            notes.textContent = "Geen selectie — kies een element voor deterministische uitleg.";
+            diff.textContent = "";
+            return;
+          }
+          const info = ctx.studio?.explainLayout?.(primary);
+          notes.textContent = "Deterministische uitleg (geen AI-output).";
+          diff.textContent = JSON.stringify(info, null, 2);
+          return;
+        }
+
+        try {
+          const body = {
+            instruction: instruction || mode,
+            mode,
+            scope,
+            revision: ctx.store.getState().contentRevision || 0,
+            nodeIds: ctx.selection.keys(),
+            selectionHtml: primary?.outerHTML?.slice(0, 4000) || "",
+            selectionCss: primary ? ctx.content.rawDecls(primary) : "",
+          };
+          await ctx.api.editorAi(body);
+          notes.textContent = "Onverwacht succes zonder contract";
+        } catch (err) {
+          if (err.status === 501 || err.payload?.unavailable) {
+            notes.textContent = `Unavailable: ${err.payload?.reason || err.message}. Deterministische checks en handmatige editing blijven werken.`;
+            diff.textContent = JSON.stringify(err.payload?.contract || {}, null, 2);
+            return;
+          }
+          notes.textContent = String(err.message || err);
+        }
+      });
+
+      host.querySelector("[data-role='apply']").addEventListener("click", () => {
+        if (!proposal?.patches) {
+          notes.textContent = "Geen gevalideerd voorstel om toe te passen";
+          return;
+        }
+        // Apply would be one undoable transaction — none while unavailable
+        notes.textContent = "Geen toepasbaar voorstel";
+      });
+
+      host.querySelector("[data-role='cancel']").addEventListener("click", () => {
+        proposal = null;
+        notes.textContent = "Geannuleerd — niets geschreven";
+        diff.textContent = "";
+      });
     },
   };
-}
-
-function escapeNote(text) {
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function applyResult(ctx, nodes, data) {
-  if (!data || data.error) return;
-  ctx.commands.capture("ai", () => {
-    for (const node of nodes) {
-      if (data.cssDecls && typeof data.cssDecls === "object") {
-        for (const [key, value] of Object.entries(data.cssDecls)) {
-          if (typeof value === "string") ctx.content.applyProp(node, key, value);
-        }
-      }
-      if (node?.dataset?.lvbId && typeof data.html === "string" && data.html.trim() && nodes.length === 1) {
-        const keepStyle = node.getAttribute("style");
-        const id = node.dataset.lvbId;
-        const wrap = document.createElement("div");
-        wrap.innerHTML = data.html.trim();
-        const next = wrap.firstElementChild;
-        if (next) {
-          next.dataset.lvbId = id;
-          if (keepStyle) next.setAttribute("style", keepStyle);
-          if (node.dataset.lvbComponentId) next.dataset.lvbComponentId = node.dataset.lvbComponentId;
-          node.replaceWith(next);
-          ctx.selection.replaceElement(node, next);
-          const content = ctx.content.ensure();
-          const entry = content.nodes.find((n) => n.id === id);
-          if (entry) entry.html = next.outerHTML;
-          ctx.store.setState({ content });
-          ctx.content.markContentDirty();
-        }
-      }
-    }
-  });
-  ctx.content.setStatus(data.notes || "AI toegepast", "ok");
-  ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
-  ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
 }

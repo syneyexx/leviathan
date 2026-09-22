@@ -1,11 +1,13 @@
 /**
- * Leviathan Visual Builder — boot.
+ * LEVIATHAN STUDIO — boot.
  * One module inject. Editor UI only; normal Leviathan runs do not load this file.
  */
 
 import { createApi } from "./js/api.js";
 import { registerBuiltins } from "./js/builtins.js";
 import { createCamera } from "./js/camera.js";
+import { seedStudioCapabilities, setCapability, Status } from "./js/capabilities/registry.js";
+import { createIssues } from "./js/capabilities/issues.js";
 import { createCommands } from "./js/commands.js";
 import { FILES } from "./js/constants.js";
 import { createContent } from "./js/content.js";
@@ -20,15 +22,20 @@ import { createCode } from "./js/panels/code.js";
 import { createComponents } from "./js/panels/components.js";
 import { createDiagnosticsPanel } from "./js/panels/diagnostics.js";
 import { createHelp } from "./js/panels/help.js";
+import { createHistoryPanel } from "./js/panels/history.js";
 import { createInsert } from "./js/panels/insert.js";
 import { createInspector } from "./js/panels/inspector.js";
 import { createLayers } from "./js/panels/layers.js";
 import { createMedia } from "./js/panels/media.js";
+import { createPagesPanel } from "./js/panels/pages.js";
+import { createProblemsPanel } from "./js/panels/problems.js";
 import { createTokensPanel } from "./js/panels/tokens.js";
 import { createRegistry } from "./js/registry.js";
 import { createRenderer } from "./js/renderer.js";
 import { createSelection } from "./js/selection.js";
 import { createStore } from "./js/state.js";
+import { createStudioFeatures } from "./js/studio/features.js";
+import { createViewport } from "./js/studio/viewport.js";
 import { parseTokens } from "./js/util.js";
 import { createWidgets } from "./js/widgets.js";
 
@@ -47,12 +54,19 @@ const store = createStore({
   showColumns: false,
   autoSave: true,
   breakpoint: "desktop",
+  viewMode: "design",
   page: typeof location !== "undefined" ? location.pathname || "/" : "/",
   files: Object.fromEntries(FILES.map((name) => [name, ""])),
   saved: Object.fromEntries(FILES.map((name) => [name, ""])),
   dirtyFiles: Object.fromEntries(FILES.map((name) => [name, false])),
-  content: { version: 2, entries: {}, nodes: [], components: [] },
+  content: { version: 3, entries: {}, nodes: [], components: [], meta: { ambiguous: [] } },
   contentDirty: false,
+  contentRevision: 0,
+  contentHash: "",
+  saveState: "clean",
+  saveRevision: 0,
+  savedRevision: 0,
+  saveError: null,
   activeFile: "leviathan.css",
   status: "Start…",
   statusKind: "",
@@ -60,13 +74,18 @@ const store = createStore({
   showRight: true,
   showCode: false,
   rightTab: "inspector",
+  leftTab: "layers",
   leftW: 260,
-  rightW: 340,
+  rightW: 320,
+  codeH: 200,
   sel: "",
   selCount: 0,
   canUndo: false,
   canRedo: false,
   historyLabel: "",
+  historyDepth: 0,
+  issueCount: 0,
+  issuesEpoch: 0,
   uiEpoch: 0,
 });
 
@@ -96,6 +115,8 @@ const ctx = {
     _snapGuides: null,
     _marquee: null,
     dropEl: null,
+    freePositionMode: false,
+    rendererBackend: "dom",
   },
 };
 
@@ -118,17 +139,24 @@ ctx.palette = createPalette(ctx);
 ctx.renderer = createRenderer(ctx);
 ctx.diagnostics = createDiagnostics(ctx);
 ctx.pages = createPages(ctx);
+ctx.viewport = createViewport(ctx);
+ctx.studio = createStudioFeatures(ctx);
+ctx.issues = createIssues(ctx);
+seedStudioCapabilities();
 
 const panels = [
+  createPagesPanel(ctx),
   createLayers(ctx),
-  createInspector(ctx),
   createInsert(ctx),
-  createTokensPanel(ctx),
   createComponents(ctx),
+  createInspector(ctx),
+  createTokensPanel(ctx),
   createAi(ctx),
+  createProblemsPanel(ctx),
   createDiagnosticsPanel(ctx),
   createHelp(ctx),
   createCode(ctx),
+  createHistoryPanel(ctx),
   createMedia(ctx),
 ];
 
@@ -143,8 +171,28 @@ function boot() {
     ctx.registry.attach();
     ctx.interactions.attach();
     ctx.camera.apply();
-    ctx.content.loadAll().catch((err) => {
-      ctx.content.setStatus(`API offline? Start EDIT_LAYOUT.bat — ${err.message || err}`, "dirty");
+
+    const recovery = ctx.studio.readRecoveryDraft?.();
+    if (recovery?.snap) {
+      ctx.content.setStatus("Recovery draft beschikbaar (menu → Toon recovery draft)", "dirty");
+    }
+
+    ctx.api
+      .boot()
+      .then(() => ctx.content.loadAll())
+      .then(() => {
+        ctx.issues.schedule(400);
+        setCapability("studio-shell", { status: Status.IMPLEMENTED, evidence: "chrome boot" });
+        const caps = ctx.store.getState();
+        void caps;
+      })
+      .catch((err) => {
+        ctx.content.setStatus(`API offline? Start EDIT_LAYOUT.bat — ${err.message || err}`, "dirty");
+        store.setState({ saveState: "offline" });
+      });
+
+    store.subscribe(() => {
+      if (store.getState().contentDirty || store.getState().uiEpoch) ctx.issues.schedule();
     });
   } catch (err) {
     ctx.content.setStatus(`Studio start mislukt: ${err?.message || err}`, "dirty");
@@ -155,3 +203,5 @@ if (globalThis.document) {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
 }
+
+export { ctx };

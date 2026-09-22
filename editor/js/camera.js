@@ -1,6 +1,5 @@
 /**
- * Leviathan Visual Builder — camera.
- * Zoom/pan is a visual transform on #root and is never written to saved CSS.
+ * LEVIATHAN STUDIO — camera (zoom/pan never written to saved CSS).
  */
 
 import { clamp } from "./geometry.js";
@@ -17,6 +16,15 @@ export function createCamera(ctx) {
     const rect = el.getBoundingClientRect();
     const { panX, panY } = ctx.store.getState();
     return { x: rect.left - panX, y: rect.top - panY };
+  }
+
+  function canvasInsets() {
+    const s = ctx.store.getState();
+    const left = s.showLeft ? s.leftW || 260 : 44;
+    const right = s.showRight ? s.rightW || 320 : 0;
+    const top = 48;
+    const bottom = s.showCode ? (s.codeH || 200) + 28 : 28;
+    return { left: left + 44, right, top, bottom };
   }
 
   function apply() {
@@ -63,15 +71,26 @@ export function createCamera(ctx) {
     ctx.content?.setStatus("Zoom 100%", "ok");
   }
 
+  function usableRect() {
+    const inset = canvasInsets();
+    return {
+      x: inset.left,
+      y: inset.top,
+      width: Math.max(120, window.innerWidth - inset.left - inset.right),
+      height: Math.max(120, window.innerHeight - inset.top - inset.bottom),
+    };
+  }
+
   function fitWidth() {
     const el = document.querySelector(".lv-app") || root();
     if (!el) return;
     const origin = layoutOrigin();
-    const z = clamp((window.innerWidth - 80) / Math.max(el.offsetWidth, 1), ZOOM_MIN, ZOOM_MAX);
+    const box = usableRect();
+    const z = clamp(box.width / Math.max(el.offsetWidth, 1), ZOOM_MIN, ZOOM_MAX);
     setCamera({
       zoom: z,
-      panX: (window.innerWidth - el.offsetWidth * z) / 2 - origin.x,
-      panY: 28 - origin.y,
+      panX: box.x + (box.width - el.offsetWidth * z) / 2 - origin.x,
+      panY: box.y + 12 - origin.y,
     });
     ctx.content?.setStatus("Passend op breedte", "ok");
   }
@@ -82,6 +101,7 @@ export function createCamera(ctx) {
       ctx.content?.setStatus("Geen selectie", "dirty");
       return;
     }
+    const box = usableRect();
     const union = (() => {
       let left = Infinity;
       let top = Infinity;
@@ -105,16 +125,20 @@ export function createCamera(ctx) {
     })();
     const origin = layoutOrigin();
     const z = clamp(
-      Math.min((window.innerWidth * 0.62) / Math.max(union.width, 1), (window.innerHeight * 0.62) / Math.max(union.height, 1)),
+      Math.min((box.width * 0.86) / Math.max(union.width, 1), (box.height * 0.86) / Math.max(union.height, 1)),
       ZOOM_MIN,
       ZOOM_MAX,
     );
     setCamera({
       zoom: z,
-      panX: window.innerWidth / 2 - (union.left + union.width / 2) * z - origin.x,
-      panY: window.innerHeight / 2 - (union.top + union.height / 2) * z - origin.y,
+      panX: box.x + box.width / 2 - (union.left + union.width / 2) * z - origin.x,
+      panY: box.y + box.height / 2 - (union.top + union.height / 2) * z - origin.y,
     });
     ctx.content?.setStatus("Passend op selectie", "ok");
+  }
+
+  function fitDocument() {
+    fitWidth();
   }
 
   function screenToLocal(x, y) {
@@ -131,14 +155,14 @@ export function createCamera(ctx) {
   }
 
   function setBreakpoint(id) {
-    document.body.classList.remove("lvb-bp-tablet", "lvb-bp-mobile");
-    if (id === "tablet" || id === "mobile") document.body.classList.add(`lvb-bp-${id}`);
+    if (ctx.viewport?.setBreakpoint) {
+      ctx.viewport.setBreakpoint(id);
+      return;
+    }
     ctx.store.setState({ breakpoint: id });
     ctx.content.reapply();
     ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
     ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
-    const label = id === "tablet" ? "Tablet" : id === "mobile" ? "Mobile" : "Desktop";
-    ctx.content.setStatus(`Viewport ${label}`, "ok");
   }
 
   return {
@@ -148,9 +172,12 @@ export function createCamera(ctx) {
     reset,
     fitWidth,
     fitSelection,
+    fitDocument,
     layoutOrigin,
     screenToLocal,
     localToScreen,
     setBreakpoint,
+    usableRect,
+    canvasInsets,
   };
 }

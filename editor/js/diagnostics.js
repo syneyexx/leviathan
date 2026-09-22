@@ -40,10 +40,17 @@ export function createDiagnostics(ctx) {
       timestamp: new Date().toISOString(),
       renderer: {
         backend: ctx.renderer?.getMode?.() || "dom",
-        fps: paint.fps || 0,
-        frameMs: paint.frameMs || 0,
+        /** Editor paint call frequency — not application FPS */
+        editorPaintHz: paint.fps || 0,
+        /** CPU duration of last editor paint function — not GPU time */
+        editorPaintCpuMs: paint.frameMs || 0,
         sceneNodes: paint.sceneNodes || 0,
         paintCount: paint.paintCount || 0,
+        appFps: "niet beschikbaar",
+        gpuFrameMs: paint.gpu?.lastFrameMs ?? "niet beschikbaar",
+        // legacy aliases
+        fps: paint.fps || 0,
+        frameMs: paint.frameMs || 0,
       },
       gpu: gpu
         ? {

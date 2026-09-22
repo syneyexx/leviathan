@@ -19,10 +19,17 @@ export type EditorContentEntry = {
   zIndex?: string | number;
   styles?: Record<string, string>;
   breakpoints?: Partial<Record<EditorBreakpoint, Record<string, string>>>;
+  nodeId?: string;
+  scope?: string;
+  page?: string;
+  ambiguous?: boolean;
+  legacyKey?: string;
+  selector?: string;
 };
 
 export type EditorContentNode = {
   id: string;
+  nodeId?: string;
   label?: string;
   parent?: string;
   html: string;
@@ -41,9 +48,12 @@ export type EditorComponent = {
 
 export type EditorContentFile = {
   version?: number;
+  revision?: number;
+  docId?: string;
   entries?: Record<string, EditorContentEntry>;
   nodes?: EditorContentNode[];
   components?: EditorComponent[];
+  meta?: { ambiguous?: Array<{ key: string; reason?: string; hint?: string }> };
 };
 
 const CONTENT_URL = "/lv-editor-content.json";
@@ -110,16 +120,43 @@ function applyEntry(el: Element, entry: EditorContentEntry): void {
   if (applied.length) breakpointProps.set(htmlEl, applied);
 }
 
+function queryEntryNodes(key: string, entry: EditorContentEntry): Element[] {
+  if (key.startsWith("node:")) {
+    const id = key.slice(5);
+    const el = document.querySelector(`[data-lvb-node="${CSS.escape(id)}"]`);
+    return el ? [el] : [];
+  }
+  if (key.startsWith("shell:")) {
+    try {
+      return [...document.querySelectorAll(key.slice(6))];
+    } catch {
+      return [];
+    }
+  }
+  if (entry.nodeId) {
+    const el = document.querySelector(`[data-lvb-node="${CSS.escape(entry.nodeId)}"]`);
+    if (el) return [el];
+  }
+  // Legacy selectors: apply only when exactly one match (avoid multi-hit class/img/nth-child)
+  try {
+    const nodes = [...document.querySelectorAll(key)];
+    if (entry.ambiguous) return nodes.length === 1 ? nodes : [];
+    return nodes.length === 1 ? nodes : nodes.length > 1 ? [] : nodes;
+  } catch {
+    return [];
+  }
+}
+
 function applyEntries(content: EditorContentFile): void {
   const entries = content.entries ?? {};
-  for (const [selector, entry] of Object.entries(entries)) {
-    let nodes: NodeListOf<Element>;
-    try {
-      nodes = document.querySelectorAll(selector);
-    } catch {
-      continue;
-    }
-    nodes.forEach((el) => applyEntry(el, entry));
+  for (const [key, entry] of Object.entries(entries)) {
+    const nodes = queryEntryNodes(key, entry);
+    nodes.forEach((el) => {
+      if (entry.nodeId && el instanceof HTMLElement && !el.dataset.lvbNode) {
+        el.dataset.lvbNode = entry.nodeId;
+      }
+      applyEntry(el, entry);
+    });
   }
 }
 
@@ -140,6 +177,7 @@ function mountNodes(content: EditorContentFile): void {
       el = wrap.firstElementChild as HTMLElement | null;
       if (!el) continue;
       el.dataset.lvbId = node.id;
+      el.dataset.lvbNode = node.nodeId || node.id;
       if (node.label) el.dataset.lvbLabel = node.label;
       if (node.componentId) el.dataset.lvbComponentId = node.componentId;
       if (node.variant) el.dataset.lvbVariant = node.variant;

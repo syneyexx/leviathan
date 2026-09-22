@@ -1,0 +1,4 @@
+.studio-journal/
+.studio-checkpoints/
+artifacts/*.png
+artifacts/*.webm

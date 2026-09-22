@@ -3,10 +3,11 @@
  * Paint is delegated to ctx.renderer (WebGPU scene-graph or DOM fallback).
  */
 
-import { BREAKPOINTS, LAYOUT_STORAGE_KEY } from "./constants.js";
+import { BREAKPOINTS } from "./constants.js";
 import { EDITOR_PAGES } from "./pages.js";
+import { icon } from "./studio/icons.js";
 
-const LAYOUT_KEY = LAYOUT_STORAGE_KEY;
+const LAYOUT_KEY = "lvb.dock.v2";
 
 export function createChrome(ctx, panels) {
   const panelMap = new Map(panels.map((panel) => [panel.id, panel]));
@@ -51,6 +52,12 @@ export function createChrome(ctx, panels) {
     ui.file = $("[data-role='file']");
     ui.palette = $("[data-role='palette']");
     ui.pageSwitch = $("[data-role='page-switch']");
+    ui.savePill = $("[data-role='save-pill']");
+    ui.selMeta = $("[data-role='sel-meta']");
+    ui.rendererMeta = $("[data-role='renderer-meta']");
+    ui.hud = $("[data-role='hud']");
+    ui.leftTabs = $("[data-role='left-tabs']");
+    ui.bottomTabs = $("[data-role='bottom-tabs']");
 
     for (const panel of panels) {
       if (panel.zone === "modal") {
@@ -78,73 +85,86 @@ export function createChrome(ctx, panels) {
   }
 
   function shellHtml() {
-    return `<div class="lvb-bar">
-        <div class="lvb-brand">Leviathan</div>
+    return `<div class="lvb-bar" role="toolbar" aria-label="Studio">
+        <div class="lvb-brand">LEVIATHAN <span>Studio</span></div>
         <div class="lvb-sep"></div>
-        <button type="button" class="lvb-btn" data-nav="/">Command</button>
-        <button type="button" class="lvb-btn" data-nav="/chat">Chat</button>
-        <button type="button" class="lvb-btn" data-nav="/research">Research</button>
-        <button type="button" class="lvb-btn" data-nav="/settings">Settings</button>
-        <div class="lvb-sep"></div>
-        <label class="lvb-page-switch" title="Leviathan pagina">
-          <span>Pagina</span>
-          <select data-role="page-switch">
+        <label class="lvb-page-switch" title="Pagina">
+          <span>Page</span>
+          <select data-role="page-switch" aria-label="Pagina">
             ${EDITOR_PAGES.map((p) => `<option value="${p.path}">${p.label}</option>`).join("")}
           </select>
         </label>
         <div class="lvb-sep"></div>
-        <button type="button" class="lvb-btn" data-insert="text" title="Tekst">+T</button>
-        <button type="button" class="lvb-btn" data-act="add-image" title="Image">+Img</button>
-        <button type="button" class="lvb-btn" data-insert="box" title="Box">+Box</button>
-        <button type="button" class="lvb-btn" data-insert="button" title="Knop">+Btn</button>
-        <div class="lvb-sep"></div>
-        <div class="lvb-seg" data-role="breakpoints">
-          ${Object.values(BREAKPOINTS)
-            .map((bp) => `<button type="button" class="lvb-mini" data-bp="${bp.id}">${bp.label}</button>`)
-            .join("")}
+        <div class="lvb-seg" data-role="view-mode">
+          <button type="button" class="lvb-mini is-on" data-act="mode-design" title="Design">Design</button>
+          <button type="button" class="lvb-mini" data-act="mode-preview" title="Preview">Preview</button>
         </div>
         <div class="lvb-sep"></div>
-        <button type="button" class="lvb-btn is-on" data-act="toggle-edit">Edit aan</button>
-        <button type="button" class="lvb-btn" data-act="undo">Undo</button>
-        <button type="button" class="lvb-btn" data-act="redo">Redo</button>
-        <button type="button" class="lvb-btn" data-act="reload">Herladen</button>
-        <button type="button" class="lvb-btn" data-act="palette">⌘K</button>
-        <button type="button" class="lvb-btn lvb-btn-primary" data-act="save">Opslaan</button>
+        <button type="button" class="lvb-btn" data-act="undo" title="Undo" aria-label="Undo">${icon("undo")}</button>
+        <button type="button" class="lvb-btn" data-act="redo" title="Redo" aria-label="Redo">${icon("redo")}</button>
+        <div class="lvb-bar-spacer"></div>
+        <div class="lvb-save-pill" data-role="save-pill" data-state="clean" title="Opslagstatus">clean</div>
+        <button type="button" class="lvb-btn" data-act="palette" title="Command palette">⌘K</button>
+        <button type="button" class="lvb-btn" data-act="menu-more" title="Meer">${icon("menu")}</button>
+        <button type="button" class="lvb-btn lvb-btn-primary" data-act="save" title="Opslaan">${icon("save")} Save</button>
       </div>
-      <div class="lvb-rail">
-        <button type="button" class="lvb-tool is-on" data-tool="select" title="Selecteren (V)">V</button>
-        <button type="button" class="lvb-tool" data-tool="hand" title="Hand (H)">H</button>
-        <button type="button" class="lvb-tool" data-tool="rotate" title="Roteren (R)">R</button>
-        <button type="button" class="lvb-tool" data-tool="measure" title="Meten (M)">M</button>
+      <div class="lvb-rail" role="toolbar" aria-label="Tools">
+        <button type="button" class="lvb-tool is-on" data-tool="select" title="Select (V)" aria-label="Select">${icon("select")}</button>
+        <button type="button" class="lvb-tool" data-tool="hand" title="Hand (H)" aria-label="Hand">${icon("hand")}</button>
+        <button type="button" class="lvb-tool" data-insert="box" title="Frame / insert" aria-label="Insert frame">${icon("frame")}</button>
+        <button type="button" class="lvb-tool" data-insert="text" title="Text" aria-label="Insert text">${icon("text")}</button>
+        <button type="button" class="lvb-tool" data-tool="measure" title="Measure (M)" aria-label="Measure">${icon("measure")}</button>
+        <div class="lvb-sep" style="height:1px;width:24px;margin:6px 0"></div>
+        <button type="button" class="lvb-tool" data-tool="rotate" title="Rotate (R)" aria-label="Rotate">R</button>
       </div>
-      <aside class="lvb-dock lvb-dock-left is-open" data-role="dock-left">
+      <aside class="lvb-dock lvb-dock-left is-open" data-role="dock-left" aria-label="Left panel">
         <div class="lvb-dock-resizer" data-resize="left"></div>
+        <div class="lvb-dock-head">
+          <div class="lvb-tabs" data-role="left-tabs"></div>
+        </div>
         <div class="lvb-dock-body" data-role="left-body"></div>
       </aside>
-      <aside class="lvb-dock lvb-dock-right is-open" data-role="dock-right">
+      <aside class="lvb-dock lvb-dock-right is-open" data-role="dock-right" aria-label="Inspector">
         <div class="lvb-dock-resizer" data-resize="right"></div>
         <div class="lvb-dock-head">
           <div class="lvb-tabs" data-role="tabs"></div>
-          <button type="button" class="lvb-mini" data-act="float-tab" title="Zweven">↗</button>
+          <button type="button" class="lvb-mini" data-act="float-tab" title="Float panel">↗</button>
         </div>
         <div class="lvb-dock-body" data-role="right-body"></div>
       </aside>
-      <section class="lvb-code" data-role="code" hidden>
+      <section class="lvb-code" data-role="code" hidden aria-label="Bottom panel">
+        <div class="lvb-dock-head">
+          <div class="lvb-tabs" data-role="bottom-tabs">
+            <button type="button" class="lvb-tab is-on" data-bottom="code">Code</button>
+            <button type="button" class="lvb-tab" data-bottom="history">History</button>
+            <button type="button" class="lvb-tab" data-bottom="diagnostics">Diagnostics</button>
+          </div>
+          <div class="lvb-seg" data-role="breakpoints">
+            ${Object.values(BREAKPOINTS)
+              .map((bp) => `<button type="button" class="lvb-mini" data-bp="${bp.id}">${bp.label}</button>`)
+              .join("")}
+          </div>
+        </div>
         <div data-role="code-body"></div>
       </section>
-      <div class="lvb-statusbar">
-        <button type="button" class="lvb-mini" data-act="zoom-out">−</button>
+      <div class="lvb-statusbar" role="status">
+        <button type="button" class="lvb-mini" data-act="zoom-out" aria-label="Zoom out">−</button>
         <button type="button" class="lvb-zoom" data-role="zoom" data-act="zoom-reset">100%</button>
-        <button type="button" class="lvb-mini" data-act="zoom-in">+</button>
-        <span data-role="tool-label">Selecteren</span>
+        <button type="button" class="lvb-mini" data-act="zoom-in" aria-label="Zoom in">+</button>
+        <span data-role="tool-label">Select</span>
+        <span data-role="sel-meta"></span>
         <button type="button" class="lvb-mini" data-act="toggle-snap">Snap</button>
         <button type="button" class="lvb-mini" data-act="toggle-grid">Grid</button>
-        <button type="button" class="lvb-mini" data-act="toggle-columns">Kolommen</button>
-        <button type="button" class="lvb-mini" data-act="toggle-layers">Lagen</button>
-        <button type="button" class="lvb-mini" data-act="toggle-dock">Inspector</button>
-        <button type="button" class="lvb-mini" data-act="toggle-code">Code</button>
+        <button type="button" class="lvb-mini" data-act="toggle-layers">Layers</button>
+        <button type="button" class="lvb-mini" data-act="toggle-dock">Inspect</button>
+        <button type="button" class="lvb-mini" data-act="toggle-code">Panel</button>
+        <button type="button" class="lvb-mini" data-act="preset-studio">Studio</button>
+        <button type="button" class="lvb-mini" data-act="preset-focus">Focus</button>
+        <button type="button" class="lvb-mini" data-act="preset-code">Code</button>
         <span class="lvb-status" data-role="status">Start…</span>
+        <span data-role="renderer-meta"></span>
       </div>
+      <div class="lvb-hud" data-role="hud" hidden></div>
       <div class="lvb-canvas-grid" data-role="grid" hidden>
         <div class="lvb-pixel-grid" data-role="pixel-grid" hidden></div>
         <div class="lvb-columns" data-role="column-grid" hidden></div>
@@ -174,8 +194,8 @@ export function createChrome(ctx, panels) {
     ui.left.style.width = `${s.leftW || 260}px`;
     ui.right.style.width = `${s.rightW || 320}px`;
     ui.zoom.textContent = `${Math.round((s.zoom || 1) * 100)}%`;
-    const tools = { select: "Selecteren", hand: "Hand", rotate: "Roteren", measure: "Meten" };
-    ui.toolLabel.textContent = tools[s.tool] || "Selecteren";
+    const tools = { select: "Select", hand: "Hand", rotate: "Rotate", measure: "Measure" };
+    ui.toolLabel.textContent = tools[s.tool] || "Select";
     const primary = ctx.session.primary;
     const count = ctx.session.selected.length;
     let selInfo = "";
@@ -184,20 +204,31 @@ export function createChrome(ctx, panels) {
       const z = s.zoom || 1;
       const w = Math.round(r.width / z);
       const h = Math.round(r.height / z);
-      selInfo = count > 1 ? `${count} geselecteerd · ${w}×${h}` : `${w}×${h}`;
+      selInfo = count > 1 ? `${count} selected · ${w}×${h}` : `${ctx.selection.labelFor(primary)} · ${w}×${h}`;
     }
-    const dirty = s.contentDirty || Object.values(s.dirtyFiles || {}).some(Boolean);
+    if (ui.selMeta) ui.selMeta.textContent = selInfo;
+    const saveState = s.saveState || (s.contentDirty ? "dirty" : "clean");
+    if (ui.savePill) {
+      ui.savePill.dataset.state = saveState;
+      ui.savePill.textContent = saveState;
+    }
+    const dirty = s.contentDirty || Object.values(s.dirtyFiles || {}).some(Boolean) || saveState === "dirty" || saveState === "saving";
     const base = s.status || "";
-    ui.status.textContent = [selInfo, dirty ? "● niet opgeslagen" : "", base].filter(Boolean).join(" · ");
+    ui.status.textContent = base;
     ui.status.className = `lvb-status${s.statusKind ? ` is-${s.statusKind}` : ""}${dirty ? " is-dirty" : ""}`;
+    if (ui.rendererMeta) {
+      const backend = ctx.renderer?.backend?.() || ctx.session.rendererBackend || "dom";
+      ui.rendererMeta.textContent = `renderer:${backend}`;
+    }
     root.querySelectorAll("[data-tool]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.tool === s.tool));
     root.querySelectorAll("[data-bp]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.bp === s.breakpoint));
     root.querySelector("[data-act='toggle-snap']")?.classList.toggle("is-on", s.snap);
     root.querySelector("[data-act='toggle-grid']")?.classList.toggle("is-on", s.showGrid);
-    root.querySelector("[data-act='toggle-columns']")?.classList.toggle("is-on", s.showColumns);
     root.querySelector("[data-act='toggle-layers']")?.classList.toggle("is-on", s.showLeft);
     root.querySelector("[data-act='toggle-dock']")?.classList.toggle("is-on", s.showRight);
     root.querySelector("[data-act='toggle-code']")?.classList.toggle("is-on", s.showCode);
+    root.querySelector("[data-act='mode-design']")?.classList.toggle("is-on", (s.viewMode || "design") === "design");
+    root.querySelector("[data-act='mode-preview']")?.classList.toggle("is-on", s.viewMode === "preview");
     document.body.classList.toggle("lvb-editing", s.enabled !== false);
     document.body.classList.remove("lvb-tool-select", "lvb-tool-hand", "lvb-tool-rotate", "lvb-tool-measure");
     document.body.classList.add(`lvb-tool-${s.tool || "select"}`);
@@ -209,15 +240,50 @@ export function createChrome(ctx, panels) {
       }
     }
     placeFrame();
-    ui.tabs.innerHTML = rightTabs()
+    // Right tabs: Design / Inspect / AI first, then others
+    const preferred = ["inspector", "ai", "tokens", "components", "diagnostics", "help"];
+    const tabs = rightTabs().slice().sort((a, b) => preferred.indexOf(a.id) - preferred.indexOf(b.id));
+    ui.tabs.innerHTML = tabs
       .map((panel) => `<button type="button" class="lvb-tab${s.rightTab === panel.id ? " is-on" : ""}" data-tab="${panel.id}">${panel.title}</button>`)
       .join("");
+    if (ui.leftTabs) {
+      const leftPanels = panels.filter((p) => p.zone === "left");
+      ui.leftTabs.innerHTML = leftPanels
+        .map((p, i) => `<button type="button" class="lvb-tab${(s.leftTab || leftPanels[0]?.id) === p.id || (!s.leftTab && i === 0) ? " is-on" : ""}" data-left-tab="${p.id}">${p.title}</button>`)
+        .join("");
+      for (const panel of leftPanels) {
+        if (!panel.host) continue;
+        panel.host.hidden = (s.leftTab || leftPanels[0]?.id) !== panel.id;
+      }
+    }
     for (const panel of panels) {
       if (!panel.host || panel.zone === "modal") continue;
       if (panel.place === "float") continue;
       if (panel.zone === "right") panel.host.hidden = s.rightTab !== panel.id;
-      else panel.host.hidden = false;
+      else if (panel.zone === "bottom") panel.host.hidden = false;
     }
+    updateHud();
+  }
+
+  function updateHud() {
+    if (!ui.hud) return;
+    const primary = ctx.session.primary;
+    if (!primary?.isConnected || ctx.session.phase !== "idle") {
+      ui.hud.hidden = true;
+      return;
+    }
+    const r = primary.getBoundingClientRect();
+    ui.hud.hidden = false;
+    ui.hud.innerHTML = `
+      <button type="button" class="lvb-mini" data-hud="align-left" title="Align left">⫷</button>
+      <button type="button" class="lvb-mini" data-hud="align-center" title="Align center">☰</button>
+      <button type="button" class="lvb-mini" data-hud="duplicate" title="Duplicate">⧉</button>
+      <button type="button" class="lvb-mini" data-hud="component" title="Component">◆</button>
+      <button type="button" class="lvb-mini" data-hud="why" title="Why is this here?">?</button>`;
+    const top = Math.max(56, r.top - 36);
+    const left = Math.min(window.innerWidth - 220, Math.max(60, r.left));
+    ui.hud.style.top = `${top}px`;
+    ui.hud.style.left = `${left}px`;
   }
 
   function visible(panel) {
@@ -446,16 +512,16 @@ export function createChrome(ctx, panels) {
   }
 
   function placeFrame() {
-    const bar = root.querySelector(".lvb-bar");
-    const rail = root.querySelector(".lvb-rail");
-    if (!bar) return;
-    const top = bar.offsetHeight + 8;
-    const maxH = `calc(100vh - ${top + 56}px)`;
-    ui.left.style.top = `${top}px`;
-    ui.right.style.top = `${top}px`;
-    ui.left.style.maxHeight = maxH;
-    ui.right.style.maxHeight = maxH;
-    if (rail) rail.style.top = `${top}px`;
+    const top = 48;
+    const maxH = `calc(100vh - ${top + 28}px)`;
+    if (ui.left) {
+      ui.left.style.top = `${top}px`;
+      ui.left.style.maxHeight = maxH;
+    }
+    if (ui.right) {
+      ui.right.style.top = `${top}px`;
+      ui.right.style.maxHeight = maxH;
+    }
   }
 
   function wire() {
@@ -469,6 +535,26 @@ export function createChrome(ctx, panels) {
       if (nav) {
         event.preventDefault();
         ctx.pages?.go?.(nav.dataset.nav) || window.location.assign(nav.dataset.nav);
+        return;
+      }
+      const leftTab = event.target.closest("[data-left-tab]");
+      if (leftTab) {
+        ctx.store.setState({ leftTab: leftTab.dataset.leftTab, showLeft: true });
+        saveLayout();
+        return;
+      }
+      const hud = event.target.closest("[data-hud]");
+      if (hud) {
+        const action = hud.dataset.hud;
+        if (action === "align-left") ctx.registry.run("align-left");
+        if (action === "align-center") ctx.registry.run("align-center");
+        if (action === "duplicate") ctx.registry.run("duplicate");
+        if (action === "component") ctx.registry.run("component-create");
+        if (action === "why") {
+          const info = ctx.studio?.explainLayout?.(ctx.session.primary);
+          ctx.content.setStatus(info?.rules?.join(" · ") || "Geen layoutinfo", "ok");
+          ctx.store.setState({ rightTab: "inspector", showRight: true });
+        }
         return;
       }
       const tab = event.target.closest("[data-tab]");
@@ -501,13 +587,8 @@ export function createChrome(ctx, panels) {
       }
       const act = event.target.closest("[data-act]")?.dataset.act;
       if (!act || event.target.closest(".lvb-panel-host") || event.target.closest(".lvb-media")) return;
-      if (act === "toggle-edit") {
-        const next = ctx.store.getState().enabled === false;
-        ctx.store.setState({ enabled: next });
-        const btn = event.target.closest("[data-act='toggle-edit']");
-        if (btn) btn.textContent = next ? "Edit aan" : "Edit uit";
-        document.body.classList.toggle("lvb-editing", next);
-      }
+      if (act === "mode-design") ctx.viewport?.setMode?.("design");
+      if (act === "mode-preview") ctx.viewport?.setMode?.("preview");
       if (act === "undo") ctx.commands.undo();
       if (act === "reload") ctx.content.loadAll().catch((err) => ctx.content.setStatus(String(err.message || err), "dirty"));
       if (act === "redo") ctx.commands.redo();
@@ -515,6 +596,38 @@ export function createChrome(ctx, panels) {
       if (act === "palette") ctx.palette.toggle();
       if (act === "add-image") openMedia("insert");
       if (act === "float-tab") floatTab();
+      if (act === "menu-more") {
+        showMenu(event.clientX, event.clientY, [
+          { id: "reload", label: "Herladen van schijf", run: () => ctx.content.loadAll() },
+          { id: "checkpoint", label: "Named checkpoint…", run: () => {
+            const name = prompt("Checkpoint naam");
+            if (name) ctx.studio?.createCheckpoint?.(name);
+          }},
+          { id: "stress", label: "Responsive Stress Lab", run: () => ctx.studio?.runStressLab?.().then((r) => ctx.content.setStatus(`${r.findings?.length || 0} stress findings`, "ok")) },
+          { id: "branch", label: "Nieuwe design branch", run: () => {
+            const br = ctx.studio?.createBranch?.();
+            ctx.content.setStatus(br ? `Branch ${br.name}` : "Branch mislukt", "ok");
+          }},
+          { id: "handoff", label: "Export change package", run: () => {
+            const pkg = ctx.studio?.exportChangePackage?.();
+            if (pkg) navigator.clipboard?.writeText?.(JSON.stringify(pkg, null, 2));
+            ctx.content.setStatus("Change package naar clipboard", "ok");
+          }},
+          { id: "recovery", label: "Toon recovery draft", run: () => {
+            const d = ctx.studio?.readRecoveryDraft?.();
+            ctx.content.setStatus(d ? `Recovery ${new Date(d.savedAt).toLocaleString()}` : "Geen recovery", d ? "ok" : "dirty");
+          }},
+          { sep: true },
+          { id: "edit-toggle", label: ctx.store.getState().enabled === false ? "Edit aan" : "Edit uit", run: () => {
+            const next = ctx.store.getState().enabled === false;
+            ctx.store.setState({ enabled: next });
+            document.body.classList.toggle("lvb-editing", next);
+          }},
+        ]);
+      }
+      if (act === "preset-studio") applyPreset("studio");
+      if (act === "preset-focus") applyPreset("focus");
+      if (act === "preset-code") applyPreset("code");
       if (act === "zoom-in") ctx.camera.zoomAt(window.innerWidth / 2, window.innerHeight / 2, ctx.store.getState().zoom * 1.1);
       if (act === "zoom-out") ctx.camera.zoomAt(window.innerWidth / 2, window.innerHeight / 2, ctx.store.getState().zoom / 1.1);
       if (act === "zoom-reset") ctx.camera.reset();
