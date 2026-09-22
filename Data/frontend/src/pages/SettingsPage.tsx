@@ -1,28 +1,21 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { media } from "../assets/media";
-import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
 const CATEGORIES = [
-  { id: "algemeen", label: "Algemeen", desc: "App defaults & behavior" },
-  { id: "llm-gedrag", label: "LLM Gedrag", desc: "Response style & limits" },
-  { id: "llm-studio", label: "LLM Studio", desc: "Studio & playground prefs" },
-  { id: "rechten", label: "Rechten & Security", desc: "Access & audit" },
-  { id: "benchmarks", label: "Model Benchmarks", desc: "Eval defaults" },
-  { id: "mediacenter", label: "Mediacenter", desc: "Media defaults" },
-  { id: "opslag", label: "Opslag", desc: "Storage & backups" },
-  { id: "python", label: "Python & Runtime", desc: "Runtime & acceleration" },
-  { id: "settings-console", label: "Console", desc: "Operator console" },
-  { id: "logs", label: "Logs", desc: "Retention & verbosity" },
+  { id: "algemeen", label: "Algemeen", desc: "App defaults & behavior", to: "/settings" },
+  { id: "llm-gedrag", label: "LLM Gedrag", desc: "Response style & limits", to: "/settings/llm-gedrag" },
+  { id: "llm-studio", label: "LLM Studio", desc: "Studio & playground prefs", to: "/settings/llm-studio" },
+  { id: "rechten", label: "Rechten & Security", desc: "Access & audit", to: "/settings/rechten" },
+  { id: "benchmarks", label: "Model Benchmarks", desc: "Eval defaults", to: "/settings/benchmarks" },
+  { id: "mediacenter", label: "Mediacenter", desc: "Media defaults", to: "/settings/mediacenter" },
+  { id: "opslag", label: "Opslag", desc: "Storage & backups", to: "/settings/opslag" },
+  { id: "python", label: "Python & Runtime", desc: "Runtime & acceleration", to: "/settings/python" },
+  { id: "settings-console", label: "Console", desc: "Operator console", to: "/settings/console" },
+  { id: "logs", label: "Logs", desc: "Retention & verbosity", to: "/settings/logs" },
 ] as const;
-
-type CategoryId = (typeof CATEGORIES)[number]["id"];
-
-function isCategoryId(value: string | null): value is CategoryId {
-  return CATEGORIES.some((item) => item.id === value);
-}
 
 const INTEGRATIONS = [
   { name: "OpenAI", status: "Connected" },
@@ -37,9 +30,7 @@ type ToggleState = Record<string, boolean>;
 
 export function SettingsPage() {
   const toast = useAppToast();
-  const [params, setParams] = useSearchParams();
-  const tab = params.get("tab");
-  const category: CategoryId = isCategoryId(tab) ? tab : "algemeen";
+  const navigate = useNavigate();
   const [appName, setAppName] = useState("LEVIATHAN");
   const [toggles, setToggles] = useState<ToggleState>({
     autoSave: true,
@@ -64,13 +55,6 @@ export function SettingsPage() {
 
   const setToggle = (key: string) => {
     setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const selectCategory = (id: CategoryId) => {
-    const next = new URLSearchParams(params);
-    if (id === "algemeen") next.delete("tab");
-    else next.set("tab", id);
-    setParams(next, { replace: true });
   };
 
   return (
@@ -105,16 +89,14 @@ export function SettingsPage() {
           </div>
         </section>
 
-        <SubMenu />
-
         <div className="lv-settings-layout">
           <aside className="lv-panel lv-settings-nav">
             {CATEGORIES.map((item) => (
               <button
                 key={item.id}
-                className={`lv-settings-nav-item${category === item.id ? " is-active" : ""}`}
+                className={`lv-settings-nav-item${item.id === "algemeen" ? " is-active" : ""}`}
                 type="button"
-                onClick={() => selectCategory(item.id)}
+                onClick={() => navigate(item.to)}
               >
                 <strong>{item.label}</strong>
                 <small>{item.desc}</small>
@@ -124,7 +106,7 @@ export function SettingsPage() {
 
           <div className="lv-settings-grid">
             <article className="lv-panel lv-settings-card">
-              <div className="lv-section-label">General</div>
+              <div className="lv-section-label">Algemeen</div>
               <div className="lv-form-field">
                 <label htmlFor="app-name">Application Name</label>
                 <input
@@ -137,9 +119,9 @@ export function SettingsPage() {
               </div>
               <div className="lv-form-field">
                 <label htmlFor="language">Language</label>
-                <select id="language" className="lv-select" defaultValue="en">
-                  <option value="en">English</option>
+                <select id="language" className="lv-select" defaultValue="nl">
                   <option value="nl">Nederlands</option>
+                  <option value="en">English</option>
                   <option value="de">Deutsch</option>
                 </select>
               </div>
@@ -158,12 +140,7 @@ export function SettingsPage() {
                   ["minimized", "Start Minimized"],
                   ["confirmDanger", "Confirm Dangerous Actions"],
                 ].map(([key, label]) => (
-                  <button
-                    key={key}
-                    className="lv-toggle"
-                    type="button"
-                    onClick={() => setToggle(key)}
-                  >
+                  <button key={key} className="lv-toggle" type="button" onClick={() => setToggle(key)}>
                     <span className={`lv-switch${toggles[key] ? " is-on" : ""}`} />
                     {label}
                   </button>
@@ -175,21 +152,18 @@ export function SettingsPage() {
               <div className="lv-section-label">Performance</div>
               {(
                 [
-                  ["concurrent", "Max Concurrent Tasks", 1, 16, ""],
-                  ["timeout", "Request Timeout", 30, 300, "s"],
-                  ["memory", "Max Memory Usage", 20, 100, "%"],
-                  ["cpu", "CPU Usage Limit", 20, 100, "%"],
+                  ["concurrent", "Concurrent Jobs", 1, 16],
+                  ["timeout", "Timeout (s)", 30, 600],
+                  ["memory", "Memory Cap %", 20, 100],
+                  ["cpu", "CPU Cap %", 20, 100],
                 ] as const
-              ).map(([key, label, min, max, suffix]) => (
-                <div key={key} className="lv-slider-row">
-                  <header>
-                    <span>{label}</span>
-                    <strong>
-                      {sliders[key]}
-                      {suffix}
-                    </strong>
-                  </header>
+              ).map(([key, label, min, max]) => (
+                <div key={key} className="lv-form-field">
+                  <label htmlFor={key}>
+                    {label}: {sliders[key]}
+                  </label>
                   <input
+                    id={key}
                     type="range"
                     min={min}
                     max={max}
@@ -202,16 +176,11 @@ export function SettingsPage() {
               ))}
               <div className="lv-toggle-stack">
                 {[
-                  ["quantization", "Enable Model Quantization"],
-                  ["flashAttention", "Use Flash Attention"],
-                  ["lowVram", "Optimize for Low VRAM"],
+                  ["quantization", "Quantization"],
+                  ["flashAttention", "Flash Attention"],
+                  ["lowVram", "Low VRAM Mode"],
                 ].map(([key, label]) => (
-                  <button
-                    key={key}
-                    className="lv-toggle"
-                    type="button"
-                    onClick={() => setToggle(key)}
-                  >
+                  <button key={key} className="lv-toggle" type="button" onClick={() => setToggle(key)}>
                     <span className={`lv-switch${toggles[key] ? " is-on" : ""}`} />
                     {label}
                   </button>
@@ -220,121 +189,44 @@ export function SettingsPage() {
             </article>
 
             <article className="lv-panel lv-settings-card">
-              <div className="lv-section-label">Data & Storage</div>
-              <div className="lv-form-field">
-                <label htmlFor="data-dir">Data Directory</label>
-                <input
-                  id="data-dir"
-                  className="lv-input"
-                  style={{ width: "100%" }}
-                  defaultValue="/Data/backend/data"
-                />
-              </div>
-              <div className="lv-form-field">
-                <label htmlFor="cache-dir">Cache Directory</label>
-                <input
-                  id="cache-dir"
-                  className="lv-input"
-                  style={{ width: "100%" }}
-                  defaultValue="/Data/backend/cache"
-                />
-              </div>
-              <div className="lv-form-field">
-                <label htmlFor="cache-size">Max Cache Size</label>
-                <input id="cache-size" className="lv-input" defaultValue="50 GB" />
-              </div>
-              <div className="lv-form-field">
-                <label htmlFor="backup-freq">Backup Frequency</label>
-                <select id="backup-freq" className="lv-select" defaultValue="daily">
-                  <option value="hourly">Hourly</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                </select>
-              </div>
-              <div className="lv-detail-actions">
-                <button className="lv-btn" type="button" onClick={() => toast("Open Directory")}>
-                  Open Directory
-                </button>
-                <button className="lv-btn lv-btn-danger" type="button" onClick={() => toast("Run Cleanup")}>
-                  Run Cleanup
-                </button>
-                <button className="lv-btn" type="button" onClick={() => toast("Create Backup")}>
-                  Create Backup
-                </button>
-                <button className="lv-btn" type="button" onClick={() => toast("Restore Backup")}>
-                  Restore Backup
-                </button>
-              </div>
-            </article>
-
-            <article className="lv-panel lv-settings-card span-2">
               <div className="lv-section-label">API & Integrations</div>
-              {INTEGRATIONS.map((item) => (
-                <div key={item.name} className="lv-integration-row">
-                  <strong style={{ color: "var(--lv-text-bright)" }}>{item.name}</strong>
-                  <span className="lv-model-status">
-                    <span
-                      className={`lv-status-dot ${item.status === "Connected" ? "ready" : "failed"}`}
-                    />
-                    {item.status}
-                  </span>
-                  <button className="lv-btn" type="button" onClick={() => toast(`Configure ${item.name}`)}>
-                    Configure
+              <div className="lv-toggle-stack">
+                {INTEGRATIONS.map((item) => (
+                  <button
+                    key={item.name}
+                    className="lv-toggle"
+                    type="button"
+                    onClick={() => toast(`${item.name}: ${item.status}`)}
+                  >
+                    <span className={`lv-switch${item.status === "Connected" ? " is-on" : ""}`} />
+                    {item.name}
+                    <small className="lv-muted" style={{ marginLeft: "auto" }}>
+                      {item.status}
+                    </small>
                   </button>
-                </div>
-              ))}
+                ))}
+              </div>
             </article>
 
             <article className="lv-panel lv-settings-card">
               <div className="lv-section-label">Notifications</div>
               <div className="lv-toggle-stack">
                 {[
-                  ["taskComplete", "Task Completion"],
-                  ["errors", "Errors & Failures"],
-                  ["modelStatus", "Model Status Changes"],
-                  ["longRunning", "Long Running Tasks"],
+                  ["taskComplete", "Task Complete"],
+                  ["errors", "Errors"],
+                  ["modelStatus", "Model Status"],
+                  ["longRunning", "Long Running Jobs"],
                   ["systemUpdates", "System Updates"],
                 ].map(([key, label]) => (
-                  <button
-                    key={key}
-                    className="lv-toggle"
-                    type="button"
-                    onClick={() => setToggle(key)}
-                  >
+                  <button key={key} className="lv-toggle" type="button" onClick={() => setToggle(key)}>
                     <span className={`lv-switch${toggles[key] ? " is-on" : ""}`} />
                     {label}
                   </button>
                 ))}
               </div>
             </article>
-
-            <article className="lv-panel lv-settings-card lv-danger-zone">
-              <div className="lv-section-label">Danger Zone</div>
-              <div className="lv-danger-actions">
-                <div className="lv-danger-row">
-                  <span>Clear All Conversations</span>
-                  <button className="lv-btn lv-btn-danger" type="button" onClick={() => toast("Clear")}>
-                    Clear
-                  </button>
-                </div>
-                <div className="lv-danger-row">
-                  <span>Reset All Settings</span>
-                  <button className="lv-btn lv-btn-danger" type="button" onClick={() => toast("Reset")}>
-                    Reset
-                  </button>
-                </div>
-                <div className="lv-danger-row">
-                  <span>Delete Local Data</span>
-                  <button className="lv-btn lv-btn-danger" type="button" onClick={() => toast("Delete")}>
-                    Delete
-                  </button>
-                </div>
-              </div>
-            </article>
           </div>
         </div>
-
-        <p className="lv-footer-quote">“Small adjustments. Massive impact.” — LEVIATHAN</p>
       </main>
     </AppShell>
   );

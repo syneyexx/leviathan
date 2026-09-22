@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  allSubMenuRoutes,
   findMainMenuByPath,
   findSubMenuItem,
   isMainMenuActive,
-  submenuHref,
+  MAIN_MENU,
 } from "./menu";
 
 describe("navigation menu", () => {
@@ -40,15 +41,22 @@ describe("navigation menu", () => {
     expect(isMainMenuActive(llm, "/chat")).toBe(false);
   });
 
-  it("resolves submenu from path and tab query", () => {
-    const media = findMainMenuByPath("/media");
-    expect(findSubMenuItem(media, "/media", null)?.id).toBe("overzicht");
-    expect(findSubMenuItem(media, "/media", "youtube")?.id).toBe("youtube");
-    expect(submenuHref(media, media.submenu[1])).toBe("/media?tab=youtube");
+  it("resolves nested media submenu routes", () => {
+    const media = findMainMenuByPath("/media/youtube");
+    expect(media.id).toBe("media");
+    expect(findSubMenuItem(media, "/media")?.id).toBe("overzicht");
+    expect(findSubMenuItem(media, "/media/youtube")?.id).toBe("youtube");
   });
 
   it("leaves dashboard submenu inactive on Hades landing", () => {
     const hades = findMainMenuByPath("/");
-    expect(findSubMenuItem(hades, "/", null)).toBeNull();
+    expect(findSubMenuItem(hades, "/")).toBeNull();
+  });
+
+  it("gives every submenu item a dedicated route", () => {
+    const routes = allSubMenuRoutes();
+    expect(routes.length).toBeGreaterThan(30);
+    expect(routes.every((item) => Boolean(item.to))).toBe(true);
+    expect(MAIN_MENU.every((section) => section.submenu.length > 0)).toBe(true);
   });
 });

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { media } from "../assets/media";
-import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 import type { HealthResponse } from "../types/api";
@@ -142,7 +141,6 @@ export function CommandPage() {
         </section>
 
         <section className="lv-command">
-          <SubMenu />
 
           <div className="lv-prompt">
             <button

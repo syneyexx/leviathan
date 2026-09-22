@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "../layouts/AppShell";
-import { SubMenu } from "../components/SubMenu";
 import { useAppToast } from "../state/useAppToast";
 
 export function CodingPage() {
@@ -26,7 +25,6 @@ export function CodingPage() {
       layout="wide"
     >
       <main className="lv-main">
-        <SubMenu />
 
         <section className="lv-panel lv-card" style={{ padding: 16 }}>
           <div className="lv-section-label">Coding</div>

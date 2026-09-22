@@ -1220,6 +1220,11 @@ img { display: block; max-width: 100%; }
   display: flex;
   align-items: center;
   gap: 4px;
+  max-width: min(920px, 62vw);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  padding: 4px 2px;
   height: clamp(46px, 5.4vh, 54px);
   padding: 4px;
   border-radius: var(--lv-radius-xl);
@@ -1229,18 +1234,27 @@ img { display: block; max-width: 100%; }
 }
 
 .lv-dock-item {
-  min-width: clamp(64px, 5.5vw, 78px);
+  min-width: clamp(58px, 5.2vw, 78px);
   height: 100%;
   border-radius: var(--lv-radius-lg);
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 2px;
   color: var(--lv-text-secondary);
   font-size: var(--lv-text-xs);
   text-decoration: none;
   transition: all var(--lv-transition);
+  padding: 0 6px;
+}
+
+.lv-dock-item span {
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lv-dock-item.is-active {

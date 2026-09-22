@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { media } from "../assets/media";
-import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
@@ -168,8 +167,6 @@ export function BrainPage() {
             <span>Link</span>
           </div>
         </section>
-
-        <SubMenu />
 
         <div className="lv-toolbar">
           <div className="lv-tabs" role="tablist">

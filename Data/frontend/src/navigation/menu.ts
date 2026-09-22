@@ -1,8 +1,8 @@
 export type SubMenuItem = {
   id: string;
   label: string;
-  /** Dedicated route when the item has its own page. */
-  to?: string;
+  /** Dedicated route — every submenu item has a real page. */
+  to: string;
 };
 
 export type MainMenuItem = {
@@ -16,8 +16,8 @@ export type MainMenuItem = {
 };
 
 /**
- * HOOFDMENU (left) + SUBMENU (under the middle content box).
- * Existing pages are wired via `to`; items without a page stay section-local tabs.
+ * HOOFDMENU (left sidebar) + SUBMENU (footer dock under the middle box).
+ * Every submenu item has its own route.
  */
 export const MAIN_MENU: readonly MainMenuItem[] = [
   {
@@ -50,16 +50,16 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/media"],
     submenu: [
       { id: "overzicht", label: "Overzicht", to: "/media" },
-      { id: "youtube", label: "Youtube" },
-      { id: "tiktok", label: "Tiktok" },
-      { id: "instagram", label: "Instagram" },
-      { id: "facebook", label: "Facebook" },
-      { id: "queue", label: "Algemene publicatiewachtrij" },
-      { id: "viral", label: "Viral radar" },
-      { id: "calendar", label: "Calender" },
-      { id: "media-analytics", label: "Analytics" },
-      { id: "library", label: "Bibliotheek" },
-      { id: "personas", label: "Personas" },
+      { id: "youtube", label: "Youtube", to: "/media/youtube" },
+      { id: "tiktok", label: "Tiktok", to: "/media/tiktok" },
+      { id: "instagram", label: "Instagram", to: "/media/instagram" },
+      { id: "facebook", label: "Facebook", to: "/media/facebook" },
+      { id: "queue", label: "Publicatiewachtrij", to: "/media/queue" },
+      { id: "viral", label: "Viral radar", to: "/media/viral" },
+      { id: "calendar", label: "Calender", to: "/media/calendar" },
+      { id: "media-analytics", label: "Analytics", to: "/media/analytics" },
+      { id: "library", label: "Bibliotheek", to: "/media/library" },
+      { id: "personas", label: "Personas", to: "/media/personas" },
     ],
   },
   {
@@ -69,11 +69,11 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/trading"],
     submenu: [
       { id: "simulatie", label: "Simulatie", to: "/trading" },
-      { id: "strategieen", label: "Strategieen" },
-      { id: "marktdata", label: "Marktdata" },
-      { id: "portefeuille", label: "Portefeuille" },
-      { id: "paper", label: "PAPER trading" },
-      { id: "broker", label: "BROKER trading" },
+      { id: "strategieen", label: "Strategieen", to: "/trading/strategieen" },
+      { id: "marktdata", label: "Marktdata", to: "/trading/marktdata" },
+      { id: "portefeuille", label: "Portefeuille", to: "/trading/portefeuille" },
+      { id: "paper", label: "PAPER trading", to: "/trading/paper" },
+      { id: "broker", label: "BROKER trading", to: "/trading/broker" },
     ],
   },
   {
@@ -110,15 +110,15 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/settings"],
     submenu: [
       { id: "algemeen", label: "Algemeen", to: "/settings" },
-      { id: "llm-gedrag", label: "LLM Gedrag" },
-      { id: "llm-studio", label: "LLM Studio" },
-      { id: "rechten", label: "Rechten & Security" },
-      { id: "benchmarks", label: "Model Benchmarks" },
-      { id: "mediacenter", label: "Mediacenter" },
-      { id: "opslag", label: "Opslag" },
-      { id: "python", label: "Python & Runtime" },
-      { id: "settings-console", label: "Console" },
-      { id: "logs", label: "Logs" },
+      { id: "llm-gedrag", label: "LLM Gedrag", to: "/settings/llm-gedrag" },
+      { id: "llm-studio", label: "LLM Studio", to: "/settings/llm-studio" },
+      { id: "rechten", label: "Rechten & Security", to: "/settings/rechten" },
+      { id: "benchmarks", label: "Model Benchmarks", to: "/settings/benchmarks" },
+      { id: "mediacenter", label: "Mediacenter", to: "/settings/mediacenter" },
+      { id: "opslag", label: "Opslag", to: "/settings/opslag" },
+      { id: "python", label: "Python & Runtime", to: "/settings/python" },
+      { id: "settings-console", label: "Console", to: "/settings/console" },
+      { id: "logs", label: "Logs", to: "/settings/logs" },
     ],
   },
 ] as const;
@@ -131,47 +131,56 @@ export function normalizePath(pathname: string): string {
 export function findMainMenuByPath(pathname: string): MainMenuItem {
   const path = normalizePath(pathname);
 
+  // Prefer the longest matching prefix so /media/youtube stays under Media, not a shorter miss.
+  let best: MainMenuItem | null = null;
+  let bestLen = -1;
+
   for (const item of MAIN_MENU) {
     for (const prefix of item.match) {
       const normalized = normalizePath(prefix);
       if (normalized === "/") {
-        if (path === "/") return item;
+        if (path === "/" && bestLen < 1) {
+          best = item;
+          bestLen = 1;
+        }
         continue;
       }
       if (path === normalized || path.startsWith(`${normalized}/`)) {
-        return item;
+        if (normalized.length > bestLen) {
+          best = item;
+          bestLen = normalized.length;
+        }
       }
     }
   }
 
-  return MAIN_MENU[0];
+  return best ?? MAIN_MENU[0];
 }
 
 export function isMainMenuActive(item: MainMenuItem, pathname: string): boolean {
   return findMainMenuByPath(pathname).id === item.id;
 }
 
-export function findSubMenuItem(
-  section: MainMenuItem,
-  pathname: string,
-  tab: string | null,
-): SubMenuItem | null {
+export function findSubMenuItem(section: MainMenuItem, pathname: string): SubMenuItem | null {
   const path = normalizePath(pathname);
 
-  if (tab) {
-    const byTab = section.submenu.find((item) => item.id === tab);
-    if (byTab) return byTab;
-  }
+  const exact = section.submenu.find((item) => normalizePath(item.to) === path);
+  if (exact) return exact;
 
-  const byRoute = section.submenu.find((item) => item.to && normalizePath(item.to) === path);
-  if (byRoute) return byRoute;
-
-  // Prefer the submenu item whose dedicated route owns this path.
+  // Longest dedicated route that owns this path (for nested pages).
+  let best: SubMenuItem | null = null;
+  let bestLen = -1;
   for (const item of section.submenu) {
-    if (!item.to) continue;
     const to = normalizePath(item.to);
-    if (to !== "/" && (path === to || path.startsWith(`${to}/`))) return item;
+    if (to === "/") continue;
+    if (path === to || path.startsWith(`${to}/`)) {
+      if (to.length > bestLen) {
+        best = item;
+        bestLen = to.length;
+      }
+    }
   }
+  if (best) return best;
 
   // Section landing (e.g. Hades AI → dashboard) may have no matching submenu route.
   if (normalizePath(section.to) === path) return null;
@@ -179,8 +188,6 @@ export function findSubMenuItem(
   return section.submenu[0] ?? null;
 }
 
-export function submenuHref(section: MainMenuItem, item: SubMenuItem): string {
-  if (item.to) return item.to;
-  const base = section.to === "/" ? "/" : section.to;
-  return `${base}?tab=${encodeURIComponent(item.id)}`;
+export function allSubMenuRoutes(): readonly SubMenuItem[] {
+  return MAIN_MENU.flatMap((section) => [...section.submenu]);
 }
