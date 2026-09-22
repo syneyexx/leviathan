@@ -6,12 +6,19 @@ from typing import Any
 
 from Data.modules.function_runtime.types import SideEffect
 
+# field is used by CapabilityDefinition.metadata default_factory
+
 
 class CapabilityProviderKind(str, Enum):
     FUNCTION = "function"
     KNOWLEDGE = "knowledge"
     ARTIFACT = "artifact"
     INTERNAL = "internal"
+    MCP = "mcp"
+    MODULE = "module"
+    EXTERNAL = "external"
+    NATIVE = "native"
+    BUILTIN = "builtin"
 
 
 class CapabilityStatus(str, Enum):
@@ -33,6 +40,11 @@ class CapabilityDefinition:
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
     required_permissions: tuple[str, ...] = ()
+    available: bool = True
+    availability_reason: str | None = None
+    enabled: bool = True
+    schema_hash: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +57,17 @@ class CapabilityDefinition:
             "input_schema": self.input_schema,
             "output_schema": self.output_schema,
             "required_permissions": list(self.required_permissions),
+            "available": self.available,
+            "availability_reason": self.availability_reason,
+            "enabled": self.enabled,
+            "schema_hash": self.schema_hash,
+            "metadata": self.metadata,
+            "truth": {
+                "discoverable_is_not_authorized": True,
+                "registered_is_not_available": True,
+                "available_is_not_enabled": True,
+                "enabled_is_not_approved": True,
+            },
         }
 
 

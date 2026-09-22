@@ -638,6 +638,14 @@ export function createInteractions(ctx) {
     if (event.key === "Escape") {
       ctx.chrome.hideMenu();
       ctx.session.measure = { a: null, b: null };
+      if (ctx.session.phase && ctx.session.phase !== "idle") {
+        ctx.commands.cancelGesture?.();
+        press = null;
+        setPhase("idle");
+        ctx.chrome.clearGuides?.();
+        ctx.chrome.schedulePaint();
+        return;
+      }
       if (ctx.session.inlineEl) ctx.session.inlineEl.blur();
       else ctx.selection.clear();
       ctx.chrome.schedulePaint();
@@ -703,10 +711,24 @@ export function createInteractions(ctx) {
     }
   }
 
+  function cancelActiveGesture() {
+    if (!press && ctx.session.phase === "idle") return;
+    ctx.commands.cancelGesture?.();
+    press = null;
+    setPhase("idle");
+    ctx.chrome.clearGuides?.();
+    ctx.chrome.schedulePaint();
+  }
+
   function attach() {
     document.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("pointermove", onPointerMove, true);
     window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointercancel", () => cancelActiveGesture(), true);
+    window.addEventListener("lostpointercapture", () => {
+      if (ctx.session.phase !== "idle") cancelActiveGesture();
+    }, true);
+    window.addEventListener("blur", () => cancelActiveGesture());
     document.addEventListener("dblclick", onDoubleClick, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     document.addEventListener("click", (event) => {
@@ -755,5 +777,5 @@ export function createInteractions(ctx) {
     watchMutations();
   }
 
-  return { attach };
+  return { attach, cancelActiveGesture };
 }

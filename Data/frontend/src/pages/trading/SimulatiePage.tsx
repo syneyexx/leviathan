@@ -1,69 +1,149 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { tradingHeroes } from "../../assets/tradingAssets";
+import { ApiError, api } from "../../api/client";
 import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
-import { CandleChart, LineSeries, MOCK_CANDLES, Panel, Tone, TradingHero } from "./shared";
+import type {
+  MarketDataSource,
+  MarketSimLiveState,
+  MarketSimRun,
+  MarketSimStatusResponse,
+  MarketStrategy,
+} from "../../types/api";
+import { LineSeries, Panel, Tone, TradingHero, fmtMoney, hashShort, metricValue } from "./shared";
 
-const PERIODS = ["3M", "6M", "1Y", "3Y", "5Y", "ALL"] as const;
 const SPEEDS = ["0.1x", "0.5x", "1x", "2x", "5x", "10x"] as const;
 const TFS = ["1m", "5m", "15m", "1h", "4h", "1D"] as const;
 
-const ASKS = [
-  { price: "24,528.40", size: "0.84", total: "2.41" },
-  { price: "24,526.10", size: "1.20", total: "1.57" },
-  { price: "24,524.75", size: "0.36", total: "0.37" },
-] as const;
-
-const BIDS = [
-  { price: "24,521.90", size: "1.12", total: "1.12" },
-  { price: "24,519.40", size: "0.68", total: "1.80" },
-  { price: "24,517.05", size: "2.04", total: "3.84" },
-  { price: "24,514.80", size: "0.91", total: "4.75" },
-] as const;
-
-const FILLS = [
-  { t: "10:42:17", side: "BUY", px: "24,521.90", sz: "0.25" },
-  { t: "10:41:58", side: "SELL", px: "24,518.20", sz: "0.40" },
-  { t: "10:41:22", side: "BUY", px: "24,509.10", sz: "0.18" },
-  { t: "10:40:47", side: "BUY", px: "24,501.55", sz: "0.55" },
-  { t: "10:40:11", side: "SELL", px: "24,496.80", sz: "0.30" },
-  { t: "10:39:36", side: "BUY", px: "24,488.40", sz: "0.22" },
-  { t: "10:39:02", side: "SELL", px: "24,482.15", sz: "0.48" },
-  { t: "10:38:29", side: "BUY", px: "24,475.60", sz: "0.15" },
-] as const;
-
-const EVENTS = [
-  { t: "Mar 14 10:00", event: "FOMC Rate Decision", impact: "High", asset: "BTC", desc: "Fed holds rates; hawkish guidance" },
-  { t: "Mar 10 08:30", event: "CPI Inflation Data", impact: "High", asset: "BTC", desc: "YoY CPI 5.0% vs 5.2% exp" },
-  { t: "Feb 28 14:00", event: "Exchange Outage", impact: "Medium", asset: "BTC", desc: "Major venue API degraded 42m" },
-  { t: "Feb 12 09:15", event: "ETF Flow Spike", impact: "Medium", asset: "BTC", desc: "Net inflows +$412M session" },
-  { t: "Jan 24 16:00", event: "Options Expiry", impact: "High", asset: "BTC", desc: "$1.8B notional weekly expiry" },
-] as const;
-
-const WORKERS = [
-  { id: "sim-01", strategy: "Quantum Trend", progress: 78, uptime: "04:12:08" },
-  { id: "sim-02", strategy: "Mean Reversion Pro", progress: 64, uptime: "03:48:21" },
-  { id: "sim-03", strategy: "Vol Harvest", progress: 41, uptime: "02:19:55" },
-  { id: "sim-04", strategy: "Event Alpha", progress: 92, uptime: "05:02:14" },
-] as const;
-
-const EQUITY = [100, 102, 101, 105, 108, 107, 112, 116, 114, 119, 122, 121, 125];
-const DRAWDOWN = [0, -2, -1, -4, -3, -6, -5, -8, -7, -10, -9, -12, -3];
-
 export function SimulatiePage() {
   const toast = useAppToast();
-  const [period, setPeriod] = useState<(typeof PERIODS)[number]>("1Y");
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>("1x");
   const [tf, setTf] = useState<(typeof TFS)[number]>("1h");
-  const [playing, setPlaying] = useState(true);
+  const [status, setStatus] = useState<MarketSimStatusResponse | null>(null);
+  const [sources, setSources] = useState<MarketDataSource[]>([]);
+  const [strategies, setStrategies] = useState<MarketStrategy[]>([]);
+  const [runs, setRuns] = useState<MarketSimRun[]>([]);
+  const [sourceId, setSourceId] = useState("");
+  const [strategyId, setStrategyId] = useState("");
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [live, setLive] = useState<MarketSimLiveState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshMeta = useCallback(async () => {
+    try {
+      const [st, data, strat, runList] = await Promise.all([
+        api.marketSimStatus(),
+        api.listMarketData().catch(() => ({ sources: [] as MarketDataSource[] })),
+        api.listMarketStrategies().catch(() => ({ strategies: [] as MarketStrategy[] })),
+        api.listMarketSimRuns().catch(() => ({ runs: [] as MarketSimRun[] })),
+      ]);
+      setStatus(st);
+      setSources(data.sources);
+      setStrategies(strat.strategies);
+      setRuns(runList.runs);
+      if (!sourceId && data.sources[0]) setSourceId(data.sources[0].source_id);
+      if (!strategyId && strat.strategies[0]) setStrategyId(strat.strategies[0].strategy_id);
+      if (!activeRunId && runList.runs[0]) setActiveRunId(runList.runs[0].run_id);
+      setError(st.enabled ? null : "Market sim disabled — set LEVIATHAN_FEATURE_MARKET_SIM=true");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load market sim status");
+    }
+  }, [activeRunId, sourceId, strategyId]);
+
+  const refreshLive = useCallback(async () => {
+    if (!activeRunId || !status?.enabled) return;
+    try {
+      setLive(await api.getMarketSimLive(activeRunId));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) setLive(null);
+    }
+  }, [activeRunId, status?.enabled]);
+
+  useEffect(() => {
+    void refreshMeta();
+  }, [refreshMeta]);
+
+  useEffect(() => {
+    void refreshLive();
+    if (!activeRunId) return;
+    const id = window.setInterval(() => void refreshLive(), 1500);
+    return () => window.clearInterval(id);
+  }, [activeRunId, refreshLive]);
+
+  const run = live?.run;
+  const selectedSource = sources.find((s) => s.source_id === sourceId);
+  const progressPct =
+    run && run.bar_count > 0 ? Math.min(100, Math.round((run.bar_index / run.bar_count) * 100)) : 0;
+  const equityPoints = useMemo(() => {
+    const pts = (live?.equity ?? []).map((p) => p.equity);
+    if (pts.length >= 2) return pts;
+    return run ? [run.initial_cash, run.equity] : [100_000];
+  }, [live, run]);
+  const drawdownPoints = useMemo(() => {
+    let peak = equityPoints[0] ?? 0;
+    return equityPoints.map((v) => {
+      peak = Math.max(peak, v);
+      return peak > 0 ? -((peak - v) / peak) * 100 : 0;
+    });
+  }, [equityPoints]);
+  const brainTotal = (run?.brain_hits ?? 0) + (run?.brain_misses ?? 0);
+  const playing = run?.status === "RUNNING" || run?.status === "QUEUED";
+
+  async function createAndStart() {
+    if (!sourceId) {
+      toast("Select market data first");
+      return;
+    }
+    setBusy(true);
+    try {
+      const speedNum = Number.parseFloat(speed.replace("x", "")) || 1;
+      const { run: created } = await api.createMarketSimRun({
+        sourceId,
+        strategyId: strategyId || undefined,
+        seed: 42,
+        speed: speedNum,
+        deliberationEveryN: 5,
+      });
+      await api.startMarketSimRun(created.run_id);
+      setActiveRunId(created.run_id);
+      toast("Simulation started");
+      await refreshMeta();
+      await refreshLive();
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Failed to start run");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function control(action: "pause" | "step" | "stop" | "start") {
+    if (!activeRunId) return;
+    setBusy(true);
+    try {
+      if (action === "pause") await api.pauseMarketSimRun(activeRunId);
+      if (action === "step") await api.stepMarketSimRun(activeRunId);
+      if (action === "stop") await api.stopMarketSimRun(activeRunId);
+      if (action === "start") await api.startMarketSimRun(activeRunId);
+      await refreshLive();
+      await refreshMeta();
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Control failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <AppShell
       activeMode="explore"
       modeLabel="Simulation Mode"
       searchPlaceholder="Search markets, assets, strategies, or run simulations..."
-      systemItems={["MARKETS LIVE", "SIMULATION MODE"]}
+      systemItems={[
+        status?.enabled ? "MARKET SIM ON" : "MARKET SIM OFF",
+        run?.status ? `RUN ${run.status}` : "NO RUN",
+      ]}
       layout="wide"
       pageClass="lv-app--trading"
     >
@@ -78,173 +158,222 @@ export function SimulatiePage() {
 
         <SubMenu />
 
+        {error ? (
+          <Panel title="Market Sim">
+            <p>{error}</p>
+            <p className="lv-tp-muted">
+              Sources ready: {status?.health.sources_ready ?? 0} · Root:{" "}
+              {status?.health.markets_root ?? "—"}
+            </p>
+          </Panel>
+        ) : null}
+
         <section className="lv-sim-config" aria-label="Simulation configuration">
           <article className="lv-sim-config-card">
-            <div className="lbl">Scenario</div>
-            <strong>BTC Bull Run 2023</strong>
-            <p>Full-cycle replay with real market data</p>
+            <div className="lbl">Market data</div>
+            <select
+              className="lv-tp-select"
+              value={sourceId}
+              onChange={(e) => setSourceId(e.target.value)}
+              style={{ width: "100%", marginTop: 6 }}
+            >
+              <option value="">Select source…</option>
+              {sources.map((s) => (
+                <option key={s.source_id} value={s.source_id}>
+                  {s.symbol} {s.timeframe} · {s.bar_count} bars · {s.status}
+                </option>
+              ))}
+            </select>
+            <p>{selectedSource ? hashShort(selectedSource.content_hash) : "Register files on Marktdata"}</p>
           </article>
           <article className="lv-sim-config-card">
             <div className="lbl">Asset / Market</div>
-            <strong>BTC/USD</strong>
-            <p>Bitcoin / US Dollar</p>
+            <strong>{run?.symbol ?? selectedSource?.symbol ?? "—"}</strong>
+            <p>
+              {run?.timeframe ?? selectedSource?.timeframe ?? "—"} · paper sim only
+            </p>
           </article>
           <article className="lv-sim-config-card">
-            <div className="lbl">Historical Period</div>
-            <strong>Jan 01, 2023 — Dec 31, 2023</strong>
-            <div className="lv-sim-periods">
-              {PERIODS.map((p) => (
-                <button key={p} type="button" className={`lv-tp-chip${period === p ? " is-active" : ""}`} onClick={() => setPeriod(p)}>
-                  {p}
-                </button>
+            <div className="lbl">Historical window</div>
+            <strong>
+              {run?.start_ts?.slice(0, 10) ?? selectedSource?.start_ts?.slice(0, 10) ?? "—"} —{" "}
+              {run?.end_ts?.slice(0, 10) ?? selectedSource?.end_ts?.slice(0, 10) ?? "—"}
+            </strong>
+            <p>
+              Clock {run?.clock_ts ?? "idle"} · bar {run?.bar_index ?? 0}/{run?.bar_count ?? 0}
+            </p>
+          </article>
+          <article className="lv-sim-config-card">
+            <div className="lbl">Strategy</div>
+            <select
+              className="lv-tp-select"
+              value={strategyId}
+              onChange={(e) => setStrategyId(e.target.value)}
+              style={{ width: "100%", marginTop: 6 }}
+            >
+              <option value="">Default MA cross</option>
+              {strategies.map((s) => (
+                <option key={s.strategy_id} value={s.strategy_id}>
+                  {s.name} v{s.current_version}
+                </option>
               ))}
-            </div>
-          </article>
-          <article className="lv-sim-config-card">
-            <div className="lbl">Simulation Configuration</div>
-            <strong>Standard Execution</strong>
-            <p>Realistic Slippage · Fees · Latency</p>
-            <button type="button" className="lv-tp-btn lv-tp-btn--accent" style={{ marginTop: 8 }} onClick={() => toast("Configure simulation")}>
-              Configure
+            </select>
+            <button
+              type="button"
+              className="lv-tp-btn lv-tp-btn--accent"
+              style={{ marginTop: 8 }}
+              disabled={busy}
+              onClick={() => void createAndStart()}
+            >
+              New Run
             </button>
           </article>
         </section>
 
         <section className="lv-sim-playback" aria-label="Playback controls">
           <div className="lv-sim-controls">
-            {["⏹", "⏮", playing ? "⏸" : "▶", "⏭", "⏭⏭"].map((icon, i) => (
-              <button
-                key={icon + i}
-                type="button"
-                className={i === 2 && playing ? "is-active" : ""}
-                onClick={() => {
-                  if (i === 2) setPlaying((v) => !v);
-                  else toast("Playback");
-                }}
-                aria-label={["Stop", "Rewind", "Play/Pause", "Fast forward", "Skip end"][i]}
-              >
-                {icon}
-              </button>
-            ))}
+            <button type="button" disabled={busy || !activeRunId} onClick={() => void control("stop")} aria-label="Stop">
+              ⏹
+            </button>
+            <button type="button" disabled={busy || !activeRunId} onClick={() => void control("step")} aria-label="Step">
+              ⏭
+            </button>
+            <button
+              type="button"
+              className={playing ? "is-active" : ""}
+              disabled={busy || !activeRunId}
+              onClick={() => void control(playing ? "pause" : "start")}
+              aria-label="Play/Pause"
+            >
+              {playing ? "⏸" : "▶"}
+            </button>
+            <button type="button" disabled={busy || !activeRunId} onClick={() => void control("start")} aria-label="Resume">
+              ⏭⏭
+            </button>
           </div>
           <div className="lv-sim-speeds">
             {SPEEDS.map((s) => (
-              <button key={s} type="button" className={`lv-tp-chip${speed === s ? " is-active" : ""}`} onClick={() => setSpeed(s)}>
+              <button
+                key={s}
+                type="button"
+                className={`lv-tp-chip${speed === s ? " is-active" : ""}`}
+                onClick={() => setSpeed(s)}
+              >
                 {s}
               </button>
             ))}
           </div>
           <div className="lv-sim-timeline">
             <div className="lv-sim-timeline-meta">
-              <span>Mar 14, 2023 10:42:17</span>
-              <span className="lv-tp-muted">Day 73 / 365 · 42%</span>
+              <span>{run?.clock_ts ?? "No active clock"}</span>
+              <span className="lv-tp-muted">
+                Bar {run?.bar_index ?? 0}/{run?.bar_count ?? 0} · {progressPct}%
+              </span>
             </div>
-            <div className="lv-sim-seek" role="slider" aria-valuenow={42} aria-valuemin={0} aria-valuemax={100}>
-              <span />
-              <i style={{ left: "18%" }} />
-              <i style={{ left: "34%" }} />
-              <i style={{ left: "61%" }} />
-              <i style={{ left: "79%" }} />
+            <div className="lv-sim-seek" role="slider" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>
+              <span style={{ width: `${progressPct}%` }} />
             </div>
           </div>
-          <button type="button" className="lv-tp-btn lv-tp-btn--gold" onClick={() => toast("Go to Live")}>
-            Go to Live
-          </button>
+          <select
+            className="lv-tp-select"
+            value={activeRunId ?? ""}
+            onChange={(e) => setActiveRunId(e.target.value || null)}
+          >
+            <option value="">Select run…</option>
+            {runs.map((r) => (
+              <option key={r.run_id} value={r.run_id}>
+                {r.symbol} · {r.status} · {r.run_id.slice(0, 8)}
+              </option>
+            ))}
+          </select>
         </section>
 
         <section className="lv-sim-chart-grid">
           <Panel
-            title="BTC/USD · Replay Chart"
+            title={`${run?.symbol ?? "Market"} · Equity Replay`}
             action={
               <div className="lv-tp-tabs">
                 {TFS.map((t) => (
-                  <button key={t} type="button" className={`lv-tp-chip${tf === t ? " is-active" : ""}`} onClick={() => setTf(t)}>
+                  <button
+                    key={t}
+                    type="button"
+                    className={`lv-tp-chip${tf === t ? " is-active" : ""}`}
+                    onClick={() => setTf(t)}
+                  >
                     {t}
                   </button>
                 ))}
-                <button type="button" className="lv-tp-chip" onClick={() => toast("Indicators")}>
-                  Indicators
-                </button>
-                <button type="button" className="lv-tp-chip" onClick={() => toast("Events")}>
-                  Events
-                </button>
               </div>
             }
           >
             <div className="lv-sim-chart-head">
               <div>
-                <strong>BTC/USD</strong>
-                <span className="lv-tp-mono">24,521.90 </span>
-                <Tone value={0.86}>+0.86%</Tone>
+                <strong>{run?.symbol ?? "—"}</strong>
+                <span className="lv-tp-mono">{fmtMoney(run?.equity)}</span>
+                <Tone value={(run?.equity ?? 0) - (run?.initial_cash ?? 0)}>
+                  {run ? `${(((run.equity - run.initial_cash) / run.initial_cash) * 100).toFixed(2)}%` : "—"}
+                </Tone>
               </div>
-              <div className="lv-tp-muted">SMA 20 · 50 · 200</div>
+              <div className="lv-tp-muted">
+                Causality violations: {run?.causality_violations ?? 0} · hash {hashShort(run?.data_hash)}
+              </div>
             </div>
-            <CandleChart candles={MOCK_CANDLES} height={240} />
+            <LineSeries series={[{ values: equityPoints, color: "#D6A957" }]} height={240} />
           </Panel>
 
-          <Panel title="Order Book (Replay)">
-            <div className="lv-sim-ob">
-              <div className="lv-sim-ob-row lv-tp-muted">
-                <span>Price</span>
-                <span>Size</span>
-                <span>Total</span>
-              </div>
-              {ASKS.map((r) => (
-                <div key={r.price} className="lv-sim-ob-row is-ask">
-                  <span>{r.price}</span>
-                  <span>{r.size}</span>
-                  <span>{r.total}</span>
-                </div>
-              ))}
-              <div className="lv-sim-ob-row" style={{ color: "var(--lv-gold-bright)", fontWeight: 650, padding: "6px 0" }}>
-                <span>24,521.90</span>
-                <span>Spread</span>
-                <span>2.85</span>
-              </div>
-              {BIDS.map((r) => (
-                <div key={r.price} className="lv-sim-ob-row is-bid">
-                  <span>{r.price}</span>
-                  <span>{r.size}</span>
-                  <span>{r.total}</span>
-                </div>
-              ))}
-            </div>
+          <Panel title="Order Book">
+            <p className="lv-tp-muted">
+              L2 order book UNAVAILABLE for this run — no order-book snapshots registered. Fill model uses
+              conservative bar close ± slippage.
+            </p>
           </Panel>
 
           <Panel title="Simulated Fills (Tape)">
             <div className="lv-sim-tape">
-              {FILLS.map((f) => (
-                <div key={f.t + f.side} className="lv-sim-tape-row">
-                  <span className="lv-tp-muted">{f.t}</span>
-                  <span className={f.side === "BUY" ? "is-good" : "is-bad"}>{f.side}</span>
-                  <span>{f.px}</span>
-                  <span>{f.sz}</span>
+              {(live?.fills ?? [])
+                .slice(-24)
+                .reverse()
+                .map((f) => (
+                  <div key={f.fill_id} className="lv-sim-tape-row">
+                    <span className="lv-tp-muted">bar {f.bar_index}</span>
+                    <span className={f.side === "BUY" ? "is-good" : "is-bad"}>{f.side}</span>
+                    <span>{f.price.toFixed(2)}</span>
+                    <span>{f.qty.toFixed(4)}</span>
+                  </div>
+                ))}
+              {!live?.fills?.length ? (
+                <div className="lv-sim-tape-row">
+                  <span className="lv-tp-muted">No fills yet — paper sim only</span>
                 </div>
-              ))}
+              ) : null}
             </div>
           </Panel>
         </section>
 
         <section className="lv-sim-stats">
           <Panel title="Simulated Portfolio Value">
-            <div style={{ fontSize: 28, fontWeight: 700, color: "var(--lv-text-bright)" }}>$124,832.47</div>
-            <Tone value={24.83}>+24.83%</Tone>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "var(--lv-text-bright)" }}>
+              {fmtMoney(run?.equity)}
+            </div>
+            <Tone value={(run?.equity ?? 0) - (run?.initial_cash ?? 0)}>
+              {metricValue(run?.metrics, "total_return")}
+            </Tone>
             <div className="lv-sim-metric-grid" style={{ marginTop: 10 }}>
               <div>
                 <span>Initial Capital</span>
-                <strong>$100,000</strong>
+                <strong>{fmtMoney(run?.initial_cash)}</strong>
               </div>
               <div>
                 <span>Unrealized P&amp;L</span>
-                <strong className="is-good">+$4,218</strong>
+                <strong>{fmtMoney(run?.unrealized_pnl)}</strong>
               </div>
               <div>
                 <span>Realized P&amp;L</span>
-                <strong className="is-good">+$20,614</strong>
+                <strong>{fmtMoney(run?.realized_pnl)}</strong>
               </div>
               <div>
                 <span>Cash</span>
-                <strong>$38,420</strong>
+                <strong>{fmtMoney(run?.cash)}</strong>
               </div>
             </div>
           </Panel>
@@ -252,124 +381,141 @@ export function SimulatiePage() {
           <Panel title="Strategy Performance">
             <div className="lv-sim-metric-grid">
               {[
-                ["Total Return", "+24.83%", true],
-                ["Sharpe Ratio", "1.42", true],
-                ["Win Rate", "67.3%", true],
-                ["Profit Factor", "2.31", true],
-                ["Total Trades", "428", null],
-                ["Avg Hold", "18h 24m", null],
-                ["Best Trade", "+$2,840", true],
-                ["Worst Trade", "-$1,120", false],
-              ].map(([k, v, up]) => (
+                ["Total Return", metricValue(run?.metrics, "total_return")],
+                ["Sharpe", metricValue(run?.metrics, "sharpe")],
+                ["Sortino", metricValue(run?.metrics, "sortino")],
+                ["Max Drawdown", metricValue(run?.metrics, "max_drawdown")],
+                ["Buy & Hold", metricValue(run?.metrics, "buy_and_hold_return")],
+                ["Fees Paid", metricValue(run?.metrics, "fees_paid")],
+                ["Win Rate", metricValue(run?.metrics, "win_rate")],
+                [
+                  "Brain Hit Rate",
+                  brainTotal
+                    ? `${(((run?.brain_hits ?? 0) / brainTotal) * 100).toFixed(0)}%`
+                    : "UNMEASURED",
+                ],
+              ].map(([k, v]) => (
                 <div key={String(k)}>
                   <span>{k}</span>
-                  <strong className={up === true ? "is-good" : up === false ? "is-bad" : ""}>{v}</strong>
+                  <strong>{v}</strong>
                 </div>
               ))}
             </div>
           </Panel>
 
           <Panel title="Equity Curve">
-            <LineSeries series={[{ values: EQUITY, color: "#22c9d6" }]} height={120} />
+            <LineSeries series={[{ values: equityPoints, color: "#22c9d6" }]} height={120} />
             <div className="lv-tp-muted" style={{ marginTop: 4 }}>
-              Strategy equity vs initial capital
+              Live equity from simulation worker
             </div>
           </Panel>
 
           <Panel title="Drawdown Analysis">
-            <LineSeries series={[{ values: DRAWDOWN, color: "#f87171" }]} height={90} />
+            <LineSeries series={[{ values: drawdownPoints, color: "#f87171" }]} height={90} />
             <div className="lv-sim-metric-grid" style={{ marginTop: 8 }}>
               <div>
                 <span>Max Drawdown</span>
-                <strong className="is-bad">-12.47%</strong>
+                <strong className="is-bad">{metricValue(run?.metrics, "max_drawdown")}</strong>
               </div>
               <div>
-                <span>Current DD</span>
-                <strong className="is-bad">-3.21%</strong>
+                <span>Position</span>
+                <strong>{run ? run.position_qty.toFixed(4) : "—"}</strong>
               </div>
               <div>
-                <span>Recovery Time</span>
-                <strong>18 days</strong>
+                <span>Seed</span>
+                <strong>{run?.seed ?? "—"}</strong>
               </div>
               <div>
-                <span>Underwater</span>
-                <strong>11%</strong>
+                <span>Status</span>
+                <strong>{run?.status ?? "—"}</strong>
               </div>
             </div>
           </Panel>
         </section>
 
         <section className="lv-sim-bottom">
-          <Panel title="Scenario Events">
+          <Panel title="Agent Deliberation">
             <table className="lv-tp-table">
               <thead>
                 <tr>
-                  <th>Time</th>
-                  <th>Event</th>
-                  <th>Impact</th>
-                  <th>Asset</th>
-                  <th>Description</th>
+                  <th>Bar</th>
+                  <th>Kind</th>
+                  <th>Role</th>
+                  <th>Content</th>
+                  <th>Conf</th>
                 </tr>
               </thead>
               <tbody>
-                {EVENTS.map((e) => (
-                  <tr key={e.t}>
-                    <td>{e.t}</td>
-                    <td>{e.event}</td>
-                    <td>
-                      <span className={`lv-tp-pill${e.impact === "High" ? " is-bad" : " is-warn"}`}>{e.impact}</span>
-                    </td>
-                    <td>{e.asset}</td>
-                    <td>{e.desc}</td>
+                {(live?.messages ?? [])
+                  .slice(-20)
+                  .reverse()
+                  .map((m) => (
+                    <tr key={m.message_id}>
+                      <td>{m.bar_index}</td>
+                      <td>{m.kind}</td>
+                      <td>{m.role}</td>
+                      <td>{m.content}</td>
+                      <td>{(m.confidence * 100).toFixed(0)}%</td>
+                    </tr>
+                  ))}
+                {!live?.messages?.length ? (
+                  <tr>
+                    <td colSpan={5}>No deliberation yet</td>
                   </tr>
-                ))}
+                ) : null}
               </tbody>
             </table>
           </Panel>
 
-          <Panel title="Active Simulation Workers">
-            {WORKERS.map((w) => (
-              <div key={w.id} className="lv-sim-worker">
-                <strong>{w.id}</strong>
+          <Panel title="Agents on Run">
+            {(run?.agents ?? []).map((w) => (
+              <div key={String(w.agent_id ?? w.role)} className="lv-sim-worker">
+                <strong>{String(w.agent_id ?? w.role)}</strong>
                 <div>
-                  <div>{w.strategy}</div>
+                  <div>{String(w.label ?? w.role)}</div>
                   <div className="lv-tp-bar" style={{ marginTop: 4 }}>
-                    <span style={{ width: `${w.progress}%` }} />
+                    <span style={{ width: `${progressPct}%` }} />
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <span className="lv-tp-pill is-live">Running</span>
-                  <div className="lv-tp-muted">{w.uptime}</div>
+                  <span className={`lv-tp-pill${playing ? " is-live" : ""}`}>{run?.status ?? "—"}</span>
                 </div>
               </div>
             ))}
+            {!run?.agents?.length ? (
+              <p className="lv-tp-muted">Single-strategy mode or no run selected</p>
+            ) : null}
           </Panel>
 
           <Panel title="Simulation Summary" className="lv-sim-summary">
             <dl>
               <dt>Initial Capital</dt>
-              <dd>$100,000</dd>
-              <dt>Position Sizing</dt>
-              <dd>2% risk / trade</dd>
-              <dt>Trading Fees</dt>
-              <dd>0.10%</dd>
-              <dt>Slippage Model</dt>
-              <dd>Realistic</dd>
-              <dt>Execution Latency</dt>
-              <dd>50–250ms</dd>
-              <dt>Data Source</dt>
-              <dd>Historical L2</dd>
-              <dt>Fill Model</dt>
-              <dd>Queue priority</dd>
+              <dd>{fmtMoney(run?.initial_cash ?? 100_000)}</dd>
+              <dt>Active workers</dt>
+              <dd>{status?.active_runs ?? 0}</dd>
+              <dt>Fee model</dt>
+              <dd>bps + slippage (paper)</dd>
+              <dt>Data hash</dt>
+              <dd>{hashShort(run?.data_hash)}</dd>
+              <dt>Brain hits / misses</dt>
+              <dd>
+                {run?.brain_hits ?? 0} / {run?.brain_misses ?? 0}
+              </dd>
+              <dt>Causality violations</dt>
+              <dd>{run?.causality_violations ?? 0}</dd>
+              <dt>Fill model</dt>
+              <dd>Bar close ± slippage</dd>
               <dt>Benchmark</dt>
-              <dd>BTC buy &amp; hold</dd>
+              <dd>Buy &amp; hold</dd>
             </dl>
           </Panel>
         </section>
 
         <footer className="lv-sim-foot">
           <span>Same markets. A sharper you. — LEVIATHAN</span>
-          <span className="lv-tp-pill is-live">Simulation Running</span>
+          <span className={`lv-tp-pill${playing ? " is-live" : ""}`}>
+            {run?.status ?? "Idle"} · paper only
+          </span>
         </footer>
       </main>
     </AppShell>

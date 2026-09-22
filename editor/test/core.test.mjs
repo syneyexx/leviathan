@@ -4,6 +4,8 @@ import test from "node:test";
 import { createCommands } from "../js/commands.js";
 import { alignItems, distributeItems, snapRect, snapToGuides, zoomToCursor } from "../js/geometry.js";
 import { createStore } from "../js/state.js";
+import { diffSnapshots, applyPatch, patchIsEmpty, hashDocument } from "../js/patches.js";
+import { migrateContent, identityFor, entryKeyFromNodeId, SCOPE } from "../js/identity.js";
 import {
   classifyToken,
   declsToText,
@@ -15,6 +17,8 @@ import {
   serializeShadows,
   shorthandFromSides,
   upsertOverride,
+  BEGIN,
+  END,
 } from "../js/util.js";
 
 test("store notifies on change and skips identical patches", () => {
@@ -132,6 +136,10 @@ test("gesture snapshots once", () => {
       restore: (v) => {
         current = v;
       },
+      restorePatch: (patch, dir) => {
+        current = dir === "back" ? patch.before : patch.after;
+      },
+      patchBetween: (before, after) => ({ before, after, entries: { x: { before, after } } }),
       setStatus: () => {},
     },
   };

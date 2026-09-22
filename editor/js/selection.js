@@ -1,9 +1,10 @@
 /**
- * Leviathan Visual Builder — selection.
- * Primary + multi-select, shell rules, selectors, hit testing.
+ * LEVIATHAN STUDIO — selection.
+ * Primary + multi-select, shell rules, stable identity keys, hit testing.
  */
 
 import { REGIONS, SHELL_LOCK, TEXTISH } from "./constants.js";
+import { cssSelectorForIdentity, identityFor, pageKey } from "./identity.js";
 
 export function createSelection(ctx) {
   const session = ctx.session;
@@ -25,30 +26,35 @@ export function createSelection(ctx) {
     return REGIONS.find((r) => el.matches?.(r.selector)) || null;
   }
 
+  /** Persistence / content key — never class/img-src/nth-child as unique id. */
   function selectorFor(el) {
     if (!(el instanceof Element)) return "unknown";
+    const ident = identityFor(el, { page: ctx.pages?.currentPage?.() || pageKey() });
+    return ident.key;
+  }
+
+  /** CSS selector for overrides / query — attribute or shell class only. */
+  function cssSelectorFor(el) {
+    if (!(el instanceof Element)) return "unknown";
+    const ident = identityFor(el, { page: ctx.pages?.currentPage?.() || pageKey() });
+    return cssSelectorForIdentity(ident) || ident.key;
+  }
+
+  /** Display / debug helper — may use classes for readability, not persistence. */
+  function displaySelector(el) {
+    if (!(el instanceof Element)) return "unknown";
+    if (el.dataset?.lvbNode) return `[data-lvb-node="${el.dataset.lvbNode}"]`;
     if (el.dataset?.lvbId) return `[data-lvb-id="${el.dataset.lvbId}"]`;
-    if (el.tagName === "IMG") {
-      const src = el.getAttribute("src");
-      if (src) return `img[src="${src}"]`;
-      return "img";
-    }
     const lv = [...el.classList].filter((c) => c.startsWith("lv-") && !c.startsWith("lvb-"));
-    if (lv.length === 1) return `.${lv[0]}`;
-    if (lv.length > 1) return `.${lv.join(".")}`;
+    if (lv.length) return `.${lv[0]}`;
     if (el.id && el.id !== "root") return `#${el.id}`;
-    const tag = el.tagName.toLowerCase();
-    const parent = el.parentElement;
-    if (parent && parent !== document.body) {
-      const idx = [...parent.children].indexOf(el) + 1;
-      return `${selectorFor(parent)} > ${tag}:nth-child(${idx})`;
-    }
-    return tag;
+    return el.tagName.toLowerCase();
   }
 
   function labelFor(el) {
     if (!(el instanceof Element)) return "";
     if (el.dataset?.lvbLabel) return el.dataset.lvbLabel;
+    if (el.dataset?.lvbNode) return el.dataset.lvbNode;
     if (el.dataset?.lvbId) return el.dataset.lvbId;
     if (el.tagName === "IMG") return "image";
     const lv = [...el.classList].find((c) => c.startsWith("lv-") && !c.startsWith("lvb-"));
@@ -62,6 +68,11 @@ export function createSelection(ctx) {
     if (el.dataset?.lvbLocked === "1") return true;
     const entry = ctx.content?.getEntry?.(selectorFor(el));
     return !!entry?.locked;
+  }
+
+  function editScope(el) {
+    if (!(el instanceof Element)) return "page";
+    return identityFor(el, { page: ctx.pages?.currentPage?.() || pageKey() }).scope;
   }
 
   function canMutate(el, action = "edit") {
@@ -148,15 +159,31 @@ export function createSelection(ctx) {
     publish();
   }
 
+  function resolveKey(key) {
+    if (!key) return null;
+    if (key.startsWith("node:")) {
+      const id = key.slice(5);
+      return document.querySelector(`[data-lvb-node="${CSS.escape(id)}"]`);
+    }
+    if (key.startsWith("shell:")) {
+      try {
+        return document.querySelector(key.slice(6));
+      } catch {
+        return null;
+      }
+    }
+    try {
+      return document.querySelector(key);
+    } catch {
+      return null;
+    }
+  }
+
   function reselect(selectors) {
     const found = [];
     for (const sel of selectors || []) {
-      try {
-        const el = document.querySelector(sel);
-        if (el instanceof Element && !isBuilderNode(el)) found.push(el);
-      } catch {
-        /* invalid selector after structural edit */
-      }
+      const el = resolveKey(sel);
+      if (el instanceof Element && !isBuilderNode(el)) found.push(el);
     }
     set(found, found[0] || null);
   }
@@ -196,7 +223,11 @@ export function createSelection(ctx) {
     canMutate,
     regionFor,
     selectorFor,
+    cssSelectorFor,
+    displaySelector,
     labelFor,
+    editScope,
+    resolveKey,
     pickEditable,
     pickDeep,
     resolveHit,

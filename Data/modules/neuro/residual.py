@@ -60,11 +60,19 @@ class ResidualInjectRequest:
 
 @dataclass(frozen=True)
 class ResidualInjectReceipt:
+    """Honest inject receipt. applied=False is never success."""
+
     implemented: bool
     mode: str
     hook: ResidualHookPoint
     applied: bool
     detail: str
+    reason: str = ""
+    degraded_to_chat_completions: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.reason:
+            object.__setattr__(self, "reason", self.detail)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -73,9 +81,16 @@ class ResidualInjectReceipt:
             "hook": self.hook.public_dict(),
             "applied": self.applied,
             "detail": self.detail,
+            "reason": self.reason or self.detail,
+            "degraded_to_chat_completions": self.degraded_to_chat_completions,
             "truth": {
+                "neural_signal_is_not_authority": True,
                 "residual_injection_is_not_authority": True,
+                "residual_implemented": bool(self.implemented),
+                "residual_applied": bool(self.applied),
                 "unapplied_is_not_success": True,
+                "unsupported_is_not_failure_of_core": True,
+                "streaming_degraded": False,
             },
         }
 
@@ -97,6 +112,11 @@ class ResidualForwardResult:
     detail: str
     receipts: tuple[ResidualInjectReceipt, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.reason:
+            object.__setattr__(self, "reason", self.detail)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -104,9 +124,20 @@ class ResidualForwardResult:
             "text": self.text,
             "degraded_to_chat_completions": self.degraded_to_chat_completions,
             "detail": self.detail,
+            "reason": self.reason or self.detail,
             "receipts": [item.public_dict() for item in self.receipts],
             "metadata": self.metadata,
-            "truth": {"model_output_is_not_evidence": True},
+            "truth": {
+                "model_output_is_not_evidence": True,
+                "neural_signal_is_not_authority": True,
+                "residual_implemented": bool(self.implemented),
+                "residual_applied": any(r.applied for r in self.receipts),
+                "unapplied_is_not_success": True,
+                "unsupported_is_not_failure_of_core": True,
+                "streaming_degraded": bool(
+                    (self.metadata or {}).get("streaming_degraded", False)
+                ),
+            },
         }
 
 
@@ -126,8 +157,26 @@ class ResidualStreamPort(Protocol):
 class UnsupportedResidualRuntime:
     """Honest null adapter for OpenAI-compatible servers without residual hooks."""
 
+    protocol_version = "1.0"
+
     def supports_residuals(self) -> bool:
         return False
+
+    def supports_streaming_forward(self) -> bool:
+        return False
+
+    def runtime_info(self) -> dict[str, Any]:
+        return {
+            "kind": "unsupported",
+            "protocol_version": self.protocol_version,
+            "production_grade": False,
+            "available": False,
+            "supports_streaming_forward": False,
+            "truth": {
+                "residual_injection_is_not_authority": True,
+                "unsupported_is_not_failure_of_core": True,
+            },
+        }
 
     def list_hook_points(self) -> Sequence[ResidualHookPoint]:
         return ()
@@ -139,6 +188,7 @@ class UnsupportedResidualRuntime:
             shape=(),
             available=False,
             note="Active model runtime does not expose residual stream hooks",
+            metadata=self.runtime_info(),
         )
 
     def inject(self, request: ResidualInjectRequest) -> ResidualInjectReceipt:
@@ -148,6 +198,8 @@ class UnsupportedResidualRuntime:
             hook=request.hook,
             applied=False,
             detail="Residual injection unavailable — UnsupportedResidualRuntime",
+            reason="unsupported_runtime",
+            degraded_to_chat_completions=True,
         )
 
     def run_forward(self, request: ResidualForwardRequest) -> ResidualForwardResult:
@@ -157,5 +209,7 @@ class UnsupportedResidualRuntime:
             text=None,
             degraded_to_chat_completions=True,
             detail="No residual-capable runtime wired; caller must use chat completions",
+            reason="unsupported_runtime",
             receipts=receipts,
+            metadata=self.runtime_info(),
         )

@@ -9,3 +9,4 @@ Data/backend/data/artifacts/
 Data/frontend/node_modules/
 Data/frontend/dist/
 *.tsbuildinfo
+leviathan_startup.log

@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of the **Coding Agent** control plane (migration v15) on the Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of the **Universal MCP Bridge** (migration v17) on Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,25 +12,28 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–51, a full **Model Control Plane**, Datasets/Training/Research (v14), and a **Coding Agent** for `/coding`.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, and a **Universal MCP Bridge** for Tools.
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.54.0-coding`);
+- FastAPI backend composition root (`0.57.0-mcp`);
+- **Universal MCP Bridge** (`Data/modules/mcp/`) — one bridge, many stdio/HTTP sessions; tools → CapabilityCatalog (`provider_kind=MCP`); invoke only via ExecutionGateway;
 - **Coding Agent** (`Data/modules/coding/`) — sessions, XML capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker;
+- **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v15**;
+- SQLite persistence + migrations through **v17**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
-- React + TypeScript + Vite frontend with operator `/status`, production `/models`, and **Coding Agent** `/coding` UI;
+- React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, **Market Sim** `/trading`, and **MCP** `/mcp` UI;
 - typed frontend API client;
 - honest failure semantics (no fabricated success).
 
 **Not claimed:**
 
-- Real browser/media/voice/native/trading runtimes;
-- Real MCP network clients; **weight-backed HF residual inject**; production GPU residual hooks;
+- Real browser/media/voice/native runtimes; live broker trading;
+- Legacy MCP SSE transport; full OS container isolation adapter; MCP resources/prompts/sampling;
+- **weight-backed HF residual inject** as default; production GPU residual hooks;
 - Programmatic LM Studio load/unload (external management);
 - Managed llama.cpp inference engine;
 - Chat SSE streaming transport (preference stored only);
@@ -75,7 +78,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.51.0-phase51`).
+FastAPI application (`version=0.60.0-phase54`).
 
 Responsibilities:
 
@@ -185,17 +188,19 @@ POST /api/coding/sessions + /turn
 
 Workspace default: `LEVIATHAN_CODING_WORKSPACE` (`D:/leviathan/codingworkspace`). HADES paths denied. No private shell/FS/DB.
 
-## 3.7 Knowledge V2
+## 3.7 Knowledge V2 / RAG V3
 
-Owner: `Data/modules/knowledge/`.
+Owner: `Data/modules/knowledge/`. See also `Data/docs/rag_v3_architecture.md`.
 
 - Documents with ingest status (`DISCOVERED`…`READY`/`FAILED`/…), content hash, provenance path/mtime, parser metadata
-- Chunks with hashes; document becomes READY only after successful chunk/index write
+- Chunks with hashes, span offsets, confidence, source_type, provenance JSON; READY only after successful chunk/index write
 - Lexical chunk FTS (LIKE fallback); metadata `source` filter
-- `EmbeddingProvider` interface + `NullEmbeddingProvider` (no fabricated vectors)
-- `HybridRetriever` — lexical now; vector fusion only when a real provider is available
-- Incremental file ingest under `LEVIATHAN_DATA_ROOT` with change detection
-- API: CRUD, search (`hits`+`documents`), document+chunks, `ingest/path`, `ingest/scan`
+- `EmbeddingProvider` interface: `NullEmbeddingProvider`, `LocalHashEmbeddingProvider`, optional SentenceTransformers
+- `HybridRetriever` V3 — lexical + dense fusion + optional reranker; never fabricates vectors when unavailable
+- Cold Atlas (mutable interpretation) + Deep Recall + Why Library behind feature flags
+- Directional relation atoms + chunk embeddings in central SQLite (no parallel vector DB)
+- Incremental file ingest under `LEVIATHAN_DATA_ROOT` with change detection / re-chunk on edit
+- API: CRUD, search, atlas, deep-recall, why, document+chunks, `ingest/path`, `ingest/scan`
 
 ## 3.8 Health
 
@@ -436,6 +441,8 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 49 — Cortex + recipes | PASS | CortexRuntime; training recipes registered ≠ trained |
 | Phase 50 — Harden | PASS | Subprocess isolation flag; neuro release/master gates |
 | Phase 51 — Neuro ops complete | PASS | Chat/context wire; absorb schedule; soak; Status UI; stubs |
+| Phase 52 — Neuro Grok-level depth | PASS | Weight-backed HF opt-in; smarter cortex/critic/memory; honest recipe execute |
+| Phase 53+ — Residual orchestration | PASS | ResidualOrchestrator; vLLM/llama/TRT contracts; named cortex+early-exit; ephemeral recipe worker |
 
 ---
 

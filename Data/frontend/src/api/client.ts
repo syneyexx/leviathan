@@ -56,6 +56,15 @@ import type {
   CodingSessionDetail,
   CodingMission,
   CodingWorkspaceTreeResponse,
+  McpCallRecord,
+  McpServerPublic,
+  McpToolRecord,
+  MarketSimStatusResponse,
+  MarketDataSource,
+  MarketStrategy,
+  MarketStrategyVersion,
+  MarketSimRun,
+  MarketSimLiveState,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -83,7 +92,17 @@ function detailMessage(data: ApiErrorBody | null, status: number): string {
     return body.code ? `${body.code}: ${body.message ?? ""}` : String(body.message ?? `Request failed (${status})`);
   }
   if (typeof data.detail === "object" && data.detail !== null && "error" in data.detail) {
-    const nested = (data.detail as { error?: { code?: string; message?: string } }).error;
+    const body = data.detail as { error?: unknown; detail?: unknown; message?: string };
+    if (typeof body.error === "string") {
+      const msg =
+        typeof body.detail === "string"
+          ? body.detail
+          : typeof body.message === "string"
+            ? body.message
+            : "";
+      return msg ? `${body.error}: ${msg}` : body.error;
+    }
+    const nested = body.error as { code?: string; message?: string };
     if (nested?.message) {
       return nested.code ? `${nested.code}: ${nested.message}` : nested.message;
     }
@@ -159,6 +178,117 @@ export const api = {
     });
   },
 
+  /**
+   * Stream chat via SSE when backend CHAT_STREAMING is ON.
+   * Falls back to non-stream chat() when the response is JSON (feature off / degrade).
+   */
+  async chatStream(
+    message: string,
+    conversationId: string | null,
+    handlers: {
+      onMeta?: (data: Record<string, unknown>) => void;
+      onToken?: (text: string, model?: string) => void;
+      onDone?: (data: ChatResponse) => void;
+      onError?: (detail: string) => void;
+    },
+  ): Promise<ChatResponse> {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        message,
+        conversation_id: conversationId,
+        stream: true,
+      }),
+    });
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    if (!response.ok) {
+      let detail = `Request failed (${response.status})`;
+      try {
+        const body = (await response.json()) as ApiErrorBody;
+        detail = detailMessage(body, response.status);
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(response.status, detail);
+    }
+
+    // Feature flag OFF → normal JSON response.
+    if (!contentType.includes("text/event-stream")) {
+      const data = (await response.json()) as ChatResponse;
+      handlers.onDone?.(data);
+      return data;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new ApiError(503, "Streaming response body missing");
+    }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let donePayload: ChatResponse | null = null;
+    let eventName = "message";
+
+    const flushBlock = (block: string) => {
+      const lines = block.split("\n");
+      let dataLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+      if (!dataLines.length) return;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (eventName === "meta") {
+        handlers.onMeta?.(parsed);
+      } else if (eventName === "token") {
+        const text = typeof parsed.text === "string" ? parsed.text : "";
+        const model = typeof parsed.model === "string" ? parsed.model : undefined;
+        if (text) handlers.onToken?.(text, model);
+      } else if (eventName === "done") {
+        donePayload = parsed as unknown as ChatResponse;
+        handlers.onDone?.(donePayload);
+      } else if (eventName === "error") {
+        const detail =
+          typeof parsed.detail === "string" ? parsed.detail : "stream error";
+        handlers.onError?.(detail);
+        throw new ApiError(503, detail);
+      }
+      eventName = "message";
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep = buffer.indexOf("\n\n");
+      while (sep >= 0) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        flushBlock(block);
+        sep = buffer.indexOf("\n\n");
+      }
+    }
+    if (buffer.trim()) {
+      flushBlock(buffer);
+    }
+    if (!donePayload) {
+      throw new ApiError(503, "Stream ended without done event");
+    }
+    return donePayload;
+  },
+
   listCapabilities(): Promise<{ capabilities: unknown[] }> {
     return request<{ capabilities: unknown[] }>("/api/capabilities");
   },
@@ -230,6 +360,16 @@ export const api = {
     return request<NeuroResidualStatus>("/api/neuro/residual");
   },
 
+  neuroStatus(): Promise<{
+    enabled: boolean;
+    residual: Record<string, unknown>;
+    contrastive: Record<string, unknown>;
+    streaming: Record<string, unknown>;
+    truth?: Record<string, boolean>;
+  }> {
+    return request("/api/neuro/status");
+  },
+
   neuroAbsorb(limit = 50): Promise<{ ingested: number; truth?: Record<string, boolean> }> {
     return request<{ ingested: number; truth?: Record<string, boolean> }>("/api/neuro/absorb", {
       method: "POST",
@@ -237,10 +377,22 @@ export const api = {
     });
   },
 
-  neuroSoak(iterations = 3): Promise<{ report: SoakReport }> {
+  neuroSoak(iterations = 3, mode: "mini" | "long" = "mini"): Promise<{ report: SoakReport }> {
     return request<{ report: SoakReport }>("/api/neuro/soak", {
       method: "POST",
-      body: JSON.stringify({ iterations }),
+      body: JSON.stringify({ iterations, mode }),
+    });
+  },
+
+  neuroResidualOrchestrate(payload: {
+    text: string;
+    complexity?: string;
+    run_forward?: boolean;
+    mode?: string;
+  }): Promise<{ report: unknown }> {
+    return request<{ report: unknown }>("/api/neuro/residual/orchestrate", {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   },
 
@@ -880,5 +1032,157 @@ export const api = {
     if (opts?.recursive != null) params.set("recursive", String(opts.recursive));
     const q = params.toString();
     return request(`/api/coding/workspace/tree${q ? `?${q}` : ""}`);
+  },
+
+  mcpServers(): Promise<{ servers: McpServerPublic[]; feature_enabled: boolean }> {
+    return request("/api/mcp/servers");
+  },
+
+  mcpCreateServer(payload: Record<string, unknown>): Promise<{ server: McpServerPublic }> {
+    return request("/api/mcp/servers", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  mcpEnableServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/enable`, { method: "POST" });
+  },
+
+  mcpDisableServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/disable`, { method: "POST" });
+  },
+
+  mcpConnectServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: "POST" });
+  },
+
+  mcpDisconnectServer(serverId: string): Promise<{ server: McpServerPublic }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/disconnect`, {
+      method: "POST",
+    });
+  },
+
+  mcpRefreshTools(serverId: string): Promise<{ tools: McpToolRecord[] }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}/refresh-tools`, {
+      method: "POST",
+    });
+  },
+
+  mcpDeleteServer(serverId: string): Promise<{ ok: boolean }> {
+    return request(`/api/mcp/servers/${encodeURIComponent(serverId)}`, { method: "DELETE" });
+  },
+
+  mcpTools(serverId?: string): Promise<{ tools: McpToolRecord[] }> {
+    const q = serverId ? `?server_id=${encodeURIComponent(serverId)}` : "";
+    return request(`/api/mcp/tools${q}`);
+  },
+
+  mcpCalls(limit = 100): Promise<{ calls: McpCallRecord[] }> {
+    return request(`/api/mcp/calls?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  mcpCall(payload: {
+    capability_id: string;
+    arguments?: Record<string, unknown>;
+    approval_id?: string;
+    approved_by_user?: boolean;
+  }): Promise<{ result: unknown; truth: Record<string, boolean> }> {
+    return request("/api/mcp/call", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  /* ---------- Market Simulation ---------- */
+
+  marketSimStatus(): Promise<MarketSimStatusResponse> {
+    return request("/api/market-sim/status");
+  },
+
+  listMarketData(limit = 200): Promise<{ sources: MarketDataSource[] }> {
+    return request(`/api/market-sim/data?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  scanMarketData(): Promise<{ sources: MarketDataSource[] }> {
+    return request("/api/market-sim/data/scan", { method: "POST" });
+  },
+
+  registerMarketData(payload: {
+    path: string;
+    symbol?: string;
+    timeframe?: string;
+  }): Promise<{ source: MarketDataSource }> {
+    return request("/api/market-sim/data/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listMarketStrategies(limit = 100): Promise<{ strategies: MarketStrategy[] }> {
+    return request(`/api/market-sim/strategies?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createMarketStrategy(payload: {
+    name: string;
+    description?: string;
+    tags?: string[];
+    parameters?: Record<string, unknown>;
+    entryRules?: Record<string, unknown>;
+    exitRules?: Record<string, unknown>;
+    riskRules?: Record<string, unknown>;
+    requiredTimeframes?: string[];
+    brainDependencies?: string[];
+  }): Promise<{ strategy: MarketStrategy; version: MarketStrategyVersion }> {
+    return request("/api/market-sim/strategies", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getMarketStrategy(
+    strategyId: string,
+  ): Promise<{ strategy: MarketStrategy; versions: MarketStrategyVersion[] }> {
+    return request(`/api/market-sim/strategies/${encodeURIComponent(strategyId)}`);
+  },
+
+  listMarketSimRuns(limit = 50): Promise<{ runs: MarketSimRun[] }> {
+    return request(`/api/market-sim/runs?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createMarketSimRun(payload: {
+    sourceId: string;
+    strategyId?: string;
+    strategyVersion?: number;
+    startTs?: string;
+    endTs?: string;
+    seed?: number;
+    speed?: number;
+    initialCash?: number;
+    deliberationEveryN?: number;
+    agents?: Array<Record<string, unknown>>;
+  }): Promise<{ run: MarketSimRun }> {
+    return request("/api/market-sim/runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  startMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/start`, { method: "POST" });
+  },
+
+  pauseMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/pause`, { method: "POST" });
+  },
+
+  stepMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/step`, { method: "POST" });
+  },
+
+  stopMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
+  },
+
+  getMarketSimLive(runId: string): Promise<MarketSimLiveState> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/live`);
+  },
+
+  getMarketSimResults(runId: string): Promise<MarketSimLiveState & { metrics: Record<string, unknown> }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/results`);
   },
 };

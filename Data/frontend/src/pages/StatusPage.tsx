@@ -68,9 +68,9 @@ export function StatusPage() {
     };
   }, []);
 
-  async function runSoak() {
+  async function runSoak(mode: "mini" | "long" = "mini") {
     try {
-      const result = await api.neuroSoak(3);
+      const result = await api.neuroSoak(mode === "long" ? 12 : 3, mode);
       setState((prev) => ({ ...prev, soak: result.report, error: null }));
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Neuro soak failed";
@@ -203,9 +203,46 @@ export function StatusPage() {
                 </strong>
               </div>
               <div className="lv-world-stat">
-                <span>Cortex / tiers</span>
+                <span>Load weights</span>
+                <strong>{neuro?.residual_load_weights || state.residual?.load_weights ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Orchestrator</span>
+                <strong>{neuro?.residual_orchestrator ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Cortex K / blocks</span>
                 <strong>
-                  {neuro?.cortex ? "cortex" : "—"}/{neuro?.memory_tiers ? "tiers" : "—"}
+                  {neuro?.cortex_max_k ?? state.residual?.cortex_max_k ?? "—"}/
+                  {neuro?.cortex_blocks ? "named" : neuro?.cortex ? "on" : "—"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>WM load</span>
+                <strong>
+                  {typeof neuro?.working_memory_load === "number"
+                    ? `${Math.round(neuro.working_memory_load * 100)}%`
+                    : "—"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Contrastive</span>
+                <strong>
+                  {neuro?.contrastive_ready
+                    ? neuro.contrastive_method_default || "ready"
+                    : neuro?.contrastive_training
+                      ? "lexical"
+                      : "OFF"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Chat stream</span>
+                <strong>{neuro?.streaming_posture || (neuro?.chat_streaming ? "sse" : "OFF")}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Residual applied/degraded</span>
+                <strong>
+                  {neuro?.residual_applied_count ?? 0}/{neuro?.residual_degraded_count ?? 0}
                 </strong>
               </div>
               <div className="lv-world-stat">
@@ -217,18 +254,70 @@ export function StatusPage() {
                 <strong>{state.recipes.length || health?.training_recipes?.registered || 0}</strong>
               </div>
             </div>
-            <p className="lv-muted">
-              Neural signal ≠ authority. Residual unsupported is not success.
-            </p>
-            <button type="button" className="lv-button-primary" onClick={() => void runSoak()}>
-              Run mini soak
-            </button>
+            {neuro?.truth ? (
+              <p className="lv-muted">
+                Honesty: residual_implemented=
+                {String(neuro.truth.residual_implemented ?? false)}; residual_applied=
+                {String(neuro.truth.residual_applied ?? false)}; streaming_degraded=
+                {String(neuro.truth.streaming_degraded ?? false)}; neural≠authority=
+                {String(neuro.truth.neural_signal_is_not_authority ?? true)}
+              </p>
+            ) : (
+              <p className="lv-muted">Neural signal ≠ authority. Residual unsupported is not success.</p>
+            )}
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button type="button" className="lv-button-primary" onClick={() => void runSoak("mini")}>
+                Run mini soak
+              </button>
+              {neuro?.soak_long ? (
+                <button type="button" className="lv-button-primary" onClick={() => void runSoak("long")}>
+                  Run long soak
+                </button>
+              ) : null}
+            </div>
             {state.soak ? (
               <p className="lv-muted">
-                Soak {state.soak.passed}/{state.soak.passed + state.soak.failed} steps ok ·{" "}
-                {Math.round(state.soak.duration_ms)}ms (not a production SLO)
+                Soak ({state.soak.mode ?? "mini"}) {state.soak.passed}/{state.soak.passed + state.soak.failed}{" "}
+                steps ok · {Math.round(state.soak.duration_ms)}ms (not a production SLO)
               </p>
             ) : null}
+          </article>
+
+          <article className="lv-panel lv-card">
+            <div className="lv-section-label">Knowledge / RAG</div>
+            <div className="lv-world-stats">
+              <div className="lv-world-stat">
+                <span>Documents</span>
+                <strong>{health?.knowledge?.documents ?? "—"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Embeddings</span>
+                <strong>
+                  {health?.knowledge?.embedding_available
+                    ? health.knowledge.embedding_provider ?? "ready"
+                    : health?.knowledge?.embedding_provider ?? "unavailable"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>RAG V3</span>
+                <strong>{health?.knowledge?.rag_v3 ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Deep recall</span>
+                <strong>{health?.knowledge?.deep_recall ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Why library</span>
+                <strong>{health?.knowledge?.why_library ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Reranker</span>
+                <strong>{health?.knowledge?.reranker_available ? "ready" : "unavailable"}</strong>
+              </div>
+            </div>
+            <p className="lv-muted">
+              Unavailable embeddings/reranker/deep-recall are reported honestly — never fabricated.
+            </p>
           </article>
         </section>
       </main>

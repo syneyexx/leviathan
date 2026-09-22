@@ -7,8 +7,8 @@ import { escapeHtml } from "../util.js";
 export function createComponents(ctx) {
   return {
     id: "components",
-    title: "Componenten",
-    zone: "right",
+    title: "Assets",
+    zone: "left",
     place: "dock",
     host: null,
     _sig: null,

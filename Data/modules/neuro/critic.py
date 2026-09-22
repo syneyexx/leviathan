@@ -5,8 +5,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-from .types import NeuroSignal
 from .residual import ResidualTensorRef
+from .types import NeuroSignal
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,8 @@ class CriticScore:
 class ProcessCritic:
     """Scores intermediate reasoning for consistency / progress / grounding.
 
-    Without residual tensors, uses lexical heuristics with honest provenance.
+    Grounding heavily prefers Evidence IDs and Knowledge document/chunk IDs.
+    Without citations, factual_grounding drops hard. Advisory only.
     """
 
     def __init__(self, *, enabled: bool = False) -> None:
@@ -66,7 +67,6 @@ class ProcessCritic:
         words = re.findall(r"[a-z0-9]{3,}", lowered)
         unique = len(set(words)) / max(len(words), 1)
 
-        # Consistency: penalize high-risk destructive phrasing without evidence ids.
         risk_tokens = ("delete", "rm -rf", "overwrite", "force", "ignore policy")
         risk_hits = sum(1 for token in risk_tokens if token in lowered)
         consistency = max(0.0, min(1.0, 0.85 - 0.2 * risk_hits + 0.1 * unique))
@@ -75,24 +75,53 @@ class ProcessCritic:
         if not steps:
             goal_progress = 0.4
         else:
-            covered = sum(1 for step in steps if step.lower() in lowered or any(w in lowered for w in step.lower().split("_")))
+            covered = sum(
+                1
+                for step in steps
+                if step.lower() in lowered
+                or any(w in lowered for w in step.lower().split("_") if len(w) > 2)
+            )
             goal_progress = round(covered / max(len(steps), 1), 3)
 
-        grounded_pool = list(knowledge_ids or []) + list(evidence_ids or [])
-        if grounded_pool:
-            cited = sum(1 for item in grounded_pool if item.lower() in lowered)
-            factual_grounding = round(min(1.0, cited / max(len(grounded_pool), 1) + 0.2), 3)
-            method = "lexical_grounding_ids"
-        else:
-            factual_grounding = 0.25
-            method = "lexical_ungrounded_heuristic"
+        evidence_pool = [str(x) for x in (evidence_ids or ()) if str(x).strip()]
+        knowledge_pool = [str(x) for x in (knowledge_ids or ()) if str(x).strip()]
+        notes: list[str] = []
 
+        if evidence_pool or knowledge_pool:
+            # Evidence citations weigh more heavily than knowledge ids.
+            evidence_cited = sum(1 for item in evidence_pool if item.lower() in lowered)
+            knowledge_cited = sum(1 for item in knowledge_pool if item.lower() in lowered)
+            evidence_ratio = evidence_cited / max(len(evidence_pool), 1) if evidence_pool else 0.0
+            knowledge_ratio = knowledge_cited / max(len(knowledge_pool), 1) if knowledge_pool else 0.0
+            factual_grounding = round(
+                min(1.0, 0.15 + 0.55 * evidence_ratio + 0.30 * knowledge_ratio),
+                3,
+            )
+            if evidence_cited == 0 and knowledge_cited == 0:
+                # Hard drop when IDs were available but none cited.
+                factual_grounding = 0.08
+                notes.append("ids_available_but_uncited — grounding collapsed")
+                method = "lexical_grounding_ids_missed"
+            else:
+                method = "lexical_grounding_ids"
+                notes.append(
+                    f"evidence_cited={evidence_cited}/{len(evidence_pool)}; "
+                    f"knowledge_cited={knowledge_cited}/{len(knowledge_pool)}"
+                )
+        else:
+            # No Evidence/Knowledge IDs in context — ungrounded heuristic, capped low.
+            citation_like = bool(re.search(r"\b(evid|doc|chunk|source)[-_]?[a-z0-9]+\b", lowered))
+            factual_grounding = 0.18 if citation_like else 0.05
+            method = "lexical_ungrounded_heuristic"
+            notes.append("no evidence/knowledge ids — grounding capped low")
+
+        notes.append("heuristic critic — residual tensors not required for this path")
         return CriticScore(
             consistency=round(consistency, 3),
             goal_progress=goal_progress,
             factual_grounding=factual_grounding,
             method=method,
-            notes=("heuristic critic — residual tensors not required for this path",),
+            notes=tuple(notes),
         )
 
     def score_residual(
@@ -116,20 +145,25 @@ class ProcessCritic:
             return CriticScore(
                 consistency=0.3,
                 goal_progress=0.3,
-                factual_grounding=0.2,
+                factual_grounding=0.05 if not (knowledge_ids or evidence_ids) else 0.15,
                 method="residual_unavailable",
                 notes=(tensor.note or "residual tensor unavailable",),
             )
         meta = tensor.metadata or {}
         norm = float(meta.get("norm") or 0.0)
-        # Bounded heuristic on residual energy — advisory only.
         consistency = max(0.0, min(1.0, 1.0 - abs(norm - 1.0) / 5.0))
-        goal_progress = 0.5 if plan_steps else 0.4
-        if knowledge_ids or evidence_ids:
-            factual_grounding = 0.55
-            method = "residual_stats_with_id_context"
+        if plan_steps:
+            goal_progress = 0.55
         else:
-            factual_grounding = 0.35
+            goal_progress = 0.4
+        if evidence_ids:
+            factual_grounding = 0.62
+            method = "residual_stats_with_evidence_context"
+        elif knowledge_ids:
+            factual_grounding = 0.48
+            method = "residual_stats_with_knowledge_context"
+        else:
+            factual_grounding = 0.12
             method = "residual_stats_ungrounded"
         return CriticScore(
             consistency=round(consistency, 3),
@@ -143,7 +177,7 @@ class ProcessCritic:
         return NeuroSignal(
             signal_id=str(uuid.uuid4()),
             kind="process_critic",
-            strength=score.aggregate,
+            strength=max(0.0, min(1.0, score.aggregate)),
             summary=(
                 f"Critic aggregate={score.aggregate} "
                 f"(consistency={score.consistency}, progress={score.goal_progress}, "
