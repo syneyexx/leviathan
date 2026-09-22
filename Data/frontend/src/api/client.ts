@@ -56,6 +56,7 @@ import type {
   CodingStatusResponse,
   CodingSession,
   CodingSessionDetail,
+  CodingTurnResponse,
   CodingMission,
   CodingWorkspaceTreeResponse,
   McpCallRecord,
@@ -999,12 +1000,21 @@ export const api = {
   createCodingSession(payload: {
     goal: string;
     mission?: CodingMission;
-    workspace_root?: string;
-    model_id?: string;
+    workspaceRoot?: string;
+    modelId?: string;
+    conversationId?: string;
+    title?: string;
   }): Promise<{ session: CodingSession }> {
     return request("/api/coding/sessions", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        goal: payload.goal,
+        ...(payload.mission ? { mission: payload.mission } : {}),
+        ...(payload.workspaceRoot ? { workspaceRoot: payload.workspaceRoot } : {}),
+        ...(payload.modelId ? { modelId: payload.modelId } : {}),
+        ...(payload.conversationId ? { conversationId: payload.conversationId } : {}),
+        ...(payload.title ? { title: payload.title } : {}),
+      }),
     });
   },
 
@@ -1014,11 +1024,15 @@ export const api = {
 
   codingTurn(
     sessionId: string,
-    payload: { message?: string; approval_id?: string; capability_id?: string },
-  ): Promise<CodingSessionDetail> {
+    payload: { message?: string; approvalId?: string; capabilityId?: string } = {},
+  ): Promise<CodingTurnResponse> {
     return request(`/api/coding/sessions/${encodeURIComponent(sessionId)}/turn`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...(payload.message != null ? { message: payload.message } : {}),
+        ...(payload.approvalId ? { approvalId: payload.approvalId } : {}),
+        ...(payload.capabilityId ? { capabilityId: payload.capabilityId } : {}),
+      }),
     });
   },
 
@@ -1031,10 +1045,12 @@ export const api = {
   codingWorkspaceTree(opts?: {
     path?: string;
     recursive?: boolean;
+    sessionId?: string;
   }): Promise<CodingWorkspaceTreeResponse> {
     const params = new URLSearchParams();
     if (opts?.path) params.set("path", opts.path);
     if (opts?.recursive != null) params.set("recursive", String(opts.recursive));
+    if (opts?.sessionId) params.set("session_id", opts.sessionId);
     const q = params.toString();
     return request(`/api/coding/workspace/tree${q ? `?${q}` : ""}`);
   },

@@ -939,6 +939,14 @@ export type CodingSession = {
   created_at: string;
   updated_at: string;
   run_id?: string | null;
+  pending_capability?: {
+    capability_id?: string;
+    approval_id?: string;
+    arguments?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+  feature_truth?: Record<string, unknown> | null;
+  round_count?: number;
 };
 
 export type CodingStep = {
@@ -947,6 +955,9 @@ export type CodingStep = {
   kind: string;
   capability_id: string | null;
   status: string;
+  /** Canonical backend field from CodingStep.public_dict(). */
+  output?: Record<string, unknown> | null;
+  /** @deprecated Prefer `output` — kept for transitional reads. */
   output_json?: Record<string, unknown> | null;
   error?: string | null;
   created_at?: string;
@@ -966,8 +977,9 @@ export type CodingPatch = {
 };
 
 export type CodingVerification = {
-  report_id: string;
-  outcome: "PASSED" | "FAILED" | "UNMEASURED";
+  verification_id?: string | null;
+  report_id?: string;
+  outcome?: "PASSED" | "FAILED" | "UNMEASURED";
   requirements?: Array<{ requirement_id: string; outcome: string; detail?: string | null }>;
 };
 
@@ -987,6 +999,10 @@ export type CodingSessionDetail = {
   patches: CodingPatch[];
   verification: CodingVerification | null;
   neuro: CodingNeuroSnapshot | null;
+};
+
+export type CodingTurnResponse = {
+  session: CodingSession;
 };
 
 export type CodingWorkspaceTreeResponse = {
