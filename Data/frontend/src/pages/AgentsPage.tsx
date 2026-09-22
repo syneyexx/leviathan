@@ -1,73 +1,54 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { mediaControlCrops } from "../assets/mediaControlAssets";
+import { api, ApiError } from "../api/client";
+import { useSystemTelemetry } from "../hooks/useSystemTelemetry";
 import { AppShell } from "../layouts/AppShell";
+import { formatElapsed, isActiveJobStatus } from "../lib/jobStatus";
 import { useAppToast } from "../state/useAppToast";
-
-type AgentStatus = "Online" | "Busy" | "Idle" | "Offline";
-
-const AGENTS = [
-  { name: "Research", role: "Information & Analysis", status: "Online" as AgentStatus, model: "gpt-4.1", tags: ["research", "web", "analysis"], tasks: "5 | 2", last: "1m ago", icon: "research" },
-  { name: "Coding", role: "Implementation & Verify", status: "Busy" as AgentStatus, model: "claude-3.7", tags: ["code", "tests", "refactor"], tasks: "3 | 1", last: "just now", icon: "coding" },
-  { name: "Trading", role: "Markets & Execution", status: "Online" as AgentStatus, model: "gpt-4.1", tags: ["markets", "risk", "orders"], tasks: "2 | 0", last: "4m ago", icon: "trading" },
-  { name: "Memory", role: "Context & Recall", status: "Online" as AgentStatus, model: "qwen3-14b", tags: ["memory", "index", "recall"], tasks: "1 | 0", last: "8m ago", icon: "memory" },
-  { name: "Media", role: "Create & Publish", status: "Idle" as AgentStatus, model: "gpt-4.1", tags: ["video", "caption", "schedule"], tasks: "0 | 0", last: "22m ago", icon: "media" },
-  { name: "Critic", role: "Review & Guardrails", status: "Online" as AgentStatus, model: "claude-3.7", tags: ["review", "qa", "policy"], tasks: "2 | 1", last: "3m ago", icon: "critic" },
-  { name: "Planner", role: "Goals & Decomposition", status: "Busy" as AgentStatus, model: "o3-mini", tags: ["plan", "delegate", "roadmap"], tasks: "4 | 2", last: "2m ago", icon: "planner" },
-  { name: "Execution", role: "Tools & Runtime", status: "Offline" as AgentStatus, model: "hermes-3", tags: ["tools", "runtime", "shell"], tasks: "0 | 0", last: "2h ago", icon: "execution" },
-] as const;
+import type {
+  AgentDefinition,
+  AgentEvent,
+  AgentFleetSummary,
+  AgentMission,
+  CapabilityListItem,
+} from "../types/api";
 
 const MISSION_TABS = ["All Tasks", "Running", "Queued", "Completed"] as const;
-
-const MISSIONS = [
-  { id: 2401, task: "Deep research · rate-cut odds", agent: "Research", status: "Running", priority: "High", progress: 68, eta: "6m" },
-  { id: 2402, task: "Implement feature from spec", agent: "Coding", status: "Running", priority: "High", progress: 42, eta: "18m" },
-  { id: 2403, task: "Rebalance paper portfolio", agent: "Trading", status: "Queued", priority: "Med", progress: 10, eta: "25m" },
-  { id: 2404, task: "Critique media campaign draft", agent: "Critic", status: "Running", priority: "Med", progress: 55, eta: "9m" },
-  { id: 2405, task: "Plan Q2 agent fleet roadmap", agent: "Planner", status: "Queued", priority: "Low", progress: 8, eta: "40m" },
-  { id: 2406, task: "Index new knowledge pack", agent: "Memory", status: "Running", priority: "Med", progress: 81, eta: "3m" },
-  { id: 2407, task: "Schedule weekly recap reel", agent: "Media", status: "Queued", priority: "Low", progress: 5, eta: "1h" },
-  { id: 2408, task: "Verify tool sandbox health", agent: "Execution", status: "Queued", priority: "High", progress: 0, eta: "—" },
-] as const;
-
-const RESOURCES = [
-  { label: "Total Token Usage", detail: "1.2M / 5.0M", pct: 24 },
-  { label: "Memory Usage", detail: "18.4 GB / 64 GB", pct: 29 },
-  { label: "Active Workers", detail: "7 / 16", pct: 44 },
-  { label: "Average Latency", detail: "Good", pct: 72 },
-  { label: "Context Budget", detail: "210K / 1.0M", pct: 21 },
-  { label: "CPU Usage", detail: "32%", pct: 32 },
-  { label: "GPU Usage", detail: "68%", pct: 68 },
-] as const;
-
 const LOG_FILTERS = ["All", "System", "Agents", "Tasks", "Warnings", "Errors"] as const;
-
-const LOGS = [
-  { time: "14:37:21", source: "Coding", text: "Completed web search · 14 sources", dur: "2.3s", kind: "Agents" },
-  { time: "14:36:58", source: "System", text: "Worker pool scaled · +2 slots", dur: "0.4s", kind: "System" },
-  { time: "14:36:12", source: "Research", text: "Delegated synthesis to Critic", dur: "1.1s", kind: "Tasks" },
-  { time: "14:35:40", source: "Planner", text: "Mission graph updated · 4 nodes", dur: "0.8s", kind: "Tasks" },
-  { time: "14:34:55", source: "Trading", text: "Risk check passed · exposure 18%", dur: "0.6s", kind: "Agents" },
-  { time: "14:33:18", source: "Memory", text: "Warning · context pressure rising", dur: "—", kind: "Warnings" },
-  { time: "14:31:02", source: "Execution", text: "Error · sandbox offline", dur: "—", kind: "Errors" },
-  { time: "14:29:44", source: "Critic", text: "Approved media caption batch", dur: "3.2s", kind: "Agents" },
-] as const;
-
 const CAPABILITY_TABS = ["Capabilities", "Tools & Integrations", "Datasets", "Knowledge Sources"] as const;
 
-const CAPABILITIES = [
-  { title: "Web Search", desc: "Live retrieval across the open web.", icon: "search" },
-  { title: "Code Execution", desc: "Sandboxed runtimes for verify loops.", icon: "code" },
-  { title: "Browser Automation", desc: "Navigate and extract from UIs.", icon: "globe" },
-  { title: "Image & Video Gen", desc: "Cinematic media synthesis.", icon: "image" },
-  { title: "APIs", desc: "Authenticated external connectors.", icon: "api" },
-  { title: "Market Data", desc: "Quotes, books, and regime feeds.", icon: "chart" },
-  { title: "File System", desc: "Workspace read/write with policy.", icon: "folder" },
-  { title: "Datasets", desc: "Curated training and eval packs.", icon: "data" },
-  { title: "Memory Access", desc: "Long-term recall and indexing.", icon: "memory" },
-  { title: "Reasoning & Planning", desc: "Multi-step goal decomposition.", icon: "brain" },
-  { title: "Document Analysis", desc: "Parse PDFs, sheets, and specs.", icon: "doc" },
-  { title: "Communication", desc: "Inter-agent message bus.", icon: "chat" },
-] as const;
+function errMsg(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
+function healthLabel(agent: AgentDefinition): string {
+  const h = String(agent.health || "").toLowerCase();
+  if (!agent.enabled || h === "disabled") return "Offline";
+  if (h === "busy") return "Busy";
+  if (h === "idle") return "Idle";
+  if (h === "error") return "Offline";
+  if (h === "archived") return "Offline";
+  return "Online";
+}
+
+function statusTone(label: string) {
+  if (label === "Online" || label === "Idle") return "ok";
+  if (label === "Busy") return "warn";
+  if (label === "Idle") return "cyan";
+  return "off";
+}
+
+function agentIconKind(agent: AgentDefinition): string {
+  const kind = String(agent.kind).toLowerCase();
+  if (kind === "research") return "research";
+  if (kind === "coding") return "coding";
+  if (kind === "orchestrator") return "planner";
+  if (agent.tags.includes("trading") || agent.name.toLowerCase().includes("trading")) return "trading";
+  if (agent.tags.includes("media") || agent.name.toLowerCase().includes("media")) return "media";
+  if (agent.tags.includes("memory") || agent.name.toLowerCase().includes("memory")) return "memory";
+  if (agent.tags.includes("review") || agent.name.toLowerCase().includes("critic")) return "critic";
+  return "execution";
+}
 
 function AgentIcon({ kind }: { kind: string }) {
   switch (kind) {
@@ -96,34 +77,13 @@ function CapIcon({ kind }: { kind: string }) {
       return (<><circle cx="11" cy="11" r="6" /><path d="M16 16l3.5 3.5" /></>);
     case "code":
       return <path d="M8 8l-4 4 4 4M16 8l4 4-4 4" />;
-    case "globe":
-      return (<><circle cx="12" cy="12" r="8" /><path d="M4 12h16M12 4c2.5 2.8 2.5 13.2 0 16M12 4c-2.5 2.8-2.5 13.2 0 16" /></>);
-    case "image":
-      return (<><rect x="4" y="6" width="16" height="12" rx="2" /><path d="M8 14l3-3 2.5 2.5L16 11l2 2" /></>);
-    case "api":
-      return <path d="M8 8h8v8H8zM12 4v4M12 16v4M4 12h4M16 12h4" />;
-    case "chart":
-      return <path d="M5 19V10M12 19V6M19 19v-5" />;
     case "folder":
       return (<><path d="M4 9h16v9H4z" /><path d="M4 9l1.6-2.8h5L12 9" /></>);
-    case "data":
-      return (<><ellipse cx="12" cy="7" rx="6" ry="2.5" /><path d="M6 7v5c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V7M6 12v5c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5v-5" /></>);
-    case "memory":
-      return (<><ellipse cx="12" cy="8" rx="6" ry="3" /><path d="M6 8v6c0 1.7 2.7 3 6 3s6-1.3 6-3V8" /></>);
     case "brain":
       return <path d="M9 8a3 3 0 015 0 3 3 0 012.5 2.8A3 3 0 0115 16H9a3 3 0 01-1.5-5.2A3 3 0 019 8z" />;
-    case "doc":
-      return <path d="M7 4h7l3 3v13H7zM14 4v3h3M9 11h6M9 15h5" />;
     default:
       return <path d="M5 7h14v8H9l-4 3V7z" />;
   }
-}
-
-function statusTone(status: AgentStatus) {
-  if (status === "Online") return "ok";
-  if (status === "Busy") return "warn";
-  if (status === "Idle") return "cyan";
-  return "off";
 }
 
 function SectionTitle({ n, title }: { n: number; title: string }) {
@@ -135,37 +95,58 @@ function SectionTitle({ n, title }: { n: number; title: string }) {
   );
 }
 
-function AgentNetwork() {
-  const nodes: Array<{ id: string; label: string; x: number; y: number; hub?: boolean }> = [
-    { id: "orch", label: "Orchestrator", x: 200, y: 110, hub: true },
-    { id: "research", label: "Research", x: 70, y: 40 },
-    { id: "planner", label: "Planner", x: 200, y: 28 },
-    { id: "critic", label: "Critic", x: 330, y: 40 },
-    { id: "coding", label: "Coding", x: 60, y: 170 },
-    { id: "memory", label: "Memory", x: 200, y: 200 },
-    { id: "trading", label: "Trading", x: 340, y: 170 },
+function AgentNetwork({
+  agents,
+  edges,
+}: {
+  agents: AgentDefinition[];
+  edges: Array<{ from: string; to: string; active: boolean }>;
+}) {
+  const orch = agents.find((a) => a.kind === "orchestrator");
+  const members = agents.filter((a) => a.kind !== "orchestrator").slice(0, 6);
+  const nodes: Array<{ id: string; label: string; x: number; y: number; hub?: boolean }> = [];
+  if (orch) {
+    nodes.push({ id: orch.agentId, label: orch.name, x: 200, y: 110, hub: true });
+  }
+  const positions = [
+    [70, 40],
+    [200, 28],
+    [330, 40],
+    [60, 170],
+    [200, 200],
+    [340, 170],
   ];
-
-  const links: Array<[string, string, "active" | "idle"]> = [
-    ["orch", "research", "active"],
-    ["orch", "planner", "active"],
-    ["orch", "critic", "active"],
-    ["orch", "coding", "active"],
-    ["orch", "memory", "idle"],
-    ["orch", "trading", "idle"],
-    ["planner", "critic", "active"],
-    ["research", "memory", "idle"],
-  ];
-
+  members.forEach((m, i) => {
+    const [x, y] = positions[i] ?? [200, 110];
+    nodes.push({ id: m.agentId, label: m.name, x, y });
+  });
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const linkSet =
+    edges.length > 0
+      ? edges
+      : orch
+        ? members.map((m) => ({
+            from: orch.agentId,
+            to: m.agentId,
+            active: healthLabel(m) === "Busy",
+          }))
+        : [];
 
   return (
     <svg className="lv-ag-network" viewBox="0 0 400 230" role="img" aria-label="Agent network">
-      {links.map(([a, b, tone]) => {
-        const from = byId[a];
-        const to = byId[b];
+      {linkSet.map((link) => {
+        const from = byId[link.from];
+        const to = byId[link.to];
+        if (!from || !to) return null;
         return (
-          <line key={`${a}-${b}`} x1={from.x} y1={from.y} x2={to.x} y2={to.y} className={`lv-ag-link is-${tone}`} />
+          <line
+            key={`${link.from}-${link.to}`}
+            x1={from.x}
+            y1={from.y}
+            x2={to.x}
+            y2={to.y}
+            className={`lv-ag-link is-${link.active ? "active" : "idle"}`}
+          />
         );
       })}
       {nodes.map((node) => (
@@ -182,45 +163,275 @@ function AgentNetwork() {
 
 export function AgentsPage() {
   const toast = useAppToast();
+  const { sample: telemetry, error: telemetryError } = useSystemTelemetry({ enabled: true, intervalMs: 4000 });
+
+  const [agents, setAgents] = useState<AgentDefinition[]>([]);
+  const [summary, setSummary] = useState<AgentFleetSummary | null>(null);
+  const [missions, setMissions] = useState<AgentMission[]>([]);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [capabilities, setCapabilities] = useState<CapabilityListItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [eventsLive, setEventsLive] = useState(true);
+
   const [roleFilter, setRoleFilter] = useState("All Roles");
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [missionTab, setMissionTab] = useState<(typeof MISSION_TABS)[number]>("All Tasks");
   const [commTab, setCommTab] = useState("Agent Network");
   const [logFilter, setLogFilter] = useState<(typeof LOG_FILTERS)[number]>("All");
   const [capTab, setCapTab] = useState<(typeof CAPABILITY_TABS)[number]>("Capabilities");
-  const [autonomy, setAutonomy] = useState(70);
-  const [maxWorkers, setMaxWorkers] = useState(3);
-  const [priority, setPriority] = useState<"Low" | "Med" | "High">("High");
-  const [checks, setChecks] = useState({ tools: true, memory: true, web: true, multi: false });
   const [query, setQuery] = useState("");
 
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [taskRequest, setTaskRequest] = useState("search leviathan agent capabilities");
+  const [priority, setPriority] = useState<"low" | "med" | "high">("high");
+  const [dryRun, setDryRun] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createKind, setCreateKind] = useState("research");
+
+  const agentById = useMemo(() => Object.fromEntries(agents.map((a) => [a.agentId, a])), [agents]);
+
+  const loadAll = useCallback(async () => {
+    setLoadError(null);
+    try {
+      const [fleet, missionRes, eventRes, caps] = await Promise.all([
+        api.listAgents(),
+        api.listAgentMissions({ limit: 100 }),
+        api.listAgentEvents({ limit: 80 }),
+        api.listCapabilities().catch(() => ({ capabilities: [] as CapabilityListItem[] })),
+      ]);
+      setAgents(fleet.agents);
+      setSummary(fleet.summary);
+      setMissions(missionRes.missions);
+      setEvents(eventRes.events);
+      setCapabilities(caps.capabilities ?? []);
+      setEventsLive(true);
+      if (!selectedAgentId && fleet.agents.length > 0) {
+        const preferred =
+          fleet.agents.find((a) => a.kind === "coding") ??
+          fleet.agents.find((a) => a.enabled) ??
+          fleet.agents[0];
+        setSelectedAgentId(preferred.agentId);
+      }
+    } catch (err) {
+      setLoadError(errMsg(err, "Failed to load agent fleet"));
+      setEventsLive(false);
+    }
+  }, [selectedAgentId]);
+
+  useEffect(() => {
+    void loadAll();
+    const id = window.setInterval(() => void loadAll(), 5000);
+    return () => window.clearInterval(id);
+  }, [loadAll]);
+
   const roster = useMemo(() => {
-    return AGENTS.filter((agent) => {
+    return agents.filter((agent) => {
+      if (agent.archived) return false;
       if (query && !agent.name.toLowerCase().includes(query.toLowerCase())) return false;
-      if (statusFilter !== "All Status" && agent.status !== statusFilter) return false;
+      const label = healthLabel(agent);
+      if (statusFilter !== "All Status" && label !== statusFilter) return false;
       if (roleFilter !== "All Roles" && !agent.role.toLowerCase().includes(roleFilter.toLowerCase())) return false;
       return true;
     });
-  }, [query, roleFilter, statusFilter]);
+  }, [agents, query, roleFilter, statusFilter]);
 
-  const missions = useMemo(() => {
-    if (missionTab === "All Tasks") return MISSIONS;
-    if (missionTab === "Completed") return [];
-    const key = missionTab === "Running" ? "Running" : "Queued";
-    return MISSIONS.filter((m) => m.status === key);
-  }, [missionTab]);
+  const filteredMissions = useMemo(() => {
+    if (missionTab === "All Tasks") return missions;
+    if (missionTab === "Completed") return missions.filter((m) => m.status === "completed");
+    if (missionTab === "Running") return missions.filter((m) => isActiveJobStatus(m.status) && m.status !== "queued");
+    return missions.filter((m) => m.status === "queued");
+  }, [missionTab, missions]);
 
-  const logs = useMemo(() => {
-    if (logFilter === "All") return LOGS;
-    return LOGS.filter((l) => l.kind === logFilter);
-  }, [logFilter]);
+  const filteredEvents = useMemo(() => {
+    if (logFilter === "All") return events;
+    const map: Record<string, string[]> = {
+      System: ["system"],
+      Agents: ["agents"],
+      Tasks: ["tasks"],
+      Warnings: ["warn", "warning"],
+      Errors: ["errors", "error"],
+    };
+    const wanted = map[logFilter] ?? [];
+    return events.filter((e) => wanted.includes(e.category) || wanted.includes(e.level));
+  }, [events, logFilter]);
+
+  const networkEdges = useMemo(() => {
+    const edges: Array<{ from: string; to: string; active: boolean }> = [];
+    for (const agent of agents) {
+      if (agent.kind !== "orchestrator" || !agent.orchestrator) continue;
+      for (const memberId of agent.orchestrator.memberAgentIds) {
+        const member = agentById[memberId];
+        edges.push({
+          from: agent.agentId,
+          to: memberId,
+          active: member ? healthLabel(member) === "Busy" : false,
+        });
+      }
+    }
+    return edges;
+  }, [agents, agentById]);
+
+  const resourceRows = useMemo(() => {
+    const rows: Array<{ label: string; detail: string; pct: number }> = [];
+    if (summary) {
+      const busy = summary.health.busy ?? 0;
+      const total = Math.max(1, summary.agentCount);
+      rows.push({
+        label: "Active Workers",
+        detail: `${busy} / ${total}`,
+        pct: Math.min(100, Math.round((busy / total) * 100)),
+      });
+      rows.push({
+        label: "Active Missions",
+        detail: String(summary.activeMissions),
+        pct: Math.min(100, summary.activeMissions * 10),
+      });
+    }
+    if (telemetry?.cpu?.available && telemetry.cpu.utilizationPct != null) {
+      rows.push({
+        label: "CPU Usage",
+        detail: `${telemetry.cpu.utilizationPct.toFixed(0)}%`,
+        pct: Math.round(telemetry.cpu.utilizationPct),
+      });
+    }
+    if (telemetry?.memory?.available && telemetry.memory.utilizationPct != null) {
+      const used = telemetry.memory.usedBytes;
+      const total = telemetry.memory.totalBytes;
+      rows.push({
+        label: "Memory Usage",
+        detail:
+          used != null && total != null
+            ? `${(used / 1024 ** 3).toFixed(1)} / ${(total / 1024 ** 3).toFixed(1)} GB`
+            : `${telemetry.memory.utilizationPct.toFixed(0)}%`,
+        pct: Math.round(telemetry.memory.utilizationPct),
+      });
+    }
+    if (telemetry?.gpu?.available && telemetry.gpu.devices[0]) {
+      const gpu = telemetry.gpu.devices[0];
+      if (gpu.utilizationPct != null) {
+        rows.push({
+          label: "GPU Usage",
+          detail: `${gpu.name} · ${gpu.utilizationPct.toFixed(0)}%`,
+          pct: Math.round(gpu.utilizationPct),
+        });
+      }
+    }
+    if (rows.length === 0) {
+      rows.push({
+        label: "Resources",
+        detail: telemetryError ? "Telemetry unavailable" : "Waiting for measurements",
+        pct: 0,
+      });
+    }
+    return rows;
+  }, [summary, telemetry, telemetryError]);
+
+  async function withBusy(fn: () => Promise<void>, ok?: string) {
+    setBusy(true);
+    try {
+      await fn();
+      if (ok) toast(ok);
+      await loadAll();
+    } catch (err) {
+      toast(errMsg(err, "Action failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onLaunch() {
+    if (!selectedAgentId) {
+      toast("Select an agent first");
+      return;
+    }
+    if (!taskRequest.trim()) {
+      toast("Task request is required");
+      return;
+    }
+    await withBusy(async () => {
+      await api.launchAgentMission(selectedAgentId, {
+        request: taskRequest.trim(),
+        priority,
+        dryRun,
+      });
+    }, dryRun ? "Dry-run plan complete" : "Mission launched");
+  }
+
+  async function onStopSelected() {
+    const active = missions.find(
+      (m) => m.agentId === selectedAgentId && isActiveJobStatus(m.status),
+    );
+    if (!active) {
+      toast("No active mission for selected agent");
+      return;
+    }
+    await withBusy(async () => {
+      await api.cancelAgentMission(active.missionId);
+    }, "Cancel requested");
+  }
+
+  async function onCreateAgent() {
+    if (!createName.trim()) {
+      toast("Agent name required");
+      return;
+    }
+    await withBusy(async () => {
+      const created = await api.createAgent({
+        name: createName.trim(),
+        kind: createKind,
+        role: createKind === "orchestrator" ? "Goals & Decomposition" : "Specialist",
+        orchestrator:
+          createKind === "orchestrator"
+            ? { memberAgentIds: agents.filter((a) => a.kind !== "orchestrator").slice(0, 3).map((a) => a.agentId) }
+            : undefined,
+      });
+      setCreateName("");
+      setSelectedAgentId(created.agent.agentId);
+    }, "Agent created");
+  }
+
+  async function onToggleSelected() {
+    if (!selectedAgentId) return;
+    const agent = agentById[selectedAgentId];
+    if (!agent) return;
+    await withBusy(async () => {
+      if (agent.enabled) await api.disableAgent(selectedAgentId);
+      else await api.enableAgent(selectedAgentId);
+    }, agent.enabled ? "Agent disabled" : "Agent enabled");
+  }
+
+  const selectedCaps = useMemo(() => {
+    const agent = agentById[selectedAgentId];
+    if (!agent) return [] as Array<{ id: string; title: string; desc: string }>;
+    if (agent.capabilities.length === 0 && capabilities.length > 0) {
+      return capabilities.slice(0, 12).map((c, index) => {
+        const id = typeof c.id === "string" && c.id ? c.id : `cap-${index}`;
+        const title = typeof c.name === "string" && c.name ? c.name : id;
+        const desc =
+          typeof c.description === "string" && c.description
+            ? c.description
+            : "Registered capability";
+        return { id, title, desc };
+      });
+    }
+    return agent.capabilities.map((id) => ({
+      id,
+      title: id,
+      desc: "Assigned on agent definition — executed via ExecutionGateway",
+    }));
+  }, [agentById, selectedAgentId, capabilities]);
 
   return (
     <AppShell
       activeMode="explore"
       modeLabel="Agents Mode"
       searchPlaceholder="Search agents, tasks, workflows, or ask Leviathan..."
-      systemItems={["MEMORY ONLINE", "SYSTEMS OPERATIONAL"]}
+      systemItems={[
+        summary?.agentsEnabled ? "AGENTS ENABLED" : "AGENTS FEATURE OFF",
+        `${summary?.agentCount ?? agents.length} AGENTS`,
+        `${summary?.activeMissions ?? 0} ACTIVE`,
+      ]}
       layout="wide"
       pageClass="lv-app--agents"
     >
@@ -243,6 +454,16 @@ export function AgentsPage() {
             <span>A BRIGHTER TOMORROW.</span>
           </aside>
         </section>
+
+        {loadError ? (
+          <div className="lv-ag-panel" style={{ marginBottom: 12 }}>
+            <p>{loadError}</p>
+            <button type="button" className="lv-ag-btn-gold" onClick={() => void loadAll()}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+
         <div className="lv-ag-grid-top">
           <section className="lv-ag-panel">
             <SectionTitle n={1} title="AGENT ROSTER / DIRECTORY" />
@@ -252,7 +473,7 @@ export function AgentsPage() {
                 <option>All Roles</option>
                 <option>Analysis</option>
                 <option>Implementation</option>
-                <option>Markets</option>
+                <option>Decomposition</option>
               </select>
               <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                 <option>All Status</option>
@@ -261,36 +482,65 @@ export function AgentsPage() {
                 <option>Idle</option>
                 <option>Offline</option>
               </select>
-              <select defaultValue="Sort: Name" onChange={() => toast("Sort")}>
-                <option>Sort: Name</option>
-                <option>Sort: Status</option>
-                <option>Sort: Activity</option>
+              <input
+                type="text"
+                placeholder="New agent name"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+              />
+              <select value={createKind} onChange={(e) => setCreateKind(e.target.value)}>
+                <option value="research">research</option>
+                <option value="coding">coding</option>
+                <option value="generic">generic</option>
+                <option value="specialist">specialist</option>
+                <option value="orchestrator">orchestrator</option>
               </select>
+              <button type="button" className="lv-ag-btn-teal" disabled={busy} onClick={() => void onCreateAgent()}>
+                Create
+              </button>
             </div>
             <div className="lv-ag-roster-grid">
-              {roster.map((agent) => (
-                <article key={agent.name} className="lv-ag-agent-card">
-                  <div className="lv-ag-agent-head">
-                    <span className="lv-ag-agent-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24"><AgentIcon kind={agent.icon} /></svg>
-                    </span>
-                    <div>
-                      <strong>{agent.name}</strong>
-                      <small>{agent.role}</small>
-                    </div>
-                    <span className={`lv-ag-status is-${statusTone(agent.status)}`}>
-                      <i />
-                      {agent.status}
-                    </span>
-                  </div>
-                  <div className="lv-ag-agent-model">{agent.model}</div>
-                  <div className="lv-ag-tags">
-                    {agent.tags.map((tag) => (
-                      <span key={tag}>{tag}</span>
-                    ))}
-                  </div>
-                </article>
-              ))}
+              {roster.length === 0 ? (
+                <p className="lv-ag-empty">No agents match filters.</p>
+              ) : (
+                roster.map((agent) => {
+                  const label = healthLabel(agent);
+                  return (
+                    <article
+                      key={agent.agentId}
+                      className={`lv-ag-agent-card${selectedAgentId === agent.agentId ? " is-selected" : ""}`}
+                      onClick={() => setSelectedAgentId(agent.agentId)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") setSelectedAgentId(agent.agentId);
+                      }}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      <div className="lv-ag-agent-head">
+                        <span className="lv-ag-agent-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24"><AgentIcon kind={agentIconKind(agent)} /></svg>
+                        </span>
+                        <div>
+                          <strong>{agent.name}</strong>
+                          <small>{agent.role || agent.kind}</small>
+                        </div>
+                        <span className={`lv-ag-status is-${statusTone(label)}`}>
+                          <i />
+                          {label}
+                        </span>
+                      </div>
+                      <div className="lv-ag-agent-model">{agent.modelRef || "model: inherit"}</div>
+                      <div className="lv-ag-tags">
+                        <span>{agent.kind}</span>
+                        <span>v{agent.version}</span>
+                        {agent.tags.slice(0, 3).map((tag) => (
+                          <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+                    </article>
+                  );
+                })
+              )}
             </div>
           </section>
 
@@ -305,33 +555,39 @@ export function AgentsPage() {
                       <th>Status</th>
                       <th>Model</th>
                       <th>Role</th>
-                      <th>Tasks</th>
+                      <th>Active</th>
                       <th>Last</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {AGENTS.map((agent) => (
-                      <tr key={agent.name}>
-                        <td>
-                          <span className="lv-ag-table-agent">
-                            <span className="lv-ag-agent-icon is-sm" aria-hidden="true">
-                              <svg viewBox="0 0 24 24"><AgentIcon kind={agent.icon} /></svg>
+                    {agents.filter((a) => !a.archived).map((agent) => {
+                      const label = healthLabel(agent);
+                      const active = missions.filter(
+                        (m) => m.agentId === agent.agentId && isActiveJobStatus(m.status),
+                      ).length;
+                      return (
+                        <tr key={agent.agentId}>
+                          <td>
+                            <span className="lv-ag-table-agent">
+                              <span className="lv-ag-agent-icon is-sm" aria-hidden="true">
+                                <svg viewBox="0 0 24 24"><AgentIcon kind={agentIconKind(agent)} /></svg>
+                              </span>
+                              {agent.name}
                             </span>
-                            {agent.name}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`lv-ag-status is-${statusTone(agent.status)}`}>
-                            <i />
-                            {agent.status}
-                          </span>
-                        </td>
-                        <td>{agent.model}</td>
-                        <td>{agent.role.split(" ")[0]}</td>
-                        <td>{agent.tasks}</td>
-                        <td>{agent.last}</td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td>
+                            <span className={`lv-ag-status is-${statusTone(label)}`}>
+                              <i />
+                              {label}
+                            </span>
+                          </td>
+                          <td>{agent.modelRef || "—"}</td>
+                          <td>{agent.kind}</td>
+                          <td>{active}</td>
+                          <td>{agent.lastRunAt ? formatElapsed(agent.lastRunAt) : "—"}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -340,77 +596,59 @@ export function AgentsPage() {
             <section className="lv-ag-panel lv-ag-orchestrator">
               <SectionTitle n={3} title="ORCHESTRATOR / CONTROL" />
               <div className="lv-ag-orch-actions">
-                <button type="button" className="lv-ag-btn-gold" onClick={() => toast("Launch Agent")}>
+                <button type="button" className="lv-ag-btn-gold" disabled={busy} onClick={() => void onLaunch()}>
                   Launch Agent
                 </button>
-                <button type="button" className="lv-ag-btn-stop" onClick={() => toast("Stop Agent")}>
+                <button type="button" className="lv-ag-btn-stop" disabled={busy} onClick={() => void onStopSelected()}>
                   Stop Agent
+                </button>
+                <button type="button" className="lv-ag-btn-teal" disabled={busy} onClick={() => void onToggleSelected()}>
+                  Enable / Disable
                 </button>
               </div>
               <div className="lv-ag-orch-fields">
                 <label>
                   <span>Select Agent</span>
-                  <select defaultValue="Coding Agent">
-                    {AGENTS.map((a) => (
-                      <option key={a.name}>{a.name} Agent</option>
+                  <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
+                    {agents.filter((a) => !a.archived).map((a) => (
+                      <option key={a.agentId} value={a.agentId}>
+                        {a.name} ({a.kind})
+                      </option>
                     ))}
                   </select>
                 </label>
                 <label>
-                  <span>Assign Role</span>
-                  <input type="text" defaultValue="Implement feature from spec" />
+                  <span>Task request</span>
+                  <input type="text" value={taskRequest} onChange={(e) => setTaskRequest(e.target.value)} />
                 </label>
                 <div className="lv-ag-priority">
                   <span>Task Priority</span>
                   <div>
-                    {(["Low", "Med", "High"] as const).map((p) => (
-                      <button key={p} type="button" className={priority === p ? "is-active" : ""} onClick={() => setPriority(p)}>
+                    {(["low", "med", "high"] as const).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        className={priority === p ? "is-active" : ""}
+                        onClick={() => setPriority(p)}
+                      >
                         {p}
                       </button>
                     ))}
                   </div>
                 </div>
                 <label>
-                  <span>Approval Mode</span>
-                  <select defaultValue="Auto (Low Risk)">
-                    <option>Auto (Low Risk)</option>
-                    <option>Manual</option>
-                    <option>Hybrid</option>
-                  </select>
-                </label>
-                <label className="lv-ag-slider">
                   <span>
-                    Autonomy Level <em>{autonomy}%</em>
+                    Dry-run plan only{" "}
+                    <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
                   </span>
-                  <input type="range" min={0} max={100} value={autonomy} onChange={(e) => setAutonomy(Number(e.target.value))} />
-                </label>
-                <label>
-                  <span>Max Workers</span>
-                  <input type="number" min={1} max={16} value={maxWorkers} onChange={(e) => setMaxWorkers(Number(e.target.value))} />
                 </label>
               </div>
-              <div className="lv-ag-checks">
-                {(
-                  [
-                    ["tools", "Access Tools"],
-                    ["memory", "Use Memory"],
-                    ["multi", "Multi-step"],
-                    ["web", "Web Access"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <label key={key}>
-                    <input
-                      type="checkbox"
-                      checked={checks[key]}
-                      onChange={() => setChecks((prev) => ({ ...prev, [key]: !prev[key] }))}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-              <button type="button" className="lv-ag-btn-gold is-wide" onClick={() => toast("Deploy Task")}>
+              <button type="button" className="lv-ag-btn-gold is-wide" disabled={busy} onClick={() => void onLaunch()}>
                 Deploy Task
               </button>
+              {selectedAgentId && agentById[selectedAgentId]?.healthReason ? (
+                <p className="lv-ag-empty">{agentById[selectedAgentId]?.healthReason}</p>
+              ) : null}
             </section>
           </div>
         </div>
@@ -419,7 +657,15 @@ export function AgentsPage() {
           <section className="lv-ag-panel">
             <div className="lv-ag-panel-bar">
               <SectionTitle n={4} title="ACTIVE MISSIONS / TASKS" />
-              <button type="button" className="lv-ag-btn-teal" onClick={() => toast("New Task")}>
+              <button
+                type="button"
+                className="lv-ag-btn-teal"
+                disabled={busy}
+                onClick={() => {
+                  setMissionTab("All Tasks");
+                  void onLaunch();
+                }}
+              >
                 + New Task
               </button>
             </div>
@@ -427,12 +673,19 @@ export function AgentsPage() {
               {MISSION_TABS.map((tab) => {
                 const count =
                   tab === "All Tasks"
-                    ? MISSIONS.length
+                    ? missions.length
                     : tab === "Completed"
-                      ? 128
-                      : MISSIONS.filter((m) => m.status === (tab === "Running" ? "Running" : "Queued")).length;
+                      ? missions.filter((m) => m.status === "completed").length
+                      : tab === "Running"
+                        ? missions.filter((m) => isActiveJobStatus(m.status) && m.status !== "queued").length
+                        : missions.filter((m) => m.status === "queued").length;
                 return (
-                  <button key={tab} type="button" className={missionTab === tab ? "is-active" : ""} onClick={() => setMissionTab(tab)}>
+                  <button
+                    key={tab}
+                    type="button"
+                    className={missionTab === tab ? "is-active" : ""}
+                    onClick={() => setMissionTab(tab)}
+                  >
                     {tab} ({count})
                   </button>
                 );
@@ -442,45 +695,68 @@ export function AgentsPage() {
               <table className="lv-ag-table">
                 <thead>
                   <tr>
-                    <th>#</th>
+                    <th>ID</th>
                     <th>Task</th>
                     <th>Agent</th>
                     <th>Status</th>
                     <th>Priority</th>
                     <th>Progress</th>
-                    <th>ETA</th>
+                    <th>Elapsed</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
-                  {missions.length === 0 ? (
+                  {filteredMissions.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="lv-ag-empty">
-                        No completed tasks in the live window — 128 archived.
+                      <td colSpan={8} className="lv-ag-empty">
+                        No missions in this filter.
                       </td>
                     </tr>
                   ) : (
-                    missions.map((m) => (
-                      <tr key={m.id}>
-                        <td>#{m.id}</td>
-                        <td>{m.task}</td>
-                        <td>{m.agent}</td>
-                        <td>
-                          <span className={`lv-ag-pill is-${m.status === "Running" ? "cyan" : "muted"}`}>{m.status}</span>
-                        </td>
-                        <td>
-                          <span className={`lv-ag-prio is-${m.priority.toLowerCase()}`}>{m.priority}</span>
-                        </td>
-                        <td>
-                          <div className="lv-ag-prog">
-                            <div className="lv-ag-prog-track">
-                              <span style={{ width: `${m.progress}%` }} />
+                    filteredMissions.map((m) => {
+                      const agent = agentById[m.agentId];
+                      const pct = Math.round((m.progress || 0) * 100);
+                      return (
+                        <tr key={m.missionId}>
+                          <td title={m.missionId}>{m.missionId.slice(0, 12)}</td>
+                          <td>{m.title}</td>
+                          <td>{agent?.name ?? m.agentId.slice(0, 8)}</td>
+                          <td>
+                            <span className={`lv-ag-pill is-${isActiveJobStatus(m.status) ? "cyan" : "muted"}`}>
+                              {m.status}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`lv-ag-prio is-${m.priority}`}>{m.priority}</span>
+                          </td>
+                          <td>
+                            <div className="lv-ag-prog">
+                              <div className="lv-ag-prog-track">
+                                <span style={{ width: `${pct}%` }} />
+                              </div>
+                              <em>{pct}%</em>
                             </div>
-                            <em>{m.progress}%</em>
-                          </div>
-                        </td>
-                        <td>{m.eta}</td>
-                      </tr>
-                    ))
+                          </td>
+                          <td>{formatElapsed(m.startedAt || m.createdAt, m.finishedAt)}</td>
+                          <td>
+                            {isActiveJobStatus(m.status) ? (
+                              <button
+                                type="button"
+                                className="lv-ag-btn-stop"
+                                disabled={busy}
+                                onClick={() =>
+                                  void withBusy(async () => {
+                                    await api.cancelAgentMission(m.missionId);
+                                  }, "Cancelled")
+                                }
+                              >
+                                Cancel
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -495,10 +771,7 @@ export function AgentsPage() {
                   key={tab}
                   type="button"
                   className={commTab === tab ? "is-active" : ""}
-                  onClick={() => {
-                    setCommTab(tab);
-                    if (tab !== "Agent Network") toast(tab);
-                  }}
+                  onClick={() => setCommTab(tab)}
                 >
                   {tab}
                 </button>
@@ -506,7 +779,7 @@ export function AgentsPage() {
             </div>
             {commTab === "Agent Network" ? (
               <>
-                <AgentNetwork />
+                <AgentNetwork agents={agents.filter((a) => !a.archived)} edges={networkEdges} />
                 <div className="lv-ag-net-legend">
                   <span>
                     <i className="is-active" /> Active Link
@@ -516,15 +789,43 @@ export function AgentsPage() {
                   </span>
                 </div>
               </>
-            ) : (
-              <div className="lv-ag-empty-panel">{commTab} view — open for live stream.</div>
-            )}
+            ) : null}
+            {commTab === "Delegation Chain" ? (
+              <ul className="lv-ag-logs">
+                {missions
+                  .filter((m) => m.parentMissionId)
+                  .slice(0, 20)
+                  .map((m) => (
+                    <li key={m.missionId}>
+                      <time>{m.createdAt.slice(11, 19)}</time>
+                      <span className="lv-ag-log-src">[{agentById[m.agentId]?.name ?? m.agentId.slice(0, 8)}]</span>
+                      <span className="lv-ag-log-text">
+                        child of {m.parentMissionId?.slice(0, 12)} · {m.status}
+                      </span>
+                    </li>
+                  ))}
+                {missions.every((m) => !m.parentMissionId) ? (
+                  <li className="lv-ag-empty">No delegation chains yet — launch an orchestrator mission.</li>
+                ) : null}
+              </ul>
+            ) : null}
+            {commTab === "Message Log" ? (
+              <ul className="lv-ag-logs">
+                {events.slice(0, 20).map((e) => (
+                  <li key={e.eventId}>
+                    <time>{e.createdAt.slice(11, 19)}</time>
+                    <span className="lv-ag-log-src">[{e.category}]</span>
+                    <span className="lv-ag-log-text">{e.message}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
 
           <section className="lv-ag-panel">
             <SectionTitle n={6} title="RESOURCES / SYSTEM USAGE" />
             <div className="lv-ag-usage">
-              {RESOURCES.map((row) => (
+              {resourceRows.map((row) => (
                 <div key={row.label} className="lv-ag-usage-row">
                   <div className="lv-ag-usage-meta">
                     <span>{row.label}</span>
@@ -543,34 +844,49 @@ export function AgentsPage() {
           <section className="lv-ag-panel">
             <div className="lv-ag-panel-bar">
               <SectionTitle n={7} title="LOGS / EVENT TIMELINE" />
-              <span className="lv-ag-live">
-                <i /> Live
+              <span className={`lv-ag-live${eventsLive ? "" : " is-stale"}`}>
+                <i /> {eventsLive ? "Live" : "Stale"}
               </span>
             </div>
             <div className="lv-ag-tabs">
               {LOG_FILTERS.map((tab) => (
-                <button key={tab} type="button" className={logFilter === tab ? "is-active" : ""} onClick={() => setLogFilter(tab)}>
+                <button
+                  key={tab}
+                  type="button"
+                  className={logFilter === tab ? "is-active" : ""}
+                  onClick={() => setLogFilter(tab)}
+                >
                   {tab}
                 </button>
               ))}
             </div>
             <ul className="lv-ag-logs">
-              {logs.map((log) => (
-                <li key={log.time + log.text}>
-                  <time>{log.time}</time>
-                  <span className="lv-ag-log-src">[{log.source}]</span>
-                  <span className="lv-ag-log-text">{log.text}</span>
-                  <em>{log.dur}</em>
-                </li>
-              ))}
+              {filteredEvents.length === 0 ? (
+                <li className="lv-ag-empty">No events yet.</li>
+              ) : (
+                filteredEvents.map((log) => (
+                  <li key={log.eventId}>
+                    <time>{log.createdAt.slice(11, 19)}</time>
+                    <span className="lv-ag-log-src">
+                      [{agentById[log.agentId ?? ""]?.name ?? log.category}]
+                    </span>
+                    <span className="lv-ag-log-text">{log.message}</span>
+                    <em>{log.level}</em>
+                  </li>
+                ))
+              )}
             </ul>
           </section>
 
           <section className="lv-ag-panel">
             <div className="lv-ag-panel-bar">
               <SectionTitle n={8} title="KNOWLEDGE / SKILLS / TOOL ACCESS" />
-              <button type="button" className="lv-ag-btn-teal" onClick={() => toast("Manage Tools")}>
-                Manage Tools
+              <button
+                type="button"
+                className="lv-ag-btn-teal"
+                onClick={() => setCapTab("Capabilities")}
+              >
+                Refresh view
               </button>
             </div>
             <div className="lv-ag-tabs">
@@ -579,25 +895,34 @@ export function AgentsPage() {
                   key={tab}
                   type="button"
                   className={capTab === tab ? "is-active" : ""}
-                  onClick={() => {
-                    setCapTab(tab);
-                    if (tab !== "Capabilities") toast(tab);
-                  }}
+                  onClick={() => setCapTab(tab)}
                 >
                   {tab}
                 </button>
               ))}
             </div>
             <div className="lv-ag-cap-grid">
-              {CAPABILITIES.map((cap) => (
-                <button key={cap.title} type="button" className="lv-ag-cap-card" onClick={() => toast(cap.title)}>
-                  <span className="lv-ag-agent-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><CapIcon kind={cap.icon} /></svg>
-                  </span>
-                  <strong>{cap.title}</strong>
-                  <small>{cap.desc}</small>
-                </button>
-              ))}
+              {capTab === "Capabilities" || capTab === "Tools & Integrations" ? (
+                selectedCaps.length === 0 ? (
+                  <p className="lv-ag-empty">No capabilities assigned to selected agent.</p>
+                ) : (
+                  selectedCaps.map((cap) => (
+                    <div key={cap.id} className="lv-ag-cap-card">
+                      <span className="lv-ag-agent-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><CapIcon kind="search" /></svg>
+                      </span>
+                      <strong>{cap.title}</strong>
+                      <small>{cap.desc}</small>
+                    </div>
+                  ))
+                )
+              ) : (
+                <p className="lv-ag-empty">
+                  {capTab} linkage uses dataset/knowledge policy fields on the agent definition
+                  ({agentById[selectedAgentId]?.datasetAccess ?? "none"} /{" "}
+                  {agentById[selectedAgentId]?.memoryPolicy ?? "default"}).
+                </p>
+              )}
             </div>
           </section>
         </div>
