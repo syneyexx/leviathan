@@ -1190,3 +1190,54 @@ export type MarketSimLiveState = {
   equity: Array<{ bar_index: number; ts: string; equity: number; cash: number; position_qty: number }>;
   truth: Record<string, unknown>;
 };
+
+export type SettingsCategory = {
+  id: string;
+  label: string;
+  description: string;
+  order: number;
+  setting_count: number;
+};
+
+export type SettingState = {
+  key: string;
+  category: string;
+  label: string;
+  description: string;
+  type: string;
+  default_value: unknown;
+  desired_value: unknown;
+  effective_value: unknown;
+  source: string;
+  editable: boolean;
+  secret: boolean;
+  configured?: boolean | null;
+  restart_required: boolean;
+  apply_mode: string;
+  status: string;
+  dangerous: boolean;
+  experimental: boolean;
+  requires: string[];
+  enum_values: string[];
+  min_value?: number | null;
+  max_value?: number | null;
+  consumer: string;
+  effective_now: boolean;
+};
+
+export type SettingsSnapshot = {
+  categories: SettingsCategory[];
+  settings: SettingState[];
+  effective_summary?: Record<string, unknown>;
+};
+
+export type SettingMutationResult = {
+  key: string;
+  status: string;
+  message: string;
+  desired_value?: unknown;
+  effective_value?: unknown;
+  restart_required?: boolean;
+  saved?: boolean;
+  applied?: boolean;
+};

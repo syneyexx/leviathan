@@ -77,7 +77,9 @@ def resolve_corpus_root(settings: Settings) -> Path:
     """Pick a writable corpus root without inventing remote storage."""
     import os
 
-    override = (os.getenv("LEVIATHAN_CORPUS_ROOT") or "").strip()
+    override = (settings.research_integration.corpus_root or "").strip()
+    if not override:
+        override = (os.getenv("LEVIATHAN_CORPUS_ROOT") or "").strip()
     if override:
         path = Path(override)
         if not path.is_absolute():

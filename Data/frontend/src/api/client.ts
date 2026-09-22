@@ -67,6 +67,9 @@ import type {
   MarketStrategyVersion,
   MarketSimRun,
   MarketSimLiveState,
+  SettingsSnapshot,
+  SettingState,
+  SettingMutationResult,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -1223,6 +1226,57 @@ export const api = {
     return request(`/api/cognition/runs/${encodeURIComponent(runId)}/steer`, {
       method: "POST",
       body: JSON.stringify({ instruction }),
+    });
+  },
+
+  getSettings(): Promise<SettingsSnapshot> {
+    return request("/api/settings");
+  },
+
+  getSettingsCatalog(): Promise<Record<string, unknown>> {
+    return request("/api/settings/catalog");
+  },
+
+  getSettingsCategory(category: string): Promise<{ category: string; settings: SettingState[] }> {
+    return request(`/api/settings/categories/${encodeURIComponent(category)}`);
+  },
+
+  patchSettings(
+    values: Record<string, unknown>,
+    confirmDangerous = false,
+  ): Promise<{ results: SettingMutationResult[]; settings: SettingState[] }> {
+    return request("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ values, confirm_dangerous: confirmDangerous }),
+    });
+  },
+
+  patchSetting(
+    key: string,
+    value: unknown,
+    opts?: { confirmDangerous?: boolean; clearSecret?: boolean },
+  ): Promise<{ result: SettingMutationResult; setting: SettingState }> {
+    return request(`/api/settings/keys/${key.split("/").map(encodeURIComponent).join("/")}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        value,
+        confirm_dangerous: opts?.confirmDangerous ?? false,
+        clear_secret: opts?.clearSecret ?? false,
+      }),
+    });
+  },
+
+  resetSetting(key: string): Promise<{ result: SettingMutationResult; setting: SettingState }> {
+    return request(`/api/settings/reset/${key.split("/").map(encodeURIComponent).join("/")}`, {
+      method: "POST",
+    });
+  },
+
+  resetSettingsCategory(
+    category: string,
+  ): Promise<{ results: SettingMutationResult[]; settings: SettingState[] }> {
+    return request(`/api/settings/reset-category/${encodeURIComponent(category)}`, {
+      method: "POST",
     });
   },
 };

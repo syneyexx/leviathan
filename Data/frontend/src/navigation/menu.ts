@@ -109,23 +109,35 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     to: "/settings",
     match: ["/settings"],
     submenu: [
-      { id: "algemeen", label: "Algemeen", to: "/settings" },
-      { id: "llm-gedrag", label: "LLM Gedrag", to: "/settings/llm-gedrag" },
-      { id: "llm-studio", label: "LLM Studio", to: "/settings/llm-studio" },
-      { id: "rechten", label: "Rechten & Security", to: "/settings/rechten" },
-      { id: "benchmarks", label: "Model Benchmarks", to: "/settings/benchmarks" },
-      { id: "mediacenter", label: "Mediacenter", to: "/settings/mediacenter" },
-      { id: "opslag", label: "Opslag", to: "/settings/opslag" },
-      { id: "python", label: "Python & Runtime", to: "/settings/python" },
-      { id: "settings-console", label: "Console", to: "/settings/console" },
-      { id: "logs", label: "Logs", to: "/settings/logs" },
+      { id: "algemeen", label: "Algemeen", to: "/settings?section=algemeen" },
+      { id: "llm-gedrag", label: "LLM Gedrag", to: "/settings?section=llm_gedrag" },
+      { id: "llm-studio", label: "LLM Studio", to: "/settings?section=llm_studio" },
+      { id: "rechten", label: "Rechten & Security", to: "/settings?section=rechten" },
+      { id: "benchmarks", label: "Model Benchmarks", to: "/settings?section=benchmarks" },
+      { id: "mediacenter", label: "Mediacenter", to: "/settings?section=mediacenter" },
+      { id: "opslag", label: "Opslag", to: "/settings?section=opslag" },
+      { id: "python", label: "Python & Runtime", to: "/settings?section=python" },
+      { id: "settings-console", label: "Console", to: "/settings?section=console" },
+      { id: "logs", label: "Logs", to: "/settings?section=logs" },
+      { id: "knowledge-rag", label: "Knowledge & RAG", to: "/settings?section=knowledge_rag" },
+      { id: "cognition-neuro", label: "Cognition & Neuro", to: "/settings?section=cognition_neuro" },
+      { id: "agents-coding", label: "Agents & Coding", to: "/settings?section=agents_coding" },
+      { id: "tools-mcp", label: "Tools & MCP", to: "/settings?section=tools_mcp" },
+      { id: "markt-sim", label: "Markt Simulatie", to: "/settings?section=markt_sim" },
+      { id: "data-research", label: "Data & Research", to: "/settings?section=data_research" },
     ],
   },
 ] as const;
 
 export function normalizePath(pathname: string): string {
   if (!pathname || pathname === "/") return "/";
-  return pathname.replace(/\/+$/, "") || "/";
+  const withoutQuery = pathname.split("?")[0] ?? pathname;
+  return withoutQuery.replace(/\/+$/, "") || "/";
+}
+
+function splitRoute(to: string): { path: string; query: string } {
+  const [pathPart, queryPart = ""] = to.split("?");
+  return { path: normalizePath(pathPart || "/"), query: queryPart };
 }
 
 export function findMainMenuByPath(pathname: string): MainMenuItem {
@@ -161,16 +173,30 @@ export function isMainMenuActive(item: MainMenuItem, pathname: string): boolean 
   return findMainMenuByPath(pathname).id === item.id;
 }
 
-export function findSubMenuItem(section: MainMenuItem, pathname: string): SubMenuItem | null {
+export function findSubMenuItem(
+  section: MainMenuItem,
+  pathname: string,
+  search = "",
+): SubMenuItem | null {
   const path = normalizePath(pathname);
+  const searchParams = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
 
-  const exact = section.submenu.find((item) => normalizePath(item.to) === path);
+  const exact = section.submenu.find((item) => {
+    const { path: itemPath, query } = splitRoute(item.to);
+    if (itemPath !== path) return false;
+    if (!query) return true;
+    const wanted = new URLSearchParams(query);
+    for (const [key, value] of wanted.entries()) {
+      if (searchParams.get(key) !== value) return false;
+    }
+    return true;
+  });
   if (exact) return exact;
 
   let best: SubMenuItem | null = null;
   let bestLen = -1;
   for (const item of section.submenu) {
-    const to = normalizePath(item.to);
+    const { path: to } = splitRoute(item.to);
     if (to === "/") continue;
     if (path === to || path.startsWith(`${to}/`)) {
       if (to.length > bestLen) {

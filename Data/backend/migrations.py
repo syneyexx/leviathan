@@ -1516,6 +1516,21 @@ def _m19_cognitive_runtime(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m20_settings_overrides(conn: sqlite3.Connection) -> None:
+    """Operator settings override store for the Settings Control Plane."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings_overrides (
+            key TEXT PRIMARY KEY,
+            value_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL DEFAULT 'operator',
+            version INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1536,6 +1551,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=17, name="mcp_bridge", apply=_m17_mcp_bridge),
     Migration(version=18, name="rag_v3", apply=_m18_rag_v3),
     Migration(version=19, name="cognitive_runtime", apply=_m19_cognitive_runtime),
+    Migration(version=20, name="settings_overrides", apply=_m20_settings_overrides),
 )
 
 
