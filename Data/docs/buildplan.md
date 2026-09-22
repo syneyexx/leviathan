@@ -6,6 +6,38 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Phase 53+ Neuro Layer (EXTERNAL-FIRST residual / cortex / training) — PASS
+
+### Objective
+Elevate Phase 52 Neuro to production-grade residual orchestration, named cortex circuits with early-exit, honest vLLM/llama.cpp/TRT adapter contracts, EXTERNAL-FIRST recipe workers, and measurable soak — without authority theater.
+
+### Added / changed
+- **ResidualOrchestrator** (`Data/modules/neuro/residual_orchestrator.py`) — mid/late layer selection, α/scale budget, multi-inject coordination, telemetry + truth fields; never authorizes side-effects
+- **Adapters:** vLLM / llama.cpp probe `/v1/residuals/hooks` before claiming support; HTTP read/inject/forward when confirmed; `TrtResidualAdapter` optional honest stub; health≠support
+- **Cortex:** named circuits (`planning`, `verification`, `tool_selection`, `memory_projection`, `self_critique`); `LEVIATHAN_NEURO_CORTEX_MAX_K` bound; ProcessCritic early-exit
+- **Training:** `EphemeralRecipeWorkerTrainer` behind `LEVIATHAN_NEURO_TRAINING_REAL_WORKER` (subprocess, no parallel DB)
+- **Soak:** long mode behind `LEVIATHAN_FEATURE_NEURO_SOAK_LONG` (still not multi-hour SLO claim)
+- **Flags:** residual orchestrator / cortex blocks / contrastive training / soak long / hook layers / tier0 slots / training real worker
+- **API:** `POST /api/neuro/residual/orchestrate`; status/residual truth fields expanded; version `0.59.0-phase53`; Master `phase_span=0-53`
+- **Frontend:** Status neuro panel — residual posture, WM load, cortex K, honesty flags, mini/long soak
+- **Tests:** `test_neuro_phase53.py`
+
+### EXTERNAL-FIRST review
+- Orchestrator = Core control plane; residual mutation on adapters / external residual servers
+- Recipe worker = ephemeral subprocess; Core keeps registry authority
+- No second SQLite / gateway / approvals / model client
+
+### Explicitly NOT claimed
+- Default production GPU residual path
+- Multi-hour power/HBM SLO
+- Automatic “thought harder” authority
+- Fabricated COMPLETED training without trainer metrics
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Universal MCP Bridge (one bridge / many servers) — PASS
 
 ### Objective

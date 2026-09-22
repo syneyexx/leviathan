@@ -12,7 +12,7 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–52, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, and a **Universal MCP Bridge** for Tools.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, and a **Universal MCP Bridge** for Tools.
 
 **Implemented and real:**
 
@@ -78,7 +78,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.55.0-phase52`).
+FastAPI application (`version=0.59.0-phase53`).
 
 Responsibilities:
 
@@ -442,6 +442,7 @@ Live LLM integration is **NOT** claimed by unit tests. When no model server is a
 | Phase 50 — Harden | PASS | Subprocess isolation flag; neuro release/master gates |
 | Phase 51 — Neuro ops complete | PASS | Chat/context wire; absorb schedule; soak; Status UI; stubs |
 | Phase 52 — Neuro Grok-level depth | PASS | Weight-backed HF opt-in; smarter cortex/critic/memory; honest recipe execute |
+| Phase 53+ — Residual orchestration | PASS | ResidualOrchestrator; vLLM/llama/TRT contracts; named cortex+early-exit; ephemeral recipe worker |
 
 ---
 

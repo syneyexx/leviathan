@@ -540,50 +540,139 @@ class HFTransformersResidualAdapter:
             return result
 
 
+def _http_json_get(url: str, *, timeout: float = 0.75) -> dict[str, Any] | None:
+    """Best-effort local HTTP GET JSON — never raises into adapter init."""
+    try:
+        import json
+        import urllib.request
+
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            body = resp.read()
+            if not body:
+                return {"_status": int(getattr(resp, "status", 0) or 0)}
+            parsed = json.loads(body.decode("utf-8"))
+            if isinstance(parsed, dict):
+                return parsed
+            return {"_raw": parsed, "_status": int(getattr(resp, "status", 0) or 0)}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _http_json_post(url: str, payload: dict[str, Any], *, timeout: float = 2.0) -> dict[str, Any] | None:
+    try:
+        import json
+        import urllib.request
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            body = resp.read()
+            if not body:
+                return {"_status": int(getattr(resp, "status", 0) or 0)}
+            parsed = json.loads(body.decode("utf-8"))
+            return parsed if isinstance(parsed, dict) else {"_raw": parsed}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _hooks_from_probe(payload: dict[str, Any] | None, *, prefix: str) -> tuple[ResidualHookPoint, ...]:
+    if not payload:
+        return ()
+    raw_hooks = payload.get("hooks") or payload.get("hook_points") or payload.get("layers")
+    if not isinstance(raw_hooks, list):
+        return ()
+    hooks: list[ResidualHookPoint] = []
+    for item in raw_hooks:
+        if isinstance(item, int):
+            hooks.append(ResidualHookPoint(layer_index=item, name=f"{prefix}_{item}", site="block_out"))
+            continue
+        if not isinstance(item, dict):
+            continue
+        try:
+            idx = int(item.get("layer_index", item.get("layer", item.get("index", -1))))
+        except (TypeError, ValueError):
+            continue
+        if idx < 0:
+            continue
+        name = str(item.get("name") or f"{prefix}_{idx}")
+        site = str(item.get("site") or "block_out")
+        hooks.append(ResidualHookPoint(layer_index=idx, name=name, site=site))
+    return tuple(hooks)
+
+
 @dataclass
 class VllmResidualAdapter:
-    """vLLM residual adapter — probes endpoint when configured; honest otherwise."""
+    """vLLM residual adapter — production path when residual hook plugin exposes HTTP API.
+
+    Probe order:
+      1. GET {endpoint}/v1/residuals/hooks  (Leviathan residual plugin contract)
+      2. GET {endpoint}/health             (reachability only)
+
+    supports_residuals() is True ONLY when hooks are confirmed by the residual API.
+    """
 
     endpoint: str | None = None
     protocol_version: str = "1.0"
     _hooks: tuple[ResidualHookPoint, ...] = ()
     _probe_detail: str = "vLLM residual hooks not wired"
+    _hooks_confirmed: bool = False
+    _health_ok: bool = False
     _telemetry: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.endpoint:
             self._probe_detail = "vLLM endpoint unset"
             return
-        # Local endpoint metadata probe only — never invent residual support.
-        try:
-            import urllib.request
-
-            req = urllib.request.Request(
-                self.endpoint.rstrip("/") + "/health",
-                method="GET",
-            )
-            with urllib.request.urlopen(req, timeout=0.5) as resp:  # noqa: S310
-                _ = resp.status
+        base = self.endpoint.rstrip("/")
+        residual_probe = _http_json_get(base + "/v1/residuals/hooks")
+        if residual_probe and residual_probe.get("supports_residuals") is True:
+            hooks = _hooks_from_probe(residual_probe, prefix="vllm_block")
+            self._hooks = hooks
+            self._hooks_confirmed = bool(hooks) or bool(residual_probe.get("hooks_ok"))
+            self._health_ok = True
+            if self._hooks_confirmed:
+                self._probe_detail = (
+                    f"vLLM residual hooks confirmed ({len(self._hooks)} hook points)"
+                )
+            else:
+                self._probe_detail = (
+                    "vLLM residual API reachable but no hook points advertised — "
+                    "supports_residuals=False"
+                )
+            return
+        health = _http_json_get(base + "/health")
+        if health is not None:
+            self._health_ok = True
             self._probe_detail = (
                 "vLLM endpoint reachable but residual hook plugin not confirmed — "
                 "supports_residuals=False"
             )
-        except Exception as exc:  # noqa: BLE001
-            self._probe_detail = f"vLLM endpoint probe failed: {exc}"
+        else:
+            self._probe_detail = "vLLM endpoint residual/health probe failed"
 
     def supports_residuals(self) -> bool:
-        return False
+        return bool(self._hooks_confirmed)
 
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "vllm",
             "protocol_version": self.protocol_version,
-            "production_grade": False,
+            "production_grade": self._hooks_confirmed,
             "endpoint": self.endpoint,
-            "available": False,
+            "available": self._hooks_confirmed,
+            "health_ok": self._health_ok,
+            "hooks_confirmed": self._hooks_confirmed,
+            "hook_count": len(self._hooks),
             "probe": self._probe_detail,
             "truth": {
                 "adapter_requires_hooks_plugin": True,
+                "health_ok_is_not_residual_support": True,
                 "residual_injection_is_not_authority": True,
             },
         }
@@ -592,37 +681,154 @@ class VllmResidualAdapter:
         return self._hooks
 
     def read(self, request: ResidualReadRequest) -> ResidualTensorRef:
-        return ResidualTensorRef(
-            hook=request.hook,
-            dtype="none",
-            shape=(),
-            available=False,
-            note=self._probe_detail,
-            metadata=self.runtime_info(),
+        if not self.supports_residuals() or not self.endpoint:
+            return ResidualTensorRef(
+                hook=request.hook,
+                dtype="none",
+                shape=(),
+                available=False,
+                note=self._probe_detail,
+                metadata=self.runtime_info(),
+            )
+        base = self.endpoint.rstrip("/")
+        payload = _http_json_post(
+            base + "/v1/residuals/read",
+            {"hook": request.hook.public_dict(), "token_span": request.token_span, "run_id": request.run_id},
         )
+        if not payload or not payload.get("available"):
+            return ResidualTensorRef(
+                hook=request.hook,
+                dtype="none",
+                shape=(),
+                available=False,
+                note=str((payload or {}).get("detail") or "vLLM residual read unavailable"),
+                metadata=self.runtime_info(),
+            )
+        shape_raw = payload.get("shape") or ()
+        shape = tuple(int(x) for x in shape_raw) if isinstance(shape_raw, (list, tuple)) else ()
+        ref = ResidualTensorRef(
+            hook=request.hook,
+            dtype=str(payload.get("dtype") or "f32-stat"),
+            shape=shape,
+            available=True,
+            note=str(payload.get("note") or "vLLM residual read"),
+            metadata={"runtime": self.runtime_info(), "remote": payload.get("metadata") or {}},
+        )
+        self._telemetry.append({"name": "residual_read", "payload": ref.public_dict()})
+        return ref
 
     def inject(self, request: ResidualInjectRequest) -> ResidualInjectReceipt:
+        if request.mode == "DISABLED":
+            receipt = ResidualInjectReceipt(
+                implemented=True,
+                mode=request.mode,
+                hook=request.hook,
+                applied=False,
+                detail="DISABLED mode — no mutation",
+                reason="disabled",
+                degraded_to_chat_completions=not self.supports_residuals(),
+            )
+            self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
+            return receipt
+        if not self.supports_residuals() or not self.endpoint:
+            receipt = ResidualInjectReceipt(
+                implemented=False,
+                mode=request.mode,
+                hook=request.hook,
+                applied=False,
+                detail=self._probe_detail or "vLLM residual adapter — hooks plugin not available",
+                reason="vllm_hooks_unavailable",
+                degraded_to_chat_completions=True,
+            )
+            self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
+            return receipt
+        if request.mode not in VALID_INJECT_MODES:
+            receipt = ResidualInjectReceipt(
+                implemented=True,
+                mode=request.mode,
+                hook=request.hook,
+                applied=False,
+                detail=f"Unknown mode {request.mode}",
+                reason="unknown_mode",
+            )
+            self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
+            return receipt
+        base = self.endpoint.rstrip("/")
+        payload = _http_json_post(
+            base + "/v1/residuals/inject",
+            {
+                "hook": request.hook.public_dict(),
+                "mode": request.mode,
+                "scale": request.scale,
+                "source": request.source,
+                "payload_ref": request.payload_ref,
+                "run_id": request.run_id,
+            },
+        )
+        applied = bool(payload and payload.get("applied"))
         receipt = ResidualInjectReceipt(
-            implemented=False,
+            implemented=True,
             mode=request.mode,
             hook=request.hook,
-            applied=False,
-            detail="vLLM residual adapter — hooks plugin not available",
-            reason="vllm_hooks_unavailable",
-            degraded_to_chat_completions=True,
+            applied=applied,
+            detail=str((payload or {}).get("detail") or ("applied" if applied else "vLLM inject not applied")),
+            reason=str((payload or {}).get("reason") or ("applied_vllm" if applied else "vllm_inject_rejected")),
+            degraded_to_chat_completions=not applied,
         )
         self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
         return receipt
 
     def run_forward(self, request: ResidualForwardRequest) -> ResidualForwardResult:
+        receipts = tuple(self.inject(item) for item in request.inject)
+        if not self.supports_residuals() or not self.endpoint:
+            return ResidualForwardResult(
+                implemented=False,
+                text=None,
+                degraded_to_chat_completions=True,
+                detail="vLLM residual forward unavailable — degrade to chat completions",
+                reason="vllm_unavailable",
+                receipts=receipts,
+                metadata=self.runtime_info(),
+            )
+        base = self.endpoint.rstrip("/")
+        payload = _http_json_post(
+            base + "/v1/residuals/forward",
+            {
+                "messages": request.messages,
+                "engage_cortex": request.engage_cortex,
+                "critic_rounds": request.critic_rounds,
+                "inject": [
+                    {
+                        "hook": item.hook.public_dict(),
+                        "mode": item.mode,
+                        "scale": item.scale,
+                        "source": item.source,
+                        "payload_ref": item.payload_ref,
+                    }
+                    for item in request.inject
+                ],
+                "metadata": request.metadata,
+            },
+            timeout=30.0,
+        )
+        if not payload or not payload.get("implemented"):
+            return ResidualForwardResult(
+                implemented=False,
+                text=None,
+                degraded_to_chat_completions=True,
+                detail=str((payload or {}).get("detail") or "vLLM residual forward failed"),
+                reason=str((payload or {}).get("reason") or "vllm_forward_unavailable"),
+                receipts=receipts,
+                metadata=self.runtime_info(),
+            )
         return ResidualForwardResult(
-            implemented=False,
-            text=None,
-            degraded_to_chat_completions=True,
-            detail="vLLM residual forward unavailable — degrade to chat completions",
-            reason="vllm_unavailable",
-            receipts=tuple(self.inject(item) for item in request.inject),
-            metadata=self.runtime_info(),
+            implemented=True,
+            text=str(payload.get("text") or "") or None,
+            degraded_to_chat_completions=bool(payload.get("degraded_to_chat_completions")),
+            detail=str(payload.get("detail") or "vLLM residual forward completed"),
+            reason=str(payload.get("reason") or "vllm_forward"),
+            receipts=receipts,
+            metadata={"runtime": self.runtime_info(), "remote": payload.get("metadata") or {}},
         )
 
 
@@ -636,6 +842,7 @@ class LlamaCppResidualAdapter:
     protocol_version: str = "1.0"
     _hooks: tuple[ResidualHookPoint, ...] = ()
     _detail: str = "llama.cpp residual hooks not wired"
+    _hooks_confirmed: bool = False
     _telemetry: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -645,10 +852,23 @@ class LlamaCppResidualAdapter:
                 for i in self.selected_layers
             )
         if self.server_url:
-            self._detail = (
-                "llama.cpp server configured but residual layer API not confirmed — "
-                "supports_residuals=False"
-            )
+            base = self.server_url.rstrip("/")
+            residual_probe = _http_json_get(base + "/v1/residuals/hooks")
+            if residual_probe and residual_probe.get("supports_residuals") is True:
+                probed = _hooks_from_probe(residual_probe, prefix="llama_block")
+                if probed:
+                    self._hooks = probed
+                self._hooks_confirmed = bool(self._hooks) or bool(residual_probe.get("hooks_ok"))
+                self._detail = (
+                    f"llama.cpp residual hooks confirmed ({len(self._hooks)} hook points)"
+                    if self._hooks_confirmed
+                    else "llama.cpp residual API reachable but no hooks — supports_residuals=False"
+                )
+            else:
+                self._detail = (
+                    "llama.cpp server configured but residual layer API not confirmed — "
+                    "supports_residuals=False"
+                )
         elif self.model_path:
             self._detail = (
                 "llama.cpp model_path set but custom residual server not configured — "
@@ -658,21 +878,230 @@ class LlamaCppResidualAdapter:
             self._detail = "llama.cpp residual adapter inactive"
 
     def supports_residuals(self) -> bool:
-        # Real selected-layer inject requires a custom server contract not present by default.
-        return False
+        return bool(self._hooks_confirmed)
 
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "llama_cpp",
             "protocol_version": self.protocol_version,
-            "production_grade": False,
+            "production_grade": self._hooks_confirmed,
             "model_path": self.model_path,
             "server_url": self.server_url,
             "selected_layers": list(self.selected_layers),
-            "available": False,
+            "available": self._hooks_confirmed,
+            "hooks_confirmed": self._hooks_confirmed,
+            "hook_count": len(self._hooks),
             "detail": self._detail,
             "truth": {
-                "adapter_stub_until_custom_server": True,
+                "adapter_requires_custom_residual_server": True,
+                "model_path_alone_is_not_residual_support": True,
+                "residual_injection_is_not_authority": True,
+            },
+        }
+
+    def list_hook_points(self) -> Sequence[ResidualHookPoint]:
+        return self._hooks
+
+    def read(self, request: ResidualReadRequest) -> ResidualTensorRef:
+        if not self.supports_residuals() or not self.server_url:
+            return ResidualTensorRef(
+                hook=request.hook,
+                dtype="none",
+                shape=(),
+                available=False,
+                note=self._detail,
+                metadata=self.runtime_info(),
+            )
+        payload = _http_json_post(
+            self.server_url.rstrip("/") + "/v1/residuals/read",
+            {"hook": request.hook.public_dict(), "token_span": request.token_span, "run_id": request.run_id},
+        )
+        if not payload or not payload.get("available"):
+            return ResidualTensorRef(
+                hook=request.hook,
+                dtype="none",
+                shape=(),
+                available=False,
+                note=str((payload or {}).get("detail") or self._detail),
+                metadata=self.runtime_info(),
+            )
+        shape_raw = payload.get("shape") or ()
+        shape = tuple(int(x) for x in shape_raw) if isinstance(shape_raw, (list, tuple)) else ()
+        return ResidualTensorRef(
+            hook=request.hook,
+            dtype=str(payload.get("dtype") or "f32-stat"),
+            shape=shape,
+            available=True,
+            note=str(payload.get("note") or "llama.cpp residual read"),
+            metadata={"runtime": self.runtime_info(), "remote": payload.get("metadata") or {}},
+        )
+
+    def inject(self, request: ResidualInjectRequest) -> ResidualInjectReceipt:
+        if request.mode == "DISABLED":
+            receipt = ResidualInjectReceipt(
+                implemented=True,
+                mode=request.mode,
+                hook=request.hook,
+                applied=False,
+                detail="DISABLED mode — no mutation",
+                reason="disabled",
+                degraded_to_chat_completions=not self.supports_residuals(),
+            )
+            self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
+            return receipt
+        if not self.supports_residuals() or not self.server_url:
+            receipt = ResidualInjectReceipt(
+                implemented=False,
+                mode=request.mode,
+                hook=request.hook,
+                applied=False,
+                detail=self._detail,
+                reason="llama_cpp_hooks_unavailable",
+                degraded_to_chat_completions=True,
+            )
+            self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
+            return receipt
+        if request.mode not in VALID_INJECT_MODES:
+            receipt = ResidualInjectReceipt(
+                implemented=True,
+                mode=request.mode,
+                hook=request.hook,
+                applied=False,
+                detail=f"Unknown mode {request.mode}",
+                reason="unknown_mode",
+            )
+            self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
+            return receipt
+        payload = _http_json_post(
+            self.server_url.rstrip("/") + "/v1/residuals/inject",
+            {
+                "hook": request.hook.public_dict(),
+                "mode": request.mode,
+                "scale": request.scale,
+                "source": request.source,
+                "payload_ref": request.payload_ref,
+                "run_id": request.run_id,
+            },
+        )
+        applied = bool(payload and payload.get("applied"))
+        receipt = ResidualInjectReceipt(
+            implemented=True,
+            mode=request.mode,
+            hook=request.hook,
+            applied=applied,
+            detail=str((payload or {}).get("detail") or ("applied" if applied else "llama.cpp inject not applied")),
+            reason=str((payload or {}).get("reason") or ("applied_llama_cpp" if applied else "llama_cpp_inject_rejected")),
+            degraded_to_chat_completions=not applied,
+        )
+        self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
+        return receipt
+
+    def run_forward(self, request: ResidualForwardRequest) -> ResidualForwardResult:
+        receipts = tuple(self.inject(item) for item in request.inject)
+        if not self.supports_residuals() or not self.server_url:
+            return ResidualForwardResult(
+                implemented=False,
+                text=None,
+                degraded_to_chat_completions=True,
+                detail="llama.cpp residual forward unavailable — degrade to chat completions",
+                reason="llama_cpp_unavailable",
+                receipts=receipts,
+                metadata=self.runtime_info(),
+            )
+        payload = _http_json_post(
+            self.server_url.rstrip("/") + "/v1/residuals/forward",
+            {
+                "messages": request.messages,
+                "engage_cortex": request.engage_cortex,
+                "critic_rounds": request.critic_rounds,
+                "inject": [
+                    {
+                        "hook": item.hook.public_dict(),
+                        "mode": item.mode,
+                        "scale": item.scale,
+                        "source": item.source,
+                        "payload_ref": item.payload_ref,
+                    }
+                    for item in request.inject
+                ],
+                "metadata": request.metadata,
+            },
+            timeout=30.0,
+        )
+        if not payload or not payload.get("implemented"):
+            return ResidualForwardResult(
+                implemented=False,
+                text=None,
+                degraded_to_chat_completions=True,
+                detail=str((payload or {}).get("detail") or "llama.cpp residual forward failed"),
+                reason=str((payload or {}).get("reason") or "llama_cpp_forward_unavailable"),
+                receipts=receipts,
+                metadata=self.runtime_info(),
+            )
+        return ResidualForwardResult(
+            implemented=True,
+            text=str(payload.get("text") or "") or None,
+            degraded_to_chat_completions=bool(payload.get("degraded_to_chat_completions")),
+            detail=str(payload.get("detail") or "llama.cpp residual forward completed"),
+            reason=str(payload.get("reason") or "llama_cpp_forward"),
+            receipts=receipts,
+            metadata={"runtime": self.runtime_info(), "remote": payload.get("metadata") or {}},
+        )
+
+
+@dataclass
+class TrtResidualAdapter:
+    """TensorRT-LLM residual adapter — engine-dependent optional path.
+
+    Default: honest unsupported until an engine residual contract is configured.
+    """
+
+    engine_path: str | None = None
+    server_url: str | None = None
+    protocol_version: str = "1.0"
+    _hooks: tuple[ResidualHookPoint, ...] = ()
+    _detail: str = "TensorRT-LLM residual adapter inactive"
+    _hooks_confirmed: bool = False
+    _telemetry: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.server_url:
+            residual_probe = _http_json_get(self.server_url.rstrip("/") + "/v1/residuals/hooks")
+            if residual_probe and residual_probe.get("supports_residuals") is True:
+                self._hooks = _hooks_from_probe(residual_probe, prefix="trt_block")
+                self._hooks_confirmed = bool(self._hooks) or bool(residual_probe.get("hooks_ok"))
+                self._detail = (
+                    f"TRT residual hooks confirmed ({len(self._hooks)})"
+                    if self._hooks_confirmed
+                    else "TRT residual API reachable but no hooks"
+                )
+            else:
+                self._detail = (
+                    "TRT server configured but residual contract not confirmed — "
+                    "supports_residuals=False"
+                )
+        elif self.engine_path:
+            self._detail = (
+                "TRT engine_path set but residual server not configured — "
+                "supports_residuals=False"
+            )
+        else:
+            self._detail = "TensorRT-LLM residual adapter inactive"
+
+    def supports_residuals(self) -> bool:
+        return bool(self._hooks_confirmed)
+
+    def runtime_info(self) -> dict[str, Any]:
+        return {
+            "kind": "trt",
+            "protocol_version": self.protocol_version,
+            "production_grade": self._hooks_confirmed,
+            "engine_path": self.engine_path,
+            "server_url": self.server_url,
+            "available": self._hooks_confirmed,
+            "detail": self._detail,
+            "truth": {
+                "engine_dependent_optional_adapter": True,
                 "residual_injection_is_not_authority": True,
             },
         }
@@ -697,7 +1126,7 @@ class LlamaCppResidualAdapter:
             hook=request.hook,
             applied=False,
             detail=self._detail,
-            reason="llama_cpp_hooks_unavailable",
+            reason="trt_hooks_unavailable",
             degraded_to_chat_completions=True,
         )
         self._telemetry.append({"name": "residual_inject", "payload": receipt.public_dict()})
@@ -708,8 +1137,8 @@ class LlamaCppResidualAdapter:
             implemented=False,
             text=None,
             degraded_to_chat_completions=True,
-            detail="llama.cpp residual forward unavailable — degrade to chat completions",
-            reason="llama_cpp_unavailable",
+            detail="TRT residual forward unavailable — degrade to chat completions",
+            reason="trt_unavailable",
             receipts=tuple(self.inject(item) for item in request.inject),
             metadata=self.runtime_info(),
         )
@@ -737,13 +1166,18 @@ def build_residual_runtime(
             load_weights=load_weights,
         )
     if normalized in {"vllm"}:
-        return VllmResidualAdapter(endpoint=model_id)
+        return VllmResidualAdapter(endpoint=model_id or server_url)
     if normalized in {"llama_cpp", "llamacpp", "llama.cpp"}:
+        llama_server = server_url
+        if not llama_server and (model_id or "").startswith("http"):
+            llama_server = model_id
         return LlamaCppResidualAdapter(
-            model_path=model_id,
-            server_url=server_url,
+            model_path=None if llama_server and model_id == llama_server else model_id,
+            server_url=llama_server,
             selected_layers=tuple(selected_layers or ()),
         )
+    if normalized in {"trt", "tensorrt", "tensorrt_llm", "trt_llm"}:
+        return TrtResidualAdapter(engine_path=model_id, server_url=server_url)
     from .residual import UnsupportedResidualRuntime
 
     return UnsupportedResidualRuntime()

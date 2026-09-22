@@ -1,15 +1,26 @@
+"""Cortex runtime — named functional circuits with bounded K + early-exit."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-from .critic import CriticScore, ProcessCritic
+from .critic import ProcessCritic
 from .residual import (
     ResidualForwardRequest,
     ResidualHookPoint,
     ResidualInjectRequest,
     ResidualReadRequest,
     ResidualStreamPort,
+)
+
+# Named cortex circuits (advisory functional blocks — not a second model).
+NAMED_CORTEX_BLOCKS: tuple[str, ...] = (
+    "planning",
+    "verification",
+    "tool_selection",
+    "memory_projection",
+    "self_critique",
 )
 
 
@@ -19,6 +30,7 @@ class CortexBlockSpec:
     layer_index: int
     rank: int = 8
     enabled: bool = True
+    circuit: str = "generic"  # planning | verification | tool_selection | ...
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -26,6 +38,7 @@ class CortexBlockSpec:
             "layer_index": self.layer_index,
             "rank": self.rank,
             "enabled": self.enabled,
+            "circuit": self.circuit,
         }
 
 
@@ -43,6 +56,10 @@ class CortexRunReport:
     path: str = "lean"
     residual_replay_layers: tuple[int, ...] = ()
     mid_forward_interventions: int = 0
+    early_exit: bool = False
+    early_exit_reason: str = ""
+    k_used: int = 0
+    max_k: int = 0
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +75,10 @@ class CortexRunReport:
             "detail": self.detail,
             "residual_replay_layers": list(self.residual_replay_layers),
             "mid_forward_interventions": self.mid_forward_interventions,
+            "early_exit": self.early_exit,
+            "early_exit_reason": self.early_exit_reason,
+            "k_used": self.k_used,
+            "max_k": self.max_k,
             "truth": {
                 "cortex_run_is_not_completion_authority": True,
                 "neural_signal_is_not_authority": True,
@@ -67,10 +88,11 @@ class CortexRunReport:
 
 
 class CortexRuntime:
-    """Execute cortex blocks against a ResidualStreamPort with bounded critic loops.
+    """Execute named cortex blocks against a ResidualStreamPort with bounded critic loops.
 
     Mid-forward ProcessCritic may re-steer residual injects up to K rounds when
-    consistency / grounding scores fall below thresholds. Advisory only.
+    consistency / grounding scores fall below thresholds. Early-exit when scores
+    clear floors. Advisory only.
     """
 
     def __init__(
@@ -80,25 +102,47 @@ class CortexRuntime:
         critic: ProcessCritic | None = None,
         max_depth: int = 2,
         max_critic_rounds: int = 2,
+        max_k: int | None = None,
         consistency_floor: float = 0.45,
         grounding_floor: float = 0.35,
+        named_blocks_enabled: bool = False,
+        early_exit_enabled: bool = True,
     ) -> None:
         self.residual_port = residual_port
         self.critic = critic or ProcessCritic(enabled=True)
         self.max_depth = max(0, max_depth)
         self.max_critic_rounds = max(0, max_critic_rounds)
+        self.max_k = max(0, int(max_k if max_k is not None else max_critic_rounds))
         self.consistency_floor = consistency_floor
         self.grounding_floor = grounding_floor
+        self.named_blocks_enabled = named_blocks_enabled
+        self.early_exit_enabled = early_exit_enabled
 
     def build_blocks(self, depth: int) -> tuple[CortexBlockSpec, ...]:
         hooks = list(self.residual_port.list_hook_points())
         if not hooks:
             return ()
-        selected = hooks[len(hooks) // 3 : len(hooks) // 3 + max(1, min(depth, self.max_depth))]
-        return tuple(
-            CortexBlockSpec(block_id=f"cortex_{h.layer_index}", layer_index=h.layer_index, rank=8)
-            for h in selected
-        )
+        depth = max(1, min(depth, self.max_depth, len(NAMED_CORTEX_BLOCKS)))
+        selected = hooks[len(hooks) // 3 : len(hooks) // 3 + depth]
+        if not selected:
+            selected = hooks[:depth]
+        blocks: list[CortexBlockSpec] = []
+        for i, h in enumerate(selected):
+            circuit = (
+                NAMED_CORTEX_BLOCKS[i % len(NAMED_CORTEX_BLOCKS)]
+                if self.named_blocks_enabled
+                else "generic"
+            )
+            block_id = f"cortex_{circuit}_{h.layer_index}" if self.named_blocks_enabled else f"cortex_{h.layer_index}"
+            blocks.append(
+                CortexBlockSpec(
+                    block_id=block_id,
+                    layer_index=h.layer_index,
+                    rank=8,
+                    circuit=circuit,
+                )
+            )
+        return tuple(blocks)
 
     def run(
         self,
@@ -123,10 +167,13 @@ class CortexRuntime:
                 degraded=True,
                 detail="Residual port unsupported — cortex degraded",
                 path="lean",
+                max_k=self.max_k,
             )
 
         depth = min(max(0, depth), self.max_depth)
-        critic_rounds = min(max(0, critic_rounds), self.max_critic_rounds)
+        # K budget: critic_rounds capped by max_k (LEVIATHAN_NEURO_CORTEX_MAX_K).
+        k_cap = self.max_k if self.max_k > 0 else self.max_critic_rounds
+        critic_rounds = min(max(0, critic_rounds), self.max_critic_rounds, k_cap)
         blocks = self.build_blocks(depth) if depth > 0 else ()
         reads: list[dict[str, Any]] = []
         scores: list[dict[str, Any]] = []
@@ -134,8 +181,13 @@ class CortexRuntime:
         inject_list = list(inject)
         interventions = 0
         replay_layers: list[int] = []
+        early_exit = False
+        early_exit_reason = ""
+        k_used = 0
 
         for block in blocks:
+            if not block.enabled:
+                continue
             hook = ResidualHookPoint(layer_index=block.layer_index, name=block.block_id, site="block_out")
             tensor = self.residual_port.read(ResidualReadRequest(hook=hook))
             reads.append(tensor.public_dict())
@@ -150,6 +202,7 @@ class CortexRuntime:
 
         # Bounded mid-forward critic loop — re-steer residual path when scores are weak.
         for round_idx in range(critic_rounds):
+            k_used = round_idx + 1
             probe_text = ""
             if reads:
                 probe_text = str(reads[-1].get("note") or "")
@@ -162,6 +215,17 @@ class CortexRuntime:
                 evidence_ids=evidence_ids,
             )
             scores.append(score.public_dict())
+            passes_floors = (
+                score.consistency >= self.consistency_floor
+                and score.factual_grounding >= self.grounding_floor
+            )
+            if self.early_exit_enabled and passes_floors:
+                early_exit = True
+                early_exit_reason = (
+                    f"early_exit at k={k_used}: consistency={score.consistency:.3f} "
+                    f"grounding={score.factual_grounding:.3f}"
+                )
+                break
             needs_steer = (
                 score.consistency < self.consistency_floor
                 or score.factual_grounding < self.grounding_floor
@@ -173,7 +237,6 @@ class CortexRuntime:
                     name=f"{target.block_id}_resteer",
                     site="block_out",
                 )
-                # Prefer evidence/knowledge payload refs when available.
                 payload = None
                 if evidence_ids:
                     payload = str(evidence_ids[0])
@@ -185,14 +248,13 @@ class CortexRuntime:
                     hook=hook,
                     mode=mode,
                     scale=scale,
-                    source="neuro.cortex.mid_forward_critic",
+                    source=f"neuro.cortex.mid_forward_critic.{target.circuit}",
                     payload_ref=payload,
                 )
                 receipt = self.residual_port.inject(req)
                 receipts.append(receipt.public_dict())
                 inject_list.append(req)
                 interventions += 1
-                # Residual replay of selected layer after steer.
                 replay = self.residual_port.read(ResidualReadRequest(hook=hook))
                 reads.append(replay.public_dict())
                 if target.layer_index not in replay_layers:
@@ -209,6 +271,10 @@ class CortexRuntime:
         for receipt in forward.receipts:
             receipts.append(receipt.public_dict())
 
+        detail = "Cortex runtime completed against residual port"
+        if early_exit:
+            detail = f"{detail}; {early_exit_reason}"
+
         return CortexRunReport(
             engaged=depth > 0,
             depth=depth,
@@ -218,8 +284,12 @@ class CortexRuntime:
             inject_receipts=tuple(receipts),
             forward=forward.public_dict(),
             degraded=forward.degraded_to_chat_completions,
-            detail="Cortex runtime completed against residual port",
+            detail=detail,
             path="complex" if depth > 0 else "lean",
             residual_replay_layers=tuple(replay_layers),
             mid_forward_interventions=interventions,
+            early_exit=early_exit,
+            early_exit_reason=early_exit_reason,
+            k_used=k_used,
+            max_k=k_cap,
         )

@@ -73,6 +73,6 @@ class MasterGateRunner:
         return MasterGateReport(
             status=status,
             checks=results,
-            phase_span="0-52",
+            phase_span="0-53",
             metadata={"program": "LEVIATHAN Master Engineering Program"},
         )

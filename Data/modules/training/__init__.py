@@ -19,6 +19,7 @@ from .recipes import (
     TrainingRecipe,
     TrainingRecipeRegistry,
 )
+from .neuro_worker import EphemeralRecipeWorkerTrainer, build_neuro_recipe_trainer
 from .recovery import reconcile_active_jobs
 from .registry import TrainingRegistry
 from .service import TrainingError, TrainingService
@@ -48,6 +49,7 @@ __all__ = [
     "CheckpointRecord",
     "DurableTrainingJob",
     "DurableTrainingStatus",
+    "EphemeralRecipeWorkerTrainer",
     "FixtureRecipeTrainer",
     "HardwareSnapshot",
     "MetricRecord",
@@ -73,6 +75,7 @@ __all__ = [
     "TrainingRegistry",
     "TrainingService",
     "TrainingStore",
+    "build_neuro_recipe_trainer",
     "evaluate_job",
     "export_artifact",
     "list_job_artifacts",

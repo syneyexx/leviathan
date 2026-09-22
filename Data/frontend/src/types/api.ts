@@ -62,10 +62,22 @@ export type HealthResponse = {
     residual_injection?: boolean;
     cortex?: boolean;
     memory_tiers?: boolean;
+    residual_orchestrator?: boolean;
+    cortex_blocks?: boolean;
+    contrastive_training?: boolean;
+    soak_long?: boolean;
+    training_real_worker?: boolean;
     residual_supported?: boolean;
     residual_kind?: string;
     residual_production?: boolean;
+    residual_load_weights?: boolean;
+    residual_hook_layers?: number[];
+    cortex_max_k?: number;
+    working_memory_load?: number;
+    working_memory_slots?: number;
+    memory_tier0_max_slots?: number;
     absorb?: Record<string, number>;
+    truth?: Record<string, boolean>;
   };
   knowledge?: {
     data_root?: string;
@@ -152,6 +164,13 @@ export type NeuroResidualStatus = {
   hook_points: unknown[];
   runtime?: unknown;
   kind?: string;
+  residual_production?: boolean;
+  residual_orchestrator?: boolean;
+  load_weights?: boolean;
+  hook_layers?: number[];
+  cortex_max_k?: number;
+  orchestrator_telemetry?: Record<string, number>;
+  recent_receipts?: unknown[];
   truth?: Record<string, boolean>;
 };
 
@@ -175,6 +194,8 @@ export type SoakReport = {
   duration_ms: number;
   steps: Array<{ name: string; ok: boolean; detail: string; duration_ms: number }>;
   notes?: string[];
+  mode?: string;
+  long_soak_enabled?: boolean;
   truth?: Record<string, boolean>;
 };
 

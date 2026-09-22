@@ -1,8 +1,8 @@
 # LEVIATHAN Phase 46+ — Top-Tier Frontier Neuro Layer
 
-> **Status:** Phase 52 Grok-level depth jump + RAG V3 / Neural production path upgrade  
-> **Baseline:** Phase 51 operational completion  
-> **Current version marker:** `0.58.0-rag-v3`  
+> **Status:** Phase 53+ SpaceX/xAI Grok-level residual orchestration (EXTERNAL-FIRST)  
+> **Baseline:** Phase 52 Grok-level depth jump + RAG V3 / Neural production path  
+> **Current version marker:** `0.59.0-phase53`  
 > **Authority:** This document is the design contract. Executable code and tests win when they disagree; update this doc when architecture changes.
 
 ---
@@ -392,13 +392,21 @@ Owned by `Data/modules/training/` registry (already honest stub). Neuro adds **r
 | `LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION` | false | Attempt residual path |
 | `LEVIATHAN_FEATURE_NEURO_CORTEX` | false | Dynamic cortex engagement |
 | `LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS` | false | Multi-tier facade |
+| `LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR` | false | ResidualOrchestrator layer/α budgeting |
+| `LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS` | false | Named cortex circuits |
+| `LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING` | false | Contrastive recipe / retrieval training path |
+| `LEVIATHAN_FEATURE_NEURO_SOAK_LONG` | false | Extended local soak (not multi-hour SLO) |
+| `LEVIATHAN_NEURO_TRAINING_REAL_WORKER` | false | Ephemeral EXTERNAL-FIRST recipe worker |
 | `LEVIATHAN_FEATURE_MODULE_MANAGER` | false | Universal Module Manager active |
-| `LEVIATHAN_NEURO_RESIDUAL_KIND` | unsupported | unsupported \| deterministic \| hf \| vllm \| llama_cpp |
+| `LEVIATHAN_NEURO_RESIDUAL_KIND` | unsupported | unsupported \| deterministic \| hf \| vllm \| llama_cpp \| trt |
 | `LEVIATHAN_NEURO_RESIDUAL_MODEL` | empty | HF model id/path or vLLM endpoint |
 | `LEVIATHAN_NEURO_RESIDUAL_DEVICE` | cpu | Device for weight-backed HF |
 | `LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS` | false | High-memory / dev-only HF weight load |
+| `LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS` | empty | Comma-separated mid/late layers |
+| `LEVIATHAN_NEURO_CORTEX_MAX_K` | 2 | Bounded cortex critic K |
+| `LEVIATHAN_NEURO_MEMORY_TIER0_MAX_SLOTS` | 64 | Working-memory capacity |
 
-Child flags require parent where applicable (`neuro_*` → `NEURO`; residual/cortex/tiers → `NEURO`).
+Child flags require parent where applicable (`neuro_*` → `NEURO`; residual/cortex/tiers → `NEURO`; cortex_blocks → `NEURO_CORTEX`).
 
 ---
 
@@ -547,6 +555,20 @@ Every major block behind a flag; health `public_summary` lists flag states (neve
 - Multi-hour power/HBM SLO
 - Automatic “thought harder” authority
 - Fake COMPLETED training metrics without a trainer
+
+### Phase 53+ — Residual orchestration + EXTERNAL-FIRST workers — **DONE**
+
+- `ResidualOrchestrator` budgets mid/late injects; receipts + telemetry always.
+- vLLM / llama.cpp / TRT adapters: support only when residual HTTP contract confirms hooks.
+- Named cortex circuits + early-exit + `LEVIATHAN_NEURO_CORTEX_MAX_K`.
+- `EphemeralRecipeWorkerTrainer` when `LEVIATHAN_NEURO_TRAINING_REAL_WORKER=true`.
+- Long soak flag; Master `phase_span=0-53`; version `0.59.0-phase53`.
+
+**Still not claimed**
+
+- Residual as default production path
+- Multi-hour power/HBM SLO without measurement
+- Authority for neural signals
 
 ---
 

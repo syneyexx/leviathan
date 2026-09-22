@@ -70,9 +70,10 @@ from Data.modules.neuro import (
     NeuroSnapshotStore,
     NeuroSoakHarness,
     ProcessCritic,
+    ResidualOrchestrator,
+    ResidualReceiptStore,
     build_residual_runtime,
 )
-from Data.modules.neuro.receipts import ResidualReceiptStore
 from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
@@ -81,6 +82,7 @@ from Data.modules.training import (
     TrainingRecipeRegistry,
     TrainingRegistry,
     TrainingService,
+    build_neuro_recipe_trainer,
 )
 from Data.modules.datasets import DatasetService
 from Data.modules.research import ResearchService
@@ -195,6 +197,8 @@ residual_runtime = build_residual_runtime(
     model_id=settings.neuro_runtime.residual_model_id,
     device=settings.neuro_runtime.residual_device,
     load_weights=settings.neuro_runtime.residual_load_weights,
+    selected_layers=settings.neuro_runtime.residual_hook_layers or None,
+    server_url=settings.neuro_runtime.residual_server_url,
 )
 neuro_memory = NeuroMemoryFacade(
     enabled=settings.features.neuro_enabled and settings.features.neuro_memory_tiers,
@@ -203,6 +207,7 @@ neuro_memory = NeuroMemoryFacade(
     knowledge_retriever=retriever,
     snapshot_store=neuro_snapshots,
     use_embeddings=bool(retriever.embeddings.available()),
+    working_capacity=settings.neuro_runtime.memory_tier0_max_slots,
 )
 neuro_absorb = NeuroAbsorbService(knowledge)
 neuro_contrastive = ContrastiveRetrievalHead(
@@ -214,6 +219,17 @@ neuro_critic = ProcessCritic(enabled=settings.features.neuro_process_critic)
 cortex_runtime = CortexRuntime(
     residual_port=residual_runtime,
     critic=neuro_critic,
+    max_k=settings.neuro_runtime.cortex_max_k,
+    named_blocks_enabled=settings.features.neuro_cortex_blocks,
+)
+residual_orchestrator = ResidualOrchestrator(
+    residual_port=residual_runtime,
+    enabled=(
+        settings.features.neuro_enabled
+        and settings.features.neuro_residual_orchestrator
+    ),
+    hook_layers=settings.neuro_runtime.residual_hook_layers,
+    observability=observability,
 )
 neuro_advisor = NeuroAdvisor(
     enabled=settings.features.neuro_enabled,
@@ -226,6 +242,8 @@ neuro_advisor = NeuroAdvisor(
     memory_facade=neuro_memory,
     cortex_planner=CortexPlanner(
         enabled=settings.features.neuro_cortex,
+        max_depth=min(2, max(0, settings.neuro_runtime.cortex_max_k)),
+        max_critic_rounds=settings.neuro_runtime.cortex_max_k,
         default_token_budget=settings.context.token_budget,
     ),
     critic=neuro_critic,
@@ -262,7 +280,11 @@ evaluation_harness = EvaluationHarness(
 )
 isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
-training_recipes = TrainingRecipeRegistry()
+training_recipes = TrainingRecipeRegistry(
+    trainer=build_neuro_recipe_trainer(
+        real_worker=settings.features.neuro_training_real_worker
+    )
+)
 preference_bridge = PreferenceBridge(training_registry)
 corpus_layout = build_corpus_layout(settings)
 dataset_service = DatasetService.from_settings(settings, knowledge=knowledge)
@@ -294,7 +316,7 @@ market_sim_service = MarketSimControlPlane.from_settings(
     neuro=neuro_advisor,
     observability_emit=observability.emit,
 )
-neuro_soak = NeuroSoakHarness()
+neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
 browser_stub = BrowserAutomationStub()
 media_stub = MediaAutomationStub()
 voice_stub = VoiceRuntimeStub()
@@ -683,7 +705,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.58.0-rag-v3", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.59.0-phase53", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -792,20 +814,36 @@ async def health() -> dict:
             "residual_injection": settings.features.neuro_residual_injection,
             "cortex": settings.features.neuro_cortex,
             "memory_tiers": settings.features.neuro_memory_tiers,
+            "residual_orchestrator": settings.features.neuro_residual_orchestrator,
+            "cortex_blocks": settings.features.neuro_cortex_blocks,
+            "contrastive_training": settings.features.neuro_contrastive_training,
+            "soak_long": settings.features.neuro_soak_long,
+            "training_real_worker": settings.features.neuro_training_real_worker,
             "residual_supported": residual_runtime.supports_residuals(),
             "residual_kind": settings.neuro_runtime.residual_kind,
             "residual_load_weights": settings.neuro_runtime.residual_load_weights,
             "residual_production": settings.features.residual_production,
+            "residual_hook_layers": list(settings.neuro_runtime.residual_hook_layers),
+            "cortex_max_k": settings.neuro_runtime.cortex_max_k,
+            "working_memory_load": neuro_memory.working.load if neuro_memory.enabled else 0.0,
+            "working_memory_slots": (
+                len(neuro_memory.working.snapshot()) if neuro_memory.enabled else 0
+            ),
+            "memory_tier0_max_slots": settings.neuro_runtime.memory_tier0_max_slots,
             "residual_runtime": (
                 residual_runtime.runtime_info()
                 if hasattr(residual_runtime, "runtime_info")
                 else {"kind": settings.neuro_runtime.residual_kind}
             ),
-            "working_memory_load": neuro_memory.working.load if neuro_memory.enabled else 0.0,
+            "orchestrator_telemetry": dict(residual_orchestrator.telemetry),
             "absorb": dict(neuro_absorb.telemetry),
             "truth": {
                 "neural_signal_is_not_authority": True,
                 "residual_implemented": residual_runtime.supports_residuals(),
+                "discoverable_is_not_authorized": True,
+                "unapplied_is_not_success": True,
+                "model_output_is_not_evidence": True,
+                "unsupported_is_not_failure_of_core": True,
             },
         },
         "module_manager": {
@@ -1074,6 +1112,30 @@ async def chat(payload: ChatRequest) -> dict:
                             ),
                             metadata={"run_id": run.run_id, "source": "cortex_runtime"},
                         )
+                if settings.features.neuro_residual_orchestrator:
+                    orch = residual_orchestrator.orchestrate(
+                        messages=[{"role": "user", "content": message}],
+                        complexity=str(plan.complexity or "medium"),
+                        token_budget=settings.context.token_budget,
+                        payload_ref=knowledge_ids[0] if knowledge_ids else None,
+                        run_forward=False,
+                        run_id=run.run_id,
+                    )
+                    for receipt in orch.receipts:
+                        residual_receipts.record(
+                            receipt,
+                            metadata={"run_id": run.run_id, "source": "residual_orchestrator"},
+                        )
+                    neuro_context.append(
+                        {
+                            "id": f"residual-orch-{run.run_id}",
+                            "content": (
+                                f"[residual_orchestrator layers={list(orch.selected_layers)} "
+                                f"applied={sum(1 for r in orch.receipts if r.applied)}] {orch.detail}"
+                            ),
+                            "status": "advisory",
+                        }
+                    )
                 observability.emit(
                     "neuro",
                     "cortex_engagement",
@@ -1085,7 +1147,8 @@ async def chat(payload: ChatRequest) -> dict:
                         "id": f"cortex-{run.run_id}",
                         "content": (
                             f"[cortex engaged={report.engaged} depth={report.depth} "
-                            f"degraded={report.degraded}] {report.detail}"
+                            f"early_exit={report.early_exit} k={report.k_used}/{report.max_k}] "
+                            f"{report.detail}"
                         ),
                         "status": "advisory",
                     }
@@ -2343,14 +2406,60 @@ def neuro_residual_status() -> dict:
         "runtime": info,
         "kind": settings.neuro_runtime.residual_kind,
         "residual_production": settings.features.residual_production,
+        "residual_orchestrator": settings.features.neuro_residual_orchestrator,
         "load_weights": settings.neuro_runtime.residual_load_weights,
+        "hook_layers": list(settings.neuro_runtime.residual_hook_layers),
+        "cortex_max_k": settings.neuro_runtime.cortex_max_k,
+        "orchestrator_telemetry": dict(residual_orchestrator.telemetry),
         "recent_receipts": residual_receipts.recent(limit=10),
         "truth": {
+            "neural_signal_is_not_authority": True,
             "residual_injection_is_not_authority": True,
             "unsupported_is_not_success": True,
             "unapplied_is_not_success": True,
+            "discoverable_is_not_authorized": True,
+            "model_output_is_not_evidence": True,
+            "unsupported_is_not_failure_of_core": True,
         },
     }
+
+
+class NeuroOrchestrateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=30_000)
+    complexity: str = Field(default="medium", max_length=32)
+    run_forward: bool = False
+    mode: str | None = Field(default=None, max_length=32)
+
+
+@app.post("/api/neuro/residual/orchestrate")
+def neuro_residual_orchestrate(payload: NeuroOrchestrateRequest) -> dict:
+    if not settings.features.neuro_enabled:
+        raise HTTPException(status_code=503, detail="Neuro feature flag OFF")
+    if not settings.features.neuro_residual_orchestrator:
+        raise HTTPException(status_code=503, detail="Neuro residual orchestrator flag OFF")
+    report = residual_orchestrator.orchestrate(
+        messages=[{"role": "user", "content": payload.text}],
+        complexity=payload.complexity,
+        token_budget=settings.context.token_budget,
+        run_forward=payload.run_forward,
+        mode=payload.mode,
+    )
+    for receipt in report.receipts:
+        residual_receipts.record(
+            receipt,
+            metadata={"source": "residual_orchestrator", "complexity": payload.complexity},
+        )
+    observability.emit(
+        "neuro",
+        "residual_orchestrate",
+        payload={
+            "plans": len(report.plans),
+            "applied": sum(1 for r in report.receipts if r.applied),
+            "available": report.residual_available,
+        },
+    )
+    metrics.incr("neuro_residual_orchestrations")
+    return {"report": report.public_dict()}
 
 
 class NeuroCortexRunRequest(BaseModel):
@@ -2463,12 +2572,13 @@ def neuro_absorb_schedule(payload: NeuroAbsorbScheduleRequest) -> dict:
 
 
 class NeuroSoakRequest(BaseModel):
-    iterations: int = Field(default=3, ge=1, le=20)
+    iterations: int = Field(default=3, ge=1, le=200)
+    mode: str = Field(default="mini", max_length=16)
 
 
 @app.post("/api/neuro/soak")
 def neuro_soak_run(payload: NeuroSoakRequest) -> dict:
-    """Mini local soak for neuro contracts — not a production SLO claim."""
+    """Local soak for neuro contracts — mini or long; never a multi-hour SLO claim."""
 
     def _assess() -> str:
         result = neuro_advisor.assess("soak probe delete risk", plan=reasoner.analyze("soak", False))
@@ -2480,14 +2590,25 @@ def neuro_soak_run(payload: NeuroSoakRequest) -> dict:
     def _modules() -> str:
         return f"enabled={module_manager.enabled} count={len(module_manager.list())}"
 
-    report = neuro_soak.run(
-        iterations=payload.iterations,
-        steps=[
-            ("neuro_assess", _assess),
-            ("residual_port", _residual),
-            ("module_manager", _modules),
-        ],
-    )
+    def _orchestrator() -> str:
+        return (
+            f"enabled={residual_orchestrator.enabled} "
+            f"telemetry={residual_orchestrator.telemetry.get('orchestrations', 0)}"
+        )
+
+    try:
+        report = neuro_soak.run(
+            iterations=payload.iterations,
+            mode=payload.mode,
+            steps=[
+                ("neuro_assess", _assess),
+                ("residual_port", _residual),
+                ("module_manager", _modules),
+                ("residual_orchestrator", _orchestrator),
+            ],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     metrics.incr("neuro_soak_runs")
     return {"report": report.public_dict()}
 
