@@ -27,7 +27,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/", "/chat", "/coding", "/tasks", "/status"],
     submenu: [
       { id: "chatten", label: "Chatten", to: "/chat" },
-      { id: "coding", label: "Coding", to: "/coding" },
+      { id: "coding", label: "Coding Agent", to: "/coding" },
       { id: "taken", label: "Taken", to: "/tasks" },
     ],
   },

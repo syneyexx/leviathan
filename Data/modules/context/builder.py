@@ -48,6 +48,9 @@ class ContextBuilder:
         memory: list[dict[str, Any]] | None = None,
         neuro: list[dict[str, Any]] | None = None,
         token_budget: int | None = None,
+        mode: str | None = None,
+        constraints: str | None = None,
+        file_kinds: list[dict[str, Any]] | None = None,
     ) -> ContextPack:
         budget = token_budget if token_budget is not None else self.usable_budget
         know_chars = max_knowledge_chars if max_knowledge_chars is not None else self.max_knowledge_chars
@@ -55,22 +58,55 @@ class ContextBuilder:
         dropped: list[str] = []
         used = 0
 
-        system_core = (
-            "You are Leviathan, a precise local AI assistant. Give direct, useful answers. "
-            "Do not claim that an action, tool call, lookup, file change, or external verification happened "
-            "unless the runtime actually provided evidence for it. "
-            "The runtime has already selected a lightweight response plan; follow it without exposing hidden chain-of-thought. "
-            f"Intent={plan.intent}; complexity={plan.complexity}; plan={','.join(plan.steps)}."
-        )
+        if mode == "coding" and constraints:
+            system_core = constraints
+        elif mode == "coding":
+            from Data.modules.coding.prompts import CODING_SYSTEM_PROMPT
+
+            system_core = CODING_SYSTEM_PROMPT
+        else:
+            system_core = (
+                "You are Leviathan, a precise local AI assistant. Give direct, useful answers. "
+                "Do not claim that an action, tool call, lookup, file change, or external verification happened "
+                "unless the runtime actually provided evidence for it. "
+                "The runtime has already selected a lightweight response plan; follow it without exposing hidden chain-of-thought. "
+                f"Intent={plan.intent}; complexity={plan.complexity}; plan={','.join(plan.steps)}."
+            )
+            if constraints:
+                system_core = constraints.strip() + "\n\n" + system_core
+
         system_section = ContextSection(
             name="system_core",
             kind="system",
             content=system_core,
             token_estimate=estimate_tokens(system_core),
-            provenance={"source": "context.builder"},
+            provenance={"source": "context.builder", "mode": mode or "default"},
         )
         sections.append(system_section)
         used += system_section.token_estimate
+
+        # Optional open-file kind summaries for coding (path + hash, not full bodies).
+        if file_kinds:
+            for idx, item in enumerate(file_kinds):
+                text = str(
+                    item.get("content")
+                    or f"FILE {item.get('path', '?')} kind={item.get('kind', 'unknown')} "
+                    f"hash={item.get('hash', '-')}"
+                )
+                tokens = estimate_tokens(text)
+                if used + tokens > budget:
+                    dropped.append(f"file_kind:{idx}")
+                    continue
+                used += tokens
+                sections.append(
+                    ContextSection(
+                        name=f"file_kind_{idx}",
+                        kind="constraints",
+                        content=text,
+                        token_estimate=tokens,
+                        provenance={"path": item.get("path"), "kind": "file"},
+                    )
+                )
 
         # History: newest-first selection, then restore chronological order.
         history_items = [

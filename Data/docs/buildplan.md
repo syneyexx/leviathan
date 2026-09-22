@@ -6,6 +6,44 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-21 — Coding Agent control plane + /coding operator UI — PASS
+
+### Objective
+Turn `/coding` from a toast/chat-redirect stub into a production Coding Agent control plane (same honesty bar as Models / Datasets / Research), with a pixel layout matching the Coding Agent mockup.
+
+### Added
+- `Data/modules/coding/` — CodingControlPlane, CodingLoop (XML tool protocol), store, workspace confinement (HADES deny), patch applicator (fail-closed), parser, prompts (few-shots), tools ENFORCE-*, background worker
+- Migration **v15** — `coding_sessions`, `coding_turns`, `coding_steps`, `coding_patches`
+- Capabilities: `workspace.list`, `workspace.search`, `file.write`, `file.patch`, `file.delete`, `coding.run_tests`, `git.status`, `git.diff`; `file.read` gains line numbers / start_line / end_line
+- Functions under `Data/functions/{text_file_write,text_file_patch,text_file_delete,workspace_list,workspace_search,coding_run_tests,git_status,git_diff}`
+- API: `Data/backend/routes/coding.py` mounted from `main.py`; lifespan starts coding worker
+- Flags: `LEVIATHAN_FEATURE_CODING` (default false; requires `LEVIATHAN_FEATURE_AGENTS`); workspace default `D:/leviathan/codingworkspace`
+- Frontend: `/coding` Coding Agent page — hero + 8 panels (Task Intake, Agent Status, Workspace, Timeline, Terminal, Diff, Review, Memory); typed client; submenu **Coding Agent**
+- Tests: `Data/backend/tests/test_coding_agent.py` (32)
+
+### Architecture fit
+- Side effects only via ExecutionGateway + Approvals; `requested_by=agent:coding`
+- Loop runs in background worker (HTTP turn returns RUNNING immediately)
+- ContextBuilder `mode=coding` replaces generic system_core
+- AgentRuntime still plans VERIFY heuristics when coding flag off; delegates when on
+- No private shell / FS / second DB; HADES paths rejected
+
+### Verification
+- Backend coding + migrations + agents/gateway smoke → **PASS**
+- Frontend typecheck / test / build → **PASS**
+- Live LM Studio E2E coding loop: **NOT TESTED** in this environment (fake LLM queue in unit tests)
+
+### Explicitly NOT claimed
+- Native OpenAI `tools[]` (XML-in-content is the real path; client has no tool_calls)
+- Multi-agent coding swarm / SSE token streaming
+- Automatic git commit / push without explicit operator request + approval
+- Browser / media / HADES integration
+
+### Status
+**PASS** (control plane + UI; live model E2E NOT TESTED here)
+
+---
+
 ## 2026-09-21 — Models + Datasets + Training + Research production subsystem — PASS
 
 ### Objective

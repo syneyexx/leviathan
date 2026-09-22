@@ -1,6 +1,7 @@
 import architectureBg from "./architecture-bg.jpg";
 import analyticsHero from "./analytics-hero.jpg";
 import avatar from "./avatar.jpg";
+import codingHero from "./coding-hero.jpg";
 import earthMini from "./earth-mini.jpg";
 import globe from "./globe.jpg";
 import hero from "./hero.jpg";
@@ -16,6 +17,7 @@ export const media = {
   architectureBg,
   analyticsHero,
   avatar,
+  codingHero,
   earthMini,
   globe,
   hero,

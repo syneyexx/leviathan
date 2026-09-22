@@ -12,7 +12,7 @@ def build_default_catalog() -> CapabilityCatalog:
         CapabilityDefinition(
             id="file.read",
             name="Read File",
-            description="Read a local text file.",
+            description="Read a local text file with optional line range.",
             side_effects=(SideEffect.READ,),
             provider_kind=CapabilityProviderKind.FUNCTION,
             provider_ref="text_file_read",
@@ -22,6 +22,8 @@ def build_default_catalog() -> CapabilityCatalog:
                 "properties": {
                     "path": {"type": "string"},
                     "max_bytes": {"type": "integer"},
+                    "start_line": {"type": "integer"},
+                    "end_line": {"type": "integer"},
                 },
             },
             output_schema={"type": "object"},
@@ -63,6 +65,168 @@ def build_default_catalog() -> CapabilityCatalog:
                 "properties": {
                     "path": {"type": "string"},
                     "max_pages": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.write",
+            name="Write File",
+            description="Atomically write a UTF-8 text file.",
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="text_file_write",
+            input_schema={
+                "type": "object",
+                "required": ["path", "content"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                    "create_parents": {"type": "boolean"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.write",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.patch",
+            name="Patch File",
+            description="Apply a unified diff fail-closed.",
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="text_file_patch",
+            input_schema={
+                "type": "object",
+                "required": ["path", "unified_diff"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "unified_diff": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.write",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="file.delete",
+            name="Delete File",
+            description="Delete a local file.",
+            side_effects=(SideEffect.DELETE, SideEffect.DESTRUCTIVE),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="text_file_delete",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {"path": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.write",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="workspace.list",
+            name="List Workspace",
+            description="List coding workspace entries.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="workspace_list",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "max_entries": {"type": "integer"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="workspace.search",
+            name="Search Workspace",
+            description="Search coding workspace contents.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="workspace_search",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "path": {"type": "string"},
+                    "glob": {"type": "string"},
+                    "max_hits": {"type": "integer"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.run_tests",
+            name="Run Tests",
+            description="Run pytest/npm tests and capture exit code.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_run_tests",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "selector": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                    "cwd": {"type": "string"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="git.status",
+            name="Git Status",
+            description="Read git status (honest if no .git).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="git_status",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {"path": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="git.diff",
+            name="Git Diff",
+            description="Read git diff (honest if no .git).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="git_diff",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "path": {"type": "string"},
+                    "staged": {"type": "boolean"},
                 },
             },
             output_schema={"type": "object"},

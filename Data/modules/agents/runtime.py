@@ -27,12 +27,16 @@ class AgentRuntime:
         verification: VerificationEngine | None = None,
         runs: RunFactory | None = None,
         agents_enabled: bool = False,
+        coding: Any | None = None,
+        coding_enabled: bool = False,
     ) -> None:
         self.gateway = gateway
         self.jobs = jobs
         self.verification = verification
         self.runs = runs
         self.agents_enabled = agents_enabled
+        self.coding = coding
+        self.coding_enabled = coding_enabled
 
     def plan(self, request: str, *, kind: AgentKind = AgentKind.GENERIC) -> list[AgentStep]:
         text = request.strip()
@@ -109,6 +113,31 @@ class AgentRuntime:
                 run_id=run_id,
                 status="DISABLED",
                 error="Agents feature flag is OFF (LEVIATHAN_FEATURE_AGENTS)",
+            )
+
+        # When coding is enabled, delegate CODING executes to the control plane
+        # without blocking the caller for a full LLM loop (wake worker only).
+        if kind == AgentKind.CODING and self.coding_enabled and self.coding is not None:
+            session = self.coding.create_session(
+                goal=request,
+                conversation_id=conversation_id,
+            )
+            if session.status.value != "DISABLED":
+                self.coding.start_turn(session.session_id, message=request)
+            return AgentResult(
+                agent_kind=kind,
+                run_id=session.run_id or run_id,
+                status=session.status.value,
+                output=f"coding session {session.session_id}",
+                steps=[
+                    {
+                        "kind": "PLAN",
+                        "note": "Delegated to CodingControlPlane (non-blocking worker)",
+                        "status": "OK",
+                        "session_id": session.session_id,
+                    }
+                ],
+                error=session.error,
             )
 
         created_run_id = run_id
