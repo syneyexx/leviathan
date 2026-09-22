@@ -77,24 +77,42 @@ export function createCamera(ctx) {
   }
 
   function fitSelection() {
-    const el = ctx.session.primary;
-    if (!el) {
+    const els = ctx.session.selected.filter((el) => el?.isConnected);
+    if (!els.length) {
       ctx.content?.setStatus("Geen selectie", "dirty");
       return;
     }
-    const rect = el.getBoundingClientRect();
-    const s = ctx.store.getState();
+    const union = (() => {
+      let left = Infinity;
+      let top = Infinity;
+      let right = -Infinity;
+      let bottom = -Infinity;
+      const s = ctx.store.getState();
+      const origin = layoutOrigin();
+      const safe = s.zoom || 1;
+      for (const el of els) {
+        const rect = el.getBoundingClientRect();
+        const localX = (rect.left - origin.x - s.panX) / safe;
+        const localY = (rect.top - origin.y - s.panY) / safe;
+        const localW = rect.width / safe;
+        const localH = rect.height / safe;
+        left = Math.min(left, localX);
+        top = Math.min(top, localY);
+        right = Math.max(right, localX + localW);
+        bottom = Math.max(bottom, localY + localH);
+      }
+      return { left, top, width: right - left, height: bottom - top };
+    })();
     const origin = layoutOrigin();
-    const safe = s.zoom || 1;
-    const localW = Math.max(rect.width / safe, 1);
-    const localH = Math.max(rect.height / safe, 1);
-    const localX = (rect.left - origin.x - s.panX) / safe;
-    const localY = (rect.top - origin.y - s.panY) / safe;
-    const z = clamp(Math.min((window.innerWidth * 0.62) / localW, (window.innerHeight * 0.62) / localH), ZOOM_MIN, ZOOM_MAX);
+    const z = clamp(
+      Math.min((window.innerWidth * 0.62) / Math.max(union.width, 1), (window.innerHeight * 0.62) / Math.max(union.height, 1)),
+      ZOOM_MIN,
+      ZOOM_MAX,
+    );
     setCamera({
       zoom: z,
-      panX: window.innerWidth / 2 - (localX + localW / 2) * z - origin.x,
-      panY: window.innerHeight / 2 - (localY + localH / 2) * z - origin.y,
+      panX: window.innerWidth / 2 - (union.left + union.width / 2) * z - origin.x,
+      panY: window.innerHeight / 2 - (union.top + union.height / 2) * z - origin.y,
     });
     ctx.content?.setStatus("Passend op selectie", "ok");
   }

@@ -2,9 +2,10 @@
  * Leviathan Visual Builder — docks, tabs, floats, selection chrome.
  */
 
-import { BREAKPOINTS } from "./constants.js";
+import { BREAKPOINTS, HANDLE_DIRS, LAYOUT_STORAGE_KEY } from "./constants.js";
+import { unionRect } from "./geometry.js";
 
-const LAYOUT_KEY = "lvb.dock.v1";
+const LAYOUT_KEY = LAYOUT_STORAGE_KEY;
 
 export function createChrome(ctx, panels) {
   const panelMap = new Map(panels.map((panel) => [panel.id, panel]));
@@ -165,8 +166,20 @@ export function createChrome(ctx, panels) {
     ui.zoom.textContent = `${Math.round((s.zoom || 1) * 100)}%`;
     const tools = { select: "Selecteren", hand: "Hand", rotate: "Roteren", measure: "Meten" };
     ui.toolLabel.textContent = tools[s.tool] || "Selecteren";
-    ui.status.textContent = s.status || "";
-    ui.status.className = `lvb-status${s.statusKind ? ` is-${s.statusKind}` : ""}`;
+    const primary = ctx.session.primary;
+    const count = ctx.session.selected.length;
+    let selInfo = "";
+    if (primary?.isConnected) {
+      const r = primary.getBoundingClientRect();
+      const z = s.zoom || 1;
+      const w = Math.round(r.width / z);
+      const h = Math.round(r.height / z);
+      selInfo = count > 1 ? `${count} geselecteerd · ${w}×${h}` : `${w}×${h}`;
+    }
+    const dirty = s.contentDirty || Object.values(s.dirtyFiles || {}).some(Boolean);
+    const base = s.status || "";
+    ui.status.textContent = [selInfo, dirty ? "● niet opgeslagen" : "", base].filter(Boolean).join(" · ");
+    ui.status.className = `lvb-status${s.statusKind ? ` is-${s.statusKind}` : ""}${dirty ? " is-dirty" : ""}`;
     root.querySelectorAll("[data-tool]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.tool === s.tool));
     root.querySelectorAll("[data-bp]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.bp === s.breakpoint));
     root.querySelector("[data-act='toggle-snap']")?.classList.toggle("is-on", s.snap);
@@ -252,68 +265,133 @@ export function createChrome(ctx, panels) {
       ui.hoverLabel.textContent = ctx.selection.labelFor(hover);
     } else ui.hover.hidden = true;
 
-    ui.multis.innerHTML = ctx.session.selected
-      .filter((el) => el !== ctx.session.primary && el.isConnected)
-      .map((el) => {
-        const r = el.getBoundingClientRect();
-        return `<div class="lvb-multi" style="left:${r.left}px;top:${r.top}px;width:${Math.max(r.width, 4)}px;height:${Math.max(r.height, 4)}px"></div>`;
-      })
-      .join("");
+    const selected = ctx.session.selected.filter((el) => el.isConnected);
+    const primary = ctx.session.primary?.isConnected ? ctx.session.primary : null;
 
-    const el = ctx.session.primary;
-    if (!el || !el.isConnected) {
+    // Multi outlines + shared AABB when N>1
+    const others = selected.filter((el) => el !== primary);
+    if (others.length) {
+      ui.multis.innerHTML = others
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return `<div class="lvb-multi" style="left:${r.left}px;top:${r.top}px;width:${Math.max(r.width, 4)}px;height:${Math.max(r.height, 4)}px"></div>`;
+        })
+        .join("");
+      const union = unionRect(selected);
+      if (union && selected.length > 1) {
+        ui.multis.insertAdjacentHTML(
+          "beforeend",
+          `<div class="lvb-multi-bounds" style="left:${union.left}px;top:${union.top}px;width:${union.width}px;height:${union.height}px"></div>`,
+        );
+      }
+    } else ui.multis.innerHTML = "";
+
+    if (!primary) {
       ui.select.hidden = true;
       return;
     }
-    const rect = el.getBoundingClientRect();
+    const rect = primary.getBoundingClientRect();
     placeBox(ui.select, rect);
-    ui.select.querySelectorAll(".lvb-handle, .lvb-rotate").forEach((n) => n.remove());
-    const region = ctx.selection.regionFor(el);
-    const dirs = region?.edge ? [region.edge] : ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
-    if (!ctx.selection.isLocked(el)) {
-      for (const dir of dirs) {
-        const handle = document.createElement("div");
-        handle.className = "lvb-handle";
-        handle.dataset.dir = dir;
-        ui.select.appendChild(handle);
+
+    // Stable handles: rebuild only when dirs / lock / rotate presence change
+    const region = ctx.selection.regionFor(primary);
+    const dirs = region?.edge ? [region.edge] : HANDLE_DIRS.slice();
+    const locked = ctx.selection.isLocked(primary);
+    const showRotate = !locked && !region?.edge && !ctx.selection.isShell(primary);
+    const sig = `${dirs.join("")}|${locked ? 1 : 0}|${showRotate ? 1 : 0}`;
+    if (ui.select.dataset.handleSig !== sig) {
+      ui.select.dataset.handleSig = sig;
+      ui.select.querySelectorAll(".lvb-handle, .lvb-rotate").forEach((n) => n.remove());
+      if (!locked) {
+        for (const dir of dirs) {
+          const handle = document.createElement("div");
+          handle.className = "lvb-handle";
+          handle.dataset.dir = dir;
+          ui.select.appendChild(handle);
+        }
+        if (showRotate) {
+          const rot = document.createElement("div");
+          rot.className = "lvb-rotate";
+          rot.title = "Roteren (Shift = 15°)";
+          ui.select.appendChild(rot);
+        }
       }
     }
-    const count = ctx.session.selected.length;
-    const lock = ctx.selection.isLocked(el) ? " 🔒" : "";
-    ui.selectLabel.textContent = `${ctx.selection.selectorFor(el)}${lock}${count > 1 ? ` +${count - 1}` : ""}`;
-    if (rect.top < 28) ui.selectLabel.style.top = "2px";
+
+    const count = selected.length;
+    const lock = locked ? " 🔒" : "";
+    const rot = primary.style.rotate ? ` · ${primary.style.rotate}` : "";
+    ui.selectLabel.textContent = `${ctx.selection.labelFor(primary)}${lock}${rot}${count > 1 ? ` +${count - 1}` : ""}`;
+    if (rect.top < 36) ui.selectLabel.style.top = "2px";
     else ui.selectLabel.style.top = "-22px";
   }
 
   function paintMeasure() {
     const m = ctx.session.measure;
-    if (!m?.a) {
+    if (!m?.a && !m?.live) {
       ui.measure.hidden = true;
       return;
     }
-    const a = ctx.camera.localToScreen(m.a.x, m.a.y);
-    const b = m.b ? ctx.camera.localToScreen(m.b.x, m.b.y) : null;
     ui.measure.hidden = false;
     ui.measure.setAttribute("width", String(window.innerWidth));
     ui.measure.setAttribute("height", String(window.innerHeight));
+
+    // Element↔element spacing overlay (Alt-hover measure)
+    if (m.between) {
+      const { labelX, labelY, dist, dx, dy } = m.between;
+      const parts = [];
+      if (labelX) {
+        parts.push(`<line class="is-dim" x1="${labelX.x1}" y1="${labelX.y}" x2="${labelX.x2}" y2="${labelX.y}" />
+          <text x="${(labelX.x1 + labelX.x2) / 2}" y="${labelX.y - 6}">${labelX.value}px</text>`);
+      }
+      if (labelY) {
+        parts.push(`<line class="is-dim" x1="${labelY.x}" y1="${labelY.y1}" x2="${labelY.x}" y2="${labelY.y2}" />
+          <text x="${labelY.x + 8}" y="${(labelY.y1 + labelY.y2) / 2}">${labelY.value}px</text>`);
+      }
+      if (!labelX && !labelY) {
+        parts.push(`<text x="24" y="48">${dist}px · Δ${dx},${dy}</text>`);
+      }
+      ui.measure.innerHTML = parts.join("");
+      return;
+    }
+
+    const a = ctx.camera.localToScreen(m.a.x, m.a.y);
+    const end = m.b || m.live;
+    const b = end ? ctx.camera.localToScreen(end.x, end.y) : null;
     if (!b) {
       ui.measure.innerHTML = `<circle cx="${a.x}" cy="${a.y}" r="4" />`;
       return;
     }
-    const dx = Math.round((m.b.x - m.a.x));
-    const dy = Math.round((m.b.y - m.a.y));
+    const dx = Math.round(end.x - m.a.x);
+    const dy = Math.round(end.y - m.a.y);
     const dist = Math.round(Math.hypot(dx, dy));
     const mx = (a.x + b.x) / 2;
     const my = (a.y + b.y) / 2;
-    ui.measure.innerHTML = `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
+    // Orthogonal guides + hypotenuse
+    ui.measure.innerHTML = `
+      <line class="is-ghost" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${a.y}" />
+      <line class="is-ghost" x1="${b.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
+      <line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />
       <circle cx="${a.x}" cy="${a.y}" r="3.5" /><circle cx="${b.x}" cy="${b.y}" r="3.5" />
-      <text x="${mx + 8}" y="${my - 8}">${dist}px  Δ${dx},${dy}</text>`;
+      <text x="${mx + 8}" y="${my - 8}">${dist}px</text>
+      <text x="${(a.x + b.x) / 2}" y="${a.y - 8}">Δx ${dx}</text>
+      <text x="${b.x + 8}" y="${(a.y + b.y) / 2}">Δy ${dy}</text>`;
   }
 
   function setGuides(snap) {
     const lines = [];
-    if (snap?.lineX != null) lines.push(`<div class="lvb-guide is-x is-${snap.kindX || "edge"}" style="left:${snap.lineX}px"></div>`);
-    if (snap?.lineY != null) lines.push(`<div class="lvb-guide is-y is-${snap.kindY || "edge"}" style="top:${snap.lineY}px"></div>`);
+    if (snap?.lineX != null) {
+      lines.push(`<div class="lvb-guide is-x is-${snap.kindX || "edge"}" style="left:${snap.lineX}px"></div>`);
+      if (snap.gapX != null) {
+        lines.push(`<div class="lvb-guide-label is-x" style="left:${snap.lineX}px;top:50%">${Math.round(snap.gapX)}px</div>`);
+      }
+    }
+    if (snap?.lineY != null) {
+      lines.push(`<div class="lvb-guide is-y is-${snap.kindY || "edge"}" style="top:${snap.lineY}px"></div>`);
+      if (snap.gapY != null) {
+        lines.push(`<div class="lvb-guide-label is-y" style="top:${snap.lineY}px;left:50%">${Math.round(snap.gapY)}px</div>`);
+      }
+    }
     ui.guides.innerHTML = lines.join("");
   }
 
@@ -445,9 +523,11 @@ export function createChrome(ctx, panels) {
   function applyPreset(name) {
     if (name === "focus") ctx.store.setState({ showLeft: false, showRight: false, showCode: false });
     if (name === "studio") ctx.store.setState({ showLeft: true, showRight: true, showCode: false, rightTab: "inspector" });
-    if (name === "code") ctx.store.setState({ showLeft: true, showRight: true, showCode: true, rightTab: "inspector" });
+    if (name === "code") ctx.store.setState({ showLeft: true, showRight: true, showCode: true, rightTab: "code" });
+    if (name === "full") ctx.store.setState({ showLeft: true, showRight: true, showCode: true, rightTab: "inspector", leftW: 280, rightW: 360 });
     saveLayout();
-    ctx.content.setStatus(name === "focus" ? "Focus" : name === "code" ? "Code-layout" : "Studio-layout", "ok");
+    const labels = { focus: "Focus", code: "Code-layout", full: "Volledig", studio: "Studio-layout" };
+    ctx.content.setStatus(labels[name] || "Studio-layout", "ok");
   }
 
   function saveLayout() {
@@ -456,6 +536,7 @@ export function createChrome(ctx, panels) {
       id: el.dataset.panel,
       x: parseFloat(el.style.left) || 80,
       y: parseFloat(el.style.top) || 80,
+      w: parseFloat(el.style.width) || 0,
     }));
     try {
       localStorage.setItem(
@@ -486,6 +567,22 @@ export function createChrome(ctx, panels) {
         rightTab: saved.rightTab || "inspector",
         leftW: saved.leftW || 260,
         rightW: saved.rightW || 320,
+      });
+      // Rehydrate floats after panels are mounted
+      queueMicrotask(() => {
+        for (const f of saved.floats || []) {
+          if (!f?.id || !panelMap.get(f.id)) continue;
+          const was = ctx.store.getState().rightTab;
+          ctx.store.setState({ rightTab: f.id });
+          floatTab();
+          const win = root.querySelector(`.lvb-float[data-panel="${f.id}"]`);
+          if (win) {
+            win.style.left = `${f.x || 96}px`;
+            win.style.top = `${f.y || 96}px`;
+            if (f.w) win.style.width = `${f.w}px`;
+          }
+          ctx.store.setState({ rightTab: was });
+        }
       });
     } catch {
       /* ignore broken layout */

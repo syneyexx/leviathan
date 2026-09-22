@@ -23,7 +23,9 @@ export function registerBuiltins(ctx) {
   go("flip-v", "Spiegel verticaal", null, "Selectie", () => ctx.widgets.flip("y"));
   go("copy-style", "Kopieer stijl", null, "Selectie", () => ctx.widgets.copyStyle());
   go("paste-style", "Plak stijl", null, "Selectie", () => ctx.widgets.pasteStyle());
+  go("detach", "Detach component", null, "Componenten", () => ctx.widgets.detachComponent());
   go("component-create", "Maak component", "Mod+Alt+K", "Componenten", () => ctx.widgets.createComponent());
+  go("preset-full", "Layout volledig", null, "Panelen", () => ctx.chrome.applyPreset("full"));
 
   go("tool-select", "Selecteren", "V", "Weergave", () => ctx.store.setState({ tool: "select" }));
   go("tool-hand", "Hand", "H", "Weergave", () => ctx.store.setState({ tool: "hand" }));
