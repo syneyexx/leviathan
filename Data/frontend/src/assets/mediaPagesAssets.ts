@@ -37,19 +37,6 @@ import evidenceBust from "./media-pages/crops/evidence-bust.jpg";
 
 import { mediaControlCrops, platformTiles } from "./mediaControlAssets";
 
-/** Legacy full-bleed content crops (PixelMock stubs until real pages land). */
-export const mediaPageContent = {
-  queue: contentQueue,
-  viral: contentViral,
-  calendar: contentCalendar,
-  library: contentLibrary,
-  personas: contentPersonas,
-  research: contentResearch,
-  evidence: contentEvidence,
-} as const;
-
-export type MediaPageKey = keyof typeof mediaPageContent;
-
 export const mediaPageHeroes = {
   queue: heroQueue,
   viral: heroViral,
