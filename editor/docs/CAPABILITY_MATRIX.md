@@ -18,7 +18,24 @@ Baseline for this ledger: `d66c044` + frontier work on `cursor/editor-frontier-d
 | studio-shell | implemented but unverified | graphite/ice-blue chrome — no browser screenshots this run |
 | viewport-preview | partial | Design↔Preview restores iframe.hidden; still boots editor-enabled route in iframe |
 | gesture-cancel | verified (unit) / implemented but unverified (browser) | `gesture-draft.js` + Escape/pointercancel/blur wiring; browser restore unverified |
-| ai-copilot | unavailable | 501 + honest UI; no provider contract |
+| ai-copilot | partial | Gateway + mock + preview pipeline verified in unit/API tests; browser acceptance unverified this run |
+| ai-context-protocol | verified | `ai/protocol.py` + `js/ai/context.js` + gateway/API tests |
+| ai-context-selection | verified | selection dims/role/tokens in context collector tests |
+| ai-style-source | verified | four sources validated in protocol |
+| ai-page-snapshot | implemented but unverified | SVG foreignObject capture; planning tests verified; browser capture unverified |
+| ai-selection-snapshot | implemented but unverified | same as page snapshot |
+| ai-provider-registry | verified | `ai/providers/registry.py` + gateway tests |
+| ai-capability-discovery | verified | `GET /api/editor-ai/capabilities` |
+| ai-mock-provider | verified | deterministic PNG; labeled MOCK; API + unit |
+| ai-image-generation | partial | mock verified; real OpenAI Images adapter implemented but unverified / requires credentials |
+| ai-image-replace | partial | Accept → upload → `replaceImageWithUrl` / background path; browser unverified |
+| ai-image-variants | verified (mock) | variants 1/2/4 via mock |
+| ai-image-edit | unavailable | no provider binding (mock refuses dishonest edit) |
+| ai-image-outpaint | unavailable | no provider; UI disabled via capability discovery |
+| ai-preview-accept | verified (unit) | promote + history capture; browser unverified |
+| ai-preview-reject | verified | cleanup, no history |
+| ai-history-integration | verified (unit) | one undoable capture on accept |
+| ai-mcp-tool-foundation | implemented but unverified | `js/ai/tools.js` shared surface; no public MCP server |
 | stress-lab | partial | container-width probe — **not** viewport media-query runner |
 | constraints-intel | implemented but unverified | `explainLayout` |
 | design-problems | implemented but unverified | Problems panel |

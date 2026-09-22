@@ -40,12 +40,17 @@ CONTENT_FILE = PUBLIC / "lv-editor-content.json"
 META_FILE = PUBLIC / "lv-editor-meta.json"
 JOURNAL_DIR = ROOT / ".studio-journal"
 CHECKPOINT_DIR = ROOT / ".studio-checkpoints"
+AI_TEMP_DIR = ROOT / ".studio-ai-temp"
 SRC_ROOT = FRONTEND / "src"
 HOST = "127.0.0.1"
 PORT = 5199
 VITE_PORT = 5173
 MAX_BODY = 2_000_000
 MAX_UPLOAD = 12_000_000
+# AI context may include bounded snapshots; still far below unchecked DoS sizes.
+MAX_AI_BODY = 6_000_000
+_AI_IMPORT_ERROR: str | None = None
+_get_ai_gateway = None
 
 ALLOWED_FILES = {
     "tokens.css": STYLES / "tokens.css",
@@ -296,6 +301,29 @@ def validate_image_bytes(ext: str, raw: bytes) -> bytes:
     return raw
 
 
+def _ensure_ai_gateway_import() -> None:
+    global _get_ai_gateway, _AI_IMPORT_ERROR
+    if _get_ai_gateway is not None or _AI_IMPORT_ERROR:
+        return
+    try:
+        import sys
+
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from ai.gateway import get_gateway as _gw
+
+        _get_ai_gateway = _gw
+    except Exception as exc:  # pragma: no cover
+        _AI_IMPORT_ERROR = str(exc)
+
+
+def ai_gateway():
+    _ensure_ai_gateway_import()
+    if _get_ai_gateway is None:
+        raise RuntimeError(_AI_IMPORT_ERROR or "AI gateway unavailable")
+    return _get_ai_gateway(AI_TEMP_DIR, validate_image=validate_image_bytes)
+
+
 def journal_begin(
     txn_id: str,
     files: dict[str, str],
@@ -508,6 +536,50 @@ class Handler(BaseHTTPRequestHandler):
                     "hash": meta["hash"],
                 },
             )
+            return
+
+        if path == "/api/editor-ai/capabilities":
+            if not self._origin_ok():
+                self._json(403, {"error": "Origin niet toegestaan"})
+                return
+            try:
+                report = ai_gateway().capabilities()
+            except Exception as exc:
+                self._json(
+                    200,
+                    {
+                        "available": False,
+                        "aiEnabled": False,
+                        "capabilities": {},
+                        "providers": [],
+                        "error": str(exc),
+                        "unavailable": True,
+                        "reason": "gateway-import-failed",
+                    },
+                )
+                return
+            self._json(200, report)
+            return
+
+        if path.startswith("/api/editor-ai/preview/"):
+            if not self._origin_ok():
+                self._json(403, {"error": "Origin niet toegestaan"})
+                return
+            asset_id = path[len("/api/editor-ai/preview/") :].strip("/")
+            if "/" in asset_id or ".." in asset_id:
+                self._json(400, {"error": "Invalid preview id"})
+                return
+            try:
+                got = ai_gateway().get_preview_bytes(asset_id)
+            except Exception as exc:
+                self._json(500, {"error": str(exc)})
+                return
+            if not got:
+                self._json(404, {"error": "Preview not found or expired"})
+                return
+            raw, record = got
+            mime = record.get("mime") or "application/octet-stream"
+            self._send(200, raw, mime)
             return
 
         if path == "/api/session":
@@ -758,34 +830,179 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
 
-        # AI may be probed without session for unavailable state, but still origin-check
-        if parsed.path == "/api/editor-ai":
+        # OmniRoute Editor Gateway — generation does not mutate document content
+        if parsed.path == "/api/editor-ai" or parsed.path == "/api/editor-ai/generate":
             if not self._origin_ok():
                 self._json(403, {"error": "Origin niet toegestaan"})
                 return
+            if not self._require_session():
+                self._json(401, {"error": "Sessie vereist"})
+                return
             length = int(self.headers.get("Content-Length", "0") or "0")
-            if length > MAX_BODY:
+            if length > MAX_AI_BODY:
                 self._json(413, {"error": "Body te groot"})
+                return
+            payload = self._read_json(limit=MAX_AI_BODY)
+            if payload is None:
+                self._json(400, {"error": "Expected JSON body"})
+                return
+            # Snapshot of content hash before — generation must not write content
+            meta_before = dict(load_meta())
+            content_mtime_before = CONTENT_FILE.stat().st_mtime if CONTENT_FILE.is_file() else None
+            try:
+                status, body = ai_gateway().handle(payload)
+            except Exception as exc:
+                self._json(
+                    501,
+                    {
+                        "error": "AI gateway unavailable",
+                        "notes": str(exc),
+                        "unavailable": True,
+                        "reason": "gateway-error",
+                    },
+                )
+                return
+            meta_after = load_meta()
+            content_mtime_after = CONTENT_FILE.stat().st_mtime if CONTENT_FILE.is_file() else None
+            if meta_before != meta_after or content_mtime_before != content_mtime_after:
+                # Hard invariant — generation must never persist document mutations
+                self._json(
+                    500,
+                    {
+                        "error": "AI generation mutated document state — aborted",
+                        "unavailable": True,
+                        "reason": "invariant-violation",
+                    },
+                )
+                return
+            # Legacy probe compatibility fields
+            if status == 501 and isinstance(body, dict):
+                body.setdefault("unavailable", True)
+                err = (body.get("error") or {}) if isinstance(body.get("error"), dict) else {}
+                body.setdefault("reason", err.get("code") or "no-provider")
+            self._json(status, body)
+            return
+
+        if parsed.path == "/api/editor-ai/cancel":
+            if not self._origin_ok():
+                self._json(403, {"error": "Origin niet toegestaan"})
+                return
+            if not self._require_session():
+                self._json(401, {"error": "Sessie vereist"})
                 return
             payload = self._read_json()
             if payload is None:
                 self._json(400, {"error": "Expected JSON body"})
                 return
-            instruction = payload.get("instruction")
-            if not isinstance(instruction, str) or not instruction.strip():
-                self._json(400, {"error": "instruction is verplicht"})
+            request_id = payload.get("requestId")
+            if not isinstance(request_id, str) or not request_id.strip():
+                self._json(400, {"error": "requestId required"})
                 return
+            try:
+                self._json(200, ai_gateway().cancel(request_id.strip()))
+            except Exception as exc:
+                self._json(500, {"error": str(exc)})
+            return
+
+        if parsed.path == "/api/editor-ai/preview/cleanup":
+            if not self._origin_ok():
+                self._json(403, {"error": "Origin niet toegestaan"})
+                return
+            if not self._require_session():
+                self._json(401, {"error": "Sessie vereist"})
+                return
+            payload = self._read_json() or {}
+            try:
+                self._json(
+                    200,
+                    ai_gateway().cleanup_preview(
+                        request_id=payload.get("requestId") if isinstance(payload.get("requestId"), str) else None,
+                        asset_id=payload.get("assetId") if isinstance(payload.get("assetId"), str) else None,
+                    ),
+                )
+            except Exception as exc:
+                self._json(500, {"error": str(exc)})
+            return
+
+        if parsed.path == "/api/editor-ai/accept-asset":
+            # Promote temp preview bytes into permanent uploads (still no document mutation)
+            if not self._origin_ok():
+                self._json(403, {"error": "Origin niet toegestaan"})
+                return
+            if not self._require_session():
+                self._json(401, {"error": "Sessie vereist"})
+                return
+            payload = self._read_json()
+            if payload is None:
+                self._json(400, {"error": "Expected JSON body"})
+                return
+            asset_id = payload.get("tempId") or payload.get("assetId")
+            if not isinstance(asset_id, str) or not asset_id.strip():
+                self._json(400, {"error": "tempId required"})
+                return
+            try:
+                promoted = ai_gateway().accept_to_upload_bytes(asset_id.strip())
+            except Exception as exc:
+                self._json(500, {"error": str(exc)})
+                return
+            if not promoted:
+                self._json(404, {"error": "Preview asset not found or expired"})
+                return
+            raw, ext, mime = promoted
+            try:
+                raw = validate_image_bytes(ext, raw)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            if len(raw) > MAX_UPLOAD:
+                self._json(400, {"error": "Image too large (max 12MB)"})
+                return
+            UPLOADS.mkdir(parents=True, exist_ok=True)
+            meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+            # Never store secrets; keep bounded generation provenance
+            safe_meta = {
+                k: meta[k]
+                for k in (
+                    "origin",
+                    "requestId",
+                    "task",
+                    "provider",
+                    "model",
+                    "requestedWidth",
+                    "requestedHeight",
+                    "actualWidth",
+                    "actualHeight",
+                    "sourcePage",
+                    "targetNode",
+                    "isMock",
+                )
+                if k in meta and isinstance(meta[k], (str, int, float, bool))
+            }
+            safe_meta.setdefault("origin", "ai-generated")
+            out_name = f"ai-{uuid.uuid4().hex[:10]}{ext}"
+            out_path = UPLOADS / out_name
+            atomic_write_bytes(out_path, raw)
+            # Sidecar metadata (optional, non-secret)
+            if safe_meta:
+                atomic_write_text(
+                    out_path.with_suffix(out_path.suffix + ".meta.json"),
+                    json.dumps({**safe_meta, "mime": mime, "bytes": len(raw), "hash": hashlib.sha256(raw).hexdigest()}, ensure_ascii=False, indent=2)
+                    + "\n",
+                )
+            # Cleanup temp after successful promote
+            try:
+                ai_gateway().cleanup_preview(asset_id=asset_id.strip())
+            except Exception:
+                pass
             self._json(
-                501,
+                200,
                 {
-                    "error": "AI nog niet aangesloten",
-                    "notes": "Geen Leviathan-modelcontract beschikbaar in deze omgeving. Er is niets geschreven.",
-                    "unavailable": True,
-                    "reason": "no-model-binding",
-                    "contract": {
-                        "request": ["selectionHtml", "selectionCss", "instruction", "revision", "scope", "nodeIds"],
-                        "response": ["patches", "notes", "preview"],
-                    },
+                    "ok": True,
+                    "url": f"/assets/uploads/{out_name}",
+                    "path": str(out_path),
+                    "bytes": len(raw),
+                    "mime": mime,
+                    "meta": safe_meta,
                 },
             )
             return
@@ -1020,6 +1237,13 @@ def main() -> None:
     UPLOADS.mkdir(parents=True, exist_ok=True)
     JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    AI_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        cleaned = ai_gateway().cleanup_preview()
+        if cleaned.get("removed"):
+            print(f"[studio] Cleaned {cleaned['removed']} expired AI preview(s)", flush=True)
+    except Exception as exc:
+        print(f"[studio] AI gateway startup note: {exc}", flush=True)
     acquire_process_lock()
     recovered = recover_pending_journals()
     if recovered:

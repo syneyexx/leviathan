@@ -68,5 +68,9 @@ export function createApi(origin) {
     upload: (filename, data) => json("POST", "/api/upload", { filename, data }),
     assets: () => send("/api/assets"),
     editorAi: (body) => json("POST", "/api/editor-ai", body),
+    getAiCapabilities: () => send("/api/editor-ai/capabilities"),
+    cancelAiRequest: (requestId) => json("POST", "/api/editor-ai/cancel", { requestId }),
+    cleanupAiPreview: (body) => json("POST", "/api/editor-ai/preview/cleanup", body || {}),
+    acceptAiAsset: (body) => json("POST", "/api/editor-ai/accept-asset", body),
   };
 }
