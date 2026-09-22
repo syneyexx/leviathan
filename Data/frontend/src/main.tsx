@@ -12,6 +12,12 @@ import "./styles/analytics.css";
 import "./styles/trading.css";
 import "./styles/training.css";
 import "./styles/coding.css";
+import "./styles/media-platform.css";
+import "./styles/media-pages.css";
+import "./styles/media-control.css";
+import "./styles/agents.css";
+import "./styles/media-instagram.css";
+import "./styles/media-facebook.css";
 
 const root = document.getElementById("root");
 if (!root) {

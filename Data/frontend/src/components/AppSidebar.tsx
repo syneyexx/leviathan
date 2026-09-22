@@ -29,6 +29,14 @@ const ICONS: Record<string, ReactNode> = {
       <circle cx="9" cy="10" r="1.2" />
     </>
   ),
+  agents: (
+    <>
+      <circle cx="8" cy="9" r="2.2" />
+      <circle cx="16" cy="9" r="2.2" />
+      <circle cx="12" cy="15.5" r="2.2" />
+      <path d="M9.6 10.4l1.6 3.4M14.4 10.4l-1.6 3.4M9.2 9h5.6" />
+    </>
+  ),
   trading: (
     <>
       <path d="M4 16l4.5-5 3.5 3 4-6 4 2" />
