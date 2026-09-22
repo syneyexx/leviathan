@@ -17,6 +17,12 @@ export function registerBuiltins(ctx) {
   go("lock", "Lock / unlock", "Mod+Shift+L", "Selectie", () => ctx.widgets.toggleLock());
   go("forward", "Naar voren", "Mod+]", "Selectie", () => ctx.widgets.bumpZ(1));
   go("backward", "Naar achter", "Mod+[", "Selectie", () => ctx.widgets.bumpZ(-1));
+  go("group", "Groeperen", "Mod+G", "Selectie", () => ctx.widgets.groupSelection());
+  go("ungroup", "Degroeperen", "Mod+Shift+G", "Selectie", () => ctx.widgets.ungroupSelection());
+  go("flip-h", "Spiegel horizontaal", null, "Selectie", () => ctx.widgets.flip("x"));
+  go("flip-v", "Spiegel verticaal", null, "Selectie", () => ctx.widgets.flip("y"));
+  go("copy-style", "Kopieer stijl", null, "Selectie", () => ctx.widgets.copyStyle());
+  go("paste-style", "Plak stijl", null, "Selectie", () => ctx.widgets.pasteStyle());
   go("component-create", "Maak component", "Mod+Alt+K", "Componenten", () => ctx.widgets.createComponent());
 
   go("tool-select", "Selecteren", "V", "Weergave", () => ctx.store.setState({ tool: "select" }));

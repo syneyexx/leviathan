@@ -111,10 +111,12 @@ export function createWidgets(ctx) {
   function insertImageAtUrl(url, alt = "Image") {
     const safeAlt = escapeHtml(alt || "Image");
     const safeUrl = escapeHtml(url);
+    // Free-transform ready: no max-width:100% (fights explicit width).
+    // height:auto until first promote freezes computed height; ratio unlocked by default.
     return insertWidget({
       label: "image",
-      html: `<img class="lvb-widget lvb-image" src="${safeUrl}" alt="${safeAlt}" style="display:block;width:240px;max-width:100%;height:auto;border-radius:8px;object-fit:cover;" />`,
-      styles: { position: "relative", left: "12px", top: "12px", width: "240px" },
+      html: `<img class="lvb-widget lvb-image" src="${safeUrl}" alt="${safeAlt}" style="display:block;width:240px;height:auto;max-width:none;border-radius:8px;object-fit:cover;" />`,
+      styles: { position: "relative", left: "12px", top: "12px", width: "240px", "max-width": "none" },
     });
   }
 
@@ -235,6 +237,155 @@ export function createWidgets(ctx) {
       el.style.zIndex = String(z);
       ctx.content.applyProp(el, "z-index", String(z));
     });
+  }
+
+  function flip(axis) {
+    const el = ctx.session.primary;
+    if (!el || !ctx.selection.canMutate(el)) return;
+    const key = axis === "y" ? "scaleY" : "scaleX";
+    ctx.commands.capture(axis === "y" ? "flip-v" : "flip-h", () => {
+      const cur = getComputedStyle(el).transform;
+      let sx = 1;
+      let sy = 1;
+      const m = cur && cur !== "none" ? cur.match(/matrix\(([^)]+)\)/) : null;
+      if (m) {
+        const parts = m[1].split(",").map((n) => parseFloat(n.trim()));
+        sx = parts[0] || 1;
+        sy = parts[3] || 1;
+      }
+      if (el.style.scale) {
+        const s = el.style.scale.trim().split(/\s+/);
+        sx = parseFloat(s[0]) || 1;
+        sy = parseFloat(s[1] ?? s[0]) || 1;
+      }
+      if (key === "scaleX") sx *= -1;
+      else sy *= -1;
+      el.style.scale = `${sx} ${sy}`;
+      ctx.content.applyProp(el, "scale", el.style.scale);
+    });
+    ctx.chrome?.schedulePaint?.();
+    ctx.content.setStatus(axis === "y" ? "Verticaal gespiegeld" : "Horizontaal gespiegeld", "ok");
+  }
+
+  function groupSelection() {
+    const els = ctx.selection.mutable("reparent").filter((el) => el.dataset.lvbId);
+    if (els.length < 2) {
+      ctx.content.setStatus("Groeperen vraagt minstens 2 widgets", "dirty");
+      return;
+    }
+    let group = null;
+    ctx.commands.capture("groeperen", () => {
+      const z = ctx.store.getState().zoom || 1;
+      const rects = els.map((el) => el.getBoundingClientRect());
+      const left = Math.min(...rects.map((r) => r.left));
+      const top = Math.min(...rects.map((r) => r.top));
+      const right = Math.max(...rects.map((r) => r.right));
+      const bottom = Math.max(...rects.map((r) => r.bottom));
+      const parent = els[0].parentElement || document.querySelector(".lv-main");
+      const parentRect = parent.getBoundingClientRect();
+      const content = ctx.content.ensure();
+      const id = uid();
+      const el = document.createElement("div");
+      el.className = "lvb-widget lvb-group";
+      el.dataset.lvbId = id;
+      el.dataset.lvbLabel = "groep";
+      el.style.position = "absolute";
+      el.style.left = `${Math.round((left - parentRect.left) / z)}px`;
+      el.style.top = `${Math.round((top - parentRect.top) / z)}px`;
+      el.style.width = `${Math.round((right - left) / z)}px`;
+      el.style.height = `${Math.round((bottom - top) / z)}px`;
+      parent.appendChild(el);
+      content.nodes.push({
+        id,
+        label: "groep",
+        parent: ctx.selection.selectorFor(parent),
+        html: el.outerHTML,
+        styles: {
+          position: el.style.position,
+          left: el.style.left,
+          top: el.style.top,
+          width: el.style.width,
+          height: el.style.height,
+        },
+      });
+      for (const child of els) {
+        const r = child.getBoundingClientRect();
+        el.appendChild(child);
+        child.style.position = "absolute";
+        child.style.left = `${Math.round((r.left - left) / z)}px`;
+        child.style.top = `${Math.round((r.top - top) / z)}px`;
+        child.style.width = `${Math.round(r.width / z)}px`;
+        child.style.height = `${Math.round(r.height / z)}px`;
+        ctx.layout.commitBox(child);
+        const node = content.nodes.find((n) => n.id === child.dataset.lvbId);
+        if (node) node.parent = `[data-lvb-id="${id}"]`;
+      }
+      ctx.store.setState({ content });
+      ctx.content.markContentDirty();
+      group = el;
+    });
+    if (group) {
+      ctx.selection.set([group], group);
+      ctx.content.setStatus("Gegroepeerd", "ok");
+    }
+  }
+
+  function ungroupSelection() {
+    const el = ctx.session.primary;
+    if (!el?.dataset?.lvbId || !el.classList.contains("lvb-group")) {
+      ctx.content.setStatus("Selecteer een groep", "dirty");
+      return;
+    }
+    const kids = [...el.children].filter((c) => c.dataset?.lvbId);
+    ctx.commands.capture("degroeperen", () => {
+      const parent = el.parentElement;
+      const z = ctx.store.getState().zoom || 1;
+      for (const child of kids) {
+        const r = child.getBoundingClientRect();
+        parent.insertBefore(child, el);
+        child.style.position = "absolute";
+        const pRect = parent.getBoundingClientRect();
+        child.style.left = `${Math.round((r.left - pRect.left) / z)}px`;
+        child.style.top = `${Math.round((r.top - pRect.top) / z)}px`;
+        child.style.width = `${Math.round(r.width / z)}px`;
+        child.style.height = `${Math.round(r.height / z)}px`;
+        ctx.layout.commitBox(child);
+        const content = ctx.content.ensure();
+        const node = content.nodes.find((n) => n.id === child.dataset.lvbId);
+        if (node) node.parent = ctx.selection.selectorFor(parent);
+      }
+      const content = ctx.content.ensure();
+      content.nodes = content.nodes.filter((n) => n.id !== el.dataset.lvbId);
+      el.remove();
+      ctx.store.setState({ content });
+      ctx.content.markContentDirty();
+    });
+    ctx.selection.set(kids, kids[0] || null);
+    ctx.content.setStatus("Degroepeerd", "ok");
+  }
+
+  function copyStyle() {
+    const el = ctx.session.primary;
+    if (!el) return;
+    const style = el.getAttribute("style") || "";
+    ctx.session.styleClipboard = style;
+    ctx.content.setStatus("Stijl gekopieerd", "ok");
+  }
+
+  function pasteStyle() {
+    const el = ctx.session.primary;
+    const style = ctx.session.styleClipboard;
+    if (!el || !style) {
+      ctx.content.setStatus("Geen stijl op klembord", "dirty");
+      return;
+    }
+    if (!ctx.selection.canMutate(el)) return;
+    ctx.commands.capture("plak-stijl", () => {
+      el.setAttribute("style", style);
+      ctx.layout.commitBox(el);
+    });
+    ctx.content.setStatus("Stijl geplakt", "ok");
+    ctx.chrome?.schedulePaint?.();
   }
 
   function createComponent() {
@@ -379,6 +530,11 @@ export function createWidgets(ctx) {
     toggleLock,
     setHidden,
     bumpZ,
+    flip,
+    groupSelection,
+    ungroupSelection,
+    copyStyle,
+    pasteStyle,
     createComponent,
     insertComponent,
     updateMaster,

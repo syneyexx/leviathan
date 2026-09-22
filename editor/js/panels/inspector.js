@@ -118,13 +118,22 @@ export function createInspector(ctx) {
     if (t.dataset.prop) {
       let value = t.value;
       if (t.dataset.unit === "px" && value && numFrom(value) != null && !isTokenValue(value)) value = `${value}px`;
+      if (t.dataset.unit === "deg" && value && numFrom(value) != null && !String(value).includes("deg")) value = `${value}deg`;
       if (t.dataset.role === "color-hex") value = syncColorAlpha(t);
       if (t.dataset.role === "color-alpha") value = syncColorAlpha(t);
+      if (t.dataset.role === "position-mode" || t.dataset.prop === "position") {
+        ctx.layout.setPositionMode(node, value);
+        ctx.chrome.schedulePaint();
+        return;
+      }
       if (t.dataset.prop === "width" && ctx.session.aspectLock && ctx.session.aspect) {
         ctx.content.applyProp(node, "width", value);
         const w = numFrom(value);
         if (w != null) ctx.content.applyProp(node, "height", `${Math.round(w / ctx.session.aspect)}px`);
         return;
+      }
+      if (t.dataset.prop === "left" || t.dataset.prop === "top" || t.dataset.prop === "width" || t.dataset.prop === "height") {
+        ctx.layout.ensureFreeTransform(node);
       }
       ctx.content.applyProp(node, t.dataset.prop, value);
       ctx.chrome.schedulePaint();
@@ -222,6 +231,12 @@ export function createInspector(ctx) {
     if (act === "show") ctx.widgets.setHidden(node, false);
     if (act === "front") ctx.widgets.bumpZ(1);
     if (act === "back") ctx.widgets.bumpZ(-1);
+    if (act === "flip-h") ctx.widgets.flip("x");
+    if (act === "flip-v") ctx.widgets.flip("y");
+    if (act === "group") ctx.widgets.groupSelection();
+    if (act === "ungroup") ctx.widgets.ungroupSelection();
+    if (act === "copy-style") ctx.widgets.copyStyle();
+    if (act === "paste-style") ctx.widgets.pasteStyle();
     if (act === "duplicate") ctx.widgets.duplicateSelection();
     if (act === "delete") ctx.widgets.deleteSelection();
     if (act === "component") ctx.widgets.createComponent();
@@ -381,12 +396,22 @@ function renderInspector(ctx) {
   html += `<h3>${escapeHtml(selector)}</h3>`;
   if (bp !== "desktop") html += `<p class="lvb-flag">Overrides voor ${escapeHtml(bp)} → content JSON</p>`;
   if (node.tagName === "IMG") {
+    const fit = ctx.content.readProp(node, "object-fit").value || "cover";
+    const objPos = ctx.content.readProp(node, "object-position");
     html += `<div class="lvb-section">Image</div>
       <label class="lvb-field"><span>Bron</span><input data-live="1" data-role="img-src" value="${escapeHtml(node.getAttribute("src") || "")}" /></label>
       <label class="lvb-field"><span>Alt</span><input data-live="1" data-role="img-alt" value="${escapeHtml(node.getAttribute("alt") || "")}" /></label>
+      <label class="lvb-field"><span>Object-fit</span>
+        <select data-live="1" data-prop="object-fit">
+          ${["cover", "contain", "fill", "none", "scale-down"].map((v) => `<option ${fit === v ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+      </label>
+      <label class="lvb-field"><span>Object-position</span><input data-live="1" data-prop="object-position" value="${escapeHtml(objPos.value)}" placeholder="50% 50%" /></label>
       <div class="lvb-chip-row">
         <button type="button" class="lvb-chip" data-act="pick-image">Kies image…</button>
         <button type="button" class="lvb-chip" data-act="upload-replace">Upload…</button>
+        <button type="button" class="lvb-chip" data-act="flip-h">Flip H</button>
+        <button type="button" class="lvb-chip" data-act="flip-v">Flip V</button>
       </div>`;
   } else {
     const text = node.childElementCount === 0 || [...node.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) ? node.textContent || "" : "";
@@ -428,6 +453,10 @@ function renderInspector(ctx) {
       <button type="button" class="lvb-chip" data-act="show">Toon</button>
       <button type="button" class="lvb-chip" data-act="front">Naar voren</button>
       <button type="button" class="lvb-chip" data-act="back">Naar achter</button>
+      <button type="button" class="lvb-chip" data-act="group">Groepeer</button>
+      <button type="button" class="lvb-chip" data-act="ungroup">Degroepeer</button>
+      <button type="button" class="lvb-chip" data-act="copy-style">Kopieer stijl</button>
+      <button type="button" class="lvb-chip" data-act="paste-style">Plak stijl</button>
       <button type="button" class="lvb-chip" data-act="component">Maak component</button>
       <button type="button" class="lvb-chip" data-act="clear">Reset styles</button>
     </div>`;
@@ -483,12 +512,15 @@ function sectionSize(ctx, node) {
   const maxW = ctx.content.readProp(node, "max-width");
   const minH = ctx.content.readProp(node, "min-height");
   const maxH = ctx.content.readProp(node, "max-height");
+  // Images default unlocked — "Ratio vrij" until the operator locks.
+  const lockLabel = ctx.session.aspectLock ? "Ratio vast" : "Ratio vrij (ontgrendeld)";
   return `<div class="lvb-section">Formaat</div>
     <div class="lvb-row">
       ${numField("W", "width", width, true)}
       ${numField("H", "height", height, true)}
     </div>
-    <button type="button" class="lvb-btn ${ctx.session.aspectLock ? "is-on" : ""}" data-act="aspect">${ctx.session.aspectLock ? "Ratio vast" : "Ratio vrij"}</button>
+    <button type="button" class="lvb-btn ${ctx.session.aspectLock ? "is-on" : ""}" data-act="aspect">${lockLabel}</button>
+    <p class="lvb-muted">Shift tijdens resize = tijdelijk ratio. Inspectorknop = vast.</p>
     <div class="lvb-row">
       ${numField("Min W", "min-width", minW, true)}
       ${numField("Max W", "max-width", maxW, true)}
@@ -647,20 +679,31 @@ function sectionLayout(ctx, node) {
 }
 
 function sectionPosition(ctx, node) {
-  const pos = ctx.content.readProp(node, "position").value || "static";
+  const pos = ctx.content.readProp(node, "position").value || getComputedStyle(node).position || "static";
+  const rot = ctx.content.readProp(node, "rotate");
+  const rotVal = rot.value || (node.style.rotate || "").replace("deg", "") || "";
   return `<div class="lvb-section">Positie</div>
     <label class="lvb-field"><span>Position</span>
-      <select data-live="1" data-prop="position">
+      <select data-live="1" data-prop="position" data-role="position-mode">
         ${["static", "relative", "absolute", "fixed", "sticky"].map((v) => `<option ${pos === v ? "selected" : ""}>${v}</option>`).join("")}
       </select>
     </label>
     <div class="lvb-row">
-      ${numField("Top", "top", ctx.content.readProp(node, "top"), false)}
+      ${numField("X", "left", ctx.content.readProp(node, "left"), true)}
+      ${numField("Y", "top", ctx.content.readProp(node, "top"), true)}
+    </div>
+    <div class="lvb-row">
+      ${numField("W", "width", ctx.content.readProp(node, "width"), true)}
+      ${numField("H", "height", ctx.content.readProp(node, "height"), true)}
+    </div>
+    <div class="lvb-row">
+      <label class="lvb-field"><span>Rotate</span><input data-live="1" data-prop="rotate" data-unit="deg" value="${escapeHtml(rotVal)}" placeholder="0" /></label>
+      ${numField("Z-index", "z-index", ctx.content.readProp(node, "z-index"), false)}
+    </div>
+    <div class="lvb-row">
       ${numField("Right", "right", ctx.content.readProp(node, "right"), false)}
       ${numField("Bottom", "bottom", ctx.content.readProp(node, "bottom"), false)}
-      ${numField("Left", "left", ctx.content.readProp(node, "left"), false)}
     </div>
-    ${numField("Z-index", "z-index", ctx.content.readProp(node, "z-index"), false)}
     <label class="lvb-field"><span>Opacity</span><input data-live="1" data-prop="opacity" type="range" min="0" max="1" step="0.01" value="${escapeHtml(ctx.content.readProp(node, "opacity").value || ctx.content.readProp(node, "opacity").hint || "1")}" /></label>`;
 }
 
