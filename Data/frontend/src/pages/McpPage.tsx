@@ -1,21 +1,11 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { pluginRuntimeHeroes } from "../assets/pluginRuntimeAssets";
+import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
-import {
-  MCP_ALERTS,
-  MCP_AUTH_POLICIES,
-  MCP_AUTH_SUMMARY,
-  MCP_BRIDGE,
-  MCP_KPIS,
-  MCP_QUICK_ACTIONS,
-  MCP_RECENT_CALLS,
-  MCP_SERVERS,
-  MCP_TOOL_CATALOG,
-  MCP_TRANSPORTS,
-  type PrTone,
-} from "./plugin-runtime/mocks";
+import type { McpCallRecord, McpServerPublic, McpToolRecord } from "../types/api";
 import { Bar, Panel, Pill, PrHero, Spark, Toggle } from "./plugin-runtime/shared";
+import type { PrTone } from "./plugin-runtime/mocks";
 
 const SERVER_ICONS: Record<string, ReactNode> = {
   filesystem: (
@@ -183,6 +173,12 @@ const QUICK_ICONS: Record<string, ReactNode> = {
   ),
 };
 
+function errorMessage(err: unknown, fallback = "Request failed"): string {
+  if (err instanceof ApiError) return err.message || fallback;
+  if (err instanceof Error) return err.message || fallback;
+  return fallback;
+}
+
 function StatusDot({ tone }: { tone: PrTone }) {
   return <span className={`lv-pr-mcp-dot is-${tone}`} aria-hidden="true" />;
 }
@@ -191,47 +187,611 @@ function IconBtn({
   label,
   onClick,
   children,
+  disabled,
 }: {
   label: string;
   onClick: () => void;
   children: ReactNode;
+  disabled?: boolean;
 }) {
   return (
-    <button type="button" className="lv-pr-mcp-icon-btn" aria-label={label} title={label} onClick={onClick}>
+    <button
+      type="button"
+      className="lv-pr-mcp-icon-btn"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
     </button>
   );
 }
 
+function serverIconKey(server: McpServerPublic): string {
+  const hay = `${server.source_key} ${server.display_name} ${server.server_id}`.toLowerCase();
+  for (const key of Object.keys(SERVER_ICONS)) {
+    if (hay.includes(key)) return key;
+  }
+  return "docs";
+}
+
+function runtimeState(server: McpServerPublic): string {
+  return (server.runtime?.state ?? (server.enabled ? "DISCONNECTED" : "DISABLED")).toUpperCase();
+}
+
+function statusTone(state: string): PrTone {
+  if (state === "READY" || state === "BUSY") return "ok";
+  if (state === "ERROR" || state === "CIRCUIT_OPEN" || state === "UNRESPONSIVE") return "err";
+  if (state === "DEGRADED" || state === "CONNECTING" || state === "RESTARTING") return "warn";
+  if (state === "DISABLED") return "muted";
+  return "cyan";
+}
+
+function statusLabel(state: string): string {
+  if (state === "READY" || state === "BUSY") return "Verbonden";
+  if (state === "ERROR" || state === "CIRCUIT_OPEN" || state === "UNRESPONSIVE") return "Fout";
+  if (state === "DEGRADED") return "Belast";
+  if (state === "CONNECTING" || state === "RESTARTING") return "Bezig";
+  if (state === "DISABLED") return "Uit";
+  if (state === "DISCONNECTED") return "Losgekoppeld";
+  return state;
+}
+
+function callTone(status: string): PrTone {
+  const s = status.toUpperCase();
+  if (s === "COMPLETED") return "ok";
+  if (s === "FAILED" || s === "TIMEOUT" || s === "REJECTED" || s === "CANCELLED") return "err";
+  return "warn";
+}
+
+function formatTs(value: string | null | undefined): string {
+  if (!value) return "—";
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+function formatDuration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function relativeTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return value;
+  const delta = Math.max(0, Date.now() - t);
+  if (delta < 60_000) return `${Math.round(delta / 1000)}s geleden`;
+  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m geleden`;
+  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}u geleden`;
+  return formatTs(value);
+}
+
+/** Secret refs are reference names — never treat redacted payloads as displayable values. */
+function formatSecretRef(value: string | null | undefined): string {
+  if (value == null || value === "") return "—";
+  if (/\*{2,}|redacted|••••|\[secret\]/i.test(value)) return "••••";
+  return value;
+}
+
+function tryParseArgs(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: {} };
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, error: "Arguments must be a JSON object" };
+    }
+    return { ok: true, value: parsed as Record<string, unknown> };
+  } catch {
+    return { ok: false, error: "Invalid JSON arguments" };
+  }
+}
+
+function tryParseStringMap(raw: string): { ok: true; value: Record<string, string> } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: {} };
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, error: "Must be a JSON object of string → string refs" };
+    }
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v !== "string") {
+        return { ok: false, error: "Secret refs must be string reference names, not secret values" };
+      }
+      out[k] = v;
+    }
+    return { ok: true, value: out };
+  } catch {
+    return { ok: false, error: "Invalid JSON for secret refs" };
+  }
+}
+
+const EMPTY_CREATE = {
+  display_name: "",
+  transport: "stdio",
+  command: "",
+  args: "",
+  url: "",
+  trust: "untrusted",
+  requested_isolation: "subprocess",
+  enabled: false,
+  eager_connect: false,
+  secret_refs: "",
+};
+
 export function McpPage() {
   const toast = useAppToast();
+  const [servers, setServers] = useState<McpServerPublic[]>([]);
+  const [tools, setTools] = useState<McpToolRecord[]>([]);
+  const [calls, setCalls] = useState<McpCallRecord[]>([]);
+  const [featureEnabled, setFeatureEnabled] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [transportFilter, setTransportFilter] = useState("all");
-  const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(MCP_SERVERS.map((s) => [s.id, s.enabled])),
-  );
-  const [policies, setPolicies] = useState<Record<string, string>>(() =>
-    Object.fromEntries(MCP_AUTH_POLICIES.map((p) => [p.id, p.value])),
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState(EMPTY_CREATE);
+  const [creating, setCreating] = useState(false);
+
+  const [invokeCapabilityId, setInvokeCapabilityId] = useState("");
+  const [invokeArgs, setInvokeArgs] = useState("{}");
+  const [invoking, setInvoking] = useState(false);
+  const [invokeResult, setInvokeResult] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [serversRes, toolsRes, callsRes] = await Promise.all([
+        api.mcpServers(),
+        api.mcpTools().catch(() => ({ tools: [] as McpToolRecord[] })),
+        api.mcpCalls(100).catch(() => ({ calls: [] as McpCallRecord[] })),
+      ]);
+      setServers(serversRes.servers ?? []);
+      setFeatureEnabled(serversRes.feature_enabled !== false);
+      setTools(toolsRes.tools ?? []);
+      setCalls(callsRes.calls ?? []);
+      setSelectedId((prev) => {
+        const ids = (serversRes.servers ?? []).map((s) => s.server_id);
+        if (prev && ids.includes(prev)) return prev;
+        return ids[0] ?? null;
+      });
+      setInvokeCapabilityId((prev) => {
+        const ids = (toolsRes.tools ?? []).map((t) => t.capability_id);
+        if (prev && ids.includes(prev)) return prev;
+        return ids[0] ?? "";
+      });
+    } catch (err) {
+      setLoadError(errorMessage(err, "Failed to load MCP data"));
+      setServers([]);
+      setTools([]);
+      setCalls([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const selected = useMemo(
+    () => servers.find((s) => s.server_id === selectedId) ?? null,
+    [servers, selectedId],
   );
 
   const filteredServers = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return MCP_SERVERS.filter((s) => {
-      if (statusFilter !== "all" && s.status !== statusFilter) return false;
+    return servers.filter((s) => {
+      const state = runtimeState(s);
+      const label = statusLabel(state);
+      if (statusFilter === "connected" && !(state === "READY" || state === "BUSY")) return false;
+      if (statusFilter === "error" && !(state === "ERROR" || state === "CIRCUIT_OPEN" || state === "UNRESPONSIVE")) {
+        return false;
+      }
+      if (statusFilter === "disconnected" && state !== "DISCONNECTED" && state !== "DISABLED") return false;
       if (transportFilter !== "all" && s.transport !== transportFilter) return false;
       if (!q) return true;
-      return `${s.name} ${s.transport} ${s.isolation} ${s.lastError}`.toLowerCase().includes(q);
+      const err = s.runtime?.last_error_message ?? "";
+      return `${s.display_name} ${s.server_id} ${s.transport} ${s.requested_isolation} ${label} ${err}`
+        .toLowerCase()
+        .includes(q);
     });
-  }, [query, statusFilter, transportFilter]);
+  }, [servers, query, statusFilter, transportFilter]);
 
-  const toggleServer = (id: string, name: string) => {
-    setEnabledMap((prev) => {
-      const next = !prev[id];
-      toast(next ? `${name} ingeschakeld` : `${name} uitgeschakeld`);
-      return { ...prev, [id]: next };
+  const kpis = useMemo(() => {
+    const total = servers.length;
+    const connected = servers.filter((s) => {
+      const st = runtimeState(s);
+      return st === "READY" || st === "BUSY";
+    }).length;
+    const enabled = servers.filter((s) => s.enabled).length;
+    const availableTools = tools.filter((t) => t.availability === "available").length;
+    const unavailable = tools.filter((t) => t.availability !== "available").length;
+    const failedCalls = calls.filter((c) => {
+      const st = (c.status ?? "").toUpperCase();
+      return st === "FAILED" || st === "TIMEOUT" || st === "REJECTED";
+    }).length;
+    const completed = calls.filter((c) => (c.status ?? "").toUpperCase() === "COMPLETED").length;
+    const withDuration = calls.filter((c) => c.duration_ms != null && Number.isFinite(c.duration_ms));
+    const avgLatency =
+      withDuration.length > 0
+        ? Math.round(withDuration.reduce((sum, c) => sum + Number(c.duration_ms), 0) / withDuration.length)
+        : null;
+    const errPct = calls.length ? ((failedCalls / calls.length) * 100).toFixed(1) : "0.0";
+    const connectPct = total ? Math.round((connected / total) * 100) : 0;
+
+    return [
+      { id: "servers", label: "Totaal servers", value: String(total), spark: undefined as number[] | undefined },
+      {
+        id: "connected",
+        label: "Verbonden servers",
+        value: String(connected),
+        sub: total ? `${connectPct}%` : undefined,
+        pct: total ? connectPct : undefined,
+        barTone: "ok" as const,
+      },
+      { id: "tools", label: "Ontdekte tools", value: String(tools.length) },
+      { id: "sessions", label: "Ingeschakeld", value: String(enabled) },
+      { id: "throughput", label: "Recente calls", value: String(calls.length), sub: "laatste 100" },
+      {
+        id: "approval",
+        label: "Unavailable tools",
+        value: String(unavailable),
+        warn: unavailable > 0,
+      },
+      {
+        id: "error",
+        label: "Foutpercentage",
+        value: `${errPct}%`,
+        warn: failedCalls > 0,
+      },
+      {
+        id: "latency",
+        label: "Gem. latentie",
+        value: avgLatency == null ? "—" : `${avgLatency} ms`,
+      },
+      {
+        id: "tools",
+        label: "Available tools",
+        value: String(availableTools),
+        hide: true,
+      },
+      {
+        id: "throughput",
+        label: "Completed",
+        value: String(completed),
+        hide: true,
+      },
+    ].filter((k) => !("hide" in k && k.hide));
+  }, [servers, tools, calls]);
+
+  const authSummary = useMemo(() => {
+    const available = tools.filter((t) => t.availability === "available").length;
+    const disabled = tools.filter((t) => t.availability === "disabled").length;
+    const unavailable = tools.filter((t) => t.availability === "unavailable").length;
+    return [
+      { id: "discovered", label: "Ontdekte tools", value: String(tools.length) },
+      { id: "authorized", label: "Available", value: String(available), tone: "ok" as PrTone },
+      { id: "queued", label: "Disabled", value: String(disabled), tone: disabled ? ("warn" as PrTone) : undefined },
+      { id: "blocked", label: "Unavailable", value: String(unavailable), tone: unavailable ? ("err" as PrTone) : undefined },
+    ];
+  }, [tools]);
+
+  const transportStats = useMemo(() => {
+    const by = new Map<string, { total: number; ready: number; latencies: number[] }>();
+    for (const s of servers) {
+      const key = s.transport || "unknown";
+      const cur = by.get(key) ?? { total: 0, ready: 0, latencies: [] };
+      cur.total += 1;
+      const st = runtimeState(s);
+      if (st === "READY" || st === "BUSY") cur.ready += 1;
+      by.set(key, cur);
+    }
+    for (const c of calls) {
+      const server = servers.find((s) => s.server_id === c.server_id);
+      if (!server || c.duration_ms == null) continue;
+      const cur = by.get(server.transport);
+      if (cur) cur.latencies.push(Number(c.duration_ms));
+    }
+    return [...by.entries()].map(([id, v]) => {
+      const avg =
+        v.latencies.length > 0
+          ? Math.round(v.latencies.reduce((a, b) => a + b, 0) / v.latencies.length)
+          : null;
+      const healthy = v.ready === v.total && v.total > 0;
+      return {
+        id,
+        label: id,
+        servers: v.total,
+        latency: avg == null ? "—" : `${avg} ms`,
+        status: healthy ? "Gezond" : v.ready > 0 ? "Gedeeltelijk" : "Idle",
+        statusTone: (healthy ? "ok" : v.ready > 0 ? "warn" : "muted") as PrTone,
+      };
     });
-  };
+  }, [servers, calls]);
+
+  const alerts = useMemo(() => {
+    const items: Array<{ id: string; time: string; tone: PrTone; label: string; message: string }> = [];
+    for (const s of servers) {
+      const err = s.runtime?.last_error_message;
+      if (err) {
+        items.push({
+          id: `srv-${s.server_id}`,
+          time: relativeTime(s.runtime?.last_seen_at),
+          tone: "err",
+          label: "Fout",
+          message: `${s.display_name}: ${err}`,
+        });
+      }
+    }
+    for (const c of calls.slice(0, 20)) {
+      const st = (c.status ?? "").toUpperCase();
+      if (st === "FAILED" || st === "TIMEOUT" || st === "REJECTED") {
+        items.push({
+          id: `call-${c.call_id}`,
+          time: relativeTime(c.started_at),
+          tone: "err",
+          label: st === "TIMEOUT" ? "Timeout" : "Fout",
+          message: `${c.external_tool_name}: ${c.error_message ?? st}`,
+        });
+      }
+    }
+    if (!featureEnabled) {
+      items.unshift({
+        id: "feature-off",
+        time: "nu",
+        tone: "warn",
+        label: "Info",
+        message: "MCP feature flag is disabled",
+      });
+    }
+    return items.slice(0, 8);
+  }, [servers, calls, featureEnabled]);
+
+  const bridge = useMemo(() => {
+    const connected = servers.filter((s) => {
+      const st = runtimeState(s);
+      return st === "READY" || st === "BUSY";
+    }).length;
+    const enabled = servers.filter((s) => s.enabled).length;
+    const mix = transportStats.map((t) => ({
+      id: t.id,
+      label: t.label,
+      pct: servers.length ? Math.round((t.servers / servers.length) * 100) : 0,
+      tone: (t.id === "stdio" ? "cyan" : "ok") as "cyan" | "ok",
+    }));
+    const healthPct = servers.length ? Math.round((connected / servers.length) * 100) : 0;
+    return {
+      title: "LEVIATHAN MCP BRIDGE",
+      status: !featureEnabled ? "Disabled" : connected > 0 ? "Operationeel" : servers.length ? "Idle" : "Leeg",
+      statusTone: (!featureEnabled ? "muted" : connected > 0 ? "ok" : "warn") as PrTone,
+      sessions: calls.length,
+      activeServers: `${connected}/${servers.length || enabled}`,
+      transportMix: mix,
+      healthPct,
+    };
+  }, [servers, calls.length, transportStats, featureEnabled]);
+
+  const serverNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of servers) map.set(s.server_id, s.display_name || s.server_id);
+    return map;
+  }, [servers]);
+
+  async function withBusy(id: string, action: () => Promise<void>, successMsg: string) {
+    setBusyId(id);
+    try {
+      await action();
+      toast(successMsg);
+      await load();
+    } catch (err) {
+      toast(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onToggleEnabled(server: McpServerPublic) {
+    const id = server.server_id;
+    await withBusy(
+      id,
+      async () => {
+        if (server.enabled) await api.mcpDisableServer(id);
+        else await api.mcpEnableServer(id);
+      },
+      server.enabled ? `${server.display_name} uitgeschakeld` : `${server.display_name} ingeschakeld`,
+    );
+  }
+
+  async function onConnect(server: McpServerPublic) {
+    await withBusy(server.server_id, () => api.mcpConnectServer(server.server_id).then(() => undefined), `${server.display_name} verbonden`);
+  }
+
+  async function onDisconnect(server: McpServerPublic) {
+    await withBusy(
+      server.server_id,
+      () => api.mcpDisconnectServer(server.server_id).then(() => undefined),
+      `${server.display_name} losgekoppeld`,
+    );
+  }
+
+  async function onRefreshTools(server: McpServerPublic) {
+    await withBusy(
+      server.server_id,
+      async () => {
+        const res = await api.mcpRefreshTools(server.server_id);
+        setTools((prev) => {
+          const others = prev.filter((t) => t.server_id !== server.server_id);
+          return [...others, ...(res.tools ?? [])];
+        });
+      },
+      `Tools vernieuwd (${server.display_name})`,
+    );
+  }
+
+  async function onDelete(server: McpServerPublic) {
+    if (!window.confirm(`Delete MCP server “${server.display_name}”?`)) return;
+    await withBusy(server.server_id, () => api.mcpDeleteServer(server.server_id).then(() => undefined), `${server.display_name} verwijderd`);
+  }
+
+  async function onCreateServer() {
+    const name = createForm.display_name.trim();
+    if (!name) {
+      toast("Display name is required");
+      return;
+    }
+    const refs = tryParseStringMap(createForm.secret_refs);
+    if (!refs.ok) {
+      toast(refs.error);
+      return;
+    }
+    const args = createForm.args
+      .split(/\s+/)
+      .map((a) => a.trim())
+      .filter(Boolean);
+    const payload: Record<string, unknown> = {
+      display_name: name,
+      transport: createForm.transport,
+      trust: createForm.trust,
+      requested_isolation: createForm.requested_isolation,
+      enabled: createForm.enabled,
+      eager_connect: createForm.eager_connect,
+      secret_refs: refs.value,
+    };
+    if (createForm.transport === "stdio") {
+      if (!createForm.command.trim()) {
+        toast("Command is required for stdio transport");
+        return;
+      }
+      payload.command = createForm.command.trim();
+      payload.args = args;
+    } else {
+      if (!createForm.url.trim()) {
+        toast("URL is required for http/sse transport");
+        return;
+      }
+      payload.url = createForm.url.trim();
+    }
+    setCreating(true);
+    try {
+      const res = await api.mcpCreateServer(payload);
+      toast(`Server “${res.server.display_name}” aangemaakt`);
+      setShowCreate(false);
+      setCreateForm(EMPTY_CREATE);
+      setSelectedId(res.server.server_id);
+      await load();
+    } catch (err) {
+      toast(errorMessage(err, "Create server failed"));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function onRediscoverAll() {
+    const targets = servers.filter((s) => {
+      const st = runtimeState(s);
+      return s.enabled && (st === "READY" || st === "BUSY" || st === "DEGRADED");
+    });
+    if (!targets.length) {
+      toast("No connected servers to refresh");
+      return;
+    }
+    setBusyId("rediscover");
+    try {
+      let ok = 0;
+      const errors: string[] = [];
+      for (const s of targets) {
+        try {
+          await api.mcpRefreshTools(s.server_id);
+          ok += 1;
+        } catch (err) {
+          errors.push(`${s.display_name}: ${errorMessage(err)}`);
+        }
+      }
+      await load();
+      if (errors.length) {
+        toast(`Refreshed ${ok}/${targets.length}. ${errors[0]}`);
+      } else {
+        toast(`Tools vernieuwd voor ${ok} server(s)`);
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onReconnectEnabled() {
+    const targets = servers.filter((s) => s.enabled);
+    if (!targets.length) {
+      toast("No enabled servers");
+      return;
+    }
+    setBusyId("restart");
+    try {
+      let ok = 0;
+      const errors: string[] = [];
+      for (const s of targets) {
+        try {
+          await api.mcpDisconnectServer(s.server_id).catch(() => undefined);
+          await api.mcpConnectServer(s.server_id);
+          ok += 1;
+        } catch (err) {
+          errors.push(`${s.display_name}: ${errorMessage(err)}`);
+        }
+      }
+      await load();
+      if (errors.length) toast(`Reconnected ${ok}/${targets.length}. ${errors[0]}`);
+      else toast(`Reconnected ${ok} server(s)`);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onInvoke() {
+    if (!invokeCapabilityId) {
+      toast("Select a tool capability");
+      return;
+    }
+    const parsed = tryParseArgs(invokeArgs);
+    if (!parsed.ok) {
+      toast(parsed.error);
+      return;
+    }
+    setInvoking(true);
+    setInvokeResult(null);
+    try {
+      const res = await api.mcpCall({
+        capability_id: invokeCapabilityId,
+        arguments: parsed.value,
+      });
+      setInvokeResult(JSON.stringify(res.result ?? res, null, 2));
+      toast("Tool call completed");
+      const callsRes = await api.mcpCalls(100).catch(() => null);
+      if (callsRes) setCalls(callsRes.calls ?? []);
+    } catch (err) {
+      const msg = errorMessage(err, "Tool call failed");
+      setInvokeResult(msg);
+      toast(msg);
+    } finally {
+      setInvoking(false);
+    }
+  }
+
+  const secretRefEntries = Object.entries(selected?.secret_refs ?? {});
 
   return (
     <AppShell
@@ -246,11 +806,8 @@ export function McpPage() {
         <PrHero title="MCP" image={pluginRuntimeHeroes.mcp} imageOnly />
 
         <section className="lv-pr-kpi-row" aria-label="MCP metrics">
-          {MCP_KPIS.map((kpi) => (
-            <article
-              key={kpi.id}
-              className={`lv-pr-kpi${"warn" in kpi && kpi.warn ? " is-warn" : ""}`}
-            >
+          {kpis.map((kpi) => (
+            <article key={kpi.id + kpi.label} className={`lv-pr-kpi${"warn" in kpi && kpi.warn ? " is-warn" : ""}`}>
               <div className="lv-pr-kpi-label">{kpi.label}</div>
               <div className="lv-pr-mcp-kpi-body">
                 <span className={`lv-pr-mcp-kpi-icon${"warn" in kpi && kpi.warn ? " is-warn" : ""}`}>
@@ -262,11 +819,7 @@ export function McpPage() {
                     {"sub" in kpi && kpi.sub ? <small> {kpi.sub}</small> : null}
                   </div>
                   <div className="lv-pr-kpi-foot">
-                    {"delta" in kpi && kpi.delta ? (
-                      <span className={`lv-pr-kpi-delta${kpi.deltaGood ? " is-good" : " is-bad"}`}>
-                        {kpi.delta}
-                      </span>
-                    ) : "pct" in kpi && kpi.pct != null ? (
+                    {"pct" in kpi && kpi.pct != null ? (
                       <span className="lv-pr-kpi-delta is-good">{kpi.pct}%</span>
                     ) : (
                       <span />
@@ -282,6 +835,15 @@ export function McpPage() {
             </article>
           ))}
         </section>
+
+        {loadError ? (
+          <p className="lv-pr-mcp-panel-sub lv-pr-mcp-panel-sub--block" role="alert">
+            {loadError}{" "}
+            <button type="button" className="lv-pr-mcp-btn" onClick={() => void load()}>
+              Opnieuw
+            </button>
+          </p>
+        ) : null}
 
         <section className="lv-pr-mcp-grid">
           <div className="lv-pr-mcp-col-main">
@@ -304,8 +866,9 @@ export function McpPage() {
                     aria-label="Filter status"
                   >
                     <option value="all">Alle statussen</option>
-                    <option value="Verbonden">Verbonden</option>
-                    <option value="Fout">Fout</option>
+                    <option value="connected">Verbonden</option>
+                    <option value="error">Fout</option>
+                    <option value="disconnected">Losgekoppeld</option>
                   </select>
                   <select
                     className="lv-pr-mcp-select"
@@ -316,17 +879,127 @@ export function McpPage() {
                     <option value="all">Alle transports</option>
                     <option value="stdio">stdio</option>
                     <option value="http">http</option>
+                    <option value="sse">sse</option>
                   </select>
                   <button
                     type="button"
                     className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
-                    onClick={() => toast("Server toevoegen")}
+                    onClick={() => setShowCreate((v) => !v)}
                   >
                     + Server toevoegen
+                  </button>
+                  <button type="button" className="lv-pr-mcp-btn" onClick={() => void load()} disabled={loading}>
+                    {loading ? "Laden…" : "Vernieuwen"}
                   </button>
                 </div>
               }
             >
+              {showCreate ? (
+                <div className="lv-pr-mcp-panel-sub lv-pr-mcp-panel-sub--block" style={{ marginBottom: 12 }}>
+                  <div className="lv-pr-mcp-toolbar" style={{ flexWrap: "wrap", gap: 8 }}>
+                    <input
+                      className="lv-pr-mcp-input"
+                      placeholder="Display name"
+                      value={createForm.display_name}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, display_name: e.target.value }))}
+                      aria-label="Display name"
+                    />
+                    <select
+                      className="lv-pr-mcp-select"
+                      value={createForm.transport}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, transport: e.target.value }))}
+                      aria-label="Transport"
+                    >
+                      <option value="stdio">stdio</option>
+                      <option value="http">http</option>
+                      <option value="sse">sse</option>
+                    </select>
+                    {createForm.transport === "stdio" ? (
+                      <>
+                        <input
+                          className="lv-pr-mcp-input"
+                          placeholder="Command"
+                          value={createForm.command}
+                          onChange={(e) => setCreateForm((f) => ({ ...f, command: e.target.value }))}
+                          aria-label="Command"
+                        />
+                        <input
+                          className="lv-pr-mcp-input"
+                          placeholder="Args (space-separated)"
+                          value={createForm.args}
+                          onChange={(e) => setCreateForm((f) => ({ ...f, args: e.target.value }))}
+                          aria-label="Args"
+                        />
+                      </>
+                    ) : (
+                      <input
+                        className="lv-pr-mcp-input"
+                        placeholder="URL"
+                        value={createForm.url}
+                        onChange={(e) => setCreateForm((f) => ({ ...f, url: e.target.value }))}
+                        aria-label="URL"
+                      />
+                    )}
+                    <select
+                      className="lv-pr-mcp-select"
+                      value={createForm.trust}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, trust: e.target.value }))}
+                      aria-label="Trust"
+                    >
+                      <option value="untrusted">untrusted</option>
+                      <option value="manual">manual</option>
+                      <option value="trusted">trusted</option>
+                    </select>
+                    <select
+                      className="lv-pr-mcp-select"
+                      value={createForm.requested_isolation}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, requested_isolation: e.target.value }))}
+                      aria-label="Isolation"
+                    >
+                      <option value="subprocess">subprocess</option>
+                      <option value="process">process</option>
+                      <option value="container">container</option>
+                      <option value="sandbox">sandbox</option>
+                      <option value="none">none</option>
+                    </select>
+                    <input
+                      className="lv-pr-mcp-input"
+                      placeholder='Secret refs JSON e.g. {"TOKEN":"vault://…"}'
+                      value={createForm.secret_refs}
+                      onChange={(e) => setCreateForm((f) => ({ ...f, secret_refs: e.target.value }))}
+                      aria-label="Secret refs"
+                    />
+                    <label className="lv-pr-mcp-status">
+                      <input
+                        type="checkbox"
+                        checked={createForm.enabled}
+                        onChange={(e) => setCreateForm((f) => ({ ...f, enabled: e.target.checked }))}
+                      />{" "}
+                      Enabled
+                    </label>
+                    <label className="lv-pr-mcp-status">
+                      <input
+                        type="checkbox"
+                        checked={createForm.eager_connect}
+                        onChange={(e) => setCreateForm((f) => ({ ...f, eager_connect: e.target.checked }))}
+                      />{" "}
+                      Eager connect
+                    </label>
+                    <button
+                      type="button"
+                      className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
+                      disabled={creating}
+                      onClick={() => void onCreateServer()}
+                    >
+                      {creating ? "Aanmaken…" : "Aanmaken"}
+                    </button>
+                    <button type="button" className="lv-pr-mcp-btn" onClick={() => setShowCreate(false)}>
+                      Annuleren
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="lv-pr-table-wrap">
                 <table className="lv-pr-table lv-pr-mcp-server-table">
                   <thead>
@@ -343,53 +1016,104 @@ export function McpPage() {
                     </tr>
                   </thead>
                   <tbody>
+                    {!loading && filteredServers.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="lv-pr-empty">
+                          {servers.length === 0
+                            ? featureEnabled
+                              ? "Geen MCP servers geregistreerd. Voeg een server toe om te beginnen."
+                              : "MCP feature is disabled."
+                            : "Geen servers matchen de huidige filters."}
+                        </td>
+                      </tr>
+                    ) : null}
                     {filteredServers.map((server) => {
-                      const on = enabledMap[server.id] ?? server.enabled;
+                      const state = runtimeState(server);
+                      const tone = statusTone(state);
+                      const busy = busyId === server.server_id;
+                      const connected = state === "READY" || state === "BUSY";
+                      const lastSeen = server.runtime?.last_seen_at ?? server.runtime?.last_connected_at;
                       return (
-                        <tr key={server.id}>
+                        <tr
+                          key={server.server_id}
+                          className={selectedId === server.server_id ? "is-selected" : undefined}
+                          onClick={() => setSelectedId(server.server_id)}
+                        >
                           <td>
                             <span className="lv-pr-mcp-name">
-                              <span className="lv-pr-mcp-name-icon">{SERVER_ICONS[server.id] ?? SERVER_ICONS.docs}</span>
-                              <span className="is-name">{server.name}</span>
+                              <span className="lv-pr-mcp-name-icon">
+                                {SERVER_ICONS[serverIconKey(server)] ?? SERVER_ICONS.docs}
+                              </span>
+                              <span className="is-name">{server.display_name}</span>
                             </span>
                           </td>
                           <td>{server.transport}</td>
                           <td>
-                            <span className={`lv-pr-mcp-status is-${server.statusTone}`}>
-                              <StatusDot tone={server.statusTone} />
-                              {server.status}
+                            <span className={`lv-pr-mcp-status is-${tone}`}>
+                              <StatusDot tone={tone} />
+                              {statusLabel(state)}
                             </span>
                           </td>
                           <td>
                             <button
                               type="button"
                               className="lv-pr-mcp-toggle-btn"
-                              onClick={() => toggleServer(server.id, server.name)}
-                              aria-label={`${server.name} ${on ? "uitschakelen" : "inschakelen"}`}
+                              disabled={busy}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onToggleEnabled(server);
+                              }}
+                              aria-label={`${server.display_name} ${server.enabled ? "uitschakelen" : "inschakelen"}`}
                             >
-                              <Toggle on={on} label={server.name} />
+                              <Toggle on={server.enabled} label={server.display_name} />
                             </button>
                           </td>
-                          <td>{server.tools}</td>
-                          <td className="lv-pr-mcp-health">{server.lastHealth}</td>
-                          <td className="lv-pr-mcp-iso">{server.isolation}</td>
-                          <td className={server.lastError !== "—" ? "is-err" : ""}>{server.lastError}</td>
+                          <td>{server.runtime?.tool_count ?? tools.filter((t) => t.server_id === server.server_id).length}</td>
+                          <td className="lv-pr-mcp-health">{relativeTime(lastSeen)}</td>
+                          <td className="lv-pr-mcp-iso">
+                            {server.runtime?.effective_isolation || server.requested_isolation}
+                          </td>
+                          <td className={server.runtime?.last_error_message ? "is-err" : ""}>
+                            {server.runtime?.last_error_message || "—"}
+                          </td>
                           <td>
                             <div className="lv-pr-mcp-row-actions">
-                              <IconBtn label="Open" onClick={() => toast(`${server.name} openen`)}>
+                              <IconBtn
+                                label={connected ? "Disconnect" : "Connect"}
+                                disabled={busy || (!server.enabled && !connected)}
+                                onClick={() => void (connected ? onDisconnect(server) : onConnect(server))}
+                              >
                                 <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-                                  <path d="M6 3.5H3.5v9h9V10M8.5 3.5H12.5V7.5M12.5 3.5 7 9" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                                  <path
+                                    d="M6 3.5H3.5v9h9V10M8.5 3.5H12.5V7.5M12.5 3.5 7 9"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.2"
+                                  />
                                 </svg>
                               </IconBtn>
-                              <IconBtn label="Instellingen" onClick={() => toast(`${server.name} instellingen`)}>
+                              <IconBtn
+                                label="Refresh tools"
+                                disabled={busy}
+                                onClick={() => void onRefreshTools(server)}
+                              >
                                 <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-                                  <circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
-                                  <path d="M8 2.4v1.3M8 12.3v1.3M2.4 8h1.3M12.3 8h1.3" fill="none" stroke="currentColor" strokeWidth="1.1" />
+                                  <path
+                                    d="M3.5 8a4.5 4.5 0 0 1 7.5-3.3L13 3v4H9"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.2"
+                                  />
                                 </svg>
                               </IconBtn>
-                              <IconBtn label="Vernieuwen" onClick={() => toast(`${server.name} health check`)}>
+                              <IconBtn label="Delete" disabled={busy} onClick={() => void onDelete(server)}>
                                 <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-                                  <path d="M3.5 8a4.5 4.5 0 0 1 7.5-3.3L13 3v4H9" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                                  <path
+                                    d="M4 5h8M6.5 5V3.8h3V5M5.5 5l.5 7.2h4l.5-7.2"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.2"
+                                  />
                                 </svg>
                               </IconBtn>
                             </div>
@@ -405,67 +1129,102 @@ export function McpPage() {
             <div className="lv-pr-mcp-lower-left">
               <Panel className="lv-pr-mcp-auth" title="Autorisatie & Goedkeuringen">
                 <p className="lv-pr-mcp-panel-sub lv-pr-mcp-panel-sub--block">
-                  Beheer tool-toegang, permissies en goedkeuringsbeleid.
+                  Tool availability from the MCP catalog (discoverable ≠ authorized).
                 </p>
                 <div className="lv-pr-mcp-auth-summary">
-                  {MCP_AUTH_SUMMARY.map((item) => (
+                  {authSummary.map((item) => (
                     <div
                       key={item.id}
                       className={`lv-pr-mcp-auth-box${"tone" in item && item.tone ? ` is-${item.tone}` : ""}`}
                     >
-                      <span className={`lv-pr-mcp-auth-icon${"tone" in item && item.tone ? ` is-${item.tone}` : " is-gold"}`}>
+                      <span
+                        className={`lv-pr-mcp-auth-icon${"tone" in item && item.tone ? ` is-${item.tone}` : " is-gold"}`}
+                      >
                         {AUTH_ICONS[item.id]}
                       </span>
                       <div>
                         <div className="lv-pr-mcp-auth-label">{item.label}</div>
                         <div className="lv-pr-mcp-auth-value">{item.value}</div>
-                        {item.id === "authorized" ? <div className="lv-pr-mcp-auth-meta is-ok">85%</div> : null}
-                        {item.id === "queued" ? <div className="lv-pr-mcp-auth-meta is-err">Goedkeuring</div> : null}
-                        {item.id === "blocked" ? <div className="lv-pr-mcp-auth-meta">Beleid</div> : null}
-                        {item.id === "discovered" ? <div className="lv-pr-mcp-auth-meta is-ok">+12</div> : null}
                       </div>
                     </div>
                   ))}
                 </div>
 
-                <div className="lv-pr-mcp-policy-title">Toegangsbeleid</div>
+                <div className="lv-pr-mcp-policy-title">Handmatige Invoke</div>
                 <div className="lv-pr-mcp-policies">
-                  {MCP_AUTH_POLICIES.map((policy) => (
-                    <label key={policy.id} className="lv-pr-mcp-policy-row">
-                      <span>{policy.label}</span>
-                      <select
-                        className="lv-pr-mcp-select"
-                        value={policies[policy.id] ?? policy.value}
-                        onChange={(e) => {
-                          setPolicies((prev) => ({ ...prev, [policy.id]: e.target.value }));
-                          toast(`${policy.label}: ${e.target.value}`);
-                        }}
-                      >
-                        <option value={policy.value}>{policy.value}</option>
-                        <option value="Altijd toestaan">Altijd toestaan</option>
-                        <option value="Altijd vragen">Altijd vragen</option>
-                        <option value="Blokkeren">Blokkeren</option>
-                      </select>
-                    </label>
-                  ))}
+                  <label className="lv-pr-mcp-policy-row">
+                    <span>Capability</span>
+                    <select
+                      className="lv-pr-mcp-select"
+                      value={invokeCapabilityId}
+                      onChange={(e) => setInvokeCapabilityId(e.target.value)}
+                      aria-label="Capability"
+                    >
+                      <option value="">— select tool —</option>
+                      {tools.map((t) => (
+                        <option key={t.capability_id} value={t.capability_id}>
+                          {t.external_name} ({serverNameById.get(t.server_id) ?? t.server_id})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="lv-pr-mcp-policy-row" style={{ alignItems: "flex-start" }}>
+                    <span>Arguments</span>
+                    <textarea
+                      className="lv-pr-mcp-input"
+                      style={{ minHeight: 72, fontFamily: "ui-monospace, monospace", width: "100%" }}
+                      value={invokeArgs}
+                      onChange={(e) => setInvokeArgs(e.target.value)}
+                      aria-label="Invoke arguments JSON"
+                    />
+                  </label>
+                  <div className="lv-pr-mcp-toolbar">
+                    <button
+                      type="button"
+                      className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
+                      disabled={invoking || !invokeCapabilityId}
+                      onClick={() => void onInvoke()}
+                    >
+                      {invoking ? "Calling…" : "Invoke via Gateway"}
+                    </button>
+                  </div>
+                  {invokeResult ? (
+                    <pre className="lv-pr-mcp-mono" style={{ whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto" }}>
+                      {invokeResult}
+                    </pre>
+                  ) : null}
                 </div>
+
+                {selected ? (
+                  <>
+                    <div className="lv-pr-mcp-policy-title">Selected server secrets</div>
+                    <div className="lv-pr-mcp-policies">
+                      {secretRefEntries.length === 0 ? (
+                        <div className="lv-pr-mcp-panel-sub">Geen secret refs</div>
+                      ) : (
+                        secretRefEntries.map(([key, ref]) => (
+                          <div key={key} className="lv-pr-mcp-policy-row">
+                            <span>{key}</span>
+                            <span className="lv-pr-mcp-mono">{formatSecretRef(ref)}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                ) : null}
               </Panel>
 
               <Panel
                 className="lv-pr-mcp-calls"
                 title="Recente Tool Calls"
                 action={
-                  <button
-                    type="button"
-                    className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
-                    onClick={() => toast("Alle logs")}
-                  >
-                    Alle logs
+                  <button type="button" className="lv-pr-mcp-btn lv-pr-mcp-btn--gold" onClick={() => void load()}>
+                    Vernieuwen
                   </button>
                 }
               >
                 <p className="lv-pr-mcp-panel-sub lv-pr-mcp-panel-sub--block">
-                  Laatste MCP tool aanroepen in het systeem.
+                  Laatste MCP tool aanroepen via ExecutionGateway.
                 </p>
                 <div className="lv-pr-table-wrap">
                   <table className="lv-pr-table lv-pr-mcp-calls-table">
@@ -479,20 +1238,30 @@ export function McpPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {MCP_RECENT_CALLS.map((call) => (
-                        <tr key={call.id}>
-                          <td className="lv-pr-mcp-mono">{call.time}</td>
-                          <td className="is-name">{call.tool}</td>
-                          <td>{call.requester}</td>
-                          <td>{call.duration}</td>
-                          <td>
-                            <span className={`lv-pr-mcp-status is-${call.statusTone}`}>
-                              <StatusDot tone={call.statusTone} />
-                              {call.status}
-                            </span>
+                      {calls.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="lv-pr-empty">
+                            Geen recente calls
                           </td>
                         </tr>
-                      ))}
+                      ) : null}
+                      {calls.map((call) => {
+                        const tone = callTone(call.status);
+                        return (
+                          <tr key={call.call_id}>
+                            <td className="lv-pr-mcp-mono">{formatTs(call.started_at)}</td>
+                            <td className="is-name">{call.external_tool_name || call.capability_id}</td>
+                            <td>{call.requester || "—"}</td>
+                            <td>{formatDuration(call.duration_ms)}</td>
+                            <td>
+                              <span className={`lv-pr-mcp-status is-${tone}`}>
+                                <StatusDot tone={tone} />
+                                {call.status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -503,13 +1272,15 @@ export function McpPage() {
           <aside className="lv-pr-mcp-col-side">
             <Panel className="lv-pr-mcp-bridge" title="Bridge Samenvatting">
               <p className="lv-pr-mcp-panel-sub lv-pr-mcp-panel-sub--block">
-                Een universele MCP bridge voor alle servers en transports.
+                Universele MCP bridge — live server & transport overzicht.
               </p>
               <div className="lv-pr-mcp-bridge-body">
                 <div className="lv-pr-mcp-bridge-left">
-                  <div className="lv-pr-mcp-bridge-title">{MCP_BRIDGE.title}</div>
-                  <Pill tone={MCP_BRIDGE.statusTone}>{MCP_BRIDGE.status}</Pill>
-                  <div className="lv-pr-mcp-bridge-uptime">Uptime: {MCP_BRIDGE.uptime}</div>
+                  <div className="lv-pr-mcp-bridge-title">{bridge.title}</div>
+                  <Pill tone={bridge.statusTone}>{bridge.status}</Pill>
+                  <div className="lv-pr-mcp-bridge-uptime">
+                    Feature: {featureEnabled ? "enabled" : "disabled"}
+                  </div>
                   <div className="lv-pr-mcp-bridge-viz" aria-hidden="true">
                     <svg viewBox="0 0 120 90" width="110" height="82">
                       <defs>
@@ -526,35 +1297,44 @@ export function McpPage() {
                     </svg>
                   </div>
                   <div className="lv-pr-mcp-bridge-actions">
-                    <button type="button" className="lv-pr-mcp-btn lv-pr-mcp-btn--gold" onClick={() => toast("Bridge herstarten")}>
+                    <button
+                      type="button"
+                      className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
+                      disabled={busyId === "restart"}
+                      onClick={() => void onReconnectEnabled()}
+                    >
                       Bridge herstarten
                     </button>
-                    <button type="button" className="lv-pr-mcp-btn" onClick={() => toast("Configuratie")}>
+                    <button type="button" className="lv-pr-mcp-btn" onClick={() => setShowCreate(true)}>
                       Configuratie
                     </button>
                   </div>
                 </div>
                 <div className="lv-pr-mcp-bridge-right">
                   <div className="lv-pr-mcp-bridge-stat">
-                    <span>Totaal sessies</span>
-                    <strong>{MCP_BRIDGE.sessions}</strong>
+                    <span>Recente calls</span>
+                    <strong>{bridge.sessions}</strong>
                   </div>
                   <div className="lv-pr-mcp-bridge-stat">
                     <span>Actieve servers</span>
-                    <strong>{MCP_BRIDGE.activeServers}</strong>
+                    <strong>{bridge.activeServers}</strong>
                   </div>
                   <div className="lv-pr-mcp-mix-label">Transport Mix</div>
-                  {MCP_BRIDGE.transportMix.map((mix) => (
-                    <div key={mix.id} className="lv-pr-mcp-mix-row">
-                      <span>{mix.label}</span>
-                      <Bar pct={mix.pct} tone={mix.tone} />
-                      <em>{mix.pct}%</em>
-                    </div>
-                  ))}
+                  {bridge.transportMix.length === 0 ? (
+                    <div className="lv-pr-mcp-panel-sub">Geen transports</div>
+                  ) : (
+                    bridge.transportMix.map((mix) => (
+                      <div key={mix.id} className="lv-pr-mcp-mix-row">
+                        <span>{mix.label}</span>
+                        <Bar pct={mix.pct} tone={mix.tone} />
+                        <em>{mix.pct}%</em>
+                      </div>
+                    ))
+                  )}
                   <div className="lv-pr-mcp-mix-label">Huidige Health</div>
                   <div className="lv-pr-mcp-mix-row">
-                    <Bar pct={MCP_BRIDGE.healthPct} tone="cyan" className="lv-pr-mcp-health-bar" />
-                    <em>{MCP_BRIDGE.healthPct}%</em>
+                    <Bar pct={bridge.healthPct} tone="cyan" className="lv-pr-mcp-health-bar" />
+                    <em>{bridge.healthPct}%</em>
                   </div>
                 </div>
               </div>
@@ -564,7 +1344,12 @@ export function McpPage() {
               className="lv-pr-mcp-catalog"
               title="Tool Discovery / Catalogus"
               action={
-                <button type="button" className="lv-pr-mcp-btn" onClick={() => toast("Catalogus vernieuwd")}>
+                <button
+                  type="button"
+                  className="lv-pr-mcp-btn"
+                  disabled={busyId === "rediscover"}
+                  onClick={() => void onRediscoverAll()}
+                >
                   Vernieuwen
                 </button>
               }
@@ -582,20 +1367,36 @@ export function McpPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {MCP_TOOL_CATALOG.map((tool) => (
-                      <tr key={tool.id}>
+                    {tools.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="lv-pr-empty">
+                          Geen tools ontdekt
+                        </td>
+                      </tr>
+                    ) : null}
+                    {tools.map((tool) => (
+                      <tr
+                        key={tool.capability_id}
+                        onClick={() => setInvokeCapabilityId(tool.capability_id)}
+                        style={{ cursor: "pointer" }}
+                      >
                         <td>
                           <span className="lv-pr-mcp-name">
                             <span className="lv-pr-mcp-name-icon is-gold">
                               <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-                                <path d="M8 2.5 13 5.5v5L8 13.5 3 10.5v-5z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                                <path
+                                  d="M8 2.5 13 5.5v5L8 13.5 3 10.5v-5z"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.2"
+                                />
                               </svg>
                             </span>
-                            <span className="is-name">{tool.name}</span>
+                            <span className="is-name">{tool.external_name}</span>
                           </span>
                         </td>
-                        <td>{tool.server}</td>
-                        <td className="lv-pr-mcp-desc">{tool.description}</td>
+                        <td>{serverNameById.get(tool.server_id) ?? tool.server_id}</td>
+                        <td className="lv-pr-mcp-desc">{tool.description || tool.availability}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -605,20 +1406,15 @@ export function McpPage() {
 
             <div className="lv-pr-mcp-side-bottom">
               <div className="lv-pr-mcp-side-stack">
-                <Panel
-                  className="lv-pr-mcp-transports"
-                  title="Transport & Health"
-                  action={
-                    <button type="button" className="lv-pr-mcp-btn" onClick={() => toast("Transport details")}>
-                      Details
-                    </button>
-                  }
-                >
+                <Panel className="lv-pr-mcp-transports" title="Transport & Health">
                   <p className="lv-pr-mcp-panel-sub lv-pr-mcp-panel-sub--block">
                     Status van MCP transports en verbindingen.
                   </p>
                   <div className="lv-pr-mcp-transport-list">
-                    {MCP_TRANSPORTS.map((t) => (
+                    {transportStats.length === 0 ? (
+                      <div className="lv-pr-empty">Geen transports</div>
+                    ) : null}
+                    {transportStats.map((t) => (
                       <article key={t.id} className="lv-pr-mcp-transport-card">
                         <div className="lv-pr-mcp-transport-head">
                           <strong>{t.label}</strong>
@@ -629,36 +1425,19 @@ export function McpPage() {
                             <div className="lv-pr-mcp-transport-servers">{t.servers} servers</div>
                             <div className="lv-pr-mcp-transport-lat">Gem. latentie {t.latency}</div>
                           </div>
-                          <Spark
-                            points={t.id === "stdio" ? [20, 28, 24, 36, 30, 42, 38, 44] : [30, 26, 34, 28, 40, 36, 48, 42]}
-                            color="#00E5FF"
-                            width={72}
-                            height={22}
-                          />
                         </div>
                       </article>
                     ))}
                   </div>
                 </Panel>
 
-                <Panel
-                  className="lv-pr-mcp-alerts"
-                  title="Recente Alerts"
-                  action={
-                    <button
-                      type="button"
-                      className="lv-pr-mcp-btn lv-pr-mcp-btn--gold"
-                      onClick={() => toast("Alle alerts")}
-                    >
-                      Alle alerts
-                    </button>
-                  }
-                >
+                <Panel className="lv-pr-mcp-alerts" title="Recente Alerts">
                   <p className="lv-pr-mcp-panel-sub lv-pr-mcp-panel-sub--block">
-                    Systeem meldingen en belangrijke gebeurtenissen.
+                    Fouten en events uit servers / call history.
                   </p>
                   <ul className="lv-pr-alert-list lv-pr-mcp-alert-list">
-                    {MCP_ALERTS.map((alert) => (
+                    {alerts.length === 0 ? <li className="lv-pr-empty">Geen alerts</li> : null}
+                    {alerts.map((alert) => (
                       <li key={alert.id}>
                         <span className="time">{alert.time}</span>
                         <span className={`lv-pr-mcp-status is-${alert.tone}`}>
@@ -674,17 +1453,32 @@ export function McpPage() {
 
               <Panel className="lv-pr-mcp-quick" title="Snelle Acties">
                 <div className="lv-pr-mcp-quick-list">
-                  {MCP_QUICK_ACTIONS.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      className="lv-pr-mcp-quick-btn"
-                      onClick={() => toast(action.label)}
-                    >
-                      <span className="lv-pr-mcp-quick-icon">{QUICK_ICONS[action.id]}</span>
-                      {action.label}
-                    </button>
-                  ))}
+                  <button type="button" className="lv-pr-mcp-quick-btn" onClick={() => setShowCreate(true)}>
+                    <span className="lv-pr-mcp-quick-icon">{QUICK_ICONS.add}</span>
+                    Server toevoegen
+                  </button>
+                  <button
+                    type="button"
+                    className="lv-pr-mcp-quick-btn"
+                    disabled={busyId === "rediscover"}
+                    onClick={() => void onRediscoverAll()}
+                  >
+                    <span className="lv-pr-mcp-quick-icon">{QUICK_ICONS.rediscover}</span>
+                    Tools herontdekken
+                  </button>
+                  <button
+                    type="button"
+                    className="lv-pr-mcp-quick-btn"
+                    disabled={busyId === "restart"}
+                    onClick={() => void onReconnectEnabled()}
+                  >
+                    <span className="lv-pr-mcp-quick-icon">{QUICK_ICONS.restart}</span>
+                    Bridge herstarten
+                  </button>
+                  <button type="button" className="lv-pr-mcp-quick-btn" onClick={() => void load()}>
+                    <span className="lv-pr-mcp-quick-icon">{QUICK_ICONS.config}</span>
+                    Status vernieuwen
+                  </button>
                 </div>
               </Panel>
             </div>

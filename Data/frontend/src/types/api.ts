@@ -1163,6 +1163,8 @@ export type McpServerRuntime = {
   protocol_version?: string | null;
   server_version?: string | null;
   tool_count: number;
+  last_connected_at?: string | null;
+  last_seen_at?: string | null;
   last_error_code?: string | null;
   last_error_message?: string | null;
   pid?: number | null;
@@ -1202,6 +1204,7 @@ export type McpCallRecord = {
   server_id: string;
   capability_id: string;
   external_tool_name: string;
+  requester?: string;
   status: string;
   duration_ms?: number | null;
   error_message?: string | null;
