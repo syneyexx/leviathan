@@ -176,6 +176,66 @@ export function createWidgets(ctx) {
     pasteClipboard();
   }
 
+  /** Clone selected widgets in place (for Alt-drag). Returns new elements. */
+  function duplicateInPlace(els) {
+    const source = (els || ctx.session.selected).filter((el) => el?.dataset?.lvbId && ctx.selection.canMutate(el));
+    if (!source.length) return [];
+    const created = [];
+    // Called inside an open gesture from startDrag — mutate without nested capture.
+    const content = ctx.content.ensure();
+    for (const el of source) {
+      const clone = el.cloneNode(true);
+      const id = uid();
+      clone.dataset.lvbId = id;
+      clone.dataset.lvbLabel = el.dataset.lvbLabel || "duplicaat";
+      el.parentElement?.appendChild(clone);
+      content.nodes.push({
+        id,
+        label: clone.dataset.lvbLabel,
+        parent: ctx.selection.selectorFor(el.parentElement),
+        html: clone.outerHTML,
+        componentId: el.dataset.lvbComponentId || undefined,
+        variant: el.dataset.lvbVariant || undefined,
+        styles: {
+          position: clone.style.position,
+          left: clone.style.left,
+          top: clone.style.top,
+          width: clone.style.width,
+          height: clone.style.height,
+          rotate: clone.style.rotate,
+          zIndex: clone.style.zIndex,
+        },
+      });
+      created.push(clone);
+    }
+    ctx.store.setState({ content });
+    ctx.content.markContentDirty();
+    return created;
+  }
+
+  function detachComponent(el = ctx.session.primary) {
+    if (!el?.dataset?.lvbComponentId) {
+      ctx.content.setStatus("Geen component-instance", "dirty");
+      return;
+    }
+    ctx.commands.capture("detach", () => {
+      delete el.dataset.lvbComponentId;
+      delete el.dataset.lvbVariant;
+      const content = ctx.content.ensure();
+      const node = content.nodes.find((n) => n.id === el.dataset.lvbId);
+      if (node) {
+        delete node.componentId;
+        delete node.variant;
+        node.html = el.outerHTML;
+      }
+      ctx.store.setState({ content });
+      ctx.content.markContentDirty();
+    });
+    ctx.content.setStatus("Instance losgekoppeld", "ok");
+    ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
+    ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
+  }
+
   function deleteSelection() {
     const els = [...ctx.session.selected];
     if (!els.length) return;
@@ -426,15 +486,16 @@ export function createWidgets(ctx) {
     ctx.content.setStatus("Component gemaakt", "ok");
   }
 
-  function insertComponent(id) {
+  function insertComponent(id, variantName) {
     const component = ctx.content.ensure().components.find((c) => c.id === id);
     if (!component) return;
+    const html = (variantName && component.variants?.[variantName]) || component.html;
     insertWidget({
-      html: component.html,
+      html,
       label: component.name || "component",
       styles: component.defaultStyles || {},
       componentId: component.id,
-      variant: component.variant || "",
+      variant: variantName || component.variant || "",
     });
   }
 
@@ -444,15 +505,21 @@ export function createWidgets(ctx) {
       const component = content.components.find((c) => c.id === id);
       if (!component) return;
       component.html = html;
-      if (variant != null) component.variant = variant;
+      if (variant != null && variant !== "") {
+        component.variant = variant;
+        component.variants = component.variants || {};
+        component.variants[variant] = html;
+      }
       document.querySelectorAll(`[data-lvb-component-id="${CSS.escape(id)}"]`).forEach((el) => {
         if (ctx.selection.isBuilderNode(el)) return;
         const keepStyle = el.getAttribute("style");
         const keepId = el.dataset.lvbId || "";
         const keepLabel = el.dataset.lvbLabel || "";
-        const keepVariant = variant || el.dataset.lvbVariant || "";
+        // Preserve instance variant — do not overwrite with master's default
+        const keepVariant = el.dataset.lvbVariant || "";
+        const sourceHtml = (keepVariant && component.variants?.[keepVariant]) || html;
         const wrap = document.createElement("div");
-        wrap.innerHTML = String(html || "").trim();
+        wrap.innerHTML = String(sourceHtml || "").trim();
         const next = wrap.firstElementChild;
         if (!next) return;
         if (keepStyle) next.setAttribute("style", keepStyle);
@@ -460,6 +527,9 @@ export function createWidgets(ctx) {
         next.dataset.lvbComponentId = id;
         if (keepLabel) next.dataset.lvbLabel = keepLabel;
         if (keepVariant) next.dataset.lvbVariant = keepVariant;
+        if (el.tagName === "IMG" && next.tagName === "IMG" && el.getAttribute("src")) {
+          next.setAttribute("src", el.getAttribute("src"));
+        }
         el.replaceWith(next);
         ctx.selection.replaceElement(el, next);
         const node = content.nodes.find((n) => n.id === keepId);
@@ -526,6 +596,7 @@ export function createWidgets(ctx) {
     copySelection,
     pasteClipboard,
     duplicateSelection,
+    duplicateInPlace,
     deleteSelection,
     toggleLock,
     setHidden,
@@ -535,6 +606,7 @@ export function createWidgets(ctx) {
     ungroupSelection,
     copyStyle,
     pasteStyle,
+    detachComponent,
     createComponent,
     insertComponent,
     updateMaster,

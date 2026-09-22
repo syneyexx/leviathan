@@ -29,10 +29,19 @@ export const BREAKPOINTS = {
   mobile: { id: "mobile", label: "Mobile", width: 390 },
 };
 
-export const ZOOM_MIN = 0.25;
-export const ZOOM_MAX = 3;
+/** Camera — frontier range for pixel work and large shells. */
+export const ZOOM_MIN = 0.1;
+export const ZOOM_MAX = 8;
 export const HISTORY_MAX = 100;
 
+/** Interaction / paint tuning (screen px unless noted). */
+export const SNAP_THRESHOLD = 6;
+export const LAYER_ROW_H = 28;
+export const HANDLE_DIRS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+export const LAYOUT_STORAGE_KEY = "lvb.dock.v1";
+export const TOOLS = ["select", "hand", "rotate", "measure"];
+
 export const TEXTISH = new Set([
-  "H1", "H2", "H3", "H4", "P", "SPAN", "LABEL", "BUTTON", "A", "LI", "FIGCAPTION", "SMALL", "STRONG", "EM",
+  "H1", "H2", "H3", "H4", "H5", "H6", "P", "SPAN", "LABEL", "BUTTON", "A", "LI",
+  "FIGCAPTION", "SMALL", "STRONG", "EM", "BLOCKQUOTE", "TD", "TH", "DT", "DD",
 ]);

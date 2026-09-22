@@ -155,42 +155,6 @@ export function snapToGuides(value, guides, threshold = 6) {
   return best;
 }
 
-/** Snap a screen-space rect to vertical/horizontal guides. Returns pixel deltas. */
-export function snapRect(rect, guidesX, guidesY, threshold = 6) {
-  const xs = [
-    { pos: rect.left, kind: "edge" },
-    { pos: rect.left + rect.width / 2, kind: "center" },
-    { pos: rect.left + rect.width, kind: "edge" },
-  ];
-  const ys = [
-    { pos: rect.top, kind: "edge" },
-    { pos: rect.top + rect.height / 2, kind: "center" },
-    { pos: rect.top + rect.height, kind: "edge" },
-  ];
-  let bestX = null;
-  let bestY = null;
-  for (const c of xs) {
-    const hit = snapToGuides(c.pos, guidesX, threshold);
-    if (!hit) continue;
-    const delta = hit.at - c.pos;
-    if (!bestX || Math.abs(delta) < Math.abs(bestX.delta)) bestX = { delta, at: hit.at, kind: hit.kind };
-  }
-  for (const c of ys) {
-    const hit = snapToGuides(c.pos, guidesY, threshold);
-    if (!hit) continue;
-    const delta = hit.at - c.pos;
-    if (!bestY || Math.abs(delta) < Math.abs(bestY.delta)) bestY = { delta, at: hit.at, kind: hit.kind };
-  }
-  return {
-    dx: bestX?.delta || 0,
-    dy: bestY?.delta || 0,
-    lineX: bestX ? bestX.at : null,
-    lineY: bestY ? bestY.at : null,
-    kindX: bestX?.kind || null,
-    kindY: bestY?.kind || null,
-  };
-}
-
 export function alignItems(items, mode) {
   if (!items.length) return [];
   const left = Math.min(...items.map((i) => i.left));
@@ -242,14 +206,85 @@ export function zoomToCursor({ zoom, panX, panY, clientX, clientY, nextZoom, ori
   };
 }
 
-export function collectGuides(el, ignore) {
+/** Union AABB of elements (screen space). */
+export function unionRect(els) {
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  let any = false;
+  for (const el of els || []) {
+    if (!(el instanceof Element) || !el.isConnected) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 0.5 && r.height < 0.5) continue;
+    any = true;
+    left = Math.min(left, r.left);
+    top = Math.min(top, r.top);
+    right = Math.max(right, r.right);
+    bottom = Math.max(bottom, r.bottom);
+  }
+  if (!any) return null;
+  return { left, top, width: right - left, height: bottom - top, right, bottom };
+}
+
+/**
+ * Edge/center/spacing distances between two screen rects (Figma-style measure).
+ * Returns null if rects are missing.
+ */
+export function measureBetween(a, b) {
+  if (!a || !b) return null;
+  const aR = a.right ?? a.left + a.width;
+  const aB = a.bottom ?? a.top + a.height;
+  const bR = b.right ?? b.left + b.width;
+  const bB = b.bottom ?? b.top + b.height;
+  const gapLeft = b.left - aR;
+  const gapRight = a.left - bR;
+  const gapTop = b.top - aB;
+  const gapBottom = a.top - bB;
+  let dx = 0;
+  let dy = 0;
+  let labelX = null;
+  let labelY = null;
+  // Horizontal gap (non-overlapping preferred)
+  if (gapLeft >= 0) {
+    dx = gapLeft;
+    labelX = { x1: aR, x2: b.left, y: (Math.max(a.top, b.top) + Math.min(aB, bB)) / 2, value: Math.round(dx) };
+  } else if (gapRight >= 0) {
+    dx = gapRight;
+    labelX = { x1: bR, x2: a.left, y: (Math.max(a.top, b.top) + Math.min(aB, bB)) / 2, value: Math.round(dx) };
+  } else {
+    dx = Math.round(b.left + b.width / 2 - (a.left + a.width / 2));
+  }
+  if (gapTop >= 0) {
+    dy = gapTop;
+    labelY = { y1: aB, y2: b.top, x: (Math.max(a.left, b.left) + Math.min(aR, bR)) / 2, value: Math.round(dy) };
+  } else if (gapBottom >= 0) {
+    dy = gapBottom;
+    labelY = { y1: bB, y2: a.top, x: (Math.max(a.left, b.left) + Math.min(aR, bR)) / 2, value: Math.round(dy) };
+  } else {
+    dy = Math.round(b.top + b.height / 2 - (a.top + a.height / 2));
+  }
+  return { dx, dy, dist: Math.round(Math.hypot(dx, dy)), labelX, labelY };
+}
+
+/**
+ * Collect edge + center + equal-spacing guides for a moving rect.
+ * @param {Element} el
+ * @param {Set<Element>} [ignore]
+ * @param {{ peers?: Element[], includeViewport?: boolean }} [opts]
+ */
+export function collectGuides(el, ignore, opts = {}) {
   const parent = el?.parentElement || document.body;
   const guidesX = [];
   const guidesY = [];
+  const boxes = [];
+
   const push = (node, includeCenter) => {
     if (!node || ignore?.has(node)) return;
+    if (node.id === "lvb-root" || node.closest?.("#lvb-root")) return;
     const r = node.getBoundingClientRect();
     if (r.width < 1 && r.height < 1) return;
+    boxes.push({ left: r.left, top: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom });
     guidesX.push({ at: r.left, kind: "edge" }, { at: r.right, kind: "edge" });
     guidesY.push({ at: r.top, kind: "edge" }, { at: r.bottom, kind: "edge" });
     if (includeCenter) {
@@ -257,12 +292,95 @@ export function collectGuides(el, ignore) {
       guidesY.push({ at: r.top + r.height / 2, kind: "center" });
     }
   };
+
   push(parent, true);
   const kids = parent.children ? [...parent.children] : [];
   for (const sib of kids) {
     if (sib === el || ignore?.has(sib)) continue;
-    if (sib.id === "lvb-root" || sib.closest?.("#lvb-root")) continue;
     push(sib, true);
   }
-  return { guidesX, guidesY };
+
+  // Peer selection members (multi-drag neighbors already ignored)
+  for (const peer of opts.peers || []) {
+    if (peer === el || ignore?.has(peer)) continue;
+    push(peer, true);
+  }
+
+  // App / main frame bounds
+  const frame = document.querySelector(".lv-app") || document.querySelector(".lv-main");
+  if (frame && frame !== parent) push(frame, true);
+
+  if (opts.includeViewport !== false) {
+    guidesX.push({ at: 0, kind: "edge" }, { at: window.innerWidth / 2, kind: "center" }, { at: window.innerWidth, kind: "edge" });
+    guidesY.push({ at: 0, kind: "edge" }, { at: window.innerHeight / 2, kind: "center" }, { at: window.innerHeight, kind: "edge" });
+  }
+
+  // Equal-distance midpoints between sibling pairs (spacing guides)
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i];
+      const b = boxes[j];
+      if (a.right < b.left) {
+        const mid = (a.right + b.left) / 2;
+        guidesX.push({ at: mid, kind: "spacing", gap: b.left - a.right });
+      } else if (b.right < a.left) {
+        const mid = (b.right + a.left) / 2;
+        guidesX.push({ at: mid, kind: "spacing", gap: a.left - b.right });
+      }
+      if (a.bottom < b.top) {
+        const mid = (a.bottom + b.top) / 2;
+        guidesY.push({ at: mid, kind: "spacing", gap: b.top - a.bottom });
+      } else if (b.bottom < a.top) {
+        const mid = (b.bottom + a.top) / 2;
+        guidesY.push({ at: mid, kind: "spacing", gap: a.top - b.bottom });
+      }
+    }
+  }
+
+  return { guidesX, guidesY, boxes };
+}
+
+/**
+ * Snap rect; also returns spacing labels when hitting a spacing guide.
+ * threshold is in screen pixels.
+ */
+export function snapRect(rect, guidesX, guidesY, threshold = 6) {
+  const xs = [
+    { pos: rect.left, kind: "edge" },
+    { pos: rect.left + rect.width / 2, kind: "center" },
+    { pos: rect.left + rect.width, kind: "edge" },
+  ];
+  const ys = [
+    { pos: rect.top, kind: "edge" },
+    { pos: rect.top + rect.height / 2, kind: "center" },
+    { pos: rect.top + rect.height, kind: "edge" },
+  ];
+  let bestX = null;
+  let bestY = null;
+  for (const c of xs) {
+    const hit = snapToGuides(c.pos, guidesX, threshold);
+    if (!hit) continue;
+    const delta = hit.at - c.pos;
+    if (!bestX || Math.abs(delta) < Math.abs(bestX.delta)) {
+      bestX = { delta, at: hit.at, kind: hit.kind, gap: guidesX.find((g) => (typeof g === "number" ? g : g.at) === hit.at)?.gap };
+    }
+  }
+  for (const c of ys) {
+    const hit = snapToGuides(c.pos, guidesY, threshold);
+    if (!hit) continue;
+    const delta = hit.at - c.pos;
+    if (!bestY || Math.abs(delta) < Math.abs(bestY.delta)) {
+      bestY = { delta, at: hit.at, kind: hit.kind, gap: guidesY.find((g) => (typeof g === "number" ? g : g.at) === hit.at)?.gap };
+    }
+  }
+  return {
+    dx: bestX?.delta || 0,
+    dy: bestY?.delta || 0,
+    lineX: bestX ? bestX.at : null,
+    lineY: bestY ? bestY.at : null,
+    kindX: bestX?.kind || null,
+    kindY: bestY?.kind || null,
+    gapX: bestX?.gap ?? null,
+    gapY: bestY?.gap ?? null,
+  };
 }
