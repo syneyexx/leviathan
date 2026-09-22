@@ -1649,7 +1649,7 @@ class WhyAssimilateBody(BaseModel):
 
 @app.get("/api/knowledge/atlas")
 def list_atlas(
-    q: Annotated[str, Query(default="", max_length=4000)] = "",
+    q: Annotated[str, Query(max_length=4000)] = "",
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> dict:
     if not settings.features.rag_v3:
@@ -1757,7 +1757,7 @@ def assimilate_why(payload: WhyAssimilateBody) -> dict:
 
 @app.get("/api/knowledge/why")
 def list_why(
-    q: Annotated[str, Query(default="", max_length=4000)] = "",
+    q: Annotated[str, Query(max_length=4000)] = "",
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> dict:
     if not settings.features.why_library:
