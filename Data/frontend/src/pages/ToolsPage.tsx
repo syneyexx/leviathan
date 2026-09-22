@@ -1,280 +1,196 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
+import type { CapabilityListItem, McpToolRecord } from "../types/api";
 
-type ToolRow = {
-  id: string;
-  name: string;
-  type: "Built-in" | "Integration";
-  category: string;
-  status: "Active" | "Idle" | "Not Configured";
-  description: string;
-  lastUsed: string;
-  icon: ReactNode;
-};
+type ProviderFilter = "all" | "builtin" | "mcp" | "module" | "function" | "other";
 
-const TABS = [
-  "All Tools",
-  "Core Tools",
-  "MCP Servers",
-  "Integrations",
-  "Custom Tools",
-  "Installed",
-  "Templates",
-] as const;
-
-const TOOLS: ToolRow[] = [
-  {
-    id: "fs",
-    name: "File System",
-    type: "Built-in",
-    category: "System",
-    status: "Active",
-    description: "Read, write, search and manage files and directories",
-    lastUsed: "2 min ago",
-    icon: <path d="M4 8h6l2 2h8v8H4z" />,
-  },
-  {
-    id: "web",
-    name: "Web Search",
-    type: "Built-in",
-    category: "Research",
-    status: "Active",
-    description: "Search the web with ranked results",
-    lastUsed: "5 min ago",
-    icon: (
-      <>
-        <circle cx="11" cy="11" r="7" />
-        <path d="M20 20l-3-3" />
-      </>
-    ),
-  },
-  {
-    id: "code",
-    name: "Code Execution",
-    type: "Built-in",
-    category: "Development",
-    status: "Active",
-    description: "Run sandboxed Python and shell snippets",
-    lastUsed: "12 min ago",
-    icon: <path d="M8 8l-4 4 4 4M16 8l4 4-4 4" />,
-  },
-  {
-    id: "browser",
-    name: "Browser",
-    type: "Built-in",
-    category: "Automation",
-    status: "Active",
-    description: "Navigate pages and extract structured content",
-    lastUsed: "28 min ago",
-    icon: (
-      <>
-        <circle cx="12" cy="12" r="8" />
-        <path d="M4 12h16M12 4c2.5 2.8 2.5 13.2 0 16M12 4c-2.5 2.8-2.5 13.2 0 16" />
-      </>
-    ),
-  },
-  {
-    id: "terminal",
-    name: "Terminal",
-    type: "Built-in",
-    category: "System",
-    status: "Active",
-    description: "Execute approved local shell commands",
-    lastUsed: "41 min ago",
-    icon: <path d="M5 8l5 4-5 4M12 16h7" />,
-  },
-  {
-    id: "db",
-    name: "Database",
-    type: "Built-in",
-    category: "Data",
-    status: "Active",
-    description: "Query connected SQL and document stores",
-    lastUsed: "1h ago",
-    icon: (
-      <>
-        <ellipse cx="12" cy="6" rx="7" ry="3" />
-        <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
-      </>
-    ),
-  },
-  {
-    id: "memory",
-    name: "Memory",
-    type: "Built-in",
-    category: "Memory",
-    status: "Active",
-    description: "Store and recall durable working memory",
-    lastUsed: "2h ago",
-    icon: (
-      <>
-        <path d="M8 7h8l1 4H7l1-4z" />
-        <path d="M7 11v7h10v-7" />
-      </>
-    ),
-  },
-  {
-    id: "knowledge",
-    name: "Knowledge Search",
-    type: "Built-in",
-    category: "Knowledge",
-    status: "Active",
-    description: "Retrieve local knowledge and evidence",
-    lastUsed: "3h ago",
-    icon: <path d="M12 4l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V7l7-3z" />,
-  },
-  {
-    id: "youtube",
-    name: "YouTube",
-    type: "Integration",
-    category: "Media",
-    status: "Active",
-    description: "Search and summarize video content",
-    lastUsed: "5h ago",
-    icon: <path d="M6 8h12v8H6zM10 10l5 2-5 2z" />,
-  },
-  {
-    id: "github",
-    name: "Github",
-    type: "Integration",
-    category: "Development",
-    status: "Active",
-    description: "Repos, issues, PRs and code search",
-    lastUsed: "6h ago",
-    icon: <path d="M9 19c-4 1.5-4-2-6-2m12 4v-3.5a3 3 0 00-.7-2C16.5 17 20 16 20 11a4 4 0 00-1-2.9" />,
-  },
-  {
-    id: "hf",
-    name: "HuggingFace",
-    type: "Integration",
-    category: "AI/ML",
-    status: "Active",
-    description: "Browse models and datasets",
-    lastUsed: "8h ago",
-    icon: (
-      <>
-        <circle cx="12" cy="12" r="8" />
-        <path d="M8 14c1.2 1.4 2.6 2 4 2s2.8-.6 4-2" />
-      </>
-    ),
-  },
-  {
-    id: "slack",
-    name: "Slack",
-    type: "Integration",
-    category: "Communication",
-    status: "Idle",
-    description: "Send messages and read channels",
-    lastUsed: "3 days ago",
-    icon: <path d="M8 8h3v3H8zM13 8h3v3h-3M8 13h3v3H8M13 13h3v3h-3" />,
-  },
-  {
-    id: "notion",
-    name: "Notion",
-    type: "Integration",
-    category: "Productivity",
-    status: "Idle",
-    description: "Read and write workspace pages",
-    lastUsed: "4 days ago",
-    icon: <path d="M6 5h10l2 2v12H6z" />,
-  },
-  {
-    id: "discord",
-    name: "Discord",
-    type: "Integration",
-    category: "Communication",
-    status: "Not Configured",
-    description: "Connect Discord bots and channels",
-    lastUsed: "Never",
-    icon: (
-      <>
-        <circle cx="9" cy="12" r="1.2" fill="currentColor" stroke="none" />
-        <circle cx="15" cy="12" r="1.2" fill="currentColor" stroke="none" />
-        <path d="M7 8c2-2 8-2 10 0M6 15c1.5 2 10.5 2 12 0" />
-      </>
-    ),
-  },
-  {
-    id: "gdrive",
-    name: "Google Drive",
-    type: "Integration",
-    category: "Storage",
-    status: "Not Configured",
-    description: "Access Drive files and folders",
-    lastUsed: "Never",
-    icon: <path d="M8 18h8l4-7-4-7H8L4 11z" />,
-  },
+const PROVIDER_TABS: Array<{ id: ProviderFilter; label: string }> = [
+  { id: "all", label: "All Tools" },
+  { id: "builtin", label: "Built-in" },
+  { id: "function", label: "Functions" },
+  { id: "mcp", label: "MCP" },
+  { id: "module", label: "Module" },
+  { id: "other", label: "Other" },
 ];
 
-const CATEGORIES = [
-  { label: "All Tools", count: 15 },
-  { label: "System", count: 4 },
-  { label: "Research", count: 2 },
-  { label: "Development", count: 3 },
-  { label: "Communication", count: 2 },
-  { label: "AI/ML", count: 1 },
-  { label: "Storage", count: 1 },
-  { label: "Other", count: 2 },
-] as const;
+function normalizeProvider(kind?: string | null): string {
+  return (kind ?? "unknown").trim().toLowerCase();
+}
 
-const SERVERS = [
-  { name: "LEVIATHAN Core Tools", status: "Online", meta: "12 tools" },
-  { name: "MCP Browser Server", status: "Online", meta: "6 tools" },
-  { name: "MCP File System Server", status: "Online", meta: "4 tools" },
-  { name: "MCP GitHub Server", status: "Degraded", meta: "3 tools" },
-] as const;
+function providerBucket(kind?: string | null): Exclude<ProviderFilter, "all"> {
+  const k = normalizeProvider(kind);
+  if (k === "builtin" || k === "native" || k === "internal") return "builtin";
+  if (k === "function") return "function";
+  if (k === "mcp") return "mcp";
+  if (k === "module") return "module";
+  return "other";
+}
 
-const ACTIVITY = [
-  { text: 'File read: config.json', time: "2 min ago" },
-  { text: 'Web search: "Qwen2.5 benchmarks"', time: "5 min ago" },
-  { text: "Python execution (3.2s)", time: "12 min ago" },
-  { text: "Browser navigate → docs.leviathan.ai", time: "28 min ago" },
-  { text: "Memory write: session summary", time: "1h ago" },
-] as const;
+function unavailableReason(cap: CapabilityListItem): string | null {
+  if (cap.available !== false && cap.enabled !== false) return null;
+  const reason =
+    (typeof cap.unavailable_reason === "string" && cap.unavailable_reason.trim()) ||
+    (typeof cap.availability_reason === "string" && cap.availability_reason.trim()) ||
+    null;
+  if (reason) return reason;
+  if (cap.available === false) return "Unavailable";
+  if (cap.enabled === false) return "Disabled";
+  return null;
+}
 
-const TAGS = ["Built-in", "System", "File I/O", "Search", "Edit", "Secure"] as const;
+function isInvokable(cap: CapabilityListItem): boolean {
+  return cap.available !== false && cap.enabled !== false;
+}
 
-function statusDot(status: ToolRow["status"]) {
-  if (status === "Active") return "ready";
-  if (status === "Idle") return "running";
-  return "failed";
+function statusLabel(cap: CapabilityListItem): string {
+  if (cap.available === false) return "Unavailable";
+  if (cap.enabled === false) return "Disabled";
+  return "Available";
+}
+
+function statusDot(cap: CapabilityListItem): string {
+  if (cap.available === false) return "failed";
+  if (cap.enabled === false) return "running";
+  return "ready";
+}
+
+function displayName(cap: CapabilityListItem): string {
+  return (cap.name && String(cap.name).trim()) || cap.id;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "Request failed";
+}
+
+function tryParseArgs(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: {} };
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, error: "Arguments must be a JSON object" };
+    }
+    return { ok: true, value: parsed as Record<string, unknown> };
+  } catch {
+    return { ok: false, error: "Invalid JSON arguments" };
+  }
 }
 
 export function ToolsPage() {
   const toast = useAppToast();
-  const [tab, setTab] = useState<(typeof TABS)[number]>("All Tools");
+  const [tab, setTab] = useState<ProviderFilter>("all");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState("fs");
-  const [recursive, setRecursive] = useState(true);
-  const [createFiles, setCreateFiles] = useState(true);
-  const [deleteFiles, setDeleteFiles] = useState(false);
-  const [confirm, setConfirm] = useState(true);
-  const [maxSize, setMaxSize] = useState("100");
-  const [allowedPath, setAllowedPath] = useState("D:\\HADES");
+  const [capabilities, setCapabilities] = useState<CapabilityListItem[]>([]);
+  const [mcpTools, setMcpTools] = useState<McpToolRecord[]>([]);
+  const [functionCount, setFunctionCount] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [argsJson, setArgsJson] = useState("{}");
+  const [invoking, setInvoking] = useState(false);
+  const [lastResult, setLastResult] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [capsRes, mcpRes, fnRes] = await Promise.all([
+        api.listCapabilities({ limit: 500 }),
+        api.mcpTools().catch(() => null),
+        api.listFunctions().catch(() => null),
+      ]);
+      setCapabilities(capsRes.capabilities ?? []);
+      setMcpTools(mcpRes?.tools ?? []);
+      setFunctionCount(Array.isArray(fnRes?.functions) ? fnRes.functions.length : null);
+      setSelectedId((prev) => {
+        const ids = (capsRes.capabilities ?? []).map((c) => c.id);
+        if (prev && ids.includes(prev)) return prev;
+        return ids[0] ?? null;
+      });
+    } catch (err) {
+      setLoadError(errorMessage(err));
+      setCapabilities([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return TOOLS.filter((tool) => {
-      if (tab === "Core Tools" && tool.type !== "Built-in") return false;
-      if (tab === "Integrations" && tool.type !== "Integration") return false;
-      if (tab === "MCP Servers") return tool.id === "browser" || tool.id === "fs" || tool.id === "github";
-      if (tab === "Installed" && tool.status === "Not Configured") return false;
-      if (tab === "Custom Tools") return false;
-      if (tab === "Templates") return false;
+    return capabilities.filter((cap) => {
+      if (tab !== "all" && providerBucket(cap.provider_kind) !== tab) return false;
       if (!q) return true;
-      return `${tool.name} ${tool.category} ${tool.description}`.toLowerCase().includes(q);
+      const hay = `${cap.id} ${cap.name ?? ""} ${cap.description ?? ""} ${cap.provider_kind ?? ""}`.toLowerCase();
+      return hay.includes(q);
     });
-  }, [query, tab]);
+  }, [capabilities, query, tab]);
 
-  const selected = TOOLS.find((tool) => tool.id === selectedId) ?? TOOLS[0];
+  const selected = useMemo(
+    () => capabilities.find((c) => c.id === selectedId) ?? rows[0] ?? null,
+    [capabilities, rows, selectedId],
+  );
+
+  const selectedReason = selected ? unavailableReason(selected) : null;
+  const selectedInvokable = selected ? isInvokable(selected) : false;
+
+  const counts = useMemo(() => {
+    const base: Record<ProviderFilter, number> = {
+      all: capabilities.length,
+      builtin: 0,
+      function: 0,
+      mcp: 0,
+      module: 0,
+      other: 0,
+    };
+    for (const cap of capabilities) {
+      base[providerBucket(cap.provider_kind)] += 1;
+    }
+    return base;
+  }, [capabilities]);
+
+  const availableCount = useMemo(
+    () => capabilities.filter((c) => isInvokable(c)).length,
+    [capabilities],
+  );
+
+  async function invokeSelected() {
+    if (!selected) return;
+    if (!selectedInvokable) {
+      toast(selectedReason ?? "Capability unavailable");
+      return;
+    }
+    const parsed = tryParseArgs(argsJson);
+    if (!parsed.ok) {
+      toast(parsed.error);
+      return;
+    }
+    setInvoking(true);
+    setLastResult(null);
+    try {
+      const res = await api.executeCapability(selected.id, parsed.value);
+      setLastResult(JSON.stringify(res.result ?? res, null, 2));
+    } catch (err) {
+      setLastResult(errorMessage(err));
+      toast(errorMessage(err));
+    } finally {
+      setInvoking(false);
+    }
+  }
 
   return (
     <AppShell
       activeMode="explore"
-      modeLabel="Modules Mode"
-      searchPlaceholder="Search modules, integrations, functions..."
-      systemItems={["LLM", "Neural", "Memory", "Modules"]}
+      modeLabel="Tools Mode"
+      searchPlaceholder="Search capabilities, MCP tools, functions..."
+      systemItems={["LLM", "Neural", "Memory", "Tools"]}
       layout="wide"
       pageClass="lv-app--tools"
     >
@@ -285,30 +201,33 @@ export function ToolsPage() {
           </div>
           <div className="lv-hero-shade" />
           <div className="lv-hero-content">
-            <h1 className="lv-hero-title">Modules</h1>
+            <h1 className="lv-hero-title">Tools</h1>
             <p className="lv-hero-kicker" style={{ marginTop: 6 }}>
-              Extend Capabilities. Execute Reality.
+              Capability catalog. Provenance. Live invoke.
             </p>
-            <p className="lv-page-quote">“More than a model. A working intelligence.”</p>
+            <p className="lv-page-quote">“Tools turn thought into action.” — LEVIATHAN</p>
           </div>
           <div className="lv-hero-rail" aria-hidden="true">
-            <span>Connect</span>
-            <span>Automate</span>
-            <span>Execute</span>
-            <span>Integrate</span>
-            <span>Transcend</span>
+            <span>Discover</span>
+            <span>Provenance</span>
+            <span>Invoke</span>
+            <span>Observe</span>
           </div>
         </section>
+
         <div className="lv-tools-toolbar">
           <div className="lv-tabs" role="tablist">
-            {TABS.map((item) => (
+            {PROVIDER_TABS.map((item) => (
               <button
-                key={item}
-                className={`lv-tab${tab === item ? " is-active" : ""}`}
+                key={item.id}
+                className={`lv-tab${tab === item.id ? " is-active" : ""}`}
                 type="button"
-                onClick={() => setTab(item)}
+                onClick={() => setTab(item.id)}
               >
-                {item}
+                {item.label}
+                <span className="lv-muted" style={{ marginLeft: 6 }}>
+                  {counts[item.id]}
+                </span>
               </button>
             ))}
           </div>
@@ -318,17 +237,20 @@ export function ToolsPage() {
               style={{ minWidth: 180 }}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search tools..."
-              aria-label="Search tools"
+              placeholder="Search capabilities..."
+              aria-label="Search capabilities"
             />
-            <button className="lv-btn" type="button" onClick={() => toast("Filters")}>
-              Filters
-            </button>
-            <button className="lv-btn lv-btn-gold" type="button" onClick={() => toast("Add Tool")}>
-              + Add Tool
+            <button className="lv-btn" type="button" onClick={() => void load()} disabled={loading}>
+              {loading ? "Refreshing…" : "Refresh"}
             </button>
           </div>
         </div>
+
+        {loadError ? (
+          <p className="lv-muted" role="alert" style={{ padding: "0 4px 12px" }}>
+            Failed to load capabilities: {loadError}
+          </p>
+        ) : null}
 
         <div className="lv-tools-split">
           <div className="lv-models-table-wrap">
@@ -336,270 +258,196 @@ export function ToolsPage() {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Type</th>
-                  <th>Category</th>
-                  <th>Status</th>
+                  <th>Provider</th>
+                  <th>Availability</th>
                   <th>Description</th>
-                  <th>Last Used</th>
-                  <th aria-label="Actions" />
+                  <th>Reason</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((tool) => (
-                  <tr
-                    key={tool.id}
-                    className={selectedId === tool.id ? "is-selected" : undefined}
-                    onClick={() => setSelectedId(tool.id)}
-                  >
-                    <td>
-                      <div className="lv-tool-name-cell">
-                        <span className="lv-tool-glyph">
-                          <svg className="lv-icon" viewBox="0 0 24 24">
-                            {tool.icon}
-                          </svg>
-                        </span>
-                        <strong>{tool.name}</strong>
-                      </div>
-                    </td>
-                    <td>{tool.type}</td>
-                    <td>{tool.category}</td>
-                    <td>
-                      <span className="lv-model-status">
-                        <span className={`lv-status-dot ${statusDot(tool.status)}`} />
-                        {tool.status}
-                      </span>
-                    </td>
-                    <td>{tool.description}</td>
-                    <td>{tool.lastUsed}</td>
-                    <td>
-                      <button
-                        className="lv-icon-btn"
-                        type="button"
-                        aria-label="More"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toast(`${tool.name} options`);
-                        }}
-                      >
-                        <svg className="lv-icon" viewBox="0 0 24 24">
-                          <circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none" />
-                          <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
-                          <circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none" />
-                        </svg>
-                      </button>
-                    </td>
+                {loading && capabilities.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>Loading capabilities…</td>
                   </tr>
-                ))}
+                ) : null}
+                {!loading && rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>No capabilities match this filter.</td>
+                  </tr>
+                ) : null}
+                {rows.map((cap) => {
+                  const reason = unavailableReason(cap);
+                  return (
+                    <tr
+                      key={cap.id}
+                      className={selected?.id === cap.id ? "is-selected" : undefined}
+                      onClick={() => {
+                        setSelectedId(cap.id);
+                        setLastResult(null);
+                      }}
+                    >
+                      <td>
+                        <div className="lv-tool-name-cell">
+                          <strong>{displayName(cap)}</strong>
+                          <small className="lv-muted">{cap.id}</small>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="lv-tag gold">{normalizeProvider(cap.provider_kind)}</span>
+                      </td>
+                      <td>
+                        <span className="lv-model-status">
+                          <span className={`lv-status-dot ${statusDot(cap)}`} />
+                          {statusLabel(cap)}
+                        </span>
+                      </td>
+                      <td>{cap.description || "—"}</td>
+                      <td>{reason ?? "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
           <article className="lv-panel lv-panel-premium lv-tool-detail">
-            <div className="lv-tool-detail-head">
-              <div>
-                <div className="lv-tool-detail-title">
-                  <span className="lv-tool-glyph large">
-                    <svg className="lv-icon" viewBox="0 0 24 24">
-                      {selected.icon}
-                    </svg>
-                  </span>
+            {selected ? (
+              <>
+                <div className="lv-tool-detail-head">
                   <div>
-                    <h2>{selected.name}</h2>
-                    <span className="lv-model-status">
-                      <span className={`lv-status-dot ${statusDot(selected.status)}`} />
-                      {selected.status}
-                    </span>
+                    <div className="lv-tool-detail-title">
+                      <div>
+                        <h2>{displayName(selected)}</h2>
+                        <span className="lv-model-status">
+                          <span className={`lv-status-dot ${statusDot(selected)}`} />
+                          {statusLabel(selected)}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="lv-node-desc">{selected.description || "No description provided."}</p>
+                    <p className="lv-muted" style={{ marginTop: 6 }}>
+                      id: {selected.id}
+                    </p>
                   </div>
                 </div>
-                <p className="lv-node-desc">{selected.description} on the local system.</p>
-              </div>
-            </div>
 
-            <div className="lv-toolbar">
-              {TAGS.map((tag) => (
-                <span key={tag} className="lv-tag gold">
-                  {tag}
-                </span>
-              ))}
-            </div>
+                <div className="lv-toolbar">
+                  <span className="lv-tag gold">{normalizeProvider(selected.provider_kind)}</span>
+                  {selected.provider_ref ? (
+                    <span className="lv-tag">ref: {String(selected.provider_ref)}</span>
+                  ) : null}
+                  {(selected.side_effects ?? []).map((effect) => (
+                    <span key={effect} className="lv-tag">
+                      {effect}
+                    </span>
+                  ))}
+                </div>
 
-            <div className="lv-section-label">Configuration</div>
-            <div className="lv-form-grid">
-              <label className="lv-form-field full">
-                <span>Allowed Paths</span>
-                <input
-                  className="lv-input"
-                  value={allowedPath}
-                  onChange={(event) => setAllowedPath(event.target.value)}
-                />
-              </label>
-              <label className="lv-form-field">
-                <span>Access Mode</span>
-                <select className="lv-select" defaultValue="rw">
-                  <option value="rw">Read & Write</option>
-                  <option value="ro">Read Only</option>
-                </select>
-              </label>
-              <label className="lv-form-field">
-                <span>Max File Size (MB)</span>
-                <input
-                  className="lv-input"
-                  value={maxSize}
-                  onChange={(event) => setMaxSize(event.target.value)}
-                />
-              </label>
-            </div>
+                {selectedReason ? (
+                  <p className="lv-muted" role="status" style={{ marginTop: 8 }}>
+                    Unavailable: {selectedReason}
+                  </p>
+                ) : null}
 
-            <div className="lv-toggle-stack">
-              {(
-                [
-                  ["Enable Recursive Search", recursive, setRecursive],
-                  ["Allow File Creation", createFiles, setCreateFiles],
-                  ["Allow File Deletion", deleteFiles, setDeleteFiles],
-                  ["Require Confirmation for Destructive Actions", confirm, setConfirm],
-                ] as const
-              ).map(([label, on, setOn]) => (
-                <button
-                  key={label}
-                  className="lv-toggle"
-                  type="button"
-                  onClick={() => setOn(!on)}
-                >
-                  <span className={`lv-switch${on ? " is-on" : ""}`} />
-                  {label}
-                </button>
-              ))}
-            </div>
+                <div className="lv-section-label">Invoke</div>
+                <label className="lv-form-field full">
+                  <span>Arguments (JSON object)</span>
+                  <textarea
+                    className="lv-input"
+                    rows={6}
+                    value={argsJson}
+                    onChange={(event) => setArgsJson(event.target.value)}
+                    spellCheck={false}
+                    disabled={!selectedInvokable || invoking}
+                  />
+                </label>
 
-            <div className="lv-section-label">Usage Statistics (30 Days)</div>
-            <div className="lv-job-metrics">
-              <div className="lv-metric">
-                <span>Executions</span>
-                <strong>1,482</strong>
-              </div>
-              <div className="lv-metric">
-                <span>Files Read</span>
-                <strong>856</strong>
-              </div>
-              <div className="lv-metric">
-                <span>Files Written</span>
-                <strong>231</strong>
-              </div>
-              <div className="lv-metric">
-                <span>Files Deleted</span>
-                <strong>12</strong>
-              </div>
-            </div>
+                <div className="lv-detail-actions" style={{ gridTemplateColumns: "1fr" }}>
+                  <button
+                    className="lv-btn lv-btn-gold"
+                    type="button"
+                    disabled={!selectedInvokable || invoking}
+                    title={selectedReason ?? undefined}
+                    onClick={() => void invokeSelected()}
+                  >
+                    {invoking ? "Invoking…" : "Invoke Capability"}
+                  </button>
+                </div>
 
-            <div className="lv-detail-actions" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-              <button className="lv-btn lv-btn-gold" type="button" onClick={() => toast("Test Tool")}>
-                Test Tool
-              </button>
-              <button className="lv-btn" type="button" onClick={() => toast("Documentation")}>
-                View Documentation
-              </button>
-              <button className="lv-btn lv-btn-danger" type="button" onClick={() => toast("Disable Tool")}>
-                Disable Tool
-              </button>
-            </div>
+                {lastResult ? (
+                  <>
+                    <div className="lv-section-label">Last result</div>
+                    <pre className="lv-code-block" style={{ whiteSpace: "pre-wrap", maxHeight: 280, overflow: "auto" }}>
+                      {lastResult}
+                    </pre>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <p className="lv-muted">Select a capability to inspect provenance and invoke.</p>
+            )}
           </article>
         </div>
 
         <div className="lv-tools-bottom">
           <article className="lv-panel lv-card">
-            <div className="lv-section-label">Tool Categories</div>
-            <div className="lv-process-list">
-              {CATEGORIES.map((cat) => (
-                <button
-                  key={cat.label}
-                  className="lv-process-row"
-                  type="button"
-                  onClick={() => toast(cat.label)}
-                >
-                  <span className="lv-process-icon gold" />
-                  <span>{cat.label}</span>
-                  <b>{cat.count}</b>
-                </button>
-              ))}
+            <div className="lv-section-label">Catalog summary</div>
+            <div className="lv-job-metrics">
+              <div className="lv-metric">
+                <span>Capabilities</span>
+                <strong>{capabilities.length}</strong>
+              </div>
+              <div className="lv-metric">
+                <span>Available</span>
+                <strong>{availableCount}</strong>
+              </div>
+              <div className="lv-metric">
+                <span>MCP tools</span>
+                <strong>{mcpTools.length}</strong>
+              </div>
+              <div className="lv-metric">
+                <span>Functions</span>
+                <strong>{functionCount ?? "—"}</strong>
+              </div>
             </div>
           </article>
 
           <article className="lv-panel lv-card">
-            <div className="lv-section-label">Active Tool Servers</div>
+            <div className="lv-section-label">MCP tool surface</div>
             <div className="lv-server-list">
-              {SERVERS.map((server) => (
-                <div key={server.name} className="lv-server-row">
-                  <span
-                    className={`lv-status-dot ${server.status === "Online" ? "ready" : "running"}`}
-                  />
-                  <div>
-                    <strong>{server.name}</strong>
-                    <small>
-                      {server.status} · {server.meta}
-                    </small>
+              {mcpTools.length === 0 ? (
+                <p className="lv-muted">No MCP tools reported (bridge may be empty or offline).</p>
+              ) : (
+                mcpTools.slice(0, 8).map((tool) => (
+                  <div key={`${tool.server_id}:${tool.capability_id}`} className="lv-server-row">
+                    <span
+                      className={`lv-status-dot ${
+                        tool.availability === "AVAILABLE" || tool.availability === "available"
+                          ? "ready"
+                          : "failed"
+                      }`}
+                    />
+                    <div>
+                      <strong>{tool.external_name}</strong>
+                      <small>
+                        {tool.server_id} · {tool.availability}
+                        {tool.provider_kind ? ` · ${tool.provider_kind}` : ""}
+                      </small>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
-            <button className="lv-btn" type="button" onClick={() => toast("Manage Servers")}>
-              Manage Servers
-            </button>
           </article>
 
           <article className="lv-panel lv-card">
-            <div className="lv-section-label">Recent Tool Activity</div>
-            <div className="lv-recent-list">
-              {ACTIVITY.map((item) => (
-                <button
-                  key={item.text}
-                  className="lv-recent-row"
-                  type="button"
-                  onClick={() => toast(item.text)}
-                >
-                  <span>{item.text}</span>
-                  <time>{item.time}</time>
-                </button>
-              ))}
-            </div>
-            <button className="lv-btn" type="button" onClick={() => toast("View All Activity")}>
-              View All Activity
-            </button>
+            <div className="lv-section-label">Provenance</div>
+            <p className="lv-muted">
+              Each row is a live CapabilityCatalog entry. Provider kind is the authority surface
+              (builtin / function / mcp / module). Availability is independent of registration —
+              invoke is blocked when unavailable or disabled, with the backend reason shown.
+            </p>
           </article>
-
-          <div className="lv-tools-actions-col">
-            <article className="lv-panel lv-card">
-              <div className="lv-section-label">Quick Actions</div>
-              <div className="lv-quick-actions" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                {[
-                  "Add Custom Tool",
-                  "Connect MCP Server",
-                  "Browse Templates",
-                  "Import from Registry",
-                ].map((label) => (
-                  <button
-                    key={label}
-                    className="lv-quick-action"
-                    type="button"
-                    onClick={() => toast(label)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </article>
-            <article className="lv-panel lv-card lv-danger-zone">
-              <div className="lv-section-label">Danger Zone</div>
-              <div className="lv-danger-row">
-                <span>Reset All Tool Configurations</span>
-                <button className="lv-btn lv-btn-danger" type="button" onClick={() => toast("Reset All")}>
-                  Reset All
-                </button>
-              </div>
-              <small className="lv-muted">
-                This disables custom settings and restores factory defaults for every tool.
-              </small>
-            </article>
-          </div>
         </div>
 
         <p className="lv-footer-quote">“Tools turn thought into action.” — LEVIATHAN</p>

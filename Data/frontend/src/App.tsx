@@ -8,13 +8,13 @@ import { CognitionPage } from "./pages/CognitionPage";
 import { CommandPage } from "./pages/CommandPage";
 import {
   DatasetManagementPixelPage,
-  DatasetsHubPixelPage,
-  KnowledgeLibraryPixelPage,
   ModelsPixelPage,
   OfflineDatasetsPixelPage,
   TrainingPixelPage,
 } from "./pages/pixel";
+import { DatasetsPage } from "./pages/DatasetsPage";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
+import { KnowledgeLibraryPage } from "./pages/KnowledgeLibraryPage";
 import { FacebookPage } from "./pages/media/FacebookPage";
 import { InstagramPage } from "./pages/media/InstagramPage";
 import { MediaCalendarPage } from "./pages/media/MediaCalendarPage";
@@ -25,12 +25,13 @@ import { MediaQueuePage } from "./pages/media/MediaQueuePage";
 import { MediaViralPage } from "./pages/media/MediaViralPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
 import { YouTubePage } from "./pages/media/YouTubePage";
-import { ResearchMockPage } from "./pages/ResearchMockPage";
+import { ResearchPage } from "./pages/ResearchPage";
 import { PerformancePage } from "./pages/PerformancePage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
+import { ModulesPage } from "./pages/ModulesPage";
 import { McpPage } from "./pages/McpPage";
 import { ConsolePage } from "./pages/ConsolePage";
 import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
@@ -77,16 +78,17 @@ export default function App() {
       <Route path="/trading/paper" element={<PaperTradingPage />} />
       <Route path="/trading/broker" element={<BrokerTradingPage />} />
 
-      <Route path="/research" element={<ResearchMockPage />} />
+      <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />
       <Route path="/cognition" element={<CognitionPage />} />
       <Route path="/memory" element={<SectionPage title="Geheugen" />} />
-      <Route path="/knowledge" element={<KnowledgeLibraryPixelPage />} />
+      <Route path="/knowledge" element={<KnowledgeLibraryPage />} />
       <Route path="/evidence" element={<EvidenceVaultPage />} />
-      <Route path="/datasets" element={<DatasetsHubPixelPage />} />
+      <Route path="/datasets" element={<DatasetsPage />} />
 
       <Route path="/performance" element={<PerformancePage />} />
       <Route path="/tools" element={<ToolsPage />} />
+      <Route path="/modules" element={<ModulesPage />} />
       <Route path="/mcp" element={<McpPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/console" element={<ConsolePage />} />
