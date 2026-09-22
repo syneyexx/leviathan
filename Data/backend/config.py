@@ -180,6 +180,8 @@ class FeatureFlags:
     deep_recall: bool
     why_library: bool
     residual_production: bool
+    chat_streaming: bool
+    chat_sse: bool
 
 
 @dataclass(frozen=True)
@@ -371,6 +373,8 @@ class Settings:
                 "deep_recall": self.features.deep_recall,
                 "why_library": self.features.why_library,
                 "residual_production": self.features.residual_production,
+                "chat_streaming": self.features.chat_streaming,
+                "chat_sse": self.features.chat_sse,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -477,6 +481,8 @@ class Settings:
         deep_recall = _env_bool("LEVIATHAN_FEATURE_DEEP_RECALL", False)
         why_library = _env_bool("LEVIATHAN_FEATURE_WHY_LIBRARY", False)
         residual_production = _env_bool("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION", False)
+        chat_streaming = _env_bool("LEVIATHAN_FEATURE_CHAT_STREAMING", False)
+        chat_sse = _env_bool("LEVIATHAN_FEATURE_CHAT_SSE", False)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -559,6 +565,8 @@ class Settings:
                 deep_recall=deep_recall,
                 why_library=why_library,
                 residual_production=residual_production,
+                chat_streaming=chat_streaming,
+                chat_sse=chat_sse,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,
@@ -679,6 +687,10 @@ class Settings:
         if self.features.neuro_training_real_worker and not self.features.neuro_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_NEURO_TRAINING_REAL_WORKER requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.chat_sse and not self.features.chat_streaming:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_CHAT_SSE requires LEVIATHAN_FEATURE_CHAT_STREAMING=true"
             )
         if self.features.module_manager_subprocess and not self.features.module_manager_enabled:
             raise ConfigurationError(

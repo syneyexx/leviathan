@@ -226,6 +226,26 @@ export function StatusPage() {
                 </strong>
               </div>
               <div className="lv-world-stat">
+                <span>Contrastive</span>
+                <strong>
+                  {neuro?.contrastive_ready
+                    ? neuro.contrastive_method_default || "ready"
+                    : neuro?.contrastive_training
+                      ? "lexical"
+                      : "OFF"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Chat stream</span>
+                <strong>{neuro?.streaming_posture || (neuro?.chat_streaming ? "sse" : "OFF")}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Residual applied/degraded</span>
+                <strong>
+                  {neuro?.residual_applied_count ?? 0}/{neuro?.residual_degraded_count ?? 0}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
                 <span>Module manager</span>
                 <strong>{health?.module_manager?.enabled ? "ON" : "OFF"}</strong>
               </div>
@@ -237,7 +257,9 @@ export function StatusPage() {
             {neuro?.truth ? (
               <p className="lv-muted">
                 Honesty: residual_implemented=
-                {String(neuro.truth.residual_implemented ?? false)}; neural≠authority=
+                {String(neuro.truth.residual_implemented ?? false)}; residual_applied=
+                {String(neuro.truth.residual_applied ?? false)}; streaming_degraded=
+                {String(neuro.truth.streaming_degraded ?? false)}; neural≠authority=
                 {String(neuro.truth.neural_signal_is_not_authority ?? true)}
               </p>
             ) : (

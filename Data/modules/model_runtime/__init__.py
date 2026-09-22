@@ -1,5 +1,6 @@
 """Model runtime — canonical provider-facing model access."""
 
 from .openai_compatible import LLMUnavailable, OpenAICompatibleLLM
+from .streaming import chat_truth, sse_encode
 
-__all__ = ["LLMUnavailable", "OpenAICompatibleLLM"]
+__all__ = ["LLMUnavailable", "OpenAICompatibleLLM", "chat_truth", "sse_encode"]

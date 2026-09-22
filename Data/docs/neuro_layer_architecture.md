@@ -1,8 +1,8 @@
 # LEVIATHAN Phase 46+ — Top-Tier Frontier Neuro Layer
 
 > **Status:** Phase 53+ SpaceX/xAI Grok-level residual orchestration (EXTERNAL-FIRST)  
-> **Baseline:** Phase 52 Grok-level depth jump + RAG V3 / Neural production path  
-> **Current version marker:** `0.59.0-phase53`  
+> **Baseline:** Phase 53 EXTERNAL-FIRST residual / cortex / training  
+> **Current version marker:** `0.60.0-phase54`  
 > **Authority:** This document is the design contract. Executable code and tests win when they disagree; update this doc when architecture changes.
 
 ---
@@ -556,13 +556,28 @@ Every major block behind a flag; health `public_summary` lists flag states (neve
 - Automatic “thought harder” authority
 - Fake COMPLETED training metrics without a trainer
 
+### Phase 54 — Residual production + Contrastive + Chat SSE — **DONE**
+
+- Production residual path: vLLM/llama.cpp HTTP inject/forward when hooks confirmed; receipts + truth always.
+- ResidualOrchestrator: α budget (`max_total_alpha`), multi-inject, degrade_reasons telemetry.
+- ContrastiveRetrievalHead: `method=embedding|lexical`, InfoNCE-style weights; UNMEASURED without embeddings.
+- Chat SSE: `/api/chat` streams tokens when `LEVIATHAN_FEATURE_CHAT_STREAMING`; residual+stream degrades with `truth.streaming_degraded`.
+- `GET /api/neuro/status`; Master `phase_span=0-54`; version `0.60.0-phase54`.
+
+**Still not claimed**
+
+- Default production GPU residual path
+- Multi-hour power/HBM SLO
+- Residual-aware streaming when adapter cannot stream forward
+- Contrastive training always improves retrieval without metrics
+
 ### Phase 53+ — Residual orchestration + EXTERNAL-FIRST workers — **DONE**
 
 - `ResidualOrchestrator` budgets mid/late injects; receipts + telemetry always.
 - vLLM / llama.cpp / TRT adapters: support only when residual HTTP contract confirms hooks.
 - Named cortex circuits + early-exit + `LEVIATHAN_NEURO_CORTEX_MAX_K`.
 - `EphemeralRecipeWorkerTrainer` when `LEVIATHAN_NEURO_TRAINING_REAL_WORKER=true`.
-- Long soak flag; Master `phase_span=0-53`; version `0.59.0-phase53`.
+- Long soak flag; Master `phase_span=0-54`; version `0.60.0-phase54`.
 
 **Still not claimed**
 
@@ -603,7 +618,12 @@ Public truth fields required on neuro/module responses:
   "truth": {
     "neural_signal_is_not_authority": true,
     "residual_implemented": false,
-    "discoverable_is_not_authorized": true
+    "residual_applied": false,
+    "discoverable_is_not_authorized": true,
+    "unapplied_is_not_success": true,
+    "model_output_is_not_evidence": true,
+    "unsupported_is_not_failure_of_core": true,
+    "streaming_degraded": false
   }
 }
 ```

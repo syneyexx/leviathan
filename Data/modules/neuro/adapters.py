@@ -48,6 +48,10 @@ class DeterministicResidualRuntime:
     def supports_residuals(self) -> bool:
         return True
 
+    def supports_streaming_forward(self) -> bool:
+        """Toy runtime does not expose token streaming over residual forward."""
+        return False
+
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "deterministic_toy",
@@ -55,6 +59,7 @@ class DeterministicResidualRuntime:
             "production_grade": False,
             "n_layers": self.n_layers,
             "hidden_size": self.hidden_size,
+            "supports_streaming_forward": False,
             "truth": {
                 "not_a_frontier_model_residual": True,
                 "deterministic_contract_runtime": True,
@@ -366,6 +371,9 @@ class HFTransformersResidualAdapter:
     def supports_residuals(self) -> bool:
         return bool(self._available and self._model is not None)
 
+    def supports_streaming_forward(self) -> bool:
+        return False
+
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "hf_transformers",
@@ -378,6 +386,7 @@ class HFTransformersResidualAdapter:
             "error": self._error,
             "weights_loaded": bool(self._model is not None),
             "load_weights_requested": self.load_weights,
+            "supports_streaming_forward": False,
             "truth": {
                 "config_available_is_not_weights_loaded": True,
                 "weights_loaded_required_for_supports_residuals": True,
@@ -659,6 +668,10 @@ class VllmResidualAdapter:
     def supports_residuals(self) -> bool:
         return bool(self._hooks_confirmed)
 
+    def supports_streaming_forward(self) -> bool:
+        """vLLM residual forward streaming requires a streaming residual plugin — not assumed."""
+        return False
+
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "vllm",
@@ -670,6 +683,7 @@ class VllmResidualAdapter:
             "hooks_confirmed": self._hooks_confirmed,
             "hook_count": len(self._hooks),
             "probe": self._probe_detail,
+            "supports_streaming_forward": False,
             "truth": {
                 "adapter_requires_hooks_plugin": True,
                 "health_ok_is_not_residual_support": True,
@@ -880,6 +894,9 @@ class LlamaCppResidualAdapter:
     def supports_residuals(self) -> bool:
         return bool(self._hooks_confirmed)
 
+    def supports_streaming_forward(self) -> bool:
+        return False
+
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "llama_cpp",
@@ -892,6 +909,7 @@ class LlamaCppResidualAdapter:
             "hooks_confirmed": self._hooks_confirmed,
             "hook_count": len(self._hooks),
             "detail": self._detail,
+            "supports_streaming_forward": False,
             "truth": {
                 "adapter_requires_custom_residual_server": True,
                 "model_path_alone_is_not_residual_support": True,
@@ -1091,6 +1109,9 @@ class TrtResidualAdapter:
     def supports_residuals(self) -> bool:
         return bool(self._hooks_confirmed)
 
+    def supports_streaming_forward(self) -> bool:
+        return False
+
     def runtime_info(self) -> dict[str, Any]:
         return {
             "kind": "trt",
@@ -1100,6 +1121,7 @@ class TrtResidualAdapter:
             "server_url": self.server_url,
             "available": self._hooks_confirmed,
             "detail": self._detail,
+            "supports_streaming_forward": False,
             "truth": {
                 "engine_dependent_optional_adapter": True,
                 "residual_injection_is_not_authority": True,
