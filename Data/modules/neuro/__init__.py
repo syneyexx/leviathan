@@ -23,6 +23,7 @@ from .residual import (
     ResidualTensorRef,
     UnsupportedResidualRuntime,
 )
+from .receipts import ResidualReceiptStore
 from .soak import NeuroSoakHarness, SoakReport, SoakStepResult
 from .snapshots import (
     ContrastiveRetrievalHead,
@@ -62,6 +63,7 @@ __all__ = [
     "ResidualInjectReceipt",
     "ResidualInjectRequest",
     "ResidualReadRequest",
+    "ResidualReceiptStore",
     "ResidualStreamPort",
     "ResidualTensorRef",
     "SoakReport",

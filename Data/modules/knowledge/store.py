@@ -3,17 +3,19 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import struct
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .chunking import chunk_text
+from .chunking import chunk_text_spans
+from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
 from .hashing import content_sha256, estimate_tokens, file_sha256
-from .types import ChunkRecord, DocumentRecord, IngestStatus
+from .types import ChunkRecord, DirectionalRelationAtom, DocumentRecord, IngestStatus, RelationClass
 
-INGEST_VERSION = 2
+INGEST_VERSION = 3
 PARSER_VERSION = "1.0.0"
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".csv", ".json", ".log"}
 
@@ -27,8 +29,19 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in rows}
 
 
+def _pack_embedding(vector: list[float]) -> bytes:
+    return struct.pack(f"<{len(vector)}f", *vector)
+
+
+def _unpack_embedding(blob: bytes) -> list[float]:
+    if not blob:
+        return []
+    count = len(blob) // 4
+    return list(struct.unpack(f"<{count}f", blob))
+
+
 class KnowledgeStore:
-    """Canonical Knowledge V2 owner: documents, chunks, provenance, ingest states."""
+    """Canonical Knowledge V2/V3 owner: documents, chunks, provenance, ingest states."""
 
     def __init__(
         self,
@@ -37,11 +50,13 @@ class KnowledgeStore:
         data_root: Path | None = None,
         chunk_max_chars: int = 1200,
         chunk_overlap: int = 120,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.path = path
         self.data_root = data_root
         self.chunk_max_chars = chunk_max_chars
         self.chunk_overlap = chunk_overlap
+        self.embedding_provider = embedding_provider or NullEmbeddingProvider()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
@@ -105,6 +120,18 @@ class KnowledgeStore:
             )
             """
         )
+        chunk_cols = _table_columns(conn, "knowledge_chunks")
+        for name, ddl in {
+            "start_offset": "INTEGER NOT NULL DEFAULT 0",
+            "end_offset": "INTEGER NOT NULL DEFAULT 0",
+            "confidence": "REAL NOT NULL DEFAULT 1.0",
+            "uncertainty_notes": "TEXT NOT NULL DEFAULT ''",
+            "source_type": "TEXT NOT NULL DEFAULT 'document'",
+            "provenance_json": "TEXT NOT NULL DEFAULT '{}'",
+        }.items():
+            if name not in chunk_cols:
+                conn.execute(f"ALTER TABLE knowledge_chunks ADD COLUMN {name} {ddl}")
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks(document_id, chunk_index)"
         )
@@ -122,6 +149,40 @@ class KnowledgeStore:
                 updated_at TEXT NOT NULL
             )
             """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_chunk_embeddings (
+                chunk_id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                dimensions INTEGER NOT NULL,
+                embedding BLOB NOT NULL,
+                content_hash TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(chunk_id) REFERENCES knowledge_chunks(chunk_id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS directional_relation_atoms (
+                atom_id TEXT PRIMARY KEY,
+                subject_ref TEXT NOT NULL,
+                object_ref TEXT NOT NULL,
+                relation_class TEXT NOT NULL,
+                comparison_vector_json TEXT NOT NULL DEFAULT '[]',
+                supporting_evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+                document_id TEXT,
+                chunk_id TEXT,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relation_atoms_subject "
+            "ON directional_relation_atoms(subject_ref, relation_class)"
         )
         try:
             conn.execute(
@@ -142,11 +203,11 @@ class KnowledgeStore:
         except sqlite3.OperationalError:
             pass
 
-        # Backfill V1 documents missing hashes/chunks into READY V2 shape.
+        # Backfill V1 documents missing hashes/chunks into READY V2/V3 shape.
         rows = conn.execute(
             """
             SELECT id, title, content, source, created_at, updated_at,
-                   content_hash, status
+                   content_hash, status, original_path, source_mtime
             FROM knowledge_documents
             """
         ).fetchall()
@@ -170,6 +231,10 @@ class KnowledgeStore:
                     document_id=doc_id,
                     title=row["title"],
                     content=content,
+                    original_path=row["original_path"] if "original_path" in row.keys() else None,
+                    source_mtime=row["source_mtime"] if "source_mtime" in row.keys() else None,
+                    document_hash=content_hash,
+                    source=row["source"] or "manual",
                 )
 
     def upsert_document(
@@ -184,6 +249,9 @@ class KnowledgeStore:
         size_bytes: int | None = None,
         parser: str = "plain_text",
         trust_metadata: dict[str, Any] | None = None,
+        source_type: str = "document",
+        confidence: float = 1.0,
+        uncertainty_notes: str = "",
     ) -> DocumentRecord:
         """Ingest text atomically: INDEXING → chunks → READY, or FAILED."""
         document_id = document_id or str(uuid.uuid4())
@@ -242,8 +310,19 @@ class KnowledgeStore:
             )
 
             try:
-                self._replace_chunks(conn, document_id=document_id, title=title, content=content)
-                # Document FTS (legacy whole-doc index)
+                self._replace_chunks(
+                    conn,
+                    document_id=document_id,
+                    title=title,
+                    content=content,
+                    original_path=original_path,
+                    source_mtime=source_mtime,
+                    document_hash=digest,
+                    source=source,
+                    source_type=source_type,
+                    confidence=confidence,
+                    uncertainty_notes=uncertainty_notes,
+                )
                 try:
                     conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
                     conn.execute(
@@ -267,31 +346,70 @@ class KnowledgeStore:
         assert record is not None
         return record
 
-    def _replace_chunks(self, conn: sqlite3.Connection, *, document_id: str, title: str, content: str) -> list[ChunkRecord]:
+    def _replace_chunks(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        document_id: str,
+        title: str,
+        content: str,
+        original_path: str | None = None,
+        source_mtime: str | None = None,
+        document_hash: str | None = None,
+        source: str = "manual",
+        source_type: str = "document",
+        confidence: float = 1.0,
+        uncertainty_notes: str = "",
+    ) -> list[ChunkRecord]:
         conn.execute("DELETE FROM knowledge_chunks WHERE document_id = ?", (document_id,))
         try:
             conn.execute("DELETE FROM knowledge_chunk_fts WHERE document_id = ?", (document_id,))
         except sqlite3.OperationalError:
             pass
 
-        parts = chunk_text(content, max_chars=self.chunk_max_chars, overlap=self.chunk_overlap)
+        parts = chunk_text_spans(content, max_chars=self.chunk_max_chars, overlap=self.chunk_overlap)
         records: list[ChunkRecord] = []
+        embed_texts: list[str] = []
         for index, part in enumerate(parts):
             chunk_id = str(uuid.uuid4())
-            digest = content_sha256(part)
-            tokens = estimate_tokens(part)
+            digest = content_sha256(part.text)
+            tokens = estimate_tokens(part.text)
+            provenance = {
+                "path": original_path,
+                "mtime": source_mtime,
+                "document_hash": document_hash,
+                "source": source,
+                "title": title,
+            }
+            metadata = {"title": title}
             conn.execute(
                 """
                 INSERT INTO knowledge_chunks(
-                    chunk_id, document_id, chunk_index, content, content_hash, token_estimate, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    chunk_id, document_id, chunk_index, content, content_hash, token_estimate,
+                    metadata_json, start_offset, end_offset, confidence, uncertainty_notes,
+                    source_type, provenance_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (chunk_id, document_id, index, part, digest, tokens, json.dumps({"title": title})),
+                (
+                    chunk_id,
+                    document_id,
+                    index,
+                    part.text,
+                    digest,
+                    tokens,
+                    json.dumps(metadata),
+                    part.start,
+                    part.end,
+                    confidence,
+                    uncertainty_notes,
+                    source_type,
+                    json.dumps(provenance),
+                ),
             )
             try:
                 conn.execute(
                     "INSERT INTO knowledge_chunk_fts(chunk_id, document_id, title, content) VALUES (?, ?, ?, ?)",
-                    (chunk_id, document_id, title, part),
+                    (chunk_id, document_id, title, part.text),
                 )
             except sqlite3.OperationalError:
                 pass
@@ -300,12 +418,45 @@ class KnowledgeStore:
                     chunk_id=chunk_id,
                     document_id=document_id,
                     chunk_index=index,
-                    content=part,
+                    content=part.text,
                     content_hash=digest,
                     token_estimate=tokens,
-                    metadata={"title": title},
+                    start_offset=part.start,
+                    end_offset=part.end,
+                    confidence=confidence,
+                    uncertainty_notes=uncertainty_notes,
+                    source_type=source_type,
+                    provenance=provenance,
+                    metadata=metadata,
                 )
             )
+            embed_texts.append(part.text)
+
+        if records and self.embedding_provider.available():
+            vectors = self.embedding_provider.embed_documents(embed_texts)
+            now = utc_now()
+            for record, vector in zip(records, vectors):
+                conn.execute(
+                    """
+                    INSERT INTO knowledge_chunk_embeddings(
+                        chunk_id, provider_id, dimensions, embedding, content_hash, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(chunk_id) DO UPDATE SET
+                        provider_id = excluded.provider_id,
+                        dimensions = excluded.dimensions,
+                        embedding = excluded.embedding,
+                        content_hash = excluded.content_hash,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        record.chunk_id,
+                        self.embedding_provider.provider_id,
+                        len(vector),
+                        _pack_embedding(vector),
+                        record.content_hash,
+                        now,
+                    ),
+                )
         return records
 
     def get_document(self, document_id: str) -> DocumentRecord | None:
@@ -334,29 +485,43 @@ class KnowledgeStore:
             self._ensure_schema(conn)
             rows = conn.execute(
                 """
-                SELECT chunk_id, document_id, chunk_index, content, content_hash, token_estimate, metadata_json
+                SELECT chunk_id, document_id, chunk_index, content, content_hash, token_estimate,
+                       metadata_json, start_offset, end_offset, confidence, uncertainty_notes,
+                       source_type, provenance_json
                 FROM knowledge_chunks
                 WHERE document_id = ?
                 ORDER BY chunk_index ASC
                 """,
                 (document_id,),
             ).fetchall()
-        return [
-            ChunkRecord(
-                chunk_id=row["chunk_id"],
-                document_id=row["document_id"],
-                chunk_index=row["chunk_index"],
-                content=row["content"],
-                content_hash=row["content_hash"],
-                token_estimate=row["token_estimate"],
-                metadata=json.loads(row["metadata_json"] or "{}"),
-            )
-            for row in rows
-        ]
+        return [self._row_to_chunk(row) for row in rows]
+
+    def get_chunk(self, chunk_id: str) -> ChunkRecord | None:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT chunk_id, document_id, chunk_index, content, content_hash, token_estimate,
+                       metadata_json, start_offset, end_offset, confidence, uncertainty_notes,
+                       source_type, provenance_json
+                FROM knowledge_chunks WHERE chunk_id = ?
+                """,
+                (chunk_id,),
+            ).fetchone()
+        return self._row_to_chunk(row) if row else None
 
     def delete_document(self, document_id: str) -> bool:
         with self.connect() as conn:
             self._ensure_schema(conn)
+            chunk_ids = [
+                row["chunk_id"]
+                for row in conn.execute(
+                    "SELECT chunk_id FROM knowledge_chunks WHERE document_id = ?",
+                    (document_id,),
+                ).fetchall()
+            ]
+            for chunk_id in chunk_ids:
+                conn.execute("DELETE FROM knowledge_chunk_embeddings WHERE chunk_id = ?", (chunk_id,))
             try:
                 conn.execute("DELETE FROM knowledge_chunk_fts WHERE document_id = ?", (document_id,))
             except sqlite3.OperationalError:
@@ -365,6 +530,7 @@ class KnowledgeStore:
                 conn.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
             except sqlite3.OperationalError:
                 pass
+            conn.execute("DELETE FROM directional_relation_atoms WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM knowledge_chunks WHERE document_id = ?", (document_id,))
             conn.execute("DELETE FROM knowledge_ingest_files WHERE document_id = ?", (document_id,))
             cursor = conn.execute("DELETE FROM knowledge_documents WHERE id = ?", (document_id,))
@@ -379,11 +545,9 @@ class KnowledgeStore:
         else:
             candidate = (self.data_root / raw).resolve()
         root = self.data_root.resolve() if self.data_root.exists() else self.data_root
-        # On POSIX with Windows-style D:/ModelData, resolve may not exist — use string prefix guard.
         try:
             candidate.relative_to(root.resolve() if root.exists() else root)
         except ValueError as exc:
-            # Fallback string check for non-existing Windows roots on Linux.
             cand_s = str(candidate).replace("\\", "/")
             root_s = str(self.data_root).replace("\\", "/")
             if not (cand_s == root_s or cand_s.startswith(root_s.rstrip("/") + "/")):
@@ -391,7 +555,7 @@ class KnowledgeStore:
         return candidate
 
     def ingest_file(self, path: Path, *, source: str = "modeldata") -> DocumentRecord | None:
-        """Incremental file ingest. Returns None when unchanged."""
+        """Incremental file ingest. Returns existing record when unchanged (no re-chunk)."""
         if not path.is_file():
             raise FileNotFoundError(str(path))
         if path.suffix.lower() not in TEXT_SUFFIXES:
@@ -416,6 +580,7 @@ class KnowledgeStore:
                 and existing["status"] == IngestStatus.READY.value
                 and existing["document_id"]
             ):
+                # Unchanged — return existing without re-chunking.
                 return self.get_document(existing["document_id"])
 
             conn.execute(
@@ -457,6 +622,7 @@ class KnowledgeStore:
             size_bytes=stat.st_size,
             parser="plain_text",
             trust_metadata={"trust": "local_file", "root": str(self.data_root)},
+            source_type="file",
         )
 
         with self.connect() as conn:
@@ -485,7 +651,6 @@ class KnowledgeStore:
                 break
             if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
                 continue
-            # Skip huge files in V2 plain path (> 5 MiB) — stream later.
             if path.stat().st_size > 5 * 1024 * 1024:
                 continue
             record = self.ingest_file(path)
@@ -515,6 +680,8 @@ class KnowledgeStore:
                     """
                     SELECT c.chunk_id, c.document_id, c.chunk_index, c.content AS chunk_content,
                            c.content_hash AS chunk_hash, c.token_estimate,
+                           c.start_offset, c.end_offset, c.confidence, c.uncertainty_notes,
+                           c.source_type, c.provenance_json,
                            d.title, d.source, d.content AS document_content,
                            d.created_at, d.updated_at, d.original_path, d.content_hash AS document_hash,
                            d.status, bm25(knowledge_chunk_fts) AS rank
@@ -536,6 +703,8 @@ class KnowledgeStore:
                     """
                     SELECT c.chunk_id, c.document_id, c.chunk_index, c.content AS chunk_content,
                            c.content_hash AS chunk_hash, c.token_estimate,
+                           c.start_offset, c.end_offset, c.confidence, c.uncertainty_notes,
+                           c.source_type, c.provenance_json,
                            d.title, d.source, d.content AS document_content,
                            d.created_at, d.updated_at, d.original_path, d.content_hash AS document_hash,
                            d.status, 0.0 AS rank
@@ -550,6 +719,177 @@ class KnowledgeStore:
                     (status.value, source, source, pattern, pattern, limit),
                 ).fetchall()
                 return [dict(row) for row in rows]
+
+    def get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT embedding FROM knowledge_chunk_embeddings WHERE chunk_id = ?",
+                (chunk_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _unpack_embedding(row["embedding"])
+
+    def search_dense(
+        self,
+        query_vector: list[float],
+        *,
+        limit: int = 5,
+        source: str | None = None,
+        status: IngestStatus = IngestStatus.READY,
+    ) -> list[dict[str, Any]]:
+        """Brute-force cosine over stored chunk embeddings (central SQLite only)."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT c.chunk_id, c.document_id, c.chunk_index, c.content AS chunk_content,
+                       c.content_hash AS chunk_hash, c.token_estimate,
+                       c.start_offset, c.end_offset, c.confidence, c.uncertainty_notes,
+                       c.source_type, c.provenance_json,
+                       d.title, d.source, d.updated_at, d.original_path,
+                       d.content_hash AS document_hash, e.embedding
+                FROM knowledge_chunk_embeddings e
+                JOIN knowledge_chunks c ON c.chunk_id = e.chunk_id
+                JOIN knowledge_documents d ON d.id = c.document_id
+                WHERE d.status = ?
+                  AND (? IS NULL OR d.source = ?)
+                """,
+                (status.value, source, source),
+            ).fetchall()
+
+        scored: list[dict[str, Any]] = []
+        for row in rows:
+            vec = _unpack_embedding(row["embedding"])
+            score = cosine_similarity(query_vector, vec)
+            item = dict(row)
+            item.pop("embedding", None)
+            item["dense_score"] = score
+            scored.append(item)
+        scored.sort(key=lambda item: item["dense_score"], reverse=True)
+        return scored[:limit]
+
+    def add_relation_atom(
+        self,
+        *,
+        subject_ref: str,
+        object_ref: str,
+        relation_class: RelationClass | str,
+        comparison_vector: list[float] | None = None,
+        supporting_evidence_refs: list[str] | tuple[str, ...] | None = None,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        confidence: float = 0.5,
+        notes: str = "",
+        atom_id: str | None = None,
+    ) -> DirectionalRelationAtom:
+        if isinstance(relation_class, str):
+            relation_class = RelationClass(relation_class)
+        atom = DirectionalRelationAtom(
+            atom_id=atom_id or str(uuid.uuid4()),
+            subject_ref=subject_ref.strip(),
+            object_ref=object_ref.strip(),
+            relation_class=relation_class,
+            comparison_vector=list(comparison_vector or []),
+            supporting_evidence_refs=tuple(supporting_evidence_refs or ()),
+            document_id=document_id,
+            chunk_id=chunk_id,
+            confidence=max(0.0, min(1.0, float(confidence))),
+            notes=notes,
+            created_at=utc_now(),
+        )
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO directional_relation_atoms(
+                    atom_id, subject_ref, object_ref, relation_class,
+                    comparison_vector_json, supporting_evidence_refs_json,
+                    document_id, chunk_id, confidence, notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    atom.atom_id,
+                    atom.subject_ref,
+                    atom.object_ref,
+                    atom.relation_class.value,
+                    json.dumps(atom.comparison_vector),
+                    json.dumps(list(atom.supporting_evidence_refs)),
+                    atom.document_id,
+                    atom.chunk_id,
+                    atom.confidence,
+                    atom.notes,
+                    atom.created_at,
+                ),
+            )
+        return atom
+
+    def list_relation_atoms(
+        self,
+        *,
+        subject_ref: str | None = None,
+        relation_class: RelationClass | str | None = None,
+        limit: int = 100,
+    ) -> list[DirectionalRelationAtom]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if subject_ref:
+            clauses.append("subject_ref = ?")
+            params.append(subject_ref)
+        if relation_class is not None:
+            value = relation_class.value if isinstance(relation_class, RelationClass) else relation_class
+            clauses.append("relation_class = ?")
+            params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(limit, 1000)))
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                f"""
+                SELECT * FROM directional_relation_atoms
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_atom(row) for row in rows]
+
+    @staticmethod
+    def _row_to_chunk(row: sqlite3.Row) -> ChunkRecord:
+        keys = row.keys()
+        return ChunkRecord(
+            chunk_id=row["chunk_id"],
+            document_id=row["document_id"],
+            chunk_index=row["chunk_index"],
+            content=row["content"],
+            content_hash=row["content_hash"],
+            token_estimate=row["token_estimate"],
+            start_offset=int(row["start_offset"]) if "start_offset" in keys and row["start_offset"] is not None else 0,
+            end_offset=int(row["end_offset"]) if "end_offset" in keys and row["end_offset"] is not None else 0,
+            confidence=float(row["confidence"]) if "confidence" in keys and row["confidence"] is not None else 1.0,
+            uncertainty_notes=row["uncertainty_notes"] if "uncertainty_notes" in keys and row["uncertainty_notes"] else "",
+            source_type=row["source_type"] if "source_type" in keys and row["source_type"] else "document",
+            provenance=json.loads(row["provenance_json"] or "{}") if "provenance_json" in keys else {},
+            metadata=json.loads(row["metadata_json"] or "{}"),
+        )
+
+    @staticmethod
+    def _row_to_atom(row: sqlite3.Row) -> DirectionalRelationAtom:
+        return DirectionalRelationAtom(
+            atom_id=row["atom_id"],
+            subject_ref=row["subject_ref"],
+            object_ref=row["object_ref"],
+            relation_class=RelationClass(row["relation_class"]),
+            comparison_vector=json.loads(row["comparison_vector_json"] or "[]"),
+            supporting_evidence_refs=tuple(json.loads(row["supporting_evidence_refs_json"] or "[]")),
+            document_id=row["document_id"],
+            chunk_id=row["chunk_id"],
+            confidence=float(row["confidence"]),
+            notes=row["notes"] or "",
+            created_at=row["created_at"],
+        )
 
     @staticmethod
     def _row_to_document(row: sqlite3.Row) -> DocumentRecord:

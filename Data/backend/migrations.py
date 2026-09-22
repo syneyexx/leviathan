@@ -1247,6 +1247,176 @@ def _m17_mcp_bridge(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m18_rag_v3(conn: sqlite3.Connection) -> None:
+    """Knowledge RAG V3: chunk provenance columns, embeddings, atlas, why, deep recall."""
+
+    def columns(table: str) -> set[str]:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            chunk_id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            token_estimate INTEGER NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(document_id, chunk_index)
+        )
+        """
+    )
+    chunk_cols = columns("knowledge_chunks")
+    for name, ddl in {
+        "start_offset": "INTEGER NOT NULL DEFAULT 0",
+        "end_offset": "INTEGER NOT NULL DEFAULT 0",
+        "confidence": "REAL NOT NULL DEFAULT 1.0",
+        "uncertainty_notes": "TEXT NOT NULL DEFAULT ''",
+        "source_type": "TEXT NOT NULL DEFAULT 'document'",
+        "provenance_json": "TEXT NOT NULL DEFAULT '{}'",
+    }.items():
+        if name not in chunk_cols:
+            conn.execute(f"ALTER TABLE knowledge_chunks ADD COLUMN {name} {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_chunk_embeddings (
+            chunk_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            embedding BLOB NOT NULL,
+            content_hash TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS directional_relation_atoms (
+            atom_id TEXT PRIMARY KEY,
+            subject_ref TEXT NOT NULL,
+            object_ref TEXT NOT NULL,
+            relation_class TEXT NOT NULL,
+            comparison_vector_json TEXT NOT NULL DEFAULT '[]',
+            supporting_evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            document_id TEXT,
+            chunk_id TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_relation_atoms_subject "
+        "ON directional_relation_atoms(subject_ref, relation_class)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS atlas_records (
+            atlas_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT '',
+            scale TEXT NOT NULL,
+            entities_json TEXT NOT NULL DEFAULT '[]',
+            projects_json TEXT NOT NULL DEFAULT '[]',
+            relation_types_json TEXT NOT NULL DEFAULT '[]',
+            unresolved_questions_json TEXT NOT NULL DEFAULT '[]',
+            contradictions_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            evidence_record_refs_json TEXT NOT NULL DEFAULT '[]',
+            parent_atlas_id TEXT,
+            child_atlas_ids_json TEXT NOT NULL DEFAULT '[]',
+            last_revised_at TEXT NOT NULL,
+            revision_reason TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_atlas_scale ON atlas_records(scale, last_revised_at)"
+    )
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS atlas_fts
+            USING fts5(atlas_id UNINDEXED, title, summary, entities, projects)
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS why_records (
+            why_id TEXT PRIMARY KEY,
+            observation TEXT NOT NULL,
+            bucket TEXT NOT NULL,
+            parent_ref TEXT,
+            child_ref TEXT,
+            comparison TEXT NOT NULL,
+            evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            residue TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_why_bucket ON why_records(bucket, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS deep_recall_logs (
+            recall_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            request_json TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            context_cost INTEGER NOT NULL,
+            stopped_reason TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS residual_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            applied INTEGER NOT NULL,
+            implemented INTEGER NOT NULL,
+            degraded_to_chat_completions INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            hook_json TEXT NOT NULL DEFAULT '{}',
+            detail TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    if "memory_entries" in tables:
+        mem_cols = columns("memory_entries")
+        if "priority" not in mem_cols:
+            conn.execute(
+                "ALTER TABLE memory_entries ADD COLUMN priority REAL NOT NULL DEFAULT 0.5"
+            )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1265,6 +1435,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=15, name="coding_agent", apply=_m15_coding_agent),
     Migration(version=16, name="market_sim", apply=_m16_market_sim),
     Migration(version=17, name="mcp_bridge", apply=_m17_mcp_bridge),
+    Migration(version=18, name="rag_v3", apply=_m18_rag_v3),
 )
 
 

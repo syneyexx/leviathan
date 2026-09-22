@@ -44,6 +44,43 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 Settings.from_env()
 
+    def test_deep_recall_requires_rag_v3(self) -> None:
+        env = {
+            "LEVIATHAN_FEATURE_RAG_V3": "false",
+            "LEVIATHAN_FEATURE_DEEP_RECALL": "true",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env()
+
+    def test_why_library_requires_rag_v3(self) -> None:
+        env = {
+            "LEVIATHAN_FEATURE_RAG_V3": "false",
+            "LEVIATHAN_FEATURE_WHY_LIBRARY": "true",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env()
+
+    def test_residual_production_requires_neuro_and_injection(self) -> None:
+        env = {
+            "LEVIATHAN_FEATURE_NEURO": "true",
+            "LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION": "false",
+            "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION": "true",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env()
+
+    def test_rag_v3_defaults_embedding_provider_to_hash(self) -> None:
+        env = {"LEVIATHAN_FEATURE_RAG_V3": "true"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            cfg = Settings.from_env()
+        self.assertTrue(cfg.features.rag_v3)
+        self.assertEqual(cfg.knowledge.embedding_provider, "hash")
+        summary = cfg.public_summary()
+        self.assertTrue(summary["features"]["rag_v3"])
+
     def test_loopback_only_rejects_non_loopback_host(self) -> None:
         env = {
             "LEVIATHAN_LOOPBACK_ONLY": "true",
@@ -61,7 +98,6 @@ class SettingsTests(unittest.TestCase):
             self.assertTrue(cfg.database_path.is_absolute())
             self.assertTrue(str(cfg.database_path).endswith(rel.replace("/", os.sep)) or rel in str(cfg.database_path))
             self.assertIn("custom.db", str(cfg.database_path))
-            # silence unused
             self.assertTrue(Path(tmp).exists())
 
 

@@ -230,6 +230,43 @@ export function StatusPage() {
               </p>
             ) : null}
           </article>
+
+          <article className="lv-panel lv-card">
+            <div className="lv-section-label">Knowledge / RAG</div>
+            <div className="lv-world-stats">
+              <div className="lv-world-stat">
+                <span>Documents</span>
+                <strong>{health?.knowledge?.documents ?? "—"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Embeddings</span>
+                <strong>
+                  {health?.knowledge?.embedding_available
+                    ? health.knowledge.embedding_provider ?? "ready"
+                    : health?.knowledge?.embedding_provider ?? "unavailable"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>RAG V3</span>
+                <strong>{health?.knowledge?.rag_v3 ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Deep recall</span>
+                <strong>{health?.knowledge?.deep_recall ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Why library</span>
+                <strong>{health?.knowledge?.why_library ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Reranker</span>
+                <strong>{health?.knowledge?.reranker_available ? "ready" : "unavailable"}</strong>
+              </div>
+            </div>
+            <p className="lv-muted">
+              Unavailable embeddings/reranker/deep-recall are reported honestly — never fabricated.
+            </p>
+          </article>
         </section>
       </main>
     </AppShell>

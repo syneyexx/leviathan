@@ -64,7 +64,20 @@ export type HealthResponse = {
     memory_tiers?: boolean;
     residual_supported?: boolean;
     residual_kind?: string;
+    residual_production?: boolean;
     absorb?: Record<string, number>;
+  };
+  knowledge?: {
+    data_root?: string;
+    documents?: number;
+    embedding_provider?: string;
+    embedding_available?: boolean;
+    embedding_status?: Record<string, unknown>;
+    rag_v3?: boolean;
+    deep_recall?: boolean;
+    why_library?: boolean;
+    reranker_available?: boolean;
+    deep_recall_budget?: number;
   };
   module_manager?: {
     enabled: boolean;
