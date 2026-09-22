@@ -20,6 +20,15 @@ describe("navigation menu", () => {
     expect(findMainMenuByPath("/training").id).toBe("llm");
     expect(findMainMenuByPath("/agents").id).toBe("llm");
     expect(findMainMenuByPath("/analytics").id).toBe("llm");
+    expect(findMainMenuByPath("/agents").submenu.some((item) => item.id === "agents")).toBe(true);
+  });
+
+  it("labels Coding Agent under Hades and Workflows under Plugin & Runtime", () => {
+    const hades = findMainMenuByPath("/coding");
+    expect(hades.submenu.find((item) => item.id === "coding")?.label).toBe("Coding Agent");
+    const runtime = findMainMenuByPath("/workflows");
+    expect(runtime.id).toBe("runtime");
+    expect(runtime.submenu.some((item) => item.id === "workflows" && item.to === "/workflows")).toBe(true);
   });
 
   it("restores Brain under Onderzoek & Kennis", () => {

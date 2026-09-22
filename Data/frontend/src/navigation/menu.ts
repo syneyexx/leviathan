@@ -18,9 +18,6 @@ export type MainMenuItem = {
 /**
  * HOOFDMENU (left sidebar) + SUBMENU (footer dock under the middle box).
  * Every submenu item has its own route.
- *
- * Note: main also introduced a top-level "Agents" HOOFDMENU; that conflicts with the
- * requested IA (Agents under LLM). Kept under LLM pending product decision.
  */
 export const MAIN_MENU: readonly MainMenuItem[] = [
   {
@@ -30,7 +27,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/", "/chat", "/coding", "/tasks", "/status"],
     submenu: [
       { id: "chatten", label: "Chatten", to: "/chat" },
-      { id: "coding", label: "Coding", to: "/coding" },
+      { id: "coding", label: "Coding Agent", to: "/coding" },
       { id: "taken", label: "Taken", to: "/tasks" },
     ],
   },
