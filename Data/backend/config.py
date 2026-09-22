@@ -54,6 +54,25 @@ def _env_int(name: str, default: int, *, minimum: int | None = None, maximum: in
     return value
 
 
+def _parse_int_csv(raw: str) -> tuple[int, ...]:
+    """Parse comma-separated integers; empty → (). Invalid tokens raise ConfigurationError."""
+    text = (raw or "").strip()
+    if not text:
+        return ()
+    values: list[int] = []
+    for part in text.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        try:
+            values.append(int(token))
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Invalid integer in LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS: {token!r}"
+            ) from exc
+    return tuple(values)
+
+
 def _env_float(name: str, default: float, *, minimum: float | None = None) -> float:
     raw = _env_raw(name)
     if raw is None or raw.strip() == "":
@@ -143,6 +162,11 @@ class FeatureFlags:
     neuro_residual_injection: bool
     neuro_cortex: bool
     neuro_memory_tiers: bool
+    neuro_residual_orchestrator: bool
+    neuro_cortex_blocks: bool
+    neuro_contrastive_training: bool
+    neuro_soak_long: bool
+    neuro_training_real_worker: bool
     module_manager_enabled: bool
     module_manager_subprocess: bool
     agents_enabled: bool
@@ -191,11 +215,15 @@ class MarketSimSettings:
 
 @dataclass(frozen=True)
 class NeuroRuntimeSettings:
-    residual_kind: str  # unsupported | deterministic | hf
+    residual_kind: str  # unsupported | deterministic | hf | vllm | llama_cpp | trt
     residual_model_id: str | None
     residual_device: str
     absorb_default_limit: int
     residual_load_weights: bool = False  # high-memory / dev-only HF weight load
+    residual_hook_layers: tuple[int, ...] = ()
+    cortex_max_k: int = 2
+    memory_tier0_max_slots: int = 64
+    residual_server_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -325,6 +353,11 @@ class Settings:
                 "neuro_residual_injection": self.features.neuro_residual_injection,
                 "neuro_cortex": self.features.neuro_cortex,
                 "neuro_memory_tiers": self.features.neuro_memory_tiers,
+                "neuro_residual_orchestrator": self.features.neuro_residual_orchestrator,
+                "neuro_cortex_blocks": self.features.neuro_cortex_blocks,
+                "neuro_contrastive_training": self.features.neuro_contrastive_training,
+                "neuro_soak_long": self.features.neuro_soak_long,
+                "neuro_training_real_worker": self.features.neuro_training_real_worker,
                 "module_manager_enabled": self.features.module_manager_enabled,
                 "module_manager_subprocess": self.features.module_manager_subprocess,
                 "agents_enabled": self.features.agents_enabled,
@@ -359,6 +392,10 @@ class Settings:
                 "residual_device": self.neuro_runtime.residual_device,
                 "absorb_default_limit": self.neuro_runtime.absorb_default_limit,
                 "residual_load_weights": self.neuro_runtime.residual_load_weights,
+                "residual_hook_layers": list(self.neuro_runtime.residual_hook_layers),
+                "cortex_max_k": self.neuro_runtime.cortex_max_k,
+                "memory_tier0_max_slots": self.neuro_runtime.memory_tier0_max_slots,
+                "residual_server_url": self.neuro_runtime.residual_server_url,
             },
             "resources": {
                 "max_model_concurrency": self.resources.max_model_concurrency,
@@ -500,6 +537,15 @@ class Settings:
                 neuro_residual_injection=_env_bool("LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION", False),
                 neuro_cortex=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX", False),
                 neuro_memory_tiers=_env_bool("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS", False),
+                neuro_residual_orchestrator=_env_bool(
+                    "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR", False
+                ),
+                neuro_cortex_blocks=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS", False),
+                neuro_contrastive_training=_env_bool(
+                    "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING", False
+                ),
+                neuro_soak_long=_env_bool("LEVIATHAN_FEATURE_NEURO_SOAK_LONG", False),
+                neuro_training_real_worker=_env_bool("LEVIATHAN_NEURO_TRAINING_REAL_WORKER", False),
                 module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
@@ -545,6 +591,17 @@ class Settings:
                 residual_device=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_DEVICE", "cpu") or "cpu").strip(),
                 absorb_default_limit=_env_int("LEVIATHAN_NEURO_ABSORB_LIMIT", 50, minimum=1, maximum=5000),
                 residual_load_weights=_env_bool("LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS", False),
+                residual_hook_layers=_parse_int_csv(
+                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS", "") or ""
+                ),
+                cortex_max_k=_env_int("LEVIATHAN_NEURO_CORTEX_MAX_K", 2, minimum=0, maximum=16),
+                memory_tier0_max_slots=_env_int(
+                    "LEVIATHAN_NEURO_MEMORY_TIER0_MAX_SLOTS", 64, minimum=1, maximum=10_000
+                ),
+                residual_server_url=(
+                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_SERVER_URL", "") or ""
+                ).strip()
+                or None,
             ),
             resources=ResourceLimits(
                 max_model_concurrency=_env_int("LEVIATHAN_MAX_MODEL_CONCURRENCY", 1, minimum=1, maximum=64),
@@ -598,6 +655,30 @@ class Settings:
         if self.features.neuro_memory_tiers and not self.features.neuro_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_residual_orchestrator and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_cortex_blocks and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_cortex_blocks and not self.features.neuro_cortex:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO_CORTEX=true"
+            )
+        if self.features.neuro_contrastive_training and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_soak_long and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_SOAK_LONG requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_training_real_worker and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_NEURO_TRAINING_REAL_WORKER requires LEVIATHAN_FEATURE_NEURO=true"
             )
         if self.features.module_manager_subprocess and not self.features.module_manager_enabled:
             raise ConfigurationError(
@@ -667,6 +748,10 @@ class Settings:
             "llama_cpp",
             "llamacpp",
             "llama.cpp",
+            "trt",
+            "tensorrt",
+            "tensorrt_llm",
+            "trt_llm",
         }:
             raise ConfigurationError(
                 f"LEVIATHAN_NEURO_RESIDUAL_KIND invalid: {kind!r}"

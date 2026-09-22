@@ -256,10 +256,22 @@ export const api = {
     });
   },
 
-  neuroSoak(iterations = 3): Promise<{ report: SoakReport }> {
+  neuroSoak(iterations = 3, mode: "mini" | "long" = "mini"): Promise<{ report: SoakReport }> {
     return request<{ report: SoakReport }>("/api/neuro/soak", {
       method: "POST",
-      body: JSON.stringify({ iterations }),
+      body: JSON.stringify({ iterations, mode }),
+    });
+  },
+
+  neuroResidualOrchestrate(payload: {
+    text: string;
+    complexity?: string;
+    run_forward?: boolean;
+    mode?: string;
+  }): Promise<{ report: unknown }> {
+    return request<{ report: unknown }>("/api/neuro/residual/orchestrate", {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   },
 

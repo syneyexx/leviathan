@@ -114,7 +114,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/workflows/` | WorkflowStore / WorkflowRuntime |
 | `Data/modules/schedules/` | ScheduleStore / ScheduleRunner |
 | `Data/modules/observability/` | ObservabilityHub |
-| `Data/modules/neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers/adapters/snapshots |
+| `Data/modules/neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers/adapters/orchestrator/snapshots |
 | `Data/modules/module_manager/` | Universal Module Manager (`ILeviathanModule` + optional subprocess) |
 | `Data/modules/plugins/` | PluginRegistry / declarative Tool bindings (not a second loader) |
 | `Data/modules/mcp/` | **Universal MCP Bridge** — one bridge, many sessions; Tools provider |

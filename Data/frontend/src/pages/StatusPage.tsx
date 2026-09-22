@@ -68,9 +68,9 @@ export function StatusPage() {
     };
   }, []);
 
-  async function runSoak() {
+  async function runSoak(mode: "mini" | "long" = "mini") {
     try {
-      const result = await api.neuroSoak(3);
+      const result = await api.neuroSoak(mode === "long" ? 12 : 3, mode);
       setState((prev) => ({ ...prev, soak: result.report, error: null }));
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Neuro soak failed";
@@ -203,9 +203,26 @@ export function StatusPage() {
                 </strong>
               </div>
               <div className="lv-world-stat">
-                <span>Cortex / tiers</span>
+                <span>Load weights</span>
+                <strong>{neuro?.residual_load_weights || state.residual?.load_weights ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Orchestrator</span>
+                <strong>{neuro?.residual_orchestrator ? "ON" : "OFF"}</strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>Cortex K / blocks</span>
                 <strong>
-                  {neuro?.cortex ? "cortex" : "—"}/{neuro?.memory_tiers ? "tiers" : "—"}
+                  {neuro?.cortex_max_k ?? state.residual?.cortex_max_k ?? "—"}/
+                  {neuro?.cortex_blocks ? "named" : neuro?.cortex ? "on" : "—"}
+                </strong>
+              </div>
+              <div className="lv-world-stat">
+                <span>WM load</span>
+                <strong>
+                  {typeof neuro?.working_memory_load === "number"
+                    ? `${Math.round(neuro.working_memory_load * 100)}%`
+                    : "—"}
                 </strong>
               </div>
               <div className="lv-world-stat">
@@ -217,16 +234,29 @@ export function StatusPage() {
                 <strong>{state.recipes.length || health?.training_recipes?.registered || 0}</strong>
               </div>
             </div>
-            <p className="lv-muted">
-              Neural signal ≠ authority. Residual unsupported is not success.
-            </p>
-            <button type="button" className="lv-button-primary" onClick={() => void runSoak()}>
-              Run mini soak
-            </button>
+            {neuro?.truth ? (
+              <p className="lv-muted">
+                Honesty: residual_implemented=
+                {String(neuro.truth.residual_implemented ?? false)}; neural≠authority=
+                {String(neuro.truth.neural_signal_is_not_authority ?? true)}
+              </p>
+            ) : (
+              <p className="lv-muted">Neural signal ≠ authority. Residual unsupported is not success.</p>
+            )}
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button type="button" className="lv-button-primary" onClick={() => void runSoak("mini")}>
+                Run mini soak
+              </button>
+              {neuro?.soak_long ? (
+                <button type="button" className="lv-button-primary" onClick={() => void runSoak("long")}>
+                  Run long soak
+                </button>
+              ) : null}
+            </div>
             {state.soak ? (
               <p className="lv-muted">
-                Soak {state.soak.passed}/{state.soak.passed + state.soak.failed} steps ok ·{" "}
-                {Math.round(state.soak.duration_ms)}ms (not a production SLO)
+                Soak ({state.soak.mode ?? "mini"}) {state.soak.passed}/{state.soak.passed + state.soak.failed}{" "}
+                steps ok · {Math.round(state.soak.duration_ms)}ms (not a production SLO)
               </p>
             ) : null}
           </article>
