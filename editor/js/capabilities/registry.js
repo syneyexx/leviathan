@@ -74,8 +74,14 @@ export function seedStudioCapabilities() {
     ["token-theme-studio", Status.IMPLEMENTED, "Aliases + impact"],
     ["recipes", Status.IMPLEMENTED, "Declarative patch recipes"],
     ["handoff-package", Status.IMPLEMENTED, "Change package export/import"],
-    ["precision-hud", Status.IMPLEMENTED, "Contextual selection HUD"],
-    ["workspace-recovery", Status.IMPLEMENTED, "Local recovery draft"],
+    ["precision-hud", Status.IMPLEMENTED, "Selection HUD + live W×H delta labels"],
+    ["workspace-recovery", Status.IMPLEMENTED, "Recovery draft + free-transform mid-gesture"],
+    ["multi-select-resize", Status.IMPLEMENTED, "Group scale / independent resize math"],
+    ["keyboard-resize", Status.IMPLEMENTED, "Alt+arrows through resizeRect"],
+    ["image-replace", Status.IMPLEMENTED, "Replace + smart fit; no auto orphan delete"],
+    ["zoom-handles", Status.IMPLEMENTED, "≥10px screen handles at 25%–400%"],
+    ["equal-spacing-snap", Status.IMPLEMENTED, "3+ sibling equal spacing + density"],
+    ["media-library-meta", Status.IMPLEMENTED, "Dims/bytes/mtime/used badge"],
   ];
   for (const [id, status, evidence] of rows) {
     registerCapability(id, { status, evidence, blocker: status === Status.UNAVAILABLE ? evidence : null });

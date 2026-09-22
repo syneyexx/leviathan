@@ -7,7 +7,7 @@
  * coordinates (no visual jump) before any left/top/width/height writes.
  */
 
-import { alignItems, distributeItems, layoutBoxFromScreen, roundLayoutBox } from "./geometry.js";
+import { alignItems, distributeItems, layoutBoxFromScreen, resizeGroupMembers, resizeRect, roundLayoutBox } from "./geometry.js";
 
 export function createLayout(ctx) {
   /** @deprecated use ensureFreeTransform — kept for any stray callers */
@@ -292,6 +292,114 @@ export function createLayout(ctx) {
     ctx.chrome?.schedulePaint?.();
   }
 
+  /** Parse min/max size constraints from document entry + computed style. */
+  function readConstraints(el) {
+    const entry = ctx.content?.getEntry?.(ctx.selection.selectorFor(el));
+    const styles = entry?.styles || {};
+    const cs = typeof getComputedStyle === "function" ? getComputedStyle(el) : null;
+    const px = (raw, fallback) => {
+      if (raw == null || raw === "" || raw === "none" || raw === "auto") return fallback;
+      const n = parseFloat(raw);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    return {
+      minW: Math.max(1, px(styles["min-width"] || el.style.minWidth, px(cs?.minWidth, 16))),
+      minH: Math.max(1, px(styles["min-height"] || el.style.minHeight, px(cs?.minHeight, 16))),
+      maxW: (() => {
+        const v = px(styles["max-width"] || el.style.maxWidth, px(cs?.maxWidth, null));
+        return v != null && v < 1e6 ? v : null;
+      })(),
+      maxH: (() => {
+        const v = px(styles["max-height"] || el.style.maxHeight, px(cs?.maxHeight, null));
+        return v != null && v < 1e6 ? v : null;
+      })(),
+    };
+  }
+
+  /**
+   * Keyboard resize through the same resizeRect path (Alt+arrows).
+   * Arrow maps to SE growth/shrink; Ctrl/Cmd = fromCenter; Shift = 10px.
+   */
+  function resizeByKeyboard(dir, step, { fromCenter = false, aspect = null } = {}) {
+    const els = ctx.selection.mutable("edit");
+    if (!els.length) return;
+    const mode = ctx.session.groupResizeMode === "independent" ? "independent" : "scale";
+    ctx.commands.capture("formaat-toets", () => {
+      const primary = ctx.session.primary && els.includes(ctx.session.primary) ? ctx.session.primary : els[0];
+      const members = [];
+      for (const el of els) {
+        const box = ensureFreeTransform(el);
+        if (!box) continue;
+        members.push({ el, ...box });
+      }
+      if (!members.length) return;
+      const primaryIndex = Math.max(0, members.findIndex((m) => m.el === primary));
+      const hasE = dir.includes("e");
+      const hasW = dir.includes("w");
+      const hasN = dir.includes("n");
+      const hasS = dir.includes("s");
+      const dx = hasE ? step : hasW ? -step : 0;
+      const dy = hasS ? step : hasN ? -step : 0;
+      const lockAspect = aspect != null || !!ctx.session.aspectLock;
+      const ratio = lockAspect
+        ? aspect || ctx.session.aspect || members[primaryIndex].width / members[primaryIndex].height
+        : null;
+      const constraints = readConstraints(members[primaryIndex].el);
+      if (mode === "independent" || members.length === 1) {
+        const m = members[primaryIndex];
+        const next = resizeRect({
+          start: m,
+          dir,
+          dx,
+          dy,
+          minW: constraints.minW,
+          minH: constraints.minH,
+          maxW: constraints.maxW,
+          maxH: constraints.maxH,
+          aspect: ratio,
+          fromCenter,
+        });
+        applyResizeBox(m.el, m, next, dir);
+        // Image-aware: width-only unlocked keeps height unless aspect changed it.
+        if (!(hasE || hasW) || hasN || hasS || ratio) {
+          /* height already written by applyResizeBox */
+        } else if (m.el.tagName === "IMG" && !ratio && next.height === m.height) {
+          /* leave height style as-is for height:auto semantics after promote */
+        }
+        commitBox(m.el);
+      } else {
+        const starts = members.map(({ left, top, width, height }) => ({ left, top, width, height }));
+        const nexts = resizeGroupMembers({
+          members: starts,
+          primaryIndex,
+          dir,
+          dx,
+          dy,
+          mode: "scale",
+          aspect: ratio,
+          fromCenter,
+          minW: constraints.minW,
+          minH: constraints.minH,
+          maxW: constraints.maxW,
+          maxH: constraints.maxH,
+        });
+        members.forEach((m, i) => {
+          writeLiveBox(m.el, roundLayoutBox(nexts[i]));
+          commitBox(m.el);
+        });
+      }
+    });
+    ctx.chrome?.schedulePaint?.();
+  }
+
+  /** Batch style writes during multi-drag preview (single paint). */
+  function writeLiveBoxes(entries) {
+    for (const { el, box } of entries || []) {
+      if (!el || !box) continue;
+      writeLiveBox(el, box);
+    }
+  }
+
   /** Change position mode without jumping the visual box. */
   function setPositionMode(el, mode) {
     if (!(el instanceof Element) || ctx.selection?.isShell?.(el)) return;
@@ -351,6 +459,7 @@ export function createLayout(ctx) {
     captureLayoutBox,
     readWrittenBox,
     writeLiveBox,
+    writeLiveBoxes,
     applyResizeBox,
     applyBox,
     moveBy,
@@ -358,6 +467,8 @@ export function createLayout(ctx) {
     align,
     distribute,
     nudge,
+    resizeByKeyboard,
+    readConstraints,
     setPositionMode,
     layoutBoxFromScreen: (rect) => layoutBoxFromScreen(rect, zoom()),
   };

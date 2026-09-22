@@ -285,6 +285,18 @@ export function createInspector(ctx) {
       ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
       ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
     }
+    if (act === "group-scale") {
+      ctx.session.groupResizeMode = "scale";
+      bumpRender(ctx);
+    }
+    if (act === "group-independent") {
+      ctx.session.groupResizeMode = "independent";
+      bumpRender(ctx);
+    }
+    if (act === "image-fit") ctx.widgets.applyImageFit?.(node, "fit");
+    if (act === "image-fill") ctx.widgets.applyImageFit?.(node, "fill");
+    if (act === "image-stretch") ctx.widgets.applyImageFit?.(node, "stretch");
+    if (act === "image-original") ctx.widgets.applyImageFit?.(node, "original");
     if (act === "shadow-add") {
       ctx.commands.capture("schaduw", () => {
         const current = parseShadowList(ctx.content.readProp(node, "box-shadow").value);
@@ -435,7 +447,7 @@ function renderInspector(ctx) {
   if (node.tagName === "IMG") {
     const fit = ctx.content.readProp(node, "object-fit").value || "cover";
     const objPos = ctx.content.readProp(node, "object-position");
-    html += `<div class="lvb-section">Image</div>
+    html += collapsible("Content", `<div class="lvb-section">Image</div>
       <label class="lvb-field"><span>Bron</span><input data-live="1" data-role="img-src" value="${escapeHtml(node.getAttribute("src") || "")}" /></label>
       <label class="lvb-field"><span>Alt</span><input data-live="1" data-role="img-alt" value="${escapeHtml(node.getAttribute("alt") || "")}" /></label>
       <label class="lvb-field"><span>Object-fit</span>
@@ -445,34 +457,40 @@ function renderInspector(ctx) {
       </label>
       <label class="lvb-field"><span>Object-position</span><input data-live="1" data-prop="object-position" value="${escapeHtml(objPos.value)}" placeholder="50% 50%" /></label>
       <div class="lvb-chip-row">
-        <button type="button" class="lvb-chip" data-act="pick-image">Kies image…</button>
+        <button type="button" class="lvb-chip" data-act="pick-image">Vervang image…</button>
         <button type="button" class="lvb-chip" data-act="upload-replace">Upload…</button>
+        <button type="button" class="lvb-chip" data-act="image-fit">Fit</button>
+        <button type="button" class="lvb-chip" data-act="image-fill">Fill</button>
+        <button type="button" class="lvb-chip" data-act="image-stretch">Stretch</button>
+        <button type="button" class="lvb-chip" data-act="image-original">Original</button>
         <button type="button" class="lvb-chip" data-act="flip-h">Flip H</button>
         <button type="button" class="lvb-chip" data-act="flip-v">Flip V</button>
-      </div>`;
+      </div>`);
+  } else if (ctx.widgets?.hasBackgroundImage?.(node)) {
+    html += collapsible("Content", `<div class="lvb-section">Background image</div>
+      <div class="lvb-chip-row">
+        <button type="button" class="lvb-chip" data-act="pick-image">Vervang image…</button>
+        <button type="button" class="lvb-chip" data-act="upload-replace">Upload…</button>
+      </div>`);
   } else {
     const text = node.childElementCount === 0 || [...node.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()) ? node.textContent || "" : "";
-    html += `<div class="lvb-section">Tekst</div>
+    html += collapsible("Content", `<div class="lvb-section">Tekst</div>
       <label class="lvb-field"><span>Inhoud</span><textarea data-live="1" data-role="text" rows="3">${escapeHtml(text)}</textarea></label>
-      <button type="button" class="lvb-btn" data-act="inline">Inline bewerken</button>`;
+      <button type="button" class="lvb-btn" data-act="inline">Inline bewerken</button>`);
   }
   const region = ctx.selection.regionFor(node);
   if (region?.varKey) {
     const px = ctx.content.regionPx(region);
-    html += `<div class="lvb-section">Shell maat</div>
+    html += collapsible("Size", `<div class="lvb-section">Shell maat</div>
       <label class="lvb-field"><span>${escapeHtml(region.label)} (${px}px)</span>
         <input data-live="1" data-role="region" type="range" min="${region.min}" max="${region.max}" value="${px}" />
-      </label>`;
+      </label>`);
   }
-  html += sectionSpacing(ctx, node);
-  html += sectionSize(ctx, node);
-  html += sectionType(ctx, node);
-  html += sectionColor(ctx, node, "color", "Tekstkleur");
-  html += sectionColor(ctx, node, "background-color", "Achtergrond");
-  html += sectionBorder(ctx, node);
-  html += sectionShadow(ctx, node);
-  html += sectionLayout(ctx, node);
-  html += sectionPosition(ctx, node);
+  html += collapsible("Layout", sectionSpacing(ctx, node) + sectionLayout(ctx, node));
+  html += collapsible("Size", sectionSize(ctx, node));
+  html += collapsible("Transform", sectionPosition(ctx, node));
+  html += collapsible("Appearance", sectionType(ctx, node) + sectionColor(ctx, node, "color", "Tekstkleur") + sectionColor(ctx, node, "background-color", "Achtergrond") + sectionBorder(ctx, node) + sectionShadow(ctx, node));
+  html += collapsible("Constraints", sectionConstraints(ctx, node));
   html += sectionAlign(ctx);
   html += `<details class="lvb-fold"><summary>Geavanceerd CSS</summary>
       <textarea data-live="1" data-prop="__raw" data-role="raw" rows="8">${escapeHtml(ctx.content.rawDecls(node))}</textarea>
@@ -504,6 +522,27 @@ function renderInspector(ctx) {
 function bumpRender(ctx) {
   ctx.session.uiEpoch = (ctx.session.uiEpoch || 0) + 1;
   ctx.store.setState({ uiEpoch: ctx.session.uiEpoch });
+}
+
+function collapsible(title, body, open = true) {
+  return `<details class="lvb-fold lvb-inspector-section" ${open ? "open" : ""}>
+    <summary>${title}</summary>
+    <div class="lvb-fold-body">${body}</div>
+  </details>`;
+}
+
+function sectionConstraints(ctx, node) {
+  const mix = (prop) => ctx.content.readProp(node, prop);
+  return `<div class="lvb-section">Constraints</div>
+    <div class="lvb-row">
+      ${numField("Min W", "min-width", mix("min-width"), true)}
+      ${numField("Max W", "max-width", mix("max-width"), true)}
+    </div>
+    <div class="lvb-row">
+      ${numField("Min H", "min-height", mix("min-height"), true)}
+      ${numField("Max H", "max-height", mix("max-height"), true)}
+    </div>
+    <p class="lvb-muted">Resize soft-snaps to these limits with a limit flash on the dimension HUD.</p>`;
 }
 
 function sectionSpacing(ctx, node) {
@@ -556,6 +595,7 @@ function sectionSize(ctx, node) {
     return first;
   };
   const lockLabel = ctx.session.aspectLock ? "Ratio vast" : "Ratio vrij (ontgrendeld)";
+  const groupMode = ctx.session.groupResizeMode === "independent" ? "independent" : "scale";
   return `<div class="lvb-section">Formaat</div>
     <div class="lvb-row">
       ${numField("W", "width", mix("width"), true)}
@@ -563,6 +603,10 @@ function sectionSize(ctx, node) {
     </div>
     <button type="button" class="lvb-btn ${ctx.session.aspectLock ? "is-on" : ""}" data-act="aspect">${lockLabel}</button>
     <p class="lvb-muted">Shift tijdens resize = tijdelijk ratio. Inspectorknop = vast.</p>
+    <div class="lvb-seg">
+      <button type="button" class="lvb-mini ${groupMode === "scale" ? "is-on" : ""}" data-act="group-scale">Scale group</button>
+      <button type="button" class="lvb-mini ${groupMode === "independent" ? "is-on" : ""}" data-act="group-independent">Resize independently</button>
+    </div>
     <div class="lvb-row">
       ${numField("Min W", "min-width", mix("min-width"), true)}
       ${numField("Max W", "max-width", mix("max-width"), true)}

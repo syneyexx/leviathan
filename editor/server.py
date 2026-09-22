@@ -450,6 +450,8 @@ class Handler(BaseHTTPRequestHandler):
                             "name": file_path.name,
                             "url": f"{url_prefix}/{file_path.name}",
                             "bytes": file_path.stat().st_size,
+                            "mtime": int(file_path.stat().st_mtime),
+                            "ext": file_path.suffix.lower().lstrip("."),
                         }
                     )
             self._json(200, {"assets": assets, "count": len(assets)})
