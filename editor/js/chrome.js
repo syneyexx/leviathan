@@ -685,7 +685,7 @@ export function createChrome(ctx, panels) {
             const name = prompt("Checkpoint naam");
             if (name) ctx.studio?.createCheckpoint?.(name);
           }},
-          { id: "stress", label: "Responsive Stress Lab", run: () => ctx.studio?.runStressLab?.().then((r) => ctx.content.setStatus(`${r.findings?.length || 0} stress findings`, "ok")) },
+          { id: "stress", label: "Container probe (geen viewport MQ)", run: () => ctx.studio?.runStressLab?.().then((r) => ctx.content.setStatus(`${r.findings?.length || 0} container-probe findings · gen ${r.generation ?? "—"}`, "ok")) },
           { id: "branch", label: "Nieuwe design branch", run: () => {
             const br = ctx.studio?.createBranch?.();
             ctx.content.setStatus(br ? `Branch ${br.name}` : "Branch mislukt", "ok");

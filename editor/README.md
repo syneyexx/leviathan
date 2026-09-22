@@ -19,8 +19,12 @@ Use normal start (`run_leviathan.bat` / installer / build). No editor chrome. Ca
 # API smoke (no Vite, temp content)
 python3 editor/test/test_api.py
 
-# Unit / regression
-node --test editor/test/core.test.mjs editor/test/resize.test.mjs editor/test/studio.test.mjs
+# Unit / regression (full suite)
+node --test editor/test/*.mjs
+
+# API smoke + concurrency / journal recovery
+python3 editor/test/test_api.py
+python3 editor/test/test_concurrency.py
 
 # Full studio (Windows)
 editor\EDIT_LAYOUT.bat
@@ -39,7 +43,8 @@ Visual checklist: workspace overview, selection+inspector, layers/components, De
 - **Image replace**: context menu / inspector / double-click image / drop file on selected IMG. After replace, Fit · Fill · Stretch · Original. Old assets are never auto-deleted; use Studio → Orphan cleanup.
 - **Smart guides**: status bar *Guides* cycles Off / Sparse / Dense; equal-spacing for 3+ siblings.
 - **Measurement pin**: completed measure stays pinned until Escape (idle) or *Clear last measurement pin*.
-- **Recovery**: `lvb.recovery.v1` also stores in-progress free-transform boxes mid-resize.
+- **Recovery**: `lvb.recovery.v1` also stores in-progress free-transform boxes mid-resize. Uncommitted gesture previews are not autosaved; cancel restores DOM + model.
+- **Save**: dirty state tracks acknowledged local generation vs live buffer. Conflicts pause the save drain until explicit retry. Server concurrency token is always the acknowledged server hash (not the local FNV helper).
 
 ## Architecture
 
@@ -48,9 +53,11 @@ See `docs/ARCHITECTURE.md`, `docs/STUDIO_PLAN.md`, `docs/CAPABILITY_MATRIX.md`.
 | Module | Role |
 | --- | --- |
 | `js/identity.js` | Stable node/shell keys, v2→v3 migration |
-| `js/patches.js` | Scoped history patches |
-| `js/save.js` | Save coordinator + revision queue |
+| `js/patches.js` | Identity-scoped history patches (entries + node/component ops) |
+| `js/save.js` | Save coordinator: generations, ack bases, coalesced waiters |
+| `js/gesture-draft.js` | Pre-mutation DOM chrome capture for cancel/failed promote |
 | `js/studio/viewport.js` | Design vs Preview iframe |
+| `docs/FRONTIER_EXECUTION.md` | Live execution ledger for frontier upgrades |
 | `js/capabilities/*` | Issues + capability registry |
 | `js/studio/features.js` | Stress lab, branches, recipes, recovery, … |
 | `server.py` | Session auth, transactional save, no global text replace |

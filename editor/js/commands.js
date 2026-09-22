@@ -5,6 +5,7 @@
 
 import { HISTORY_MAX } from "./constants.js";
 import { patchIsEmpty } from "./patches.js";
+import { createGestureDraft } from "./gesture-draft.js";
 
 export function createCommands(ctx) {
   let history = [];
@@ -13,6 +14,7 @@ export function createCommands(ctx) {
   let gesture = null;
   /** @type {Array<object>} */
   const timeline = [];
+  const gestureDraft = createGestureDraft();
 
   function emit() {
     ctx.store.setState({
@@ -20,6 +22,7 @@ export function createCommands(ctx) {
       canRedo: index < history.length - 1,
       historyLabel: index >= 0 ? history[index].label : "",
       historyDepth: history.length,
+      gestureActive: gestureDraft.isActive(),
     });
   }
 
@@ -94,17 +97,24 @@ export function createCommands(ctx) {
 
   function beginGesture(label = "bewerken") {
     if (gesture || suppress || !ctx.content) return;
-    gesture = { label, before: ctx.content.snapshot() };
+    const before = ctx.content.snapshot();
+    gesture = { label, before };
+    gestureDraft.begin(label, before);
+    emit();
   }
 
   function endGesture() {
     if (!gesture || suppress || !ctx.content) {
       gesture = null;
+      gestureDraft.discardWithoutRestore();
+      emit();
       return;
     }
     const { label, before } = gesture;
     gesture = null;
     const after = ctx.content.snapshot();
+    gestureDraft.commit();
+    emit();
     if (ctx.content.sameSnap(before, after)) return;
     const patch = ctx.content.patchBetween(before, after);
     if (patchIsEmpty(patch)) return;
@@ -118,17 +128,32 @@ export function createCommands(ctx) {
   }
 
   function cancelGesture() {
-    if (!gesture || !ctx.content) {
+    if (!gesture && !gestureDraft.isActive()) {
       gesture = null;
       return false;
     }
-    const { before } = gesture;
+    // Restore DOM chrome first, then model
+    const draftResult = gestureDraft.cancel();
+    const before = draftResult.modelBefore || gesture?.before;
     gesture = null;
-    // Restore only what this gesture changed so far
-    const after = ctx.content.snapshot();
-    const patch = ctx.content.patchBetween(before, after);
-    if (!patchIsEmpty(patch)) ctx.content.restorePatch(patch, "back");
-    ctx.content.setStatus("Gesture geannuleerd", "ok");
+    emit();
+    if (before && ctx.content) {
+      const after = ctx.content.snapshot();
+      const patch = ctx.content.patchBetween(before, after);
+      if (!patchIsEmpty(patch)) ctx.content.restorePatch(patch, "back");
+    }
+    // Release any pointer capture held by the interaction surface
+    try {
+      const caps = document.querySelectorAll("[data-lvb-handle], #lvb-root");
+      caps.forEach((node) => {
+        if (typeof node.releasePointerCapture === "function" && node.hasPointerCapture) {
+          /* best-effort; pointer id unknown */
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+    ctx.content?.setStatus?.("Gesture geannuleerd", "ok");
     return true;
   }
 
@@ -156,6 +181,7 @@ export function createCommands(ctx) {
     history = [];
     index = -1;
     gesture = null;
+    gestureDraft.discardWithoutRestore();
     emit();
   }
 
@@ -204,8 +230,9 @@ export function createCommands(ctx) {
     importStack,
     namedCheckpoint,
     getTimeline,
-    isGesturing: () => !!gesture,
+    isGesturing: () => !!gesture || gestureDraft.isActive(),
     isSuppressed: () => suppress > 0,
-    _debug: () => ({ length: history.length, index }),
+    gestureDraft,
+    _debug: () => ({ length: history.length, index, draft: gestureDraft.touchedCount() }),
   };
 }

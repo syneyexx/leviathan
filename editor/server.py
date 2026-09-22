@@ -69,11 +69,19 @@ vite_proc: subprocess.Popen | None = None
 SESSION_TOKEN = secrets.token_urlsafe(32)
 WRITE_LOCK = threading.RLock()
 _doc_meta: dict = {"revision": 0, "hash": ""}
+SCHEMA_VERSION = 3
+# Threading lock is not inter-process. One API process per project directory.
+PROCESS_LOCK_FILE = ROOT / ".studio-process.lock"
+_process_lock_fd: int | None = None
+
+# Durability note (honest): journal + per-file os.replace is NOT a single
+# filesystem transaction. Crash between file writes can leave a journal that
+# startup recovery rolls back to the pre-txn snapshot.
 
 
 def default_content() -> dict:
     return {
-        "version": 3,
+        "version": SCHEMA_VERSION,
         "revision": 0,
         "entries": {},
         "nodes": [],
@@ -147,9 +155,26 @@ def read_content() -> dict:
     return normalize_content(data)
 
 
-def normalize_content(data: dict) -> dict:
+def normalize_content(data: dict, *, allow_migrate: bool = True) -> dict:
+    """Validate and normalize a content document.
+
+    Future schema versions are rejected — never silently coerced to v3.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("content root must be an object")
     data = dict(data)
-    data.setdefault("version", 3)
+    version = data.get("version", SCHEMA_VERSION)
+    try:
+        version_i = int(version)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("schema version must be an integer") from exc
+    if version_i > SCHEMA_VERSION:
+        raise ValueError(f"Unsupported schema version {version_i} (max {SCHEMA_VERSION})")
+    if version_i < 1:
+        raise ValueError("schema version out of range")
+    if version_i < SCHEMA_VERSION and not allow_migrate:
+        raise ValueError(f"Schema version {version_i} requires explicit migration")
+    data["version"] = SCHEMA_VERSION if allow_migrate and version_i <= SCHEMA_VERSION else version_i
     data.setdefault("entries", {})
     data.setdefault("nodes", [])
     data.setdefault("components", [])
@@ -162,7 +187,60 @@ def normalize_content(data: dict) -> dict:
         raise ValueError("nodes must be a list")
     if not isinstance(data["components"], list):
         raise ValueError("components must be a list")
+    if not isinstance(data["meta"], dict):
+        raise ValueError("meta must be an object")
     return data
+
+
+def read_persisted_files() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for name, path in ALLOWED_FILES.items():
+        out[name] = path.read_text(encoding="utf-8") if path.is_file() else ""
+    return out
+
+
+def canonical_persisted_hash(content: dict | None = None, files: dict[str, str] | None = None) -> str:
+    """Server-owned concurrency hash over the complete persisted state.
+
+    Clients must never substitute a non-equivalent algorithm (e.g. browser FNV
+    helpers) for this token.
+    """
+    doc = content if content is not None else (read_content() if CONTENT_FILE.is_file() else default_content())
+    file_map = files if files is not None else read_persisted_files()
+    return content_hash(doc, file_map)
+
+
+def validate_revision_precondition(base_rev, base_hash, meta: dict) -> tuple[bool, dict]:
+    """Return (ok, conflict_payload). Call only while holding WRITE_LOCK."""
+    try:
+        if base_rev is not None:
+            base_rev_i = int(base_rev)
+            if base_rev_i < 0:
+                return False, {"error": "baseRevision out of range", "revision": meta["revision"], "hash": meta["hash"]}
+            if base_rev_i != int(meta["revision"]):
+                return False, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]}
+    except (TypeError, ValueError):
+        return False, {"error": "baseRevision must be an integer", "revision": meta["revision"], "hash": meta["hash"]}
+
+    # Detect external disk drift vs sidecar meta before trusting the token
+    try:
+        disk_hash = canonical_persisted_hash()
+    except ValueError:
+        disk_hash = ""
+    if meta.get("hash") and disk_hash and meta["hash"] != disk_hash:
+        return False, {
+            "error": "conflict",
+            "reason": "external-disk-change",
+            "revision": meta["revision"],
+            "hash": disk_hash,
+        }
+
+    if base_hash not in (None, ""):
+        if meta.get("hash") and str(base_hash) != str(meta["hash"]):
+            return False, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]}
+        if disk_hash and str(base_hash) != str(disk_hash):
+            return False, {"error": "conflict", "revision": meta["revision"], "hash": disk_hash}
+    return True, {}
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -218,21 +296,33 @@ def validate_image_bytes(ext: str, raw: bytes) -> bytes:
     return raw
 
 
-def journal_begin(txn_id: str, files: dict[str, str], content: dict | None) -> Path:
+def journal_begin(
+    txn_id: str,
+    files: dict[str, str],
+    content: dict | None,
+    *,
+    meta_before: dict | None = None,
+) -> Path:
     JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
     entry = {
         "id": txn_id,
         "started": time.time(),
         "files": {},
         "content": None,
+        "contentExisted": CONTENT_FILE.is_file(),
+        "meta": {"previous": dict(meta_before or load_meta())},
     }
     for name, text in files.items():
         path = ALLOWED_FILES[name]
-        prev = path.read_text(encoding="utf-8") if path.is_file() else ""
-        entry["files"][name] = {"previous": prev, "next": text}
+        existed = path.is_file()
+        prev = path.read_text(encoding="utf-8") if existed else None
+        entry["files"][name] = {"previous": prev, "existed": existed, "next": text}
     if content is not None:
-        prev_c = read_content() if CONTENT_FILE.is_file() else default_content()
-        entry["content"] = {"previous": prev_c, "next": content}
+        if CONTENT_FILE.is_file():
+            prev_c = read_content()
+            entry["content"] = {"previous": prev_c, "existed": True, "next": content}
+        else:
+            entry["content"] = {"previous": None, "existed": False, "next": content}
     path = JOURNAL_DIR / f"{txn_id}.json"
     atomic_write_text(path, json.dumps(entry, ensure_ascii=False))
     return path
@@ -255,10 +345,59 @@ def journal_rollback(txn_id: str) -> None:
     for name, pair in (entry.get("files") or {}).items():
         if name not in ALLOWED_FILES:
             continue
-        atomic_write_text(ALLOWED_FILES[name], pair.get("previous") or "")
-    if entry.get("content"):
-        write_content(entry["content"]["previous"])
+        target = ALLOWED_FILES[name]
+        if pair.get("existed") is False or pair.get("previous") is None:
+            # Absent prior file must not be restored as an invented empty file
+            if target.is_file():
+                target.unlink()
+        else:
+            atomic_write_text(target, pair.get("previous") or "")
+    content_pair = entry.get("content")
+    if content_pair:
+        if content_pair.get("existed") is False or content_pair.get("previous") is None:
+            if CONTENT_FILE.is_file():
+                CONTENT_FILE.unlink()
+        else:
+            write_content(content_pair["previous"])
+    meta_prev = (entry.get("meta") or {}).get("previous")
+    if isinstance(meta_prev, dict):
+        save_meta(meta_prev)
     path.unlink(missing_ok=True)
+
+
+def recover_pending_journals() -> list[str]:
+    """Deterministic startup policy: roll back any incomplete journal before accepting writes."""
+    JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+    recovered: list[str] = []
+    for path in sorted(JOURNAL_DIR.glob("*.json")):
+        txn_id = path.stem
+        journal_rollback(txn_id)
+        recovered.append(txn_id)
+    return recovered
+
+
+def acquire_process_lock() -> None:
+    """Best-effort single-process guard for one project directory (not a substitute for FS transactions)."""
+    global _process_lock_fd
+    PROCESS_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(PROCESS_LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        if os.name == "nt":
+            # Windows: advisory via exclusive create of a sidecar lock body
+            pass
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        _process_lock_fd = fd
+    except OSError as exc:
+        os.close(fd)
+        raise SystemExit(
+            "[studio] Another editor API process already holds this project. "
+            "Two processes against one project are unsupported."
+        ) from exc
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -419,13 +558,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(exc), "hint": "Herstel vanaf .studio-checkpoints/last-good.json"})
                 return
             meta = load_meta()
+            try:
+                h = meta["hash"] or canonical_persisted_hash(data)
+            except ValueError:
+                h = meta["hash"] or ""
             self._json(
                 200,
                 {
                     "content": data,
                     "path": str(CONTENT_FILE),
                     "revision": meta["revision"],
-                    "hash": meta["hash"] or content_hash(data),
+                    "hash": h,
                 },
             )
             return
@@ -498,23 +641,59 @@ class Handler(BaseHTTPRequestHandler):
             if payload is None:
                 self._json(400, {"error": "Expected JSON body with content"})
                 return
-            content = payload.get("content")
-            if not isinstance(content, str):
+            content_text = payload.get("content")
+            if not isinstance(content_text, str):
                 self._json(400, {"error": "content must be a string"})
                 return
-            if len(content) > MAX_BODY:
+            if len(content_text) > MAX_BODY:
                 self._json(400, {"error": "File too large"})
                 return
+            # Same revision contract as /api/save — no silent bypass
+            base_rev = payload.get("baseRevision")
+            base_hash = payload.get("baseHash")
+            if base_rev is None or base_hash in (None, ""):
+                self._json(
+                    400,
+                    {
+                        "error": "baseRevision and baseHash required",
+                        "notes": "PUT /api/file follows the transactional revision contract; prefer POST /api/save for multi-file writes.",
+                    },
+                )
+                return
+
+            txn_id = uuid.uuid4().hex
             with WRITE_LOCK:
-                file_path = ALLOWED_FILES[name]
-                atomic_write_text(file_path, content)
+                meta = load_meta()
+                ok, conflict = validate_revision_precondition(base_rev, base_hash, meta)
+                if not ok:
+                    code = 409 if conflict.get("error") == "conflict" else 400
+                    self._json(code, conflict)
+                    return
+                try:
+                    journal_begin(txn_id, {name: content_text}, None, meta_before=meta)
+                    atomic_write_text(ALLOWED_FILES[name], content_text)
+                    new_rev = int(meta["revision"]) + 1
+                    files_now = read_persisted_files()
+                    files_now[name] = content_text
+                    doc = read_content() if CONTENT_FILE.is_file() else default_content()
+                    doc["revision"] = new_rev
+                    h = content_hash(doc, files_now)
+                    save_meta({"revision": new_rev, "hash": h})
+                    journal_commit(txn_id)
+                except Exception as exc:
+                    journal_rollback(txn_id)
+                    self._json(500, {"error": f"File write mislukt: {exc}"})
+                    return
+
             self._json(
                 200,
                 {
                     "ok": True,
                     "name": name,
-                    "bytes": len(content.encode("utf-8")),
-                    "path": str(file_path),
+                    "bytes": len(content_text.encode("utf-8")),
+                    "path": str(ALLOWED_FILES[name]),
+                    "revision": new_rev,
+                    "hash": h,
                 },
             )
             return
@@ -535,19 +714,32 @@ class Handler(BaseHTTPRequestHandler):
                 return
             base_rev = payload.get("baseRevision")
             base_hash = payload.get("baseHash")
-            meta = load_meta()
-            if base_rev is not None and int(base_rev) != int(meta["revision"]):
-                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
+            if base_rev is None:
+                self._json(400, {"error": "baseRevision required"})
                 return
-            if base_hash and meta["hash"] and base_hash != meta["hash"]:
-                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
-                return
+
+            txn_id = uuid.uuid4().hex
             with WRITE_LOCK:
-                new_rev = int(meta["revision"]) + 1
-                content["revision"] = new_rev
-                h = content_hash(content)
-                write_content(content)
-                save_meta({"revision": new_rev, "hash": h})
+                meta = load_meta()
+                ok, conflict = validate_revision_precondition(base_rev, base_hash, meta)
+                if not ok:
+                    code = 409 if conflict.get("error") == "conflict" else 400
+                    self._json(code, conflict)
+                    return
+                try:
+                    journal_begin(txn_id, {}, content, meta_before=meta)
+                    new_rev = int(meta["revision"]) + 1
+                    content["revision"] = new_rev
+                    files_now = read_persisted_files()
+                    h = content_hash(content, files_now)
+                    write_content(content)
+                    save_meta({"revision": new_rev, "hash": h})
+                    journal_commit(txn_id)
+                except Exception as exc:
+                    journal_rollback(txn_id)
+                    self._json(500, {"error": f"Content write mislukt: {exc}"})
+                    return
+
             self._json(
                 200,
                 {
@@ -648,30 +840,36 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(400, {"error": str(exc)})
                     return
 
-            meta = load_meta()
             base_rev = payload.get("baseRevision")
             base_hash = payload.get("baseHash")
-            if base_rev is not None and int(base_rev) != int(meta["revision"]):
-                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
-                return
-            if base_hash and meta["hash"] and str(base_hash) != str(meta["hash"]):
-                self._json(409, {"error": "conflict", "revision": meta["revision"], "hash": meta["hash"]})
+            if base_rev is None:
+                self._json(400, {"error": "baseRevision required"})
                 return
 
             txn_id = uuid.uuid4().hex
             with WRITE_LOCK:
+                meta = load_meta()
+                ok, conflict = validate_revision_precondition(base_rev, base_hash, meta)
+                if not ok:
+                    code = 409 if conflict.get("error") == "conflict" else 400
+                    self._json(code, conflict)
+                    return
                 try:
-                    journal_begin(txn_id, files, content)
+                    journal_begin(txn_id, files, content, meta_before=meta)
                     for name, text in files.items():
                         atomic_write_text(ALLOWED_FILES[name], text)
                     new_rev = int(meta["revision"]) + 1
-                    h = meta["hash"]
+                    files_now = read_persisted_files()
+                    for name, text in files.items():
+                        files_now[name] = text
                     if content is not None:
                         content["revision"] = new_rev
                         write_content(content)
-                        h = content_hash(content, files)
+                        h = content_hash(content, files_now)
                     else:
-                        h = content_hash(read_content(), files)
+                        doc = read_content() if CONTENT_FILE.is_file() else default_content()
+                        doc["revision"] = new_rev
+                        h = content_hash(doc, files_now)
                     save_meta({"revision": new_rev, "hash": h})
                     journal_commit(txn_id)
                 except Exception as exc:
@@ -822,10 +1020,23 @@ def main() -> None:
     UPLOADS.mkdir(parents=True, exist_ok=True)
     JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    acquire_process_lock()
+    recovered = recover_pending_journals()
+    if recovered:
+        print(f"[studio] Recovered incomplete journal(s): {', '.join(recovered)}", flush=True)
     load_meta()
     if not CONTENT_FILE.is_file():
         write_content(default_content())
-        save_meta({"revision": 0, "hash": content_hash(default_content())})
+        save_meta({"revision": 0, "hash": canonical_persisted_hash(default_content(), read_persisted_files())})
+    else:
+        # Refresh hash if sidecar drifted; never invent missing content
+        try:
+            disk_h = canonical_persisted_hash()
+            meta = load_meta()
+            if not meta.get("hash"):
+                save_meta({"revision": meta["revision"], "hash": disk_h})
+        except ValueError as exc:
+            print(f"[studio] Content unreadable: {exc}", flush=True)
 
     ensure_frontend_deps()
     vite_proc = start_vite()

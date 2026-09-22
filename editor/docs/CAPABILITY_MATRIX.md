@@ -1,36 +1,51 @@
 # Capability matrix — LEVIATHAN STUDIO
 
+Statuses: **verified** (deterministic tests or browser acceptance), **implemented but unverified** (code present, no browser evidence this run), **partial**, **unavailable**, **blocked**.
+
+Baseline for this ledger: `d66c044` + frontier work on `cursor/editor-frontier-daad`.
+
 | ID | Status | Evidence / blocker |
 | --- | --- | --- |
-| identity-v3 | implemented | `js/identity.js` + runtime query; unit tests |
-| scoped-history | verified | unit: cross-page undo; commands gesture test |
-| save-coordinator | verified | unit: dirty-during-save; API conflict 409 |
-| api-session | verified | `test_api.py` 401/403/409/410 |
-| text-no-global-replace | verified | API 410 |
+| identity-v3 | verified | `js/identity.js` + unit tests |
+| scoped-history-entries | verified | cross-page entry undo tests |
+| scoped-history-structural | verified | `test/patches.test.mjs` identity node/component ops |
+| save-coordinator | verified | `test/save.test.mjs` — queue base stamp, coalesce, gen≠rev, conflict pause, waiter timing |
+| api-session | verified | `test_api.py` 401/403/409/410/400 |
+| api-write-contract | verified | `test_concurrency.py` — same-base 200+409; PUT `/api/file` requires base; journal rollback |
+| journal-recovery | verified | pending journal rolled back before writes; absent prior file not invented |
+| text-no-global-replace | verified | API 410; client `replaceText` rejects; media path no longer calls it (#48 + frontier) |
 | clear-styles | verified | BEGIN/END util test |
-| studio-shell | verified | mission-control graphite + ice-blue chrome |
-| viewport-preview | implemented | Preview mode screenshot; iframe bridge |
-| gesture-cancel | implemented | Escape / pointercancel / blur / visibilitychange restore pre-gesture boxes |
-| ai-copilot | unavailable | 501 + UI screenshot (honest unavailable) |
-| stress-lab | implemented | `studio.runStressLab` + multi-page resize/image/undo preset |
-| constraints-intel | implemented | `explainLayout` |
-| design-problems | implemented | Problems: ambiguous, missing assets, constraints, visual-jump-risk |
-| history-timeline | implemented | History panel + named checkpoints |
-| visual-compare | implemented | `compareToCheckpoint` |
-| design-branches | implemented | create/merge with conflict list |
-| states-studio | implemented | CSS state preview classes |
-| content-scenarios | implemented | Fixture bridge (local dataset) |
-| token-theme-studio | implemented | Existing tokens panel + invalid-ref check |
-| recipes | implemented | Declarative recipes + dry-run/apply |
-| handoff-package | implemented | Export/import change package |
-| precision-hud | implemented | Selection HUD + live dimension labels + aspect lock |
-| workspace-recovery | implemented | Recovery draft + in-progress free-transform boxes |
-| multi-select-resize | implemented | `resizeGroupMembers` scale/independent; unit tests |
-| keyboard-resize | implemented | Alt+arrows via `layout.resizeByKeyboard` → `resizeRect` |
-| image-replace | implemented | Context/inspector/DnD replace + Fit/Fill/Stretch/Original |
-| zoom-handles | implemented | Handle hit ≥10px screen; west/north zoom cases tested |
-| equal-spacing-snap | implemented | `equalSpacingGuides` + snap density Off/Sparse/Dense |
-| media-library-meta | implemented | Dimensions, bytes, mtime, used-on-page badge, SVG/WebP |
+| studio-shell | implemented but unverified | graphite/ice-blue chrome — no browser screenshots this run |
+| viewport-preview | partial | Design↔Preview restores iframe.hidden; still boots editor-enabled route in iframe |
+| gesture-cancel | verified (unit) / implemented but unverified (browser) | `gesture-draft.js` + Escape/pointercancel/blur wiring; browser restore unverified |
+| ai-copilot | unavailable | 501 + honest UI; no provider contract |
+| stress-lab | partial | container-width probe — **not** viewport media-query runner |
+| constraints-intel | implemented but unverified | `explainLayout` |
+| design-problems | implemented but unverified | Problems panel |
+| history-timeline | partial | named checkpoints still occupy command stack with no-op undo |
+| visual-compare | partial | `compareToCheckpoint` is document diff, not rendered visual compare |
+| design-branches | partial | Map + snapshot checkout; structural merge conflicts incomplete |
+| states-studio | partial | outline/classes preview ≠ component hover/focus design proof |
+| content-scenarios | partial | fixtures exist; must not alter parent root font-size (still risk) |
+| token-theme-studio | partial | list/copy/apply; not full authoring/theme system |
+| recipes | implemented but unverified | dry-run/apply present |
+| handoff-package | implemented but unverified | export/import present |
+| precision-hud | implemented but unverified | selection HUD + dimensions |
+| workspace-recovery | partial | recovery draft; uncommitted gesture marked separately in draft export |
+| multi-select-resize | verified (unit) | `resize.test.mjs` |
+| keyboard-resize | verified (unit) | `layout.resizeByKeyboard` → `resizeRect` |
+| image-replace | partial | Fit/Fill/Stretch + target token on upload; browser path unverified |
+| zoom-handles | verified (unit) | west/north zoom cases |
+| equal-spacing-snap | implemented but unverified | guides + density |
+| media-library-meta | implemented but unverified | dims/bytes/mtime/usage badge |
+| change-impact-review | partial | `planImpact` / `planTokenRename` + confirm before apply; recipes/import not fully wired |
+| layout-intent-lens | unavailable | not started |
+| design-preflight | unavailable | not started |
+| stress-lab | partial | labeled **container-probe**; unsupported MQ/vw/fixed reported; gen stamped |
+| content-scenarios | partial | text-200 scoped to `#root` (no parent `<html>` font-size) |
+| token-theme-studio | partial | rename with impact preview; not full theme authoring |
+| visual-compare | partial | returns `{ kind: "document-diff", visualCompare: false }` |
 
-Statuses: **verified** (browser acceptance), **implemented but unverified**, **unavailable**, **incomplete**.
-Browser visual verification depends on a running `EDIT_LAYOUT.bat` / Vite session in the agent environment.
+## Browser / Windows / GPU
+
+Not verified in this environment. Capability claims above that require screenshots remain **implemented but unverified**. Windows launch: `editor/EDIT_LAYOUT.bat` (loopback Vite + API).

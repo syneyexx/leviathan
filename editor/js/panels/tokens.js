@@ -26,8 +26,30 @@ export function createTokensPanel(ctx) {
         }
       });
       host.addEventListener("click", (event) => {
+        const renameBtn = event.target.closest("[data-act='rename-token']");
+        if (renameBtn) {
+          const oldName = renameBtn.dataset.tokenName;
+          const next = window.prompt(`Hernoem ${oldName} naar:`, oldName);
+          if (!next || next === oldName) return;
+          const newName = next.startsWith("--") ? next : `--${next.replace(/^-+/, "")}`;
+          const plan = ctx.studio?.planTokenRename?.(oldName, newName);
+          if (!plan || plan.empty) {
+            ctx.content.setStatus(plan?.error || "Geen impact", "dirty");
+            return;
+          }
+          const s = plan.summary;
+          const ok = window.confirm(
+            `Impact: ${s.entries} entries, ${s.files.length} CSS-bestanden, pages: ${s.pages.join(", ") || "—"}. Toepassen?`,
+          );
+          if (!ok) return;
+          ctx.studio.applyImpact(plan, s.label);
+          ctx.content.setStatus(`Token ${oldName} → ${newName}`, "ok");
+          this._sig = null;
+          this.render();
+          return;
+        }
         const btn = event.target.closest("[data-token-name]");
-        if (!btn) return;
+        if (!btn || btn.dataset.act === "rename-token") return;
         const name = btn.dataset.tokenName;
         const prop = propForToken(name, btn.dataset.tokenGroup);
         const el = ctx.session.primary;
@@ -56,18 +78,21 @@ export function createTokensPanel(ctx) {
         .map(
           ([group, list]) => `<div class="lvb-section">${escapeHtml(group)}</div><div class="lvb-token-grid">${list
             .map(
-              (token) => `<button type="button" class="lvb-token-card" data-token-name="${escapeHtml(token.name)}" data-token-group="${escapeHtml(token.group)}">
+              (token) => `<div class="lvb-token-row">
+                <button type="button" class="lvb-token-card" data-token-name="${escapeHtml(token.name)}" data-token-group="${escapeHtml(token.group)}">
                 <i style="background:${escapeHtml(token.group === "Kleuren" ? token.value : "#16120c")}"></i>
                 <b>${escapeHtml(token.name.replace("--lv-", ""))}</b>
                 <span>${escapeHtml(token.value)}</span>
-              </button>`,
+              </button>
+              <button type="button" class="lvb-mini" data-act="rename-token" data-token-name="${escapeHtml(token.name)}" title="Hernoem met impact preview">Rename</button>
+              </div>`,
             )
             .join("")}</div>`,
         )
         .join("");
       const keep = this.host.querySelector("[data-role='token-filter']");
       const value = keep?.value || query;
-      this.host.innerHTML = `<p class="lvb-muted">Klik kopieert <b>var(--lv-…)</b>. Shift-klik past toe op de selectie.</p>
+      this.host.innerHTML = `<p class="lvb-muted">Klik kopieert <b>var(--lv-…)</b>. Shift-klik past toe. Rename toont Change Impact.</p>
         <input data-role="token-filter" data-nohistory="1" placeholder="Zoek token…" value="${escapeHtml(value)}" />
         ${body || `<p class="lvb-muted">Geen tokens in tokens.css</p>`}`;
       const input = this.host.querySelector("[data-role='token-filter']");
