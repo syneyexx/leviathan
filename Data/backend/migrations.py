@@ -1516,6 +1516,28 @@ def _m19_cognitive_runtime(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m21_conversation_pinned(conn: sqlite3.Connection) -> None:
+    """Durable pin/favorite flag for conversations (chat control plane)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversations (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+    if "pinned" not in cols:
+        conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversations_pinned_updated "
+        "ON conversations(pinned DESC, updated_at DESC)"
+    )
+
+
 def _m20_settings_overrides(conn: sqlite3.Connection) -> None:
     """Operator settings override store for the Settings Control Plane."""
     conn.execute(
@@ -1552,6 +1574,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=18, name="rag_v3", apply=_m18_rag_v3),
     Migration(version=19, name="cognitive_runtime", apply=_m19_cognitive_runtime),
     Migration(version=20, name="settings_overrides", apply=_m20_settings_overrides),
+    Migration(version=21, name="conversation_pinned", apply=_m21_conversation_pinned),
 )
 
 

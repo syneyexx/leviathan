@@ -58,6 +58,9 @@ import type {
   CodingSessionDetail,
   CodingMission,
   CodingWorkspaceTreeResponse,
+  ChatOptions,
+  CapabilityListItem,
+  SystemTelemetryResponse,
   McpCallRecord,
   McpServerPublic,
   McpToolRecord,
@@ -154,8 +157,15 @@ export const api = {
     return request<{ metrics: MetricsSnapshot }>("/api/metrics");
   },
 
-  listConversations(): Promise<{ conversations: Conversation[] }> {
-    return request<{ conversations: Conversation[] }>("/api/conversations");
+  listConversations(opts?: {
+    q?: string;
+    limit?: number;
+  }): Promise<{ conversations: Conversation[] }> {
+    const params = new URLSearchParams();
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request<{ conversations: Conversation[] }>(`/api/conversations${q ? `?${q}` : ""}`);
   },
 
   createConversation(title = "New conversation"): Promise<{ conversation: Conversation }> {
@@ -173,12 +183,35 @@ export const api = {
     );
   },
 
-  chat(message: string, conversationId: string | null): Promise<ChatResponse> {
+  updateConversation(
+    conversationId: string,
+    patch: { title?: string; pinned?: boolean },
+  ): Promise<{ conversation: Conversation }> {
+    return request<{ conversation: Conversation }>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      },
+    );
+  },
+
+  deleteConversation(conversationId: string): Promise<{ deleted: boolean; id: string }> {
+    return request<{ deleted: boolean; id: string }>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  chat(message: string, options: ChatOptions = {}): Promise<ChatResponse> {
     return request<ChatResponse>("/api/chat", {
       method: "POST",
       body: JSON.stringify({
         message,
-        conversation_id: conversationId,
+        conversation_id: options.conversationId ?? null,
+        ...(options.modelId ? { model_id: options.modelId } : {}),
+        ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
+        ...(options.stream != null ? { stream: options.stream } : {}),
       }),
     });
   },
@@ -189,7 +222,7 @@ export const api = {
    */
   async chatStream(
     message: string,
-    conversationId: string | null,
+    options: ChatOptions,
     handlers: {
       onMeta?: (data: Record<string, unknown>) => void;
       onToken?: (text: string, model?: string) => void;
@@ -205,8 +238,10 @@ export const api = {
       },
       body: JSON.stringify({
         message,
-        conversation_id: conversationId,
+        conversation_id: options.conversationId ?? null,
         stream: true,
+        ...(options.modelId ? { model_id: options.modelId } : {}),
+        ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
       }),
     });
 
@@ -292,10 +327,6 @@ export const api = {
       throw new ApiError(503, "Stream ended without done event");
     }
     return donePayload;
-  },
-
-  listCapabilities(): Promise<{ capabilities: unknown[] }> {
-    return request<{ capabilities: unknown[] }>("/api/capabilities");
   },
 
   listApprovals(status?: string): Promise<{ approvals: unknown[] }> {
@@ -1037,6 +1068,21 @@ export const api = {
     if (opts?.recursive != null) params.set("recursive", String(opts.recursive));
     const q = params.toString();
     return request(`/api/coding/workspace/tree${q ? `?${q}` : ""}`);
+  },
+
+  systemTelemetry(): Promise<SystemTelemetryResponse> {
+    return request<SystemTelemetryResponse>("/api/system/telemetry");
+  },
+
+  listCapabilities(opts?: {
+    q?: string;
+    limit?: number;
+  }): Promise<{ capabilities: CapabilityListItem[] }> {
+    const params = new URLSearchParams();
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request<{ capabilities: CapabilityListItem[] }>(`/api/capabilities${q ? `?${q}` : ""}`);
   },
 
   mcpServers(): Promise<{ servers: McpServerPublic[]; feature_enabled: boolean }> {

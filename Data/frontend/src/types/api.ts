@@ -3,6 +3,7 @@ export type Conversation = {
   title: string;
   created_at: string;
   updated_at: string;
+  pinned?: boolean;
 };
 
 export type Message = {
@@ -11,6 +12,13 @@ export type Message = {
   role: "system" | "user" | "assistant";
   content: string;
   created_at: string;
+};
+
+export type ChatOptions = {
+  conversationId?: string | null;
+  modelId?: string | null;
+  preferredRole?: string | null;
+  stream?: boolean;
 };
 
 export type ReasoningSummary = {
@@ -992,6 +1000,52 @@ export type CodingSessionDetail = {
 export type CodingWorkspaceTreeResponse = {
   entries: Array<{ path: string; type: "file" | "dir"; size?: number; mark?: "M" | "A" | null }>;
   root?: string;
+};
+
+export type SystemTelemetryResponse = {
+  collectedAt: string | null;
+  ageMs: number | null;
+  cpu: { available: boolean; utilizationPct: number | null };
+  memory: {
+    available: boolean;
+    totalBytes: number | null;
+    usedBytes: number | null;
+    availableBytes: number | null;
+    utilizationPct: number | null;
+  };
+  gpu: {
+    available: boolean;
+    devices: Array<{
+      index: number;
+      name: string;
+      utilizationPct: number | null;
+      vramTotalBytes: number | null;
+      vramUsedBytes: number | null;
+      vramFreeBytes: number | null;
+      vramUtilizationPct: number | null;
+      driverVersion?: string | null;
+    }>;
+  };
+  notes?: string[];
+  truth: {
+    measured: boolean;
+    synthetic: boolean;
+    unavailableIsNotZero?: boolean;
+  };
+  dashboard: {
+    cpuPct: number | null;
+    ramPct: number | null;
+    gpuPct: number | null;
+    vramPct: number | null;
+  };
+};
+
+export type CapabilityListItem = {
+  capability_id: string;
+  description?: string;
+  side_effects?: string[];
+  policy?: string;
+  [key: string]: unknown;
 };
 
 
