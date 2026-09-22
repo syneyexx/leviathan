@@ -1,8 +1,9 @@
 # FRONTIER execution ledger
 
 Baseline revision: `d66c044` (predecessor PR #48).  
-Working branch: `cursor/editor-frontier-daad`.  
-Reference scan commit (findings origin): `19cbdd3`.
+Working branch: `cursor/editor-frontier-daad` → PR #49.  
+Reference scan commit (findings origin): `19cbdd3`.  
+HEAD tip: `915c2db`.
 
 ## Existing work retained (predecessor #48)
 
@@ -12,7 +13,7 @@ Reference scan commit (findings origin): `19cbdd3`.
 | Selection HUD, zoom handles, equal-spacing guides, gesture cancel wiring | implemented but unverified (browser) | retained; draft restore strengthened |
 | Image replace / bg-image / upload progress / asset meta | partial → improved | replaceText removed in #48; async target token added |
 | Dark graphite/ice-blue chrome | implemented but unverified | retained |
-| Stress fixtures / crash draft hooks | partial | stress still container probe |
+| Stress fixtures / crash draft hooks | partial | stress honestly labeled container-probe |
 
 ## P0 status after this run
 
@@ -22,13 +23,21 @@ Reference scan commit (findings origin): `19cbdd3`.
 | P0-B Server race / journal | **fixed + verified** | `server.py`, `test_concurrency.py`, `test_api.py` |
 | P0-C Structural patches | **fixed + verified** | `js/patches.js`, `test/patches.test.mjs` |
 | P0-D Gesture DOM restore | **fixed + unit verified** | `js/gesture-draft.js`, layout promote rollback, autosave skip while gesturing; browser unverified |
-| P0-E Image async identity | **partial → improved** | `widgets.replaceImageWithUrl` captures target key/el at upload start |
+| P0-E Image async identity | **improved** | upload + media modal capture target at initiation |
+
+## Follow-on shipped this run
+
+- Stress lab returns `kind: "container-probe"` + `unsupported` list + generation stamp
+- Fixtures: text-200 scoped to `#root` (not `<html>`)
+- `planImpact` / `planTokenRename` / Tokens panel Rename with confirm
+- Preview Design↔Preview restores `iframe.hidden`
+- `compareToCheckpoint` declares `visualCompare: false`
 
 ## Checks executed
 
 ```
-node --test editor/test/*.mjs          → 56 pass
-python3 editor/test/test_api.py        → ok
+node --test editor/test/*.mjs           → 58 pass
+python3 editor/test/test_api.py         → ok
 python3 editor/test/test_concurrency.py → ok (200+409, file contract, journal rollback)
 ```
 
@@ -42,9 +51,9 @@ Journal + per-file `os.replace` is **not** a single filesystem transaction. Star
 
 1. Controlled preview bridge (no nested editor/autosave) + real MQ stress runner  
 2. Inspector caret-stable updates + action registry polish  
-3. Component identity/overrides + token rename transactions  
+3. Component identity/overrides + full token theme authoring  
 4. Checkpoints outside no-op undo stack; honest local variants  
-5. Change Impact Review / Layout Intent Lens / Design Preflight  
+5. Layout Intent Lens / Design Preflight / Review Session  
 6. Browser acceptance screenshots at 1280/1440/1920 + 200% zoom  
 7. Windows verification via `EDIT_LAYOUT.bat`
 
