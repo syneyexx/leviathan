@@ -92,7 +92,10 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 
 | Package | Owns |
 |---|---|
-| `Data/modules/reasoning/` | ReasoningEngine |
+| `Data/modules/reasoning/` | ReasoningEngine (legacy classifier / compatibility) |
+| `Data/modules/cognition/` | **Cognitive Runtime** — TaskModel, BeliefState, WorkingMemory, Perception, MetaController, iterative loop, experience |
+| `Data/backend/routes/cognition.py` | Cognition HTTP API (`/api/cognition/*`) |
+| `Data/docs/cognitive_runtime.md` | Cognitive Runtime architecture reference |
 | `Data/modules/context/` | ContextBuilder |
 | `Data/modules/model_runtime/` | OpenAICompatibleLLM |
 | `Data/modules/models/` | **Model Control Plane** (registry, profiles, gateway, router, providers, downloads) |

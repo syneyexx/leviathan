@@ -1417,6 +1417,105 @@ def _m18_rag_v3(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m19_cognitive_runtime(conn: sqlite3.Connection) -> None:
+    """Cognitive Runtime durable state — central SQLite only."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cognitive_runs (
+            run_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            conversation_id TEXT,
+            status TEXT NOT NULL,
+            mode TEXT,
+            strategy TEXT,
+            shadow INTEGER NOT NULL DEFAULT 0,
+            task_json TEXT NOT NULL DEFAULT '{}',
+            plan_json TEXT NOT NULL DEFAULT '{}',
+            belief_json TEXT NOT NULL DEFAULT '{}',
+            working_memory_json TEXT NOT NULL DEFAULT '{}',
+            budgets_json TEXT NOT NULL DEFAULT '{}',
+            usage_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            trace_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognitive_runs_conversation "
+        "ON cognitive_runs(conversation_id, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognitive_runs_status "
+        "ON cognitive_runs(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cognitive_events (
+            event_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            stage TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES cognitive_runs(run_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognitive_events_run "
+        "ON cognitive_events(run_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cognitive_beliefs (
+            belief_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            proposition TEXT NOT NULL,
+            category TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            status TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            support_json TEXT NOT NULL DEFAULT '[]',
+            contradiction_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES cognitive_runs(run_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognitive_beliefs_run "
+        "ON cognitive_beliefs(run_id, status)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verified_experiences (
+            experience_id TEXT PRIMARY KEY,
+            task_type TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            task_summary TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            verification_status TEXT NOT NULL,
+            admitted INTEGER NOT NULL DEFAULT 0,
+            admission_reason TEXT,
+            privacy_class TEXT NOT NULL DEFAULT 'standard',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_verified_experiences_admitted "
+        "ON verified_experiences(admitted, domain, created_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1436,6 +1535,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=16, name="market_sim", apply=_m16_market_sim),
     Migration(version=17, name="mcp_bridge", apply=_m17_mcp_bridge),
     Migration(version=18, name="rag_v3", apply=_m18_rag_v3),
+    Migration(version=19, name="cognitive_runtime", apply=_m19_cognitive_runtime),
 )
 
 

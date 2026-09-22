@@ -2,6 +2,8 @@ import type {
   ApiErrorBody,
   BackupManifest,
   ChatResponse,
+  CognitionHealth,
+  CognitionRunStatus,
   Conversation,
   DatasetFile,
   DatasetIndex,
@@ -1184,5 +1186,43 @@ export const api = {
 
   getMarketSimResults(runId: string): Promise<MarketSimLiveState & { metrics: Record<string, unknown> }> {
     return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/results`);
+  },
+
+  cognitionHealth(): Promise<{ cognition: CognitionHealth }> {
+    return request("/api/cognition/health");
+  },
+
+  cognitionSubmit(payload: {
+    message: string;
+    conversation_id?: string | null;
+    history?: Array<{ role: string; content: string }>;
+    has_knowledge?: boolean;
+    shadow?: boolean | null;
+    constraints?: string[];
+    run?: boolean;
+  }): Promise<CognitionRunStatus> {
+    return request("/api/cognition/submit", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  cognitionStatus(runId: string): Promise<CognitionRunStatus> {
+    return request(`/api/cognition/runs/${encodeURIComponent(runId)}`);
+  },
+
+  cognitionEvents(runId: string): Promise<{ run_id: string; events: unknown[] }> {
+    return request(`/api/cognition/runs/${encodeURIComponent(runId)}/events`);
+  },
+
+  cognitionCancel(runId: string): Promise<CognitionRunStatus> {
+    return request(`/api/cognition/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+  },
+
+  cognitionSteer(runId: string, instruction: string): Promise<CognitionRunStatus> {
+    return request(`/api/cognition/runs/${encodeURIComponent(runId)}/steer`, {
+      method: "POST",
+      body: JSON.stringify({ instruction }),
+    });
   },
 };
