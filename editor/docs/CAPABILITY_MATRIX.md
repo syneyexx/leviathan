@@ -3,18 +3,18 @@
 | ID | Status | Evidence / blocker |
 | --- | --- | --- |
 | identity-v3 | implemented | `js/identity.js` + runtime query; unit tests |
-| scoped-history | implemented | `js/patches.js` + `commands.js`; cross-page undo test |
-| save-coordinator | implemented | `js/save.js` + `/api/save`; dirty-during-save test |
-| api-session | implemented | Origin + `X-LVB-Session`; `test_api.py` |
-| text-no-global-replace | implemented | `/api/replace-text` → 410 |
-| clear-styles | implemented | BEGIN/END import; util test |
-| studio-shell | implemented | `canvas.css` tokens + chrome composition |
-| viewport-preview | implemented | `js/studio/viewport.js` Design/Preview |
-| gesture-cancel | implemented | Escape / pointercancel / blur |
-| ai-copilot | unavailable | No Leviathan model binding (501) |
+| scoped-history | verified | unit: cross-page undo; commands gesture test |
+| save-coordinator | verified | unit: dirty-during-save; API conflict 409 |
+| api-session | verified | `test_api.py` 401/403/409/410 |
+| text-no-global-replace | verified | API 410 |
+| clear-styles | verified | BEGIN/END util test |
+| studio-shell | verified | headless screenshots 1280/1440/1920 |
+| viewport-preview | implemented | Preview mode screenshot; iframe bridge |
+| gesture-cancel | implemented | Escape / pointercancel / blur wired |
+| ai-copilot | unavailable | 501 + UI screenshot (honest unavailable) |
 | stress-lab | implemented | `studio.runStressLab` |
 | constraints-intel | implemented | `explainLayout` |
-| design-problems | implemented | Issues panel + checks |
+| design-problems | implemented | Problems panel screenshot |
 | history-timeline | implemented | History panel + named checkpoints |
 | visual-compare | implemented | `compareToCheckpoint` |
 | design-branches | implemented | create/merge with conflict list |
