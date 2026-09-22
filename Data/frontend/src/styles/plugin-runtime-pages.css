@@ -29,6 +29,11 @@
   overflow: auto;
 }
 
+/* Keep dense dashboard rows from collapsing under AppShell flex height. */
+.lv-pr-main > * {
+  flex-shrink: 0;
+}
+
 /* —— Hero (mirror lv-tp-hero / lv-mr-hero) —— */
 .lv-pr-hero {
   position: relative;
@@ -506,11 +511,23 @@
   display: grid;
   grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1.9fr);
   gap: var(--lv-card-gap, 8px);
-  min-height: 0;
+  align-items: stretch;
+  min-height: clamp(280px, 34vh, 420px);
 }
 
 .lv-pr-perf-tools {
   min-height: 100%;
+}
+
+.lv-pr-perf-components {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.lv-pr-perf-components .lv-pr-table-wrap {
+  flex: 1 1 auto;
+  min-height: 240px;
 }
 
 .lv-pr-perf-tools .lv-pr-panel-title,
