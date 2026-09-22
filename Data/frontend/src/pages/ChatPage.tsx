@@ -951,17 +951,22 @@ export function ChatPage() {
                 </div>
               ) : (
                 capabilities.map((cap) => (
-                  <div className="lv-tool-item" key={cap.capability_id}>
+                  <div className="lv-tool-item" key={cap.id}>
                     <span className="lv-mini-icon cyan">
                       <svg className="lv-icon" viewBox="0 0 24 24">
                         <path d="M14 7l3 3-8 8H6v-3l8-8z" />
                       </svg>
                     </span>
                     <span>
-                      <strong>{cap.capability_id}</strong>
+                      <strong>{cap.name || cap.id}</strong>
                       <small>
                         {cap.description || "No description"}
-                        {cap.policy ? ` · policy: ${cap.policy}` : ""}
+                        {cap.available === false
+                          ? " · unavailable"
+                          : cap.enabled === false
+                            ? " · disabled"
+                            : " · registered"}
+                        {cap.side_effects?.length ? ` · ${cap.side_effects.join(", ")}` : ""}
                       </small>
                     </span>
                   </div>

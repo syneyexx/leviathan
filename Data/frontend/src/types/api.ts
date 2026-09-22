@@ -1057,10 +1057,14 @@ export type SystemTelemetryResponse = {
 };
 
 export type CapabilityListItem = {
-  capability_id: string;
+  id: string;
+  name?: string;
   description?: string;
   side_effects?: string[];
-  policy?: string;
+  enabled?: boolean;
+  available?: boolean;
+  availability_reason?: string | null;
+  provider_kind?: string;
   [key: string]: unknown;
 };
 
