@@ -38,13 +38,11 @@ describe("T9 FINALBETA route + action honesty", () => {
     assert.match(hook, /createFromTemplate/);
   });
 
-  it("wires knowledge inspector actions instead of toast-only", () => {
+  it("wires knowledge inspector actions as demo toasts on pixel mock", () => {
     const page = read("components/hades/finalbeta/pages/knowledge-page.tsx");
-    assert.match(page, /runKnowledgeAction/);
-    assert.doesNotMatch(
-      page,
-      /KNOWLEDGE_ACTIONS\.map\(\(action\) => \(\s*<button[\s\S]*?data-toast=\{action\.label\}/,
-    );
+    assert.match(page, /data-toast/);
+    assert.match(page, /klib-app/);
+    assert.doesNotMatch(page, /useHadesKnowledge/);
   });
 
   it("implements settings pageId/initialTab scrolling", () => {

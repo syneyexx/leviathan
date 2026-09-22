@@ -8,6 +8,7 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const FINALBETA_PAGES = [
   "login", "dashboard", "chat", "coding", "tasks",
   "models", "model-training", "agents", "llm-stats",
+  "dataset-management", "offline-datasets", "datasets",
   "media", "youtube", "tiktok", "instagram", "facebook",
   "media-queue", "media-viral", "media-calendar", "media-analytics", "media-library", "media-personas",
   "trading-simulation", "trading-strategies", "trading-marketdata", "trading-portfolio", "trading-paper", "trading-broker",
@@ -64,6 +65,15 @@ test("FINALBETA HOOFDMENU and section SUBMENU are wired", async () => {
     assert.ok(routes.includes(label), `missing HOOFDMENU label ${label}`);
   }
   assert.match(routes, /llm-stats/);
+  assert.match(routes, /dataset-management/);
+  assert.match(routes, /offline-datasets/);
+  assert.match(routes, /datasets/);
+  assert.match(routes, /Statestieken/);
+  assert.match(routes, /Dataset Management/);
+  assert.match(routes, /Offline Datasets/);
+  assert.match(routes, /label:\s*"Datasets"/);
+  assert.match(routes, /label:\s*"Training"/);
+  assert.doesNotMatch(routes, /label:\s*"Bestanden"/);
   assert.match(routes, /trading-simulation/);
   assert.match(routes, /settings-console/);
   assert.match(routes, /media-queue/);
@@ -72,6 +82,7 @@ test("FINALBETA HOOFDMENU and section SUBMENU are wired", async () => {
   assert.ok(routes.includes('"Chatten"') || routes.includes("Chatten"));
   assert.match(routes, /resolveFinalBetaPageId/);
   assert.match(routes, /mission-control.*tasks|return "tasks"/);
+  assert.match(routes, /files.*datasets|return "datasets"/);
 });
 
 test("FINALBETA starts on login via hash default", async () => {
