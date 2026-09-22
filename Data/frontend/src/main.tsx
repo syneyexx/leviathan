@@ -20,6 +20,7 @@ import "./styles/agents.css";
 import "./styles/media-instagram.css";
 import "./styles/media-facebook.css";
 import "./styles/pixel-mock-pages.css";
+import "./styles/onderzoek-kennis.css";
 
 const root = document.getElementById("root");
 if (!root) {

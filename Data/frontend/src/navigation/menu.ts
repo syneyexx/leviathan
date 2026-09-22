@@ -87,7 +87,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "geheugen", label: "Geheugen", to: "/memory" },
       { id: "knowledge", label: "Knowledge Library", to: "/knowledge" },
       { id: "evidence", label: "Evidence Vault", to: "/evidence" },
-      { id: "bestanden", label: "Bestanden", to: "/datasets" },
+      { id: "datasets", label: "Datasets", to: "/datasets" },
     ],
   },
   {

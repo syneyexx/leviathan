@@ -15,7 +15,7 @@ export const EDITOR_PAGES = [
   { path: "/memory", label: "Geheugen" },
   { path: "/knowledge", label: "Knowledge" },
   { path: "/evidence", label: "Evidence" },
-  { path: "/datasets", label: "Bestanden" },
+  { path: "/datasets", label: "Datasets" },
   { path: "/models", label: "Modellen" },
   { path: "/training", label: "Training" },
   { path: "/analytics", label: "Stats" },
