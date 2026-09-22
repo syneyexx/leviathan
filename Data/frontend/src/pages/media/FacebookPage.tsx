@@ -10,7 +10,6 @@ import {
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
@@ -134,9 +133,6 @@ export function FacebookPage() {
             </div>
           </div>
         </section>
-
-        <SubMenu />
-
         <section className="mp-profile mp-fb-profile">
           <div className="mp-profile-avatar">
             <BrandMark id="fb-profile" />

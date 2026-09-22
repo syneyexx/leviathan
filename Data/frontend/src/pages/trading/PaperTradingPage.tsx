@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { tradingHeroes } from "../../assets/tradingAssets";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import {
@@ -107,9 +106,6 @@ export function PaperTradingPage() {
           rails={["SIMULATE · REFINE · BUILD", "DISCIPLINE · DOMINATE", "SAME MARKETS", "REAL OPPORTUNITY · ZERO RISK"]}
           objectPosition="center 28%"
         />
-
-        <SubMenu />
-
         <section className="lv-tp-kpi-row" aria-label="Paper account metrics">
           {KPIS.map((k) => (
             <article key={k.label} className="lv-tp-kpi">

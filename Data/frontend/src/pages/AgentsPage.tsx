@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { mediaControlCrops } from "../assets/mediaControlAssets";
-import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 
@@ -244,9 +243,6 @@ export function AgentsPage() {
             <span>A BRIGHTER TOMORROW.</span>
           </aside>
         </section>
-
-        <SubMenu />
-
         <div className="lv-ag-grid-top">
           <section className="lv-ag-panel">
             <SectionTitle n={1} title="AGENT ROSTER / DIRECTORY" />

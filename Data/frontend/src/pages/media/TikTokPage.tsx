@@ -9,7 +9,6 @@ import {
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
@@ -123,9 +122,6 @@ export function TikTokPage() {
             </div>
           </div>
         </section>
-
-        <SubMenu />
-
         <section className="mp-profile">
           <div className="mp-profile-avatar" aria-hidden="true">
             <BrandMark id="tt-profile" />

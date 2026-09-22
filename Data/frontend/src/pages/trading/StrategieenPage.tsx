@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { tradingHeroes } from "../../assets/tradingAssets";
 import { ApiError, api } from "../../api/client";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import type { MarketStrategy, MarketStrategyVersion } from "../../types/api";
@@ -111,9 +110,6 @@ export function StrategieenPage() {
           rails={["IDEAS", "MODELS", "BACKTESTS", "OPTIMIZATION", "DEPLOYMENT", "ALPHA"]}
           objectPosition="center 30%"
         />
-
-        <SubMenu />
-
         {error ? (
           <Panel title="Strategies">
             <p>{error}</p>

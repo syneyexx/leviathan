@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { tradingHeroes } from "../../assets/tradingAssets";
 import { ApiError, api } from "../../api/client";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import type { MarketDataSource, MarketSimStatusResponse } from "../../types/api";
@@ -94,9 +93,6 @@ export function MarktdataPage() {
           rails={["MORE SIGNALS", "DEEPER CONTEXT", "GLOBAL MARKETS", "REAL-TIME EDGE"]}
           objectPosition="center 32%"
         />
-
-        <SubMenu />
-
         {error ? (
           <Panel title="Market data">
             <p>{error}</p>

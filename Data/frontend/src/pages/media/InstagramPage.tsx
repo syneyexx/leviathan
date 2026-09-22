@@ -9,7 +9,6 @@ import {
   VerifiedBadge,
 } from "../../components/media/MediaWidgets";
 import { mediaControlCrops, platformTiles } from "../../assets/mediaControlAssets";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
@@ -121,9 +120,6 @@ export function InstagramPage() {
             </div>
           </div>
         </section>
-
-        <SubMenu />
-
         <section className="mp-profile mp-ig-profile">
           <div className="mp-profile-avatar">
             <BrandMark id="ig-profile" />

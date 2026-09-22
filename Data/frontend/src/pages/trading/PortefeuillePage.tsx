@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { tradingHeroes } from "../../assets/tradingAssets";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import {
@@ -178,9 +177,6 @@ export function PortefeuillePage() {
           rails={["LONGER HORIZONS", "STRONGER OUTCOMES", "CAPITAL DISCIPLINE", "INTELLIGENCE · FREEDOM"]}
           objectPosition="center 30%"
         />
-
-        <SubMenu />
-
         <section className="lv-tp-kpi-row" aria-label="Portfolio KPIs">
           {KPIS.map((k) => (
             <article key={k.label} className="lv-tp-kpi">

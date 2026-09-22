@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { tradingHeroes } from "../../assets/tradingAssets";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import { CandleChart, LineSeries, MOCK_CANDLES, Panel, Spark, Tone, TradingHero } from "./shared";
@@ -96,9 +95,6 @@ export function BrokerTradingPage() {
           rails={["MULTI BROKER / MULTI MARKET / ONE MIND", "EXECUTE / ANALYZE / ADAPT / REPEAT", "DISCIPLINE / SYSTEMS / BETTER / OUTCOMES"]}
           objectPosition="center 28%"
         />
-
-        <SubMenu />
-
         <section className="lv-br-top">
           <Panel
             title="Connected Brokers · 3/3 Online"

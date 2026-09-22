@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  allSubMenuRoutes,
   findMainMenuByPath,
   findSubMenuItem,
   isMainMenuActive,
-  submenuHref,
+  MAIN_MENU,
 } from "./menu";
 
 describe("navigation menu", () => {
@@ -14,10 +15,20 @@ describe("navigation menu", () => {
     expect(findMainMenuByPath("/coding").id).toBe("hades");
   });
 
-  it("maps models/training/analytics under LLM", () => {
+  it("maps models/training/agents/analytics under LLM", () => {
     expect(findMainMenuByPath("/models").id).toBe("llm");
     expect(findMainMenuByPath("/training").id).toBe("llm");
+    expect(findMainMenuByPath("/agents").id).toBe("llm");
     expect(findMainMenuByPath("/analytics").id).toBe("llm");
+    expect(findMainMenuByPath("/agents").submenu.some((item) => item.id === "agents")).toBe(true);
+  });
+
+  it("labels Coding Agent under Hades and Workflows under Plugin & Runtime", () => {
+    const hades = findMainMenuByPath("/coding");
+    expect(hades.submenu.find((item) => item.id === "coding")?.label).toBe("Coding Agent");
+    const runtime = findMainMenuByPath("/workflows");
+    expect(runtime.id).toBe("runtime");
+    expect(runtime.submenu.some((item) => item.id === "workflows" && item.to === "/workflows")).toBe(true);
   });
 
   it("restores Brain under Onderzoek & Kennis", () => {
@@ -40,17 +51,24 @@ describe("navigation menu", () => {
     expect(isMainMenuActive(llm, "/chat")).toBe(false);
   });
 
-  it("resolves submenu from path and tab query", () => {
-    const media = findMainMenuByPath("/media");
-    expect(findSubMenuItem(media, "/media", null)?.id).toBe("overzicht");
-    expect(findSubMenuItem(media, "/media", "youtube")?.id).toBe("youtube");
-    expect(submenuHref(media, media.submenu[1])).toBe("/media/youtube");
-    expect(findMainMenuByPath("/media/youtube").id).toBe("media");
-    expect(findMainMenuByPath("/agents").id).toBe("agents");
+  it("resolves nested media and trading submenu routes", () => {
+    const media = findMainMenuByPath("/media/youtube");
+    expect(media.id).toBe("media");
+    expect(findSubMenuItem(media, "/media")?.id).toBe("overzicht");
+    expect(findSubMenuItem(media, "/media/youtube")?.id).toBe("youtube");
+    expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
+    expect(findSubMenuItem(findMainMenuByPath("/trading/paper"), "/trading/paper")?.id).toBe("paper");
   });
 
   it("leaves dashboard submenu inactive on Hades landing", () => {
     const hades = findMainMenuByPath("/");
-    expect(findSubMenuItem(hades, "/", null)).toBeNull();
+    expect(findSubMenuItem(hades, "/")).toBeNull();
+  });
+
+  it("gives every submenu item a dedicated route", () => {
+    const routes = allSubMenuRoutes();
+    expect(routes.length).toBeGreaterThan(30);
+    expect(routes.every((item) => Boolean(item.to))).toBe(true);
+    expect(MAIN_MENU.every((section) => section.submenu.length > 0)).toBe(true);
   });
 });

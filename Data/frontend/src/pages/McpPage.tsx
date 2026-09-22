@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api/client";
-import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 import type { McpCallRecord, McpServerPublic, McpToolRecord } from "../types/api";
@@ -89,7 +88,6 @@ export function McpPage() {
       searchPlaceholder="Search MCP servers and tools..."
       layout="wide"
     >
-      <SubMenu />
       <main className="lv-main">
         <section className="lv-panel lv-card" style={{ marginBottom: "1rem" }}>
           <div className="lv-card-head">

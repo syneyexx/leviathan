@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { tradingHeroes } from "../../assets/tradingAssets";
 import { ApiError, api } from "../../api/client";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import type {
@@ -155,9 +154,6 @@ export function SimulatiePage() {
           image={tradingHeroes.simulatie}
           objectPosition="center 32%"
         />
-
-        <SubMenu />
-
         {error ? (
           <Panel title="Market Sim">
             <p>{error}</p>

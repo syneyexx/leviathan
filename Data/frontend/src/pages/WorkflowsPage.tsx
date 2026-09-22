@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { tradingHeroes } from "../assets/tradingAssets";
-import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 import { Panel, TradingHero } from "./trading/shared";
@@ -79,9 +78,6 @@ export function WorkflowsPage() {
           rails={["AUTOMATE", "AMPLIFY", "ORCHESTRATE", "SCALE", "BEYOND"]}
           objectPosition="center 35%"
         />
-
-        <SubMenu />
-
         <section className="lv-wf-toolbar" aria-label="Workflow filters">
           <select className="lv-tp-select" style={{ width: 140 }} defaultValue="My Workflows">
             <option>My Workflows</option>

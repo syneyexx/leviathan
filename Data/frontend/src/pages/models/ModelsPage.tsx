@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import type {
@@ -343,9 +342,6 @@ export function ModelsPage() {
             </Link>
           </div>
         </header>
-
-        <SubMenu />
-
         <ModelStatusCards status={status} loading={loading} />
 
         {error ? (

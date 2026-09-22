@@ -7,7 +7,6 @@ import {
   Sparkline,
   type PlatformKind,
 } from "../../components/media/MediaWidgets";
-import { SubMenu } from "../../components/SubMenu";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 
@@ -269,9 +268,6 @@ export function MediaControlPage() {
             </p>
           </div>
         </section>
-
-        <SubMenu />
-
         <div className="lv-mc-grid-top">
           <section className="lv-mc-panel">
             <SectionTitle n={1} title="PLATFORM OVERVIEW / CHANNEL GRID" />

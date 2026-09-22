@@ -12,8 +12,8 @@ import { MediaControlPage } from "./pages/media/MediaControlPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
 import { YouTubePage } from "./pages/media/YouTubePage";
 import { ModelsPage } from "./pages/ModelsPage";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { ResearchPage } from "./pages/ResearchPage";
+import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
@@ -35,26 +35,24 @@ export default function App() {
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/coding" element={<CodingPage />} />
-      <Route path="/research" element={<ResearchPage />} />
+
+      <Route path="/models" element={<ModelsPage />} />
+      <Route path="/training" element={<TrainingPage />} />
+      <Route path="/agents" element={<AgentsPage />} />
+      <Route path="/analytics" element={<AnalyticsPage />} />
+
       <Route path="/media" element={<MediaControlPage />} />
       <Route path="/media/youtube" element={<YouTubePage />} />
       <Route path="/media/tiktok" element={<TikTokPage />} />
       <Route path="/media/instagram" element={<InstagramPage />} />
       <Route path="/media/facebook" element={<FacebookPage />} />
-      <Route path="/datasets" element={<DatasetsPage />} />
-      <Route path="/brain" element={<BrainPage />} />
-      <Route path="/memory" element={<PlaceholderPage title="Geheugen" modeLabel="Memory Mode" />} />
-      <Route path="/knowledge" element={<PlaceholderPage title="Knowledge Library" modeLabel="Knowledge Mode" />} />
-      <Route path="/evidence" element={<PlaceholderPage title="Evidence Vault" modeLabel="Evidence Mode" />} />
-      <Route path="/models" element={<ModelsPage />} />
-      <Route path="/training" element={<TrainingPage />} />
-      <Route path="/agents" element={<AgentsPage />} />
-      <Route path="/tools" element={<ToolsPage />} />
-      <Route path="/performance" element={<PlaceholderPage title="Performance" modeLabel="Runtime Mode" />} />
-      <Route path="/mcp" element={<McpPage />} />
-      <Route path="/workflows" element={<WorkflowsPage />} />
-      <Route path="/console" element={<PlaceholderPage title="Console" modeLabel="Runtime Mode" />} />
-      <Route path="/analytics" element={<AnalyticsPage />} />
+      <Route path="/media/queue" element={<SectionPage title="Algemene publicatiewachtrij" />} />
+      <Route path="/media/viral" element={<SectionPage title="Viral radar" />} />
+      <Route path="/media/calendar" element={<SectionPage title="Calender" />} />
+      <Route path="/media/analytics" element={<SectionPage title="Media Analytics" />} />
+      <Route path="/media/library" element={<SectionPage title="Bibliotheek" />} />
+      <Route path="/media/personas" element={<SectionPage title="Personas" />} />
+
       <Route path="/trading" element={<Navigate to="/trading/simulatie" replace />} />
       <Route path="/trading/simulatie" element={<SimulatiePage />} />
       <Route path="/trading/strategieen" element={<StrategieenPage />} />
@@ -62,7 +60,31 @@ export default function App() {
       <Route path="/trading/portefeuille" element={<PortefeuillePage />} />
       <Route path="/trading/paper" element={<PaperTradingPage />} />
       <Route path="/trading/broker" element={<BrokerTradingPage />} />
+
+      <Route path="/research" element={<ResearchPage />} />
+      <Route path="/brain" element={<BrainPage />} />
+      <Route path="/memory" element={<SectionPage title="Geheugen" />} />
+      <Route path="/knowledge" element={<SectionPage title="Knowledge Library" />} />
+      <Route path="/evidence" element={<SectionPage title="Evidence Vault" />} />
+      <Route path="/datasets" element={<DatasetsPage />} />
+
+      <Route path="/performance" element={<SectionPage title="Performance" />} />
+      <Route path="/tools" element={<ToolsPage />} />
+      <Route path="/mcp" element={<McpPage />} />
+      <Route path="/workflows" element={<WorkflowsPage />} />
+      <Route path="/console" element={<SectionPage title="Console" />} />
+
       <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/settings/llm-gedrag" element={<SectionPage title="LLM Gedrag" />} />
+      <Route path="/settings/llm-studio" element={<SectionPage title="LLM Studio" />} />
+      <Route path="/settings/rechten" element={<SectionPage title="Rechten & Security" />} />
+      <Route path="/settings/benchmarks" element={<SectionPage title="Model Benchmarks" />} />
+      <Route path="/settings/mediacenter" element={<SectionPage title="Mediacenter" />} />
+      <Route path="/settings/opslag" element={<SectionPage title="Opslag" />} />
+      <Route path="/settings/python" element={<SectionPage title="Python & Runtime" />} />
+      <Route path="/settings/console" element={<SectionPage title="Console" />} />
+      <Route path="/settings/logs" element={<SectionPage title="Logs" />} />
+
       <Route path="/chat.html" element={<Navigate to="/chat" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

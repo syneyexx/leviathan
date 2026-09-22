@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
-import { SubMenu } from "../components/SubMenu";
 import type {
   HealthResponse,
   MasterGateReport,
@@ -90,7 +89,6 @@ export function TasksPage() {
   return (
     <AppShell activeMode="explore" searchPlaceholder="Zoek taken, jobs, approvals...">
       <main className="lv-main">
-        <SubMenu />
 
         <section className="lv-panel lv-card" style={{ marginBottom: "1rem" }}>
           <div className="lv-card-head">

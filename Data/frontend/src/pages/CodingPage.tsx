@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { media } from "../assets/media";
 import { api, ApiError } from "../api/client";
-import { SubMenu } from "../components/SubMenu";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
 import {
@@ -280,7 +279,6 @@ export function CodingPage() {
           <img src={media.codingHero} alt="" width={1400} height={220} />
         </section>
 
-        <SubMenu />
 
         {status && !status.enabled ? (
           <div className="lv-ca-banner is-warn" role="status">

@@ -2,10 +2,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AppFooter } from "../components/AppFooter";
 import { AppHeader } from "../components/AppHeader";
 import { AppSidebar } from "../components/AppSidebar";
-import { useAppToast } from "../state/useAppToast";
 
 type ShellProps = {
-  activeMode: "explore" | "chat";
+  activeMode?: "explore" | "chat";
   searchPlaceholder?: string;
   modeLabel?: string;
   systemItems?: readonly string[];
@@ -16,7 +15,6 @@ type ShellProps = {
 };
 
 export function AppShell({
-  activeMode,
   searchPlaceholder,
   modeLabel,
   systemItems,
@@ -25,7 +23,6 @@ export function AppShell({
   chatApp = false,
   children,
 }: ShellProps) {
-  const toast = useAppToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -41,10 +38,6 @@ export function AppShell({
     document.addEventListener("click", onDocClick);
     return () => document.removeEventListener("click", onDocClick);
   }, [sidebarOpen]);
-
-  const onReserved = (label: string) => {
-    toast(`${label} is reserved for a later Leviathan step.`);
-  };
 
   const appClass = [
     "lv-app",
@@ -67,7 +60,7 @@ export function AppShell({
         <AppSidebar open={sidebarOpen} />
         {children}
       </div>
-      <AppFooter activeMode={activeMode} onReserved={onReserved} />
+      <AppFooter />
     </div>
   );
 }
