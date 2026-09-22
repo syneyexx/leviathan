@@ -833,6 +833,43 @@ export const api = {
     return request("/api/datasets/jobs/reconcile", { method: "POST" });
   },
 
+  discoverOfflineDatasets(maxFiles = 500): Promise<{
+    roots: Array<{ id: string; path: string }>;
+    sources: Array<Record<string, unknown>>;
+    count: number;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/datasets/offline/discover?maxFiles=${encodeURIComponent(String(maxFiles))}`);
+  },
+
+  listOfflineBrainIndexes(limit = 100): Promise<{ indexes: DatasetIndex[] }> {
+    return request(`/api/datasets/offline/indexes?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  offlineBrainPreflight(payload: {
+    datasetId: string;
+    versionId: string;
+    offlineOnly?: boolean;
+  }): Promise<{ preflight: Record<string, unknown> }> {
+    return request("/api/datasets/offline/preflight", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  enqueueOfflineBrainIndex(payload: {
+    datasetId: string;
+    versionId: string;
+    scope?: string;
+    maxRecords?: number | null;
+    sourceFingerprint?: string | null;
+  }): Promise<{ job: DatasetJob }> {
+    return request("/api/datasets/offline/index", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   /* ---------- Training ---------- */
 
   trainingCapabilities(): Promise<{ capabilities: TrainingCapabilities }> {
