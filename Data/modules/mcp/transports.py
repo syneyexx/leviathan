@@ -248,7 +248,7 @@ class HttpTransport:
         # Basic SSRF guard for non-loopback when outbound is allowed — still refuse metadata IPs.
         if host in {"169.254.169.254", "metadata.google.internal"}:
             raise McpError(MCP_NETWORK_BLOCKED, "Metadata endpoint blocked for MCP HTTP")
-        self._client = httpx.Client(
+        self._client = _httpx().Client(
             timeout=self.timeout_seconds,
             follow_redirects=False,
             headers={"Content-Type": "application/json", **self.headers},
@@ -258,6 +258,7 @@ class HttpTransport:
         if self._client is None:
             raise McpError(MCP_CONNECT_FAILED, "HTTP transport not started")
         body = encode_message(payload, limits=self.limits).rstrip(b"\n")
+        httpx = _httpx()
         try:
             response = self._client.post(self.url, content=body)
         except httpx.HTTPError as exc:

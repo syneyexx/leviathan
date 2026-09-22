@@ -966,7 +966,206 @@ def _m15_coding_agent(conn: sqlite3.Connection) -> None:
     )
 
 
-def _m16_mcp_bridge(conn: sqlite3.Connection) -> None:
+def _m16_market_sim(conn: sqlite3.Connection) -> None:
+    """Market simulation: data sources, strategies, runs, fills, deliberation."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_data_sources (
+            source_id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            bar_count INTEGER NOT NULL DEFAULT 0,
+            start_ts TEXT,
+            end_ts TEXT,
+            byte_size INTEGER NOT NULL DEFAULT 0,
+            validation_error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_data_sources_status "
+        "ON market_data_sources(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategies (
+            strategy_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            current_version INTEGER NOT NULL DEFAULT 1,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategy_versions (
+            version_id TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            parameters_json TEXT NOT NULL DEFAULT '{}',
+            entry_rules_json TEXT NOT NULL DEFAULT '{}',
+            exit_rules_json TEXT NOT NULL DEFAULT '{}',
+            risk_rules_json TEXT NOT NULL DEFAULT '{}',
+            required_timeframes_json TEXT NOT NULL DEFAULT '[]',
+            brain_dependencies_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            changelog TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(strategy_id, version),
+            FOREIGN KEY(strategy_id) REFERENCES market_strategies(strategy_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_runs (
+            run_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            start_ts TEXT NOT NULL,
+            end_ts TEXT NOT NULL,
+            data_hash TEXT NOT NULL,
+            seed INTEGER NOT NULL DEFAULT 42,
+            speed REAL NOT NULL DEFAULT 1.0,
+            initial_cash REAL NOT NULL DEFAULT 100000,
+            fee_bps REAL NOT NULL DEFAULT 5.0,
+            slippage_bps REAL NOT NULL DEFAULT 2.0,
+            max_position_pct REAL NOT NULL DEFAULT 25.0,
+            max_drawdown_pct REAL NOT NULL DEFAULT 20.0,
+            per_trade_risk_pct REAL NOT NULL DEFAULT 1.0,
+            agents_json TEXT NOT NULL DEFAULT '[]',
+            deliberation_every_n INTEGER NOT NULL DEFAULT 5,
+            clock_ts TEXT,
+            bar_index INTEGER NOT NULL DEFAULT 0,
+            bar_count INTEGER NOT NULL DEFAULT 0,
+            cash REAL NOT NULL DEFAULT 100000,
+            equity REAL NOT NULL DEFAULT 100000,
+            position_qty REAL NOT NULL DEFAULT 0,
+            realized_pnl REAL NOT NULL DEFAULT 0,
+            unrealized_pnl REAL NOT NULL DEFAULT 0,
+            causality_violations INTEGER NOT NULL DEFAULT 0,
+            brain_hits INTEGER NOT NULL DEFAULT 0,
+            brain_misses INTEGER NOT NULL DEFAULT 0,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            worker_pid INTEGER,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_runs_status "
+        "ON market_sim_runs(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_fills (
+            fill_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER NOT NULL,
+            ts TEXT NOT NULL,
+            side TEXT NOT NULL,
+            qty REAL NOT NULL,
+            price REAL NOT NULL,
+            fee REAL NOT NULL DEFAULT 0,
+            slippage REAL NOT NULL DEFAULT 0,
+            agent_id TEXT,
+            rationale TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_fills_run "
+        "ON market_sim_fills(run_id, bar_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_messages (
+            message_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER NOT NULL,
+            ts TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            proposal_json TEXT NOT NULL DEFAULT '{}',
+            confidence REAL NOT NULL DEFAULT 0,
+            brain_refs_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_messages_run "
+        "ON market_sim_messages(run_id, bar_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_equity (
+            point_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER NOT NULL,
+            ts TEXT NOT NULL,
+            equity REAL NOT NULL,
+            cash REAL NOT NULL,
+            position_qty REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_equity_run "
+        "ON market_sim_equity(run_id, bar_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_events (
+            event_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_events_run "
+        "ON market_sim_events(run_id, created_at)"
+    )
+
+
+def _m17_mcp_bridge(conn: sqlite3.Connection) -> None:
     """Universal MCP bridge tables — servers, tools cache, call history."""
     conn.executescript(
         """
@@ -1064,7 +1263,8 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=13, name="model_control_plane", apply=_m13_model_control_plane),
     Migration(version=14, name="datasets_training_research", apply=_m14_datasets_training_research),
     Migration(version=15, name="coding_agent", apply=_m15_coding_agent),
-    Migration(version=16, name="mcp_bridge", apply=_m16_mcp_bridge),
+    Migration(version=16, name="market_sim", apply=_m16_market_sim),
+    Migration(version=17, name="mcp_bridge", apply=_m17_mcp_bridge),
 )
 
 

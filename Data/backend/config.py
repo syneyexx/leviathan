@@ -146,6 +146,7 @@ class FeatureFlags:
     mcp_stdio: bool
     mcp_http: bool
     mcp_auto_expand_modules: bool
+    market_sim_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,15 @@ class CodingSettings:
     token_budget: int = 24_000
     reserve_response_tokens: int = 1024
     max_file_chars: int = 8000
+
+
+@dataclass(frozen=True)
+class MarketSimSettings:
+    """Market simulation control-plane settings (data root + worker bounds)."""
+
+    markets_root: Path
+    bars_per_slice: int = 50
+    default_initial_cash: float = 100_000.0
 
 
 @dataclass(frozen=True)
@@ -233,6 +243,7 @@ class Settings:
     reasoning: ReasoningSettings
     features: FeatureFlags
     coding: CodingSettings
+    market_sim: MarketSimSettings
     neuro_runtime: NeuroRuntimeSettings
     resources: ResourceLimits
     context: ContextSettings
@@ -309,6 +320,7 @@ class Settings:
                 "mcp_stdio": self.features.mcp_stdio,
                 "mcp_http": self.features.mcp_http,
                 "mcp_auto_expand_modules": self.features.mcp_auto_expand_modules,
+                "market_sim_enabled": self.features.market_sim_enabled,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -317,6 +329,12 @@ class Settings:
                 "temperature": self.coding.temperature,
                 # Workspace path omitted from public summary (operator-local root).
                 "workspace_configured": bool(str(self.coding.workspace).strip()),
+            },
+            "market_sim": {
+                "enabled": self.features.market_sim_enabled,
+                "markets_root_configured": bool(str(self.market_sim.markets_root).strip()),
+                "bars_per_slice": self.market_sim.bars_per_slice,
+                "default_initial_cash": self.market_sim.default_initial_cash,
             },
             "neuro_runtime": {
                 "residual_kind": self.neuro_runtime.residual_kind,
@@ -400,11 +418,18 @@ class Settings:
         mcp_auto_expand = (
             _env_bool("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES", True) if mcp_enabled else False
         )
+        market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", False)
         coding_workspace_raw = (
             _env_raw("LEVIATHAN_CODING_WORKSPACE", "D:/leviathan/codingworkspace")
             or "D:/leviathan/codingworkspace"
         )
         coding_workspace = _resolve_data_root(coding_workspace_raw)
+        markets_root_raw = (
+            _env_raw("LEVIATHAN_MARKETS_ROOT", "") or ""
+        ).strip()
+        if not markets_root_raw:
+            markets_root_raw = str(data_root / "markets")
+        markets_root = _resolve_data_root(markets_root_raw)
         allowlist_raw = (
             _env_raw(
                 "LEVIATHAN_CODING_COMMAND_ALLOWLIST",
@@ -448,6 +473,7 @@ class Settings:
                 mcp_stdio=mcp_stdio,
                 mcp_http=mcp_http,
                 mcp_auto_expand_modules=mcp_auto_expand,
+                market_sim_enabled=market_sim_enabled,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,
@@ -463,6 +489,13 @@ class Settings:
                 ),
                 max_file_chars=_env_int(
                     "LEVIATHAN_CODING_MAX_FILE_CHARS", 8000, minimum=200, maximum=200_000
+                ),
+            ),
+            market_sim=MarketSimSettings(
+                markets_root=markets_root,
+                bars_per_slice=_env_int("LEVIATHAN_MARKET_SIM_BARS_PER_SLICE", 50, minimum=1, maximum=10_000),
+                default_initial_cash=_env_float(
+                    "LEVIATHAN_MARKET_SIM_INITIAL_CASH", 100_000.0, minimum=1.0
                 ),
             ),
             neuro_runtime=NeuroRuntimeSettings(

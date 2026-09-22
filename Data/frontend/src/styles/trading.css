@@ -565,3 +565,4 @@
     grid-template-columns: 1fr;
   }
 }
+.lv-tr-empty { padding: 24px; color: rgba(214,169,87,0.55); font-size: 0.9rem; }

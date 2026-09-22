@@ -37,7 +37,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `release/` | ReleaseGateRunner |
 | `security/` | SecurityAuditor (posture, not pentest) |
 | `native/` | NativeRuntimeStub |
-| `trading/` | TradingStub |
+| `trading/` | TradingStub (real broker refused) |
+| `market_sim/` | MarketSimControlPlane + causal engine + multi-agent worker (flagged) |
 | `backup/` | BackupService (local SQLite snapshots) |
 | `metrics/` | MetricsCollector (in-process) |
 | `chaos/` | ChaosInjector (default OFF) |

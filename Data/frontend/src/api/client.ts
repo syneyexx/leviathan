@@ -59,6 +59,12 @@ import type {
   McpCallRecord,
   McpServerPublic,
   McpToolRecord,
+  MarketSimStatusResponse,
+  MarketDataSource,
+  MarketStrategy,
+  MarketStrategyVersion,
+  MarketSimRun,
+  MarketSimLiveState,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -86,7 +92,17 @@ function detailMessage(data: ApiErrorBody | null, status: number): string {
     return body.code ? `${body.code}: ${body.message ?? ""}` : String(body.message ?? `Request failed (${status})`);
   }
   if (typeof data.detail === "object" && data.detail !== null && "error" in data.detail) {
-    const nested = (data.detail as { error?: { code?: string; message?: string } }).error;
+    const body = data.detail as { error?: unknown; detail?: unknown; message?: string };
+    if (typeof body.error === "string") {
+      const msg =
+        typeof body.detail === "string"
+          ? body.detail
+          : typeof body.message === "string"
+            ? body.message
+            : "";
+      return msg ? `${body.error}: ${msg}` : body.error;
+    }
+    const nested = body.error as { code?: string; message?: string };
     if (nested?.message) {
       return nested.code ? `${nested.code}: ${nested.message}` : nested.message;
     }
@@ -937,5 +953,103 @@ export const api = {
     approved_by_user?: boolean;
   }): Promise<{ result: unknown; truth: Record<string, boolean> }> {
     return request("/api/mcp/call", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  /* ---------- Market Simulation ---------- */
+
+  marketSimStatus(): Promise<MarketSimStatusResponse> {
+    return request("/api/market-sim/status");
+  },
+
+  listMarketData(limit = 200): Promise<{ sources: MarketDataSource[] }> {
+    return request(`/api/market-sim/data?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  scanMarketData(): Promise<{ sources: MarketDataSource[] }> {
+    return request("/api/market-sim/data/scan", { method: "POST" });
+  },
+
+  registerMarketData(payload: {
+    path: string;
+    symbol?: string;
+    timeframe?: string;
+  }): Promise<{ source: MarketDataSource }> {
+    return request("/api/market-sim/data/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listMarketStrategies(limit = 100): Promise<{ strategies: MarketStrategy[] }> {
+    return request(`/api/market-sim/strategies?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createMarketStrategy(payload: {
+    name: string;
+    description?: string;
+    tags?: string[];
+    parameters?: Record<string, unknown>;
+    entryRules?: Record<string, unknown>;
+    exitRules?: Record<string, unknown>;
+    riskRules?: Record<string, unknown>;
+    requiredTimeframes?: string[];
+    brainDependencies?: string[];
+  }): Promise<{ strategy: MarketStrategy; version: MarketStrategyVersion }> {
+    return request("/api/market-sim/strategies", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getMarketStrategy(
+    strategyId: string,
+  ): Promise<{ strategy: MarketStrategy; versions: MarketStrategyVersion[] }> {
+    return request(`/api/market-sim/strategies/${encodeURIComponent(strategyId)}`);
+  },
+
+  listMarketSimRuns(limit = 50): Promise<{ runs: MarketSimRun[] }> {
+    return request(`/api/market-sim/runs?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createMarketSimRun(payload: {
+    sourceId: string;
+    strategyId?: string;
+    strategyVersion?: number;
+    startTs?: string;
+    endTs?: string;
+    seed?: number;
+    speed?: number;
+    initialCash?: number;
+    deliberationEveryN?: number;
+    agents?: Array<Record<string, unknown>>;
+  }): Promise<{ run: MarketSimRun }> {
+    return request("/api/market-sim/runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  startMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/start`, { method: "POST" });
+  },
+
+  pauseMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/pause`, { method: "POST" });
+  },
+
+  stepMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/step`, { method: "POST" });
+  },
+
+  stopMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
+  },
+
+  getMarketSimLive(runId: string): Promise<MarketSimLiveState> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/live`);
+  },
+
+  getMarketSimResults(runId: string): Promise<MarketSimLiveState & { metrics: Record<string, unknown> }> {
+    return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/results`);
   },
 };

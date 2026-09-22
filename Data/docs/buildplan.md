@@ -14,7 +14,7 @@ Give LEVIATHAN first-class Model Context Protocol support through **ONE** univer
 ### Added / changed
 - **Module:** `Data/modules/mcp/` — `McpBridge`, sessions, stdio+HTTP transports, protocol, catalog sync, provider, store, module.json integration
 - **Capability model:** `provider_kind=MCP`; catalog `upsert` / availability / `search`+`inspect`; gateway MCP dispatch
-- **Migration v16:** `mcp_servers`, `mcp_tools`, `mcp_tool_calls`
+- **Migration v17:** `mcp_servers`, `mcp_tools`, `mcp_tool_calls`
 - **Flags:** `LEVIATHAN_FEATURE_MCP` (+ STDIO / HTTP / AUTO_EXPAND_MODULES children)
 - **API:** `/api/mcp/*` — register/lifecycle/tools/calls; `POST /api/mcp/call` via ExecutionGateway only
 - **Frontend:** `/mcp` operator page (real supervisor-backed state)
@@ -33,6 +33,34 @@ Give LEVIATHAN first-class Model Context Protocol support through **ONE** univer
 
 ### Status
 **PASS**
+
+---
+
+## 2026-09-22 — Market simulation (causal multi-agent, EXTERNAL-FIRST) — PASS
+
+### Objective
+Replace mock Trading Center numbers with a rigorous paper market simulator: real OHLCV files, strict no-look-ahead clock, versioned strategies, multi-agent deliberation with brain hooks, honest metrics.
+
+### Added
+- `Data/modules/market_sim/` — control plane, MarketDataStore, SimulationEngine, StrategyStore, DeliberationRuntime, BrainFacade, MarketSimWorker
+- Migration **v16** — market_data_sources, market_strategies/versions, market_sim_runs/fills/messages/equity/events
+- API: `Data/backend/routes/market_sim.py` under `/api/market-sim/*`
+- Flag: `LEVIATHAN_FEATURE_MARKET_SIM` (default false); `LEVIATHAN_MARKETS_ROOT`
+- Frontend: live binding intended for `/trading/simulatie`, `/trading/strategieen`, `/trading/marktdata` (see merge note vs pixel-exact TradingCenter pages)
+- Docs: `Data/docs/market_sim.md`
+- Tests: `Data/backend/tests/test_market_sim.py` + fixture BTC OHLCV
+- App version `0.56.0-market-sim` (after Phase 52 `0.55.0`)
+
+### Architecture fit
+- EXTERNAL-FIRST: worker executes bars; Core owns lifecycle/state
+- One central SQLite; market files on filesystem with hashes
+- Brain advisory only; paper fills only; trading stub still refuses real orders
+- Causality violations measured and must be 0 on tests
+
+### Explicitly NOT claimed
+- Real broker / live money
+- Perfect L2 microstructure without L2 data
+- Guaranteed alpha / in-loop foundation training
 
 ---
 
