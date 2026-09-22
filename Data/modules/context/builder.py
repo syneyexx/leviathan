@@ -266,28 +266,47 @@ class ContextBuilder:
         sections: list[ContextSection] = []
         used = 0
         dropped: list[str] = []
+        # Neuro gets a slightly tighter per-item cap so advisory signals stay budgeted.
+        item_max = 480 if kind == "neuro" else max_chars
         for idx, item in enumerate(items):
             raw = str(item.get("content") or item.get("claim") or item.get("summary") or item)
+            if kind == "neuro":
+                signal_kind = item.get("kind") or item.get("signal_kind") or "advisory"
+                raw = f"[{signal_kind}] {raw}"
             truncated = False
-            if len(raw) > max_chars:
-                raw = raw[:max_chars] + "…"
+            if len(raw) > item_max:
+                raw = raw[:item_max] + "…"
                 truncated = True
             tokens = estimate_tokens(raw)
             if used + tokens > budget:
                 dropped.append(f"{label}:{idx}")
                 continue
             used += tokens
+            provenance = {
+                "id": item.get("id")
+                or item.get("evidence_id")
+                or item.get("observation_id")
+                or item.get("memory_id")
+                or item.get("signal_id"),
+                "status": item.get("status"),
+                "kind": kind,
+            }
+            if kind == "neuro":
+                provenance.update(
+                    {
+                        "signal_kind": item.get("kind") or item.get("signal_kind"),
+                        "advisory_only": True,
+                        "neural_signal_is_not_authority": True,
+                        "provenance_label": "neuro_advisory",
+                    }
+                )
             sections.append(
                 ContextSection(
                     name=f"{label}_{idx}",
                     kind=kind,
                     content=raw,
                     token_estimate=tokens,
-                    provenance={
-                        "id": item.get("id") or item.get("evidence_id") or item.get("observation_id") or item.get("memory_id"),
-                        "status": item.get("status"),
-                        "kind": kind,
-                    },
+                    provenance=provenance,
                     truncated=truncated,
                 )
             )

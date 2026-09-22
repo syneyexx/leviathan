@@ -1,7 +1,23 @@
 from __future__ import annotations
 
+import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Mapping, Protocol, Sequence
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class RecipeRunStatus(str, Enum):
+    REGISTERED = "REGISTERED"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
 @dataclass(frozen=True)
@@ -91,12 +107,230 @@ NEURO_RECIPES: tuple[TrainingRecipe, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class RecipeRun:
+    run_id: str
+    recipe_id: str
+    status: RecipeRunStatus
+    created_at: str
+    updated_at: str
+    metrics: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    trainer_backend: str | None = None
+    detail: str = ""
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "recipe_id": self.recipe_id,
+            "status": self.status.value,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "metrics": self.metrics,
+            "error": self.error,
+            "trainer_backend": self.trainer_backend,
+            "detail": self.detail,
+            "truth": {
+                "registered_is_not_trained": True,
+                "no_fabricated_metrics": True,
+                "completed_requires_real_trainer_metrics": True,
+            },
+        }
+
+
+class RecipeTrainerBackend(Protocol):
+    """Optional trainer backend. Must return real metrics or raise — never fabricate."""
+
+    backend_id: str
+
+    def available(self) -> bool: ...
+
+    def execute(
+        self,
+        recipe: TrainingRecipe,
+        *,
+        samples: Sequence[Mapping[str, Any]],
+        config: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        """Return metrics dict from a real training step. Raise on failure."""
+        ...
+
+
+@dataclass
+class FixtureRecipeTrainer:
+    """Dev/test trainer that runs a deterministic local step without ML deps.
+
+    Produces honest fixture metrics labelled as fixture — never claims GPU training.
+    """
+
+    backend_id: str = "fixture"
+    fail: bool = False
+
+    def available(self) -> bool:
+        return True
+
+    def execute(
+        self,
+        recipe: TrainingRecipe,
+        *,
+        samples: Sequence[Mapping[str, Any]],
+        config: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        if self.fail:
+            raise RuntimeError("fixture trainer forced failure")
+        # Process-supervision / DPO / InfoNCE / synthetic honesty gates.
+        approved = [s for s in samples if s.get("critic_approved") or s.get("verification_passed")]
+        if recipe.requires_verification and not approved and samples:
+            raise RuntimeError("recipe requires verification-approved samples; none present")
+        if recipe.objective == "synthetic_reasoning":
+            kept = [s for s in samples if s.get("verification_passed")]
+            discarded = len(samples) - len(kept)
+        else:
+            kept = list(approved or samples)
+            discarded = 0
+        loss_proxy = max(0.01, 1.0 / max(len(kept), 1))
+        return {
+            "steps": len(kept),
+            "samples_kept": len(kept),
+            "samples_discarded": discarded,
+            "loss": round(loss_proxy, 6),
+            "objective": recipe.objective,
+            "fixture": True,
+            "config": dict(config or {}),
+            "truth": {
+                "fixture_metrics_are_not_gpu_training": True,
+                "no_fabricated_production_metrics": True,
+            },
+        }
+
+
 class TrainingRecipeRegistry:
-    def __init__(self, recipes: tuple[TrainingRecipe, ...] = NEURO_RECIPES) -> None:
+    """Recipe catalog + honest run status machine.
+
+    REGISTERED → QUEUED → RUNNING → COMPLETED | FAILED
+    Metrics only when a real trainer backend reports them.
+    """
+
+    def __init__(
+        self,
+        recipes: tuple[TrainingRecipe, ...] = NEURO_RECIPES,
+        *,
+        trainer: RecipeTrainerBackend | None = None,
+    ) -> None:
         self._recipes = {item.recipe_id: item for item in recipes}
+        self._runs: dict[str, RecipeRun] = {}
+        self.trainer = trainer
 
     def list(self) -> list[TrainingRecipe]:
         return sorted(self._recipes.values(), key=lambda item: item.recipe_id)
 
     def get(self, recipe_id: str) -> TrainingRecipe | None:
         return self._recipes.get(recipe_id)
+
+    def list_runs(self) -> list[RecipeRun]:
+        return sorted(self._runs.values(), key=lambda item: item.created_at, reverse=True)
+
+    def get_run(self, run_id: str) -> RecipeRun | None:
+        return self._runs.get(run_id)
+
+    def enqueue(self, recipe_id: str) -> RecipeRun:
+        recipe = self._recipes.get(recipe_id)
+        if recipe is None:
+            raise KeyError(f"Unknown recipe: {recipe_id}")
+        now = utc_now()
+        run = RecipeRun(
+            run_id=str(uuid.uuid4()),
+            recipe_id=recipe_id,
+            status=RecipeRunStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+            detail="queued — registered is not trained",
+        )
+        self._runs[run.run_id] = run
+        return run
+
+    def execute(
+        self,
+        recipe_id: str,
+        *,
+        samples: Sequence[Mapping[str, Any]] | None = None,
+        config: Mapping[str, Any] | None = None,
+        trainer: RecipeTrainerBackend | None = None,
+    ) -> RecipeRun:
+        recipe = self._recipes.get(recipe_id)
+        if recipe is None:
+            raise KeyError(f"Unknown recipe: {recipe_id}")
+        backend = trainer if trainer is not None else self.trainer
+        now = utc_now()
+        run = RecipeRun(
+            run_id=str(uuid.uuid4()),
+            recipe_id=recipe_id,
+            status=RecipeRunStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+            trainer_backend=getattr(backend, "backend_id", None) if backend else None,
+            detail="queued",
+        )
+        self._runs[run.run_id] = run
+
+        if backend is None or not backend.available():
+            failed = RecipeRun(
+                run_id=run.run_id,
+                recipe_id=recipe_id,
+                status=RecipeRunStatus.FAILED,
+                created_at=run.created_at,
+                updated_at=utc_now(),
+                metrics={},
+                error="No trainer backend available — recipe remains untrained (registered ≠ trained)",
+                trainer_backend=None,
+                detail="FAILED without fabricated metrics",
+            )
+            self._runs[run.run_id] = failed
+            return failed
+
+        running = RecipeRun(
+            run_id=run.run_id,
+            recipe_id=recipe_id,
+            status=RecipeRunStatus.RUNNING,
+            created_at=run.created_at,
+            updated_at=utc_now(),
+            trainer_backend=backend.backend_id,
+            detail="running",
+        )
+        self._runs[run.run_id] = running
+        started = time.perf_counter()
+        try:
+            metrics = dict(
+                backend.execute(recipe, samples=list(samples or ()), config=config)
+            )
+            # Refuse forged COMPLETED with empty metrics.
+            if not metrics:
+                raise RuntimeError("trainer returned empty metrics — refusing fabricated COMPLETED")
+            duration_ms = (time.perf_counter() - started) * 1000
+            metrics.setdefault("duration_ms", round(duration_ms, 3))
+            completed = RecipeRun(
+                run_id=run.run_id,
+                recipe_id=recipe_id,
+                status=RecipeRunStatus.COMPLETED,
+                created_at=run.created_at,
+                updated_at=utc_now(),
+                metrics=metrics,
+                trainer_backend=backend.backend_id,
+                detail="completed with trainer-reported metrics",
+            )
+            self._runs[run.run_id] = completed
+            return completed
+        except Exception as exc:  # noqa: BLE001
+            failed = RecipeRun(
+                run_id=run.run_id,
+                recipe_id=recipe_id,
+                status=RecipeRunStatus.FAILED,
+                created_at=run.created_at,
+                updated_at=utc_now(),
+                metrics={},
+                error=str(exc),
+                trainer_backend=backend.backend_id,
+                detail="FAILED — no fabricated metrics",
+            )
+            self._runs[run.run_id] = failed
+            return failed

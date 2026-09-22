@@ -9,9 +9,10 @@ from .types import TrainingJob
 
 
 class PreferenceBridge:
-    """Derive preference-optimization training intents from Verification reports.
+    """Derive preference-optimization training intents from Verification + human preference.
 
-    Does not fabricate preference labels or start training. Registers intents only.
+    Does not fabricate preference labels or start training. Registers intents only
+    unless a TrainingRecipeRegistry execute path is explicitly invoked by the caller.
     """
 
     def __init__(self, registry: TrainingRegistry) -> None:
@@ -48,3 +49,26 @@ class PreferenceBridge:
             )
             created.append(job)
         return created
+
+    def register_human_preference(
+        self,
+        *,
+        preferred_id: str,
+        rejected_id: str,
+        recipe_id: str = "pref_dpo_v1",
+        note: str = "",
+    ) -> TrainingJob:
+        """Register a human preference pair for later DPO-style optimization."""
+        preferred = preferred_id.strip()
+        rejected = rejected_id.strip()
+        if not preferred or not rejected:
+            raise ValueError("preferred_id and rejected_id are required")
+        if preferred == rejected:
+            raise ValueError("preferred_id and rejected_id must differ")
+        return self.registry.register(
+            name=f"pref_human:{preferred[:24]}",
+            objective=(
+                f"recipe={recipe_id}; preferred={preferred}; rejected={rejected}; "
+                f"source=human_preference; note={note.strip()[:200]}"
+            ),
+        )
