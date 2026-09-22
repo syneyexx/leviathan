@@ -1,17 +1,25 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
+title LEVIATHAN
 
-if not exist ".venv\Scripts\python.exe" (
+set "PY=.venv\Scripts\python.exe"
+set "LOG=%~dp0leviathan_startup.log"
+
+echo [%DATE% %TIME%] LEVIATHAN start > "%LOG%"
+
+if not exist "%PY%" (
   echo [LEVIATHAN] Not installed yet.
   echo Run installer.bat first.
-  exit /b 1
+  echo [%DATE% %TIME%] Missing .venv\Scripts\python.exe >> "%LOG%"
+  goto :fail
 )
 
 if not exist "Data\frontend\dist\index.html" (
   echo [LEVIATHAN] Frontend build missing.
   echo Run installer.bat first ^(or: cd Data\frontend ^&^& npm run build^).
-  exit /b 1
+  echo [%DATE% %TIME%] Missing Data\frontend\dist\index.html >> "%LOG%"
+  goto :fail
 )
 
 if not exist ".env" (
@@ -20,9 +28,55 @@ if not exist ".env" (
     echo [LEVIATHAN] Created .env from .env.example
   ) else (
     echo [LEVIATHAN] Missing .env and .env.example
-    exit /b 1
+    echo [%DATE% %TIME%] Missing .env and .env.example >> "%LOG%"
+    goto :fail
   )
 )
 
+echo [LEVIATHAN] Checking Python packages...
+"%PY%" -c "import fastapi, uvicorn" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [LEVIATHAN] Required packages missing or broken ^(fastapi/uvicorn^).
+  echo Run installer.bat again.
+  echo See leviathan_startup.log for details.
+  goto :fail
+)
+
+echo [LEVIATHAN] Checking app import...
+"%PY%" -c "from Data.backend.main import app" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [LEVIATHAN] Failed to import Data.backend.main:app
+  echo See leviathan_startup.log for the Python traceback.
+  type "%LOG%"
+  goto :fail
+)
+
 echo [LEVIATHAN] Starting on http://127.0.0.1:8765
-".venv\Scripts\python.exe" -m uvicorn Data.backend.main:app --host 127.0.0.1 --port 8765
+echo [LEVIATHAN] Keep this window open. Press Ctrl+C to stop.
+echo.
+
+"%PY%" -m uvicorn Data.backend.main:app --host 127.0.0.1 --port 8765
+set "EXITCODE=%ERRORLEVEL%"
+
+if not "%EXITCODE%"=="0" (
+  echo.
+  echo [LEVIATHAN] Server exited with error code %EXITCODE%.
+  echo [%DATE% %TIME%] uvicorn exit code %EXITCODE% >> "%LOG%"
+  echo If the traceback scrolled away, re-run this file from a Command Prompt:
+  echo   cd /d "%~dp0"
+  echo   run_leviathan.bat
+  echo Or open leviathan_startup.log after the preflight checks above.
+  goto :fail
+)
+
+exit /b 0
+
+:fail
+echo.
+echo ============================================
+echo   LEVIATHAN failed to start
+echo ============================================
+echo This window stays open so you can read the error.
+echo.
+pause
+exit /b 1

@@ -301,7 +301,6 @@ export function DatasetsPage() {
             </Link>
           </div>
         </header>
-
         {error ? (
           <div className="lv-models-banner is-error" role="alert">
             <strong>Datasets unavailable</strong>

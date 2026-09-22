@@ -299,7 +299,6 @@ export function ToolsPage() {
             <span>Transcend</span>
           </div>
         </section>
-
         <div className="lv-tools-toolbar">
           <div className="lv-tabs" role="tablist">
             {TABS.map((item) => (

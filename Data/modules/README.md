@@ -27,6 +27,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `neuro/` | NeuroAdvisor + residual/cortex/critic/memory/adapters/snapshots (advisory; never authority) |
 | `module_manager/` | Universal Module Manager — single `ILeviathanModule` loader (+ optional subprocess) |
 | `plugins/` | PluginRegistry (declarative → catalog; not a second loader) |
+| `mcp/` | Universal MCP Bridge (one bridge / many sessions; Tools provider) |
 | `evaluation/` | EvaluationHarness (+ neuro ablations) |
 | `isolation/` | IsolationGuard |
 | `training/` | TrainingRegistry stub + TrainingRecipeRegistry |
@@ -36,7 +37,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `release/` | ReleaseGateRunner |
 | `security/` | SecurityAuditor (posture, not pentest) |
 | `native/` | NativeRuntimeStub |
-| `trading/` | TradingStub |
+| `trading/` | TradingStub (real broker refused) |
+| `market_sim/` | MarketSimControlPlane + causal engine + multi-agent worker (flagged) |
 | `backup/` | BackupService (local SQLite snapshots) |
 | `metrics/` | MetricsCollector (in-process) |
 | `chaos/` | ChaosInjector (default OFF) |

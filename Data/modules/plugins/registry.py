@@ -80,6 +80,43 @@ class PluginRegistry:
         self._plugins[plugin_id] = updated
         return updated
 
+    def replace_bindings(
+        self,
+        plugin_id: str,
+        *,
+        name: str | None = None,
+        bindings: list[PluginCapabilityBinding] | tuple[PluginCapabilityBinding, ...] | None = None,
+        metadata: dict[str, Any] | None = None,
+        status: PluginStatus | None = None,
+    ) -> PluginRecord:
+        """Update declarative bindings for an existing plugin record (MCP sync)."""
+        item = self._plugins.get(plugin_id)
+        if item is None:
+            raise KeyError(f"Unknown plugin: {plugin_id}")
+        new_bindings = tuple(bindings) if bindings is not None else item.bindings
+        for binding in new_bindings:
+            if binding.capability_id not in self.catalog:
+                raise KeyError(
+                    f"Binding capability not in catalog (register capability first): "
+                    f"{binding.capability_id}"
+                )
+        updated = PluginRecord(
+            plugin_id=item.plugin_id,
+            name=name or item.name,
+            kind=item.kind,
+            status=status or item.status,
+            version=item.version,
+            bindings=new_bindings,
+            endpoint=item.endpoint,
+            metadata={**item.metadata, **(metadata or {})},
+            error=item.error if (status or item.status) == PluginStatus.ERROR else None,
+        )
+        self._plugins[plugin_id] = updated
+        return updated
+
+    def unregister(self, plugin_id: str) -> bool:
+        return self._plugins.pop(plugin_id, None) is not None
+
     def resolve_capability(self, plugin_id: str, external_name: str) -> str | None:
         """Map external tool name → capability id if plugin is ENABLED."""
         plugin = self._plugins.get(plugin_id)

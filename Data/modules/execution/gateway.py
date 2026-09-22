@@ -60,6 +60,21 @@ class ObservationRecorder(Protocol):
     def record_execution(self, **kwargs: Any) -> Any: ...
 
 
+class McpExecutor(Protocol):
+    """MCP provider adapter — invoked only after gateway authorization."""
+
+    def execute_capability(
+        self,
+        capability_id: str,
+        arguments: dict[str, Any],
+        *,
+        request_id: str,
+        approval_id: str | None = None,
+        requested_by: str = "api",
+        approved_by_user: bool | None = None,
+    ) -> CapabilityResult: ...
+
+
 @dataclass
 class EffectRecord:
     effect_id: str
@@ -89,6 +104,7 @@ class ExecutionGateway:
     artifact_store: ArtifactWriter | None = None
     approval_checker: ApprovalChecker | None = None
     observation_store: ObservationRecorder | None = None
+    mcp_executor: McpExecutor | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
@@ -125,6 +141,20 @@ class ExecutionGateway:
                 request=request,
             )
 
+        # Strip audit-only client fields before schema validation — never authority.
+        arguments = dict(request.arguments)
+        arguments.pop("approved_by_user", None)
+        arguments.pop("_approved_by_user", None)
+        request = CapabilityRequest(
+            capability_id=request.capability_id,
+            arguments=arguments,
+            request_id=request.request_id,
+            run_id=request.run_id,
+            job_id=request.job_id,
+            approval_id=request.approval_id,
+            requested_by=request.requested_by,
+        )
+
         try:
             self._validate_args(definition, request.arguments)
         except GatewayRejection as exc:
@@ -133,6 +163,18 @@ class ExecutionGateway:
                 definition.id,
                 str(exc),
                 reason=exc.reason,
+                started=started,
+                definition=definition,
+                approval_id=request.approval_id,
+                request=request,
+            )
+
+        if not definition.available:
+            return self._reject(
+                request_id,
+                definition.id,
+                f"Capability unavailable: {definition.availability_reason or 'unavailable'}",
+                reason="unavailable",
                 started=started,
                 definition=definition,
                 approval_id=request.approval_id,
@@ -250,9 +292,26 @@ class ExecutionGateway:
             return self._dispatch_knowledge(definition, request)
         if kind == CapabilityProviderKind.ARTIFACT:
             return self._dispatch_artifact(definition, request)
+        if kind == CapabilityProviderKind.MCP:
+            return self._dispatch_mcp(definition, request)
         raise GatewayRejection(
             f"Unsupported provider kind: {kind.value}",
             reason="unsupported_provider",
+        )
+
+    def _dispatch_mcp(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> CapabilityResult:
+        if self.mcp_executor is None:
+            raise RuntimeError("MCP executor not configured on ExecutionGateway")
+        # approved_by_user may arrive as a top-level sibling in API payloads — never authorize from it.
+        return self.mcp_executor.execute_capability(
+            definition.id,
+            dict(request.arguments),
+            request_id=request.request_id or "",
+            approval_id=request.approval_id,
+            requested_by=request.requested_by,
+            approved_by_user=None,
         )
 
     def _dispatch_function(

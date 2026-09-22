@@ -6,6 +6,197 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-22 — Phase 54 Residual Production + Contrastive Memory + Chat SSE — PASS
+
+### Objective
+Elevate Phase 53 Neuro to a measurable production residual path, InfoNCE contrastive retrieval via EmbeddingProvider, and real `/api/chat` SSE token streaming — without authority theater or fake success.
+
+### Added / changed
+- **Residual production path:** vLLM / llama.cpp adapters keep mandatory `/v1/residuals/hooks` probe; HTTP read/inject/forward when confirmed; receipts always include implemented/applied/degraded/reason/truth; health≠support; `supports_streaming_forward=False` by default
+- **ResidualOrchestrator harden:** mid/late layer policy, α/`max_total_alpha` budgeting, multi-inject one-forward coordination, degrade_reasons telemetry, truth fields (`residual_implemented`, `residual_applied`, `streaming_degraded`)
+- **Contrastive:** `ContrastiveRetrievalHead` methods `embedding` | `lexical`; InfoNCE-style softmax weights via EmbeddingProvider; UNMEASURED when embeddings absent; Tier2 chat path can surface contrastive hits
+- **Training:** contrastive recipe still via `EphemeralRecipeWorkerTrainer` (EXTERNAL-FIRST); no fabricated COMPLETED
+- **Chat SSE:** `LEVIATHAN_FEATURE_CHAT_STREAMING` + child `LEVIATHAN_FEATURE_CHAT_SSE`; `OpenAICompatibleLLM.chat_stream`; `/api/chat` returns `text/event-stream` (meta/token/done/error); residual+stream degrades honestly with `truth.streaming_degraded`
+- **API:** `GET /api/neuro/status` (residual/contrastive/streaming posture); health neuro block expanded
+- **Frontend:** Chat UI consumes SSE tokens; Status neuro panel shows contrastive readiness, stream posture, applied/degraded counts
+- **Version:** `0.60.0-phase54`; Master `phase_span=0-54`
+- **Tests:** `test_neuro_phase54.py`
+
+### EXTERNAL-FIRST review
+- Residual mutation stays on adapters / external residual servers; Core orchestrates
+- Contrastive training worker = ephemeral subprocess; Core keeps registry authority
+- Chat streaming is transport over existing model_runtime client — no second model client
+- No second SQLite / gateway / approvals / evidence system
+
+### Explicitly NOT claimed
+- Default production GPU residual path
+- Multi-hour power/HBM SLO
+- Residual-aware token streaming when adapter cannot stream forward (degrades)
+- Contrastive training always improves retrieval without metrics
+- Legacy MCP SSE transport
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-22 — Phase 53+ Neuro Layer (EXTERNAL-FIRST residual / cortex / training) — PASS
+
+### Objective
+Elevate Phase 52 Neuro to production-grade residual orchestration, named cortex circuits with early-exit, honest vLLM/llama.cpp/TRT adapter contracts, EXTERNAL-FIRST recipe workers, and measurable soak — without authority theater.
+
+### Added / changed
+- **ResidualOrchestrator** (`Data/modules/neuro/residual_orchestrator.py`) — mid/late layer selection, α/scale budget, multi-inject coordination, telemetry + truth fields; never authorizes side-effects
+- **Adapters:** vLLM / llama.cpp probe `/v1/residuals/hooks` before claiming support; HTTP read/inject/forward when confirmed; `TrtResidualAdapter` optional honest stub; health≠support
+- **Cortex:** named circuits (`planning`, `verification`, `tool_selection`, `memory_projection`, `self_critique`); `LEVIATHAN_NEURO_CORTEX_MAX_K` bound; ProcessCritic early-exit
+- **Training:** `EphemeralRecipeWorkerTrainer` behind `LEVIATHAN_NEURO_TRAINING_REAL_WORKER` (subprocess, no parallel DB)
+- **Soak:** long mode behind `LEVIATHAN_FEATURE_NEURO_SOAK_LONG` (still not multi-hour SLO claim)
+- **Flags:** residual orchestrator / cortex blocks / contrastive training / soak long / hook layers / tier0 slots / training real worker
+- **API:** `POST /api/neuro/residual/orchestrate`; status/residual truth fields expanded; version `0.59.0-phase53`; Master `phase_span=0-53`
+- **Frontend:** Status neuro panel — residual posture, WM load, cortex K, honesty flags, mini/long soak
+- **Tests:** `test_neuro_phase53.py`
+
+### EXTERNAL-FIRST review
+- Orchestrator = Core control plane; residual mutation on adapters / external residual servers
+- Recipe worker = ephemeral subprocess; Core keeps registry authority
+- No second SQLite / gateway / approvals / model client
+
+### Explicitly NOT claimed
+- Default production GPU residual path
+- Multi-hour power/HBM SLO
+- Automatic “thought harder” authority
+- Fabricated COMPLETED training without trainer metrics
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-22 — Universal MCP Bridge (one bridge / many servers) — PASS
+
+### Objective
+Give LEVIATHAN first-class Model Context Protocol support through **ONE** universal MCP bridge that manages many MCP servers and tools while preserving CapabilityCatalog, ExecutionGateway, Approvals, Evidence, and central SQLite invariants. No per-server wrapper proliferation. No HADES copy.
+
+### Added / changed
+- **Module:** `Data/modules/mcp/` — `McpBridge`, sessions, stdio+HTTP transports, protocol, catalog sync, provider, store, module.json integration
+- **Capability model:** `provider_kind=MCP`; catalog `upsert` / availability / `search`+`inspect`; gateway MCP dispatch
+- **Migration v17:** `mcp_servers`, `mcp_tools`, `mcp_tool_calls`
+- **Flags:** `LEVIATHAN_FEATURE_MCP` (+ STDIO / HTTP / AUTO_EXPAND_MODULES children)
+- **API:** `/api/mcp/*` — register/lifecycle/tools/calls; `POST /api/mcp/call` via ExecutionGateway only
+- **Frontend:** `/mcp` operator page (real supervisor-backed state)
+- **Docs:** `Data/docs/mcp_bridge.md`
+- **Tests:** `test_mcp_bridge.py` (protocol, gateway, multi-server, circuit, limits, secrets, isolation, module ownership, feature-off)
+
+### Verification
+- `python3 -m unittest Data.backend.tests.test_mcp_bridge` → PASS
+- Related: plugins / execution_gateway / config / migrations / module_manager → PASS
+
+### Explicitly NOT claimed
+- Legacy SSE transport (explicit unsupported)
+- Real OS container/sandbox adapter
+- MCP resources/prompts/sampling families (architecture extensible)
+- Environment-dependent real upstream MCP servers (filesystem/git/fetch) unless installed
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-22 — Market simulation (causal multi-agent, EXTERNAL-FIRST) — PASS
+
+### Objective
+Replace mock Trading Center numbers with a rigorous paper market simulator: real OHLCV files, strict no-look-ahead clock, versioned strategies, multi-agent deliberation with brain hooks, honest metrics.
+
+### Added
+- `Data/modules/market_sim/` — control plane, MarketDataStore, SimulationEngine, StrategyStore, DeliberationRuntime, BrainFacade, MarketSimWorker
+- Migration **v16** — market_data_sources, market_strategies/versions, market_sim_runs/fills/messages/equity/events
+- API: `Data/backend/routes/market_sim.py` under `/api/market-sim/*`
+- Flag: `LEVIATHAN_FEATURE_MARKET_SIM` (default false); `LEVIATHAN_MARKETS_ROOT`
+- Frontend: live binding intended for `/trading/simulatie`, `/trading/strategieen`, `/trading/marktdata` (see merge note vs pixel-exact TradingCenter pages)
+- Docs: `Data/docs/market_sim.md`
+- Tests: `Data/backend/tests/test_market_sim.py` + fixture BTC OHLCV
+- App version `0.56.0-market-sim` (after Phase 52 `0.55.0`)
+
+### Architecture fit
+- EXTERNAL-FIRST: worker executes bars; Core owns lifecycle/state
+- One central SQLite; market files on filesystem with hashes
+- Brain advisory only; paper fills only; trading stub still refuses real orders
+- Causality violations measured and must be 0 on tests
+
+### Explicitly NOT claimed
+- Real broker / live money
+- Perfect L2 microstructure without L2 data
+- Guaranteed alpha / in-loop foundation training
+
+---
+
+## 2026-09-22 — Phase 52 — Neuro Layer Grok-level depth jump — PASS
+
+### Objective
+Elevate the Neuro Layer from Phase 51 operational completion to frontier-feeling local reasoning quality while preserving every honesty invariant (neural signal ≠ authority, residual optional/degradable, registered ≠ trained, unmeasured ≠ passed).
+
+### Added / changed
+- **Residual:** weight-backed `HFTransformersResidualAdapter` behind `LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS`; ADDITIVE/GATED/DISABLED modes; provenance receipts (`implemented`/`applied`/`degraded_to_chat_completions`/`reason`); richer vLLM/llama.cpp stubs; telemetry on read/inject/forward
+- **Cortex:** smarter `CortexPlanner` (budget, residual, memory coverage/quality, WM load); `CortexRuntime` mid-forward critic re-steer + residual replay; depth metadata signals (advisory only)
+- **Critic:** grounding collapses without Evidence/Knowledge ID citations
+- **Memory:** Tier0 priority eviction; high-trust Verification/human writes; budgeted retrieve; lock-safe snapshot/restore; contrastive head uses EmbeddingProvider when available
+- **Training:** `TrainingRecipeRegistry.execute` status machine with fixture trainer; refuse fabricated COMPLETED; human preference bridge
+- **Observability/status:** neuro category events; status residual posture + WM load
+- Version `0.55.0-phase52`; Master `phase_span=0-52`
+- Tests: `test_neuro_phase52.py` (+ existing Phase 46–51 suites)
+
+### Verification
+- Full backend `pytest Data/backend/tests` → **229 passed**
+
+### Explicitly NOT claimed
+- Default production path is weight-backed GPU residual (still opt-in / env-dependent)
+- Multi-hour HBM/power SLO
+- Automatic preference fabrication
+- “Thought harder” as authority
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-21 — Coding Agent control plane + /coding operator UI — PASS
+
+### Objective
+Turn `/coding` from a toast/chat-redirect stub into a production Coding Agent control plane (same honesty bar as Models / Datasets / Research), with a pixel layout matching the Coding Agent mockup.
+
+### Added
+- `Data/modules/coding/` — CodingControlPlane, CodingLoop (XML tool protocol), store, workspace confinement (HADES deny), patch applicator (fail-closed), parser, prompts (few-shots), tools ENFORCE-*, background worker
+- Migration **v15** — `coding_sessions`, `coding_turns`, `coding_steps`, `coding_patches`
+- Capabilities: `workspace.list`, `workspace.search`, `file.write`, `file.patch`, `file.delete`, `coding.run_tests`, `git.status`, `git.diff`; `file.read` gains line numbers / start_line / end_line
+- Functions under `Data/functions/{text_file_write,text_file_patch,text_file_delete,workspace_list,workspace_search,coding_run_tests,git_status,git_diff}`
+- API: `Data/backend/routes/coding.py` mounted from `main.py`; lifespan starts coding worker
+- Flags: `LEVIATHAN_FEATURE_CODING` (default false; requires `LEVIATHAN_FEATURE_AGENTS`); workspace default `D:/leviathan/codingworkspace`
+- Frontend: `/coding` Coding Agent page — hero + 8 panels (Task Intake, Agent Status, Workspace, Timeline, Terminal, Diff, Review, Memory); typed client; submenu **Coding Agent**
+- Tests: `Data/backend/tests/test_coding_agent.py` (32)
+
+### Architecture fit
+- Side effects only via ExecutionGateway + Approvals; `requested_by=agent:coding`
+- Loop runs in background worker (HTTP turn returns RUNNING immediately)
+- ContextBuilder `mode=coding` replaces generic system_core
+- AgentRuntime still plans VERIFY heuristics when coding flag off; delegates when on
+- No private shell / FS / second DB; HADES paths rejected
+
+### Verification
+- Backend coding + migrations + agents/gateway smoke → **PASS**
+- Frontend typecheck / test / build → **PASS**
+- Live LM Studio E2E coding loop: **NOT TESTED** in this environment (fake LLM queue in unit tests)
+
+### Explicitly NOT claimed
+- Native OpenAI `tools[]` (XML-in-content is the real path; client has no tool_calls)
+- Multi-agent coding swarm / SSE token streaming
+- Automatic git commit / push without explicit operator request + approval
+- Browser / media / HADES integration
+
+### Status
+**PASS** (control plane + UI; live model E2E NOT TESTED here)
+
+---
+
 ## 2026-09-21 — Models + Datasets + Training + Research production subsystem — PASS
 
 ### Objective
@@ -1677,3 +1868,32 @@ After every major phase:
 - update `cursor.md` if ownership/file locations change;
 - update `leviathan_system.md` if the target architecture or HADES reference lessons materially change;
 - do not document unimplemented functionality as finished.
+
+---
+
+# Chronological entry — RAG V3 + Neural Layer upgrade (0.58.0-rag-v3)
+
+Shipped:
+
+- Knowledge V3 chunk provenance (offsets, confidence, source_type, provenance JSON).
+- `directional_relation_atoms` + `knowledge_chunk_embeddings` in central SQLite (migration 18).
+- HybridRetriever V3: lexical + dense fusion + optional reranker; Null/unavailable stay honest.
+- LocalHashEmbeddingProvider (default when RAG_V3) + optional SentenceTransformers provider.
+- Cold Atlas store (mutable) with revise-without-rewriting-evidence.
+- DeepRecallService with budget/stop conditions + logs.
+- Why Library (evidence-gated parent inheritance) + Cognitive Economy Governor.
+- Memory kinds RELATION/SUMMARY/RESIDUE, budgeted retrieve, lock-safe snapshot/restore.
+- Feature flags: RAG_V3, DEEP_RECALL, WHY_LIBRARY, RESIDUAL_PRODUCTION (parent/child validated).
+- ContextBuilder sections: atlas / exact evidence IDs / why / contradictions.
+- ReasoningEngine deep-recall / atlas steps; chat path integration.
+- ResidualReceiptStore + Status UI knowledge/RAG health surfaces.
+- Docs: `rag_v3_architecture.md`; optional `requirements-embeddings.txt`.
+
+Honesty:
+
+- Missing embeddings/reranker/deep-recall/residual → UNAVAILABLE, never fabricated success.
+- Atlas ≠ evidence; neural / why / residual ≠ authority.
+- No second database / vector DB.
+
+Tests: `test_knowledge_v2`, `test_memory`, `test_config`, `test_migrations`, neuro suites green.
+

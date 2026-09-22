@@ -162,7 +162,22 @@ export function ChatPage() {
     setBusy(true);
 
     try {
-      const data = await api.chat(text, activeId);
+      const data = await api.chatStream(text, activeId, {
+        onToken: (token) => {
+          setMessages((current) => {
+            const copy = [...current];
+            const last = copy[copy.length - 1];
+            if (last?.pending && last.role === "assistant") {
+              const base = last.content === "Thinking…" ? "" : last.content;
+              copy[copy.length - 1] = {
+                ...last,
+                content: `${base}${token}`,
+              };
+            }
+            return copy;
+          });
+        },
+      });
       setConversationId(data.conversation_id);
       setMessages((current) => {
         const withoutPending = current.filter((item) => !item.pending);
@@ -177,6 +192,11 @@ export function ChatPage() {
       });
       showReasoningSummary(data.reasoning, data.knowledge_sources);
       setModelLabel(data.model);
+      if (data.truth?.streaming_degraded) {
+        setContextMeta((prev) =>
+          prev ? `${prev} · stream degraded` : "stream degraded to non-SSE path",
+        );
+      }
       const list = await refreshConversations(data.conversation_id);
       const active = list.find((item) => item.id === data.conversation_id);
       if (active) setTitle(active.title);

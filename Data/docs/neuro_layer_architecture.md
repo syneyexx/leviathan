@@ -1,8 +1,8 @@
 # LEVIATHAN Phase 46+ — Top-Tier Frontier Neuro Layer
 
-> **Status:** SPECIFIED + MVP scaffolding started (Phase 46)  
-> **Baseline:** `0.46.0-phase45` foundation (Master Program complete)  
-> **Target version after MVP:** `0.47.0-phase46`  
+> **Status:** Phase 53+ SpaceX/xAI Grok-level residual orchestration (EXTERNAL-FIRST)  
+> **Baseline:** Phase 53 EXTERNAL-FIRST residual / cortex / training  
+> **Current version marker:** `0.60.0-phase54`  
 > **Authority:** This document is the design contract. Executable code and tests win when they disagree; update this doc when architecture changes.
 
 ---
@@ -392,9 +392,21 @@ Owned by `Data/modules/training/` registry (already honest stub). Neuro adds **r
 | `LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION` | false | Attempt residual path |
 | `LEVIATHAN_FEATURE_NEURO_CORTEX` | false | Dynamic cortex engagement |
 | `LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS` | false | Multi-tier facade |
+| `LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR` | false | ResidualOrchestrator layer/α budgeting |
+| `LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS` | false | Named cortex circuits |
+| `LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING` | false | Contrastive recipe / retrieval training path |
+| `LEVIATHAN_FEATURE_NEURO_SOAK_LONG` | false | Extended local soak (not multi-hour SLO) |
+| `LEVIATHAN_NEURO_TRAINING_REAL_WORKER` | false | Ephemeral EXTERNAL-FIRST recipe worker |
 | `LEVIATHAN_FEATURE_MODULE_MANAGER` | false | Universal Module Manager active |
+| `LEVIATHAN_NEURO_RESIDUAL_KIND` | unsupported | unsupported \| deterministic \| hf \| vllm \| llama_cpp \| trt |
+| `LEVIATHAN_NEURO_RESIDUAL_MODEL` | empty | HF model id/path or vLLM endpoint |
+| `LEVIATHAN_NEURO_RESIDUAL_DEVICE` | cpu | Device for weight-backed HF |
+| `LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS` | false | High-memory / dev-only HF weight load |
+| `LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS` | empty | Comma-separated mid/late layers |
+| `LEVIATHAN_NEURO_CORTEX_MAX_K` | 2 | Bounded cortex critic K |
+| `LEVIATHAN_NEURO_MEMORY_TIER0_MAX_SLOTS` | 64 | Working-memory capacity |
 
-Child flags require parent where applicable (`neuro_*` → `NEURO`; residual/cortex/tiers → `NEURO`).
+Child flags require parent where applicable (`neuro_*` → `NEURO`; residual/cortex/tiers → `NEURO`; cortex_blocks → `NEURO_CORTEX`).
 
 ---
 
@@ -501,6 +513,78 @@ Every major block behind a flag; health `public_summary` lists flag states (neve
 
 ### Phase 51 — Operational completion — **DONE** (chat/context/schedule/soak/UI; weight-backed GPU residuals still NOT claimed)
 
+### Phase 52 — Grok-level Neuro depth — **DONE** (local-first, honest)
+
+**Residual-stream quality**
+
+- `HFTransformersResidualAdapter` can load real weights under `LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS=true` (high-memory / dev-only). `supports_residuals()` is True only when weights are loaded.
+- Injection modes: `ADDITIVE` (`h' = h + α·Δ`), `GATED` (`h' = h + σ(g)·Δ`), `DISABLED` (default honest no-op), `REPLACE_SLICE`.
+- Every inject/forward receipt returns `implemented`, `applied`, `degraded_to_chat_completions`, `reason`.
+- `VllmResidualAdapter` / `LlamaCppResidualAdapter` probe/config improved; still honest `supports_residuals=False` without hooks plugin / custom server.
+- Ablations: residual-off ⇒ `UNMEASURED`; residual-on (deterministic) ⇒ measurable.
+
+**Dynamic depth / Cortex**
+
+- `CortexPlanner` consumes complexity, token budget, residual availability, memory hit quality/coverage, process_critic flag, working-memory load.
+- Lean path ≈ zero extra cost; complex path engages multi-tier memory + cortex blocks + bounded critic loops.
+- `CortexRuntime` supports residual replay of selected layers + mid-forward critic re-steer (bounded K).
+- Public signals remain `advisory_only=true`; depth metadata never claims authority.
+
+**Multi-tier memory**
+
+- Tier0 priority eviction + residual projection metadata.
+- Tier1 high-trust writes from Verification / human preference (still refuses `trust=model_output`).
+- Tier2 uses existing Knowledge V2 HybridRetriever (embeddings when provider available).
+- Snapshot/restore lock-safe under concurrent chat writes.
+- `ContrastiveRetrievalHead` ranks with real embeddings when provider present; otherwise lexical `UNMEASURED`.
+
+**Training / preference honesty**
+
+- `TrainingRecipeRegistry.execute` status machine: `REGISTERED/QUEUED → RUNNING → COMPLETED|FAILED`.
+- Metrics only from a real trainer backend (`FixtureRecipeTrainer` for local/dev). No empty-metric COMPLETED.
+- `PreferenceBridge.register_human_preference` complements verification-derived prefs.
+
+**Observability / status**
+
+- NeuroAdvisor emits `category=neuro` events (assess, cortex_engagement, critic_score, memory_retrieve, residual_*).
+- `/api/status` neuro block exposes residual runtime info, load_weights posture, working-memory load, honesty truth fields.
+
+**Still not claimed**
+
+- Production GPU residual as default path
+- Multi-hour power/HBM SLO
+- Automatic “thought harder” authority
+- Fake COMPLETED training metrics without a trainer
+
+### Phase 54 — Residual production + Contrastive + Chat SSE — **DONE**
+
+- Production residual path: vLLM/llama.cpp HTTP inject/forward when hooks confirmed; receipts + truth always.
+- ResidualOrchestrator: α budget (`max_total_alpha`), multi-inject, degrade_reasons telemetry.
+- ContrastiveRetrievalHead: `method=embedding|lexical`, InfoNCE-style weights; UNMEASURED without embeddings.
+- Chat SSE: `/api/chat` streams tokens when `LEVIATHAN_FEATURE_CHAT_STREAMING`; residual+stream degrades with `truth.streaming_degraded`.
+- `GET /api/neuro/status`; Master `phase_span=0-54`; version `0.60.0-phase54`.
+
+**Still not claimed**
+
+- Default production GPU residual path
+- Multi-hour power/HBM SLO
+- Residual-aware streaming when adapter cannot stream forward
+- Contrastive training always improves retrieval without metrics
+
+### Phase 53+ — Residual orchestration + EXTERNAL-FIRST workers — **DONE**
+
+- `ResidualOrchestrator` budgets mid/late injects; receipts + telemetry always.
+- vLLM / llama.cpp / TRT adapters: support only when residual HTTP contract confirms hooks.
+- Named cortex circuits + early-exit + `LEVIATHAN_NEURO_CORTEX_MAX_K`.
+- `EphemeralRecipeWorkerTrainer` when `LEVIATHAN_NEURO_TRAINING_REAL_WORKER=true`.
+- Long soak flag; Master `phase_span=0-54`; version `0.60.0-phase54`.
+
+**Still not claimed**
+
+- Residual as default production path
+- Multi-hour power/HBM SLO without measurement
+- Authority for neural signals
+
 ---
 
 ## 14. Recommended next concrete code changes (repo)
@@ -534,7 +618,12 @@ Public truth fields required on neuro/module responses:
   "truth": {
     "neural_signal_is_not_authority": true,
     "residual_implemented": false,
-    "discoverable_is_not_authorized": true
+    "residual_applied": false,
+    "discoverable_is_not_authorized": true,
+    "unapplied_is_not_success": true,
+    "model_output_is_not_evidence": true,
+    "unsupported_is_not_failure_of_core": true,
+    "streaming_degraded": false
   }
 }
 ```

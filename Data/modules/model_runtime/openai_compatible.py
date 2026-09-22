@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, AsyncIterator
 
 import httpx
 
 from Data.backend.config import Settings
 from Data.modules.context import ContextBuilder
 from Data.modules.reasoning import ReasoningPlan
+
+from .streaming import extract_delta_text, parse_openai_sse_line
 
 
 class LLMUnavailable(RuntimeError):
@@ -85,7 +88,7 @@ class OpenAICompatibleLLM:
                 "error": str(exc),
             }
 
-    async def chat(
+    def _build_messages(
         self,
         history: list[dict[str, str]],
         knowledge: list[dict],
@@ -95,16 +98,11 @@ class OpenAICompatibleLLM:
         observations: list[dict] | None = None,
         evidence: list[dict] | None = None,
         neuro: list[dict] | None = None,
-        model_id: str | None = None,
-        endpoint: str | None = None,
-        api_key: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        top_p: float | None = None,
+        atlas: list[dict] | None = None,
+        why: list[dict] | None = None,
+        contradictions: list[dict] | str | None = None,
         system_prompt: str | None = None,
-        stream: bool = False,
-    ) -> tuple[str, str]:
-        model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
+    ) -> list[dict[str, str]]:
         pack = self.context_builder.build(
             history=history,
             knowledge=knowledge,
@@ -113,10 +111,12 @@ class OpenAICompatibleLLM:
             observations=observations,
             evidence=evidence,
             neuro=neuro,
+            atlas=atlas,
+            why=why,
+            contradictions=contradictions,  # type: ignore[arg-type]
         )
         messages = list(pack.messages)
         if system_prompt and system_prompt.strip():
-            # Prepend profile system prompt without replacing context-builder system.
             if messages and messages[0].get("role") == "system":
                 messages[0] = {
                     "role": "system",
@@ -124,7 +124,18 @@ class OpenAICompatibleLLM:
                 }
             else:
                 messages.insert(0, {"role": "system", "content": system_prompt.strip()})
+        return messages
 
+    def _completion_payload(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float | None,
+        max_tokens: int | None,
+        top_p: float | None,
+        stream: bool,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -135,7 +146,54 @@ class OpenAICompatibleLLM:
             payload["top_p"] = top_p
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        return payload
 
+    async def chat(
+        self,
+        history: list[dict[str, str]],
+        knowledge: list[dict],
+        plan: ReasoningPlan,
+        *,
+        memory: list[dict] | None = None,
+        observations: list[dict] | None = None,
+        evidence: list[dict] | None = None,
+        neuro: list[dict] | None = None,
+        atlas: list[dict] | None = None,
+        why: list[dict] | None = None,
+        contradictions: list[dict] | str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        stream: bool = False,
+    ) -> tuple[str, str]:
+        """Non-streaming chat completion. ``stream=True`` is ignored here — use chat_stream."""
+        _ = stream  # callers must use chat_stream for token streaming
+        model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
+        messages = self._build_messages(
+            history,
+            knowledge,
+            plan,
+            memory=memory,
+            observations=observations,
+            evidence=evidence,
+            neuro=neuro,
+            atlas=atlas,
+            why=why,
+            contradictions=contradictions,
+            system_prompt=system_prompt,
+        )
+        payload = self._completion_payload(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            stream=False,
+        )
         base = self._base_url(endpoint)
         try:
             async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
@@ -159,3 +217,99 @@ class OpenAICompatibleLLM:
         if not isinstance(content, str) or not content.strip():
             raise LLMUnavailable("LLM returned an empty response.")
         return content.strip(), model
+
+    async def chat_stream(
+        self,
+        history: list[dict[str, str]],
+        knowledge: list[dict],
+        plan: ReasoningPlan,
+        *,
+        memory: list[dict] | None = None,
+        observations: list[dict] | None = None,
+        evidence: list[dict] | None = None,
+        neuro: list[dict] | None = None,
+        atlas: list[dict] | None = None,
+        why: list[dict] | None = None,
+        contradictions: list[dict] | str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Yield ``(delta_text, model_id)`` token chunks from OpenAI-compatible SSE.
+
+        If the upstream server rejects ``stream=true`` or returns non-SSE, raises
+        ``LLMUnavailable`` so the caller can degrade honestly to non-stream.
+        """
+        model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
+        messages = self._build_messages(
+            history,
+            knowledge,
+            plan,
+            memory=memory,
+            observations=observations,
+            evidence=evidence,
+            neuro=neuro,
+            atlas=atlas,
+            why=why,
+            contradictions=contradictions,
+            system_prompt=system_prompt,
+        )
+        payload = self._completion_payload(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            stream=True,
+        )
+        base = self._base_url(endpoint)
+        headers = self._headers(api_key)
+        headers["Accept"] = "text/event-stream"
+        yielded = False
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
+                async with client.stream(
+                    "POST",
+                    f"{base}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    if response.status_code >= 400:
+                        body = (await response.aread()).decode("utf-8", errors="replace")[:400]
+                        raise LLMUnavailable(
+                            f"LLM stream failed HTTP {response.status_code}: {body}"
+                        )
+                    content_type = (response.headers.get("content-type") or "").lower()
+                    # Some servers return application/json even for stream=false fallbacks.
+                    if "text/event-stream" not in content_type and "json" in content_type:
+                        raw = await response.aread()
+                        try:
+                            data = json.loads(raw.decode("utf-8"))
+                            content = data["choices"][0]["message"]["content"]
+                        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                            raise LLMUnavailable(
+                                "LLM stream endpoint returned non-SSE JSON without usable content"
+                            ) from exc
+                        if not isinstance(content, str) or not content.strip():
+                            raise LLMUnavailable("LLM returned an empty streamed response.")
+                        yield content.strip(), model
+                        return
+                    async for line in response.aiter_lines():
+                        chunk = parse_openai_sse_line(line)
+                        if chunk is None:
+                            continue
+                        if chunk.get("_done"):
+                            break
+                        delta = extract_delta_text(chunk)
+                        if not delta:
+                            continue
+                        yielded = True
+                        yield delta, model
+        except httpx.HTTPError as exc:
+            raise LLMUnavailable(f"LLM stream request failed: {exc}") from exc
+        if not yielded:
+            raise LLMUnavailable("LLM stream completed without tokens.")

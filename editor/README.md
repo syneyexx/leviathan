@@ -1,46 +1,49 @@
-# Leviathan Visual Builder (admin tool)
+# Leviathan Studio (visual editor)
 
-Losstaande full-freedom layout editor over de **echte** Leviathan UI.
-Hoort **niet** bij de normale Leviathan-start.
+Admin studio to edit the real Leviathan layout. Not part of normal app start.
 
-## Start de editor
-
-```
-D:\leviathan\editor\EDIT_LAYOUT.bat
+```bat
+EDIT_LAYOUT.bat
 ```
 
-Opent http://127.0.0.1:5173 met de visual builder overlay.
+Opens http://127.0.0.1:5173 with the overlay. API: http://127.0.0.1:5199.
+Without `LEVIATHAN_EDITOR=1` there is no editor UI. Saved content still applies via `editorContentRuntime.ts`.
 
-## Start Leviathan zonder editor
+## Without editor
 
-Gebruik je normale start (`run_leviathan.bat` / installer / build).
-Dan zie je **geen** editor-UI — wel al je opgeslagen wijzigingen.
+Use normal start (`run_leviathan.bat` / installer / build). No editor chrome. Camera transforms are never persisted into document CSS.
 
-## Capabilities
+## Start / test / verify
 
-- Vrije layout: drag, 8-handle resize, rotate, multi-select (Shift), reparent (drop-zones)
-- Snap + guides + optioneel grid; aspect lock; min/max constraints
-- Dockable panels: Inspector, Layers, Assets, Insert, Tokens, Code, History
-  (slepen / float / dock L-R-B / tabs / maximize; presets in `localStorage`)
-- Insert: tekst, titel, image, knop, divider, spacer, frame, custom HTML
-- Styles + live tokens.css; shell regio-sliders (header/sidebar/right/footer)
-- Inline text, image upload/library/replace, undo/redo, lock, group/ungroup
-- Shell containers (`.lv-app`, `.lv-body`, …) blijven protected
+```bash
+# API smoke (no Vite, temp content)
+python3 editor/test/test_api.py
 
-## Wat wordt opgeslagen (blijft in Leviathan)
+# Unit / regression
+node --test editor/test/core.test.mjs editor/test/resize.test.mjs editor/test/studio.test.mjs
 
-| Actie | Bestand |
-|------|---------|
-| Maten, kleuren, styles | `Data/frontend/src/styles/*.css` |
-| Tekst / image-paden (waar mogelijk) | bron-`.tsx` via replace |
-| Overrides + nieuwe widgets | `Data/frontend/public/lv-editor-content.json` |
-| Geüploade images | `Data/frontend/public/assets/uploads/` |
+# Full studio (Windows)
+editor\EDIT_LAYOUT.bat
 
-In normale Leviathan laadt `editorContentRuntime.ts` alleen
-`lv-editor-content.json` — geen editor-UI.
+# Full studio (Linux/mac — from repo root)
+LEVIATHAN_EDITOR_NO_BROWSER=1 python3 editor/server.py
+# then open http://127.0.0.1:5173
+```
 
-## Scheiding
+Visual checklist: workspace overview, selection+inspector, layers/components, Design/Preview breakpoints, command palette (⌘K), save conflict, AI unavailable state. Screenshots: `editor/artifacts/` when captured.
 
-- Editor alleen bij `LEVIATHAN_EDITOR=1` (via `EDIT_LAYOUT.bat`)
-- Vite-plugin `apply: "serve"` → zit niet in production build overlay
-- API op `127.0.0.1:5199`; writes alleen binnen `Data/frontend`
+## Architecture
+
+See `docs/ARCHITECTURE.md`, `docs/STUDIO_PLAN.md`, `docs/CAPABILITY_MATRIX.md`.
+
+| Module | Role |
+| --- | --- |
+| `js/identity.js` | Stable node/shell keys, v2→v3 migration |
+| `js/patches.js` | Scoped history patches |
+| `js/save.js` | Save coordinator + revision queue |
+| `js/studio/viewport.js` | Design vs Preview iframe |
+| `js/capabilities/*` | Issues + capability registry |
+| `js/studio/features.js` | Stress lab, branches, recipes, recovery, … |
+| `server.py` | Session auth, transactional save, no global text replace |
+
+Shell (`.lv-app` …) is never deleted or reparented. Free-transform widgets use `data-lvb-node` / `data-lvb-id`.

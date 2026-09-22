@@ -1,0 +1,24 @@
+{
+  "module_id": "market_sim",
+  "name": "Market Simulation",
+  "version": "1.0.0",
+  "entrypoint": "Data.modules.market_sim.service:MarketSimControlPlane",
+  "isolation": "SUBPROCESS",
+  "execution_mode": "subprocess",
+  "side_effects": ["READ", "WRITE"],
+  "permissions": ["market_sim"],
+  "capabilities": [
+    {
+      "capability_id": "market_sim.run",
+      "name": "Run market simulation",
+      "description": "Execute causal paper market simulation on registered data",
+      "side_effects": ["WRITE"]
+    }
+  ],
+  "metadata": {
+    "external_first": true,
+    "paper_sim_only": true,
+    "no_real_broker_orders": true,
+    "feature_flag": "LEVIATHAN_FEATURE_MARKET_SIM"
+  }
+}

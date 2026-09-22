@@ -11,7 +11,15 @@ from .model_registration import register_training_artifact_as_model, sync_comple
 from .planner import plan_training
 from .preferences import PreferenceBridge
 from .preflight import run_preflight
-from .recipes import NEURO_RECIPES, TrainingRecipe, TrainingRecipeRegistry
+from .recipes import (
+    NEURO_RECIPES,
+    FixtureRecipeTrainer,
+    RecipeRun,
+    RecipeRunStatus,
+    TrainingRecipe,
+    TrainingRecipeRegistry,
+)
+from .neuro_worker import EphemeralRecipeWorkerTrainer, build_neuro_recipe_trainer
 from .recovery import reconcile_active_jobs
 from .registry import TrainingRegistry
 from .service import TrainingError, TrainingService
@@ -41,6 +49,8 @@ __all__ = [
     "CheckpointRecord",
     "DurableTrainingJob",
     "DurableTrainingStatus",
+    "EphemeralRecipeWorkerTrainer",
+    "FixtureRecipeTrainer",
     "HardwareSnapshot",
     "MetricRecord",
     "NEURO_RECIPES",
@@ -48,6 +58,8 @@ __all__ = [
     "PreflightResult",
     "PreflightVerdict",
     "RESUMABLE_DURABLE_STATUSES",
+    "RecipeRun",
+    "RecipeRunStatus",
     "TERMINAL_DURABLE_STATUSES",
     "TrainingCapabilities",
     "TrainingConfig",
@@ -63,6 +75,7 @@ __all__ = [
     "TrainingRegistry",
     "TrainingService",
     "TrainingStore",
+    "build_neuro_recipe_trainer",
     "evaluate_job",
     "export_artifact",
     "list_job_artifacts",

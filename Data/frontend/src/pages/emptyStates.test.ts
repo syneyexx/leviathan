@@ -17,6 +17,10 @@ function sourcesEmptyCopy(count: number): string | null {
   return count === 0 ? "NO SOURCES" : null;
 }
 
+function codingEmptyCopy(count: number): string | null {
+  return count === 0 ? "NO CODING SESSIONS" : null;
+}
+
 describe("page empty states", () => {
   it("datasets shows honest empty title when API returns []", () => {
     expect(datasetsEmptyCopy(0)).toBe("NO DATASETS");
@@ -31,5 +35,10 @@ describe("page empty states", () => {
   it("research projects and sources stay empty until real data", () => {
     expect(researchEmptyCopy(0)).toBe("NO RESEARCH PROJECTS");
     expect(sourcesEmptyCopy(0)).toBe("NO SOURCES");
+  });
+
+  it("coding agent shows honest empty sessions", () => {
+    expect(codingEmptyCopy(0)).toBe("NO CODING SESSIONS");
+    expect(codingEmptyCopy(1)).toBeNull();
   });
 });

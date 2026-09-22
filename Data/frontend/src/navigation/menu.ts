@@ -18,6 +18,9 @@ export type MainMenuItem = {
 /**
  * HOOFDMENU (left sidebar) + SUBMENU (footer dock under the middle box).
  * Every submenu item has its own route.
+ *
+ * Note: main also introduced a top-level "Agents" HOOFDMENU; that conflicts with the
+ * requested IA (Agents under LLM). Kept under LLM pending product decision.
  */
 export const MAIN_MENU: readonly MainMenuItem[] = [
   {
@@ -50,8 +53,8 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     match: ["/media"],
     submenu: [
       { id: "overzicht", label: "Overzicht", to: "/media" },
-      { id: "youtube", label: "Youtube", to: "/media/youtube" },
-      { id: "tiktok", label: "Tiktok", to: "/media/tiktok" },
+      { id: "youtube", label: "YouTube", to: "/media/youtube" },
+      { id: "tiktok", label: "TikTok", to: "/media/tiktok" },
       { id: "instagram", label: "Instagram", to: "/media/instagram" },
       { id: "facebook", label: "Facebook", to: "/media/facebook" },
       { id: "queue", label: "Publicatiewachtrij", to: "/media/queue" },
@@ -65,10 +68,10 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
   {
     id: "trading",
     label: "TradingCenter",
-    to: "/trading",
+    to: "/trading/simulatie",
     match: ["/trading"],
     submenu: [
-      { id: "simulatie", label: "Simulatie", to: "/trading" },
+      { id: "simulatie", label: "Simulatie", to: "/trading/simulatie" },
       { id: "strategieen", label: "Strategieen", to: "/trading/strategieen" },
       { id: "marktdata", label: "Marktdata", to: "/trading/marktdata" },
       { id: "portefeuille", label: "Portefeuille", to: "/trading/portefeuille" },
@@ -131,7 +134,7 @@ export function normalizePath(pathname: string): string {
 export function findMainMenuByPath(pathname: string): MainMenuItem {
   const path = normalizePath(pathname);
 
-  // Prefer the longest matching prefix so /media/youtube stays under Media, not a shorter miss.
+  // Prefer the longest matching prefix so /media/youtube stays under Media.
   let best: MainMenuItem | null = null;
   let bestLen = -1;
 
@@ -167,7 +170,6 @@ export function findSubMenuItem(section: MainMenuItem, pathname: string): SubMen
   const exact = section.submenu.find((item) => normalizePath(item.to) === path);
   if (exact) return exact;
 
-  // Longest dedicated route that owns this path (for nested pages).
   let best: SubMenuItem | null = null;
   let bestLen = -1;
   for (const item of section.submenu) {
@@ -182,7 +184,6 @@ export function findSubMenuItem(section: MainMenuItem, pathname: string): SubMen
   }
   if (best) return best;
 
-  // Section landing (e.g. Hades AI → dashboard) may have no matching submenu route.
   if (normalizePath(section.to) === path) return null;
 
   return section.submenu[0] ?? null;

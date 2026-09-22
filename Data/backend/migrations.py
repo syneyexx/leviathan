@@ -860,6 +860,563 @@ def _m14_datasets_training_research(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m15_coding_agent(conn: sqlite3.Connection) -> None:
+    """Coding Agent control-plane sessions, turns, steps, and patches."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_sessions (
+            session_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            mission TEXT NOT NULL,
+            status TEXT NOT NULL,
+            workspace_root TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            user_goal TEXT NOT NULL DEFAULT '',
+            conversation_id TEXT,
+            run_id TEXT,
+            model_id TEXT,
+            error TEXT,
+            verification_id TEXT,
+            feature_truth_json TEXT NOT NULL DEFAULT '{}',
+            neuro_json TEXT NOT NULL DEFAULT '{}',
+            pending_capability_json TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            worker_pid INTEGER,
+            round_count INTEGER NOT NULL DEFAULT 0,
+            read_paths_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_sessions_status "
+        "ON coding_sessions(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_turns (
+            turn_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            content_raw TEXT,
+            created_at TEXT NOT NULL,
+            neuro_assessment_json TEXT,
+            token_estimate INTEGER,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(session_id) REFERENCES coding_sessions(session_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_turns_session "
+        "ON coding_turns(session_id, seq)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_steps (
+            step_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            turn_id TEXT,
+            seq INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            capability_id TEXT,
+            arguments_json TEXT NOT NULL DEFAULT '{}',
+            approval_id TEXT,
+            status TEXT NOT NULL,
+            observation_id TEXT,
+            effect_id TEXT,
+            artifact_id TEXT,
+            output_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            requested_by TEXT NOT NULL DEFAULT 'agent:coding',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES coding_sessions(session_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_steps_session "
+        "ON coding_steps(session_id, seq)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_patches (
+            patch_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            artifact_id TEXT,
+            path TEXT NOT NULL,
+            diff_unified TEXT NOT NULL,
+            hash_before TEXT,
+            hash_after TEXT,
+            applied INTEGER NOT NULL DEFAULT 0,
+            approval_id TEXT,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(session_id) REFERENCES coding_sessions(session_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coding_patches_session "
+        "ON coding_patches(session_id, created_at)"
+    )
+
+
+def _m16_market_sim(conn: sqlite3.Connection) -> None:
+    """Market simulation: data sources, strategies, runs, fills, deliberation."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_data_sources (
+            source_id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            bar_count INTEGER NOT NULL DEFAULT 0,
+            start_ts TEXT,
+            end_ts TEXT,
+            byte_size INTEGER NOT NULL DEFAULT 0,
+            validation_error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_data_sources_status "
+        "ON market_data_sources(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategies (
+            strategy_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            current_version INTEGER NOT NULL DEFAULT 1,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategy_versions (
+            version_id TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            parameters_json TEXT NOT NULL DEFAULT '{}',
+            entry_rules_json TEXT NOT NULL DEFAULT '{}',
+            exit_rules_json TEXT NOT NULL DEFAULT '{}',
+            risk_rules_json TEXT NOT NULL DEFAULT '{}',
+            required_timeframes_json TEXT NOT NULL DEFAULT '[]',
+            brain_dependencies_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            changelog TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(strategy_id, version),
+            FOREIGN KEY(strategy_id) REFERENCES market_strategies(strategy_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_runs (
+            run_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            start_ts TEXT NOT NULL,
+            end_ts TEXT NOT NULL,
+            data_hash TEXT NOT NULL,
+            seed INTEGER NOT NULL DEFAULT 42,
+            speed REAL NOT NULL DEFAULT 1.0,
+            initial_cash REAL NOT NULL DEFAULT 100000,
+            fee_bps REAL NOT NULL DEFAULT 5.0,
+            slippage_bps REAL NOT NULL DEFAULT 2.0,
+            max_position_pct REAL NOT NULL DEFAULT 25.0,
+            max_drawdown_pct REAL NOT NULL DEFAULT 20.0,
+            per_trade_risk_pct REAL NOT NULL DEFAULT 1.0,
+            agents_json TEXT NOT NULL DEFAULT '[]',
+            deliberation_every_n INTEGER NOT NULL DEFAULT 5,
+            clock_ts TEXT,
+            bar_index INTEGER NOT NULL DEFAULT 0,
+            bar_count INTEGER NOT NULL DEFAULT 0,
+            cash REAL NOT NULL DEFAULT 100000,
+            equity REAL NOT NULL DEFAULT 100000,
+            position_qty REAL NOT NULL DEFAULT 0,
+            realized_pnl REAL NOT NULL DEFAULT 0,
+            unrealized_pnl REAL NOT NULL DEFAULT 0,
+            causality_violations INTEGER NOT NULL DEFAULT 0,
+            brain_hits INTEGER NOT NULL DEFAULT 0,
+            brain_misses INTEGER NOT NULL DEFAULT 0,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            worker_pid INTEGER,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_runs_status "
+        "ON market_sim_runs(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_fills (
+            fill_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER NOT NULL,
+            ts TEXT NOT NULL,
+            side TEXT NOT NULL,
+            qty REAL NOT NULL,
+            price REAL NOT NULL,
+            fee REAL NOT NULL DEFAULT 0,
+            slippage REAL NOT NULL DEFAULT 0,
+            agent_id TEXT,
+            rationale TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_fills_run "
+        "ON market_sim_fills(run_id, bar_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_messages (
+            message_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER NOT NULL,
+            ts TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            proposal_json TEXT NOT NULL DEFAULT '{}',
+            confidence REAL NOT NULL DEFAULT 0,
+            brain_refs_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_messages_run "
+        "ON market_sim_messages(run_id, bar_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_equity (
+            point_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER NOT NULL,
+            ts TEXT NOT NULL,
+            equity REAL NOT NULL,
+            cash REAL NOT NULL,
+            position_qty REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_equity_run "
+        "ON market_sim_equity(run_id, bar_index)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_events (
+            event_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            bar_index INTEGER,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_events_run "
+        "ON market_sim_events(run_id, created_at)"
+    )
+
+
+def _m17_mcp_bridge(conn: sqlite3.Connection) -> None:
+    """Universal MCP bridge tables — servers, tools cache, call history."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+            server_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            owner_module_id TEXT,
+            transport TEXT NOT NULL,
+            command TEXT,
+            args_json TEXT NOT NULL DEFAULT '[]',
+            url TEXT,
+            cwd TEXT,
+            env_public_json TEXT NOT NULL DEFAULT '{}',
+            secret_refs_json TEXT NOT NULL DEFAULT '{}',
+            enabled INTEGER NOT NULL DEFAULT 0,
+            trust TEXT NOT NULL DEFAULT 'untrusted',
+            requested_isolation TEXT NOT NULL DEFAULT 'subprocess',
+            effective_isolation TEXT NOT NULL DEFAULT 'subprocess',
+            timeout_seconds REAL NOT NULL DEFAULT 30,
+            max_concurrent_calls INTEGER NOT NULL DEFAULT 4,
+            eager_connect INTEGER NOT NULL DEFAULT 0,
+            expand_tools INTEGER NOT NULL DEFAULT 1,
+            semantic_effects_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            current_state TEXT NOT NULL DEFAULT 'DISCONNECTED',
+            last_connected_at TEXT,
+            last_seen_at TEXT,
+            last_error_code TEXT,
+            last_error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(source_kind, source_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS mcp_tools (
+            capability_id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL,
+            external_name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            input_schema_json TEXT NOT NULL DEFAULT '{}',
+            schema_hash TEXT NOT NULL,
+            semantic_effects_json TEXT NOT NULL DEFAULT '[]',
+            availability TEXT NOT NULL DEFAULT 'unavailable',
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            server_version TEXT,
+            protocol_version TEXT,
+            UNIQUE(server_id, external_name),
+            FOREIGN KEY(server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_tools_server
+            ON mcp_tools(server_id, external_name);
+
+        CREATE TABLE IF NOT EXISTS mcp_tool_calls (
+            call_id TEXT PRIMARY KEY,
+            trace_id TEXT,
+            server_id TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            external_tool_name TEXT NOT NULL,
+            requester TEXT NOT NULL,
+            status TEXT NOT NULL,
+            duration_ms REAL,
+            approval_id TEXT,
+            arguments_summary TEXT,
+            result_summary TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            schema_hash TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_tool_calls_started
+            ON mcp_tool_calls(started_at DESC);
+        """
+    )
+
+
+def _m18_rag_v3(conn: sqlite3.Connection) -> None:
+    """Knowledge RAG V3: chunk provenance columns, embeddings, atlas, why, deep recall."""
+
+    def columns(table: str) -> set[str]:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            chunk_id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            token_estimate INTEGER NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(document_id, chunk_index)
+        )
+        """
+    )
+    chunk_cols = columns("knowledge_chunks")
+    for name, ddl in {
+        "start_offset": "INTEGER NOT NULL DEFAULT 0",
+        "end_offset": "INTEGER NOT NULL DEFAULT 0",
+        "confidence": "REAL NOT NULL DEFAULT 1.0",
+        "uncertainty_notes": "TEXT NOT NULL DEFAULT ''",
+        "source_type": "TEXT NOT NULL DEFAULT 'document'",
+        "provenance_json": "TEXT NOT NULL DEFAULT '{}'",
+    }.items():
+        if name not in chunk_cols:
+            conn.execute(f"ALTER TABLE knowledge_chunks ADD COLUMN {name} {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_chunk_embeddings (
+            chunk_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            embedding BLOB NOT NULL,
+            content_hash TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS directional_relation_atoms (
+            atom_id TEXT PRIMARY KEY,
+            subject_ref TEXT NOT NULL,
+            object_ref TEXT NOT NULL,
+            relation_class TEXT NOT NULL,
+            comparison_vector_json TEXT NOT NULL DEFAULT '[]',
+            supporting_evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            document_id TEXT,
+            chunk_id TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_relation_atoms_subject "
+        "ON directional_relation_atoms(subject_ref, relation_class)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS atlas_records (
+            atlas_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT '',
+            scale TEXT NOT NULL,
+            entities_json TEXT NOT NULL DEFAULT '[]',
+            projects_json TEXT NOT NULL DEFAULT '[]',
+            relation_types_json TEXT NOT NULL DEFAULT '[]',
+            unresolved_questions_json TEXT NOT NULL DEFAULT '[]',
+            contradictions_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            evidence_record_refs_json TEXT NOT NULL DEFAULT '[]',
+            parent_atlas_id TEXT,
+            child_atlas_ids_json TEXT NOT NULL DEFAULT '[]',
+            last_revised_at TEXT NOT NULL,
+            revision_reason TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_atlas_scale ON atlas_records(scale, last_revised_at)"
+    )
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS atlas_fts
+            USING fts5(atlas_id UNINDEXED, title, summary, entities, projects)
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS why_records (
+            why_id TEXT PRIMARY KEY,
+            observation TEXT NOT NULL,
+            bucket TEXT NOT NULL,
+            parent_ref TEXT,
+            child_ref TEXT,
+            comparison TEXT NOT NULL,
+            evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            residue TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_why_bucket ON why_records(bucket, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS deep_recall_logs (
+            recall_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            request_json TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            context_cost INTEGER NOT NULL,
+            stopped_reason TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS residual_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            applied INTEGER NOT NULL,
+            implemented INTEGER NOT NULL,
+            degraded_to_chat_completions INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            hook_json TEXT NOT NULL DEFAULT '{}',
+            detail TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    if "memory_entries" in tables:
+        mem_cols = columns("memory_entries")
+        if "priority" not in mem_cols:
+            conn.execute(
+                "ALTER TABLE memory_entries ADD COLUMN priority REAL NOT NULL DEFAULT 0.5"
+            )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -875,6 +1432,10 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=12, name="neuro_memory_snapshots", apply=_m12_neuro_memory_snapshots),
     Migration(version=13, name="model_control_plane", apply=_m13_model_control_plane),
     Migration(version=14, name="datasets_training_research", apply=_m14_datasets_training_research),
+    Migration(version=15, name="coding_agent", apply=_m15_coding_agent),
+    Migration(version=16, name="market_sim", apply=_m16_market_sim),
+    Migration(version=17, name="mcp_bridge", apply=_m17_mcp_bridge),
+    Migration(version=18, name="rag_v3", apply=_m18_rag_v3),
 )
 
 

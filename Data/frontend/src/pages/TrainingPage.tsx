@@ -245,7 +245,6 @@ export function TrainingPage() {
             </button>
           </div>
         </header>
-
         {error ? (
           <div className="lv-models-banner is-error" role="alert">
             <strong>Training API error</strong>

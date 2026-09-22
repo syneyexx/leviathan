@@ -211,7 +211,6 @@ export function AnalyticsPage() {
         <section className="lv-an-hero" aria-label="Analytics">
           <img src={media.analyticsHero} alt="" width={1400} height={220} />
         </section>
-
         <div className="lv-an-controls">
           <div className="lv-an-tabs" role="tablist" aria-label="Analytics sections">
             {TABS.map((item) => (

@@ -2,6 +2,8 @@
  * Applies saved visual-editor content in normal Leviathan runs.
  * No editor UI — admin tool stays separate (EDIT_LAYOUT.bat only).
  */
+export type EditorBreakpoint = "desktop" | "tablet" | "mobile";
+
 export type EditorContentEntry = {
   text?: string;
   html?: string;
@@ -16,23 +18,53 @@ export type EditorContentEntry = {
   height?: string;
   zIndex?: string | number;
   styles?: Record<string, string>;
+  breakpoints?: Partial<Record<EditorBreakpoint, Record<string, string>>>;
+  nodeId?: string;
+  scope?: string;
+  page?: string;
+  ambiguous?: boolean;
+  legacyKey?: string;
+  selector?: string;
 };
 
 export type EditorContentNode = {
   id: string;
+  nodeId?: string;
   label?: string;
   parent?: string;
   html: string;
+  componentId?: string;
+  variant?: string;
   styles?: Record<string, string | undefined>;
+};
+
+export type EditorComponent = {
+  id: string;
+  name?: string;
+  html: string;
+  variant?: string;
+  defaultStyles?: Record<string, string | undefined>;
 };
 
 export type EditorContentFile = {
   version?: number;
+  revision?: number;
+  docId?: string;
   entries?: Record<string, EditorContentEntry>;
   nodes?: EditorContentNode[];
+  components?: EditorComponent[];
+  meta?: { ambiguous?: Array<{ key: string; reason?: string; hint?: string }> };
 };
 
 const CONTENT_URL = "/lv-editor-content.json";
+const breakpointProps = new WeakMap<HTMLElement, string[]>();
+
+function activeBreakpoint(): EditorBreakpoint {
+  const width = window.innerWidth;
+  if (width <= 640) return "mobile";
+  if (width <= 1024) return "tablet";
+  return "desktop";
+}
 
 function hasDirectText(el: Element): boolean {
   return [...el.childNodes].some(
@@ -67,18 +99,64 @@ function applyEntry(el: Element, entry: EditorContentEntry): void {
   if (entry.height != null) htmlEl.style.height = entry.height;
   if (entry.zIndex != null) htmlEl.style.zIndex = String(entry.zIndex);
   if (entry.hide) htmlEl.style.display = "none";
+
+  const previous = breakpointProps.get(htmlEl) ?? [];
+  for (const prop of previous) {
+    const base = entry.styles?.[prop];
+    if (base) htmlEl.style.setProperty(prop, base);
+    else htmlEl.style.removeProperty(prop);
+  }
+  breakpointProps.delete(htmlEl);
+
+  const bp = activeBreakpoint();
+  const overrides = bp === "desktop" ? undefined : entry.breakpoints?.[bp];
+  if (!overrides) return;
+  const applied: string[] = [];
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value == null || value === "") continue;
+    htmlEl.style.setProperty(key, value);
+    applied.push(key);
+  }
+  if (applied.length) breakpointProps.set(htmlEl, applied);
+}
+
+function queryEntryNodes(key: string, entry: EditorContentEntry): Element[] {
+  if (key.startsWith("node:")) {
+    const id = key.slice(5);
+    const el = document.querySelector(`[data-lvb-node="${CSS.escape(id)}"]`);
+    return el ? [el] : [];
+  }
+  if (key.startsWith("shell:")) {
+    try {
+      return [...document.querySelectorAll(key.slice(6))];
+    } catch {
+      return [];
+    }
+  }
+  if (entry.nodeId) {
+    const el = document.querySelector(`[data-lvb-node="${CSS.escape(entry.nodeId)}"]`);
+    if (el) return [el];
+  }
+  // Legacy selectors: apply only when exactly one match (avoid multi-hit class/img/nth-child)
+  try {
+    const nodes = [...document.querySelectorAll(key)];
+    if (entry.ambiguous) return nodes.length === 1 ? nodes : [];
+    return nodes.length === 1 ? nodes : nodes.length > 1 ? [] : nodes;
+  } catch {
+    return [];
+  }
 }
 
 function applyEntries(content: EditorContentFile): void {
   const entries = content.entries ?? {};
-  for (const [selector, entry] of Object.entries(entries)) {
-    let nodes: NodeListOf<Element>;
-    try {
-      nodes = document.querySelectorAll(selector);
-    } catch {
-      continue;
-    }
-    nodes.forEach((el) => applyEntry(el, entry));
+  for (const [key, entry] of Object.entries(entries)) {
+    const nodes = queryEntryNodes(key, entry);
+    nodes.forEach((el) => {
+      if (entry.nodeId && el instanceof HTMLElement && !el.dataset.lvbNode) {
+        el.dataset.lvbNode = entry.nodeId;
+      }
+      applyEntry(el, entry);
+    });
   }
 }
 
@@ -99,7 +177,10 @@ function mountNodes(content: EditorContentFile): void {
       el = wrap.firstElementChild as HTMLElement | null;
       if (!el) continue;
       el.dataset.lvbId = node.id;
+      el.dataset.lvbNode = node.nodeId || node.id;
       if (node.label) el.dataset.lvbLabel = node.label;
+      if (node.componentId) el.dataset.lvbComponentId = node.componentId;
+      if (node.variant) el.dataset.lvbVariant = node.variant;
       const parent =
         (node.parent ? document.querySelector(node.parent) : null) ||
         document.querySelector(".lv-main") ||
@@ -170,6 +251,9 @@ export function startEditorContentRuntime(): void {
 
     window.addEventListener("popstate", () => {
       window.setTimeout(apply, 50);
+    });
+    window.addEventListener("resize", () => {
+      window.setTimeout(apply, 80);
     });
   };
 

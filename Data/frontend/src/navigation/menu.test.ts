@@ -15,9 +15,10 @@ describe("navigation menu", () => {
     expect(findMainMenuByPath("/coding").id).toBe("hades");
   });
 
-  it("maps models/training/analytics under LLM", () => {
+  it("maps models/training/agents/analytics under LLM", () => {
     expect(findMainMenuByPath("/models").id).toBe("llm");
     expect(findMainMenuByPath("/training").id).toBe("llm");
+    expect(findMainMenuByPath("/agents").id).toBe("llm");
     expect(findMainMenuByPath("/analytics").id).toBe("llm");
   });
 
@@ -41,11 +42,13 @@ describe("navigation menu", () => {
     expect(isMainMenuActive(llm, "/chat")).toBe(false);
   });
 
-  it("resolves nested media submenu routes", () => {
+  it("resolves nested media and trading submenu routes", () => {
     const media = findMainMenuByPath("/media/youtube");
     expect(media.id).toBe("media");
     expect(findSubMenuItem(media, "/media")?.id).toBe("overzicht");
     expect(findSubMenuItem(media, "/media/youtube")?.id).toBe("youtube");
+    expect(findMainMenuByPath("/trading/simulatie").id).toBe("trading");
+    expect(findSubMenuItem(findMainMenuByPath("/trading/paper"), "/trading/paper")?.id).toBe("paper");
   });
 
   it("leaves dashboard submenu inactive on Hades landing", () => {

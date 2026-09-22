@@ -109,12 +109,17 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/memory/` | MemoryStore |
 | `Data/modules/verification/` | VerificationEngine |
 | `Data/modules/agents/` | AgentRuntime (feature-flagged) |
+| `Data/modules/coding/` | **CodingControlPlane** — sessions, XML loop, workspace, patches |
+| `Data/backend/routes/coding.py` | Coding HTTP API (`/api/coding/*`) |
 | `Data/modules/workflows/` | WorkflowStore / WorkflowRuntime |
 | `Data/modules/schedules/` | ScheduleStore / ScheduleRunner |
 | `Data/modules/observability/` | ObservabilityHub |
-| `Data/modules/neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers/adapters/snapshots |
+| `Data/modules/neuro/` | NeuroAdvisor + residual/cortex/critic/memory_tiers/adapters/orchestrator/snapshots |
 | `Data/modules/module_manager/` | Universal Module Manager (`ILeviathanModule` + optional subprocess) |
-| `Data/modules/plugins/` | PluginRegistry / MCP stubs (bindings only) |
+| `Data/modules/plugins/` | PluginRegistry / declarative Tool bindings (not a second loader) |
+| `Data/modules/mcp/` | **Universal MCP Bridge** — one bridge, many sessions; Tools provider |
+| `Data/backend/routes/mcp.py` | MCP HTTP API (`/api/mcp/*`; call via ExecutionGateway) |
+| `Data/docs/mcp_bridge.md` | MCP architecture reference |
 | `Data/modules/evaluation/` | EvaluationHarness (+ neuro ablation suite) |
 | `Data/modules/isolation/` | IsolationGuard |
 | `Data/modules/training/` | TrainingRegistry stub + TrainingRecipeRegistry |
@@ -146,6 +151,8 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 - `src/pages/CommandPage.tsx` — dashboard/Command shell
 - `src/pages/ChatPage.tsx` — real chat against `/api/*`
 - `src/pages/ModelsPage.tsx` → `src/pages/models/*` — Model Control Plane UI (no mock catalog)
+- `src/pages/CodingPage.tsx` → `src/pages/coding/*` — **Coding Agent** operator surface (`/coding`, real APIs; not chat redirect)
+- `src/pages/ResearchPage.tsx` — Research workspace
 - `src/pages/StatusPage.tsx` — operator status
 - `src/pages/BrainPage.tsx`, `TrainingPage.tsx`, `SettingsPage.tsx` — additional shells
 
@@ -238,13 +245,15 @@ SQLite persistence
 | Memory | `Data/modules/memory/` |
 | Verification | `Data/modules/verification/` |
 | Agents | `Data/modules/agents/` (requires feature flag) |
+| Coding Agent | `Data/modules/coding/` + `/coding` UI (requires `LEVIATHAN_FEATURE_AGENTS` + `LEVIATHAN_FEATURE_CODING`) |
+| Market Sim | `Data/modules/market_sim/` + `/trading` UI (requires `LEVIATHAN_FEATURE_MARKET_SIM`; paper/causal only) |
 | Workflows | `Data/modules/workflows/` |
 | Schedules | `Data/modules/schedules/` |
 | Observability | `Data/modules/observability/` |
 | Neuro | `Data/modules/neuro/` (advisory; feature-flagged; residual optional) |
 | Universal Module Manager | `Data/modules/module_manager/` (single loader; feature-flagged) |
 | Neuro architecture spec | `Data/docs/neuro_layer_architecture.md` |
-| Plugins / MCP bindings | `Data/modules/plugins/` (not a second loader) |
+| Plugins / MCP bindings | `Data/modules/plugins/` (declarative) + `Data/modules/mcp/` (bridge) |
 | Evaluation | `Data/modules/evaluation/` |
 | Isolation | `Data/modules/isolation/` |
 | Training | `Data/modules/training/` (registry stub) |
@@ -274,6 +283,6 @@ SQLite persistence
 
 # Immediate capability boundary
 
-**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, reasoning, Run/Artifact/Knowledge V2, Function Runtime, Execution Gateway, Approvals, Jobs, Observations, Evidence, Memory, Verification (durable reports), Agents (flagged), Workflows, Schedules, Observability, Neuro Layer 46–51 (chat/context wired, absorb schedule, soak, Status UI), Universal Module Manager (flagged; optional subprocess), Plugins/MCP stub, Evaluation (+ neuro ablations), Isolation, Training/Browser/Media/Voice/Native/Trading stubs, Release + Security + Master gates, Backup/restore, Metrics, Chaos (OFF), operator Status page.
+**Real today:** dashboard + chat UI, FastAPI, LLM client, SQLite chat/Knowledge, reasoning, Run/Artifact/Knowledge V2, Function Runtime, Execution Gateway, Approvals, Jobs, Observations, Evidence, Memory, Verification (durable reports), Agents (flagged), Coding Agent (flagged), Workflows, Schedules, Observability, Neuro Layer 46–54, Universal Module Manager (flagged; optional subprocess), **Universal MCP Bridge** (flagged), Plugins declarative bindings, Evaluation (+ neuro ablations), Isolation, Training/Browser/Media/Voice/Native/Trading stubs, Release + Security + Master gates, Backup/restore, Metrics, Chaos (OFF), operator Status + Models + MCP pages.
 
-**Not claimed:** production certification, live trading fills, real browser/media/voice automation, native runtime, cloud backup sync, APM, penetration testing, weight-backed HF/vLLM/llama residual injection, frontier GPU residual hooks, multi-hour soak SLOs.
+**Not claimed:** production certification, live trading fills, real browser/media/voice automation, native runtime, cloud backup sync, APM, penetration testing, default production GPU residual path, residual-aware stream without degrade, multi-hour soak SLOs.

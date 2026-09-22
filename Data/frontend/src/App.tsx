@@ -1,19 +1,31 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { AgentsPage } from "./pages/AgentsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { BrainPage } from "./pages/BrainPage";
 import { ChatPage } from "./pages/ChatPage";
 import { CodingPage } from "./pages/CodingPage";
 import { CommandPage } from "./pages/CommandPage";
 import { DatasetsPage } from "./pages/DatasetsPage";
-import { MediaManagementPage } from "./pages/MediaManagementPage";
+import { FacebookPage } from "./pages/media/FacebookPage";
+import { InstagramPage } from "./pages/media/InstagramPage";
+import { MediaControlPage } from "./pages/media/MediaControlPage";
+import { TikTokPage } from "./pages/media/TikTokPage";
+import { YouTubePage } from "./pages/media/YouTubePage";
 import { ModelsPage } from "./pages/ModelsPage";
 import { ResearchPage } from "./pages/ResearchPage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
-import { TradingCenterPage } from "./pages/TradingCenterPage";
+import { McpPage } from "./pages/McpPage";
+import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
+import { MarktdataPage } from "./pages/trading/MarktdataPage";
+import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
+import { PortefeuillePage } from "./pages/trading/PortefeuillePage";
+import { SimulatiePage } from "./pages/trading/SimulatiePage";
+import { StrategieenPage } from "./pages/trading/StrategieenPage";
 import { TrainingPage } from "./pages/TrainingPage";
+import { WorkflowsPage } from "./pages/WorkflowsPage";
 
 export default function App() {
   return (
@@ -26,14 +38,14 @@ export default function App() {
 
       <Route path="/models" element={<ModelsPage />} />
       <Route path="/training" element={<TrainingPage />} />
-      <Route path="/agents" element={<SectionPage title="Agents" />} />
+      <Route path="/agents" element={<AgentsPage />} />
       <Route path="/analytics" element={<AnalyticsPage />} />
 
-      <Route path="/media" element={<MediaManagementPage />} />
-      <Route path="/media/youtube" element={<SectionPage title="Youtube" />} />
-      <Route path="/media/tiktok" element={<SectionPage title="Tiktok" />} />
-      <Route path="/media/instagram" element={<SectionPage title="Instagram" />} />
-      <Route path="/media/facebook" element={<SectionPage title="Facebook" />} />
+      <Route path="/media" element={<MediaControlPage />} />
+      <Route path="/media/youtube" element={<YouTubePage />} />
+      <Route path="/media/tiktok" element={<TikTokPage />} />
+      <Route path="/media/instagram" element={<InstagramPage />} />
+      <Route path="/media/facebook" element={<FacebookPage />} />
       <Route path="/media/queue" element={<SectionPage title="Algemene publicatiewachtrij" />} />
       <Route path="/media/viral" element={<SectionPage title="Viral radar" />} />
       <Route path="/media/calendar" element={<SectionPage title="Calender" />} />
@@ -41,12 +53,13 @@ export default function App() {
       <Route path="/media/library" element={<SectionPage title="Bibliotheek" />} />
       <Route path="/media/personas" element={<SectionPage title="Personas" />} />
 
-      <Route path="/trading" element={<TradingCenterPage />} />
-      <Route path="/trading/strategieen" element={<SectionPage title="Strategieen" />} />
-      <Route path="/trading/marktdata" element={<SectionPage title="Marktdata" />} />
-      <Route path="/trading/portefeuille" element={<SectionPage title="Portefeuille" />} />
-      <Route path="/trading/paper" element={<SectionPage title="PAPER trading" />} />
-      <Route path="/trading/broker" element={<SectionPage title="BROKER trading" />} />
+      <Route path="/trading" element={<Navigate to="/trading/simulatie" replace />} />
+      <Route path="/trading/simulatie" element={<SimulatiePage />} />
+      <Route path="/trading/strategieen" element={<StrategieenPage />} />
+      <Route path="/trading/marktdata" element={<MarktdataPage />} />
+      <Route path="/trading/portefeuille" element={<PortefeuillePage />} />
+      <Route path="/trading/paper" element={<PaperTradingPage />} />
+      <Route path="/trading/broker" element={<BrokerTradingPage />} />
 
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />
@@ -57,8 +70,8 @@ export default function App() {
 
       <Route path="/performance" element={<SectionPage title="Performance" />} />
       <Route path="/tools" element={<ToolsPage />} />
-      <Route path="/mcp" element={<SectionPage title="MCP" />} />
-      <Route path="/workflows" element={<SectionPage title="Workflows" />} />
+      <Route path="/mcp" element={<McpPage />} />
+      <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/console" element={<SectionPage title="Console" />} />
 
       <Route path="/settings" element={<SettingsPage />} />

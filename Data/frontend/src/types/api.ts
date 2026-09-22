@@ -35,6 +35,15 @@ export type ChatResponse = {
   knowledge_sources: KnowledgeSource[];
   neuro?: unknown;
   cortex?: unknown;
+  streamed?: boolean;
+  truth?: {
+    neural_signal_is_not_authority?: boolean;
+    residual_implemented?: boolean;
+    residual_applied?: boolean;
+    streaming_degraded?: boolean;
+    model_output_is_not_evidence?: boolean;
+    [key: string]: boolean | undefined;
+  };
 };
 
 export type HealthResponse = {
@@ -62,9 +71,41 @@ export type HealthResponse = {
     residual_injection?: boolean;
     cortex?: boolean;
     memory_tiers?: boolean;
+    residual_orchestrator?: boolean;
+    cortex_blocks?: boolean;
+    contrastive_training?: boolean;
+    soak_long?: boolean;
+    training_real_worker?: boolean;
     residual_supported?: boolean;
     residual_kind?: string;
+    residual_production?: boolean;
+    residual_load_weights?: boolean;
+    residual_hook_layers?: number[];
+    cortex_max_k?: number;
+    working_memory_load?: number;
+    working_memory_slots?: number;
+    memory_tier0_max_slots?: number;
     absorb?: Record<string, number>;
+    contrastive_ready?: boolean;
+    contrastive_method_default?: string;
+    chat_streaming?: boolean;
+    chat_sse?: boolean;
+    streaming_posture?: string;
+    residual_applied_count?: number;
+    residual_degraded_count?: number;
+    truth?: Record<string, boolean>;
+  };
+  knowledge?: {
+    data_root?: string;
+    documents?: number;
+    embedding_provider?: string;
+    embedding_available?: boolean;
+    embedding_status?: Record<string, unknown>;
+    rag_v3?: boolean;
+    deep_recall?: boolean;
+    why_library?: boolean;
+    reranker_available?: boolean;
+    deep_recall_budget?: number;
   };
   module_manager?: {
     enabled: boolean;
@@ -139,6 +180,13 @@ export type NeuroResidualStatus = {
   hook_points: unknown[];
   runtime?: unknown;
   kind?: string;
+  residual_production?: boolean;
+  residual_orchestrator?: boolean;
+  load_weights?: boolean;
+  hook_layers?: number[];
+  cortex_max_k?: number;
+  orchestrator_telemetry?: Record<string, number>;
+  recent_receipts?: unknown[];
   truth?: Record<string, boolean>;
 };
 
@@ -162,6 +210,8 @@ export type SoakReport = {
   duration_ms: number;
   steps: Array<{ name: string; ok: boolean; detail: string; duration_ms: number }>;
   notes?: string[];
+  mode?: string;
+  long_soak_enabled?: boolean;
   truth?: Record<string, boolean>;
 };
 
@@ -804,3 +854,294 @@ export type ResearchProjectCreate = {
   seedSources?: string[];
 };
 
+/* ---------- Coding Agent ---------- */
+
+export type CodingMission = "SCAFFOLD" | "REVIEW" | "TEST" | "FIX" | "GENERIC";
+
+export type CodingSessionStatus =
+  | "CREATED"
+  | "RUNNING"
+  | "WAITING_APPROVAL"
+  | "COMPLETED"
+  | "FAILED"
+  | "UNVERIFIED"
+  | "CANCELLED"
+  | "DISABLED";
+
+export type CodingStatusResponse = {
+  enabled: boolean;
+  agents_enabled: boolean;
+  workspace_configured: boolean;
+  residual_supported: boolean;
+  catalog_ids: string[];
+  truth: {
+    gateway_only: boolean;
+    hades_excluded: boolean;
+  };
+  error?: string | null;
+};
+
+export type CodingSession = {
+  session_id: string;
+  mission: CodingMission;
+  status: CodingSessionStatus;
+  workspace_root: string;
+  title: string;
+  user_goal: string;
+  model_id: string | null;
+  error: string | null;
+  verification_id: string | null;
+  created_at: string;
+  updated_at: string;
+  run_id?: string | null;
+};
+
+export type CodingStep = {
+  step_id: string;
+  session_id: string;
+  kind: string;
+  capability_id: string | null;
+  status: string;
+  output_json?: Record<string, unknown> | null;
+  error?: string | null;
+  created_at?: string;
+  observation_id?: string | null;
+  artifact_id?: string | null;
+  approval_id?: string | null;
+};
+
+export type CodingPatch = {
+  patch_id: string;
+  session_id: string;
+  path: string;
+  diff_unified: string;
+  applied: boolean;
+  artifact_id?: string | null;
+  approval_id?: string | null;
+};
+
+export type CodingVerification = {
+  report_id: string;
+  outcome: "PASSED" | "FAILED" | "UNMEASURED";
+  requirements?: Array<{ requirement_id: string; outcome: string; detail?: string | null }>;
+};
+
+export type CodingNeuroSnapshot = {
+  enabled: boolean;
+  consistency?: number | null;
+  progress?: number | null;
+  grounding?: number | null;
+  residual_supported?: boolean;
+  notes?: string[];
+};
+
+export type CodingSessionDetail = {
+  session: CodingSession;
+  turns: Array<{ turn_id: string; role: string; content: string; created_at: string }>;
+  steps: CodingStep[];
+  patches: CodingPatch[];
+  verification: CodingVerification | null;
+  neuro: CodingNeuroSnapshot | null;
+};
+
+export type CodingWorkspaceTreeResponse = {
+  entries: Array<{ path: string; type: "file" | "dir"; size?: number; mark?: "M" | "A" | null }>;
+  root?: string;
+};
+
+
+export type McpServerRuntime = {
+  server_id: string;
+  state: string;
+  effective_isolation: string;
+  protocol_version?: string | null;
+  server_version?: string | null;
+  tool_count: number;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  pid?: number | null;
+  circuit_open?: boolean;
+};
+
+export type McpServerPublic = {
+  server_id: string;
+  display_name: string;
+  source_kind: string;
+  source_key: string;
+  transport: string;
+  command?: string | null;
+  args: string[];
+  url?: string | null;
+  enabled: boolean;
+  trust: string;
+  requested_isolation: string;
+  secret_refs: Record<string, string>;
+  runtime?: McpServerRuntime;
+};
+
+export type McpToolRecord = {
+  server_id: string;
+  external_name: string;
+  capability_id: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  schema_hash: string;
+  semantic_effects: string[];
+  availability: string;
+  provider_kind?: string;
+};
+
+export type McpCallRecord = {
+  call_id: string;
+  server_id: string;
+  capability_id: string;
+  external_tool_name: string;
+  status: string;
+  duration_ms?: number | null;
+  error_message?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+};
+
+export type McpHealthSummary = {
+  registered_servers: number;
+  enabled_servers: number;
+  connected_servers: number;
+  ready_servers: number;
+  tool_count: number;
+  unavailable_tools: number;
+  last_error?: string | null;
+  feature_enabled: boolean;
+};
+
+/* ---------- Market Simulation ---------- */
+
+export type MarketSimStatusResponse = {
+  enabled: boolean;
+  feature_flag: string;
+  health: {
+    markets_root: string;
+    configured: boolean;
+    exists: boolean;
+    sources_indexed: number;
+    sources_ready: number;
+  };
+  active_runs: number;
+  worker: Record<string, number>;
+  truth: Record<string, boolean>;
+};
+
+export type MarketDataSource = {
+  source_id: string;
+  symbol: string;
+  timeframe: string;
+  kind: string;
+  path: string;
+  content_hash: string;
+  status: string;
+  bar_count: number;
+  start_ts: string | null;
+  end_ts: string | null;
+  byte_size: number;
+  validation_error: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MarketStrategy = {
+  strategy_id: string;
+  name: string;
+  description: string;
+  status: string;
+  tags: string[];
+  current_version: number;
+  content_hash: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MarketStrategyVersion = {
+  version_id: string;
+  strategy_id: string;
+  version: number;
+  content_hash: string;
+  parameters: Record<string, unknown>;
+  entry_rules: Record<string, unknown>;
+  exit_rules: Record<string, unknown>;
+  risk_rules: Record<string, unknown>;
+  required_timeframes: string[];
+  brain_dependencies: string[];
+  created_at: string;
+  changelog: string;
+};
+
+export type MarketSimRun = {
+  run_id: string;
+  status: string;
+  source_id: string;
+  strategy_id: string | null;
+  strategy_version: number | null;
+  symbol: string;
+  timeframe: string;
+  start_ts: string;
+  end_ts: string;
+  data_hash: string;
+  seed: number;
+  speed: number;
+  initial_cash: number;
+  clock_ts: string | null;
+  bar_index: number;
+  bar_count: number;
+  cash: number;
+  equity: number;
+  position_qty: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  causality_violations: number;
+  brain_hits: number;
+  brain_misses: number;
+  metrics: Record<string, unknown>;
+  error: string | null;
+  agents: Array<Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+  truth?: Record<string, boolean>;
+};
+
+export type MarketSimFill = {
+  fill_id: string;
+  run_id: string;
+  bar_index: number;
+  ts: string;
+  side: string;
+  qty: number;
+  price: number;
+  fee: number;
+  slippage: number;
+  agent_id: string | null;
+  rationale: string;
+  status: string;
+};
+
+export type MarketSimMessage = {
+  message_id: string;
+  run_id: string;
+  bar_index: number;
+  ts: string;
+  agent_id: string;
+  role: string;
+  kind: string;
+  content: string;
+  proposal: Record<string, unknown>;
+  confidence: number;
+  brain_refs: Array<Record<string, unknown>>;
+};
+
+export type MarketSimLiveState = {
+  run: MarketSimRun;
+  fills: MarketSimFill[];
+  messages: MarketSimMessage[];
+  equity: Array<{ bar_index: number; ts: string; equity: number; cash: number; position_qty: number }>;
+  truth: Record<string, unknown>;
+};

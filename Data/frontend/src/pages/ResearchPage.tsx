@@ -228,7 +228,6 @@ export function ResearchPage() {
             </button>
           </div>
         </header>
-
         {error ? (
           <div className="lv-models-banner is-error" role="alert">
             <strong>Research unavailable</strong>

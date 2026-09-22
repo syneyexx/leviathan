@@ -342,7 +342,6 @@ export function ModelsPage() {
             </Link>
           </div>
         </header>
-
         <ModelStatusCards status={status} loading={loading} />
 
         {error ? (

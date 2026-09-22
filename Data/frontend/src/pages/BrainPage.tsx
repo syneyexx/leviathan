@@ -167,7 +167,6 @@ export function BrainPage() {
             <span>Link</span>
           </div>
         </section>
-
         <div className="lv-toolbar">
           <div className="lv-tabs" role="tablist">
             {VIEWS.map((item) => (

@@ -54,6 +54,25 @@ def _env_int(name: str, default: int, *, minimum: int | None = None, maximum: in
     return value
 
 
+def _parse_int_csv(raw: str) -> tuple[int, ...]:
+    """Parse comma-separated integers; empty → (). Invalid tokens raise ConfigurationError."""
+    text = (raw or "").strip()
+    if not text:
+        return ()
+    values: list[int] = []
+    for part in text.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        try:
+            values.append(int(token))
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Invalid integer in LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS: {token!r}"
+            ) from exc
+    return tuple(values)
+
+
 def _env_float(name: str, default: float, *, minimum: float | None = None) -> float:
     raw = _env_raw(name)
     if raw is None or raw.strip() == "":
@@ -119,6 +138,11 @@ class KnowledgeSettings:
     data_root: Path
     chunk_max_chars: int = 1200
     chunk_overlap: int = 120
+    embedding_provider: str = "null"
+    embedding_model: str | None = None
+    embedding_hash_dimensions: int = 256
+    reranker_model: str | None = None
+    deep_recall_budget: int = 800
 
 
 @dataclass(frozen=True)
@@ -138,17 +162,70 @@ class FeatureFlags:
     neuro_residual_injection: bool
     neuro_cortex: bool
     neuro_memory_tiers: bool
+    neuro_residual_orchestrator: bool
+    neuro_cortex_blocks: bool
+    neuro_contrastive_training: bool
+    neuro_soak_long: bool
+    neuro_training_real_worker: bool
     module_manager_enabled: bool
     module_manager_subprocess: bool
     agents_enabled: bool
+    coding_enabled: bool
+    mcp_enabled: bool
+    mcp_stdio: bool
+    mcp_http: bool
+    mcp_auto_expand_modules: bool
+    market_sim_enabled: bool
+    rag_v3: bool
+    deep_recall: bool
+    why_library: bool
+    residual_production: bool
+    chat_streaming: bool
+    chat_sse: bool
+
+
+@dataclass(frozen=True)
+class CodingSettings:
+    """Coding Agent control-plane settings (workspace + loop bounds)."""
+
+    workspace: Path
+    max_rounds: int = 12
+    max_file_bytes: int = 1_000_000
+    command_allowlist: tuple[str, ...] = (
+        "python",
+        "python3",
+        "pytest",
+        "npm",
+        "npx",
+        "node",
+        "git",
+    )
+    temperature: float = 0.1
+    token_budget: int = 24_000
+    reserve_response_tokens: int = 1024
+    max_file_chars: int = 8000
+
+
+@dataclass(frozen=True)
+class MarketSimSettings:
+    """Market simulation control-plane settings (data root + worker bounds)."""
+
+    markets_root: Path
+    bars_per_slice: int = 50
+    default_initial_cash: float = 100_000.0
 
 
 @dataclass(frozen=True)
 class NeuroRuntimeSettings:
-    residual_kind: str  # unsupported | deterministic | hf
+    residual_kind: str  # unsupported | deterministic | hf | vllm | llama_cpp | trt
     residual_model_id: str | None
     residual_device: str
     absorb_default_limit: int
+    residual_load_weights: bool = False  # high-memory / dev-only HF weight load
+    residual_hook_layers: tuple[int, ...] = ()
+    cortex_max_k: int = 2
+    memory_tier0_max_slots: int = 64
+    residual_server_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -204,6 +281,8 @@ class Settings:
     knowledge: KnowledgeSettings
     reasoning: ReasoningSettings
     features: FeatureFlags
+    coding: CodingSettings
+    market_sim: MarketSimSettings
     neuro_runtime: NeuroRuntimeSettings
     resources: ResourceLimits
     context: ContextSettings
@@ -261,6 +340,10 @@ class Settings:
                 "data_root": str(self.knowledge.data_root),
                 "chunk_max_chars": self.knowledge.chunk_max_chars,
                 "chunk_overlap": self.knowledge.chunk_overlap,
+                "embedding_provider": self.knowledge.embedding_provider,
+                "embedding_model": self.knowledge.embedding_model,
+                "reranker_model": self.knowledge.reranker_model,
+                "deep_recall_budget": self.knowledge.deep_recall_budget,
             },
             "reasoning": {"enabled": self.reasoning.enabled},
             "features": {
@@ -272,15 +355,51 @@ class Settings:
                 "neuro_residual_injection": self.features.neuro_residual_injection,
                 "neuro_cortex": self.features.neuro_cortex,
                 "neuro_memory_tiers": self.features.neuro_memory_tiers,
+                "neuro_residual_orchestrator": self.features.neuro_residual_orchestrator,
+                "neuro_cortex_blocks": self.features.neuro_cortex_blocks,
+                "neuro_contrastive_training": self.features.neuro_contrastive_training,
+                "neuro_soak_long": self.features.neuro_soak_long,
+                "neuro_training_real_worker": self.features.neuro_training_real_worker,
                 "module_manager_enabled": self.features.module_manager_enabled,
                 "module_manager_subprocess": self.features.module_manager_subprocess,
                 "agents_enabled": self.features.agents_enabled,
+                "coding_enabled": self.features.coding_enabled,
+                "mcp_enabled": self.features.mcp_enabled,
+                "mcp_stdio": self.features.mcp_stdio,
+                "mcp_http": self.features.mcp_http,
+                "mcp_auto_expand_modules": self.features.mcp_auto_expand_modules,
+                "market_sim_enabled": self.features.market_sim_enabled,
+                "rag_v3": self.features.rag_v3,
+                "deep_recall": self.features.deep_recall,
+                "why_library": self.features.why_library,
+                "residual_production": self.features.residual_production,
+                "chat_streaming": self.features.chat_streaming,
+                "chat_sse": self.features.chat_sse,
+            },
+            "coding": {
+                "enabled": self.features.coding_enabled,
+                "max_rounds": self.coding.max_rounds,
+                "max_file_bytes": self.coding.max_file_bytes,
+                "temperature": self.coding.temperature,
+                # Workspace path omitted from public summary (operator-local root).
+                "workspace_configured": bool(str(self.coding.workspace).strip()),
+            },
+            "market_sim": {
+                "enabled": self.features.market_sim_enabled,
+                "markets_root_configured": bool(str(self.market_sim.markets_root).strip()),
+                "bars_per_slice": self.market_sim.bars_per_slice,
+                "default_initial_cash": self.market_sim.default_initial_cash,
             },
             "neuro_runtime": {
                 "residual_kind": self.neuro_runtime.residual_kind,
                 "residual_model_id": self.neuro_runtime.residual_model_id,
                 "residual_device": self.neuro_runtime.residual_device,
                 "absorb_default_limit": self.neuro_runtime.absorb_default_limit,
+                "residual_load_weights": self.neuro_runtime.residual_load_weights,
+                "residual_hook_layers": list(self.neuro_runtime.residual_hook_layers),
+                "cortex_max_k": self.neuro_runtime.cortex_max_k,
+                "memory_tier0_max_slots": self.neuro_runtime.memory_tier0_max_slots,
+                "residual_server_url": self.neuro_runtime.residual_server_url,
             },
             "resources": {
                 "max_model_concurrency": self.resources.max_model_concurrency,
@@ -348,6 +467,49 @@ class Settings:
         if chaos_error_rate > 1.0:
             raise ConfigurationError("LEVIATHAN_CHAOS_ERROR_RATE must be <= 1.0")
 
+        coding_enabled = _env_bool("LEVIATHAN_FEATURE_CODING", False)
+        mcp_enabled = _env_bool("LEVIATHAN_FEATURE_MCP", False)
+        # Hierarchical children: default true only when parent is enabled; explicit
+        # child=true with parent=false is rejected in validate().
+        mcp_stdio = _env_bool("LEVIATHAN_FEATURE_MCP_STDIO", True) if mcp_enabled else False
+        mcp_http = _env_bool("LEVIATHAN_FEATURE_MCP_HTTP", True) if mcp_enabled else False
+        mcp_auto_expand = (
+            _env_bool("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES", True) if mcp_enabled else False
+        )
+        market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", False)
+        rag_v3 = _env_bool("LEVIATHAN_FEATURE_RAG_V3", False)
+        deep_recall = _env_bool("LEVIATHAN_FEATURE_DEEP_RECALL", False)
+        why_library = _env_bool("LEVIATHAN_FEATURE_WHY_LIBRARY", False)
+        residual_production = _env_bool("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION", False)
+        chat_streaming = _env_bool("LEVIATHAN_FEATURE_CHAT_STREAMING", False)
+        chat_sse = _env_bool("LEVIATHAN_FEATURE_CHAT_SSE", False)
+        embedding_provider = (
+            _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
+        ).strip().lower()
+        embedding_model = (_env_raw("LEVIATHAN_EMBEDDING_MODEL", "") or "").strip() or None
+        reranker_model = (_env_raw("LEVIATHAN_RERANKER_MODEL", "") or "").strip() or None
+        coding_workspace_raw = (
+            _env_raw("LEVIATHAN_CODING_WORKSPACE", "D:/leviathan/codingworkspace")
+            or "D:/leviathan/codingworkspace"
+        )
+        coding_workspace = _resolve_data_root(coding_workspace_raw)
+        markets_root_raw = (
+            _env_raw("LEVIATHAN_MARKETS_ROOT", "") or ""
+        ).strip()
+        if not markets_root_raw:
+            markets_root_raw = str(data_root / "markets")
+        markets_root = _resolve_data_root(markets_root_raw)
+        allowlist_raw = (
+            _env_raw(
+                "LEVIATHAN_CODING_COMMAND_ALLOWLIST",
+                "python,python3,pytest,npm,npx,node,git",
+            )
+            or "python,python3,pytest,npm,npx,node,git"
+        )
+        command_allowlist = tuple(
+            part.strip() for part in allowlist_raw.split(",") if part.strip()
+        )
+
         settings = cls(
             runtime=RuntimeSettings(host=host, port=port, loopback_only=loopback_only),
             model=ModelSettings(
@@ -361,6 +523,15 @@ class Settings:
                 data_root=data_root,
                 chunk_max_chars=chunk_max,
                 chunk_overlap=chunk_overlap,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                embedding_hash_dimensions=_env_int(
+                    "LEVIATHAN_EMBEDDING_HASH_DIMENSIONS", 256, minimum=32, maximum=4096
+                ),
+                reranker_model=reranker_model,
+                deep_recall_budget=_env_int(
+                    "LEVIATHAN_DEEP_RECALL_BUDGET", 800, minimum=64, maximum=20_000
+                ),
             ),
             reasoning=ReasoningSettings(enabled=_env_bool("LEVIATHAN_REASONING_ENABLED", True)),
             features=FeatureFlags(
@@ -372,9 +543,53 @@ class Settings:
                 neuro_residual_injection=_env_bool("LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION", False),
                 neuro_cortex=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX", False),
                 neuro_memory_tiers=_env_bool("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS", False),
+                neuro_residual_orchestrator=_env_bool(
+                    "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR", False
+                ),
+                neuro_cortex_blocks=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS", False),
+                neuro_contrastive_training=_env_bool(
+                    "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING", False
+                ),
+                neuro_soak_long=_env_bool("LEVIATHAN_FEATURE_NEURO_SOAK_LONG", False),
+                neuro_training_real_worker=_env_bool("LEVIATHAN_NEURO_TRAINING_REAL_WORKER", False),
                 module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
+                coding_enabled=coding_enabled,
+                mcp_enabled=mcp_enabled,
+                mcp_stdio=mcp_stdio,
+                mcp_http=mcp_http,
+                mcp_auto_expand_modules=mcp_auto_expand,
+                market_sim_enabled=market_sim_enabled,
+                rag_v3=rag_v3,
+                deep_recall=deep_recall,
+                why_library=why_library,
+                residual_production=residual_production,
+                chat_streaming=chat_streaming,
+                chat_sse=chat_sse,
+            ),
+            coding=CodingSettings(
+                workspace=coding_workspace,
+                max_rounds=_env_int("LEVIATHAN_CODING_MAX_ROUNDS", 12, minimum=1, maximum=64),
+                max_file_bytes=_env_int(
+                    "LEVIATHAN_CODING_MAX_FILE_BYTES", 1_000_000, minimum=1024, maximum=50_000_000
+                ),
+                command_allowlist=command_allowlist or ("python", "python3", "pytest"),
+                temperature=_env_float("LEVIATHAN_CODING_TEMPERATURE", 0.1, minimum=0.0),
+                token_budget=_env_int("LEVIATHAN_CODING_TOKEN_BUDGET", 24_000, minimum=512, maximum=200_000),
+                reserve_response_tokens=_env_int(
+                    "LEVIATHAN_CODING_RESERVE_RESPONSE_TOKENS", 1024, minimum=64, maximum=32_000
+                ),
+                max_file_chars=_env_int(
+                    "LEVIATHAN_CODING_MAX_FILE_CHARS", 8000, minimum=200, maximum=200_000
+                ),
+            ),
+            market_sim=MarketSimSettings(
+                markets_root=markets_root,
+                bars_per_slice=_env_int("LEVIATHAN_MARKET_SIM_BARS_PER_SLICE", 50, minimum=1, maximum=10_000),
+                default_initial_cash=_env_float(
+                    "LEVIATHAN_MARKET_SIM_INITIAL_CASH", 100_000.0, minimum=1.0
+                ),
             ),
             neuro_runtime=NeuroRuntimeSettings(
                 residual_kind=(
@@ -383,6 +598,18 @@ class Settings:
                 residual_model_id=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_MODEL", "") or "").strip() or None,
                 residual_device=(_env_raw("LEVIATHAN_NEURO_RESIDUAL_DEVICE", "cpu") or "cpu").strip(),
                 absorb_default_limit=_env_int("LEVIATHAN_NEURO_ABSORB_LIMIT", 50, minimum=1, maximum=5000),
+                residual_load_weights=_env_bool("LEVIATHAN_NEURO_RESIDUAL_LOAD_WEIGHTS", False),
+                residual_hook_layers=_parse_int_csv(
+                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_HOOK_LAYERS", "") or ""
+                ),
+                cortex_max_k=_env_int("LEVIATHAN_NEURO_CORTEX_MAX_K", 2, minimum=0, maximum=16),
+                memory_tier0_max_slots=_env_int(
+                    "LEVIATHAN_NEURO_MEMORY_TIER0_MAX_SLOTS", 64, minimum=1, maximum=10_000
+                ),
+                residual_server_url=(
+                    _env_raw("LEVIATHAN_NEURO_RESIDUAL_SERVER_URL", "") or ""
+                ).strip()
+                or None,
             ),
             resources=ResourceLimits(
                 max_model_concurrency=_env_int("LEVIATHAN_MAX_MODEL_CONCURRENCY", 1, minimum=1, maximum=64),
@@ -437,10 +664,89 @@ class Settings:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS requires LEVIATHAN_FEATURE_NEURO=true"
             )
+        if self.features.neuro_residual_orchestrator and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_cortex_blocks and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_cortex_blocks and not self.features.neuro_cortex:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS requires LEVIATHAN_FEATURE_NEURO_CORTEX=true"
+            )
+        if self.features.neuro_contrastive_training and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_soak_long and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_NEURO_SOAK_LONG requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.neuro_training_real_worker and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_NEURO_TRAINING_REAL_WORKER requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.chat_sse and not self.features.chat_streaming:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_CHAT_SSE requires LEVIATHAN_FEATURE_CHAT_STREAMING=true"
+            )
         if self.features.module_manager_subprocess and not self.features.module_manager_enabled:
             raise ConfigurationError(
                 "LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS requires LEVIATHAN_FEATURE_MODULE_MANAGER=true"
             )
+        if self.features.coding_enabled and not self.features.agents_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_CODING requires LEVIATHAN_FEATURE_AGENTS=true"
+            )
+        if self.features.mcp_stdio and not self.features.mcp_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP_STDIO requires LEVIATHAN_FEATURE_MCP=true"
+            )
+        if self.features.mcp_http and not self.features.mcp_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP_HTTP requires LEVIATHAN_FEATURE_MCP=true"
+            )
+        if self.features.mcp_auto_expand_modules and not self.features.mcp_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES requires LEVIATHAN_FEATURE_MCP=true"
+            )
+        if self.features.mcp_enabled and not self.features.mcp_stdio and not self.features.mcp_http:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_MCP=true requires MCP_STDIO and/or MCP_HTTP"
+            )
+        if self.features.deep_recall and not self.features.rag_v3:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_DEEP_RECALL requires LEVIATHAN_FEATURE_RAG_V3=true"
+            )
+        if self.features.why_library and not self.features.rag_v3:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_WHY_LIBRARY requires LEVIATHAN_FEATURE_RAG_V3=true"
+            )
+        if self.features.residual_production and not self.features.neuro_enabled:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO=true"
+            )
+        if self.features.residual_production and not self.features.neuro_residual_injection:
+            raise ConfigurationError(
+                "LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION requires LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION=true"
+            )
+        emb = self.knowledge.embedding_provider
+        if emb not in {
+            "null",
+            "none",
+            "off",
+            "hash",
+            "local_hash",
+            "local",
+            "sentence_transformers",
+            "st",
+            "sbert",
+            "huggingface",
+            "hf",
+        }:
+            raise ConfigurationError(f"LEVIATHAN_EMBEDDING_PROVIDER invalid: {emb!r}")
         kind = self.neuro_runtime.residual_kind
         if kind not in {
             "unsupported",
@@ -454,6 +760,10 @@ class Settings:
             "llama_cpp",
             "llamacpp",
             "llama.cpp",
+            "trt",
+            "tensorrt",
+            "tensorrt_llm",
+            "trt_llm",
         }:
             raise ConfigurationError(
                 f"LEVIATHAN_NEURO_RESIDUAL_KIND invalid: {kind!r}"
