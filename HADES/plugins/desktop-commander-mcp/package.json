@@ -1,8 +1,0 @@
-{
-  "name": "hades-desktop-commander-mcp",
-  "version": "0.1.0",
-  "private": true,
-  "dependencies": {
-    "@wonderwhy-er/desktop-commander": "latest"
-  }
-}

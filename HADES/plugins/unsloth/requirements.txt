@@ -1,4 +1,0 @@
-# Optional heavy deps. Install may fail without a compatible GPU/torch stack.
-# Operators can repair/reinstall after bringing a CUDA/torch environment.
-unsloth>=2024.1
-
