@@ -72,6 +72,18 @@ NEURO_RECIPES: tuple[TrainingRecipe, ...] = (
         data_sources=("verification_reports", "human_preferences"),
         requires_verification=True,
         freezes_base_model=True,
+        metadata={"reference_model_required": True, "method": "dpo"},
+    ),
+    TrainingRecipe(
+        recipe_id="reward_model_v1",
+        name="Reward model on preference pairs",
+        objective="reward_modeling",
+        loss="BradleyTerry",
+        formulation="L_rm = -log sigma(r_theta(y_w) - r_theta(y_l)); calibrate on held-out prefs",
+        data_sources=("human_preferences", "preference_records"),
+        requires_verification=False,
+        freezes_base_model=True,
+        metadata={"held_out_calibration_required": True, "method": "reward"},
     ),
     TrainingRecipe(
         recipe_id="contrastive_memory_v1",

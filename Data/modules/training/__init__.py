@@ -1,5 +1,6 @@
 """Training subsystem — durable jobs, optional LoRA, honest stubs where needed."""
 
+from .active_learning import ActiveLearningMiner, MinedCandidate
 from .artifacts import export_artifact, list_job_artifacts
 from .capabilities import probe_training_capabilities, safe_import
 from .config import TrainingConfig
@@ -8,10 +9,19 @@ from .events import TrainingEventLog
 from .hardware import probe_hardware
 from .launcher import TrainingLauncher
 from .integrity import IntegrityReport, verify_artifact_integrity
+from .lineage import LineageEdge, ModelLineageStore
 from .model_registration import register_training_artifact_as_model, sync_completed_artifacts_to_models
 from .planner import plan_training
+from .preference_schema import PreferenceRecord, build_preference_record
+from .preference_store import PreferenceStore
 from .preferences import PreferenceBridge
 from .preflight import run_preflight
+from .promotion import (
+    ChallengerProposal,
+    FlywheelControlPlane,
+    PromotionError,
+    PromotionRecord,
+)
 from .recipes import (
     NEURO_RECIPES,
     FixtureRecipeTrainer,
@@ -25,6 +35,7 @@ from .recovery import reconcile_active_jobs
 from .registry import TrainingRegistry
 from .service import TrainingError, TrainingService
 from .store import TrainingStore
+from .synthetic import GeneratorProvenance, SyntheticBatch, SyntheticDataService
 from .types import (
     ACTIVE_DURABLE_STATUSES,
     ArtifactRecord,
@@ -46,22 +57,35 @@ from .types import (
 
 __all__ = [
     "ACTIVE_DURABLE_STATUSES",
+    "ActiveLearningMiner",
     "ArtifactRecord",
+    "ChallengerProposal",
     "CheckpointRecord",
     "DurableTrainingJob",
     "DurableTrainingStatus",
     "EphemeralRecipeWorkerTrainer",
     "FixtureRecipeTrainer",
+    "FlywheelControlPlane",
+    "GeneratorProvenance",
     "HardwareSnapshot",
     "IntegrityReport",
+    "LineageEdge",
     "MetricRecord",
+    "MinedCandidate",
+    "ModelLineageStore",
     "NEURO_RECIPES",
     "PreferenceBridge",
+    "PreferenceRecord",
+    "PreferenceStore",
     "PreflightResult",
     "PreflightVerdict",
+    "PromotionError",
+    "PromotionRecord",
     "RESUMABLE_DURABLE_STATUSES",
     "RecipeRun",
     "RecipeRunStatus",
+    "SyntheticBatch",
+    "SyntheticDataService",
     "TERMINAL_DURABLE_STATUSES",
     "TrainingCapabilities",
     "TrainingConfig",
@@ -78,6 +102,7 @@ __all__ = [
     "TrainingService",
     "TrainingStore",
     "build_neuro_recipe_trainer",
+    "build_preference_record",
     "evaluate_job",
     "export_artifact",
     "list_job_artifacts",

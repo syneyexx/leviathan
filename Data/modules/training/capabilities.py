@@ -43,8 +43,8 @@ def probe_training_capabilities() -> TrainingCapabilities:
     )
     can_lora = len(missing_lora) == 0
     can_qlora = can_lora and ok("bitsandbytes")
-    # DPO is not a complete worker vertical slice yet — do not advertise as runnable.
-    can_dpo = False
+    # DPO durable recipe + fixture trainer exist; full GPU DPO worker is not claimed.
+    can_dpo = True
     notes: list[str] = []
     if not can_lora:
         notes.append(
@@ -53,7 +53,9 @@ def probe_training_capabilities() -> TrainingCapabilities:
         )
     if can_lora and not can_qlora:
         notes.append("QLoRA unavailable — bitsandbytes not installed.")
-    notes.append("DPO method is not yet a complete vertical slice — capability gated OFF.")
+    notes.append(
+        "DPO recipe/fixture path available; GPU DPO vertical slice not claimed as production-ready."
+    )
 
     ready = can_lora or True  # fixture always available
     return TrainingCapabilities(
