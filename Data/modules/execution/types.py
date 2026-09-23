@@ -6,6 +6,8 @@ from typing import Any
 
 from Data.modules.function_runtime.types import SideEffect
 
+from .metadata import normalize_capability_metadata, schema_hash
+
 # field is used by CapabilityDefinition.metadata default_factory
 
 
@@ -19,6 +21,7 @@ class CapabilityProviderKind(str, Enum):
     EXTERNAL = "external"
     NATIVE = "native"
     BUILTIN = "builtin"
+    BROWSER = "browser"
 
 
 class CapabilityStatus(str, Enum):
@@ -46,6 +49,17 @@ class CapabilityDefinition:
     schema_hash: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def normalized_metadata(self) -> dict[str, Any]:
+        return normalize_capability_metadata(
+            self.metadata,
+            capability_id=self.id,
+            name=self.name,
+            description=self.description,
+        )
+
+    def resolved_schema_hash(self) -> str:
+        return self.schema_hash or schema_hash(self.input_schema, self.output_schema)
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -60,13 +74,14 @@ class CapabilityDefinition:
             "available": self.available,
             "availability_reason": self.availability_reason,
             "enabled": self.enabled,
-            "schema_hash": self.schema_hash,
-            "metadata": self.metadata,
+            "schema_hash": self.resolved_schema_hash(),
+            "metadata": self.normalized_metadata(),
             "truth": {
                 "discoverable_is_not_authorized": True,
                 "registered_is_not_available": True,
                 "available_is_not_enabled": True,
                 "enabled_is_not_approved": True,
+                "metadata_is_not_authorization": True,
             },
         }
 

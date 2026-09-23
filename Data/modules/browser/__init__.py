@@ -1,5 +1,25 @@
-"""Browser automation stub — no fabricated page results."""
+"""Browser automation — fixture worker + honest stub (Wave 5)."""
 
-from .stub import BrowserAction, BrowserAutomationStub, BrowserJob, BrowserJobStatus
+from .worker import (
+    BrowserAction,
+    BrowserAutomationStub,
+    BrowserBackendKind,
+    BrowserJob,
+    BrowserJobStatus,
+    BrowserObservation,
+    BrowserSession,
+    BrowserWorker,
+    FixtureBrowserBackend,
+)
 
-__all__ = ["BrowserAction", "BrowserAutomationStub", "BrowserJob", "BrowserJobStatus"]
+__all__ = [
+    "BrowserAction",
+    "BrowserAutomationStub",
+    "BrowserBackendKind",
+    "BrowserJob",
+    "BrowserJobStatus",
+    "BrowserObservation",
+    "BrowserSession",
+    "BrowserWorker",
+    "FixtureBrowserBackend",
+]

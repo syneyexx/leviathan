@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of **Wave 4 Context Substrate** (`0.68.0-wave4-context`) on Wave 3 Model Serving (v26) + Wave 2 Evaluation (v25) + Wave 1 Cognition + Wave 0 Durable Kernel (v24) + Context/Memory scope (v27).
+> This is the implementation truth for the repository as of **Wave 5 Capability World** (`0.69.0-wave5-capability`) on Wave 4 Context Substrate (v27) + Wave 3 Model Serving (v26) + Wave 2 Evaluation (v25) + Wave 1 Cognition + Wave 0 Durable Kernel (v24).
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,11 +12,12 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel**, **Wave 2 evaluation as release authority**, **Wave 3 managed local model serving**, and **Wave 4 context/memory/knowledge substrate** (pinned constraints, scoped memory, retrieval thresholds).
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel**, **Wave 2 evaluation as release authority**, **Wave 3 managed local model serving**, **Wave 4 context/memory/knowledge substrate**, and **Wave 5 capability world interface** (metadata, receipts, secrets broker, fixture browser worker).
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.68.0-wave4-context`);
+- FastAPI backend composition root (`0.69.0-wave5-capability`);
+- **Wave 5 capability world** — normalized capability metadata, semantic shortlist, capability-call receipts, secrets leases, fixture browser via ExecutionGateway/Jobs (no Chromium in CI);
 - **Wave 4 context/memory/knowledge** — pinned constraints, budget ledger, scoped memory (no cross-conversation leak), retrieval min_score + traces + citation heuristic;
 - **Wave 3 model serving** — managed local adapters, serving supervisor, stream cancel, measured route audit, serving conformance eval (batching QoS UNMEASURED);
 - **Wave 2 evaluation platform** — versioned cases, JudgmentKind/MeasurementState, durable reports + regression corpus, system scorecards, release/promotion relevance (UNMEASURED ≠ PASS);
@@ -27,16 +28,16 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 - **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v27**;
+- SQLite persistence + migrations through **v28**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
-- Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
+- Honest stubs: Training execution / Media / Voice / Native / Trading / llama.cpp managed runtime; Browser fixture worker (not Chromium);
 - React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, **Market Sim** `/trading`, and **MCP** `/mcp` UI;
 - typed frontend API client;
 - honest failure semantics (no fabricated success).
 
 **Not claimed:**
 
-- Real browser/media/voice/native runtimes; live broker trading;
+- Production Playwright/Chromium packaging; live broker trading;
 - Legacy MCP SSE transport; full OS container isolation adapter; MCP resources/prompts/sampling;
 - **weight-backed HF residual inject** as default; production GPU residual hooks;
 - Programmatic LM Studio load/unload (external management);

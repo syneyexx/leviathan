@@ -63,24 +63,45 @@ class CapabilityCatalog:
         return sorted(self._items.values(), key=lambda item: item.id)
 
     def search(self, query: str, *, limit: int = 20) -> list[CapabilityDefinition]:
-        """Shortlist capabilities by id/name/description — no schema dump."""
+        """Semantic shortlist by id/name/description/metadata — no schema dump."""
         q = (query or "").strip().lower()
         if not q:
             return self.list()[:limit]
+        parts = [p for p in q.replace("/", " ").replace(".", " ").split() if p]
         scored: list[tuple[int, CapabilityDefinition]] = []
         for item in self._items.values():
-            hay = f"{item.id} {item.name} {item.description}".lower()
-            if q not in hay and not all(part in hay for part in q.split()):
-                continue
+            meta = item.normalized_metadata()
+            hay = str(meta.get("search_text") or f"{item.id} {item.name} {item.description}").lower()
+            aliases = " ".join(meta.get("aliases") or []).lower()
+            tags = " ".join(meta.get("tags") or []).lower()
+            domains = " ".join(meta.get("domains") or []).lower()
+            blob = f"{hay} {aliases} {tags} {domains}"
+            if q not in blob and not all(part in blob for part in parts):
+                # Soft semantic: allow partial token overlap (≥50% of tokens).
+                if not parts or sum(1 for part in parts if part in blob) < max(1, (len(parts) + 1) // 2):
+                    continue
             score = 0
             if q in item.id.lower():
-                score += 40
+                score += 50
             if q in item.name.lower():
-                score += 30
+                score += 35
             if q in item.description.lower():
+                score += 12
+            if q in aliases or any(part in aliases for part in parts):
+                score += 20
+            if any(part in tags for part in parts):
+                score += 15
+            if any(part in domains for part in parts):
                 score += 10
+            for part in parts:
+                if part in blob:
+                    score += 3
             if item.available:
                 score += 5
+            if item.provider_kind.value == "browser" and any(
+                t in q for t in ("browser", "navigate", "click", "web", "page", "dom")
+            ):
+                score += 8
             scored.append((score, item))
         scored.sort(key=lambda pair: (-pair[0], pair[1].id))
         return [item for _, item in scored[:limit]]

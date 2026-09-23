@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from Data.modules.function_runtime.types import FunctionCallStatus, SideEffect
 
 from .catalog import CapabilityCatalog
+from .receipts import CapabilityReceiptStore, build_receipt_from_result
 from .types import (
     CapabilityDefinition,
     CapabilityProviderKind,
@@ -75,6 +76,33 @@ class McpExecutor(Protocol):
     ) -> CapabilityResult: ...
 
 
+class BrowserExecutor(Protocol):
+    """Browser domain worker — invoked only after gateway authorization."""
+
+    def execute(
+        self,
+        *,
+        action: Any,
+        arguments: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
+
+class ModuleExecutor(Protocol):
+    """Optional MODULE provider_kind adapter."""
+
+    def execute_module_capability(
+        self,
+        capability_id: str,
+        provider_ref: str,
+        arguments: dict[str, Any],
+        *,
+        request_id: str,
+        run_id: str | None = None,
+    ) -> dict[str, Any] | CapabilityResult: ...
+
+
 @dataclass
 class EffectRecord:
     effect_id: str
@@ -105,6 +133,9 @@ class ExecutionGateway:
     approval_checker: ApprovalChecker | None = None
     observation_store: ObservationRecorder | None = None
     mcp_executor: McpExecutor | None = None
+    browser_executor: BrowserExecutor | None = None
+    module_executor: ModuleExecutor | None = None
+    receipt_store: CapabilityReceiptStore | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
@@ -116,6 +147,7 @@ class ExecutionGateway:
             "cancellations": 0,
             "approval_required": 0,
             "observations_recorded": 0,
+            "receipts_recorded": 0,
         }
     )
 
@@ -139,6 +171,7 @@ class ExecutionGateway:
                 reason="unknown_capability",
                 started=started,
                 request=request,
+                authority_decision="rejected_unknown",
             )
 
         # Strip audit-only client fields before schema validation — never authority.
@@ -148,13 +181,16 @@ class ExecutionGateway:
         request = CapabilityRequest(
             capability_id=request.capability_id,
             arguments=arguments,
-            request_id=request.request_id,
+            request_id=request.request_id or request_id,
             run_id=request.run_id,
             job_id=request.job_id,
             approval_id=request.approval_id,
             requested_by=request.requested_by,
+            trace_id=request.trace_id,
+            idempotency_key=request.idempotency_key,
         )
 
+        authority_decision = "pending"
         try:
             self._validate_args(definition, request.arguments)
         except GatewayRejection as exc:
@@ -167,6 +203,7 @@ class ExecutionGateway:
                 definition=definition,
                 approval_id=request.approval_id,
                 request=request,
+                authority_decision="rejected_validation",
             )
 
         if not definition.available:
@@ -179,10 +216,12 @@ class ExecutionGateway:
                 definition=definition,
                 approval_id=request.approval_id,
                 request=request,
+                authority_decision="rejected_unavailable",
             )
 
         try:
             self._enforce_policy(definition, request)
+            authority_decision = "allowed" if not request.approval_id else "allowed_with_approval"
         except GatewayRejection as exc:
             if exc.reason == "approval_required":
                 self.telemetry["approval_required"] += 1
@@ -195,10 +234,23 @@ class ExecutionGateway:
                 definition=definition,
                 approval_id=request.approval_id,
                 request=request,
+                authority_decision=f"rejected_{exc.reason}",
             )
 
         try:
             output = self._dispatch(definition, request)
+        except GatewayRejection as exc:
+            return self._reject(
+                request_id,
+                definition.id,
+                str(exc),
+                reason=exc.reason,
+                started=started,
+                definition=definition,
+                approval_id=request.approval_id,
+                request=request,
+                authority_decision=f"rejected_{exc.reason}",
+            )
         except Exception as exc:  # noqa: BLE001 — normalized into CapabilityResult
             result = CapabilityResult(
                 request_id=request_id,
@@ -212,7 +264,7 @@ class ExecutionGateway:
                 telemetry={"duration_ms": (time.perf_counter() - started) * 1000},
             )
             self.telemetry["failed"] += 1
-            self._record_effect(result, request=request)
+            self._record_effect(result, request=request, authority_decision=authority_decision)
             return result
 
         if isinstance(output, CapabilityResult):
@@ -228,7 +280,7 @@ class ExecutionGateway:
             }
             self._bump_status(output.status)
             self._maybe_consume_approval(request, output)
-            self._record_effect(output, request=request)
+            self._record_effect(output, request=request, authority_decision=authority_decision)
             return output
 
         result = CapabilityResult(
@@ -244,7 +296,7 @@ class ExecutionGateway:
         )
         self.telemetry["completed"] += 1
         self._maybe_consume_approval(request, result)
-        self._record_effect(result, request=request)
+        self._record_effect(result, request=request, authority_decision=authority_decision)
         return result
 
     def _maybe_consume_approval(self, request: CapabilityRequest, result: CapabilityResult) -> None:
@@ -294,9 +346,54 @@ class ExecutionGateway:
             return self._dispatch_artifact(definition, request)
         if kind == CapabilityProviderKind.MCP:
             return self._dispatch_mcp(definition, request)
+        if kind == CapabilityProviderKind.BROWSER:
+            return self._dispatch_browser(definition, request)
+        if kind == CapabilityProviderKind.MODULE:
+            return self._dispatch_module(definition, request)
         raise GatewayRejection(
             f"Unsupported provider kind: {kind.value}",
             reason="unsupported_provider",
+        )
+
+    def _dispatch_browser(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> dict[str, Any]:
+        if self.browser_executor is None:
+            raise RuntimeError("Browser executor not configured on ExecutionGateway")
+        action = definition.provider_ref
+        result = self.browser_executor.execute(
+            action=action,
+            arguments=dict(request.arguments),
+            run_id=request.run_id,
+            request_id=request.request_id,
+        )
+        status = str(result.get("status") or "").upper()
+        # Honest provider outcomes — never invent success (U179).
+        if status == "REJECTED":
+            raise GatewayRejection(
+                str(result.get("error") or result.get("detail") or "Browser rejected"),
+                reason="browser_rejected",
+            )
+        if status == "UNSUPPORTED":
+            raise GatewayRejection(
+                str(result.get("detail") or "Browser action unsupported"),
+                reason="browser_unsupported",
+            )
+        if status == "FAILED":
+            raise RuntimeError(str(result.get("error") or result.get("detail") or "Browser failed"))
+        return result
+
+    def _dispatch_module(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> Any:
+        if self.module_executor is None:
+            raise RuntimeError("Module executor not configured on ExecutionGateway")
+        return self.module_executor.execute_module_capability(
+            definition.id,
+            definition.provider_ref,
+            dict(request.arguments),
+            request_id=request.request_id or "",
+            run_id=request.run_id,
         )
 
     def _dispatch_mcp(
@@ -443,6 +540,7 @@ class ExecutionGateway:
         definition: CapabilityDefinition | None = None,
         approval_id: str | None = None,
         request: CapabilityRequest | None = None,
+        authority_decision: str | None = None,
     ) -> CapabilityResult:
         self.telemetry["rejected"] += 1
         result = CapabilityResult(
@@ -459,7 +557,11 @@ class ExecutionGateway:
                 "duration_ms": (time.perf_counter() - started) * 1000,
             },
         )
-        self._record_effect(result, request=request)
+        self._record_effect(
+            result,
+            request=request,
+            authority_decision=authority_decision or f"rejected_{reason}",
+        )
         return result
 
     def _bump_status(self, status: CapabilityStatus) -> None:
@@ -479,6 +581,7 @@ class ExecutionGateway:
         result: CapabilityResult,
         *,
         request: CapabilityRequest | None = None,
+        authority_decision: str = "allowed",
     ) -> None:
         observation_id = None
         effect_id = str(uuid.uuid4())
@@ -502,7 +605,10 @@ class ExecutionGateway:
                     output=result.output,
                     error=result.error,
                     duration_ms=duration_ms,
-                    metadata={"reason": (result.telemetry or {}).get("reason")},
+                    metadata={
+                        "reason": (result.telemetry or {}).get("reason"),
+                        "trace_id": request.trace_id if request else None,
+                    },
                 )
                 observation_id = observation.observation_id
                 effect_id = durable.effect_id
@@ -527,3 +633,16 @@ class ExecutionGateway:
                 observation_id=observation_id,
             )
         )
+
+        if self.receipt_store is not None:
+            try:
+                receipt = build_receipt_from_result(
+                    result=result,
+                    request=request,
+                    authority_decision=authority_decision,
+                )
+                self.receipt_store.record(receipt)
+                self.telemetry["receipts_recorded"] = int(self.telemetry.get("receipts_recorded", 0)) + 1
+                result.telemetry["receipt_id"] = receipt.receipt_id
+            except Exception as exc:  # noqa: BLE001 — never fail execution on receipt write
+                result.telemetry["receipt_persist_error"] = str(exc)

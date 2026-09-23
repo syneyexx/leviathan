@@ -55,11 +55,36 @@ class CapabilityBroker:
         if available_only:
             found = [c for c in found if getattr(c, "available", True)]
         ids = tuple(str(getattr(c, "id", "")) for c in found if getattr(c, "id", None))
+        # Inspect top hits for semantic shortlist (schemas only for shortlisted IDs).
+        inspected: dict[str, dict[str, Any]] = {}
+        for cap in found[: min(3, len(found))]:
+            cid = str(getattr(cap, "id", "") or "")
+            if not cid:
+                continue
+            data = self.catalog.inspect(cid)
+            if data:
+                # Prefer normalized metadata surface for shortlist consumers.
+                inspected[cid] = {
+                    "id": data.get("id"),
+                    "name": data.get("name"),
+                    "description": data.get("description"),
+                    "provider_kind": data.get("provider_kind"),
+                    "side_effects": data.get("side_effects"),
+                    "available": data.get("available"),
+                    "metadata": data.get("metadata"),
+                    "schema_hash": data.get("schema_hash"),
+                }
         notes = (
             "Capability availability is independent of initial intent classification",
             "Authorization still requires ExecutionGateway + policy/approvals",
+            "Semantic shortlist uses metadata tags/aliases/domains — not keyword-NLU gating",
         )
-        return CapabilityShortlist(query=query, capability_ids=ids, notes=notes)
+        return CapabilityShortlist(
+            query=query,
+            capability_ids=ids,
+            inspected=inspected,
+            notes=notes,
+        )
 
     def inspect(self, capability_ids: list[str] | tuple[str, ...]) -> CapabilityShortlist:
         inspected: dict[str, dict[str, Any]] = {}
