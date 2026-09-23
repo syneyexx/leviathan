@@ -61,6 +61,7 @@ export function jobTypeLabel(jobType: string): string {
   if (t === "tokenize_stats") return "Tokenize Stats";
   if (t === "export") return "Export";
   if (t === "index") return "Index";
+  if (t === "duplicate") return "Duplicate";
   if (t === "shard_ingest") return "Shard Ingest";
   if (t === "contamination_scan") return "Contamination Scan";
   if (t.includes("offline") && t.includes("index")) return "Offline Brain Index";

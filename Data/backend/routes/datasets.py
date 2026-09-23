@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from Data.modules.datasets import DatasetError, DatasetService
@@ -96,6 +97,12 @@ class IndexBody(BaseModel):
     maxRecords: int | None = None
     offlineOnly: bool = False
     sourceFingerprint: str | None = None
+    rebuild: bool = False
+
+
+class DuplicateBody(BaseModel):
+    versionId: str | None = None
+    name: str | None = None
 
 
 class OfflineBrainIndexBody(BaseModel):
@@ -477,6 +484,20 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         ok = service.store.delete_dataset(dataset_id)
         return {"deleted": ok, "datasetId": dataset_id}
 
+    @router.post("/api/datasets/{dataset_id}/duplicate")
+    def duplicate_dataset(dataset_id: str, body: DuplicateBody | None = None) -> dict:
+        body = body or DuplicateBody()
+        try:
+            job = service.enqueue_duplicate(
+                dataset_id,
+                version_id=body.versionId,
+                name=body.name,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
     @router.get("/api/datasets/{dataset_id}/versions")
     def list_versions(dataset_id: str) -> dict:
         try:
@@ -557,6 +578,21 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             raise
         return {"job": service.public_job(job)}
 
+    @router.get("/api/datasets/{dataset_id}/versions/{version_id}/download")
+    def download_export_version(dataset_id: str, version_id: str) -> FileResponse:
+        """Download a completed export artifact (EXPORT versions only)."""
+        try:
+            path = service.resolve_export_download(dataset_id, version_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return FileResponse(
+            path,
+            media_type="application/x-ndjson",
+            filename=path.name,
+            content_disposition_type="attachment",
+        )
+
     @router.post("/api/datasets/{dataset_id}/versions/{version_id}/index")
     def index_version(dataset_id: str, version_id: str, body: IndexBody | None = None) -> dict:
         body = body or IndexBody()
@@ -568,6 +604,7 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
                 max_records=body.maxRecords,
                 offline_only=body.offlineOnly,
                 source_fingerprint=body.sourceFingerprint,
+                rebuild=body.rebuild,
             )
         except DatasetError as exc:
             _raise(exc)

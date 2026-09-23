@@ -14,13 +14,9 @@ import {
   type DhStatus,
 } from "../mocks/datasets-dashboard";
 import { useAppToast } from "../state/useAppToast";
-import type { DatasetActivityEntry, DatasetJob, DatasetRecord } from "../types/api";
+import type { DatasetJob, DatasetRecord } from "../types/api";
 import { DatasetActivityConsole } from "./datasets/DatasetActivityConsole";
-import {
-  isActiveJob,
-  mergeActivityEntries,
-  pollingIntervalMs,
-} from "./datasets/datasetActivity";
+import { useDatasetActivity } from "./datasets/useDatasetActivity";
 
 type ViewMode = "list" | "grid";
 type ModalKind = "create" | "import" | "hf" | null;
@@ -353,16 +349,22 @@ export function DatasetsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
-  const [jobs, setJobs] = useState<DatasetJob[]>([]);
-  const [jobsError, setJobsError] = useState<string | null>(null);
-  const [activityEntries, setActivityEntries] = useState<DatasetActivityEntry[]>([]);
-  const [preferredJobId, setPreferredJobId] = useState<string | null>(null);
-  const prevJobsRef = useRef<Map<string, DatasetJob>>(new Map());
-  const activityEntriesRef = useRef<DatasetActivityEntry[]>([]);
-  const clearedEntryIdsRef = useRef<Set<string>>(new Set());
-  const jobsFailRef = useRef(0);
-  const pollTimerRef = useRef<number | null>(null);
   const loadDatasetsRef = useRef<(opts?: { quiet?: boolean }) => Promise<void>>(async () => undefined);
+
+  const {
+    jobs,
+    jobsError,
+    activityEntries,
+    preferredJobId,
+    setPreferredJobId,
+    loadJobs,
+    clearActivityView,
+    live,
+  } = useDatasetActivity({
+    onLifecycleChange: () => {
+      void loadDatasetsRef.current({ quiet: true });
+    },
+  });
 
   const [filter, setFilter] = useState<DhFilterId>("all");
   const [view, setView] = useState<ViewMode>("list");
@@ -584,76 +586,10 @@ export function DatasetsPage() {
   }, [activeId]);
 
   loadDatasetsRef.current = loadDatasets;
-  activityEntriesRef.current = activityEntries;
-
-  const loadJobs = useCallback(async () => {
-    try {
-      const res = await api.listDatasetJobs(undefined, 50);
-      const next = res.jobs;
-      setJobsError(null);
-      jobsFailRef.current = 0;
-      setJobs((prev) => {
-        const prevById = new Map(prev.map((j) => [j.jobId, j]));
-        const merged = mergeActivityEntries(
-          activityEntriesRef.current,
-          next,
-          prevJobsRef.current,
-        );
-        const filtered = merged.filter((e) => !clearedEntryIdsRef.current.has(e.id));
-        activityEntriesRef.current = filtered;
-        setActivityEntries(filtered);
-        prevJobsRef.current = new Map(next.map((j) => [j.jobId, j]));
-
-        const lifecycleHit = next.some((j) => {
-          const old = prevById.get(j.jobId);
-          if (!old) return true;
-          return old.status !== j.status;
-        });
-        if (lifecycleHit) {
-          void loadDatasetsRef.current({ quiet: true });
-        }
-        return next;
-      });
-      return next;
-    } catch (err) {
-      jobsFailRef.current += 1;
-      setJobsError(errMsg(err, "Failed to load dataset jobs"));
-      return [] as DatasetJob[];
-    }
-  }, []);
 
   useEffect(() => {
     void loadDatasets();
-    void loadJobs();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- initial load
-
-  // Adaptive job polling for the Dataset Activity console.
-  useEffect(() => {
-    let cancelled = false;
-
-    const schedule = () => {
-      if (cancelled) return;
-      if (pollTimerRef.current != null) window.clearTimeout(pollTimerRef.current);
-      const hasActive = jobs.some(isActiveJob);
-      const delay = pollingIntervalMs({
-        hasActive,
-        hasJobs: jobs.length > 0,
-        consecutiveFailures: jobsFailRef.current,
-      });
-      pollTimerRef.current = window.setTimeout(() => {
-        void (async () => {
-          await loadJobs();
-          if (!cancelled) schedule();
-        })();
-      }, delay);
-    };
-
-    schedule();
-    return () => {
-      cancelled = true;
-      if (pollTimerRef.current != null) window.clearTimeout(pollTimerRef.current);
-    };
-  }, [jobs, loadJobs]);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -1268,16 +1204,10 @@ export function DatasetsPage() {
           preferredJobId={preferredJobId}
           onPreferredJobIdChange={setPreferredJobId}
           apiError={jobsError}
-          live={jobs.some(isActiveJob) && !jobsError}
+          live={live}
           busy={busy}
           onCancelJob={onCancelDatasetJob}
-          onClearView={() => {
-            for (const e of activityEntriesRef.current) {
-              clearedEntryIdsRef.current.add(e.id);
-            }
-            setActivityEntries([]);
-            activityEntriesRef.current = [];
-          }}
+          onClearView={clearActivityView}
         />
       </main>
 

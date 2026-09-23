@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 from Data.modules.common.atomic import ensure_dir
 from Data.modules.common.corpus import CorpusLayout, build_corpus_layout
 from Data.modules.common.hashing import sha256_file
-from Data.modules.common.paths import PathEscapeError, safe_join
+from Data.modules.common.paths import PathEscapeError, safe_join, safe_relpath
 from Data.modules.common.secrets import redact_secrets
 from Data.modules.knowledge import KnowledgeStore
 
@@ -123,6 +124,7 @@ class DatasetService:
             DatasetJobType.TOKENIZE_STATS.value: self._handle_tokenize_stats,
             DatasetJobType.EXPORT.value: self._handle_export,
             DatasetJobType.INDEX.value: self._handle_index,
+            DatasetJobType.DUPLICATE.value: self._handle_duplicate,
             DatasetJobType.SHARD_INGEST.value: self._handle_shard_ingest,
             DatasetJobType.CONTAMINATION_SCAN.value: self._handle_contamination_scan,
         }
@@ -375,6 +377,7 @@ class DatasetService:
         max_records: int | None = None,
         offline_only: bool = False,
         source_fingerprint: str | None = None,
+        rebuild: bool = False,
     ) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
@@ -387,6 +390,7 @@ class DatasetService:
                 "maxRecords": max_records,
                 "offlineOnly": offline_only,
                 "sourceFingerprint": source_fingerprint,
+                "rebuild": rebuild,
             },
         )
 
@@ -467,6 +471,128 @@ class DatasetService:
             offline_only=True,
             source_fingerprint=source_fingerprint,
         )
+
+    def _unique_dataset_name(self, base: str) -> str:
+        """Return a collision-safe dataset name starting from ``base``."""
+        name = (base or "untitled").strip() or "untitled"
+        existing = {ds.name for ds in self.store.list_datasets(limit=500)}
+        if name not in existing:
+            return name
+        for i in range(2, 10_000):
+            candidate = f"{name} ({i})"
+            if candidate not in existing:
+                return candidate
+        raise DatasetError("Unable to allocate unique dataset name", code="name_collision", http_status=409)
+
+    def pick_usable_version(
+        self,
+        dataset_id: str,
+        *,
+        version_id: str | None = None,
+    ) -> DatasetVersion | None:
+        """Prefer an explicit version, else ready materialized, else any ready version."""
+        self.get_dataset(dataset_id)
+        if version_id:
+            ver = self.get_version(version_id)
+            if ver.dataset_id != dataset_id:
+                raise DatasetError(
+                    "Version does not belong to dataset",
+                    code="version_mismatch",
+                    http_status=400,
+                )
+            return ver
+        versions = self.list_versions(dataset_id)
+        ready = [v for v in versions if v.status == VersionStatus.READY]
+        for kind in (VersionKind.MATERIALIZED, VersionKind.TRANSFORMED, VersionKind.SPLIT, VersionKind.RAW):
+            for ver in ready:
+                if ver.kind == kind and ver.storage_path:
+                    return ver
+        for ver in ready:
+            if ver.storage_path:
+                return ver
+        return versions[0] if versions else None
+
+    def enqueue_duplicate(
+        self,
+        dataset_id: str,
+        *,
+        version_id: str | None = None,
+        name: str | None = None,
+    ) -> DatasetJob:
+        """Enqueue durable duplication of a dataset into independent storage."""
+        source = self.get_dataset(dataset_id)
+        source_version = self.pick_usable_version(dataset_id, version_id=version_id)
+        if version_id and source_version is None:
+            raise DatasetError("Version not found", code="not_found", http_status=404)
+
+        base_name = (name or f"{source.name} copy").strip() or f"{source.name} copy"
+        unique_name = self._unique_dataset_name(base_name)
+        empty = source_version is None or not source_version.storage_path
+        target = self.store.create_dataset(
+            name=unique_name,
+            source_type=SourceType.DERIVED,
+            description=source.description,
+            license=source.license,
+            metadata=dict(source.metadata or {}),
+            provenance={
+                "duplicatedFromDatasetId": source.dataset_id,
+                "duplicatedFromVersionId": source_version.version_id if source_version else None,
+                "sourceContentHash": source.content_hash,
+                "sourceName": source.name,
+            },
+            status=DatasetStatus.CREATED if empty else DatasetStatus.IMPORTING,
+            original_filename=source.original_filename,
+            original_uri=source.original_uri,
+        )
+        if source.detected_format is not None or source.format_confidence is not None:
+            self.store.update_dataset(
+                target.dataset_id,
+                detected_format=source.detected_format,
+                format_confidence=source.format_confidence,
+            )
+        return self.store.create_job(
+            job_type=DatasetJobType.DUPLICATE,
+            dataset_id=target.dataset_id,
+            version_id=None,
+            config={
+                "sourceDatasetId": source.dataset_id,
+                "sourceVersionId": source_version.version_id if source_version else None,
+                "targetDatasetId": target.dataset_id,
+                "empty": empty,
+            },
+        )
+
+    def resolve_export_download(self, dataset_id: str, version_id: str) -> Path:
+        """Resolve a downloadable export artifact path under canonical exports storage."""
+        self.get_dataset(dataset_id)
+        ver = self.get_version(version_id)
+        if ver.dataset_id != dataset_id:
+            raise DatasetError(
+                "Version does not belong to dataset",
+                code="version_mismatch",
+                http_status=400,
+            )
+        if ver.kind != VersionKind.EXPORT:
+            raise DatasetError(
+                "Version is not an export artifact",
+                code="not_export",
+                http_status=400,
+            )
+        if not ver.storage_path:
+            raise DatasetError("Export artifact path missing", code="no_storage", http_status=404)
+        path = Path(ver.storage_path).resolve()
+        root = (self.corpus.datasets_exports / dataset_id).resolve()
+        try:
+            safe_relpath(root, path)
+        except PathEscapeError as exc:
+            raise DatasetError(
+                "Export path escapes canonical exports storage",
+                code="path_traversal",
+                http_status=400,
+            ) from exc
+        if not path.is_file():
+            raise DatasetError("Export artifact not found", code="not_found", http_status=404)
+        return path
 
     def cancel_job(self, job_id: str) -> DatasetJob:
         self.get_job(job_id)
@@ -1165,6 +1291,199 @@ class DatasetService:
         result["versionId"] = export_version.version_id
         return result
 
+    def _cleanup_duplicate_target(self, target_dataset_id: str) -> None:
+        """Remove a partially created duplicate (DB + corpus dirs). Never touches the source."""
+        try:
+            self.store.delete_dataset(target_dataset_id)
+        except Exception:  # noqa: BLE001 — best-effort rollback
+            pass
+        for key in ("raw", "materialized", "processed", "exports", "manifests"):
+            root = getattr(self.corpus, f"datasets_{key}", None)
+            if root is None:
+                continue
+            target_dir = Path(root) / target_dataset_id
+            if target_dir.exists():
+                shutil.rmtree(target_dir, ignore_errors=True)
+
+    def _atomic_copy_file(self, source: Path, dest: Path) -> tuple[str, int]:
+        """Copy ``source`` to ``dest`` via temp file, verify hash, return (hash, size)."""
+        if not source.is_file():
+            raise DatasetError(f"Source storage missing: {source}", code="source_missing", http_status=404)
+        ensure_dir(dest.parent)
+        digest = sha256_file(source)
+        tmp = dest.parent / f".{dest.name}.dup.tmp"
+        try:
+            shutil.copy2(source, tmp)
+            copied = sha256_file(tmp)
+            if copied != digest:
+                raise DatasetError(
+                    "Duplicate copy hash mismatch",
+                    code="hash_mismatch",
+                    http_status=500,
+                )
+            tmp.replace(dest)
+        finally:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+        return digest, dest.stat().st_size
+
+    def _handle_duplicate(self, job: DatasetJob) -> dict[str, Any]:
+        target_id = str(job.config.get("targetDatasetId") or job.dataset_id or "")
+        source_id = str(job.config.get("sourceDatasetId") or "")
+        source_version_id = job.config.get("sourceVersionId")
+        empty = bool(job.config.get("empty"))
+        if not target_id or not source_id:
+            raise DatasetError("Duplicate job missing source/target", code="invalid_config", http_status=400)
+
+        source = self.get_dataset(source_id)
+        target = self.get_dataset(target_id)
+        try:
+            self.store.update_job(job.job_id, phase="copying", progress=0.05)
+            if empty or not source_version_id:
+                self.store.update_dataset(
+                    target_id,
+                    status=DatasetStatus.CREATED,
+                    provenance={
+                        **dict(target.provenance or {}),
+                        "duplicatedFromDatasetId": source.dataset_id,
+                        "emptyShell": True,
+                    },
+                )
+                self.store.update_job(job.job_id, phase="done", progress=1.0)
+                return {
+                    "datasetId": target_id,
+                    "empty": True,
+                    "name": target.name,
+                    "sourceDatasetId": source_id,
+                }
+
+            source_ver = self.get_version(str(source_version_id))
+            if not source_ver.storage_path:
+                raise DatasetError("Source version has no storage", code="no_storage", http_status=400)
+            source_path = Path(source_ver.storage_path)
+            dirs = self._dataset_dirs(target_id)
+
+            # Prefer content-addressed raw copy when source is a plain file under corpus.
+            self.store.update_job(job.job_id, phase="copying_storage", progress=0.2)
+            if source_ver.kind == VersionKind.RAW or source_path.parent == (self.corpus.datasets_raw / source_id):
+                dest, digest, size = copy_immutable_raw(source_path, dirs["raw"])
+            elif source_ver.kind in {
+                VersionKind.MATERIALIZED,
+                VersionKind.TRANSFORMED,
+                VersionKind.SPLIT,
+            }:
+                dest = dirs["materialized"] / "canonical.jsonl"
+                digest, size = self._atomic_copy_file(source_path, dest)
+            else:
+                dest = dirs["processed"] / source_path.name
+                digest, size = self._atomic_copy_file(source_path, dest)
+
+            if self.runner.is_cancel_requested(job.job_id):
+                raise DatasetError("cancelled", code="cancelled", http_status=409)
+
+            self.store.update_job(job.job_id, phase="registering", progress=0.7)
+            self.store.add_file(
+                dataset_id=target_id,
+                role="duplicate",
+                path=str(dest),
+                content_hash=digest,
+                byte_size=size,
+                metadata={
+                    "duplicatedFromDatasetId": source_id,
+                    "duplicatedFromVersionId": source_ver.version_id,
+                },
+            )
+            new_ver = self.store.create_version(
+                dataset_id=target_id,
+                version_label=f"dup-{source_ver.version_label}",
+                kind=source_ver.kind,
+                status=VersionStatus.READY,
+                storage_path=str(dest),
+                schema=dict(source_ver.schema or {}),
+                metadata={
+                    **dict(source_ver.metadata or {}),
+                    "duplicatedFromVersionId": source_ver.version_id,
+                },
+                transform_lineage=list(source_ver.transform_lineage or [])
+                + [
+                    {
+                        "name": "duplicate",
+                        "params": {
+                            "sourceDatasetId": source_id,
+                            "sourceVersionId": source_ver.version_id,
+                        },
+                        "appliedAt": utc_now(),
+                    }
+                ],
+            )
+            self.store.update_version(
+                new_ver.version_id,
+                content_hash=digest,
+                byte_size=size,
+                row_count=source_ver.row_count,
+                split=dict(source_ver.split or {}),
+                token_stats=dict(source_ver.token_stats or {}),
+                validation=dict(source_ver.validation or {}),
+            )
+            self.store.update_dataset(
+                target_id,
+                status=DatasetStatus.READY if source_ver.kind != VersionKind.RAW else DatasetStatus.RAW,
+                content_hash=digest,
+                byte_size=size,
+                row_count=source_ver.row_count,
+                raw_path=str(dest) if source_ver.kind == VersionKind.RAW else None,
+                detected_format=source.detected_format,
+                format_confidence=source.format_confidence,
+                provenance={
+                    **dict(target.provenance or {}),
+                    "duplicatedFromDatasetId": source_id,
+                    "duplicatedFromVersionId": source_ver.version_id,
+                    "contentHash": digest,
+                },
+            )
+            # Also copy original raw file into independent storage when available and distinct.
+            if (
+                source.raw_path
+                and Path(source.raw_path).is_file()
+                and Path(source.raw_path).resolve() != source_path.resolve()
+            ):
+                try:
+                    raw_dest, raw_digest, raw_size = copy_immutable_raw(Path(source.raw_path), dirs["raw"])
+                    self.store.add_file(
+                        dataset_id=target_id,
+                        role="raw",
+                        path=str(raw_dest),
+                        content_hash=raw_digest,
+                        byte_size=raw_size,
+                        metadata={"duplicatedFromRaw": source.raw_path},
+                    )
+                    self.store.update_dataset(target_id, raw_path=str(raw_dest))
+                except DatasetError:
+                    pass
+
+            if self.runner.is_cancel_requested(job.job_id):
+                raise DatasetError("cancelled", code="cancelled", http_status=409)
+
+            self.store.update_job(job.job_id, phase="done", progress=1.0, version_id=new_ver.version_id)
+            return {
+                "datasetId": target_id,
+                "versionId": new_ver.version_id,
+                "contentHash": digest,
+                "byteSize": size,
+                "rowCount": source_ver.row_count,
+                "name": target.name,
+                "sourceDatasetId": source_id,
+                "sourceVersionId": source_ver.version_id,
+                "storagePath": str(dest),
+            }
+        except Exception:
+            try:
+                self.store.update_dataset(target_id, status=DatasetStatus.FAILED)
+            except Exception:  # noqa: BLE001 — target may already be gone
+                pass
+            self._cleanup_duplicate_target(target_id)
+            raise
+
     def _handle_index(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
         if self.knowledge is None:
@@ -1237,7 +1556,31 @@ class DatasetService:
                 chunk_count=outcome["chunkCount"],
                 provenance=provenance,
             )
-            return {"indexId": index.index_id, **outcome, "manifest": manifest}
+            superseded: list[str] = []
+            if bool(job.config.get("rebuild")):
+                for old in self.store.list_indexes(job.dataset_id):
+                    if (
+                        old.index_id != index.index_id
+                        and old.version_id == job.version_id
+                        and old.status == IndexStatus.READY
+                    ):
+                        self.store.update_index(
+                            old.index_id,
+                            status=IndexStatus.FAILED,
+                            provenance={
+                                **dict(old.provenance or {}),
+                                "supersededBy": index.index_id,
+                                "reason": "rebuild",
+                            },
+                        )
+                        superseded.append(old.index_id)
+            return {
+                "indexId": index.index_id,
+                **outcome,
+                "manifest": manifest,
+                "supersededIndexIds": superseded,
+                "rebuild": bool(job.config.get("rebuild")),
+            }
         except Exception as exc:
             self.store.update_index(
                 index.index_id,
