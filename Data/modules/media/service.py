@@ -416,7 +416,9 @@ class MediaService:
         if not path:
             raise ValueError("VIDEO_INGEST requires path")
         # Fixture: synthesize time-aligned frames/shots/transcript without decoding.
+        # duration_ms from args is caller-supplied / synthetic — not measured decode.
         duration_ms = float(args.get("duration_ms") or 3000)
+        duration_is_synthetic = True  # fixture never measures real decode duration
         video_id = f"vid_{uuid.uuid4().hex[:10]}"
         frames = []
         shots = []
@@ -470,6 +472,13 @@ class MediaService:
         out["status"] = MediaJobStatus.COMPLETED.value
         out["detail"] = "Fixture video ingest with timestamp citations"
         out["request_id"] = request_id
+        out["duration_is_synthetic"] = duration_is_synthetic
+        out["truth"] = {
+            **(out.get("truth") or {}),
+            "fixture_is_not_production": True,
+            "production_capable": False,
+            "synthetic_latency_not_production_metric": True,
+        }
         return out
 
     def _vision_inspect(self, args: dict[str, Any]) -> dict[str, Any]:

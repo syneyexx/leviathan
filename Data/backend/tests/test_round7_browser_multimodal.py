@@ -283,6 +283,27 @@ class VoiceMediaHonestyTests(unittest.TestCase):
         self.assertFalse(job.public_dict()["truth"]["production_capable"])
         self.assertTrue(job.public_dict()["truth"]["fixture_is_not_production"])
 
+        voice = RealtimeVoiceService()
+        started = voice.execute(action=VoiceAction.START_SESSION, arguments={})
+        session_id = started["session"]["session_id"]
+        tts = voice.execute(
+            action=VoiceAction.STREAM_TTS,
+            arguments={"session_id": session_id, "text": "hello there"},
+        )
+        self.assertIsNone(tts.get("end_of_speech_to_first_audio_ms"))
+        self.assertNotEqual(tts.get("end_of_speech_to_first_audio_ms"), 12.0)
+        self.assertTrue(tts["truth"]["synthetic_latency_not_production_metric"])
+
+    def test_browser_session_honest_about_in_memory(self) -> None:
+        worker = BrowserWorker(backend_kind="local_dom")
+        with tempfile.TemporaryDirectory() as tmp:
+            page = Path(tmp) / "p.html"
+            page.write_text("<html><body><p>hi</p></body></html>", encoding="utf-8")
+            nav = worker.execute(action="NAVIGATE", arguments={"url": str(page)})
+            session = worker.get_session(nav["session_id"])
+            assert session is not None
+            self.assertTrue(session.public_dict()["truth"]["in_memory_only"])
+
 
 if __name__ == "__main__":
     unittest.main()

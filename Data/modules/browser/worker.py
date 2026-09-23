@@ -79,6 +79,8 @@ class BrowserSession:
             "truth": {
                 "page_text_is_untrusted_context": True,
                 "session_isolated_per_run": True,
+                "in_memory_only": True,
+                "browser_sessions_table_not_authoritative": True,
             },
         }
 

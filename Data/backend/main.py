@@ -4136,6 +4136,9 @@ _BROWSER_ACTION_TO_CAPABILITY = {
     "DOWNLOAD": "browser.download",
     "UPLOAD": "browser.upload",
     "VERIFY_STATE": "browser.verify_state",
+    "SCROLL": "browser.scroll",
+    "WAIT": "browser.wait",
+    "KEYPRESS": "browser.keypress",
 }
 
 

@@ -301,7 +301,7 @@ def build_default_catalog() -> CapabilityCatalog:
         CapabilityDefinition(
             id="browser.navigate",
             name="Browser Navigate",
-            description="Navigate a supervised browser session to a URL (fixture or real backend).",
+            description="Navigate a supervised browser session to a URL (local_dom real HTML; fixture test-only).",
             side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE),
             provider_kind=CapabilityProviderKind.BROWSER,
             provider_ref="navigate",
@@ -528,12 +528,66 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.scroll",
+            name="Browser Scroll",
+            description="Scroll the current browser session viewport.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="scroll",
+            input_schema={
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.interact",),
+            metadata={"tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.wait",
+            name="Browser Wait",
+            description="Wait in the current browser session.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="wait",
+            input_schema={
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.read",),
+            metadata={"tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.keypress",
+            name="Browser Keypress",
+            description="Send a keypress to the current browser session.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="keypress",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "key": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.interact",),
+            metadata={"tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
+        )
+    )
     # Wave 7 — media capabilities (fixture MediaService via ExecutionGateway).
     catalog.register(
         CapabilityDefinition(
             id="media.probe",
             name="Media Probe",
-            description="Probe a media file path for kind/size without decoding (fixture).",
+            description="Probe a media file path for kind/size without decoding (fixture — not production).",
             side_effects=(SideEffect.READ,),
             provider_kind=CapabilityProviderKind.MEDIA,
             provider_ref="PROBE",

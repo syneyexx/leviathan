@@ -268,6 +268,7 @@ class RealtimeVoiceService:
                 "text": piece,
                 "is_final": i == len(words) - 1,
                 "t_ms": i * 120,
+                "t_ms_is_synthetic": True,
                 "vad": "speech" if i < len(words) - 1 else "end_of_speech",
             }
             partials.append(item)
@@ -279,11 +280,23 @@ class RealtimeVoiceService:
             "session_id": session.session_id,
             "partials": partials,
             "transcript": base,
-            "diarization": [{"speaker": "spk0", "start_ms": 0, "end_ms": max(120, len(words) * 120)}],
+            "diarization": [
+                {
+                    "speaker": "spk0",
+                    "start_ms": 0,
+                    "end_ms": max(120, len(words) * 120),
+                    "timestamps_are_synthetic": True,
+                }
+            ],
             "backend": "fixture",
             "detail": "Fixture streaming ASR partials + VAD",
             "metrics": session.metrics.public_dict(),
-            "truth": {"diarization_only_when_provider_supports": True},
+            "truth": {
+                "diarization_only_when_provider_supports": True,
+                "fixture_is_not_production": True,
+                "production_capable": False,
+                "synthetic_latency_not_production_metric": True,
+            },
         }
 
     def stream_tts(
@@ -305,8 +318,9 @@ class RealtimeVoiceService:
                 "detail": "TTS cancelled by barge-in before start",
                 "session_id": session.session_id,
             }
-        eos_to_first = 12.0  # fixture measured latency
-        session.metrics.end_of_speech_to_first_audio_ms = eos_to_first
+        # Fixture path: do NOT invent a constant production-looking latency.
+        # Real backends must measure with perf_counter; here latency stays None/synthetic.
+        started = time.perf_counter()
         chunks: list[dict[str, Any]] = []
         words = text.strip().split()
         for i, word in enumerate(words):
@@ -325,18 +339,28 @@ class RealtimeVoiceService:
                     "text": word,
                     "audio_ref": f"fixture://tts/{session.session_id}/{i}",
                     "persona": dict(session.persona),
+                    "t_ms_synthetic": i * 120,
                 }
             )
             session.metrics.tts_chunks += 1
+        # Record wall time of the fixture loop only — labeled synthetic, not production TTS latency.
+        synthetic_ms = (time.perf_counter() - started) * 1000.0
+        session.metrics.end_of_speech_to_first_audio_ms = None
         return {
             "status": VoiceJobStatus.COMPLETED.value,
             "session_id": session.session_id,
             "chunks": chunks,
-            "end_of_speech_to_first_audio_ms": eos_to_first,
+            "end_of_speech_to_first_audio_ms": None,
+            "fixture_loop_ms": synthetic_ms,
             "persona": dict(session.persona),
             "backend": "fixture",
             "detail": "Fixture streaming TTS",
             "metrics": session.metrics.public_dict(),
+            "truth": {
+                "fixture_is_not_production": True,
+                "production_capable": False,
+                "synthetic_latency_not_production_metric": True,
+            },
         }
 
     def iter_tts_chunks(
