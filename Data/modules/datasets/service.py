@@ -590,28 +590,21 @@ class DatasetService:
 
         # RAW, directory-backed, missing/non-file storage, or unsuitable kind:
         # attempt sibling resolution before failing.
-        needs_resolution = (
-            ver.kind == VersionKind.RAW
-            or not ver.storage_path
-            or Path(ver.storage_path).is_dir()
-            or not self._is_directly_indexable(ver)
+        sibling = self._pick_indexable_sibling(
+            dataset_id,
+            exclude_version_id=ver.version_id if ver.kind == VersionKind.RAW else None,
         )
-        if needs_resolution:
-            sibling = self._pick_indexable_sibling(
-                dataset_id,
-                exclude_version_id=ver.version_id if ver.kind == VersionKind.RAW else None,
+        # When a supposedly canonical version points at a directory, prefer another
+        # valid sibling of the same dataset; do not treat the directory as JSONL.
+        if sibling is not None:
+            return sibling
+        if ver.kind == VersionKind.RAW or (ver.storage_path and Path(ver.storage_path).is_dir()):
+            raise DatasetError(
+                "Dataset has no indexable materialized version. "
+                "Materialize the dataset before indexing.",
+                code="no_indexable_version",
+                http_status=409,
             )
-            # When a supposedly canonical version points at a directory, prefer another
-            # valid sibling of the same dataset; do not treat the directory as JSONL.
-            if sibling is not None:
-                return sibling
-            if ver.kind == VersionKind.RAW or (ver.storage_path and Path(ver.storage_path).is_dir()):
-                raise DatasetError(
-                    "Dataset has no indexable materialized version. "
-                    "Materialize the dataset before indexing.",
-                    code="no_indexable_version",
-                    http_status=409,
-                )
 
         if not ver.storage_path:
             raise DatasetError(
