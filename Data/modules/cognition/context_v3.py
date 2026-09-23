@@ -49,13 +49,48 @@ class ContextBuilderV3:
         *,
         token_budget: int = 6000,
         reserve_response_tokens: int = 512,
+        auto_budget: bool = True,
+        max_context_fraction: float = 0.72,
+        reserve_response_fraction: float = 0.18,
+        minimum_response_tokens: int = 256,
+        model_context_window: int | None = None,
     ) -> None:
         self.token_budget = token_budget
         self.reserve_response_tokens = reserve_response_tokens
+        self.auto_budget = bool(auto_budget)
+        self.max_context_fraction = float(max_context_fraction)
+        self.reserve_response_fraction = float(reserve_response_fraction)
+        self.minimum_response_tokens = max(0, int(minimum_response_tokens))
+        self.model_context_window = (
+            int(model_context_window) if model_context_window is not None else None
+        )
+
+    def resolve_budgets(
+        self,
+        *,
+        model_context_window: int | None = None,
+        token_budget: int | None = None,
+    ) -> dict[str, Any]:
+        """Delegate to the canonical ContextBuilder budget resolver for parity."""
+        from Data.modules.context.builder import ContextBuilder
+
+        proxy = ContextBuilder(
+            token_budget=self.token_budget,
+            reserve_response_tokens=self.reserve_response_tokens,
+            auto_budget=self.auto_budget,
+            max_context_fraction=self.max_context_fraction,
+            reserve_response_fraction=self.reserve_response_fraction,
+            minimum_response_tokens=self.minimum_response_tokens,
+            model_context_window=self.model_context_window,
+        )
+        return proxy.resolve_budgets(
+            model_context_window=model_context_window,
+            token_budget=token_budget,
+        )
 
     @property
     def usable_budget(self) -> int:
-        return max(256, self.token_budget - self.reserve_response_tokens)
+        return int(self.resolve_budgets()["usable_budget"])
 
     def build(
         self,
@@ -68,8 +103,13 @@ class ContextBuilderV3:
         capability_shortlist: list[str] | None = None,
         history: list[dict[str, str]] | None = None,
         token_budget: int | None = None,
+        model_context_window: int | None = None,
     ) -> ContextV3Result:
-        budget = token_budget if token_budget is not None else self.usable_budget
+        resolved = self.resolve_budgets(
+            model_context_window=model_context_window,
+            token_budget=token_budget,
+        )
+        budget = int(resolved["usable_budget"])
         allocation = self._allocate(budget, task)
         sections: list[ContextSection] = []
         dropped: list[str] = []
@@ -233,6 +273,12 @@ class ContextBuilderV3:
                 "builder": "context_v3",
                 "task_id": task.task_id,
                 "trust_labels": True,
+                "budget_resolution": {
+                    "source": resolved["source"],
+                    "auto_budget_applied": resolved["auto_budget_applied"],
+                    "model_context_window": resolved["model_context_window"],
+                    "reserve_response_tokens": resolved["reserve_response_tokens"],
+                },
             },
         )
         return ContextV3Result(pack=pack, section_kinds=kinds, budget_allocation=allocation)

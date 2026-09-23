@@ -220,6 +220,8 @@ class HybridRetriever:
     Vector path is only used when EmbeddingProvider.available() is true.
     Null/unavailable providers produce lexical-only results — never fabricated vectors.
     Hash embedding providers may participate in dense fusion but are never labeled semantic.
+    Final selection may apply MMR-style diversity when ``diversity_enabled`` is set.
+    Exact / high lexical overlap hits keep preference over pure diversity.
     """
 
     def __init__(
@@ -232,6 +234,9 @@ class HybridRetriever:
         dense_weight: float = 0.45,
         candidate_multiplier: int = 3,
         rrf_k: int = RRF_K,
+        diversity_enabled: bool = False,
+        diversity_strength: float = 0.3,
+        observability_emit: Any | None = None,
     ) -> None:
         self.store = store
         self.embeddings = embeddings or NullEmbeddingProvider()
@@ -240,6 +245,9 @@ class HybridRetriever:
         self.dense_weight = dense_weight
         self.candidate_multiplier = max(1, candidate_multiplier)
         self.rrf_k = max(1, int(rrf_k))
+        self.diversity_enabled = bool(diversity_enabled)
+        self.diversity_strength = float(diversity_strength)
+        self._emit = observability_emit
 
     def search(self, query: RetrievalQuery) -> list[RetrievalHit]:
         mode = query.resolved_mode()
@@ -530,6 +538,19 @@ class HybridRetriever:
             hits = [h for h in hits if h.score >= query.min_score]
             dropped_below = len(before_threshold) - len(hits)
 
+        diversity_applied = False
+        if self.diversity_enabled and hits and query.limit > 1:
+            selected = self._mmr_select(
+                hits,
+                query_text=query.text,
+                limit=query.limit,
+                strength=self.diversity_strength,
+            )
+            if selected:
+                hits = selected
+                diversity_applied = True
+                fusion_used = f"{fusion_used}+mmr" if fusion_used else "mmr"
+
         result = hits[: query.limit]
         for idx, hit in enumerate(result):
             prov = {
@@ -540,6 +561,12 @@ class HybridRetriever:
             }
             if "fusion" not in prov:
                 prov["fusion"] = fusion_used
+            if diversity_applied:
+                prov["diversity"] = {
+                    "enabled": True,
+                    "strength": self.diversity_strength,
+                    "method": "mmr",
+                }
             result[idx] = RetrievalHit(
                 document_id=hit.document_id,
                 chunk_id=hit.chunk_id,
@@ -577,6 +604,24 @@ class HybridRetriever:
                 fusion=fusion_used,
                 embedding_is_semantic=embedding_is_semantic if dense_eligible else None,
             )
+
+        if self._emit is not None:
+            try:
+                self._emit(
+                    "knowledge",
+                    "hybrid_retrieval",
+                    payload={
+                        "query_preview": (query.text or "")[:120],
+                        "mode": mode.value,
+                        "fusion": fusion_used,
+                        "candidate_count": len(before_threshold),
+                        "selected_count": len(result),
+                        "diversity_applied": diversity_applied,
+                        "embedding_is_semantic": embedding_is_semantic if dense_eligible else None,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
         return result
 
     def search_with_trace(
@@ -595,6 +640,100 @@ class HybridRetriever:
                 mode=query.resolved_mode().value,
             )
         return hits, trace
+
+    @staticmethod
+    def _token_set(text: str) -> set[str]:
+        import re
+
+        return {t for t in re.findall(r"[^\W_]{2,}", (text or "").lower(), flags=re.UNICODE)}
+
+    @classmethod
+    def _jaccard(cls, a: set[str], b: set[str]) -> float:
+        if not a or not b:
+            return 0.0
+        inter = len(a & b)
+        union = len(a | b)
+        return inter / union if union else 0.0
+
+    @classmethod
+    def _exact_match_boost(cls, query_text: str, content: str) -> float:
+        """Prefer precision: high query-token coverage in content is exact-ish."""
+        q = cls._token_set(query_text)
+        if not q:
+            return 0.0
+        c = cls._token_set(content)
+        coverage = len(q & c) / len(q)
+        # Phrase containment is a strong exact signal.
+        q_norm = " ".join((query_text or "").lower().split())
+        c_norm = " ".join((content or "").lower().split())
+        if q_norm and q_norm in c_norm:
+            return 1.0
+        return coverage
+
+    def _mmr_select(
+        self,
+        hits: list[RetrievalHit],
+        *,
+        query_text: str,
+        limit: int,
+        strength: float,
+    ) -> list[RetrievalHit]:
+        """Simple MMR-style selection with exact-match preference.
+
+        ``strength`` in [0,1] controls novelty weight (1 = max diversity).
+        Hits with high exact overlap are always preferred early.
+        """
+        if not hits or limit <= 0:
+            return []
+        strength = min(1.0, max(0.0, float(strength)))
+        # lambda_rel: relevance weight; higher strength → lower lambda_rel
+        lambda_rel = 1.0 - strength
+
+        # Pin exact / near-exact matches first (precision preference).
+        scored = []
+        for hit in hits:
+            exact = self._exact_match_boost(query_text, hit.content)
+            scored.append((exact, hit))
+        scored.sort(key=lambda item: (item[0], item[1].score), reverse=True)
+
+        selected: list[RetrievalHit] = []
+        remaining: list[RetrievalHit] = []
+        for exact, hit in scored:
+            if exact >= 0.85 and len(selected) < limit:
+                selected.append(hit)
+            else:
+                remaining.append(hit)
+
+        token_cache: dict[str, set[str]] = {
+            h.chunk_id: self._token_set(h.content) for h in hits
+        }
+        # Normalize relevance scores to [0,1] for MMR mix.
+        max_score = max((h.score for h in hits), default=1.0) or 1.0
+
+        while remaining and len(selected) < limit:
+            best_idx = 0
+            best_val = float("-inf")
+            selected_tokens = [token_cache.get(h.chunk_id, set()) for h in selected]
+            for idx, hit in enumerate(remaining):
+                relevance = float(hit.score) / max_score if max_score else 0.0
+                novelty_pen = 0.0
+                if selected_tokens:
+                    ht = token_cache.get(hit.chunk_id, set())
+                    novelty_pen = max(
+                        (self._jaccard(ht, st) for st in selected_tokens),
+                        default=0.0,
+                    )
+                # Also diversify by document_id when content is near-duplicate.
+                same_doc = any(hit.document_id == s.document_id for s in selected)
+                if same_doc:
+                    novelty_pen = max(novelty_pen, 0.55)
+                mmr = lambda_rel * relevance - (1.0 - lambda_rel) * novelty_pen
+                if mmr > best_val:
+                    best_val = mmr
+                    best_idx = idx
+            selected.append(remaining.pop(best_idx))
+
+        return selected
 
     def _embedding_is_semantic(self) -> bool:
         status = {}

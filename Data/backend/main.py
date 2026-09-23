@@ -192,11 +192,19 @@ knowledge = KnowledgeStore(
     chunk_overlap=settings.knowledge.chunk_overlap,
     embedding_provider=embedding_provider,
 )
-retriever = HybridRetriever(knowledge, embeddings=embedding_provider, reranker=reranker_provider)
+retriever = HybridRetriever(
+    knowledge,
+    embeddings=embedding_provider,
+    reranker=reranker_provider,
+    diversity_enabled=bool(settings.knowledge.diversity_enabled),
+    diversity_strength=float(settings.knowledge.diversity_strength),
+)
 staged_retriever = StagedRetriever(
     retriever,
     deep_recall=None,  # wired after deep_recall_service is constructed
     rerank_policy=settings.knowledge.rerank_policy,
+    query_expansion=bool(settings.knowledge.query_expansion),
+    max_query_expansions=int(settings.knowledge.max_query_expansions),
 )
 atlas_store = AtlasStore(settings.database_path)
 why_library = WhyLibrary(settings.database_path, enabled=settings.features.why_library)
@@ -278,6 +286,9 @@ timeseries = TimeSeriesStore(max_points_per_series=3_600)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001
     "knowledge", name, payload=payload
 )
+retriever._emit = observability.emit  # noqa: SLF001
+staged_retriever._emit = observability.emit  # noqa: SLF001
+assimilation_service._emit = observability.emit  # noqa: SLF001
 neuro_snapshots = NeuroSnapshotStore(settings.database_path)
 residual_receipts = ResidualReceiptStore(settings.database_path)
 residual_runtime = build_residual_runtime(
@@ -1079,6 +1090,7 @@ async def lifespan(_: FastAPI):
         cortex_runtime=cortex_runtime,
         residual_runtime=residual_runtime,
         reasoning_policy_holder=intelligence_health,
+        context_builder=getattr(llm, "context_builder", None),
     )
     settings_plane._run_callbacks_for_all_hot()
     observability.emit(

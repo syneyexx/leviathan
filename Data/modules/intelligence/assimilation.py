@@ -94,10 +94,12 @@ class KnowledgeAssimilationService:
         database_path: Path | str | None = None,
         knowledge_store: Any | None = None,
         atlas_store: Any | None = None,
+        observability_emit: Any | None = None,
     ) -> None:
         self.database_path = Path(database_path) if database_path else None
         self.knowledge_store = knowledge_store
         self.atlas_store = atlas_store
+        self._emit = observability_emit
         self._lock = threading.RLock()
         self._memory_receipts: list[AssimilationReceipt] = []
         if self.database_path is not None:
@@ -138,26 +140,46 @@ class KnowledgeAssimilationService:
         with self._lock:
             if self.database_path is None:
                 self._memory_receipts.append(receipt)
-                return
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO intelligence_assimilation_receipts(
-                        receipt_id, kind, created_at, ok, success_count,
-                        failure_count, skipped_count, payload_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        receipt.receipt_id,
-                        receipt.kind,
-                        receipt.created_at,
-                        1 if receipt.ok else 0,
-                        receipt.success_count,
-                        receipt.failure_count,
-                        receipt.skipped_count,
-                        json.dumps(receipt.public_dict()),
-                    ),
+            else:
+                with self._connect() as conn:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO intelligence_assimilation_receipts(
+                            receipt_id, kind, created_at, ok, success_count,
+                            failure_count, skipped_count, payload_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            receipt.receipt_id,
+                            receipt.kind,
+                            receipt.created_at,
+                            1 if receipt.ok else 0,
+                            receipt.success_count,
+                            receipt.failure_count,
+                            receipt.skipped_count,
+                            json.dumps(receipt.public_dict()),
+                        ),
+                    )
+        if self._emit is not None:
+            try:
+                self._emit(
+                    "intelligence",
+                    "assimilation",
+                    payload={
+                        "receipt_id": receipt.receipt_id,
+                        "kind": receipt.kind,
+                        "ok": receipt.ok,
+                        "success_count": receipt.success_count,
+                        "failure_count": receipt.failure_count,
+                        "skipped_count": receipt.skipped_count,
+                        "research_project_id": (receipt.metadata or {}).get("research_project_id"),
+                        "dataset_id": (receipt.metadata or {}).get("dataset_id"),
+                    },
+                    level="info" if receipt.ok else "warning",
+                    success=receipt.ok,
                 )
+            except Exception:  # noqa: BLE001
+                pass
 
     def list_receipts(self, *, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock:

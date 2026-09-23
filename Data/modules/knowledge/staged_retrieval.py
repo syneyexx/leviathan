@@ -103,11 +103,17 @@ class StagedRetriever:
         deep_recall: Any | None = None,
         rerank_policy: str = "auto",
         early_exit_enabled: bool = True,
+        query_expansion: bool = True,
+        max_query_expansions: int = 4,
+        observability_emit: Any | None = None,
     ) -> None:
         self.retriever = retriever
         self.deep_recall = deep_recall
         self.rerank_policy = rerank_policy
         self.early_exit_enabled = early_exit_enabled
+        self.query_expansion = bool(query_expansion)
+        self.max_query_expansions = max(0, int(max_query_expansions))
+        self._emit = observability_emit
 
     def search(
         self,
@@ -120,8 +126,16 @@ class StagedRetriever:
         required_precision: str = "normal",
         rerank_policy: str | None = None,
         record_trace: bool = True,
+        query_expansion: bool | None = None,
+        max_query_expansions: int | None = None,
     ) -> StagedRetrievalResult:
         policy = rerank_policy if rerank_policy is not None else self.rerank_policy
+        expand_on = self.query_expansion if query_expansion is None else bool(query_expansion)
+        max_expansions = (
+            self.max_query_expansions
+            if max_query_expansions is None
+            else max(0, int(max_query_expansions))
+        )
         embedding_is_semantic = False
         try:
             embedding_is_semantic = bool(self.retriever._embedding_is_semantic())  # noqa: SLF001
@@ -184,6 +198,7 @@ class StagedRetriever:
             result.hits = lexical_probe[:limit]
             result.early_exit = True
             result.coverage = "high"
+            self._emit_result(result)
             return result
 
         # --- Stage B: hybrid retrieval ---
@@ -222,12 +237,17 @@ class StagedRetriever:
         result.coverage = coverage
 
         # --- Stage C: query expansion only if coverage low ---
-        if coverage == "low":
-            expansions = self._simple_expansions(text, conversation_terms=probe_terms)
+        if coverage == "low" and expand_on and max_expansions > 0:
+            expansions = self._simple_expansions(
+                text,
+                conversation_terms=probe_terms,
+                max_expansions=max_expansions,
+            )
             result.expansions = expansions
             expanded_hits: list[RetrievalHit] = list(result.hits)
             seen = {h.chunk_id for h in expanded_hits}
-            for expansion in expansions[1:]:  # skip original (already searched)
+            # Skip original (already searched); run remaining formulations.
+            for expansion in expansions[1:]:
                 more = self.retriever.search(
                     RetrievalQuery(
                         text=expansion,
@@ -252,15 +272,19 @@ class StagedRetriever:
                     "expand",
                     {
                         "expansions": expansions,
+                        "expansion_count": max(0, len(expansions) - 1),
                         "hits_after": len(result.hits),
                         "coverage": result.coverage,
                     },
                 )
             )
         else:
-            result.stages.append(
-                StageTrace("C", "skip", {"reason": f"coverage_{coverage}"})
-            )
+            reason = f"coverage_{coverage}"
+            if coverage == "low" and not expand_on:
+                reason = "query_expansion_disabled"
+            elif coverage == "low" and max_expansions <= 0:
+                reason = "max_query_expansions_zero"
+            result.stages.append(StageTrace("C", "skip", {"reason": reason}))
 
         # --- Stage D: rerank per policy ---
         want_rerank = resolve_use_reranker(
@@ -393,7 +417,30 @@ class StagedRetriever:
         if not result.hits:
             result.negative_reasons.append("no_hits_after_stages")
             result.coverage = "empty"
+        self._emit_result(result)
         return result
+
+    def _emit_result(self, result: StagedRetrievalResult) -> None:
+        if self._emit is None:
+            return
+        try:
+            self._emit(
+                "knowledge",
+                "staged_retrieval",
+                payload={
+                    "query_preview": (result.query or "")[:120],
+                    "hit_count": len(result.hits),
+                    "coverage": result.coverage,
+                    "early_exit": result.early_exit,
+                    "expansions": list(result.expansions)[:8],
+                    "rerank_applied": result.rerank_applied,
+                    "deep_recall_applied": result.deep_recall_applied,
+                    "stages": [s.stage for s in result.stages],
+                    "negative_reasons": list(result.negative_reasons)[:8],
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     @staticmethod
     def _coverage(hits: Sequence[RetrievalHit], *, limit: int) -> str:
@@ -419,30 +466,51 @@ class StagedRetriever:
         text: str,
         *,
         conversation_terms: Sequence[str] | None = None,
+        max_expansions: int = 4,
     ) -> list[str]:
-        """Generate cheap expansions: original, entity-ish tokens, exact phrase."""
+        """Generate cheap expansions: original + multiple reformulations.
+
+        Always returns the original first. Additional formulations include
+        entity-ish tokens, exact phrase, keyword bag, and conversation hybrids.
+        Cap total list length at ``max_expansions + 1`` (original + N variants).
+        """
         original = (text or "").strip()
         toks = _tokens(original)
-        # Entity-ish: longer tokens / capitalized-looking originals preserved via length.
         entity_ish = [t for t in toks if len(t) >= 4][:8]
+        short_keywords = [t for t in toks if len(t) >= 3][:12]
         expansions = [original]
-        if entity_ish:
+        if entity_ish and " ".join(entity_ish).lower() != original.lower():
             expansions.append(" ".join(entity_ish))
+        # Keyword bag without stopword-ish ultra-short tokens (already filtered).
+        if short_keywords and len(short_keywords) >= 2:
+            bag = " ".join(short_keywords)
+            if bag.lower() != original.lower():
+                expansions.append(bag)
         # Exact: quoted form of the original (helps lexical FTS phrase-ish matching).
         if " " in original:
             expansions.append(f'"{original}"')
+        # Leading noun-ish slice: first half of tokens for broad recall.
+        if len(toks) >= 4:
+            half = " ".join(toks[: max(2, len(toks) // 2)])
+            expansions.append(half)
         for term in conversation_terms or []:
             term_s = str(term).strip()
             if term_s and term_s.lower() not in original.lower():
                 expansions.append(f"{original} {term_s}")
+                expansions.append(term_s)
+                if entity_ish:
+                    expansions.append(f"{' '.join(entity_ish[:4])} {term_s}")
                 break
-        # Deduplicate while preserving order.
+        # Deduplicate while preserving order; keep original + up to max_expansions variants.
         seen: set[str] = set()
         out: list[str] = []
+        cap = max(1, int(max_expansions) + 1)
         for item in expansions:
-            key = item.lower()
+            key = item.lower().strip()
             if key in seen or not item.strip():
                 continue
             seen.add(key)
             out.append(item)
+            if len(out) >= cap:
+                break
         return out

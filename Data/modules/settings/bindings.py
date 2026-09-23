@@ -79,6 +79,29 @@ def bind_default_consumers(
                 if perception is not None and hasattr(perception, "rerank_policy"):
                     perception.rerank_policy = str(value)
 
+        if key == "knowledge.query_expansion" and staged_retriever is not None:
+            if hasattr(staged_retriever, "query_expansion"):
+                staged_retriever.query_expansion = bool(value)
+
+        if key == "knowledge.max_query_expansions" and staged_retriever is not None:
+            if hasattr(staged_retriever, "max_query_expansions"):
+                staged_retriever.max_query_expansions = max(0, int(value))
+
+        if key == "knowledge.diversity_enabled" and knowledge is not None:
+            # Prefer live HybridRetriever when passed as staged's authority.
+            target = None
+            if staged_retriever is not None and hasattr(staged_retriever, "retriever"):
+                target = staged_retriever.retriever
+            if target is not None and hasattr(target, "diversity_enabled"):
+                target.diversity_enabled = bool(value)
+
+        if key == "knowledge.diversity_strength":
+            target = None
+            if staged_retriever is not None and hasattr(staged_retriever, "retriever"):
+                target = staged_retriever.retriever
+            if target is not None and hasattr(target, "diversity_strength"):
+                target.diversity_strength = float(value)
+
         if key == "features.deep_recall" and deep_recall is not None and hasattr(deep_recall, "enabled"):
             deep_recall.enabled = bool(value) and bool(effective.features.rag_v3)
 

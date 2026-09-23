@@ -94,6 +94,7 @@ def feature_section_from_report(report: ConsumerTruthReport) -> dict[str, Any]:
     """Flatten a ConsumerTruthReport into a health-payload section dict."""
     payload = report.public_dict()
     return {
+        "feature_key": payload["feature_key"],
         "desired": payload["desired"],
         "effective": payload["effective"],
         "consumer": payload["consumer"],
