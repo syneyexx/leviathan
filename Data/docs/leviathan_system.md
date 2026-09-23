@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of **Wave 1 Cognitive Runtime** (`0.65.0-wave1-cognition`) on Wave 0 Durable Kernel (migration v24) + Cognitive Runtime (v19) + Settings Control Plane (v20) + Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of **Wave 2 Evaluation Platform** (`0.66.0-wave2-evaluation`) on Wave 1 Cognitive Runtime + Wave 0 Durable Kernel (migration v24) + Evaluation Platform (v25) + Cognitive Runtime (v19) + Settings Control Plane (v20) + Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,11 +12,12 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, and **Wave 0 durable kernel guardrails** (canonical Run/Job/Event contracts, ownership conformance, BehaviorProfile vs AuthorityProfile).
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel guardrails** (canonical Run/Job/Event contracts, ownership conformance, BehaviorProfile vs AuthorityProfile), and **Wave 2 evaluation as release authority** (durable reports, scorecards, regression corpus, promotion gates).
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.65.0-wave1-cognition`);
+- FastAPI backend composition root (`0.66.0-wave2-evaluation`);
+- **Wave 2 evaluation platform** — versioned cases, JudgmentKind/MeasurementState, durable reports + regression corpus, system scorecards, release/promotion relevance (UNMEASURED ≠ PASS);
 - **Wave 1 cognition/agents** — full CognitiveRun hydrate/resume, live INVOKE_CAPABILITY via ExecutionGateway, structured agent planner, DAG multi-agent + blackboard;
 - **Wave 0 durable kernel** — `EventEnvelope`, job leases/idempotency/budgets, correlation IDs, Frontier Capability Manifest, architecture ownership API + conformance tests;
 - **Universal MCP Bridge** (`Data/modules/mcp/`) — one bridge, many stdio/HTTP sessions; tools → CapabilityCatalog (`provider_kind=MCP`); invoke only via ExecutionGateway;
@@ -24,7 +25,7 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 - **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v24**;
+- SQLite persistence + migrations through **v25**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
 - React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, **Market Sim** `/trading`, and **MCP** `/mcp` UI;
@@ -80,7 +81,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.65.0-wave1-cognition`).
+FastAPI application (`version=0.66.0-wave2-evaluation`).
 
 Responsibilities:
 
@@ -218,7 +219,7 @@ Owner: `Data/modules/knowledge/`. See also `Data/docs/rag_v3_architecture.md`.
 - frontend dist readiness;
 - LLM availability (honest unavailable state).
 
-## 3.8b Wave 0 durable kernel + Wave 1 cognition
+## 3.8b Wave 0 durable kernel + Wave 1 cognition + Wave 2 evaluation
 
 Canonical owners:
 
@@ -226,6 +227,14 @@ Canonical owners:
 - `Data/modules/jobs/` — schedulable work, leases, idempotency, budgets
 - `Data/modules/execution/` — CapabilityCatalog + ExecutionGateway + FrontierCapabilityManifest
 - `Data/modules/cognition/` — Cognitive Runtime with **hydrate/resume** and live **INVOKE_CAPABILITY** via Gateway
+- `Data/modules/agents/` — StructuredAgentPlanner, DAG MultiAgentCoordinator, AgentBlackboard
+- `Data/modules/evaluation/` — EvaluationHarness + EvaluationPlatform (durable reports, scorecards, regression corpus); UNMEASURED ≠ PASS
+- `Data/modules/release/` — ReleaseGateRunner consumes evaluation relevance for promotion readiness
+- `Data/modules/approvals/` — AuthorityProfile (technical scopes)
+- `Data/modules/settings/` — BehaviorProfile (SYSTEM_PROMPT; not capability grant)
+- `Data/modules/common/` — CorrelationIds + CANONICAL_OWNERSHIP
+
+Wave 2 truth: evaluation is release authority, not theatre. Missing measurement stays UNMEASURED and is never treated as PASS.
 - `Data/modules/agents/` — structured planner + DAG `MultiAgentCoordinator` + `AgentBlackboard`
 - `Data/modules/settings/behavior.py` — BehaviorProfile (SYSTEM_PROMPT)
 - `Data/modules/approvals/authority.py` — AuthorityProfile (technical scopes)

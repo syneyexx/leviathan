@@ -30,13 +30,13 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `module_manager/` | Universal Module Manager — single `ILeviathanModule` loader (+ optional subprocess) |
 | `plugins/` | PluginRegistry (declarative → catalog; not a second loader) |
 | `mcp/` | Universal MCP Bridge (one bridge / many sessions; Tools provider) |
-| `evaluation/` | EvaluationHarness (+ neuro ablations) |
+| `evaluation/` | EvaluationHarness + EvaluationPlatform (+ neuro ablations, scorecards, regression corpus) |
 | `isolation/` | IsolationGuard |
 | `training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `browser/` | BrowserAutomationStub |
 | `media/` | MediaAutomationStub |
 | `voice/` | VoiceRuntimeStub |
-| `release/` | ReleaseGateRunner |
+| `release/` | ReleaseGateRunner + evaluation relevance |
 | `security/` | SecurityAuditor (posture, not pentest) |
 | `native/` | NativeRuntimeStub |
 | `trading/` | TradingStub (real broker refused) |

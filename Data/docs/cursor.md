@@ -110,6 +110,8 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/settings/` | Settings Control Plane + BehaviorProfile |
 | `Data/modules/common/` | CorrelationIds + ownership matrix |
 | `Data/backend/tests/test_architecture_wave0.py` | Wave 0 architecture conformance exit gate |
+| `Data/backend/tests/test_wave1_cognition_agents.py` | Wave 1 cognition hydrate/invoke + DAG agents |
+| `Data/backend/tests/test_wave2_evaluation.py` | Wave 2 evaluation platform / release authority |
 | `Data/modules/artifacts/` | ArtifactStore |
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
 | `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |
@@ -129,13 +131,13 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/mcp/` | **Universal MCP Bridge** — one bridge, many sessions; Tools provider |
 | `Data/backend/routes/mcp.py` | MCP HTTP API (`/api/mcp/*`; call via ExecutionGateway) |
 | `Data/docs/mcp_bridge.md` | MCP architecture reference |
-| `Data/modules/evaluation/` | EvaluationHarness (+ neuro ablation suite) |
+| `Data/modules/evaluation/` | EvaluationHarness + EvaluationPlatform (scorecards, regression corpus) |
 | `Data/modules/isolation/` | IsolationGuard |
 | `Data/modules/training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `Data/modules/browser/` | BrowserAutomationStub |
 | `Data/modules/media/` | MediaAutomationStub |
 | `Data/modules/voice/` | VoiceRuntimeStub |
-| `Data/modules/release/` | ReleaseGateRunner |
+| `Data/modules/release/` | ReleaseGateRunner + evaluation relevance gate |
 | `Data/modules/security/` | SecurityAuditor |
 | `Data/modules/backup/` | BackupService |
 | `Data/modules/metrics/` | MetricsCollector |
@@ -267,7 +269,7 @@ SQLite persistence
 | Isolation | `Data/modules/isolation/` |
 | Training | `Data/modules/training/` (registry stub) |
 | Browser / Media / Voice | stub modules under `Data/modules/{browser,media,voice}/` |
-| Release gates | `Data/modules/release/` |
+| Release gates | `Data/modules/release/` (consumes evaluation relevance) |
 | Security posture | `Data/modules/security/` |
 | Backup / restore | `Data/modules/backup/` |
 | Metrics | `Data/modules/metrics/` |

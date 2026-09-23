@@ -1805,6 +1805,65 @@ def _m24_durable_kernel(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m25_evaluation_platform(conn: sqlite3.Connection) -> None:
+    """Wave 2 evaluation platform: durable reports + regression corpus."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS eval_reports (
+            report_id TEXT PRIMARY KEY,
+            suite_id TEXT NOT NULL,
+            suite_version TEXT NOT NULL DEFAULT '1',
+            name TEXT NOT NULL,
+            system_level INTEGER NOT NULL DEFAULT 0,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            component_scope_json TEXT NOT NULL DEFAULT '[]',
+            artifact_refs_json TEXT NOT NULL DEFAULT '[]',
+            results_json TEXT NOT NULL DEFAULT '[]',
+            recorded_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_eval_reports_suite "
+        "ON eval_reports(suite_id, recorded_at DESC)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS eval_case_results (
+            result_id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL,
+            case_id TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            measurement TEXT NOT NULL,
+            judgment_kind TEXT NOT NULL,
+            detail TEXT,
+            component TEXT,
+            artifact_refs_json TEXT NOT NULL DEFAULT '[]',
+            evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(report_id) REFERENCES eval_reports(report_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_eval_case_results_report "
+        "ON eval_case_results(report_id, case_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS eval_regression_corpus (
+            regression_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            incident_ref TEXT NOT NULL,
+            case_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reproducible INTEGER NOT NULL DEFAULT 1,
+            notes TEXT
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1830,6 +1889,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=22, name="agent_fleet", apply=_m22_agent_fleet),
     Migration(version=23, name="observability_events", apply=_m23_observability_events),
     Migration(version=24, name="durable_kernel", apply=_m24_durable_kernel),
+    Migration(version=25, name="evaluation_platform", apply=_m25_evaluation_platform),
 )
 
 

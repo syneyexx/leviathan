@@ -4,7 +4,7 @@ import unittest
 
 from Data.modules.browser import BrowserAction, BrowserAutomationStub, BrowserJobStatus
 from Data.modules.media import MediaAction, MediaAutomationStub, MediaJobStatus
-from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
+from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner, evaluation_relevance_gate
 from Data.modules.voice import VoiceAction, VoiceJobStatus, VoiceRuntimeStub
 
 
@@ -34,6 +34,7 @@ class ReleaseGateTests(unittest.TestCase):
         report = runner.run()
         self.assertFalse(report.ready)
         self.assertTrue(report.public_dict()["truth"]["release_ready_is_not_production_certified"])
+        self.assertTrue(report.public_dict()["truth"]["evaluation_is_release_authority"])
 
     def test_warn_only_still_ready(self) -> None:
         runner = ReleaseGateRunner(
@@ -43,6 +44,13 @@ class ReleaseGateTests(unittest.TestCase):
             ]
         )
         self.assertTrue(runner.run().ready)
+
+    def test_evaluation_relevance_helper(self) -> None:
+        gate = evaluation_relevance_gate(
+            {"recorded": True, "measurement": "PASS", "detail": "ok", "promotable": True},
+            require_pass=True,
+        )
+        self.assertTrue(gate.passed)
 
 
 if __name__ == "__main__":
