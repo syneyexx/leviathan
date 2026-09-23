@@ -16,6 +16,10 @@ import {
 import { useAppToast } from "../state/useAppToast";
 import type { DatasetJob, DatasetRecord } from "../types/api";
 import { DatasetActivityConsole } from "./datasets/DatasetActivityConsole";
+import {
+  countDatasetsByFilter,
+  filterDatasetRows,
+} from "./datasets/datasetsInventory";
 import { useDatasetActivity } from "./datasets/useDatasetActivity";
 
 type ViewMode = "list" | "grid";
@@ -189,16 +193,6 @@ function recordToRow(ds: DatasetRecord, jobs: DatasetJob[]): DhRow {
     rowCount: ds.rowCount,
     updatedAt: ds.updatedAt,
   };
-}
-
-function matchesFilter(row: DhRow, filter: DhFilterId): boolean {
-  if (filter === "all") return true;
-  if (filter === "local") return row.sourceKind === "local";
-  if (filter === "huggingface") return row.sourceKind === "huggingface";
-  if (filter === "curated") return row.sourceKind === "curated";
-  if (filter === "offline") return row.status === "offline";
-  if (filter === "processing") return row.status === "processing" || row.status === "validating";
-  return true;
 }
 
 function sourceGlyph(kind: DhSourceKind): string {
@@ -395,45 +389,18 @@ export function DatasetsPage() {
 
   const baseRows: DhRow[] = liveRows;
 
-  const filterCounts = useMemo(() => {
-    const counts: Record<DhFilterId, number> = {
-      all: baseRows.length,
-      local: 0,
-      huggingface: 0,
-      curated: 0,
-      offline: 0,
-      processing: 0,
-    };
-    for (const row of baseRows) {
-      if (row.sourceKind === "local") counts.local += 1;
-      if (row.sourceKind === "huggingface") counts.huggingface += 1;
-      if (row.sourceKind === "curated") counts.curated += 1;
-      if (row.status === "offline") counts.offline += 1;
-      if (row.status === "processing" || row.status === "validating") counts.processing += 1;
-    }
-    return counts;
-  }, [baseRows]);
+  const filterCounts = useMemo(() => countDatasetsByFilter(baseRows), [baseRows]);
 
-  const filteredRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let rows = baseRows.filter((row) => matchesFilter(row, filter));
-    if (typeFilter !== "All Types") {
-      rows = rows.filter((r) => r.type === typeFilter);
-    }
-    if (q) {
-      rows = rows.filter(
-        (r) =>
-          r.name.toLowerCase().includes(q) ||
-          r.description.toLowerCase().includes(q) ||
-          r.source.toLowerCase().includes(q) ||
-          (r.tags ?? []).some((t) => t.toLowerCase().includes(q)),
-      );
-    }
-    if (updatedFilter === "Oldest first") {
-      rows = [...rows].reverse();
-    }
-    return rows;
-  }, [baseRows, filter, query, typeFilter, updatedFilter]);
+  const filteredRows = useMemo(
+    () =>
+      filterDatasetRows(baseRows, {
+        filter,
+        query,
+        typeFilter,
+        updatedFilter,
+      }),
+    [baseRows, filter, query, typeFilter, updatedFilter],
+  );
 
   const overviewStats = useMemo(() => {
     const local = liveRows.filter((r) => r.sourceKind === "local").length;
@@ -897,7 +864,11 @@ export function DatasetsPage() {
           </div>
         ) : null}
 
-        <section className="lv-dh-panel" aria-label="Datasets inventory">
+        {/*
+          Inventory list/grid — driven by GET /api/datasets via `datasets` state.
+          Complementary to Dataset Activity (jobs), not replaced by it.
+        */}
+        <section className="lv-dh-panel" aria-label="Datasets inventory" data-testid="datasets-inventory">
           <span className="lv-dh-panel-corners" aria-hidden="true" />
           {view === "list" ? (
             <div className="lv-dh-table-wrap">
@@ -1198,6 +1169,7 @@ export function DatasetsPage() {
           </article>
         </div>
 
+        {/* Dataset Activity console — jobs/progress only; does not replace inventory. */}
         <DatasetActivityConsole
           jobs={jobs}
           entries={activityEntries}
