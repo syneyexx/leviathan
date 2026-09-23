@@ -823,6 +823,54 @@ export type ResearchBudget = {
   max_evidence_per_source: number;
 };
 
+export type ResearchBudgetCatalog = {
+  presets: Record<string, ResearchBudget>;
+  ceilings: ResearchBudget;
+  limits: {
+    research_workers: { min: number; max: number };
+    rounds: { min: number; max: number };
+    [key: string]: { min: number; max: number };
+  };
+  execution_modes: {
+    normal: {
+      research_workers: number;
+      rounds: number;
+      locked: boolean;
+      description: string;
+    };
+    custom: {
+      limits: {
+        research_workers: { min: number; max: number };
+        rounds: { min: number; max: number };
+      };
+      locked: boolean;
+      description: string;
+    };
+  };
+};
+
+export type ResearchWorker = {
+  worker_id: string;
+  project_id: string;
+  run_id: string;
+  worker_index: number;
+  status: string;
+  phase: string;
+  current_round: number;
+  total_rounds: number;
+  completed_rounds: number;
+  current_query?: string | null;
+  current_task?: string | null;
+  sources_added: number;
+  evidence_added: number;
+  started_at?: string | null;
+  heartbeat_at?: string | null;
+  finished_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ResearchPlan = {
   interpreted_question: string;
   scope: string;
@@ -866,6 +914,7 @@ export type ResearchProject = {
   coverage?: ResearchCoverage | null;
   local_scopes: string[];
   seed_sources: string[];
+  connected_datasets?: Array<Record<string, unknown>>;
   current_round: number;
   total_rounds: number;
   error?: string | null;
@@ -877,11 +926,19 @@ export type ResearchProject = {
   updated_at: string;
   started_at?: string | null;
   finished_at?: string | null;
+  execution_mode?: string;
+  phase?: string;
+  progress_pct?: number;
+  analysis_mode?: string;
+  active_run_id?: string | null;
+  completed_worker_rounds?: number;
+  total_worker_rounds?: number;
   source_count: number;
   claim_count: number;
   evidence_count: number;
   conflict_count: number;
   web_unavailable_reason?: string | null;
+  workers?: ResearchWorker[];
 };
 
 export type ResearchEvent = {
@@ -908,6 +965,9 @@ export type ResearchSource = {
   snapshot_path?: string | null;
   parse_status: string;
   parser?: string | null;
+  brain_status?: string;
+  brain_document_id?: string | null;
+  brain_error?: string | null;
   provenance?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   created_at: string;
@@ -978,6 +1038,8 @@ export type ResearchProjectCreate = {
   budget?: Partial<ResearchBudget> | null;
   localScopes?: string[];
   seedSources?: string[];
+  connectedDatasets?: Array<Record<string, unknown>>;
+  executionMode?: string;
 };
 
 /* ---------- Knowledge Library ---------- */

@@ -1079,6 +1079,7 @@ async def lifespan(_: FastAPI):
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
     research_service.recover()
+    research_service.start_background()
     coding_service.start_background()
     mcp_bridge.initialize()
     market_sim_service.start_background()

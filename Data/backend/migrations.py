@@ -2295,6 +2295,95 @@ def _m32_posttraining_flywheel(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m33_research_workers_runs(conn: sqlite3.Connection) -> None:
+    """Persistent research runs/workers + Brain sync columns."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(research_projects)").fetchall()}
+    alter = {
+        "execution_mode": "TEXT NOT NULL DEFAULT 'custom'",
+        "phase": "TEXT NOT NULL DEFAULT 'idle'",
+        "progress_pct": "REAL NOT NULL DEFAULT 0",
+        "analysis_mode": "TEXT NOT NULL DEFAULT 'deterministic_fallback'",
+        "active_run_id": "TEXT",
+        "completed_worker_rounds": "INTEGER NOT NULL DEFAULT 0",
+        "total_worker_rounds": "INTEGER NOT NULL DEFAULT 0",
+        "connected_datasets_json": "TEXT NOT NULL DEFAULT '[]'",
+    }
+    for name, ddl in alter.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE research_projects ADD COLUMN {name} {ddl}")
+
+    source_cols = {row[1] for row in conn.execute("PRAGMA table_info(research_sources)").fetchall()}
+    source_alter = {
+        "brain_status": "TEXT NOT NULL DEFAULT 'not_applicable'",
+        "brain_document_id": "TEXT",
+        "brain_error": "TEXT",
+    }
+    for name, ddl in source_alter.items():
+        if name not in source_cols:
+            conn.execute(f"ALTER TABLE research_sources ADD COLUMN {name} {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_runs (
+            run_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            execution_mode TEXT NOT NULL DEFAULT 'normal',
+            workers INTEGER NOT NULL DEFAULT 1,
+            rounds_per_worker INTEGER NOT NULL DEFAULT 1,
+            phase TEXT NOT NULL DEFAULT 'idle',
+            completed_worker_rounds INTEGER NOT NULL DEFAULT 0,
+            total_worker_rounds INTEGER NOT NULL DEFAULT 0,
+            progress_pct REAL NOT NULL DEFAULT 0,
+            analysis_mode TEXT NOT NULL DEFAULT 'deterministic_fallback',
+            error TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_runs_project "
+        "ON research_runs(project_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_workers (
+            worker_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            worker_index INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            phase TEXT NOT NULL DEFAULT '',
+            current_round INTEGER NOT NULL DEFAULT 0,
+            total_rounds INTEGER NOT NULL DEFAULT 1,
+            completed_rounds INTEGER NOT NULL DEFAULT 0,
+            current_query TEXT,
+            current_task TEXT,
+            sources_added INTEGER NOT NULL DEFAULT 0,
+            evidence_added INTEGER NOT NULL DEFAULT 0,
+            started_at TEXT,
+            heartbeat_at TEXT,
+            finished_at TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE,
+            FOREIGN KEY(run_id) REFERENCES research_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_workers_run "
+        "ON research_workers(run_id, worker_index)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_workers_project "
+        "ON research_workers(project_id, updated_at)"
+    )
 
 
 MIGRATIONS: Sequence[Migration] = (
@@ -2330,6 +2419,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=30, name="multimodal_realtime", apply=_m30_multimodal_realtime),
     Migration(version=31, name="data_training_factory", apply=_m31_data_training_factory),
     Migration(version=32, name="posttraining_flywheel", apply=_m32_posttraining_flywheel),
+    Migration(version=33, name="research_workers_runs", apply=_m33_research_workers_runs),
 )
 
 

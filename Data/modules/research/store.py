@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .types import (
+    AnalysisMode,
+    BrainStatus,
     ClaimStatus,
     CoverageSummary,
     ParseStatus,
@@ -19,13 +21,18 @@ from .types import (
     ResearchConflict,
     ResearchEvidence,
     ResearchEvent,
+    ResearchExecutionMode,
+    ResearchPhase,
     ResearchPlan,
     ResearchProject,
     ResearchReport,
+    ResearchRun,
     ResearchSource,
     ResearchStatus,
     ResearchDepth,
+    ResearchWorker,
     SourceType,
+    WorkerStatus,
 )
 
 
@@ -70,7 +77,7 @@ class ResearchStore:
             self._ensure_schema(conn)
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        # Mirror migration v14 so unit tests can use an isolated DB.
+        # Mirror migrations so unit tests can use an isolated DB.
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS research_projects (
@@ -186,8 +193,93 @@ class ResearchStore:
                 UNIQUE(project_id, version),
                 FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS research_runs (
+                run_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                execution_mode TEXT NOT NULL DEFAULT 'normal',
+                workers INTEGER NOT NULL DEFAULT 1,
+                rounds_per_worker INTEGER NOT NULL DEFAULT 1,
+                phase TEXT NOT NULL DEFAULT 'idle',
+                completed_worker_rounds INTEGER NOT NULL DEFAULT 0,
+                total_worker_rounds INTEGER NOT NULL DEFAULT 0,
+                progress_pct REAL NOT NULL DEFAULT 0,
+                analysis_mode TEXT NOT NULL DEFAULT 'deterministic_fallback',
+                error TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_research_runs_project
+                ON research_runs(project_id, created_at);
+            CREATE TABLE IF NOT EXISTS research_workers (
+                worker_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                worker_index INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                phase TEXT NOT NULL DEFAULT '',
+                current_round INTEGER NOT NULL DEFAULT 0,
+                total_rounds INTEGER NOT NULL DEFAULT 1,
+                completed_rounds INTEGER NOT NULL DEFAULT 0,
+                current_query TEXT,
+                current_task TEXT,
+                sources_added INTEGER NOT NULL DEFAULT 0,
+                evidence_added INTEGER NOT NULL DEFAULT 0,
+                started_at TEXT,
+                heartbeat_at TEXT,
+                finished_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES research_projects(project_id) ON DELETE CASCADE,
+                FOREIGN KEY(run_id) REFERENCES research_runs(run_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_research_workers_run
+                ON research_workers(run_id, worker_index);
+            CREATE INDEX IF NOT EXISTS idx_research_workers_project
+                ON research_workers(project_id, updated_at);
             """
         )
+        self._ensure_columns(
+            conn,
+            "research_projects",
+            {
+                "execution_mode": "TEXT NOT NULL DEFAULT 'normal'",
+                "phase": "TEXT NOT NULL DEFAULT 'idle'",
+                "progress_pct": "REAL NOT NULL DEFAULT 0",
+                "analysis_mode": "TEXT NOT NULL DEFAULT 'deterministic_fallback'",
+                "active_run_id": "TEXT",
+                "completed_worker_rounds": "INTEGER NOT NULL DEFAULT 0",
+                "total_worker_rounds": "INTEGER NOT NULL DEFAULT 0",
+                "connected_datasets_json": "TEXT NOT NULL DEFAULT '[]'",
+            },
+        )
+        self._ensure_columns(
+            conn,
+            "research_sources",
+            {
+                "brain_status": "TEXT NOT NULL DEFAULT 'not_applicable'",
+                "brain_document_id": "TEXT",
+                "brain_error": "TEXT",
+            },
+        )
+
+    def _ensure_columns(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        columns: dict[str, str],
+    ) -> None:
+        existing = {
+            row[1]
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     # --- projects -----------------------------------------------------------
 
@@ -204,6 +296,8 @@ class ResearchStore:
         budget: ResearchBudget | None = None,
         local_scopes: list[str] | None = None,
         seed_sources: list[str] | None = None,
+        connected_datasets: list[dict[str, Any]] | None = None,
+        execution_mode: ResearchExecutionMode = ResearchExecutionMode.CUSTOM,
         project_id: str | None = None,
         trace_id: str | None = None,
     ) -> ResearchProject:
@@ -224,7 +318,10 @@ class ResearchStore:
             budget=bud,
             local_scopes=list(local_scopes or []),
             seed_sources=list(seed_sources or []),
+            connected_datasets=list(connected_datasets or []),
             total_rounds=bud.rounds,
+            execution_mode=execution_mode,
+            total_worker_rounds=bud.research_workers * bud.rounds,
             trace_id=trace_id or str(uuid.uuid4()),
             created_at=now,
             updated_at=now,
@@ -242,8 +339,10 @@ class ResearchStore:
                 respect_robots_txt, model_profile_json, budget_json, plan_json,
                 coverage_json, local_scopes_json, seed_sources_json, current_round,
                 total_rounds, error, cancel_requested, worker_pid, trace_id,
-                report_version, created_at, updated_at, started_at, finished_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                report_version, created_at, updated_at, started_at, finished_at,
+                execution_mode, phase, progress_pct, analysis_mode, active_run_id,
+                completed_worker_rounds, total_worker_rounds, connected_datasets_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 project.project_id,
@@ -271,6 +370,14 @@ class ResearchStore:
                 project.updated_at,
                 project.started_at,
                 project.finished_at,
+                project.execution_mode.value,
+                project.phase.value,
+                float(project.progress_pct),
+                project.analysis_mode.value,
+                project.active_run_id,
+                project.completed_worker_rounds,
+                project.total_worker_rounds,
+                _json_dumps(project.connected_datasets),
             ),
         )
 
@@ -286,7 +393,10 @@ class ResearchStore:
                     coverage_json=?, local_scopes_json=?, seed_sources_json=?,
                     current_round=?, total_rounds=?, error=?, cancel_requested=?,
                     worker_pid=?, trace_id=?, report_version=?, updated_at=?,
-                    started_at=?, finished_at=?
+                    started_at=?, finished_at=?,
+                    execution_mode=?, phase=?, progress_pct=?, analysis_mode=?,
+                    active_run_id=?, completed_worker_rounds=?, total_worker_rounds=?,
+                    connected_datasets_json=?
                 WHERE project_id=?
                 """,
                 (
@@ -313,6 +423,14 @@ class ResearchStore:
                     project.updated_at,
                     project.started_at,
                     project.finished_at,
+                    project.execution_mode.value,
+                    project.phase.value,
+                    float(project.progress_pct),
+                    project.analysis_mode.value,
+                    project.active_run_id,
+                    project.completed_worker_rounds,
+                    project.total_worker_rounds,
+                    _json_dumps(project.connected_datasets),
                     project.project_id,
                 ),
             )
@@ -329,6 +447,9 @@ class ResearchStore:
                 return None
             project = self._project_from_row(row)
             self._attach_counts(conn, project)
+            project.workers = [
+                w.public_dict() for w in self._list_workers_conn(conn, project_id)
+            ]
             return project
 
     def list_projects(self, *, limit: int = 100) -> list[ResearchProject]:
@@ -341,6 +462,9 @@ class ResearchStore:
             projects = [self._project_from_row(row) for row in rows]
             for project in projects:
                 self._attach_counts(conn, project)
+                project.workers = [
+                    w.public_dict() for w in self._list_workers_conn(conn, project.project_id)
+                ]
             return projects
 
     def _attach_counts(self, conn: sqlite3.Connection, project: ResearchProject) -> None:
@@ -366,9 +490,33 @@ class ResearchStore:
             ).fetchone()[0]
         )
 
+    def _row_get(self, row: sqlite3.Row, key: str, default: Any = None) -> Any:
+        try:
+            return row[key]
+        except (IndexError, KeyError):
+            return default
+
     def _project_from_row(self, row: sqlite3.Row) -> ResearchProject:
         plan_raw = _json_loads(row["plan_json"], {})
         coverage_raw = _json_loads(row["coverage_json"], {})
+        mode_raw = self._row_get(row, "execution_mode", "normal") or "normal"
+        phase_raw = self._row_get(row, "phase", "idle") or "idle"
+        analysis_raw = (
+            self._row_get(row, "analysis_mode", "deterministic_fallback")
+            or "deterministic_fallback"
+        )
+        try:
+            execution_mode = ResearchExecutionMode(str(mode_raw))
+        except ValueError:
+            execution_mode = ResearchExecutionMode.NORMAL
+        try:
+            phase = ResearchPhase(str(phase_raw))
+        except ValueError:
+            phase = ResearchPhase.IDLE
+        try:
+            analysis_mode = AnalysisMode(str(analysis_raw))
+        except ValueError:
+            analysis_mode = AnalysisMode.DETERMINISTIC_FALLBACK
         return ResearchProject(
             project_id=row["project_id"],
             title=row["title"],
@@ -384,6 +532,9 @@ class ResearchStore:
             coverage=CoverageSummary.from_dict(coverage_raw) if coverage_raw else None,
             local_scopes=list(_json_loads(row["local_scopes_json"], [])),
             seed_sources=list(_json_loads(row["seed_sources_json"], [])),
+            connected_datasets=list(
+                _json_loads(self._row_get(row, "connected_datasets_json", "[]"), [])
+            ),
             current_round=int(row["current_round"] or 0),
             total_rounds=int(row["total_rounds"] or 1),
             error=row["error"],
@@ -395,6 +546,15 @@ class ResearchStore:
             updated_at=row["updated_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
+            execution_mode=execution_mode,
+            phase=phase,
+            progress_pct=float(self._row_get(row, "progress_pct", 0) or 0),
+            analysis_mode=analysis_mode,
+            active_run_id=self._row_get(row, "active_run_id"),
+            completed_worker_rounds=int(
+                self._row_get(row, "completed_worker_rounds", 0) or 0
+            ),
+            total_worker_rounds=int(self._row_get(row, "total_worker_rounds", 0) or 0),
         )
 
     def request_cancel(self, project_id: str) -> ResearchProject:
@@ -506,8 +666,8 @@ class ResearchStore:
                     source_id, project_id, source_type, original_uri, canonical_uri,
                     title, author, published_at, fetched_at, content_hash, mime_type,
                     snapshot_path, parse_status, parser, provenance_json, metadata_json,
-                    created_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    created_at, brain_status, brain_document_id, brain_error
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     source.source_id,
@@ -527,6 +687,44 @@ class ResearchStore:
                     _json_dumps(source.provenance),
                     _json_dumps(source.metadata),
                     source.created_at,
+                    source.brain_status.value,
+                    source.brain_document_id,
+                    source.brain_error,
+                ),
+            )
+        return source
+
+    def save_source(self, source: ResearchSource) -> ResearchSource:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                UPDATE research_sources SET
+                    source_type=?, original_uri=?, canonical_uri=?, title=?, author=?,
+                    published_at=?, fetched_at=?, content_hash=?, mime_type=?,
+                    snapshot_path=?, parse_status=?, parser=?, provenance_json=?,
+                    metadata_json=?, brain_status=?, brain_document_id=?, brain_error=?
+                WHERE source_id=?
+                """,
+                (
+                    source.source_type.value,
+                    source.original_uri,
+                    source.canonical_uri,
+                    source.title,
+                    source.author,
+                    source.published_at,
+                    source.fetched_at,
+                    source.content_hash,
+                    source.mime_type,
+                    source.snapshot_path,
+                    source.parse_status.value,
+                    source.parser,
+                    _json_dumps(source.provenance),
+                    _json_dumps(source.metadata),
+                    source.brain_status.value,
+                    source.brain_document_id,
+                    source.brain_error,
+                    source.source_id,
                 ),
             )
         return source
@@ -555,6 +753,11 @@ class ResearchStore:
         return [self._source_from_row(row) for row in rows]
 
     def _source_from_row(self, row: sqlite3.Row) -> ResearchSource:
+        brain_raw = self._row_get(row, "brain_status", "not_applicable") or "not_applicable"
+        try:
+            brain_status = BrainStatus(str(brain_raw))
+        except ValueError:
+            brain_status = BrainStatus.NOT_APPLICABLE
         return ResearchSource(
             source_id=row["source_id"],
             project_id=row["project_id"],
@@ -570,6 +773,9 @@ class ResearchStore:
             snapshot_path=row["snapshot_path"],
             parse_status=ParseStatus(row["parse_status"] or ParseStatus.PENDING.value),
             parser=row["parser"],
+            brain_status=brain_status,
+            brain_document_id=self._row_get(row, "brain_document_id"),
+            brain_error=self._row_get(row, "brain_error"),
             provenance=_json_loads(row["provenance_json"], {}),
             metadata=_json_loads(row["metadata_json"], {}),
             created_at=row["created_at"],
@@ -871,3 +1077,245 @@ class ResearchStore:
             generation_trace=_json_loads(row["generation_trace_json"], {}),
             created_at=row["created_at"],
         )
+
+    # --- runs / workers -----------------------------------------------------
+
+    def create_run(self, run: ResearchRun) -> ResearchRun:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO research_runs(
+                    run_id, project_id, status, execution_mode, workers, rounds_per_worker,
+                    phase, completed_worker_rounds, total_worker_rounds, progress_pct,
+                    analysis_mode, error, started_at, finished_at, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    run.run_id,
+                    run.project_id,
+                    run.status.value,
+                    run.execution_mode.value,
+                    run.workers,
+                    run.rounds_per_worker,
+                    run.phase.value,
+                    run.completed_worker_rounds,
+                    run.total_worker_rounds,
+                    float(run.progress_pct),
+                    run.analysis_mode.value,
+                    run.error,
+                    run.started_at,
+                    run.finished_at,
+                    run.created_at,
+                    run.updated_at,
+                ),
+            )
+        return run
+
+    def save_run(self, run: ResearchRun) -> ResearchRun:
+        run.updated_at = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            conn.execute(
+                """
+                UPDATE research_runs SET
+                    status=?, execution_mode=?, workers=?, rounds_per_worker=?,
+                    phase=?, completed_worker_rounds=?, total_worker_rounds=?,
+                    progress_pct=?, analysis_mode=?, error=?, started_at=?,
+                    finished_at=?, updated_at=?
+                WHERE run_id=?
+                """,
+                (
+                    run.status.value,
+                    run.execution_mode.value,
+                    run.workers,
+                    run.rounds_per_worker,
+                    run.phase.value,
+                    run.completed_worker_rounds,
+                    run.total_worker_rounds,
+                    float(run.progress_pct),
+                    run.analysis_mode.value,
+                    run.error,
+                    run.started_at,
+                    run.finished_at,
+                    run.updated_at,
+                    run.run_id,
+                ),
+            )
+        return run
+
+    def get_run(self, run_id: str) -> ResearchRun | None:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT * FROM research_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return self._run_from_row(row) if row else None
+
+    def get_latest_run(self, project_id: str) -> ResearchRun | None:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT * FROM research_runs
+                WHERE project_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+        return self._run_from_row(row) if row else None
+
+    def _run_from_row(self, row: sqlite3.Row) -> ResearchRun:
+        return ResearchRun(
+            run_id=row["run_id"],
+            project_id=row["project_id"],
+            status=ResearchStatus(row["status"]),
+            execution_mode=ResearchExecutionMode(row["execution_mode"]),
+            workers=int(row["workers"]),
+            rounds_per_worker=int(row["rounds_per_worker"]),
+            phase=ResearchPhase(row["phase"] or ResearchPhase.IDLE.value),
+            completed_worker_rounds=int(row["completed_worker_rounds"] or 0),
+            total_worker_rounds=int(row["total_worker_rounds"] or 0),
+            progress_pct=float(row["progress_pct"] or 0),
+            analysis_mode=AnalysisMode(
+                row["analysis_mode"] or AnalysisMode.DETERMINISTIC_FALLBACK.value
+            ),
+            error=row["error"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def upsert_worker(self, worker: ResearchWorker) -> ResearchWorker:
+        worker.updated_at = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            existing = conn.execute(
+                "SELECT worker_id FROM research_workers WHERE worker_id = ?",
+                (worker.worker_id,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE research_workers SET
+                        status=?, phase=?, current_round=?, total_rounds=?,
+                        completed_rounds=?, current_query=?, current_task=?,
+                        sources_added=?, evidence_added=?, started_at=?,
+                        heartbeat_at=?, finished_at=?, last_error=?, updated_at=?
+                    WHERE worker_id=?
+                    """,
+                    (
+                        worker.status.value,
+                        worker.phase,
+                        worker.current_round,
+                        worker.total_rounds,
+                        worker.completed_rounds,
+                        worker.current_query,
+                        worker.current_task,
+                        worker.sources_added,
+                        worker.evidence_added,
+                        worker.started_at,
+                        worker.heartbeat_at,
+                        worker.finished_at,
+                        worker.last_error,
+                        worker.updated_at,
+                        worker.worker_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO research_workers(
+                        worker_id, project_id, run_id, worker_index, status, phase,
+                        current_round, total_rounds, completed_rounds, current_query,
+                        current_task, sources_added, evidence_added, started_at,
+                        heartbeat_at, finished_at, last_error, created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        worker.worker_id,
+                        worker.project_id,
+                        worker.run_id,
+                        worker.worker_index,
+                        worker.status.value,
+                        worker.phase,
+                        worker.current_round,
+                        worker.total_rounds,
+                        worker.completed_rounds,
+                        worker.current_query,
+                        worker.current_task,
+                        worker.sources_added,
+                        worker.evidence_added,
+                        worker.started_at,
+                        worker.heartbeat_at,
+                        worker.finished_at,
+                        worker.last_error,
+                        worker.created_at,
+                        worker.updated_at,
+                    ),
+                )
+        return worker
+
+    def list_workers(
+        self,
+        project_id: str,
+        *,
+        run_id: str | None = None,
+    ) -> list[ResearchWorker]:
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            return self._list_workers_conn(conn, project_id, run_id=run_id)
+
+    def _list_workers_conn(
+        self,
+        conn: sqlite3.Connection,
+        project_id: str,
+        *,
+        run_id: str | None = None,
+    ) -> list[ResearchWorker]:
+        if run_id:
+            rows = conn.execute(
+                """
+                SELECT * FROM research_workers
+                WHERE project_id = ? AND run_id = ?
+                ORDER BY worker_index ASC
+                """,
+                (project_id, run_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM research_workers
+                WHERE project_id = ?
+                ORDER BY updated_at DESC, worker_index ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [self._worker_from_row(row) for row in rows]
+
+    def _worker_from_row(self, row: sqlite3.Row) -> ResearchWorker:
+        return ResearchWorker(
+            worker_id=row["worker_id"],
+            project_id=row["project_id"],
+            run_id=row["run_id"],
+            worker_index=int(row["worker_index"]),
+            status=WorkerStatus(row["status"]),
+            phase=row["phase"] or "",
+            current_round=int(row["current_round"] or 0),
+            total_rounds=int(row["total_rounds"] or 1),
+            completed_rounds=int(row["completed_rounds"] or 0),
+            current_query=row["current_query"],
+            current_task=row["current_task"],
+            sources_added=int(row["sources_added"] or 0),
+            evidence_added=int(row["evidence_added"] or 0),
+            started_at=row["started_at"],
+            heartbeat_at=row["heartbeat_at"],
+            finished_at=row["finished_at"],
+            last_error=row["last_error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+

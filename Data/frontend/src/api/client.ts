@@ -49,7 +49,8 @@ import type {
   ResearchProjectCreate,
   ResearchReport,
   ResearchSource,
-  ResearchBudget,
+  ResearchBudgetCatalog,
+  ResearchWorker,
   RouterConfig,
   SecurityAuditReport,
   SoakReport,
@@ -1239,7 +1240,7 @@ export const api = {
 
   /* ---------- Research ---------- */
 
-  researchBudgets(): Promise<{ presets: Record<string, ResearchBudget> }> {
+  researchBudgets(): Promise<ResearchBudgetCatalog> {
     return request("/api/research/budgets");
   },
 
@@ -1300,6 +1301,10 @@ export const api = {
     });
   },
 
+  listResearchWorkers(projectId: string): Promise<{ workers: ResearchWorker[] }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/workers`);
+  },
+
   listResearchEvents(projectId: string, limit = 200): Promise<{ events: ResearchEvent[] }> {
     return request(
       `/api/research/${encodeURIComponent(projectId)}/events?limit=${encodeURIComponent(String(limit))}`,
@@ -1309,6 +1314,50 @@ export const api = {
   listResearchSources(projectId: string, limit = 200): Promise<{ sources: ResearchSource[] }> {
     return request(
       `/api/research/${encodeURIComponent(projectId)}/sources?limit=${encodeURIComponent(String(limit))}`,
+    );
+  },
+
+  uploadResearchSource(
+    projectId: string,
+    file: File,
+  ): Promise<{ source: ResearchSource; extracted_chars: number; page_count?: number | null }> {
+    const body = new FormData();
+    body.append("file", file);
+    return request(`/api/research/${encodeURIComponent(projectId)}/sources/upload`, {
+      method: "POST",
+      body,
+    });
+  },
+
+  addResearchUrlSource(projectId: string, url: string): Promise<{ source: ResearchSource }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/sources/url`, {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
+  },
+
+  connectResearchDataset(
+    projectId: string,
+    payload: {
+      datasetId: string;
+      versionId?: string | null;
+      indexed?: boolean | null;
+      label?: string | null;
+    },
+  ): Promise<{ project: ResearchProject }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/datasets/connect`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  retryResearchBrainSync(
+    projectId: string,
+    sourceId: string,
+  ): Promise<{ source: ResearchSource }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}/brain-retry`,
+      { method: "POST" },
     );
   },
 
