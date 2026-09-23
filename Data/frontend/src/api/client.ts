@@ -178,6 +178,23 @@ export const api = {
     return request<HealthResponse>("/api/health");
   },
 
+  productTruth(): Promise<{ product_truth: HealthResponse["product_truth"] }> {
+    return request<{ product_truth: HealthResponse["product_truth"] }>("/api/product/truth");
+  },
+
+  listMemory(opts?: {
+    status?: string;
+    kind?: string;
+    limit?: number;
+  }): Promise<{ memory: Array<Record<string, unknown>> }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.kind) params.set("kind", opts.kind);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request<{ memory: Array<Record<string, unknown>> }>(`/api/memory${q ? `?${q}` : ""}`);
+  },
+
   metrics(): Promise<{ metrics: MetricsSnapshot }> {
     return request<{ metrics: MetricsSnapshot }>("/api/metrics");
   },

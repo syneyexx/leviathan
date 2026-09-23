@@ -101,9 +101,24 @@ export type CognitionRunStatus = {
 
 export type HealthResponse = {
   ok: boolean;
+  liveness?: string;
+  posture?: string;
   version: string;
   database: string;
   reasoning_enabled: boolean;
+  product_truth?: {
+    overall?: string;
+    components?: Array<{
+      id: string;
+      name: string;
+      type: string;
+      status: string;
+      detail?: string;
+      measured?: boolean;
+    }>;
+    vocabulary?: string[];
+    truth?: Record<string, boolean>;
+  };
   llm: {
     available: boolean;
     model: string | null;

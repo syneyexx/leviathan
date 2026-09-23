@@ -107,18 +107,19 @@ def _overall(components: Iterable[ComponentPosture]) -> ProductStatus:
     statuses = {c.status for c in components}
     if not statuses:
         return ProductStatus.UNMEASURED
-    if ProductStatus.UNAVAILABLE in statuses and all(
-        s in {ProductStatus.UNAVAILABLE, ProductStatus.UNCONFIGURED, ProductStatus.UNMEASURED}
-        for s in statuses
+    # Worst-first: never hide fixture/degraded behind a single operational core.
+    for candidate in (
+        ProductStatus.UNAVAILABLE,
+        ProductStatus.DEGRADED,
+        ProductStatus.FIXTURE,
+        ProductStatus.EXPERIMENTAL,
+        ProductStatus.UNCONFIGURED,
+        ProductStatus.UNMEASURED,
+        ProductStatus.OPERATIONAL,
     ):
-        return ProductStatus.UNAVAILABLE
-    if ProductStatus.DEGRADED in statuses or ProductStatus.UNAVAILABLE in statuses:
-        return ProductStatus.DEGRADED
-    if ProductStatus.FIXTURE in statuses or ProductStatus.EXPERIMENTAL in statuses:
-        return ProductStatus.EXPERIMENTAL
-    if ProductStatus.UNMEASURED in statuses or ProductStatus.UNCONFIGURED in statuses:
-        return ProductStatus.UNMEASURED
-    return ProductStatus.OPERATIONAL
+        if candidate in statuses:
+            return candidate
+    return ProductStatus.UNMEASURED
 
 
 def assess_product_truth(
@@ -139,6 +140,10 @@ def assess_product_truth(
     embedding_available: bool | None = None,
     agents_enabled: bool = False,
     training_fixture_default: bool = False,
+    media_backend_kind: str | None = None,
+    media_production_capable: bool | None = None,
+    voice_backend_kind: str | None = None,
+    voice_production_capable: bool | None = None,
 ) -> ProductTruthReport:
     """Build evidence-based postures for operator/product surfaces."""
     components: list[ComponentPosture] = []
@@ -201,14 +206,19 @@ def assess_product_truth(
             id="module_manager",
             name="module-manager",
             type="Runtime",
+            # Feature-on alone is not operational — READY-after-import is lifecycle, not product truth.
             status=(
-                ProductStatus.OPERATIONAL
+                ProductStatus.UNMEASURED
                 if module_manager_enabled
-                else ProductStatus.UNAVAILABLE
+                else ProductStatus.UNCONFIGURED
             ),
-            detail=f"modules={module_count}",
+            detail=(
+                f"enabled modules={module_count} (no operational probe)"
+                if module_manager_enabled
+                else "feature_disabled"
+            ),
             evidence={"enabled": module_manager_enabled, "modules": module_count},
-            measured=True,
+            measured=False if module_manager_enabled else True,
         )
     )
 
@@ -439,16 +449,98 @@ def assess_product_truth(
             id="agents",
             name="agents",
             type="Runtime",
+            # Flag alone ≠ operational agent run evidence.
             status=(
-                ProductStatus.OPERATIONAL
+                ProductStatus.UNMEASURED
                 if agents_enabled
                 else ProductStatus.UNCONFIGURED
             ),
-            detail="feature_enabled" if agents_enabled else "feature_disabled",
+            detail=(
+                "feature_enabled (no agent-run probe)"
+                if agents_enabled
+                else "feature_disabled"
+            ),
             evidence={"enabled": agents_enabled},
-            measured=True,
+            measured=False if agents_enabled else True,
         )
     )
+
+    # Media / voice — production defaults may still be fixture backends.
+    if media_backend_kind is None:
+        media_comp = ComponentPosture(
+            id="media",
+            name="media",
+            type="Multimodal",
+            status=ProductStatus.UNCONFIGURED,
+            detail="backend unset",
+            evidence={},
+            measured=False,
+        )
+    elif str(media_backend_kind).lower() in {"fixture", "stub"} or media_production_capable is False:
+        media_comp = ComponentPosture(
+            id="media",
+            name="media",
+            type="Multimodal",
+            status=ProductStatus.FIXTURE,
+            detail=f"backend={media_backend_kind}",
+            evidence={
+                "backend_kind": media_backend_kind,
+                "production_capable": False,
+            },
+            measured=True,
+        )
+    else:
+        media_comp = ComponentPosture(
+            id="media",
+            name="media",
+            type="Multimodal",
+            status=ProductStatus.OPERATIONAL if media_production_capable else ProductStatus.UNMEASURED,
+            detail=f"backend={media_backend_kind}",
+            evidence={
+                "backend_kind": media_backend_kind,
+                "production_capable": media_production_capable,
+            },
+            measured=media_production_capable is not None,
+        )
+    components.append(media_comp)
+
+    if voice_backend_kind is None:
+        voice_comp = ComponentPosture(
+            id="voice",
+            name="voice",
+            type="Multimodal",
+            status=ProductStatus.UNCONFIGURED,
+            detail="backend unset",
+            evidence={},
+            measured=False,
+        )
+    elif str(voice_backend_kind).lower() in {"fixture", "stub"} or voice_production_capable is False:
+        voice_comp = ComponentPosture(
+            id="voice",
+            name="voice",
+            type="Multimodal",
+            status=ProductStatus.FIXTURE,
+            detail=f"backend={voice_backend_kind}",
+            evidence={
+                "backend_kind": voice_backend_kind,
+                "production_capable": False,
+            },
+            measured=True,
+        )
+    else:
+        voice_comp = ComponentPosture(
+            id="voice",
+            name="voice",
+            type="Multimodal",
+            status=ProductStatus.OPERATIONAL if voice_production_capable else ProductStatus.UNMEASURED,
+            detail=f"backend={voice_backend_kind}",
+            evidence={
+                "backend_kind": voice_backend_kind,
+                "production_capable": voice_production_capable,
+            },
+            measured=voice_production_capable is not None,
+        )
+    components.append(voice_comp)
 
     if training_fixture_default:
         components.append(

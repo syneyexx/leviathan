@@ -834,6 +834,17 @@ def _assess_product_truth_report():
         browser_capable = False
 
     model_cards = model_plane.status_cards()
+    # Media/voice services are real entry points but fixture/stub backends are not production.
+    media_capable = False
+    voice_capable = False
+    media_kind = "fixture"
+    voice_kind = "fixture"
+    if settings.features.multimodal_realtime:
+        media_kind = "service"
+        voice_kind = "realtime"
+        # Existing stubs advertise fixture_is_not_production in job truth — keep honest.
+        media_capable = False
+        voice_capable = False
     return assess_product_truth(
         backend_alive=True,
         observability_durable=observability.store is not None,
@@ -851,6 +862,10 @@ def _assess_product_truth_report():
         embedding_available=bool(retriever.embeddings.available()),
         agents_enabled=bool(settings.features.agents_enabled),
         training_fixture_default=True,
+        media_backend_kind=media_kind,
+        media_production_capable=media_capable,
+        voice_backend_kind=voice_kind,
+        voice_production_capable=voice_capable,
     )
 
 
@@ -1227,8 +1242,12 @@ async def health() -> dict:
     metrics.set_gauge("capabilities_registered", float(len(capability_catalog)))
     metrics.set_gauge("approvals_pending", float(len(approval_service.list(status=ApprovalStatus.PENDING, limit=500))))
     model_status = model_plane.status_cards()
+    product_truth = _product_truth_snapshot()
+    # ``ok`` is process liveness only — subsystem truth lives under product_truth.
     return {
         "ok": True,
+        "liveness": "alive",
+        "posture": product_truth.get("overall"),
         "version": app.version,
         "database": str(settings.database_path),
         "reasoning_enabled": settings.reasoning_enabled,
@@ -1368,8 +1387,14 @@ async def health() -> dict:
             "recent": len(verification_reports.list(limit=50)),
         },
         "llm": model,
-        "product_truth": _product_truth_snapshot(),
+        "product_truth": product_truth,
     }
+
+
+@app.get("/api/product/truth")
+def get_product_truth() -> dict:
+    """Thin alias for Round 9 Product Truth report (same as health.product_truth)."""
+    return {"product_truth": _product_truth_snapshot()}
 
 
 @app.get("/api/architecture/ownership")

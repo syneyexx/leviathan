@@ -43,14 +43,23 @@ class ProductTruthVocabularyTests(unittest.TestCase):
             model_gateway_health="healthy",
             model_provider_count=0,
             embedding_available=False,
-            agents_enabled=False,
+            agents_enabled=True,
             training_fixture_default=True,
+            media_backend_kind="fixture",
+            media_production_capable=False,
+            voice_backend_kind="stub",
+            voice_production_capable=False,
         )
         by_id = {c.id: c for c in report.components}
         self.assertEqual(by_id["mcp_bridge"].status, ProductStatus.UNCONFIGURED)
         self.assertEqual(by_id["browser"].status, ProductStatus.FIXTURE)
         self.assertEqual(by_id["models"].status, ProductStatus.UNCONFIGURED)
         self.assertEqual(by_id["training"].status, ProductStatus.FIXTURE)
+        self.assertEqual(by_id["media"].status, ProductStatus.FIXTURE)
+        self.assertEqual(by_id["voice"].status, ProductStatus.FIXTURE)
+        # Flag-on alone is unmeasured, not operational.
+        self.assertEqual(by_id["agents"].status, ProductStatus.UNMEASURED)
+        self.assertEqual(by_id["module_manager"].status, ProductStatus.UNMEASURED)
         self.assertNotEqual(by_id["browser"].status, ProductStatus.OPERATIONAL)
         payload = report.public_dict()
         self.assertTrue(payload["truth"]["import_success_is_not_operational"])
@@ -92,12 +101,26 @@ class ProductTruthLocalDomTests(unittest.TestCase):
             model_gateway_health="healthy",
             model_provider_count=1,
             embedding_available=True,
-            agents_enabled=True,
+            agents_enabled=False,
             mcp_feature_enabled=False,
+            media_backend_kind="fixture",
+            media_production_capable=False,
+            voice_backend_kind="fixture",
+            voice_production_capable=False,
         )
         browser = next(c for c in report.components if c.id == "browser")
         self.assertEqual(browser.status, ProductStatus.OPERATIONAL)
         self.assertTrue(browser.measured)
+
+    def test_health_helpers_expose_posture_not_only_ok(self) -> None:
+        import Data.backend.main as main
+
+        snap = main._product_truth_snapshot()
+        self.assertIn("overall", snap)
+        self.assertIn("vocabulary", snap)
+        self.assertNotIn("healthy", [c["status"] for c in snap["components"]])
+        media = next(c for c in snap["components"] if c["id"] == "media")
+        self.assertEqual(media["status"], "fixture")
 
 
 if __name__ == "__main__":
