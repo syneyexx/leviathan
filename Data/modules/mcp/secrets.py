@@ -11,6 +11,29 @@ from typing import Mapping
 
 from .errors import MCP_SECRET_UNRESOLVED, McpError
 
+# Minimal host env keys safe to pass into untrusted MCP children (Round 8).
+# Full ``os.environ`` inheritance is opt-in only — default is allowlist.
+_SAFE_INHERIT_KEYS = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "PATHEXT",
+        "PYTHONPATH",
+        "VIRTUAL_ENV",
+        "TERM",
+    }
+)
+
 
 def resolve_secret_ref(ref: str, *, overrides: Mapping[str, str] | None = None) -> str:
     """Resolve a secret reference.
@@ -23,7 +46,7 @@ def resolve_secret_ref(ref: str, *, overrides: Mapping[str, str] | None = None) 
     if overrides and ref in overrides:
         return overrides[ref]
     text = (ref or "").strip()
-    if not text:
+    if text == "":
         raise McpError(MCP_SECRET_UNRESOLVED, "Empty secret reference")
 
     if text.startswith("secret:") or text.startswith("env:"):
@@ -53,10 +76,18 @@ def build_process_env(
     env_public: Mapping[str, str],
     secret_refs: Mapping[str, str],
     overrides: Mapping[str, str] | None = None,
-    inherit: bool = True,
+    inherit: bool = False,
 ) -> tuple[dict[str, str], list[str]]:
-    """Build subprocess env and return (env, secret_values_for_redaction)."""
-    env: dict[str, str] = dict(os.environ) if inherit else {}
+    """Build subprocess env and return (env, secret_values_for_redaction).
+
+    Default ``inherit=False`` copies only ``_SAFE_INHERIT_KEYS`` so AWS_*/API
+    keys from the parent do not leak into MCP children. Pass ``inherit=True``
+    only when an operator explicitly needs full parent env.
+    """
+    if inherit:
+        env: dict[str, str] = dict(os.environ)
+    else:
+        env = {k: v for k, v in os.environ.items() if k in _SAFE_INHERIT_KEYS}
     for key, value in env_public.items():
         env[str(key)] = str(value)
     secret_values: list[str] = []

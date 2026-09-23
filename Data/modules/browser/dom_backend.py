@@ -162,9 +162,16 @@ class LocalDomBrowserBackend:
 
     kind = BrowserBackendKind.LOCAL_DOM
 
-    def __init__(self, *, allow_network: bool = False, allow_uploads: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        allow_network: bool = False,
+        allow_uploads: bool = True,
+        filesystem_root: str | Path | None = None,
+    ) -> None:
         self.allow_network = allow_network
         self.allow_uploads = allow_uploads
+        self.filesystem_root = Path(filesystem_root) if filesystem_root else None
         self._dom_by_session: dict[str, _DomNode] = {}
         self._html_by_session: dict[str, str] = {}
         self._downloads: dict[str, list[dict[str, Any]]] = {}
@@ -472,10 +479,12 @@ class LocalDomBrowserBackend:
             return urllib.parse.unquote(payload), url
         if url.startswith("file:"):
             path = Path(urllib.request.url2pathname(urllib.parse.urlparse(url).path))
-            return path.read_text(encoding="utf-8", errors="replace"), url
+            path = self._confine_local_path(path)
+            return path.read_text(encoding="utf-8", errors="replace"), path.resolve().as_uri()
         # bare path
         path = Path(url)
         if path.exists() and path.is_file():
+            path = self._confine_local_path(path)
             return path.read_text(encoding="utf-8", errors="replace"), path.resolve().as_uri()
         if url.startswith("http://") or url.startswith("https://"):
             if not self.allow_network:
@@ -483,6 +492,20 @@ class LocalDomBrowserBackend:
             with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310 — gated by policy
                 return resp.read().decode("utf-8", errors="replace"), url
         raise ValueError(f"Unsupported URL for LocalDom backend: {url}")
+
+    def _confine_local_path(self, path: Path) -> Path:
+        """Refuse host FS escape when filesystem_root is set (Round 8)."""
+        if self.filesystem_root is None:
+            return path
+        from Data.modules.coding.workspace import confine
+        from Data.modules.common.paths import PathEscapeError
+
+        try:
+            return confine(self.filesystem_root, path)
+        except PathEscapeError as exc:
+            raise PermissionError(
+                f"file:// path outside filesystem_root refused: {path}"
+            ) from exc
 
     @staticmethod
     def _title(root: _DomNode) -> str:

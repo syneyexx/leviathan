@@ -78,6 +78,8 @@ class AuthorityProfile:
                 "authority_is_not_behavior": True,
                 "system_prompt_cannot_grant_host_privileges": True,
                 "discoverable_is_not_authorized": True,
+                "enforcement_class": "declared_not_enforced",
+                "ceilings_are_declarative_until_gateway_enforces": True,
             },
         }
 

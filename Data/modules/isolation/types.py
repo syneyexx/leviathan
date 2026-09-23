@@ -37,6 +37,8 @@ class IsolationEffective:
             "notes": list(self.notes),
             "truth": {
                 "requested_isolation_is_not_effective_isolation": True,
+                "matched_means_application_intended_only": True,
+                "matched_is_not_os_enforcement": True,
             },
         }
 

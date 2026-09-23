@@ -145,6 +145,141 @@ class SecretsRedactionTests(unittest.TestCase):
         self.assertIn("[REDACTED]", redact_secrets("api_key=sk-ABCDEFGHIJKLMNOPQRSTUV"))
 
 
+class FilesystemConfineTests(unittest.TestCase):
+    def test_gateway_rejects_path_escape_when_root_set(self) -> None:
+        from Data.modules.execution import ExecutionGateway, build_default_catalog
+        from Data.modules.execution.types import CapabilityRequest, CapabilityStatus
+        from Data.modules.function_runtime import FunctionRuntime, build_default_registry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ok.txt").write_text("safe", encoding="utf-8")
+            runtime = FunctionRuntime(build_default_registry(), max_concurrency=1, warm_cache_size=0)
+            try:
+                gateway = ExecutionGateway(
+                    catalog=build_default_catalog(),
+                    function_runtime=runtime,
+                    filesystem_root=root,
+                )
+                ok = gateway.execute(
+                    CapabilityRequest(
+                        capability_id="file.read",
+                        arguments={"path": str(root / "ok.txt")},
+                    )
+                )
+                self.assertEqual(ok.status, CapabilityStatus.COMPLETED)
+                bad = gateway.execute(
+                    CapabilityRequest(
+                        capability_id="file.read",
+                        arguments={"path": "/etc/passwd"},
+                    )
+                )
+                self.assertEqual(bad.status, CapabilityStatus.REJECTED)
+                self.assertEqual(bad.telemetry.get("reason"), "path_escape")
+            finally:
+                runtime.shutdown()
+
+    def test_browser_file_uri_confined(self) -> None:
+        from Data.modules.browser.dom_backend import LocalDomBrowserBackend
+        from Data.modules.browser.worker import BrowserAction, BrowserSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            page = root / "page.html"
+            page.write_text("<html><body><h1>ok</h1></body></html>", encoding="utf-8")
+            backend = LocalDomBrowserBackend(allow_network=False, filesystem_root=root)
+            session = BrowserSession(session_id="s1")
+            session, obs, meta = backend.apply(
+                session,
+                action=BrowserAction.NAVIGATE,
+                arguments={"url": page.resolve().as_uri()},
+            )
+            self.assertIn("ok", session.dom_text)
+            with self.assertRaises(PermissionError):
+                backend.apply(
+                    session,
+                    action=BrowserAction.NAVIGATE,
+                    arguments={"url": "file:///etc/passwd"},
+                )
+
+
+class ProcessTimeoutKillTests(unittest.TestCase):
+    def test_coding_run_tests_kills_on_timeout_and_confines_cwd(self) -> None:
+        from Data.functions.coding_run_tests import run as run_tests
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rejected = run_tests(
+                "Data/backend/tests/test_coding_agent.py",
+                timeout_seconds=5,
+                cwd="/",
+                workspace_root=str(root),
+            )
+            self.assertEqual(rejected["status"], "REJECTED")
+            self.assertIn("path_escape", rejected.get("error", ""))
+
+            sleeper_test = root / "test_sleep.py"
+            sleeper_test.write_text(
+                "import time\n\ndef test_sleep():\n    time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            timed = run_tests(
+                str(sleeper_test),
+                timeout_seconds=1,
+                cwd=str(root),
+                workspace_root=str(root),
+            )
+            self.assertEqual(timed["status"], "TIMEOUT")
+            self.assertTrue(timed.get("process_killed"))
+
+
+class McpEnvAndObservationTests(unittest.TestCase):
+    def test_mcp_env_does_not_inherit_parent_secrets(self) -> None:
+        import os
+
+        from Data.modules.mcp.secrets import build_process_env
+
+        os.environ["AWS_SECRET_ACCESS_KEY"] = "should-not-leak"
+        os.environ["LEVIATHAN_LLM_API_KEY"] = "should-not-leak-either"
+        try:
+            env, _ = build_process_env(env_public={"FOO": "bar"}, secret_refs={})
+            self.assertEqual(env.get("FOO"), "bar")
+            self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+            self.assertNotIn("LEVIATHAN_LLM_API_KEY", env)
+            self.assertIn("PATH", env)
+        finally:
+            os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+            os.environ.pop("LEVIATHAN_LLM_API_KEY", None)
+
+    def test_observation_output_redacted(self) -> None:
+        from Data.modules.observations import ObservationStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ObservationStore(Path(tmp) / "obs.db")
+            store.initialize()
+            obs, _effect = store.record_execution(
+                request_id="r1",
+                capability_id="file.read",
+                status="COMPLETED",
+                side_effects=["READ"],
+                output={"token": "sk-ABCDEFGHIJKLMNOPQRSTUVWX", "note": "ok"},
+                error="Authorization: Bearer leak-token-value-xyz",
+                metadata={"password": "hunter2"},
+            )
+            self.assertEqual(obs.output.get("token"), "[REDACTED]")
+            self.assertEqual(obs.output.get("note"), "ok")
+            self.assertNotIn("leak-token-value-xyz", obs.error or "")
+            self.assertEqual(obs.metadata.get("password"), "[REDACTED]")
+
+
+class AuthorityHonestyTests(unittest.TestCase):
+    def test_authority_profile_declared_not_enforced(self) -> None:
+        from Data.modules.approvals import DEFAULT_AUTHORITY_PROFILE
+
+        truth = DEFAULT_AUTHORITY_PROFILE.public_dict()["truth"]
+        self.assertEqual(truth["enforcement_class"], "declared_not_enforced")
+
+
 class DeploymentModeTests(unittest.TestCase):
     def test_local_single_user_preserved(self) -> None:
         settings = Settings.from_env()
@@ -155,6 +290,24 @@ class DeploymentModeTests(unittest.TestCase):
             self.assertTrue(payload["truth"]["local_single_user_preserved_without_enterprise_complexity"])
             self.assertFalse(payload["authentication_required"])
         self.assertTrue(payload["truth"]["configuration_is_not_enforcement_proof"])
+
+    def test_non_loopback_mutation_gate(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from Data.backend.main import _assert_loopback_mutation_allowed
+        from fastapi import HTTPException
+
+        req = MagicMock()
+        req.headers = {}
+        with patch("Data.backend.main.settings") as mock_settings:
+            mock_settings.runtime.loopback_only = False
+            with patch.dict("os.environ", {}, clear=False):
+                import os
+
+                os.environ.pop("LEVIATHAN_OPERATOR_TOKEN", None)
+                with self.assertRaises(HTTPException) as ctx:
+                    _assert_loopback_mutation_allowed(req)
+                self.assertEqual(ctx.exception.status_code, 403)
 
 
 if __name__ == "__main__":
