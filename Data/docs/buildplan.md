@@ -6,6 +6,34 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 1 Cognitive Runtime + Agents (restart-safe / executable) — PASS
+
+### Objective
+Make the Cognitive Runtime restart-safe and executable: full hydrate/resume, live Cognition → ExecutionGateway invocation, structured agent planner, DAG multi-agent execution, shared blackboard, and agent budgets — without a second orchestration stack.
+
+### Added / changed
+- **Cognition hydrate/resume (U122):** reconstruct TaskModel, plan, beliefs, working memory, decision, observations, actions, budgets from SQLite; `hydrate()` + `resume(hydrate=True)`
+- **INVOKE_CAPABILITY (U123):** real `CapabilityRequest` through ExecutionGateway with `trace_id` + idempotency key; observation ingest; idempotent replay on resume
+- **Structured plans (U125):** PlanStep `completion_criteria` + `resource_estimate`; ActionSelector can emit INVOKE after capability shortlist
+- **Agents (U142–U146):** `StructuredAgentPlanner` replaces keyword `plan()`; `MultiAgentCoordinator.run_dag` with dependencies/parallel/joins/cycle+deadlock detection; `AgentBlackboard`
+- **Tests:** `test_wave1_cognition_agents.py`
+- **Version:** `0.65.0-wave1-cognition`
+
+### EXTERNAL-FIRST review
+- Cognition/Agents remain control/strategy — all effects via ExecutionGateway / JobRuntime
+- DAG uses shared AgentRuntime workers; no private agent queues/DBs
+- Idempotent capability keys prevent duplicate effects after kill/resume
+
+### Explicitly NOT claimed
+- Full CognitiveRun authority/approval rehydration UI
+- Default-on replacement of legacy chat orchestration
+- Distributed remote agent fleet
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Wave 0 Durable Kernel / Architecture Guardrails — PASS
 
 ### Objective

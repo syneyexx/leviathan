@@ -24,6 +24,17 @@ from .errors import (
     CognitionTransitionInvalid,
 )
 from .experience import ExperienceStore
+from .hydration import (
+    action_from_dict,
+    beliefs_from_dict,
+    decision_from_parts,
+    observation_from_dict,
+    plan_from_dict,
+    status_from_value,
+    task_from_dict,
+    usage_from_dict,
+    working_memory_from_dict,
+)
 from .loop_detection import LoopDetector
 from .meta_controller import MetaController, MetaDecision
 from .perception import PerceptionService, PerceptionSnapshot
@@ -330,7 +341,7 @@ class CognitiveRuntime:
         return list(state.events)
 
     def resume(self, run_id: str, *, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
-        state = self._require(run_id)
+        state = self._require(run_id, hydrate=True)
         if state.status in TERMINAL_STATUSES and state.status != CognitiveRunStatus.BLOCKED:
             return state.public_status()
         if state.status == CognitiveRunStatus.WAITING_APPROVAL:
@@ -338,8 +349,15 @@ class CognitiveRuntime:
         elif state.status == CognitiveRunStatus.BLOCKED:
             # Reopen blocked as replanning only when explicitly resumed.
             state.status = CognitiveRunStatus.REPLANNING
-        self._emit(state, "resumed", {"from": state.status.value})
+        self._emit(state, "resumed", {"from": state.status.value, "hydrated": True})
         return self.run(run_id, history=history)
+
+    def hydrate(self, run_id: str) -> dict[str, Any]:
+        """Load durable cognitive state into the in-process runtime (U122)."""
+        state = self._hydrate_from_store(run_id)
+        self._runs[run_id] = state
+        self._emit(state, "hydrated", {"status": state.status.value})
+        return state.public_status()
 
     def health(self) -> dict[str, Any]:
         active = [
@@ -356,26 +374,92 @@ class CognitiveRuntime:
             "active_runs": len(active),
             "tracked_runs": len(self._runs),
             "delegation_handlers": self.delegation.available(),
+            "gateway_wired": self.execution_gateway is not None,
             "truth": {
                 "cognition_does_not_bypass_gateway": True,
                 "neuro_is_advisory": True,
+                "hydrate_reconstructs_live_state": True,
             },
         }
 
     # --- internals ---
 
-    def _require(self, run_id: str) -> CognitiveRunState:
+    def _require(self, run_id: str, *, hydrate: bool = False) -> CognitiveRunState:
         state = self._runs.get(run_id)
-        if state is None and self.store is not None:
+        if state is not None:
+            return state
+        if self.store is not None:
             row = self.store.get_run(run_id)
             if row is None:
                 raise KeyError(f"Unknown cognitive run: {run_id}")
-            # Minimal hydrate for status/events; full resume requires live state.
+            if hydrate:
+                state = self._hydrate_from_store(run_id)
+                self._runs[run_id] = state
+                return state
             raise KeyError(
-                f"Cognitive run {run_id} exists in DB but is not loaded in this process"
+                f"Cognitive run {run_id} exists in DB but is not loaded in this process; "
+                "call hydrate()/resume() to reconstruct live state"
             )
-        if state is None:
+        raise KeyError(f"Unknown cognitive run: {run_id}")
+
+    def _hydrate_from_store(self, run_id: str) -> CognitiveRunState:
+        if self.store is None:
             raise KeyError(f"Unknown cognitive run: {run_id}")
+        row = self.store.get_run(run_id)
+        if row is None:
+            raise KeyError(f"Unknown cognitive run: {run_id}")
+        result = dict(row.get("result") or {})
+        checkpoint = dict(result.get("checkpoint") or {})
+        task = task_from_dict(row.get("task"), run_id=run_id)
+        decision = decision_from_parts(
+            mode=row.get("mode"),
+            strategy=row.get("strategy"),
+            budgets=row.get("budgets"),
+            decision_blob=checkpoint.get("decision") or result.get("decision"),
+        )
+        beliefs = self.store.load_beliefs(run_id)
+        if not beliefs.items and row.get("beliefs"):
+            beliefs = beliefs_from_dict(row.get("beliefs"))
+        working_memory = working_memory_from_dict(row.get("working_memory"))
+        plan = plan_from_dict(row.get("plan"))
+        observations = [
+            observation_from_dict(item)
+            for item in (checkpoint.get("observations") or result.get("observations") or [])
+            if isinstance(item, dict)
+        ]
+        actions = [
+            action_from_dict(item)
+            for item in (checkpoint.get("actions") or result.get("actions") or [])
+            if isinstance(item, dict)
+        ]
+        usage = usage_from_dict(row.get("usage") or checkpoint.get("usage"))
+        status = status_from_value(row.get("status"))
+        # Interrupted non-terminal runs remain resumable; reconcile_interrupted may mark FAILED.
+        state = CognitiveRunState(
+            run_id=run_id,
+            task=task,
+            status=status,
+            decision=decision,
+            plan=plan,
+            beliefs=beliefs,
+            working_memory=working_memory,
+            observations=observations,
+            actions=actions,
+            usage=usage,
+            response_text=result.get("response_text"),
+            cancel_requested=bool(checkpoint.get("cancel_requested") or False),
+            cancel_acknowledged=bool(checkpoint.get("cancel_acknowledged") or False),
+            shadow=bool(row.get("shadow")),
+            error=row.get("error"),
+            verification_passed=checkpoint.get("verification_passed", result.get("verification_passed")),
+            context_public=result.get("context"),
+            completion=result.get("completion"),
+            experience=result.get("experience"),
+            steering=list(checkpoint.get("steering") or []),
+            trace_id=row.get("trace_id"),
+        )
+        events = self.store.list_events(run_id)
+        state.events = list(events)
         return state
 
     def _transition(self, state: CognitiveRunState, target: CognitiveRunStatus) -> None:
@@ -702,19 +786,91 @@ class CognitiveRuntime:
                     success=False,
                     error="COGNITION_CAPABILITY_UNAVAILABLE",
                 )
+            capability_id = action.capability_id or str(action.arguments.get("capability_id") or "")
+            if not capability_id:
+                return CognitiveObservation(
+                    kind=CognitiveObservationKind.ERROR,
+                    observation_id=str(uuid.uuid4()),
+                    summary="INVOKE_CAPABILITY missing capability_id",
+                    success=False,
+                    error="COGNITION_CAPABILITY_ID_REQUIRED",
+                )
+            # Idempotent replay: if this action_id already produced a TOOL_RESULT, reuse it.
+            prior = next(
+                (
+                    o
+                    for o in state.observations
+                    if o.kind == CognitiveObservationKind.TOOL_RESULT
+                    and o.payload.get("action_id") == action.action_id
+                    and o.payload.get("capability_id") == capability_id
+                ),
+                None,
+            )
+            if prior is not None:
+                self._emit(
+                    state,
+                    "capability_idempotent_replay",
+                    {"action_id": action.action_id, "capability_id": capability_id},
+                )
+                return prior
+
             state.usage.tool_calls += 1
             self._transition(state, CognitiveRunStatus.EXECUTING)
-            # Gateway remains authority — cognition never bypasses it.
-            # Actual invoke left to callers wiring CapabilityRequest; here we record intent honesty.
-            self._transition(state, CognitiveRunStatus.OBSERVING)
-            return CognitiveObservation(
-                kind=CognitiveObservationKind.TOOL_RESULT,
-                observation_id=str(uuid.uuid4()),
-                summary="capability invoke must go through ExecutionGateway (not executed inline without request wiring)",
-                success=False,
-                error="invoke_requires_explicit_gateway_request",
-                payload={"capability_id": action.capability_id, "arguments": action.arguments},
-            )
+            try:
+                from Data.modules.execution import CapabilityRequest
+
+                request = CapabilityRequest(
+                    capability_id=capability_id,
+                    arguments=dict(action.arguments),
+                    request_id=action.action_id,
+                    run_id=state.run_id,
+                    requested_by="cognition",
+                    trace_id=state.trace_id,
+                    idempotency_key=f"cog:{state.run_id}:{action.action_id}",
+                    approval_id=action.arguments.get("approval_id"),
+                )
+                self._emit(
+                    state,
+                    "capability_invoked",
+                    {
+                        "capability_id": capability_id,
+                        "request_id": action.action_id,
+                        "trace_id": state.trace_id,
+                    },
+                )
+                result = self.execution_gateway.execute(request)
+                result_dict = result.public_dict() if hasattr(result, "public_dict") else dict(result)
+                status_value = str(result_dict.get("status") or "")
+                success = status_value in {"COMPLETED", "OK", "SUCCESS"}
+                self._transition(state, CognitiveRunStatus.OBSERVING)
+                return CognitiveObservation(
+                    kind=CognitiveObservationKind.TOOL_RESULT,
+                    observation_id=str(uuid.uuid4()),
+                    summary=(
+                        f"capability {capability_id} → {status_value}"
+                        if status_value
+                        else f"capability {capability_id} executed"
+                    ),
+                    source_type=EpistemicType.TOOL_OBSERVATION,
+                    success=success,
+                    error=result_dict.get("error"),
+                    payload={
+                        "action_id": action.action_id,
+                        "capability_id": capability_id,
+                        "result": result_dict,
+                        "idempotency_key": f"cog:{state.run_id}:{action.action_id}",
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._transition(state, CognitiveRunStatus.OBSERVING)
+                return CognitiveObservation(
+                    kind=CognitiveObservationKind.ERROR,
+                    observation_id=str(uuid.uuid4()),
+                    summary=f"capability invoke failed: {exc}",
+                    success=False,
+                    error=str(exc),
+                    payload={"action_id": action.action_id, "capability_id": capability_id},
+                )
 
         if kind == CognitiveActionKind.VERIFY:
             self._transition(state, CognitiveRunStatus.VERIFYING)
@@ -976,6 +1132,28 @@ class CognitiveRuntime:
         if self.store is None:
             return
         try:
+            checkpoint = {
+                "observations": [o.public_dict() for o in state.observations],
+                "actions": [a.public_dict() for a in state.actions],
+                "decision": state.decision.public_dict() if state.decision else None,
+                "cancel_requested": state.cancel_requested,
+                "cancel_acknowledged": state.cancel_acknowledged,
+                "verification_passed": state.verification_passed,
+                "steering": list(state.steering),
+                "usage": state.usage.public_dict(),
+                "cursor_iteration": state.usage.iterations,
+            }
+            result_json = {
+                "response_text": state.response_text,
+                "completion": state.completion,
+                "experience": state.experience,
+                "context": state.context_public,
+                "checkpoint": checkpoint,
+                "observations": checkpoint["observations"],
+                "actions": checkpoint["actions"],
+                "decision": checkpoint["decision"],
+                "verification_passed": state.verification_passed,
+            }
             self.store.update_run(
                 state.run_id,
                 status=state.status,
@@ -984,14 +1162,7 @@ class CognitiveRuntime:
                 working_memory_json=state.working_memory.public_dict(),
                 budgets_json=state.decision.budgets.public_dict() if state.decision else None,
                 usage_json=state.usage.public_dict(),
-                result_json={
-                    "response_text": state.response_text,
-                    "completion": state.completion,
-                    "experience": state.experience,
-                    "context": state.context_public,
-                }
-                if final or state.response_text or state.completion
-                else None,
+                result_json=result_json,
                 mode=state.decision.mode.value if state.decision else None,
                 strategy=state.decision.strategy.value if state.decision else None,
                 error=state.error,

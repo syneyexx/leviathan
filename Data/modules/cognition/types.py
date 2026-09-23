@@ -364,6 +364,9 @@ class PlanStep:
     likely_capabilities: tuple[str, ...] = ()
     risk_class: RiskClass = RiskClass.LOW
     status: str = "PENDING"
+    # Wave 1 structured plan extensions (U125)
+    resource_estimate: dict[str, Any] = field(default_factory=dict)
+    completion_criteria: tuple[str, ...] = ()
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -375,6 +378,8 @@ class PlanStep:
             "likely_capabilities": list(self.likely_capabilities),
             "risk_class": self.risk_class.value,
             "status": self.status,
+            "resource_estimate": dict(self.resource_estimate),
+            "completion_criteria": list(self.completion_criteria),
         }
 
 
