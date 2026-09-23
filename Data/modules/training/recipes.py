@@ -62,6 +62,10 @@ NEURO_RECIPES: tuple[TrainingRecipe, ...] = (
         data_sources=("ModelData/reasoning", "verification_reports"),
         requires_verification=True,
         freezes_base_model=True,
+        metadata={
+            "operational": False,
+            "truth": {"not_operational_until_objective_trainer_exists": True},
+        },
     ),
     TrainingRecipe(
         recipe_id="pref_dpo_v1",
@@ -72,7 +76,16 @@ NEURO_RECIPES: tuple[TrainingRecipe, ...] = (
         data_sources=("verification_reports", "human_preferences"),
         requires_verification=True,
         freezes_base_model=True,
-        metadata={"reference_model_required": True, "method": "dpo"},
+        metadata={
+            "reference_model_required": True,
+            "method": "dpo",
+            "operational_objective": "dpo_micro",
+            "hf_production_dpo": False,
+            "truth": {
+                "registered_is_not_trained": True,
+                "micro_dpo_is_not_hf_production_dpo": True,
+            },
+        },
     ),
     TrainingRecipe(
         recipe_id="reward_model_v1",
@@ -83,7 +96,12 @@ NEURO_RECIPES: tuple[TrainingRecipe, ...] = (
         data_sources=("human_preferences", "preference_records"),
         requires_verification=False,
         freezes_base_model=True,
-        metadata={"held_out_calibration_required": True, "method": "reward"},
+        metadata={
+            "held_out_calibration_required": True,
+            "method": "reward",
+            "operational": False,
+            "truth": {"not_operational_until_objective_trainer_exists": True},
+        },
     ),
     TrainingRecipe(
         recipe_id="contrastive_memory_v1",
@@ -190,7 +208,12 @@ class FixtureRecipeTrainer:
     ) -> Mapping[str, Any]:
         if self.fail:
             raise RuntimeError("fixture trainer forced failure")
-        # Process-supervision / DPO / InfoNCE / synthetic honesty gates.
+        # Round 4: preference/DPO must use the real DPO objective — never fabricate DPO metrics.
+        if recipe.objective == "preference_optimization" or str(recipe.loss).upper() == "DPO":
+            from .dpo import DpoRecipeTrainer
+
+            return DpoRecipeTrainer().execute(recipe, samples=samples, config=config)
+        # Process-supervision / InfoNCE / synthetic honesty gates.
         approved = [s for s in samples if s.get("critic_approved") or s.get("verification_passed")]
         if recipe.requires_verification and not approved and samples:
             raise RuntimeError("recipe requires verification-approved samples; none present")
@@ -208,10 +231,12 @@ class FixtureRecipeTrainer:
             "loss": round(loss_proxy, 6),
             "objective": recipe.objective,
             "fixture": True,
+            "operational": bool(recipe.metadata.get("operational", True)),
             "config": dict(config or {}),
             "truth": {
                 "fixture_metrics_are_not_gpu_training": True,
                 "no_fabricated_production_metrics": True,
+                "registered_is_not_trained": recipe.metadata.get("operational") is False,
             },
         }
 

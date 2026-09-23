@@ -43,7 +43,8 @@ def probe_training_capabilities() -> TrainingCapabilities:
     )
     can_lora = len(missing_lora) == 0
     can_qlora = can_lora and ok("bitsandbytes")
-    # DPO durable recipe + fixture trainer exist; full GPU DPO worker is not claimed.
+    # Round 4: DPO micro objective is always available (pure Python).
+    # HF/GPU DPO vertical slice is NOT claimed as production-ready.
     can_dpo = True
     notes: list[str] = []
     if not can_lora:
@@ -54,7 +55,12 @@ def probe_training_capabilities() -> TrainingCapabilities:
     if can_lora and not can_qlora:
         notes.append("QLoRA unavailable — bitsandbytes not installed.")
     notes.append(
-        "DPO recipe/fixture path available; GPU DPO vertical slice not claimed as production-ready."
+        "DPO: micro end-to-end objective (dpo_micro) is operational for preference pairs; "
+        "HF/GPU production DPO is not claimed."
+    )
+    notes.append(
+        "Reward-model and process-supervision recipes remain registered≠trained until "
+        "their own objective trainers exist."
     )
 
     ready = can_lora or True  # fixture always available
