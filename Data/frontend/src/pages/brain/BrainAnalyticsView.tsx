@@ -2,6 +2,14 @@ import { useMemo, useState } from "react";
 import { buildAnalytics, colorForType, type LiveBrainEdge, type LiveBrainNode } from "./brain-live";
 import { Donut, Heatmap, LineChart, Panel, Spark } from "./brain-shared";
 
+type AnalyticsKpi = {
+  label: string;
+  value: string;
+  note: string;
+  spark: number[];
+  suffix?: string;
+};
+
 function formatCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
@@ -119,13 +127,13 @@ export function BrainAnalyticsView({ nodes, edges, stats }: { nodes: LiveBrainNo
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 6);
   }, [nodes]);
 
-  const kpis = [
-    { label: "Total Nodes", value: formatCount(analytics.nodeCount), note: `${formatCount(datedSeries.daily.slice(-30).reduce((sum, value) => sum + value, 0))} dated nodes (30d)`, spark: movingSpark(datedSeries.cumulative), delta: null },
-    { label: "Relationship Density", value: density < 0.01 ? density.toFixed(4) : density.toFixed(2), suffix: "%", note: `${formatCount(analytics.edgeCount)} total connections`, spark: [], delta: null },
-    { label: "Retrieval Quality", value: "—", note: "No retrieval telemetry in graph projection", spark: [], delta: null },
-    { label: "Memory Growth", value: memoryGrowth == null ? "—" : `${memoryGrowth >= 0 ? "+" : ""}${memoryGrowth.toFixed(1)}%`, note: memoryNodes.length ? `${formatCount(memoryNodes.length)} memory nodes` : "No memory nodes in projection", spark: [], delta: null },
-    { label: "Avg. Query Latency", value: averageLatency == null ? "—" : Math.round(averageLatency).toLocaleString(), suffix: averageLatency == null ? undefined : " ms", note: averageLatency == null ? "No latency telemetry in graph projection" : `${latencyValues.length} measured nodes`, spark: movingSpark(latencyValues), delta: null },
-    { label: "Confidence Score", value: averageConfidence == null ? "—" : `${(averageConfidence * 100).toFixed(1)}%`, note: averageConfidence == null ? "No confidence telemetry in graph projection" : `${confidenceValues.length} scored nodes`, spark: movingSpark(confidenceValues), delta: null },
+  const kpis: AnalyticsKpi[] = [
+    { label: "Total Nodes", value: formatCount(analytics.nodeCount), note: `${formatCount(datedSeries.daily.slice(-30).reduce((sum, value) => sum + value, 0))} dated nodes (30d)`, spark: movingSpark(datedSeries.cumulative) },
+    { label: "Relationship Density", value: density < 0.01 ? density.toFixed(4) : density.toFixed(2), suffix: "%", note: `${formatCount(analytics.edgeCount)} total connections`, spark: [] },
+    { label: "Retrieval Quality", value: "—", note: "No retrieval telemetry in graph projection", spark: [] },
+    { label: "Memory Growth", value: memoryGrowth == null ? "—" : `${memoryGrowth >= 0 ? "+" : ""}${memoryGrowth.toFixed(1)}%`, note: memoryNodes.length ? `${formatCount(memoryNodes.length)} memory nodes` : "No memory nodes in projection", spark: [] },
+    { label: "Avg. Query Latency", value: averageLatency == null ? "—" : Math.round(averageLatency).toLocaleString(), suffix: averageLatency == null ? undefined : " ms", note: averageLatency == null ? "No latency telemetry in graph projection" : `${latencyValues.length} measured nodes`, spark: movingSpark(latencyValues) },
+    { label: "Confidence Score", value: averageConfidence == null ? "—" : `${(averageConfidence * 100).toFixed(1)}%`, note: averageConfidence == null ? "No confidence telemetry in graph projection" : `${confidenceValues.length} scored nodes`, spark: movingSpark(confidenceValues) },
   ];
 
   const maxTypeCount = Math.max(1, ...typeRows.map(([, count]) => count));
