@@ -1,6 +1,16 @@
-"""Evaluation harness — honest PASSED/FAILED/UNMEASURED outcomes + Wave 2 platform."""
+"""Evaluation harness — honest PASSED/FAILED/UNMEASURED outcomes + Wave 2/5 platform."""
 
+from .ablations import ABLATION_FEATURES, AblationReport, run_all_ablations, run_feature_ablation
+from .assistant_benchmark import (
+    AssistantBenchmarkRunner,
+    AssistantTask,
+    TaskFamily,
+    TaskRunMetrics,
+    TaskRunResult,
+    default_assistant_tasks,
+)
 from .harness import EvaluationHarness
+from .paired import PairedEvaluationReport, run_paired_evaluation
 from .platform import EvaluationPlatform
 from .scorecard import build_scorecard, scorecard_from_report_dicts
 from .store import EvaluationStore, seed_default_regressions
@@ -19,6 +29,10 @@ from .types import (
 )
 
 __all__ = [
+    "ABLATION_FEATURES",
+    "AblationReport",
+    "AssistantBenchmarkRunner",
+    "AssistantTask",
     "EvalCase",
     "EvalCaseResult",
     "EvalOutcome",
@@ -28,12 +42,20 @@ __all__ = [
     "EvaluationStore",
     "JudgmentKind",
     "MeasurementState",
+    "PairedEvaluationReport",
     "RegressionCase",
     "Scorecard",
     "ScorecardEntry",
+    "TaskFamily",
+    "TaskRunMetrics",
+    "TaskRunResult",
     "build_scorecard",
+    "default_assistant_tasks",
     "measurement_is_pass",
     "outcome_to_measurement",
+    "run_all_ablations",
+    "run_feature_ablation",
+    "run_paired_evaluation",
     "scorecard_from_report_dicts",
     "seed_default_regressions",
 ]

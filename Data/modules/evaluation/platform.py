@@ -160,6 +160,156 @@ class EvaluationPlatform:
             },
         }
 
+    def run_assistant_benchmark(self, *, persist: bool = True) -> dict[str, Any]:
+        """Round 5: end-to-end assistant benchmark across task families."""
+        from .assistant_benchmark import AssistantBenchmarkRunner, default_assistant_tasks
+        from .types import EvalCaseResult, EvalOutcome, EvalReport, JudgmentKind, MeasurementState
+
+        runner = AssistantBenchmarkRunner(profile="leviathan")
+        runs = runner.run_suite(default_assistant_tasks())
+        results: list[EvalCaseResult] = []
+        for run in runs:
+            outcome = EvalOutcome.PASSED if run.success else EvalOutcome.FAILED
+            if run.metrics.false_success:
+                outcome = EvalOutcome.FAILED
+            results.append(
+                EvalCaseResult(
+                    case_id=run.task_id,
+                    outcome=outcome,
+                    detail=run.detail,
+                    judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                    measurement=MeasurementState.PASS
+                    if outcome == EvalOutcome.PASSED
+                    else MeasurementState.FAIL,
+                    artifact_refs=(run.run_id,),
+                    component="assistant",
+                )
+            )
+        measured = EvalReport(
+            suite_id="assistant_benchmark",
+            name="assistant_benchmark",
+            results=tuple(results),
+            summary={
+                "passed": sum(1 for r in results if r.outcome == EvalOutcome.PASSED),
+                "failed": sum(1 for r in results if r.outcome == EvalOutcome.FAILED),
+                "unmeasured": 0,
+                "error": 0,
+                "total": len(results),
+            },
+            suite_version="1",
+            component_scope=("assistant",),
+            system_level=True,
+            artifact_refs=tuple(r.run_id for r in runs),
+        )
+        if persist and self.enabled:
+            measured = self.store.save_report(measured)
+        return {
+            "report": measured.public_dict(),
+            "runs": [r.public_dict() for r in runs],
+            "truth": {
+                "end_to_end_assistant_benchmark": True,
+                "metrics_tracked": True,
+            },
+        }
+
+    def run_paired_evaluation(self, *, persist: bool = False) -> dict[str, Any]:
+        from .paired import run_paired_evaluation
+
+        paired = run_paired_evaluation()
+        payload = paired.public_dict()
+        if persist and self.enabled:
+            from .types import EvalCase, EvalCaseResult, EvalOutcome, EvalReport, JudgmentKind, MeasurementState
+
+            results = []
+            for delta in paired.deltas:
+                if delta.regressed:
+                    outcome, measurement = EvalOutcome.FAILED, MeasurementState.FAIL
+                elif delta.improved or delta.leviathan_success:
+                    outcome, measurement = EvalOutcome.PASSED, MeasurementState.PASS
+                else:
+                    outcome, measurement = EvalOutcome.FAILED, MeasurementState.FAIL
+                results.append(
+                    EvalCaseResult(
+                        case_id=f"paired:{delta.task_id}",
+                        outcome=outcome,
+                        detail=delta.detail,
+                        judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                        measurement=measurement,
+                        paired_with=f"baseline:{delta.task_id}",
+                        component="assistant",
+                    )
+                )
+            report = EvalReport(
+                suite_id="paired_assistant",
+                name="paired_baseline_vs_leviathan",
+                results=tuple(results),
+                summary={
+                    "passed": sum(1 for r in results if r.outcome == EvalOutcome.PASSED),
+                    "failed": sum(1 for r in results if r.outcome == EvalOutcome.FAILED),
+                    "unmeasured": 0,
+                    "error": 0,
+                    "total": len(results),
+                },
+                suite_version="1",
+                component_scope=("assistant",),
+                system_level=True,
+            )
+            saved = self.store.save_report(report)
+            payload["persisted_report_id"] = saved.report_id
+            # Surface regressions explicitly — never hide in aggregate.
+            payload["regressions"] = [
+                d.public_dict() for d in paired.deltas if d.regressed
+            ]
+        return payload
+
+    def run_ablations(self, *, persist: bool = False) -> dict[str, Any]:
+        from .ablations import run_all_ablations
+
+        reports = run_all_ablations()
+        payload = {
+            "ablations": [r.public_dict() for r in reports],
+            "truth": {
+                "feature_flag_is_not_ablation_result": True,
+                "raw_run_evidence_stored": True,
+            },
+        }
+        if persist and self.enabled:
+            from .types import EvalCaseResult, EvalOutcome, EvalReport, JudgmentKind, MeasurementState
+
+            results = []
+            for abl in reports:
+                # Both conditions must be measured; PASS only if with/without executed.
+                ok = abl.with_feature.measured and abl.without_feature.measured
+                results.append(
+                    EvalCaseResult(
+                        case_id=f"ablation:{abl.feature}",
+                        outcome=EvalOutcome.PASSED if ok else EvalOutcome.UNMEASURED,
+                        detail=f"delta_success={abl.delta_success}",
+                        judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                        measurement=MeasurementState.PASS if ok else MeasurementState.UNMEASURED,
+                        artifact_refs=(abl.report_id,),
+                        component="ablation",
+                    )
+                )
+            report = EvalReport(
+                suite_id="ablations",
+                name="feature_ablations",
+                results=tuple(results),
+                summary={
+                    "passed": sum(1 for r in results if r.outcome == EvalOutcome.PASSED),
+                    "failed": 0,
+                    "unmeasured": sum(1 for r in results if r.outcome == EvalOutcome.UNMEASURED),
+                    "error": 0,
+                    "total": len(results),
+                },
+                suite_version="1",
+                component_scope=("ablation",),
+                system_level=True,
+            )
+            saved = self.store.save_report(report)
+            payload["persisted_report_id"] = saved.report_id
+        return payload
+
     def public_dict(self) -> dict[str, Any]:
         scorecard = self.build_system_scorecard()
         return {
