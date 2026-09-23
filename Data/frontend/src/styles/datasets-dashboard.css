@@ -592,9 +592,21 @@
 }
 
 .lv-dh-status.is-processing {
-  color: #c084fc;
-  border-color: rgba(192, 132, 252, 0.4);
-  background: rgba(192, 132, 252, 0.08);
+  color: #d6a957;
+  border-color: rgba(214, 169, 87, 0.4);
+  background: rgba(214, 169, 87, 0.08);
+}
+
+.lv-dh-status.is-failed {
+  color: #f07178;
+  border-color: rgba(240, 113, 120, 0.4);
+  background: rgba(240, 113, 120, 0.08);
+}
+
+.lv-dh-status.is-cancelled {
+  color: #99958d;
+  border-color: rgba(153, 149, 141, 0.4);
+  background: rgba(153, 149, 141, 0.08);
 }
 
 .lv-dh-dot {

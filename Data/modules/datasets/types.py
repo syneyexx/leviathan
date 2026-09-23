@@ -47,6 +47,7 @@ class DetectedFormat(str, Enum):
     TSV = "tsv"
     TXT = "txt"
     MD = "md"
+    PARQUET = "parquet"
     UNKNOWN = "unknown"
 
 

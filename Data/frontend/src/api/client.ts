@@ -942,7 +942,7 @@ export const api = {
 
   importDatasetHuggingFace(payload: {
     repositoryId: string;
-    filename: string;
+    filename?: string | null;
     revision?: string;
     name?: string | null;
     description?: string;

@@ -21,11 +21,29 @@ from .contamination import scan_contamination
 from .dedupe import exact_dedupe
 from .export import export_jsonl, preview_jsonl
 from .formats import detect_format
-from .huggingface import HfDownloadCheckpoint, download_hf_file, list_hf_dataset_files
+from .huggingface import (
+    HfDownloadCheckpoint,
+    discover_hf_repository,
+    download_hf_file,
+    download_hf_repository,
+    infer_config_from_path,
+    infer_split_from_path,
+    list_hf_dataset_files,
+    load_repo_manifest,
+    resolve_hf_token,
+    safe_dest_path,
+    write_repo_manifest,
+)
 from .importers import copy_immutable_raw, inspect_local_file, reject_traversal_components, resolve_import_path
 from .indexing import index_version_file
 from .jobs import DatasetJobRunner
-from .materialize import load_materialized_jsonl, materialize_from_raw, write_canonical_jsonl, write_manifest
+from .materialize import (
+    load_materialized_jsonl,
+    materialize_from_raw,
+    materialize_from_sources,
+    write_canonical_jsonl,
+    write_manifest,
+)
 from .mixtures import MixtureComponent, build_mixture_manifest
 from .packing_sim import simulate_packing
 from .pii import scan_records_pii
@@ -194,7 +212,7 @@ class DatasetService:
         self,
         *,
         repository_id: str,
-        filename: str,
+        filename: str | None = None,
         revision: str = "main",
         name: str | None = None,
         description: str = "",
@@ -203,29 +221,49 @@ class DatasetService:
         materialize: bool = True,
         dataset_id: str | None = None,
     ) -> DatasetJob:
-        if ".." in Path(filename.replace("\\", "/")).parts:
+        """Enqueue Hugging Face import.
+
+        ``filename`` omitted/null → full repository import (preferred).
+        ``filename`` set → legacy single-file import (backward compatible).
+        """
+        repo = repository_id.strip().strip("/")
+        if not repo:
+            raise DatasetError("repositoryId is required", code="invalid_request", http_status=400)
+        legacy_file = (filename or "").strip() or None
+        if legacy_file and ".." in Path(legacy_file.replace("\\", "/")).parts:
             raise DatasetError("Parent traversal refused", code="path_traversal", http_status=400)
         if dataset_id:
             ds = self.get_dataset(dataset_id)
         else:
+            uri = (
+                f"hf://datasets/{repo}@{revision}/{legacy_file}"
+                if legacy_file
+                else f"hf://datasets/{repo}@{revision}"
+            )
             ds = self.store.create_dataset(
-                name=name or f"{repository_id}/{filename}",
+                name=name or (f"{repo}/{legacy_file}" if legacy_file else repo),
                 source_type=SourceType.HUGGINGFACE,
                 description=description,
                 license=license,
-                original_uri=f"hf://datasets/{repository_id}@{revision}/{filename}",
-                original_filename=Path(filename).name,
+                original_uri=uri,
+                original_filename=Path(legacy_file).name if legacy_file else None,
                 status=DatasetStatus.IMPORTING,
-                provenance={"repositoryId": repository_id, "revision": revision, "filename": filename},
+                provenance={
+                    "repositoryId": repo,
+                    "revision": revision,
+                    **({"filename": legacy_file} if legacy_file else {"mode": "repository"}),
+                },
             )
-        # Never persist raw token in config — redact if present
-        safe_config = {
-            "repositoryId": repository_id,
-            "filename": filename,
+        # Never persist raw token in config
+        safe_config: dict[str, Any] = {
+            "repositoryId": repo,
             "revision": revision,
             "materialize": materialize,
-            "hasToken": bool(token),
+            "hasToken": bool(token) or bool(resolve_hf_token(None)),
+            "mode": "file" if legacy_file else "repository",
         }
+        if legacy_file:
+            safe_config["filename"] = legacy_file
         job = self.store.create_job(
             job_type=DatasetJobType.IMPORT_HF,
             dataset_id=ds.dataset_id,
@@ -537,29 +575,115 @@ class DatasetService:
 
     def _handle_import_hf(self, job: DatasetJob) -> dict[str, Any]:
         assert job.dataset_id
-        repo = str(job.config.get("repositoryId") or "")
-        filename = str(job.config.get("filename") or "")
-        revision = str(job.config.get("revision") or "main")
+        try:
+            filename = (job.config.get("filename") or "").strip() or None
+            if filename:
+                return self._handle_import_hf_legacy_file(job, filename=filename)
+            return self._handle_import_hf_repository(job)
+        except DatasetError as exc:
+            if job.dataset_id and exc.code != "cancelled":
+                self.store.update_dataset(job.dataset_id, status=DatasetStatus.FAILED)
+            raise
+        except Exception:
+            if job.dataset_id:
+                self.store.update_dataset(job.dataset_id, status=DatasetStatus.FAILED)
+            raise
+
+    def _hf_token_for_job(self, job: DatasetJob) -> str | None:
         token = self._hf_tokens.pop(job.job_id, None)
+        return resolve_hf_token(token)
+
+    def _throttled_job_progress(self, job_id: str) -> Any:
+        import time as _time
+
+        state = {"last": 0.0}
+
+        def on_progress(info: dict[str, Any]) -> None:
+            now = _time.monotonic()
+            phase = str(info.get("phase") or "downloading")
+            force = phase in {
+                "discovering",
+                "planning",
+                "download_completed",
+                "materializing",
+                "validating",
+                "finalizing",
+                "failed",
+                "cancelled",
+                "rate_limited",
+                "file_completed",
+                "hf.download.file_completed",
+            }
+            if not force and (now - state["last"]) < 0.75:
+                return
+            state["last"] = now
+            bytes_total = info.get("bytesTotal") or info.get("totalBytes")
+            bytes_done = info.get("bytesDownloaded")
+            progress = None
+            if bytes_total and bytes_done is not None:
+                progress = min(0.9, float(bytes_done) / max(1, float(bytes_total)))
+            elif info.get("filesTotal") and info.get("filesCompleted") is not None:
+                progress = min(0.9, float(info["filesCompleted"]) / max(1, float(info["filesTotal"])))
+            checkpoint = {
+                k: info[k]
+                for k in (
+                    "filesTotal",
+                    "filesCompleted",
+                    "filesFailed",
+                    "bytesTotal",
+                    "bytesDownloaded",
+                    "bytesPerSecond",
+                    "etaSeconds",
+                    "workers",
+                    "chunkSize",
+                    "rateLimitEvents",
+                    "filename",
+                    "shardIndex",
+                    "shardsTotal",
+                    "relativePath",
+                )
+                if k in info
+            }
+            if "manifest" in info and isinstance(info["manifest"], dict):
+                # Persist compact progress — full manifest is on disk.
+                m = info["manifest"]
+                checkpoint["manifestSummary"] = {
+                    "filesTotal": m.get("filesTotal"),
+                    "filesCompleted": m.get("filesCompleted"),
+                    "filesFailed": m.get("filesFailed"),
+                    "bytesTotal": m.get("bytesTotal"),
+                    "bytesDownloaded": m.get("bytesDownloaded"),
+                    "phase": m.get("phase"),
+                    "resolvedRevision": m.get("resolvedRevision"),
+                }
+            if "checkpoint" in info and isinstance(info["checkpoint"], dict):
+                checkpoint["file"] = info["checkpoint"]
+            self.store.update_job(
+                job_id,
+                checkpoint=checkpoint,
+                phase=phase,
+                progress=progress,
+            )
+
+        return on_progress
+
+    def _handle_import_hf_legacy_file(self, job: DatasetJob, *, filename: str) -> dict[str, Any]:
+        """Legacy single-file HF import (backward compatible)."""
+        assert job.dataset_id
+        repo = str(job.config.get("repositoryId") or "")
+        revision = str(job.config.get("revision") or "main")
+        token = self._hf_token_for_job(job)
         dirs = self._dataset_dirs(job.dataset_id)
-        dest = dirs["raw"] / Path(filename).name
-        cp = HfDownloadCheckpoint.from_dict(job.checkpoint or {})
+        dest = safe_dest_path(dirs["raw"], filename)
+        file_cp = job.checkpoint.get("file") if isinstance(job.checkpoint, dict) else None
+        cp = HfDownloadCheckpoint.from_dict(file_cp if isinstance(file_cp, dict) else (job.checkpoint or {}))
         if not cp.repository_id:
             cp = HfDownloadCheckpoint(repository_id=repo, revision=revision, filename=filename)
 
         def cancel() -> bool:
             return self.runner.is_cancel_requested(job.job_id)
 
-        def on_progress(info: dict[str, Any]) -> None:
-            self.store.update_job(
-                job.job_id,
-                checkpoint=info.get("checkpoint") or cp.to_dict(),
-                phase=str(info.get("phase") or "downloading"),
-                progress=None
-                if not info.get("totalBytes")
-                else min(0.9, (info.get("bytesDownloaded") or 0) / max(1, info["totalBytes"])),
-            )
-
+        on_progress = self._throttled_job_progress(job.job_id)
         downloaded = download_hf_file(
             repository_id=repo,
             filename=filename,
@@ -570,16 +694,13 @@ class DatasetService:
             cancel_check=cancel,
             progress_cb=on_progress,
         )
-        # Re-copy into content-addressed raw for immutability
-        final, digest, size = copy_immutable_raw(downloaded.path, dirs["raw"])
-        if downloaded.path != final and downloaded.path.exists():
-            # Keep both; prefer content-addressed
-            pass
-        detection = detect_format(final)
+        detection = detect_format(downloaded.path)
+        digest = downloaded.content_hash
+        size = downloaded.byte_size
         self.store.add_file(
             dataset_id=job.dataset_id,
             role="raw",
-            path=str(final),
+            path=str(downloaded.path),
             content_hash=digest,
             byte_size=size,
             metadata={
@@ -588,6 +709,7 @@ class DatasetService:
                 "filename": filename,
                 "url": downloaded.url,
                 "detection": detection.public_dict(),
+                "mode": "file",
             },
         )
         self.store.update_dataset(
@@ -595,7 +717,7 @@ class DatasetService:
             status=DatasetStatus.RAW,
             content_hash=digest,
             byte_size=size,
-            raw_path=str(final),
+            raw_path=str(downloaded.path),
             detected_format=detection.format,
             format_confidence=detection.confidence,
             original_uri=f"hf://datasets/{repo}@{revision}/{filename}",
@@ -604,6 +726,7 @@ class DatasetService:
                 "revision": revision,
                 "filename": filename,
                 "rateLimitEvents": downloaded.checkpoint.rate_limit_events,
+                "mode": "file",
             },
         )
         raw_version = self.store.create_version(
@@ -611,20 +734,176 @@ class DatasetService:
             version_label="raw-v1",
             kind=VersionKind.RAW,
             status=VersionStatus.READY,
-            storage_path=str(final),
+            storage_path=str(downloaded.path),
             schema={"type": "raw", "format": detection.format.value},
         )
         self.store.update_version(raw_version.version_id, content_hash=digest, byte_size=size)
         result: dict[str, Any] = {
-            "rawPath": str(final),
+            "rawPath": str(downloaded.path),
             "contentHash": digest,
             "byteSize": size,
             "detection": detection.public_dict(),
             "checkpoint": downloaded.checkpoint.to_dict(),
             "rawVersionId": raw_version.version_id,
+            "mode": "file",
         }
         if job.config.get("materialize", True):
-            mat = self._materialize_dataset(job.dataset_id, raw_path=final, fmt=detection.format)
+            mat = self._materialize_dataset(job.dataset_id, raw_path=downloaded.path, fmt=detection.format)
+            result["materialized"] = mat
+        return result
+
+    def _handle_import_hf_repository(self, job: DatasetJob) -> dict[str, Any]:
+        """Full repository Hugging Face import — one DatasetRecord for all shards."""
+        assert job.dataset_id
+        repo = str(job.config.get("repositoryId") or "")
+        revision = str(job.config.get("revision") or "main")
+        token = self._hf_token_for_job(job)
+        dirs = self._dataset_dirs(job.dataset_id)
+        raw_root = dirs["raw"] / "hf"
+        ensure_dir(raw_root)
+        manifest_path = dirs["manifests"] / "hf_download_manifest.json"
+        on_progress = self._throttled_job_progress(job.job_id)
+
+        def cancel() -> bool:
+            return self.runner.is_cancel_requested(job.job_id)
+
+        on_progress({"phase": "discovering"})
+        plan = discover_hf_repository(repo, revision=revision, token=token)
+        if plan.unsupported_files:
+            # Expose clearly in job checkpoint; do not silently ignore.
+            on_progress(
+                {
+                    "phase": "planning",
+                    "unsupportedFiles": [f.to_dict() for f in plan.unsupported_files],
+                }
+            )
+        if not plan.data_files:
+            raise DatasetError(
+                "No supported dataset data files found in Hugging Face repository",
+                code="hf_no_data_files",
+                http_status=400,
+            )
+
+        existing = load_repo_manifest(manifest_path)
+        on_progress({"phase": "planning", **plan.to_dict()})
+        downloaded = download_hf_repository(
+            plan=plan,
+            raw_root=raw_root,
+            token=token,
+            manifest=existing,
+            manifest_path=manifest_path,
+            cancel_check=cancel,
+            progress_cb=on_progress,
+        )
+        manifest = downloaded.manifest
+
+        # Register each raw shard under preserved relative paths
+        sources: list[dict[str, Any]] = []
+        formats_seen: set[str] = set()
+        primary_fmt: DetectedFormat | None = None
+        for entry in plan.data_files:
+            path = safe_dest_path(raw_root, entry.path)
+            state = manifest.files.get(entry.path)
+            if state is None or state.status != "complete" or not path.is_file():
+                raise DatasetError(
+                    f"Missing completed shard after download: {entry.path}",
+                    code="hf_download_incomplete",
+                    http_status=502,
+                )
+            detection = detect_format(path)
+            formats_seen.add(detection.format.value)
+            if primary_fmt is None:
+                primary_fmt = detection.format
+            digest = state.hash or sha256_file(path)
+            self.store.add_file(
+                dataset_id=job.dataset_id,
+                role="raw",
+                path=str(path),
+                content_hash=digest,
+                byte_size=path.stat().st_size,
+                metadata={
+                    "repositoryId": repo,
+                    "revision": revision,
+                    "resolvedRevision": manifest.resolved_revision,
+                    "relativePath": entry.path,
+                    "detection": detection.public_dict(),
+                    "split": infer_split_from_path(entry.path),
+                    "config": infer_config_from_path(entry.path),
+                },
+            )
+            sources.append(
+                {
+                    "path": str(path),
+                    "format": detection.format.value,
+                    "split": infer_split_from_path(entry.path),
+                    "relativePath": entry.path,
+                    "sourceName": entry.path,
+                    "provenance": {
+                        "repositoryId": repo,
+                        "revision": revision,
+                        "resolvedRevision": manifest.resolved_revision,
+                        "relativePath": entry.path,
+                        "config": infer_config_from_path(entry.path),
+                    },
+                }
+            )
+
+        total_bytes = sum(Path(s["path"]).stat().st_size for s in sources)
+        self.store.update_dataset(
+            job.dataset_id,
+            status=DatasetStatus.RAW,
+            byte_size=total_bytes,
+            raw_path=str(raw_root),
+            detected_format=primary_fmt,
+            format_confidence=1.0 if primary_fmt else None,
+            original_uri=f"hf://datasets/{repo}@{revision}",
+            original_filename=None,
+            provenance={
+                "repositoryId": repo,
+                "revision": revision,
+                "resolvedRevision": manifest.resolved_revision,
+                "mode": "repository",
+                "filesTotal": manifest.files_total,
+                "bytesTotal": manifest.bytes_total,
+                "formats": sorted(formats_seen),
+                "classification": plan.classification,
+                "unsupportedFiles": [f.path for f in plan.unsupported_files],
+                "rateLimitEvents": downloaded.manifest.to_dict().get("phase"),
+                "bytesPerSecond": downloaded.bytes_per_second,
+            },
+            metadata={
+                "hfManifestPath": str(manifest_path),
+                "sourceFileCount": len(sources),
+            },
+        )
+        write_repo_manifest(manifest_path, manifest)
+        raw_version = self.store.create_version(
+            dataset_id=job.dataset_id,
+            version_label="raw-v1",
+            kind=VersionKind.RAW,
+            status=VersionStatus.READY,
+            storage_path=str(raw_root),
+            schema={"type": "raw", "formats": sorted(formats_seen), "fileCount": len(sources)},
+            metadata={"files": [s["relativePath"] for s in sources]},
+        )
+        self.store.update_version(raw_version.version_id, byte_size=total_bytes)
+        result: dict[str, Any] = {
+            "mode": "repository",
+            "rawRoot": str(raw_root),
+            "byteSize": total_bytes,
+            "filesTotal": len(sources),
+            "manifestPath": str(manifest_path),
+            "plan": plan.to_dict(),
+            "bytesPerSecond": downloaded.bytes_per_second,
+            "rawVersionId": raw_version.version_id,
+            "formats": sorted(formats_seen),
+        }
+        if job.config.get("materialize", True):
+            mat = self._materialize_dataset_sources(
+                job.dataset_id,
+                sources=sources,
+                progress_cb=on_progress,
+            )
             result["materialized"] = mat
         return result
 
@@ -638,14 +917,46 @@ class DatasetService:
         self.store.update_dataset(dataset_id, status=DatasetStatus.MATERIALIZING)
         dirs = self._dataset_dirs(dataset_id)
         dest = dirs["materialized"] / "canonical.jsonl"
-        outcome = materialize_from_raw(raw_path, dest, fmt=fmt)
-        records = outcome.pop("records")
-        validation = validate_records(records)
+        staging = dirs["materialized"] / "canonical.jsonl.staging"
+        outcome = materialize_from_raw(raw_path, staging, fmt=fmt)
+        Path(staging).replace(dest)
+        outcome["storagePath"] = str(dest)
+        return self._publish_materialized_version(dataset_id, dest=dest, outcome=outcome)
+
+    def _materialize_dataset_sources(
+        self,
+        dataset_id: str,
+        *,
+        sources: list[dict[str, Any]],
+        progress_cb: Any | None = None,
+    ) -> dict[str, Any]:
+        self.store.update_dataset(dataset_id, status=DatasetStatus.MATERIALIZING)
+        dirs = self._dataset_dirs(dataset_id)
+        dest = dirs["materialized"] / "canonical.jsonl"
+        staging = dirs["materialized"] / "canonical.jsonl.staging"
+        if progress_cb:
+            progress_cb({"phase": "materializing", "shardsTotal": len(sources), "shardIndex": 0})
+        outcome = materialize_from_sources(sources, staging, progress_cb=progress_cb)
+        Path(staging).replace(dest)
+        outcome["storagePath"] = str(dest)
+        if progress_cb:
+            progress_cb({"phase": "finalizing", "rowCount": outcome.get("rowCount")})
+        return self._publish_materialized_version(dataset_id, dest=dest, outcome=outcome)
+
+    def _publish_materialized_version(
+        self,
+        dataset_id: str,
+        *,
+        dest: Path,
+        outcome: dict[str, Any],
+    ) -> dict[str, Any]:
+        dirs = self._dataset_dirs(dataset_id)
+        validation = outcome.get("validation") or {"valid": True, "rowCount": outcome.get("rowCount")}
         version = self.store.create_version(
             dataset_id=dataset_id,
             version_label="materialized-v1",
             kind=VersionKind.MATERIALIZED,
-            status=VersionStatus.READY if validation["valid"] else VersionStatus.FAILED,
+            status=VersionStatus.READY if validation.get("valid") else VersionStatus.FAILED,
             storage_path=str(dest),
             schema=canonical_schema_dict(),
         )
@@ -676,8 +987,10 @@ class DatasetService:
         )
         self.store.update_dataset(
             dataset_id,
-            status=DatasetStatus.READY if validation["valid"] else DatasetStatus.FAILED,
+            status=DatasetStatus.READY if validation.get("valid") else DatasetStatus.FAILED,
             row_count=outcome["rowCount"],
+            content_hash=outcome["contentHash"],
+            byte_size=outcome.get("byteSize"),
         )
         return {
             "versionId": version.version_id,

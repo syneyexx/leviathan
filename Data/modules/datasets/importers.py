@@ -14,7 +14,7 @@ from .formats import detect_format
 from .types import DatasetError, DetectedFormat, FormatDetection
 
 
-SUPPORTED_SUFFIXES = {".jsonl", ".json", ".csv", ".tsv", ".txt", ".md", ".markdown"}
+SUPPORTED_SUFFIXES = {".jsonl", ".ndjson", ".json", ".csv", ".tsv", ".txt", ".md", ".markdown", ".parquet"}
 
 
 def resolve_import_path(path: str | Path, *, allowed_roots: list[Path] | None = None) -> Path:
