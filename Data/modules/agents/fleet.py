@@ -5,6 +5,7 @@ Side effects always go through AgentRuntime → ExecutionGateway / JobRuntime.
 
 from __future__ import annotations
 
+import concurrent.futures
 import copy
 from typing import Any
 
@@ -568,21 +569,44 @@ class AgentFleetService:
                 http_status=422,
             )
         self._validate_orchestrator(orch, self_id=agent.agent_id)
+        if orch.strategy == "parallel_bounded":
+            return self._run_orchestrator_parallel(mission, agent, orch, depth=depth, use_jobs=use_jobs)
+        return self._run_orchestrator_sequential(mission, agent, orch, depth=depth, use_jobs=use_jobs)
+
+    def _launch_child(
+        self,
+        mission: AgentMission,
+        member_id: str,
+        *,
+        depth: int,
+        use_jobs: bool,
+    ) -> AgentMission:
+        return self.launch_mission(
+            agent_id=member_id,
+            request=mission.request,
+            title=f"{mission.title} → {member_id}",
+            priority=mission.priority,
+            use_jobs=use_jobs,
+            dry_run=False,
+            parent_mission_id=mission.mission_id,
+            depth=depth + 1,
+        )
+
+    def _run_orchestrator_sequential(
+        self,
+        mission: AgentMission,
+        agent: AgentDefinition,
+        orch: OrchestratorConfig,
+        *,
+        depth: int,
+        use_jobs: bool,
+    ) -> dict[str, Any]:
         child_results: list[dict[str, Any]] = []
         for member_id in orch.member_agent_ids:
             if mission.cancel_requested:
                 mission.status = MissionStatus.CANCELLED
                 break
-            child = self.launch_mission(
-                agent_id=member_id,
-                request=mission.request,
-                title=f"{mission.title} → {member_id}",
-                priority=mission.priority,
-                use_jobs=use_jobs,
-                dry_run=False,
-                parent_mission_id=mission.mission_id,
-                depth=depth + 1,
-            )
+            child = self._launch_child(mission, member_id, depth=depth, use_jobs=use_jobs)
             child_results.append(child.public_dict())
             mission.job_ids.extend(child.job_ids)
             mission.progress = min(0.95, len(child_results) / max(1, len(orch.member_agent_ids)))
@@ -604,6 +628,61 @@ class AgentFleetService:
             "truth": {
                 "orchestrator_uses_shared_gateway": True,
                 "no_private_orchestrator_execution": True,
+            },
+        }
+
+    def _run_orchestrator_parallel(
+        self,
+        mission: AgentMission,
+        agent: AgentDefinition,
+        orch: OrchestratorConfig,
+        *,
+        depth: int,
+        use_jobs: bool,
+    ) -> dict[str, Any]:
+        """Bounded parallel member delegation — still uses shared AgentRuntime/gateway."""
+        members = list(orch.member_agent_ids)
+        child_results: list[dict[str, Any]] = []
+        failed = False
+        workers = max(1, min(orch.parallelism_limit, len(members) or 1))
+
+        def _run_one(member_id: str) -> AgentMission:
+            return self._launch_child(mission, member_id, depth=depth, use_jobs=use_jobs)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_run_one, mid): mid for mid in members}
+            for fut in concurrent.futures.as_completed(futures):
+                if mission.cancel_requested:
+                    mission.status = MissionStatus.CANCELLED
+                    break
+                child = fut.result()
+                child_results.append(child.public_dict())
+                mission.job_ids.extend(child.job_ids)
+                mission.progress = min(0.95, len(child_results) / max(1, len(members)))
+                mission.updated_at = utc_now()
+                self.store.update_mission(mission)
+                if child.status in {MissionStatus.FAILED, MissionStatus.DISABLED, MissionStatus.INTERRUPTED}:
+                    if orch.failure_strategy == "fail_fast":
+                        failed = True
+                        mission.status = MissionStatus.FAILED
+                        mission.error = child.error or f"Child mission failed: {child.mission_id}"
+                        # Cancel remaining futures best-effort (in-flight children finish).
+                        for pending in futures:
+                            pending.cancel()
+                        break
+
+        if mission.status == MissionStatus.RUNNING and not failed:
+            mission.status = MissionStatus.COMPLETED
+            mission.progress = 1.0
+        return {
+            "orchestrator": True,
+            "strategy": orch.strategy,
+            "parallelismLimit": orch.parallelism_limit,
+            "children": child_results,
+            "truth": {
+                "orchestrator_uses_shared_gateway": True,
+                "no_private_orchestrator_execution": True,
+                "parallel_bounded_uses_thread_pool": True,
             },
         }
 

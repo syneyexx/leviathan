@@ -25,6 +25,10 @@ function workflowsEmptyCopy(count: number): string | null {
   return count === 0 ? "NO WORKFLOWS" : null;
 }
 
+function agentsEmptyCopy(count: number): string | null {
+  return count === 0 ? "No agents yet. Create one to begin." : null;
+}
+
 describe("page empty states", () => {
   it("datasets shows honest empty title when API returns []", () => {
     expect(datasetsEmptyCopy(0)).toBe("NO DATASETS");
@@ -49,5 +53,10 @@ describe("page empty states", () => {
   it("workflows stays empty until real API data", () => {
     expect(workflowsEmptyCopy(0)).toBe("NO WORKFLOWS");
     expect(workflowsEmptyCopy(1)).toBeNull();
+  });
+
+  it("agents roster stays empty until real fleet data", () => {
+    expect(agentsEmptyCopy(0)).toBe("No agents yet. Create one to begin.");
+    expect(agentsEmptyCopy(3)).toBeNull();
   });
 });
