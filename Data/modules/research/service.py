@@ -380,3 +380,30 @@ class ResearchService:
     def resolve_citation(self, project_id: str, citation_key: str):
         self.get_project(project_id)
         return self.ledger.resolve_citation(project_id, citation_key)
+
+    # --- Wave 6 research graph / reproducibility ---------------------------
+
+    def claim_evidence_graph(self, project_id: str) -> dict[str, Any]:
+        self.get_project(project_id)
+        from .graph import ClaimEvidenceGraphBuilder
+
+        return ClaimEvidenceGraphBuilder(self.store).build(project_id).public_dict()
+
+    def export_reproducibility_bundle(
+        self,
+        project_id: str,
+        *,
+        model_revision: str | None = None,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        from .graph import ReproducibilityBundleExporter
+
+        exporter = ReproducibilityBundleExporter(self.store, self.exports_root)
+        bundle = exporter.export(project, model_revision=model_revision)
+        self.store.add_event(
+            project_id,
+            "reproducibility_bundle",
+            f"Exported {bundle.bundle_id}",
+            {"bundle_id": bundle.bundle_id, "path": bundle.path},
+        )
+        return bundle.public_dict()

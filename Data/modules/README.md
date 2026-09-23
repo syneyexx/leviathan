@@ -39,6 +39,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `isolation/` | IsolationGuard |
 | `training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `browser/` | BrowserWorker + FixtureBrowserBackend (Gateway-dispatched; stub when feature off) |
+| `coding/` | CodingControlPlane — sessions, XML/JSON loop, semantic map, transactional patches |
+| `research/` | ResearchService — plans, claim–evidence graphs, reproducibility bundles |
 | `media/` | MediaAutomationStub |
 | `voice/` | VoiceRuntimeStub |
 | `release/` | ReleaseGateRunner + evaluation relevance |

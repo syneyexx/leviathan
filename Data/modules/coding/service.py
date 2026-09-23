@@ -344,3 +344,169 @@ class CodingControlPlane:
         pending = {**pending, "approval_id": record.approval_id}
         self.store.update_session(session_id, pending_capability=pending)
         return {"approval": record.public_dict(), "pending": pending}
+
+    # --- Wave 6 frontier coding helpers ------------------------------------
+
+    def semantic_map(
+        self,
+        *,
+        workspace_root: str | None = None,
+        session_id: str | None = None,
+        previous: Any | None = None,
+    ) -> dict[str, Any]:
+        from .semantic_map import SemanticMapBuilder
+
+        root = self._resolve_workspace(workspace_root=workspace_root, session_id=session_id)
+        smap = SemanticMapBuilder(root).build(previous=previous)
+        return smap.public_dict()
+
+    def build_change_plan(
+        self,
+        *,
+        goal: str,
+        changes: list[dict[str, Any]],
+        invariants: list[str] | None = None,
+        expected_tests: list[str] | None = None,
+        risk: str | None = None,
+    ) -> dict[str, Any]:
+        from .transaction import FileChange, build_change_plan
+
+        parsed = [
+            FileChange(
+                path=str(item["path"]),
+                kind=str(item.get("kind") or "rewrite"),
+                unified_diff=item.get("unified_diff"),
+                content=item.get("content"),
+                rationale=str(item.get("rationale") or ""),
+            )
+            for item in changes
+        ]
+        plan = build_change_plan(
+            goal=goal,
+            changes=parsed,
+            invariants=invariants,
+            expected_tests=expected_tests,
+            risk=risk,
+        )
+        return plan.public_dict()
+
+    def apply_change_plan_transactional(
+        self,
+        plan_payload: dict[str, Any],
+        *,
+        workspace_root: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        from .transaction import ChangePlan, ChangeRisk, FileChange, WorkspaceTransaction
+
+        root = self._resolve_workspace(workspace_root=workspace_root, session_id=session_id)
+        changes = [
+            FileChange(
+                path=str(item["path"]),
+                kind=str(item.get("kind") or "rewrite"),
+                unified_diff=item.get("unified_diff"),
+                content=item.get("content"),
+                rationale=str(item.get("rationale") or ""),
+            )
+            for item in (plan_payload.get("changes") or [])
+        ]
+        plan = ChangePlan(
+            plan_id=str(plan_payload.get("plan_id") or "adhoc"),
+            goal=str(plan_payload.get("goal") or ""),
+            affected_files=list(plan_payload.get("affected_files") or [c.path for c in changes]),
+            changes=changes,
+            invariants=list(plan_payload.get("invariants") or []),
+            expected_tests=list(plan_payload.get("expected_tests") or []),
+            risk=ChangeRisk(str(plan_payload.get("risk") or "low")),
+        )
+        tx = WorkspaceTransaction(root)
+        try:
+            snap = tx.apply_plan(plan, auto_rollback_on_error=True)
+            return {"ok": True, "snapshot": snap.public_dict(), "plan": plan.public_dict()}
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": str(exc),
+                "plan": plan.public_dict(),
+                "truth": {"failed_verification_restores_snapshot": True},
+            }
+
+    def adaptive_verification(
+        self,
+        *,
+        workspace_root: str | None = None,
+        session_id: str | None = None,
+        plan_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        from .semantic_map import SemanticMapBuilder
+        from .transaction import ChangePlan, ChangeRisk, FileChange
+        from .verify import select_adaptive_verification
+
+        root = self._resolve_workspace(workspace_root=workspace_root, session_id=session_id)
+        plan = None
+        if plan_payload:
+            changes = [
+                FileChange(
+                    path=str(item["path"]),
+                    kind=str(item.get("kind") or "rewrite"),
+                    unified_diff=item.get("unified_diff"),
+                    content=item.get("content"),
+                )
+                for item in (plan_payload.get("changes") or [])
+            ]
+            plan = ChangePlan(
+                plan_id=str(plan_payload.get("plan_id") or "adhoc"),
+                goal=str(plan_payload.get("goal") or ""),
+                affected_files=list(plan_payload.get("affected_files") or [c.path for c in changes]),
+                changes=changes,
+                expected_tests=list(plan_payload.get("expected_tests") or []),
+                risk=ChangeRisk(str(plan_payload.get("risk") or "low")),
+            )
+        smap = SemanticMapBuilder(root).build()
+        return select_adaptive_verification(root, plan=plan, semantic_map=smap).public_dict()
+
+    def review_diff(
+        self,
+        *,
+        plan_payload: dict[str, Any] | None = None,
+        diffs: dict[str, str] | None = None,
+        test_evidence: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from .review import build_diff_review, build_multi_agent_review_dag
+        from .transaction import ChangePlan, ChangeRisk, FileChange
+
+        plan = None
+        if plan_payload:
+            changes = [
+                FileChange(
+                    path=str(item["path"]),
+                    kind=str(item.get("kind") or "patch"),
+                    unified_diff=item.get("unified_diff"),
+                    content=item.get("content"),
+                )
+                for item in (plan_payload.get("changes") or [])
+            ]
+            plan = ChangePlan(
+                plan_id=str(plan_payload.get("plan_id") or "adhoc"),
+                goal=str(plan_payload.get("goal") or ""),
+                affected_files=list(plan_payload.get("affected_files") or [c.path for c in changes]),
+                changes=changes,
+                expected_tests=list(plan_payload.get("expected_tests") or []),
+                risk=ChangeRisk(str(plan_payload.get("risk") or "low")),
+            )
+        review = build_diff_review(plan=plan, diffs=diffs, test_evidence=test_evidence)
+        payload = review.public_dict()
+        if plan is not None:
+            payload["multi_agent_dag"] = build_multi_agent_review_dag(plan)
+        return payload
+
+    def _resolve_workspace(
+        self,
+        *,
+        workspace_root: str | None = None,
+        session_id: str | None = None,
+    ) -> Path:
+        if session_id:
+            session = self.get_session(session_id)
+            return Path(session.workspace_root)
+        return resolve_root(self.settings, override=workspace_root)

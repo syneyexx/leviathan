@@ -116,6 +116,8 @@ class ResearchPlan:
     rounds: int
     budget: ResearchBudget
     notes: str = ""
+    stopping_criteria: list[str] = field(default_factory=list)
+    evidence_coverage_targets: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -130,6 +132,8 @@ class ResearchPlan:
             "rounds": self.rounds,
             "budget": self.budget.public_dict(),
             "notes": self.notes,
+            "stopping_criteria": list(self.stopping_criteria),
+            "evidence_coverage_targets": dict(self.evidence_coverage_targets),
         }
 
     @classmethod
@@ -148,6 +152,8 @@ class ResearchPlan:
             rounds=int(data.get("rounds") or 1),
             budget=ResearchBudget.from_dict(data.get("budget")),
             notes=str(data.get("notes") or ""),
+            stopping_criteria=list(data.get("stopping_criteria") or []),
+            evidence_coverage_targets=dict(data.get("evidence_coverage_targets") or {}),
         )
 
 

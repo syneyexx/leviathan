@@ -1001,7 +1001,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.69.0-wave5-capability", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.70.0-wave6-coding-research", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))

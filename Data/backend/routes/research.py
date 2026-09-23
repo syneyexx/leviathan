@@ -259,4 +259,18 @@ def build_research_router(service: ResearchService) -> APIRouter:
             raise_research_error(exc)
         return {"citation": resolution.public_dict()}
 
+    @router.get("/api/research/{project_id}/claim-graph")
+    def claim_graph(project_id: str) -> dict:
+        try:
+            return {"graph": service.claim_evidence_graph(project_id)}
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.post("/api/research/{project_id}/reproducibility-bundle")
+    def reproducibility_bundle(project_id: str) -> dict:
+        try:
+            return {"bundle": service.export_reproducibility_bundle(project_id)}
+        except ResearchError as exc:
+            raise_research_error(exc)
+
     return router

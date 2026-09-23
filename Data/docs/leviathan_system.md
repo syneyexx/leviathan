@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of **Wave 5 Capability World** (`0.69.0-wave5-capability`) on Wave 4 Context Substrate (v27) + Wave 3 Model Serving (v26) + Wave 2 Evaluation (v25) + Wave 1 Cognition + Wave 0 Durable Kernel (v24).
+> This is the implementation truth for the repository as of **Wave 6 Coding + Research Frontier** (`0.70.0-wave6-coding-research`) on Wave 5 Capability World (v28) + Wave 4 Context Substrate (v27) + Wave 3 Model Serving (v26) + Wave 2 Evaluation (v25) + Wave 1 Cognition + Wave 0 Durable Kernel (v24).
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,11 +12,12 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel**, **Wave 2 evaluation as release authority**, **Wave 3 managed local model serving**, **Wave 4 context/memory/knowledge substrate**, and **Wave 5 capability world interface** (metadata, receipts, secrets broker, fixture browser worker).
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel**, **Wave 2 evaluation as release authority**, **Wave 3 managed local model serving**, **Wave 4 context/memory/knowledge substrate**, **Wave 5 capability world interface**, and **Wave 6 coding/research frontier** (semantic map, transactional patches, claim–evidence graphs, reproducibility bundles).
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.69.0-wave5-capability`);
+- FastAPI backend composition root (`0.70.0-wave6-coding-research`);
+- **Wave 6 coding/research** — repository semantic map, JSON+XML capability calls, transactional snapshots, adaptive verification, claim–evidence graph + citation entailment, reproducibility bundles;
 - **Wave 5 capability world** — normalized capability metadata, semantic shortlist, capability-call receipts, secrets leases, fixture browser via ExecutionGateway/Jobs (no Chromium in CI);
 - **Wave 4 context/memory/knowledge** — pinned constraints, budget ledger, scoped memory (no cross-conversation leak), retrieval min_score + traces + citation heuristic;
 - **Wave 3 model serving** — managed local adapters, serving supervisor, stream cancel, measured route audit, serving conformance eval (batching QoS UNMEASURED);
@@ -24,11 +25,11 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 - **Wave 1 cognition/agents** — full CognitiveRun hydrate/resume, live INVOKE_CAPABILITY via ExecutionGateway, structured agent planner, DAG multi-agent + blackboard;
 - **Wave 0 durable kernel** — `EventEnvelope`, job leases/idempotency/budgets, correlation IDs, Frontier Capability Manifest, architecture ownership API + conformance tests;
 - **Universal MCP Bridge** (`Data/modules/mcp/`) — one bridge, many stdio/HTTP sessions; tools → CapabilityCatalog (`provider_kind=MCP`); invoke only via ExecutionGateway;
-- **Coding Agent** (`Data/modules/coding/`) — sessions, XML capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker;
+- **Coding Agent** (`Data/modules/coding/`) — sessions, XML/JSON capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker, semantic map + transactional patches;
 - **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v28**;
+- SQLite persistence + migrations through **v29**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Media / Voice / Native / Trading / llama.cpp managed runtime; Browser fixture worker (not Chromium);
 - React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, **Market Sim** `/trading`, and **MCP** `/mcp` UI;
@@ -37,7 +38,7 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 
 **Not claimed:**
 
-- Production Playwright/Chromium packaging; live broker trading;
+- Production Playwright/Chromium packaging; live broker trading; full LSP/GitHub PR automation fleet;
 - Legacy MCP SSE transport; full OS container isolation adapter; MCP resources/prompts/sampling;
 - **weight-backed HF residual inject** as default; production GPU residual hooks;
 - Programmatic LM Studio load/unload (external management);
