@@ -48,8 +48,9 @@ const SIDEBAR_ACTIONS: SidebarAction[] = [
   { id: "hf", label: "Importeren (Hugging Face)", icon: "download" },
   { id: "local", label: "Lokale bestanden importeren", icon: "upload" },
   { id: "create", label: "Nieuwe dataset aanmaken", icon: "squareplus" },
+  { id: "rescan", label: "Opnieuw scannen", icon: "refresh" },
   { id: "delete", label: "Geselecteerde verwijderen", icon: "trash", danger: true },
-  { id: "offline", label: "Converteren naar offline", icon: "save" },
+  { id: "learn", label: "Kennis leren", icon: "database" },
   { id: "dup", label: "Dupliceren", icon: "copy" },
   { id: "index", label: "Index opnieuw opbouwen", icon: "refresh" },
   { id: "validate", label: "Valideren", icon: "checkcircle" },
@@ -80,10 +81,14 @@ function formatCompactCount(n: number | null | undefined): string {
   return String(n);
 }
 
-function mapDatasetStatus(status: string): DatasetMgmtStatus {
+function mapDatasetStatus(status: string, brainStatus?: string | null): DatasetMgmtStatus {
+  const brain = (brainStatus || "").toLowerCase();
+  if (brain === "learned") return "Klaar";
+  if (brain === "indexing" || brain === "queued") return brain === "queued" ? "Wachtrij" : "Bezig";
+  if (brain === "failed") return "Fout";
   const s = status.toLowerCase();
-  if (s === "ready" || s === "complete" || s === "completed") return "Klaar";
-  if (s === "processed" || s === "materialized") return "Verwerkt";
+  if (s === "ready" || s === "complete" || s === "completed") return "Verwerkt";
+  if (s === "processed" || s === "materialized" || s === "raw") return "Verwerkt";
   if (s === "running" || s === "processing" || s === "importing") return "Bezig";
   if (s === "queued" || s === "pending") return "Wachtrij";
   if (s === "warning" || s === "degraded") return "Waarschuwing";
@@ -390,7 +395,7 @@ export function DatasetManagementPixelPage() {
     const q = query.trim().toLowerCase();
     return datasets.filter((ds) => {
       const typeLabel = mapTypeLabel(ds);
-      const statusNl = mapDatasetStatus(ds.status);
+      const statusNl = mapDatasetStatus(ds.status, ds.brainStatus ?? ds.brain?.brainStatus);
       if (typeFilter !== "Alle types" && typeLabel !== typeFilter) return false;
       if (!sourceMatchesFilter(ds.sourceType, sourceFilter)) return false;
       if (statusFilter !== "Alle statussen" && statusNl !== statusFilter) return false;
@@ -546,13 +551,26 @@ export function DatasetManagementPixelPage() {
   }, [preview, previewError, sampleTab, selectedVersion]);
 
   function actionDisabledReason(actionId: string): string | null {
-    const needsSelection = ["delete", "offline", "dup", "index", "validate", "export"];
-    const needsVersion = ["offline", "index", "validate", "export"];
+    const needsSelection = ["delete", "learn", "dup", "index", "validate", "export"];
+    const needsVersion = ["index", "validate", "export"];
     if (needsSelection.includes(actionId) && !selectedId) {
       return "Selecteer eerst een dataset";
     }
     if (needsVersion.includes(actionId) && !selectedVersionId) {
       return "Selecteer eerst een datasetversie";
+    }
+    if (actionId === "learn" && selectedId) {
+      const selected = datasets.find((d) => d.datasetId === selectedId);
+      const brain = selected?.brainStatus ?? selected?.brain?.brainStatus;
+      if (brain === "learned") {
+        return "Al geleerd — gebruik Index opnieuw opbouwen om opnieuw te leren";
+      }
+      if (brain === "indexing" || brain === "queued") {
+        return "Kennis leren is al bezig";
+      }
+      if (selected?.sourceMissing || selected?.brain?.sourceMissing) {
+        return "Bronbestand ontbreekt op schijf";
+      }
     }
     return null;
   }
@@ -670,31 +688,29 @@ export function DatasetManagementPixelPage() {
     });
   }
 
-  async function onConvertOffline() {
-    if (!selectedId || !selectedVersionId) {
-      toast("Selecteer eerst een datasetversie");
+  async function onRescanLibrary() {
+    await withBusy(async () => {
+      const res = await api.refreshDatasetLibrary();
+      setDatasets(res.datasets);
+      toast(
+        `Scan klaar: ${res.created} nieuw, ${res.updated} bijgewerkt, ${res.discovered} bronnen`,
+      );
+    });
+  }
+
+  async function onLearnToBrain(opts?: { rebuild?: boolean }) {
+    if (!selectedId) {
+      toast("Selecteer eerst een dataset");
       return;
     }
     await withBusy(async () => {
-      const pf = await api.offlineBrainPreflight({
-        datasetId: selectedId,
+      const res = await api.learnDataset(selectedId, {
         versionId: selectedVersionId,
+        rebuild: opts?.rebuild ?? false,
         offlineOnly: true,
       });
-      const preflight = pf.preflight as {
-        ok?: boolean;
-        blockers?: string[];
-      };
-      if (!preflight.ok) {
-        const blockers = (preflight.blockers ?? []).join("; ") || "Offline preflight geblokkeerd";
-        toast(blockers);
-        return;
-      }
-      const res = await api.enqueueOfflineBrainIndex({
-        datasetId: selectedId,
-        versionId: selectedVersionId,
-      });
-      await trackJob(res.job, "Offline Brain-index in wachtrij");
+      await trackJob(res.job, opts?.rebuild ? "Opnieuw leren in wachtrij" : "Kennis leren in wachtrij");
+      await loadDatasets({ quiet: true });
     });
   }
 
@@ -765,11 +781,14 @@ export function DatasetManagementPixelPage() {
       case "hf":
         setModal("hf");
         return;
+      case "rescan":
+        await onRescanLibrary();
+        return;
       case "delete":
         setModal("delete");
         return;
-      case "offline":
-        await onConvertOffline();
+      case "learn":
+        await onLearnToBrain();
         return;
       case "dup":
         await onDuplicate();
@@ -788,13 +807,7 @@ export function DatasetManagementPixelPage() {
         );
         return;
       case "index":
-        await runVersionJob(
-          () =>
-            api.indexDatasetVersion(selectedId!, selectedVersionId!, {
-              rebuild: true,
-            }),
-          "Index herbouw",
-        );
+        await onLearnToBrain({ rebuild: true });
         return;
       default:
         return;
@@ -814,8 +827,12 @@ export function DatasetManagementPixelPage() {
       await onSidebarAction("delete");
       return;
     }
-    if (id === "offline") {
-      await onSidebarAction("offline");
+    if (id === "learn") {
+      await onSidebarAction("learn");
+      return;
+    }
+    if (id === "rescan") {
+      await onSidebarAction("rescan");
       return;
     }
     if (id === "save") {
@@ -1015,7 +1032,7 @@ export function DatasetManagementPixelPage() {
                     <tbody>
                       {filtered.map((row) => {
                         const typeLabel = mapTypeLabel(row);
-                        const statusNl = mapDatasetStatus(row.status);
+                        const statusNl = mapDatasetStatus(row.status, row.brainStatus ?? row.brain?.brainStatus);
                         const split =
                           row.datasetId === selectedId && selectedVersion
                             ? splitLabelFromVersion(selectedVersion)
@@ -1160,7 +1177,7 @@ export function DatasetManagementPixelPage() {
                       <Link to="/offline-datasets" style={{ textDecoration: "none", display: "contents" }}>
                         <button type="button">
                           <PxIcon name="database" />
-                          <span>Offline / Brain</span>
+                          <span>Geleerd in Brain</span>
                         </button>
                       </Link>
                     </div>
@@ -1221,7 +1238,8 @@ export function DatasetManagementPixelPage() {
               let reason: string | null = null;
               if (a.id === "delete") reason = actionDisabledReason("delete");
               if (a.id === "validate") reason = actionDisabledReason("validate");
-              if (a.id === "offline") reason = actionDisabledReason("offline");
+              if (a.id === "learn") reason = actionDisabledReason("learn");
+              if (a.id === "rescan") reason = actionDisabledReason("rescan");
               return (
                 <button
                   key={a.id}

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from Data.backend.migrations import MigrationRunner
 from Data.modules.datasets.offline import (
+    ALLOWED_EXTENSIONS,
     discover_under_roots,
     offline_index_preflight,
 )
@@ -16,13 +17,16 @@ class OfflineDiscoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "keep.jsonl").write_text('{"id":"1","text":"a"}\n', encoding="utf-8")
+            (root / "keep.parquet").write_bytes(b"PAR1" + b"\x00" * 4)
             (root / "skip.bin").write_bytes(b"\x00\x01")
             (root / ".hidden.jsonl").write_text("{}\n", encoding="utf-8")
             sources = discover_under_roots([("t", root)], max_files=50)
             paths = {s.relative_path for s in sources}
             self.assertIn("keep.jsonl", paths)
+            self.assertIn("keep.parquet", paths)
             self.assertNotIn("skip.bin", paths)
             self.assertTrue(all(not p.startswith(".") for p in paths))
+            self.assertIn(".parquet", ALLOWED_EXTENSIONS)
 
     def test_rejects_parent_escape_via_symlink_when_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

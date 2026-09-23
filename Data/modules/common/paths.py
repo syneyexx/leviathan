@@ -42,3 +42,42 @@ def safe_relpath(root: Path, target: Path) -> Path:
         return target.relative_to(root)
     except ValueError as exc:
         raise PathEscapeError(f"Path escapes root: {target}") from exc
+
+
+def normalize_path_key(path: str | Path) -> str:
+    """Stable identity key for local paths (Windows-safe).
+
+    ``D:\\ModelData\\foo``, ``d:/ModelData/foo``, and ``D:\\ModelData\\foo\\``
+    collapse to the same key. Never requires reading file contents.
+    """
+    text = str(path).replace("\\", "/").strip()
+    if not text:
+        return ""
+    # Preserve Windows drive-letter identity without resolving against a foreign CWD
+    # (e.g. Linux CI hosting a configured ``D:/ModelData`` root).
+    if len(text) >= 2 and text[1] == ":":
+        return (text[0].upper() + text[1:]).rstrip("/").casefold()
+    raw = Path(text)
+    try:
+        resolved = raw.resolve()
+        text = str(resolved).replace("\\", "/")
+    except OSError:
+        if not raw.is_absolute():
+            text = str((Path.cwd() / raw)).replace("\\", "/")
+    return text.rstrip("/").casefold()
+
+
+def path_under_root(root: Path, target: Path, *, follow_symlinks: bool = False) -> bool:
+    """Return True when ``target`` is under ``root`` without escaping."""
+    try:
+        root_res = root.resolve() if follow_symlinks or root.exists() else root.absolute()
+        target_res = target.resolve() if follow_symlinks or target.exists() else target.absolute()
+        safe_relpath(root_res, target_res)
+        return True
+    except (OSError, PathEscapeError, ValueError):
+        # Fallback string prefix for non-existent Windows-style roots in tests.
+        root_key = normalize_path_key(root)
+        target_key = normalize_path_key(target)
+        if not root_key or not target_key:
+            return False
+        return target_key == root_key or target_key.startswith(root_key.rstrip("/") + "/")

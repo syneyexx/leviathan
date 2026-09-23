@@ -419,24 +419,385 @@ class DatasetService:
             },
         )
 
-    def discover_offline_sources(self, *, max_files: int = 500) -> dict[str, Any]:
-        from .offline import discover_under_roots
+    def _data_root(self) -> Path:
+        return Path(self.settings.knowledge.data_root)
 
-        roots = [
-            ("datasets_raw", self.corpus.datasets_raw),
-            ("datasets_materialized", self.corpus.datasets_materialized),
-            ("datasets_exports", self.corpus.datasets_exports),
+    def _discovery_skip_paths(self) -> list[Path]:
+        """Derived trees that must not be re-registered as source datasets."""
+        return [
+            self.corpus.datasets_materialized,
+            self.corpus.datasets_processed,
+            self.corpus.datasets_exports,
+            self.corpus.datasets_manifests,
+            self.corpus.training,
+            self.corpus.research,
+            self.corpus.models_artifacts,
+            self.corpus.models_cache,
         ]
-        sources = discover_under_roots(roots, max_files=max_files, follow_symlinks=False)
+
+    def discover_offline_sources(self, *, max_files: int = 500) -> dict[str, Any]:
+        from .offline import build_discovery_roots, discover_under_roots
+
+        data_root = self._data_root()
+        roots = build_discovery_roots(
+            data_root=data_root,
+            corpus_root=self.corpus.root,
+            datasets_raw=self.corpus.datasets_raw,
+            hf_cache=self.corpus.hf_cache,
+        )
+        sources = discover_under_roots(
+            roots,
+            max_files=max_files,
+            follow_symlinks=False,
+            skip_under=self._discovery_skip_paths(),
+        )
         return {
             "roots": [{"id": rid, "path": str(path)} for rid, path in roots],
             "sources": [s.public_dict() for s in sources],
             "count": len(sources),
+            "dataRoot": str(data_root),
             "truth": {
                 "explicit_allowed_roots_only": True,
                 "no_full_filesystem_scan": True,
+                "local_dataset_is_not_learned_knowledge": True,
+                "no_copy_on_discover": True,
             },
         }
+
+    def _path_keys_for_dataset(self, ds: DatasetRecord) -> set[str]:
+        from Data.modules.common.paths import normalize_path_key
+
+        keys: set[str] = set()
+        for candidate in (
+            ds.raw_path,
+            ds.original_uri,
+            (ds.provenance or {}).get("sourcePath"),
+            (ds.provenance or {}).get("canonicalPath"),
+            (ds.metadata or {}).get("sourcePath"),
+        ):
+            if candidate:
+                keys.add(normalize_path_key(str(candidate)))
+        for ver in self.store.list_versions(ds.dataset_id):
+            if ver.kind == VersionKind.RAW and ver.storage_path:
+                keys.add(normalize_path_key(ver.storage_path))
+        return {k for k in keys if k}
+
+    def _find_dataset_by_path_key(self, path_key: str) -> DatasetRecord | None:
+        if not path_key:
+            return None
+        for ds in self.store.list_datasets(limit=500):
+            if path_key in self._path_keys_for_dataset(ds):
+                return ds
+        return None
+
+    def _register_discovered_source(self, source: dict[str, Any]) -> tuple[DatasetRecord, bool]:
+        """Register a discovered filesystem source without copying bytes.
+
+        Returns ``(dataset, created)``. Idempotent on normalized path key.
+        """
+        from Data.modules.common.paths import normalize_path_key
+
+        path_str = str(source.get("path") or "")
+        path_key = str(source.get("pathKey") or normalize_path_key(path_str))
+        existing = self._find_dataset_by_path_key(path_key)
+        path = Path(path_str)
+        source_missing = not path.exists()
+        kind = str(source.get("kind") or "file")
+        display = str(source.get("displayName") or path.stem or path.name or "discovered")
+        fmt_name = source.get("format")
+        fmt = None
+        if fmt_name:
+            try:
+                fmt = DetectedFormat(str(fmt_name))
+            except ValueError:
+                fmt = DetectedFormat.UNKNOWN
+        size = int(source.get("sizeBytes") or 0) or None
+        hf_repo = source.get("hfRepoId")
+        provenance = {
+            "sourcePath": path_str,
+            "canonicalPath": path_str,
+            "pathKey": path_key,
+            "discovered": True,
+            "discoveryRootId": source.get("rootId"),
+            "discoveryKind": kind,
+            "fingerprint": source.get("fingerprint"),
+            "hfRepoId": hf_repo,
+            "noCopy": True,
+        }
+        metadata = {
+            "sourcePath": path_str,
+            "pathKey": path_key,
+            "discovered": True,
+            "fileCount": source.get("fileCount"),
+            "sourceMissing": source_missing,
+            "hfRepoId": hf_repo,
+        }
+
+        if existing is not None:
+            meta = dict(existing.metadata or {})
+            meta.update({k: v for k, v in metadata.items() if v is not None})
+            prov = dict(existing.provenance or {})
+            prov.update({k: v for k, v in provenance.items() if v is not None})
+            updates: dict[str, Any] = {
+                "metadata": meta,
+                "provenance": prov,
+            }
+            if size is not None:
+                updates["byte_size"] = size
+            if fmt is not None and existing.detected_format is None:
+                updates["detected_format"] = fmt
+            if existing.raw_path is None and not source_missing:
+                updates["raw_path"] = path_str
+            if hf_repo and not existing.original_uri:
+                updates["original_uri"] = f"hf://{hf_repo}"
+            self.store.update_dataset(existing.dataset_id, **updates)
+            # Ensure a RAW version referencing the source exists.
+            versions = self.store.list_versions(existing.dataset_id)
+            has_raw = any(
+                v.kind == VersionKind.RAW
+                and v.storage_path
+                and normalize_path_key(v.storage_path) == path_key
+                for v in versions
+            )
+            if not has_raw and not source_missing:
+                ver = self.store.create_version(
+                    dataset_id=existing.dataset_id,
+                    version_label="raw-discovered",
+                    kind=VersionKind.RAW,
+                    status=VersionStatus.READY,
+                    storage_path=path_str,
+                    schema={"type": "raw", "format": (fmt or DetectedFormat.UNKNOWN).value, "discovered": True},
+                    metadata={"pathKey": path_key, "noCopy": True},
+                )
+                if size is not None:
+                    self.store.update_version(ver.version_id, byte_size=size)
+            return self.get_dataset(existing.dataset_id), False
+
+        source_type = SourceType.HUGGINGFACE if hf_repo or kind == "hf_cache" else SourceType.LOCAL
+        ds = self.store.create_dataset(
+            name=self._unique_dataset_name(display),
+            source_type=source_type,
+            description="Discovered under configured ModelData root (no copy).",
+            original_filename=path.name if kind == "file" else None,
+            original_uri=f"hf://{hf_repo}" if hf_repo else path_str,
+            provenance=provenance,
+            metadata=metadata,
+            status=DatasetStatus.RAW if not source_missing else DatasetStatus.CREATED,
+        )
+        self.store.update_dataset(
+            ds.dataset_id,
+            raw_path=path_str if not source_missing else None,
+            byte_size=size,
+            detected_format=fmt,
+            format_confidence=0.7 if fmt and fmt != DetectedFormat.UNKNOWN else None,
+        )
+        if not source_missing:
+            ver = self.store.create_version(
+                dataset_id=ds.dataset_id,
+                version_label="raw-discovered",
+                kind=VersionKind.RAW,
+                status=VersionStatus.READY,
+                storage_path=path_str,
+                schema={"type": "raw", "format": (fmt or DetectedFormat.UNKNOWN).value, "discovered": True},
+                metadata={"pathKey": path_key, "noCopy": True},
+            )
+            if size is not None:
+                self.store.update_version(ver.version_id, byte_size=size)
+        return self.get_dataset(ds.dataset_id), True
+
+    def refresh_dataset_library(self, *, max_files: int = 500) -> dict[str, Any]:
+        """Scan configured roots, register missing datasets, refresh cheap metadata.
+
+        Does not copy source bytes. Does not delete Brain knowledge. Marks
+        registered datasets whose source path is gone as ``sourceMissing``.
+        """
+        from Data.modules.common.paths import normalize_path_key
+
+        discovery = self.discover_offline_sources(max_files=max_files)
+        created = 0
+        updated = 0
+        registered_ids: list[str] = []
+        seen_keys: set[str] = set()
+        for raw in discovery["sources"]:
+            if raw.get("error") or not raw.get("readable", True):
+                continue
+            path_key = str(raw.get("pathKey") or normalize_path_key(str(raw.get("path") or "")))
+            if not path_key or path_key in seen_keys:
+                continue
+            seen_keys.add(path_key)
+            ds, was_created = self._register_discovered_source(raw)
+            registered_ids.append(ds.dataset_id)
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+
+        # Non-destructive: flag missing sources on previously registered datasets.
+        missing = 0
+        for ds in self.store.list_datasets(limit=500):
+            meta = dict(ds.metadata or {})
+            path_candidates = [
+                ds.raw_path,
+                (ds.provenance or {}).get("sourcePath"),
+                (ds.provenance or {}).get("canonicalPath"),
+            ]
+            source_path = next((p for p in path_candidates if p), None)
+            if not source_path:
+                continue
+            if not Path(str(source_path)).exists():
+                if not meta.get("sourceMissing"):
+                    meta["sourceMissing"] = True
+                    self.store.update_dataset(ds.dataset_id, metadata=meta)
+                    missing += 1
+            elif meta.get("sourceMissing"):
+                meta["sourceMissing"] = False
+                self.store.update_dataset(ds.dataset_id, metadata=meta)
+
+        datasets = [self.brain_library_entry(d) for d in self.store.list_datasets(limit=500)]
+        return {
+            "created": created,
+            "updated": updated,
+            "missingSources": missing,
+            "discovered": discovery["count"],
+            "registeredDatasetIds": registered_ids,
+            "roots": discovery["roots"],
+            "dataRoot": discovery.get("dataRoot"),
+            "datasets": datasets,
+            "truth": {
+                "idempotent": True,
+                "no_copy_on_discover": True,
+                "no_brain_delete_on_refresh": True,
+                "local_dataset_is_not_learned_knowledge": True,
+            },
+        }
+
+    def brain_status_for_dataset(self, dataset_id: str) -> dict[str, Any]:
+        """Map existing index/job state into Brain-ingestion truth for the UI."""
+        indexes = self.store.list_indexes(dataset_id)
+        ready = [i for i in indexes if i.status == IndexStatus.READY]
+        indexing = [i for i in indexes if i.status == IndexStatus.INDEXING]
+        failed = [i for i in indexes if i.status == IndexStatus.FAILED]
+        active_jobs = [
+            j
+            for j in self.store.list_jobs(dataset_id=dataset_id, limit=40)
+            if j.job_type == DatasetJobType.INDEX
+            and j.status in {DatasetJobStatus.QUEUED, DatasetJobStatus.RUNNING}
+        ]
+        ds = self.get_dataset(dataset_id)
+        source_missing = bool((ds.metadata or {}).get("sourceMissing"))
+        # READY Brain index is authoritative — a queued auto-index must not hide it.
+        if ready and not any(
+            bool((j.config or {}).get("rebuild")) and j.status == DatasetJobStatus.RUNNING
+            for j in active_jobs
+        ):
+            idx = sorted(ready, key=lambda i: i.updated_at or "", reverse=True)[0]
+            return {
+                "brainStatus": "learned",
+                "label": "Geleerd",
+                "indexId": idx.index_id,
+                "chunkCount": idx.chunk_count,
+                "documentCount": (idx.provenance or {}).get("documentCount"),
+                "jobId": None,
+                "progress": 1.0,
+                "phase": "ready",
+                "updatedAt": idx.updated_at,
+                "sourceMissing": source_missing,
+                "learned": True,
+                "versionId": idx.version_id,
+            }
+        if active_jobs:
+            job = active_jobs[0]
+            status = "queued" if job.status == DatasetJobStatus.QUEUED else "indexing"
+            return {
+                "brainStatus": status,
+                "label": "In wachtrij" if status == "queued" else "Bezig met leren",
+                "indexId": None,
+                "chunkCount": None,
+                "documentCount": None,
+                "jobId": job.job_id,
+                "progress": job.progress,
+                "phase": job.phase,
+                "updatedAt": job.updated_at,
+                "sourceMissing": source_missing,
+                "learned": False,
+            }
+        if indexing:
+            idx = indexing[0]
+            return {
+                "brainStatus": "indexing",
+                "label": "Bezig met leren",
+                "indexId": idx.index_id,
+                "chunkCount": idx.chunk_count,
+                "documentCount": (idx.provenance or {}).get("documentCount"),
+                "jobId": None,
+                "progress": None,
+                "phase": "indexing",
+                "updatedAt": idx.updated_at,
+                "sourceMissing": source_missing,
+                "learned": False,
+            }
+        if failed and not ready:
+            idx = sorted(failed, key=lambda i: i.updated_at or "", reverse=True)[0]
+            return {
+                "brainStatus": "failed",
+                "label": "Leren mislukt",
+                "indexId": idx.index_id,
+                "chunkCount": idx.chunk_count,
+                "documentCount": (idx.provenance or {}).get("documentCount"),
+                "jobId": None,
+                "progress": None,
+                "phase": "failed",
+                "updatedAt": idx.updated_at,
+                "sourceMissing": source_missing,
+                "learned": False,
+                "error": (idx.provenance or {}).get("error"),
+            }
+        return {
+            "brainStatus": "not_learned",
+            "label": "Nog niet geleerd",
+            "indexId": None,
+            "chunkCount": None,
+            "documentCount": None,
+            "jobId": None,
+            "progress": None,
+            "phase": None,
+            "updatedAt": None,
+            "sourceMissing": source_missing,
+            "learned": False,
+        }
+
+    def brain_library_entry(self, ds: DatasetRecord) -> dict[str, Any]:
+        entry = ds.public_dict()
+        brain = self.brain_status_for_dataset(ds.dataset_id)
+        entry["brain"] = brain
+        entry["brainStatus"] = brain["brainStatus"]
+        entry["learned"] = brain["learned"]
+        entry["sourceMissing"] = brain["sourceMissing"]
+        return entry
+
+    def list_library_datasets(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return [self.brain_library_entry(d) for d in self.store.list_datasets(limit=limit)]
+
+    def list_learned_datasets(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Datasets with verified READY Brain indexes (Dataset Offline semantics)."""
+        out: list[dict[str, Any]] = []
+        for ds in self.store.list_datasets(limit=500):
+            brain = self.brain_status_for_dataset(ds.dataset_id)
+            if not brain.get("learned"):
+                continue
+            entry = self.brain_library_entry(ds)
+            # Attach richest ready index metadata.
+            indexes = [
+                i.public_dict()
+                for i in self.store.list_indexes(ds.dataset_id)
+                if i.status == IndexStatus.READY
+            ]
+            indexes.sort(key=lambda i: i.get("updatedAt") or "", reverse=True)
+            entry["indexes"] = indexes
+            out.append(entry)
+            if len(out) >= limit:
+                break
+        return out
 
     def offline_brain_preflight(
         self,
@@ -467,10 +828,99 @@ class DatasetService:
         out: list[dict[str, Any]] = []
         for ds in self.store.list_datasets(limit=max(1, min(limit, 200))):
             for idx in self.store.list_indexes(ds.dataset_id):
-                out.append(idx.public_dict())
+                payload = idx.public_dict()
+                payload["datasetName"] = ds.name
+                payload["learned"] = idx.status == IndexStatus.READY
+                out.append(payload)
                 if len(out) >= limit:
                     return out
         return out
+
+    def enqueue_learn_to_brain(
+        self,
+        dataset_id: str,
+        version_id: str | None = None,
+        *,
+        scope: str = "dataset",
+        max_records: int | None = None,
+        source_fingerprint: str | None = None,
+        rebuild: bool = False,
+        offline_only: bool = True,
+    ) -> DatasetJob:
+        """Start Brain ingestion (Kennis leren) via the existing Knowledge index path.
+
+        Materializes RAW sources when needed (derived JSONL only — no source copy).
+        Idempotent when a READY index already exists unless ``rebuild=True``.
+        """
+        ds = self.get_dataset(dataset_id)
+        if (ds.metadata or {}).get("sourceMissing"):
+            raise DatasetError(
+                "Dataset source path is missing on disk",
+                code="source_missing",
+                http_status=409,
+            )
+        ver = self.pick_usable_version(dataset_id, version_id=version_id)
+        if ver is None:
+            raise DatasetError(
+                "Dataset has no version to learn from",
+                code="no_version",
+                http_status=409,
+            )
+        # Block duplicate concurrent learn jobs (not auto-index companions).
+        for job in self.store.list_jobs(dataset_id=dataset_id, limit=40):
+            if (
+                job.job_type == DatasetJobType.INDEX
+                and job.status in {DatasetJobStatus.QUEUED, DatasetJobStatus.RUNNING}
+                and bool((job.config or {}).get("learnToBrain"))
+            ):
+                raise DatasetError(
+                    "Brain ingestion already in progress for this dataset",
+                    code="learn_in_progress",
+                    http_status=409,
+                    details={"jobId": job.job_id},
+                )
+        if not rebuild:
+            brain = self.brain_status_for_dataset(dataset_id)
+            if brain.get("learned"):
+                raise DatasetError(
+                    "Dataset is already learned into Brain; use rebuild/opnieuw leren to reindex",
+                    code="already_learned",
+                    http_status=409,
+                    details={
+                        "indexId": brain.get("indexId"),
+                        "brainStatus": brain.get("brainStatus"),
+                    },
+                )
+        if offline_only:
+            pf = self.offline_brain_preflight(dataset_id, ver.version_id, offline_only=True)
+            if not pf.get("ok"):
+                raise DatasetError(
+                    "; ".join(pf.get("blockers") or ["offline preflight blocked"]),
+                    code="OFFLINE_PREFLIGHT_BLOCKED",
+                    http_status=409,
+                )
+        # Prefer an already-indexable sibling when resolving; else ensure materialize.
+        ensure_materialized = not self._is_directly_indexable(ver)
+        if ensure_materialized:
+            sibling = self._pick_indexable_sibling(dataset_id)
+            if sibling is not None:
+                ver = sibling
+                ensure_materialized = False
+        return self.store.create_job(
+            job_type=DatasetJobType.INDEX,
+            dataset_id=dataset_id,
+            version_id=ver.version_id,
+            config={
+                "scope": scope,
+                "maxRecords": max_records,
+                "offlineOnly": offline_only,
+                "sourceFingerprint": source_fingerprint,
+                "rebuild": rebuild,
+                "requestedVersionId": ver.version_id,
+                "ensureMaterialized": ensure_materialized,
+                "learnToBrain": True,
+            },
+        )
 
     def enqueue_offline_brain_index(
         self,
@@ -480,21 +930,17 @@ class DatasetService:
         scope: str = "dataset",
         max_records: int | None = None,
         source_fingerprint: str | None = None,
+        rebuild: bool = False,
     ) -> DatasetJob:
-        pf = self.offline_brain_preflight(dataset_id, version_id, offline_only=True)
-        if not pf.get("ok"):
-            raise DatasetError(
-                "; ".join(pf.get("blockers") or ["offline preflight blocked"]),
-                code="OFFLINE_PREFLIGHT_BLOCKED",
-                http_status=409,
-            )
-        return self.enqueue_index(
+        """Compatibility wrapper — Brain index is Kennis leren (no separate offline copy)."""
+        return self.enqueue_learn_to_brain(
             dataset_id,
             version_id,
             scope=scope,
             max_records=max_records,
-            offline_only=True,
             source_fingerprint=source_fingerprint,
+            rebuild=rebuild,
+            offline_only=True,
         )
 
     def _unique_dataset_name(self, base: str) -> str:
@@ -1747,8 +2193,99 @@ class DatasetService:
         requested_version_id = str(
             job.config.get("requestedVersionId") or job.version_id
         )
+        ensure_materialized = bool(job.config.get("ensureMaterialized"))
+        self.store.update_job(job.job_id, phase="inspecting", progress=0.02)
+
         # Re-resolve at execution time — filesystem / version state may have changed.
-        ver = self._resolve_indexable_version(job.dataset_id, requested_version_id)
+        try:
+            ver = self._resolve_indexable_version(job.dataset_id, requested_version_id)
+        except DatasetError as exc:
+            if not ensure_materialized or exc.code not in {"no_indexable_version", "storage_not_file"}:
+                raise
+            self.store.update_job(job.job_id, phase="materializing", progress=0.08)
+            ds = self.get_dataset(job.dataset_id)
+            raw_path = ds.raw_path
+            if not raw_path:
+                req = self.get_version(requested_version_id)
+                raw_path = req.storage_path
+            if not raw_path:
+                raise DatasetError(
+                    "Cannot materialize: dataset has no raw source path",
+                    code="no_raw",
+                    http_status=409,
+                ) from exc
+            raw = Path(raw_path)
+            if not raw.exists():
+                raise DatasetError(
+                    f"Source path missing: {raw}",
+                    code="source_missing",
+                    http_status=409,
+                ) from exc
+            fmt = ds.detected_format
+            # Avoid enqueuing a second INDEX job from materialize's auto-index hook.
+            prev_auto = bool(getattr(self, "datasets_auto_index_ready_to_knowledge", True))
+            self.datasets_auto_index_ready_to_knowledge = False
+            try:
+                if raw.is_file():
+                    mat = self._materialize_dataset(job.dataset_id, raw_path=raw, fmt=fmt)
+                else:
+                    # Directory-backed RAW — materialize from discoverable data files.
+                    from .offline import ALLOWED_EXTENSIONS
+
+                    sources: list[dict[str, Any]] = []
+                    for child in sorted(raw.rglob("*")):
+                        if not child.is_file():
+                            continue
+                        if child.suffix.lower() not in ALLOWED_EXTENSIONS:
+                            continue
+                        detection = detect_format(child)
+                        sources.append(
+                            {
+                                "path": str(child),
+                                "format": detection.format.value,
+                                "relativePath": str(child.relative_to(raw)),
+                                "sourceName": child.name,
+                                "provenance": {"sourcePath": str(child), "datasetId": job.dataset_id},
+                            }
+                        )
+                    if not sources:
+                        raise DatasetError(
+                            "Directory source has no supported data files to materialize",
+                            code="no_indexable_version",
+                            http_status=409,
+                        ) from exc
+                    dirs = self._dataset_dirs(job.dataset_id)
+                    dest = dirs["materialized"] / "learned.jsonl"
+                    outcome = materialize_from_sources(sources, dest)
+                    version = self.store.create_version(
+                        dataset_id=job.dataset_id,
+                        version_label="materialized-learned",
+                        kind=VersionKind.MATERIALIZED,
+                        status=VersionStatus.READY,
+                        storage_path=str(dest),
+                        schema=canonical_schema_dict(),
+                        parent_version_id=requested_version_id,
+                        metadata={"learnedMaterialize": True, "sourceCount": len(sources)},
+                    )
+                    self.store.update_version(
+                        version.version_id,
+                        row_count=outcome.get("rowCount"),
+                        byte_size=outcome.get("byteSize"),
+                        content_hash=outcome.get("contentHash"),
+                        validation=outcome.get("validation") or {},
+                    )
+                    self.store.update_dataset(
+                        job.dataset_id,
+                        status=DatasetStatus.READY,
+                        row_count=outcome.get("rowCount"),
+                        content_hash=outcome.get("contentHash"),
+                        byte_size=outcome.get("byteSize"),
+                    )
+                    mat = {"versionId": version.version_id, **outcome}
+            finally:
+                self.datasets_auto_index_ready_to_knowledge = prev_auto
+            ver = self.get_version(str(mat["versionId"]))
+
         if not ver.storage_path:
             raise DatasetError("Version has no storage", code="no_storage", http_status=400)
         storage_path = Path(ver.storage_path)
@@ -1788,6 +2325,7 @@ class DatasetService:
                     http_status=409,
                 )
         # Index row and knowledge docs must reference the resolved source version.
+        self.store.update_job(job.job_id, phase="indexing", progress=0.15, version_id=ver.version_id)
         index = self.store.create_index(
             dataset_id=job.dataset_id,
             version_id=ver.version_id,
@@ -1796,9 +2334,21 @@ class DatasetService:
             provenance={
                 "requestedVersionId": requested_version_id,
                 "resolvedVersionId": ver.version_id,
+                "learnToBrain": bool(job.config.get("learnToBrain")),
             },
         )
         try:
+
+            def _progress(info: dict[str, Any]) -> None:
+                processed = int(info.get("processed") or 0)
+                # Soft asymptotic progress while streaming unknown-length corpora.
+                ratio = min(0.92, 0.15 + (processed / (processed + 200)) * 0.75)
+                self.store.update_job(
+                    job.job_id,
+                    phase=str(info.get("phase") or "indexing"),
+                    progress=ratio,
+                )
+
             outcome = index_version_file(
                 self.knowledge,
                 storage_path,
@@ -1806,10 +2356,13 @@ class DatasetService:
                 version_id=ver.version_id,
                 scope=scope,
                 max_records=int(max_records) if max_records is not None else None,
+                progress_cb=_progress,
+                cancel_cb=lambda: self.runner.is_cancel_requested(job.job_id),
             )
             from .offline import build_projection_manifest
             from Data.modules.common.atomic import atomic_write_text
 
+            self.store.update_job(job.job_id, phase="finalizing", progress=0.95)
             manifest = build_projection_manifest(
                 projection_id=index.index_id,
                 dataset_id=job.dataset_id,
@@ -1822,6 +2375,7 @@ class DatasetService:
             )
             manifest["requestedVersionId"] = requested_version_id
             manifest["resolvedVersionId"] = ver.version_id
+            manifest["learnToBrain"] = bool(job.config.get("learnToBrain"))
             manifest_path = self.corpus.datasets_manifests / f"brain-{index.index_id}.json"
             ensure_dir(manifest_path.parent)
             atomic_write_text(
@@ -1835,6 +2389,8 @@ class DatasetService:
                 "offlineOnly": offline_only,
                 "requestedVersionId": requested_version_id,
                 "resolvedVersionId": ver.version_id,
+                "learnToBrain": bool(job.config.get("learnToBrain")),
+                "datasetName": self.get_dataset(job.dataset_id).name,
             }
             self.store.update_index(
                 index.index_id,
@@ -1860,6 +2416,7 @@ class DatasetService:
                             },
                         )
                         superseded.append(old.index_id)
+            self.store.update_job(job.job_id, phase="ready", progress=1.0)
             return {
                 "indexId": index.index_id,
                 **outcome,
@@ -1868,6 +2425,7 @@ class DatasetService:
                 "rebuild": bool(job.config.get("rebuild")),
                 "requestedVersionId": requested_version_id,
                 "resolvedVersionId": ver.version_id,
+                "learnToBrain": bool(job.config.get("learnToBrain")),
             }
         except Exception as exc:
             self.store.update_index(

@@ -36,6 +36,8 @@ DATASETS_STATIC_SEGMENTS = frozenset(
         "jobs",
         "mixtures",
         "offline",
+        "library",
+        "learned",
         "versions",
         "inspect",
         "import",
@@ -107,10 +109,20 @@ class DuplicateBody(BaseModel):
 
 class OfflineBrainIndexBody(BaseModel):
     datasetId: str
-    versionId: str
+    versionId: str | None = None
     scope: str = "dataset"
     maxRecords: int | None = None
     sourceFingerprint: str | None = None
+    rebuild: bool = False
+
+
+class LearnBody(BaseModel):
+    versionId: str | None = None
+    scope: str = "dataset"
+    maxRecords: int | None = None
+    sourceFingerprint: str | None = None
+    rebuild: bool = False
+    offlineOnly: bool = True
 
 
 class MixtureCreateBody(BaseModel):
@@ -163,7 +175,9 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     # Collection + upload (no path params)
     # ------------------------------------------------------------------
     @router.get("/api/datasets")
-    def list_datasets(limit: int = 100) -> dict:
+    def list_datasets(limit: int = 100, includeBrain: bool = True) -> dict:
+        if includeBrain:
+            return {"datasets": service.list_library_datasets(limit=limit)}
         items = service.list_datasets(limit=limit)
         return {"datasets": [d.public_dict() for d in items]}
 
@@ -176,6 +190,24 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             metadata=body.metadata,
         )
         return {"dataset": ds.public_dict()}
+
+    @router.post("/api/datasets/library/refresh")
+    def refresh_library(maxFiles: int = 500) -> dict:
+        try:
+            return service.refresh_dataset_library(max_files=max(1, min(maxFiles, 2000)))
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.get("/api/datasets/learned")
+    def list_learned(limit: int = 100) -> dict:
+        return {
+            "datasets": service.list_learned_datasets(limit=limit),
+            "truth": {
+                "learned_means_brain_index_ready": True,
+                "local_dataset_is_not_learned_knowledge": True,
+            },
+        }
 
     @router.post("/api/datasets/upload")
     async def upload_dataset(
@@ -346,10 +378,11 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     @router.post("/api/datasets/offline/preflight")
     def offline_preflight(body: OfflinePreflightBody) -> dict:
         try:
+            version_id = body.versionId
             return {
                 "preflight": service.offline_brain_preflight(
                     body.datasetId,
-                    body.versionId,
+                    version_id,
                     offline_only=body.offlineOnly,
                 )
             }
@@ -360,12 +393,14 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     @router.post("/api/datasets/offline/index")
     def offline_index(body: OfflineBrainIndexBody) -> dict:
         try:
-            job = service.enqueue_offline_brain_index(
+            job = service.enqueue_learn_to_brain(
                 body.datasetId,
                 body.versionId,
                 scope=body.scope,
                 max_records=body.maxRecords,
                 source_fingerprint=body.sourceFingerprint,
+                rebuild=body.rebuild,
+                offline_only=True,
             )
         except DatasetError as exc:
             _raise(exc)
@@ -511,6 +546,25 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     def materialize(dataset_id: str) -> dict:
         try:
             job = service.enqueue_materialize(dataset_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/learn")
+    def learn_to_brain(dataset_id: str, body: LearnBody | None = None) -> dict:
+        """Kennis leren — ingest dataset into existing Brain/Knowledge pipeline."""
+        body = body or LearnBody()
+        try:
+            job = service.enqueue_learn_to_brain(
+                dataset_id,
+                body.versionId,
+                scope=body.scope,
+                max_records=body.maxRecords,
+                source_fingerprint=body.sourceFingerprint,
+                rebuild=body.rebuild,
+                offline_only=body.offlineOnly,
+            )
         except DatasetError as exc:
             _raise(exc)
             raise

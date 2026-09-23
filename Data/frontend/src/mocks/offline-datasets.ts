@@ -50,7 +50,7 @@ export type OfflineActiveJob = {
 export const OFFLINE_PAGE_COPY = {
   title: "DATASET OFFLINE",
   subtitle:
-    "PREPARE DATASETS FOR LOCAL USE — Convert, package and store datasets locally for offline reliability and faster processing.",
+    "DATASETS GELEERD IN BRAIN — Overzicht van datasets waarvan de kennis succesvol in LEVIATHAN Brain is geïndexeerd.",
   quote: "A DEEPER INTELLIGENCE A BRIGHTER TOMORROW.",
 };
 

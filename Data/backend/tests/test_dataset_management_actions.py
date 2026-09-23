@@ -70,6 +70,8 @@ class DatasetManagementActionsTests(unittest.TestCase):
             knowledge=self.knowledge,
             allowed_import_roots=[self.import_root, self.corpus.root],
         )
+        # Keep action tests deterministic: import materialize must not enqueue background INDEX.
+        self.service.datasets_auto_index_ready_to_knowledge = False
         app = FastAPI()
         app.include_router(build_datasets_router(self.service))
         self.client = TestClient(app)

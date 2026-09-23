@@ -14,11 +14,16 @@ import {
 import type { DatasetActivityEntry, DatasetJob } from "../../types/api";
 
 const PAGE = resolve(__dirname, "../pixel/DatasetManagementPixelPage.tsx");
+const OFFLINE = resolve(__dirname, "../pixel/OfflineDatasetsPixelPage.tsx");
 const HOOK = resolve(__dirname, "./useDatasetActivity.ts");
 const CLIENT = resolve(__dirname, "../../api/client.ts");
 
 function pageSource(): string {
   return readFileSync(PAGE, "utf8");
+}
+
+function offlineSource(): string {
+  return readFileSync(OFFLINE, "utf8");
 }
 
 function hookSource(): string {
@@ -46,8 +51,9 @@ describe("DatasetManagementPixelPage action wiring", () => {
       "hf",
       "local",
       "create",
+      "rescan",
       "delete",
-      "offline",
+      "learn",
       "dup",
       "index",
       "validate",
@@ -55,16 +61,23 @@ describe("DatasetManagementPixelPage action wiring", () => {
     ]) {
       expect(src).toContain(`case "${id}"`);
     }
+    expect(src).not.toContain("Converteren naar offline");
+    expect(src).not.toContain("onConvertOffline");
     expect(src).not.toContain("Offline-conversie wordt niet ondersteund door DatasetService");
     expect(src).not.toContain("Dupliceren is nog niet beschikbaar via de API");
     expect(src).not.toMatch(/disabled:\s*true/);
   });
 
-  it("gates selection-dependent actions and keeps create/import ungated by selection", () => {
-    expect(src).toContain('const needsSelection = ["delete", "offline", "dup", "index", "validate", "export"]');
-    expect(src).toContain('const needsVersion = ["offline", "index", "validate", "export"]');
-    // upload/hf/local/create must not require selection
-    expect(src).toMatch(/needsSelection[\s\S]*does not include upload|needsSelection = \["delete"/);
+  it("exposes Kennis leren and Opnieuw scannen", () => {
+    expect(src).toContain('label: "Kennis leren"');
+    expect(src).toContain('label: "Opnieuw scannen"');
+    expect(src).toContain("api.learnDataset");
+    expect(src).toContain("api.refreshDatasetLibrary");
+  });
+
+  it("gates selection-dependent actions and keeps create/import/rescan ungated by selection", () => {
+    expect(src).toContain('const needsSelection = ["delete", "learn", "dup", "index", "validate", "export"]');
+    expect(src).toContain('const needsVersion = ["index", "validate", "export"]');
   });
 
   it("treats Hugging Face filename as optional", () => {
@@ -81,7 +94,6 @@ describe("DatasetManagementPixelPage action wiring", () => {
     expect(src).toContain("import { DatasetActivityConsole }");
     expect(src).toContain("useDatasetActivity");
     expect(src).toContain("<DatasetActivityConsole");
-    // Console after footer / main content stack
     const footerIdx = src.indexOf("lv-px-footer-bar");
     const consoleIdx = src.indexOf("<DatasetActivityConsole");
     expect(footerIdx).toBeGreaterThan(0);
@@ -100,20 +112,32 @@ describe("DatasetManagementPixelPage action wiring", () => {
     expect(src).toContain("exportArtifact");
   });
 
-  it("uses offlineBrainPreflight + enqueueOfflineBrainIndex for offline convert", () => {
-    expect(src).toContain("offlineBrainPreflight");
-    expect(src).toContain("enqueueOfflineBrainIndex");
-  });
-
-  it("duplicates via api.duplicateDataset and rebuilds index with rebuild:true", () => {
-    expect(src).toContain("duplicateDataset");
-    expect(src).toContain("rebuild: true");
-  });
-
   it("does not fabricate progress when backend progress is unknown", () => {
-    // Removed local jobProgressPct that forced 0/100
     expect(src).not.toContain("function jobProgressPct");
     expect(progressRatio(job({ jobId: "1", jobType: "export", status: "running", progress: null }))).toBeNull();
+  });
+
+  it("duplicates via api.duplicateDataset and rebuilds via learnDataset rebuild", () => {
+    expect(src).toContain("duplicateDataset");
+    expect(src).toContain("rebuild: true");
+    expect(src).toContain("onLearnToBrain({ rebuild: true })");
+  });
+});
+
+describe("OfflineDatasetsPixelPage Brain-learned semantics", () => {
+  const src = offlineSource();
+
+  it("loads learned datasets from Brain API, not full ModelData inventory", () => {
+    expect(src).toContain("listLearnedDatasets");
+    expect(src).not.toContain("Converteren naar offline");
+    expect(src).not.toContain("Converteer geselecteerde");
+    expect(src).toContain("Brain-geïmporteerde datasets");
+  });
+
+  it("supports opnieuw leren via learnDataset rebuild", () => {
+    expect(src).toContain("Opnieuw leren");
+    expect(src).toContain("rebuild: true");
+    expect(src).toContain("learnDataset");
   });
 });
 
@@ -126,6 +150,14 @@ describe("API client dataset action additions", () => {
     expect(src).toContain("requestBlob(");
     expect(src).toContain("/duplicate");
     expect(src).toContain("/download");
+  });
+
+  it("exposes learnDataset and refreshDatasetLibrary", () => {
+    expect(src).toContain("learnDataset(");
+    expect(src).toContain("refreshDatasetLibrary(");
+    expect(src).toContain("listLearnedDatasets(");
+    expect(src).toContain("/learn");
+    expect(src).toContain("/library/refresh");
   });
 
   it("passes rebuild on indexDatasetVersion", () => {
