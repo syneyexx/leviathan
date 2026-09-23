@@ -265,7 +265,17 @@ export function PerformancePage() {
               <label>
                 Status
                 <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-                  {["Alle statussen", "Gezond", "Belast", "Unavailable", "Failed"].map((t) => (
+                  {[
+                    "Alle statussen",
+                    "Operational",
+                    "Degraded",
+                    "Experimental",
+                    "Fixture",
+                    "Unconfigured",
+                    "Unmeasured",
+                    "Unavailable",
+                    "Failed",
+                  ].map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>
