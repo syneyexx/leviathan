@@ -2220,6 +2220,83 @@ def _m31_data_training_factory(conn: sqlite3.Connection) -> None:
 
 
 
+def _m32_posttraining_flywheel(conn: sqlite3.Connection) -> None:
+    """Wave 9: preference records, model lineage, challenger/promotion evidence."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS preference_records (
+            preference_id TEXT PRIMARY KEY,
+            prompt TEXT NOT NULL,
+            preferred_id TEXT,
+            rejected_id TEXT,
+            ranking TEXT NOT NULL,
+            rubric TEXT,
+            profile TEXT,
+            annotator TEXT,
+            source TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            candidates_json TEXT NOT NULL,
+            context_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_preference_records_source "
+        "ON preference_records(source, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_lineage_edges (
+            edge_id TEXT PRIMARY KEY,
+            parent_id TEXT NOT NULL,
+            child_id TEXT NOT NULL,
+            relation TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_lineage_child "
+        "ON model_lineage_edges(child_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS flywheel_challenger_proposals (
+            proposal_id TEXT PRIMARY KEY,
+            champion_model_id TEXT,
+            challenger_model_id TEXT NOT NULL,
+            rationale TEXT NOT NULL,
+            status TEXT NOT NULL,
+            eval_report_id TEXT,
+            training_job_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS flywheel_promotions (
+            promotion_id TEXT PRIMARY KEY,
+            proposal_id TEXT NOT NULL,
+            from_model_id TEXT,
+            to_model_id TEXT NOT NULL,
+            decided_by TEXT NOT NULL,
+            eval_report_id TEXT,
+            gates_json TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2252,6 +2329,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=29, name="coding_research_frontier", apply=_m29_coding_research_frontier),
     Migration(version=30, name="multimodal_realtime", apply=_m30_multimodal_realtime),
     Migration(version=31, name="data_training_factory", apply=_m31_data_training_factory),
+    Migration(version=32, name="posttraining_flywheel", apply=_m32_posttraining_flywheel),
 )
 
 

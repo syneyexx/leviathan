@@ -108,12 +108,17 @@ from Data.modules.plugins import PluginRegistry, PluginStatus
 from Data.modules.evaluation import EvaluationHarness, EvaluationPlatform, EvaluationStore
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
 from Data.modules.training import (
+    ActiveLearningMiner,
+    FlywheelControlPlane,
     PreferenceBridge,
+    PreferenceStore,
+    SyntheticDataService,
     TrainingRecipeRegistry,
     TrainingRegistry,
     TrainingService,
     build_neuro_recipe_trainer,
 )
+from Data.modules.models.store import ModelStore
 from Data.modules.datasets import DatasetService
 from Data.modules.research import ResearchService
 from Data.modules.common.corpus import build_corpus_layout
@@ -346,7 +351,17 @@ training_recipes = TrainingRecipeRegistry(
         real_worker=settings.features.neuro_training_real_worker
     )
 )
-preference_bridge = PreferenceBridge(training_registry)
+preference_store = PreferenceStore(settings.database_path)
+preference_store.initialize()
+preference_bridge = PreferenceBridge(training_registry, preference_store=preference_store)
+synthetic_data_service = SyntheticDataService()
+active_learning_miner = ActiveLearningMiner()
+model_store_for_flywheel = ModelStore(settings.database_path)
+flywheel = FlywheelControlPlane(
+    settings.database_path,
+    model_store=model_store_for_flywheel,
+    evaluation=evaluation_platform if settings.features.eval_platform else None,
+)
 corpus_layout = build_corpus_layout(settings)
 dataset_service = DatasetService.from_settings(settings, knowledge=knowledge)
 training_service = TrainingService(settings, corpus=corpus_layout)
@@ -1020,7 +1035,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.72.0-wave8-data-factory", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.73.0-wave9-flywheel", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -3683,6 +3698,178 @@ def training_preferences_from_verification(payload: PreferenceFromVerificationRe
             "preference_labels_not_fabricated": True,
         },
     }
+
+
+class HumanPreferenceRequest(BaseModel):
+    prompt: str = Field(default="human preference", min_length=1, max_length=8000)
+    preferred_text: str = Field(min_length=1, max_length=20000)
+    rejected_text: str = Field(min_length=1, max_length=20000)
+    recipe_id: str = Field(default="pref_dpo_v1", min_length=1, max_length=80)
+    note: str = ""
+    annotator: str | None = None
+    rubric: str | None = None
+    profile: str | None = None
+
+
+@app.post("/api/training/preferences")
+def create_human_preference(payload: HumanPreferenceRequest) -> dict:
+    if not settings.features.posttraining_flywheel:
+        raise HTTPException(status_code=501, detail={"reason": "LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL=false"})
+    try:
+        job = preference_bridge.register_human_preference(
+            preferred_text=payload.preferred_text,
+            rejected_text=payload.rejected_text,
+            prompt=payload.prompt,
+            recipe_id=payload.recipe_id,
+            note=payload.note,
+            annotator=payload.annotator,
+            rubric=payload.rubric,
+            profile=payload.profile,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record = preference_bridge.last_preference_record
+    return {
+        "job": job.public_dict(),
+        "preference": record.public_dict() if record else None,
+        "truth": {"preference_labels_not_fabricated": True, "registered_is_not_trained": True},
+    }
+
+
+@app.get("/api/training/preferences")
+def list_preferences(limit: int = 50, source: str | None = None) -> dict:
+    return {
+        "preferences": [p.public_dict() for p in preference_store.list(limit=limit, source=source)],
+    }
+
+
+class SyntheticGenerateRequest(BaseModel):
+    prompts: list[str] = Field(min_length=1)
+    generator_model: str = "fixture-synth-v1"
+    prompt_template: str = "answer:{prompt}"
+    seed: int = 42
+    teacher_ensemble: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/training/synthetic/generate")
+def generate_synthetic(payload: SyntheticGenerateRequest) -> dict:
+    if not settings.features.posttraining_flywheel:
+        raise HTTPException(status_code=501, detail={"reason": "LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL=false"})
+    batch = synthetic_data_service.generate(
+        prompts=payload.prompts,
+        generator_model=payload.generator_model,
+        prompt_template=payload.prompt_template,
+        seed=payload.seed,
+        teacher_ensemble=payload.teacher_ensemble,
+    )
+    return {"batch": batch.public_dict()}
+
+
+class ActiveMineRequest(BaseModel):
+    events: list[dict] = Field(default_factory=list)
+
+
+@app.post("/api/training/active-learning/mine")
+def mine_active_learning(payload: ActiveMineRequest) -> dict:
+    if not settings.features.posttraining_flywheel:
+        raise HTTPException(status_code=501, detail={"reason": "LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL=false"})
+    mined = active_learning_miner.mine_from_events(payload.events)
+    return {"candidates": [c.public_dict() for c in mined]}
+
+
+class ActiveGovernRequest(BaseModel):
+    operator: str = Field(min_length=1, max_length=120)
+    note: str = ""
+
+
+@app.post("/api/training/active-learning/{candidate_id}/govern")
+def govern_active_learning(candidate_id: str, payload: ActiveGovernRequest) -> dict:
+    try:
+        cand = active_learning_miner.govern(candidate_id, operator=payload.operator, note=payload.note)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"candidate": cand.public_dict()}
+
+
+class ChallengerProposeRequest(BaseModel):
+    challenger_model_id: str = Field(min_length=1, max_length=240)
+    rationale: str = Field(min_length=1, max_length=2000)
+    champion_model_id: str | None = None
+    training_job_id: str | None = None
+
+
+@app.post("/api/flywheel/challengers")
+def propose_challenger(payload: ChallengerProposeRequest) -> dict:
+    if not settings.features.posttraining_flywheel:
+        raise HTTPException(status_code=501, detail={"reason": "LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL=false"})
+    proposal = flywheel.propose_challenger(
+        challenger_model_id=payload.challenger_model_id,
+        rationale=payload.rationale,
+        champion_model_id=payload.champion_model_id,
+        training_job_id=payload.training_job_id,
+    )
+    return {"proposal": proposal.public_dict()}
+
+
+@app.get("/api/flywheel/challengers")
+def list_challengers(limit: int = 50) -> dict:
+    return {"proposals": [p.public_dict() for p in flywheel.list_proposals(limit=limit)]}
+
+
+class PromoteRequest(BaseModel):
+    decided_by: str = Field(min_length=1, max_length=120)
+    eval_report_id: str | None = None
+    require_eval_gate: bool = True
+    suite_id: str = "foundation"
+
+
+@app.post("/api/flywheel/challengers/{proposal_id}/promote")
+def promote_challenger(proposal_id: str, payload: PromoteRequest) -> dict:
+    if not settings.features.posttraining_flywheel:
+        raise HTTPException(status_code=501, detail={"reason": "LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL=false"})
+    try:
+        record = flywheel.promote(
+            proposal_id,
+            decided_by=payload.decided_by,
+            eval_report_id=payload.eval_report_id,
+            require_eval_gate=payload.require_eval_gate,
+            suite_id=payload.suite_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        from Data.modules.training import PromotionError
+
+        if isinstance(exc, PromotionError):
+            raise HTTPException(status_code=403, detail=exc.public_dict()) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"promotion": record.public_dict()}
+
+
+class RollbackRequest(BaseModel):
+    decided_by: str = Field(min_length=1, max_length=120)
+
+
+@app.post("/api/flywheel/promotions/{promotion_id}/rollback")
+def rollback_promotion(promotion_id: str, payload: RollbackRequest) -> dict:
+    try:
+        record = flywheel.rollback(promotion_id, decided_by=payload.decided_by)
+    except Exception as exc:  # noqa: BLE001
+        from Data.modules.training import PromotionError
+
+        if isinstance(exc, PromotionError):
+            raise HTTPException(status_code=403, detail=exc.public_dict()) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"promotion": record.public_dict()}
+
+
+@app.get("/api/flywheel/promotions")
+def list_promotions(limit: int = 50) -> dict:
+    return {"promotions": flywheel.list_promotions(limit=limit)}
+
+
+@app.get("/api/flywheel/lineage/{model_id}")
+def get_model_lineage(model_id: str, limit: int = 100) -> dict:
+    edges = flywheel.lineage.list_for_model(model_id, limit=limit)
+    return {"model_id": model_id, "edges": [e.public_dict() for e in edges]}
 
 
 @app.post("/api/training")
