@@ -17,6 +17,9 @@ from .model_adapter import build_control_plane_model_caller
 from .perception import PerceptionItem, PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .runtime import CognitiveRunState, CognitiveRuntime
+from .specialists import register_specialist_handlers
+from .steering import SteerClassification, SteerKind, classify_steer
+from .failure import FailureCategory, classify_failure, should_blind_retry
 from .store import CognitionStore
 from .task_model import TaskModel, TaskModelBuilder
 from .types import (
@@ -68,6 +71,7 @@ __all__ = [
     "EpistemicType",
     "ExperienceAdmissionPolicy",
     "ExperienceStore",
+    "FailureCategory",
     "MetaController",
     "MetaDecision",
     "PerceptionItem",
@@ -78,10 +82,16 @@ __all__ = [
     "ReasoningMode",
     "ReasoningStrategy",
     "RiskClass",
+    "SteerClassification",
+    "SteerKind",
     "TaskModel",
     "TaskModelBuilder",
     "VerifiedExperience",
     "WorkingMemory",
     "WorkingMemoryItem",
     "build_control_plane_model_caller",
+    "classify_failure",
+    "classify_steer",
+    "register_specialist_handlers",
+    "should_blind_retry",
 ]

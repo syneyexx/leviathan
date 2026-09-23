@@ -149,6 +149,7 @@ from Data.modules.cognition import (
     CapabilityBroker,
 )
 from Data.modules.cognition.model_adapter import build_control_plane_model_caller
+from Data.modules.cognition.specialists import register_specialist_handlers
 from Data.modules.security import SecretsBroker, SecurityAuditor, SecurityFinding
 from Data.modules.execution import CapabilityReceiptStore
 from Data.modules.native import NativeRuntimeStub
@@ -757,6 +758,11 @@ cognition_runtime = CognitiveRuntime(
     execution_gateway=execution_gateway,
     observability=observability,
     resource_pressure_fn=lambda: 0.0,
+)
+register_specialist_handlers(
+    cognition_delegation,
+    coding_service=coding_service,
+    research_service=research_service,
 )
 
 

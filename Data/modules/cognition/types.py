@@ -386,11 +386,15 @@ class PlanStep:
             "dependencies": list(self.dependencies),
             "expected_observation": self.expected_observation,
             "acceptance_condition": self.acceptance_condition,
+            "verification_condition": self.acceptance_condition
+            or (self.completion_criteria[0] if self.completion_criteria else None),
             "likely_capabilities": list(self.likely_capabilities),
             "risk_class": self.risk_class.value,
             "status": self.status,
             "resource_estimate": dict(self.resource_estimate),
             "completion_criteria": list(self.completion_criteria),
+            "required_input": list(self.dependencies) or None,
+            "expected_output": self.expected_observation,
         }
 
 
