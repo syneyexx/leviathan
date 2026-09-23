@@ -6,6 +6,38 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 10 Production Operations and Scale — PASS
+
+### Objective
+Industrialize production operations foundations (U341–U380): OTel-compatible traces/SLOs, sandbox/secrets authority hooks, chaos scenarios + lease recovery, fixture remote worker fleet + GPU claims, project-scoped object storage, and deployment profiles — extending existing owners (no second JobRuntime/APM/fleet-per-domain).
+
+### Added / changed
+- **Observability:** `FixtureOtelExporter` + `SloRegistry` (local evaluation; OTLP HTTP UNMEASURED)
+- **Artifacts:** `LocalFsObjectStore` / `FixtureObjectStore` with hard project isolation
+- **Jobs:** `WorkerFleetRegistry`, `FixtureGpuScheduler`, `LeaseRecoveryPlane` reclaim path
+- **Execution:** gateway idempotency short-circuit (no duplicate effect ledger rows)
+- **Isolation / chaos / secrets:** fixture sandbox; scenario presets (`kill_worker`, `expire_lease`, …); `revoke_for_worker`
+- **Ops plane:** `ProductionOpsPlane` + deployment profiles (`ci_fixture`, `local_desktop`, …)
+- **API:** `/api/ops/*` (status, profiles, otel, slos, fleet, gpu, chaos, recovery)
+- **Migration v33** + `LEVIATHAN_FEATURE_PRODUCTION_OPS`
+- **Tests:** `test_wave10_production_ops.py` (exit gate: worker failure → bounded recovery, no leak, no dup)
+- **Version:** `0.74.0-wave10-production-ops`
+
+### EXTERNAL-FIRST review
+- Recovery reuses JobStore leases + ExecutionGateway; fixtures only for remote transport / object store / sandbox
+- Chaos remains default-off; profiles select backends without forking domain code
+- No new third-party dependencies (no OTel SDK / S3 / Postgres required)
+
+### Explicitly NOT claimed
+- Production OTLP exporters, OS container sandboxes, real remote worker wire protocols
+- Kubernetes/Terraform as architectural dependencies; Redis/NATS/Postgres productization
+- MIG partitioning / cloud autoscaling fleets
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 9 Post-Training Improvement Flywheel — PASS
 
 ### Objective

@@ -208,6 +208,8 @@ class FeatureFlags:
     data_training_factory: bool
     # Wave 9 — post-training improvement flywheel (prefs/DPO/promotion)
     posttraining_flywheel: bool
+    # Wave 10 — production operations / scale foundations
+    production_ops: bool
 
 
 @dataclass(frozen=True)
@@ -435,6 +437,7 @@ class Settings:
                 "multimodal_realtime": self.features.multimodal_realtime,
                 "data_training_factory": self.features.data_training_factory,
                 "posttraining_flywheel": self.features.posttraining_flywheel,
+                "production_ops": self.features.production_ops,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -570,6 +573,7 @@ class Settings:
         multimodal_realtime = _env_bool("LEVIATHAN_FEATURE_MULTIMODAL_REALTIME", True)
         data_training_factory = _env_bool("LEVIATHAN_FEATURE_DATA_TRAINING_FACTORY", True)
         posttraining_flywheel = _env_bool("LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL", True)
+        production_ops = _env_bool("LEVIATHAN_FEATURE_PRODUCTION_OPS", True)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -671,6 +675,7 @@ class Settings:
                 multimodal_realtime=multimodal_realtime,
                 data_training_factory=data_training_factory,
                 posttraining_flywheel=posttraining_flywheel,
+                production_ops=production_ops,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,

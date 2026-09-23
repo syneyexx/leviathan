@@ -203,6 +203,29 @@ class SecretsBroker:
         self._plaintext.pop(lease_id, None)
         return self.get(lease_id)
 
+    def revoke_for_worker(self, worker_id: str) -> int:
+        """Revoke all active leases issued to a dead/expired worker (Wave 10)."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT lease_id FROM secret_credential_leases
+                WHERE issued_to = ? AND revoked = 0
+                """,
+                (worker_id,),
+            ).fetchall()
+            ids = [row["lease_id"] for row in rows]
+            if ids:
+                conn.execute(
+                    f"""
+                    UPDATE secret_credential_leases SET revoked = 1
+                    WHERE lease_id IN ({",".join("?" for _ in ids)})
+                    """,
+                    ids,
+                )
+        for lease_id in ids:
+            self._plaintext.pop(lease_id, None)
+        return len(ids)
+
     def get(self, lease_id: str) -> CredentialLease | None:
         with self.connect() as conn:
             row = conn.execute(
