@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { media } from "../assets/media";
 import { api } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
@@ -53,39 +53,8 @@ const TYPE_COLORS: Record<string, string> = {
   tool: "#DB8A34",
   agent: "#4285E8",
   code: "#20DC8C",
+  conversation: "#A1A1AA",
 };
-
-const FALLBACK_NODES: LayoutNode[] = [
-  { id: "core", label: "LEVIATHAN", type: "concept", x: 500, y: 280, r: 28, color: "#F0C875", core: true },
-  { id: "knowledge", label: "Knowledge", type: "concept", x: 360, y: 160, r: 14, color: "#F0C875" },
-  { id: "research", label: "Research", type: "project", x: 280, y: 230, r: 12, color: "#D6A957" },
-  { id: "datasets", label: "Datasets", type: "dataset", x: 320, y: 360, r: 12, color: "#E45959" },
-  { id: "memory", label: "Memory", type: "memory", x: 620, y: 140, r: 13, color: "#22C9D6" },
-  { id: "models", label: "Models", type: "model", x: 700, y: 220, r: 13, color: "#9B8CFF" },
-  { id: "agents", label: "Agents", type: "agent", x: 680, y: 340, r: 12, color: "#4285E8" },
-  { id: "tools", label: "Tools", type: "tool", x: 240, y: 300, r: 12, color: "#DB8A34" },
-  { id: "mcp", label: "MCP", type: "tool", x: 220, y: 180, r: 11, color: "#DB8A34" },
-  { id: "workflows", label: "Workflows", type: "project", x: 520, y: 430, r: 12, color: "#20DC8C" },
-  { id: "evidence", label: "Evidence", type: "evidence", x: 420, y: 420, r: 12, color: "#22C9D6" },
-  { id: "coding", label: "Coding", type: "code", x: 760, y: 300, r: 12, color: "#20DC8C" },
-];
-
-const FALLBACK_EDGES: [string, string][] = [
-  ["core", "knowledge"],
-  ["core", "research"],
-  ["core", "datasets"],
-  ["core", "memory"],
-  ["core", "models"],
-  ["core", "agents"],
-  ["core", "tools"],
-  ["core", "mcp"],
-  ["core", "workflows"],
-  ["core", "evidence"],
-  ["core", "coding"],
-  ["knowledge", "research"],
-  ["datasets", "models"],
-  ["research", "evidence"],
-];
 
 function colorFor(type: string): string {
   return TYPE_COLORS[type] || TYPE_COLORS[type.split(".")[0]] || "#A1A1AA";
@@ -97,6 +66,7 @@ function deepLink(node: BrainNode): string | null {
   if (node.type === "research.project")
     return `/research?project=${encodeURIComponent(node.id.replace(/^research:project:/, ""))}`;
   if (node.type === "dataset") return `/datasets?dataset=${encodeURIComponent(node.id.replace(/^dataset:/, ""))}`;
+  if (node.type === "memory") return `/memory`;
   if (node.type === "module") return `/modules?module=${encodeURIComponent(node.id.replace(/^module:/, ""))}`;
   if (node.type.startsWith("mcp.")) return `/mcp`;
   if (node.type === "workflow") return `/workflows`;
@@ -154,15 +124,15 @@ function layoutNodes(nodes: BrainNode[]): LayoutNode[] {
 
 export function BrainPage() {
   const toast = useAppToast();
+  const [searchParams] = useSearchParams();
   const [view, setView] = useState<BrainView>("Graph");
   const [nodes, setNodes] = useState<BrainNode[]>([]);
   const [edges, setEdges] = useState<BrainEdge[]>([]);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [usingFallback, setUsingFallback] = useState(false);
   const [q, setQ] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState(() => searchParams.get("types") || "");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showLabels, setShowLabels] = useState(true);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());
@@ -179,7 +149,6 @@ export function BrainPage() {
       setNodes(data.nodes);
       setEdges(data.edges);
       setStats(data.stats as Record<string, unknown>);
-      setUsingFallback(false);
       setActiveTypes(new Set(data.nodes.map((n) => n.type)));
       if (data.nodes.length > 0) {
         setSelectedId((prev) => (prev && data.nodes.some((n) => n.id === prev) ? prev : data.nodes[0].id));
@@ -191,9 +160,8 @@ export function BrainPage() {
       setNodes([]);
       setEdges([]);
       setStats(null);
-      setUsingFallback(true);
-      setActiveTypes(new Set(FALLBACK_NODES.map((n) => n.type)));
-      setSelectedId("core");
+      setActiveTypes(new Set());
+      setSelectedId(null);
     } finally {
       setLoading(false);
     }
@@ -203,11 +171,8 @@ export function BrainPage() {
     void load();
   }, [load]);
 
-  const liveLayout = useMemo(() => layoutNodes(nodes), [nodes]);
-  const graphNodes: LayoutNode[] = usingFallback ? FALLBACK_NODES : liveLayout;
-  const graphEdges: Array<{ id: string; source: string; target: string }> = usingFallback
-    ? FALLBACK_EDGES.map(([source, target]) => ({ id: `${source}-${target}`, source, target }))
-    : edges;
+  const graphNodes: LayoutNode[] = useMemo(() => layoutNodes(nodes), [nodes]);
+  const graphEdges: Array<{ id: string; source: string; target: string }> = edges;
 
   const typeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -244,11 +209,11 @@ export function BrainPage() {
       { label: "Knowledge Domains", value: String(Object.keys(byType).length), icon: "domains" },
       {
         label: "Last Updated",
-        value: loading ? "Refreshing…" : usingFallback ? "Offline preview" : "Live",
+        value: loading ? "Refreshing…" : error ? "Error" : "Live",
         icon: "clock",
       },
     ];
-  }, [stats, graphNodes.length, graphEdges.length, typeCounts, loading, usingFallback]);
+  }, [stats, graphNodes.length, graphEdges.length, typeCounts, loading, error]);
 
   const toggleType = (type: string) => {
     setActiveTypes((prev) => {
@@ -349,14 +314,16 @@ export function BrainPage() {
 
         {error ? (
           <div role="alert" className="lv-panel" style={{ padding: 10, fontSize: 12, color: "#f0a0a0" }}>
-            {error} — showing offline preview graph.
+            {error}
           </div>
         ) : null}
 
-        {view === "Tree" ? <BrainTreeView onToast={toast} /> : null}
-        {view === "Timeline" ? <BrainTimelineView onToast={toast} /> : null}
-        {view === "Clusters" ? <BrainClustersView onToast={toast} /> : null}
-        {view === "Analytics" ? <BrainAnalyticsView onToast={toast} /> : null}
+        {view === "Tree" ? <BrainTreeView nodes={nodes} edges={edges} onToast={toast} onSelect={setSelectedId} /> : null}
+        {view === "Timeline" ? <BrainTimelineView nodes={nodes} edges={edges} onToast={toast} /> : null}
+        {view === "Clusters" ? <BrainClustersView nodes={nodes} edges={edges} onToast={toast} /> : null}
+        {view === "Analytics" ? (
+          <BrainAnalyticsView nodes={nodes} edges={edges} stats={stats} onToast={toast} />
+        ) : null}
 
         {isGraph ? (
           <>
@@ -391,7 +358,9 @@ export function BrainPage() {
                 <p style={{ fontSize: 10, opacity: 0.65, margin: "8px 0 0" }}>
                   {loading
                     ? "Loading projection…"
-                    : `${visibleNodes.length} visible · ${graphEdges.length} links${usingFallback ? " · preview" : ""}`}
+                    : error
+                      ? error
+                      : `${visibleNodes.length} visible · ${graphEdges.length} links`}
                 </p>
               </aside>
 
@@ -509,7 +478,7 @@ export function BrainPage() {
                 <h3 className="lv-node-title">{selected.label}</h3>
                 <div className="lv-toolbar">
                   <span className="lv-tag gold">{selected.type}</span>
-                  {usingFallback ? <span className="lv-tag">Preview</span> : <span className="lv-tag">Live</span>}
+                  {error ? <span className="lv-tag">Error</span> : <span className="lv-tag">Live</span>}
                 </div>
                 <p className="lv-node-desc">
                   {typeof selected.meta?.description === "string"

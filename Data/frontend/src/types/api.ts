@@ -979,6 +979,74 @@ export type KnowledgeSearchHit = {
   provenance?: Record<string, unknown>;
 };
 
+/* ---------- Memory (Geheugen) ---------- */
+
+export type MemoryKind =
+  | "NOTE"
+  | "PREFERENCE"
+  | "FACT"
+  | "PROCEDURE"
+  | "EPISODIC"
+  | "DECISION"
+  | "RELATION"
+  | "SUMMARY"
+  | "RESIDUE"
+  | "COMMITMENT"
+  | "CORRECTION"
+  | "PROJECT"
+  | string;
+
+export type MemoryStatus = "ACTIVE" | "ARCHIVED" | "REVOKED" | "SUPERSEDED" | string;
+
+export type MemoryScope =
+  | "GLOBAL"
+  | "USER"
+  | "WORKSPACE"
+  | "PROJECT"
+  | "CONVERSATION"
+  | "AGENT_PRIVATE"
+  | string;
+
+export type MemoryRecord = {
+  memory_id: string;
+  kind: MemoryKind;
+  status: MemoryStatus;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  source: string;
+  trust: string;
+  run_id?: string | null;
+  conversation_id?: string | null;
+  tags: string[];
+  metadata?: Record<string, unknown>;
+  priority?: number;
+  scope: MemoryScope;
+  workspace_id?: string | null;
+  project_id?: string | null;
+  user_id?: string | null;
+  confidence?: number;
+  valid_from?: string | null;
+  valid_until?: string | null;
+  supersedes_id?: string | null;
+  source_refs?: string[];
+  truth?: Record<string, boolean>;
+};
+
+export type MemoryCreatePayload = {
+  content: string;
+  kind?: MemoryKind;
+  source?: string;
+  trust?: string;
+  tags?: string[];
+  conversation_id?: string | null;
+  run_id?: string | null;
+  scope?: MemoryScope | null;
+  project_id?: string | null;
+  workspace_id?: string | null;
+  user_id?: string | null;
+};
+
 /* ---------- Evidence Vault ---------- */
 
 export type EvidenceKind = "ARTIFACT_HASH" | "OBSERVATION_REF" | "FILE_EXISTS" | "COMPOSITE" | string;

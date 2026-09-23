@@ -26,22 +26,39 @@ class _Evidence:
         }
 
 
+class _Memory:
+    def public_dict(self):
+        return {
+            "memory_id": "m1",
+            "content": "User prefers concise answers",
+            "kind": "PREFERENCE",
+            "status": "ACTIVE",
+            "scope": "GLOBAL",
+            "trust": "explicit",
+            "created_at": "t",
+            "conversation_id": "c1",
+        }
+
+
 class BrainFacadeTests(unittest.TestCase):
     def test_bounded_projection_and_edges(self) -> None:
         facade = BrainQueryFacade(
             knowledge_list=lambda: [_Doc("d1", "Doc One"), _Doc("d2", "Doc Two")],
             evidence_list=lambda: [_Evidence()],
+            memory_list=lambda: [_Memory()],
             max_nodes=50,
             max_edges=100,
         )
         graph = facade.query(limit=50)
-        self.assertGreaterEqual(graph["stats"]["node_count"], 3)
+        self.assertGreaterEqual(graph["stats"]["node_count"], 4)
         ids = {n["id"] for n in graph["nodes"]}
         self.assertIn("knowledge:document:d1", ids)
         self.assertIn("evidence:ev1", ids)
+        self.assertIn("memory:m1", ids)
         self.assertTrue(graph["truth"]["projection_only"])
         # run edge from evidence
         self.assertTrue(any(e["relation"] == "from_run" for e in graph["edges"]))
+        self.assertTrue(any(e["relation"] == "from_conversation" for e in graph["edges"]))
 
     def test_type_filter_and_limit(self) -> None:
         facade = BrainQueryFacade(

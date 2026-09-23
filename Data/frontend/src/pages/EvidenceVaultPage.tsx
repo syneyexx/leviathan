@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { mediaPageArt, mediaPageHeroes } from "../assets/mediaPagesAssets";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
@@ -60,6 +61,7 @@ function kindLabel(kind: string): string {
 
 export function EvidenceVaultPage() {
   const toast = useAppToast();
+  const [searchParams] = useSearchParams();
   const [items, setItems] = useState<EvidenceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export function EvidenceVaultPage() {
   const [kindFilter, setKindFilter] = useState<KindFilter>("All");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get("evidence"));
   const [detail, setDetail] = useState<EvidenceRecord | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
 

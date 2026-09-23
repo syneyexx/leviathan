@@ -93,6 +93,8 @@ import type {
   KnowledgeDocument,
   KnowledgeChunk,
   KnowledgeSearchHit,
+  MemoryCreatePayload,
+  MemoryRecord,
   EvidenceRecord,
   WorkflowRecord,
   WorkflowCreatePayload,
@@ -186,13 +188,60 @@ export const api = {
     status?: string;
     kind?: string;
     limit?: number;
-  }): Promise<{ memory: Array<Record<string, unknown>> }> {
+    conversation_id?: string;
+    project_id?: string;
+    scope?: string;
+  }): Promise<{ memory: MemoryRecord[] }> {
     const params = new URLSearchParams();
     if (opts?.status) params.set("status", opts.status);
     if (opts?.kind) params.set("kind", opts.kind);
     if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.conversation_id) params.set("conversation_id", opts.conversation_id);
+    if (opts?.project_id) params.set("project_id", opts.project_id);
+    if (opts?.scope) params.set("scope", opts.scope);
     const q = params.toString();
-    return request<{ memory: Array<Record<string, unknown>> }>(`/api/memory${q ? `?${q}` : ""}`);
+    return request<{ memory: MemoryRecord[] }>(`/api/memory${q ? `?${q}` : ""}`);
+  },
+
+  createMemory(payload: MemoryCreatePayload): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>("/api/memory", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  searchMemory(opts: {
+    q: string;
+    limit?: number;
+    conversation_id?: string;
+    project_id?: string;
+  }): Promise<{ memory: MemoryRecord[]; truth?: Record<string, boolean> }> {
+    const params = new URLSearchParams();
+    params.set("q", opts.q);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.conversation_id) params.set("conversation_id", opts.conversation_id);
+    if (opts.project_id) params.set("project_id", opts.project_id);
+    return request<{ memory: MemoryRecord[]; truth?: Record<string, boolean> }>(
+      `/api/memory/search?${params.toString()}`,
+    );
+  },
+
+  getMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(`/api/memory/${encodeURIComponent(memoryId)}`);
+  },
+
+  archiveMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(
+      `/api/memory/${encodeURIComponent(memoryId)}/archive`,
+      { method: "POST" },
+    );
+  },
+
+  revokeMemory(memoryId: string): Promise<{ memory: MemoryRecord }> {
+    return request<{ memory: MemoryRecord }>(
+      `/api/memory/${encodeURIComponent(memoryId)}/revoke`,
+      { method: "POST" },
+    );
   },
 
   metrics(): Promise<{ metrics: MetricsSnapshot }> {

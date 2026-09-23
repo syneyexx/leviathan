@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
@@ -52,6 +52,7 @@ export function KnowledgeLibraryPage() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [source, setSource] = useState("manual");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const sources = useMemo(() => {
     const counts = new Map<string, number>();
@@ -168,6 +169,43 @@ export function KnowledgeLibraryPage() {
     }
   }
 
+  async function onUploadFiles(files: FileList | null) {
+    if (!files?.length) return;
+    const supported = /\.(txt|md|markdown|rst|csv|json|log)$/i;
+    setBusy(true);
+    let ok = 0;
+    try {
+      for (const file of Array.from(files)) {
+        if (!supported.test(file.name)) {
+          toast(`Unsupported type: ${file.name}`);
+          continue;
+        }
+        if (file.size > 100 * 1024 * 1024) {
+          toast(`${file.name} exceeds 100MB`);
+          continue;
+        }
+        const text = await file.text();
+        const res = await api.createKnowledgeDocument({
+          title: file.name.replace(/\.[^.]+$/, "") || file.name,
+          content: text,
+          source: `upload:${file.name}`,
+        });
+        setSelectedId(res.document.id);
+        ok += 1;
+      }
+      if (ok > 0) {
+        setTab("documents");
+        await loadDocuments();
+        toast(`${ok} file(s) ingested`);
+      }
+    } catch (err) {
+      toast(errMsg(err, "Upload failed"));
+    } finally {
+      setBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   async function onDelete(documentId: string) {
     if (!window.confirm("Delete this knowledge document?")) return;
     setBusy(true);
@@ -209,7 +247,7 @@ export function KnowledgeLibraryPage() {
               [
                 { id: "documents" as const, label: "Documents", sub: "Library inventory", icon: "folder" },
                 { id: "search" as const, label: "Search", sub: "Retrieve chunks", icon: "search" },
-                { id: "create" as const, label: "Add", sub: "Write a document", icon: "plus" },
+                { id: "create" as const, label: "Add", sub: "Write or upload", icon: "plus" },
               ] as const
             ).map((item) => (
               <button
@@ -465,6 +503,20 @@ export function KnowledgeLibraryPage() {
                 <PxIcon name="plus" /> Add document
               </h2>
               <div className="lv-form-grid" style={{ marginTop: 8 }}>
+                <div className="lv-form-field full">
+                  <label htmlFor="kl-file">Upload text file</label>
+                  <input
+                    id="kl-file"
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".txt,.md,.markdown,.rst,.csv,.json,.log,text/*"
+                    onChange={(e) => void onUploadFiles(e.target.files)}
+                  />
+                  <small style={{ color: "var(--lv-text-muted)" }}>
+                    Supported: TXT, MD, CSV, JSON, LOG (max 100MB). PDF/DOCX use path ingest when available.
+                  </small>
+                </div>
                 <div className="lv-form-field">
                   <label htmlFor="kl-title">Title</label>
                   <input
