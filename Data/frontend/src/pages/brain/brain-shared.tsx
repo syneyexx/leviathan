@@ -1,7 +1,14 @@
 import type { ReactNode } from "react";
 import { BRAIN_STATS, BRAIN_VIEWS, type BrainView } from "./brain-mock";
 
-export function BrainHeader({ quote }: { quote?: string }) {
+export function BrainHeader({
+  quote,
+  stats,
+}: {
+  quote?: string;
+  stats?: readonly { label: string; value: string; icon: string }[];
+}) {
+  const rows = stats?.length ? stats : BRAIN_STATS;
   return (
     <header className="lv-br-header">
       <div className="lv-br-title-block">
@@ -10,7 +17,7 @@ export function BrainHeader({ quote }: { quote?: string }) {
         <p className="lv-br-quote">{quote ?? "“Everything is connected.”"}</p>
       </div>
       <div className="lv-br-stats">
-        {BRAIN_STATS.map((stat) => (
+        {rows.map((stat) => (
           <div key={stat.label} className="lv-br-stat">
             <span className={`lv-br-stat-icon is-${stat.icon}`} aria-hidden="true" />
             <div>
