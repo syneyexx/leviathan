@@ -509,6 +509,13 @@ class ContextBuilder:
             if len(excerpt) > max_chars:
                 excerpt = excerpt[:max_chars] + "…"
                 truncated = True
+            # Round 8: retrieved knowledge is external text — never user authority.
+            from Data.modules.security.injection import ExternalTextSource, quarantine_external_text
+
+            quarantined = quarantine_external_text(
+                excerpt, source=ExternalTextSource.RETRIEVED_KNOWLEDGE
+            )
+            excerpt = quarantined.text
             title = item.get("title", "untitled")
             source = item.get("source", "unknown")
             dedupe_key = item.get("chunk_hash") or item.get("content_hash") or f"{title}:{excerpt[:80]}"
@@ -542,6 +549,9 @@ class ContextBuilder:
                         "chunk_id": chunk_id,
                         "trust": "data_not_policy",
                         "layer": item.get("layer") or "evidence",
+                        "authority": "data_only",
+                        "injection_findings": len(quarantined.findings),
+                        "external_text_is_not_user_authority": True,
                     },
                 }
             )
@@ -557,10 +567,16 @@ class ContextBuilder:
         layer: str = "external_content",
         max_chars: int = 800,
     ) -> tuple[list[ContextSection], int, list[str]]:
+        from Data.modules.security.injection import ExternalTextSource, quarantine_external_text
+
         sections: list[ContextSection] = []
         used = 0
         dropped: list[str] = []
         item_max = 480 if kind in {"neuro", "why", "atlas", "contradiction"} else max_chars
+        source_map = {
+            "observation": ExternalTextSource.TOOL_OUTPUT,
+            "evidence": ExternalTextSource.DOCUMENT,
+        }
         for idx, item in enumerate(items):
             raw = str(item.get("content") or item.get("claim") or item.get("summary") or item)
             if kind == "neuro":
@@ -572,6 +588,8 @@ class ContextBuilder:
             elif kind == "why":
                 bucket = item.get("bucket") or item.get("kind") or "why"
                 raw = f"[{bucket}] {raw}"
+            if kind in source_map:
+                raw = quarantine_external_text(raw, source=source_map[kind]).text
             truncated = False
             if len(raw) > item_max:
                 raw = raw[:item_max] + "…"
@@ -593,6 +611,13 @@ class ContextBuilder:
                 "kind": kind,
                 "scope": item.get("scope"),
             }
+            if kind in source_map:
+                provenance.update(
+                    {
+                        "authority": "data_only",
+                        "external_text_is_not_user_authority": True,
+                    }
+                )
             if kind == "neuro":
                 provenance.update(
                     {

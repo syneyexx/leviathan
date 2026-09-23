@@ -40,9 +40,20 @@ class IsolationGuard:
         namespaces for general workers. Process separation of the backend
         itself is not OS-enforced isolation of untrusted workloads.
         """
-        # Honest empty set — no OS sandbox is proven unless a future probe
-        # records real enforcement evidence.
+        # Honest empty set by default — probes may populate via probe_untrusted_execution.
         return ()
+
+    def probe_untrusted_execution(self, workspace_root: str | None = None):
+        """Run adversarial sandbox probes — results are measured, not config claims."""
+        from pathlib import Path
+
+        from .sandbox import run_workspace_sandbox_probes
+
+        report = run_workspace_sandbox_probes(
+            Path(workspace_root) if workspace_root else None,
+            network_allow_outbound=bool(self.settings.network.allow_outbound),
+        )
+        return report
 
     def evaluate(self, request: IsolationRequest | None = None) -> IsolationReport:
         intended = self.baseline_intended()
