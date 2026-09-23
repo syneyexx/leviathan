@@ -112,6 +112,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/backend/tests/test_architecture_wave0.py` | Wave 0 architecture conformance exit gate |
 | `Data/backend/tests/test_wave1_cognition_agents.py` | Wave 1 cognition hydrate/invoke + DAG agents |
 | `Data/backend/tests/test_wave2_evaluation.py` | Wave 2 evaluation platform / release authority |
+| `Data/backend/tests/test_wave3_model_serving.py` | Wave 3 managed serving / measured routing |
 | `Data/modules/artifacts/` | ArtifactStore |
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
 | `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |
@@ -132,6 +133,8 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/backend/routes/mcp.py` | MCP HTTP API (`/api/mcp/*`; call via ExecutionGateway) |
 | `Data/docs/mcp_bridge.md` | MCP architecture reference |
 | `Data/modules/evaluation/` | EvaluationHarness + EvaluationPlatform (scorecards, regression corpus) |
+| `Data/modules/models/` | Model Control Plane + measured router + managed serving providers |
+| `Data/modules/model_runtime/` | OpenAI-compatible LLM + ServingSupervisor / managed adapters |
 | `Data/modules/isolation/` | IsolationGuard |
 | `Data/modules/training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `Data/modules/browser/` | BrowserAutomationStub |

@@ -133,6 +133,41 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
             raise_model_error(exc)
         return {"router": config.public_dict()}
 
+    @router.post("/api/models/router/resolve")
+    def resolve_router(
+        explicitModelId: str | None = None,
+        preferredRole: str | None = None,
+        jobClass: str = "INTERACTIVE",
+    ) -> dict:
+        try:
+            measured = plane.resolve_measured(
+                explicit_model_id=explicitModelId,
+                preferred_role=preferredRole,
+                job_class=jobClass,
+                persist=True,
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"route": measured}
+
+    @router.get("/api/models/router/decisions")
+    def list_route_decisions(limit: int = 50) -> dict:
+        return {
+            "decisions": plane.list_route_decisions(limit=limit),
+            "truth": {"selection_is_not_permission": True},
+        }
+
+    @router.get("/api/models/serving/workers")
+    def list_serving_workers() -> dict:
+        return {
+            "workers": plane.list_serving_workers(),
+            "truth": {"dead_is_not_ready": True},
+        }
+
+    @router.post("/api/models/serving/reconcile")
+    def reconcile_serving() -> dict:
+        return plane.reconcile_serving_workers()
+
     @router.post("/api/models/refresh")
     async def refresh_models() -> dict:
         try:

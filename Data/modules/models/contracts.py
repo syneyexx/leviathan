@@ -392,6 +392,7 @@ class ModelRequest:
     locality: str = "local_preferred"
     explicit_model_id: str | None = None
     agent_model_id: str | None = None
+    job_class: str = "INTERACTIVE"  # INTERACTIVE | BACKGROUND | BATCH (U033)
 
 
 @dataclass
@@ -402,6 +403,10 @@ class RouteDecision:
     fallback_reason: str | None = None
     candidates_tried: list[str] = field(default_factory=list)
     trace_id: str | None = None
+    # Wave 3 measured routing (U041–U042)
+    job_class: str | None = None
+    candidate_scores: list[dict[str, Any]] = field(default_factory=list)
+    policy_id: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -411,6 +416,13 @@ class RouteDecision:
             "fallbackReason": self.fallback_reason,
             "candidatesTried": list(self.candidates_tried),
             "traceId": self.trace_id,
+            "jobClass": self.job_class,
+            "candidateScores": list(self.candidate_scores),
+            "policyId": self.policy_id,
+            "truth": {
+                "selection_is_not_permission": True,
+                "router_does_not_grant_capability_authority": True,
+            },
         }
 
 

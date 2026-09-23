@@ -1864,6 +1864,50 @@ def _m25_evaluation_platform(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m26_model_serving(conn: sqlite3.Connection) -> None:
+    """Wave 3 managed serving workers + measured route decision audit."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_serving_workers (
+            worker_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            backend_kind TEXT NOT NULL,
+            endpoint TEXT,
+            state TEXT NOT NULL,
+            pid INTEGER,
+            health_score REAL,
+            revision_id TEXT,
+            last_error TEXT,
+            started_at TEXT,
+            last_health_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_serving_workers_model "
+        "ON model_serving_workers(model_id, state)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_route_decisions (
+            decision_id TEXT PRIMARY KEY,
+            recorded_at TEXT NOT NULL,
+            policy_id TEXT,
+            job_class TEXT,
+            selected_model_id TEXT,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_route_decisions_recorded "
+        "ON model_route_decisions(recorded_at DESC)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1890,6 +1934,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=23, name="observability_events", apply=_m23_observability_events),
     Migration(version=24, name="durable_kernel", apply=_m24_durable_kernel),
     Migration(version=25, name="evaluation_platform", apply=_m25_evaluation_platform),
+    Migration(version=26, name="model_serving", apply=_m26_model_serving),
 )
 
 

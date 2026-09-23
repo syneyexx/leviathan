@@ -6,6 +6,38 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 3 Local Model Serving Foundation — PASS
+
+### Objective
+Make local model serving frontier-capable under the existing Model Control Plane: managed vLLM-class / llama.cpp adapters, true stream cancellation, measured routing audit, honest killed-worker recovery, and a serving conformance eval suite — without a second model platform under `native/`.
+
+### Added / changed
+- **Serving supervisor** (`model_runtime/serving.py`): worker lifecycle READY/DEAD/UNAVAILABLE, health scores, reconcile killed processes
+- **Managed adapters:** `ManagedLocalServingAdapter`, `VllmClassAdapter`, managed `LlamaCppAdapter` (inproc default; subprocess when binary configured)
+- **Measured routing (U041–U042):** candidate scores + durable `model_route_decisions`; selection ≠ permission
+- **Stream cancel (U025):** `StreamCancelToken` on `chat_stream` + managed token streams
+- **Inference job class (U033):** INTERACTIVE / BACKGROUND / BATCH on requests/decisions
+- **Conformance suite (U035):** `serving_conformance_suite` + `POST /api/evaluation/serving` (batching QoS honestly UNMEASURED)
+- **Migration v26** + flag `LEVIATHAN_FEATURE_MODEL_SERVING`
+- **API:** serving workers/reconcile, measured resolve, route decisions
+- **Tests:** `test_wave3_model_serving.py`
+- **Version:** `0.67.0-wave3-serving`
+
+### EXTERNAL-FIRST review
+- One Model Control Plane; adapters only in `model_runtime` / `models/providers`
+- `native/` remains stub — not a second serving plane
+- Missing binary → UNAVAILABLE; dead worker → DEAD; never fake READY
+
+### Explicitly NOT claimed
+- Continuous batching / KV-cache scheduler under real GPU load
+- Production vLLM/llama-server binary packaging
+- Learned router / ensembles / LoRA-aware routing completion
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 2 Evaluation as Release Authority — PASS
 
 ### Objective

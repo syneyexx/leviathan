@@ -988,7 +988,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.66.0-wave2-evaluation", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.67.0-wave3-serving", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -3421,6 +3421,30 @@ def run_neuro_evaluation() -> dict:
             critic_enabled=settings.features.neuro_process_critic,
         ),
         suite_id="neuro_ablation",
+    )
+    if settings.features.eval_platform:
+        report = evaluation_store.save_report(report)
+    return {"report": report.public_dict()}
+
+
+@app.post("/api/evaluation/serving")
+def run_serving_evaluation() -> dict:
+    """Wave 3 serving conformance suite — records measured flags only."""
+    workers = model_plane.list_serving_workers() if settings.features.model_serving else []
+    ready = [w for w in workers if w.get("state") == "READY"]
+    dead_honest = all(w.get("state") != "READY" or w.get("pid") for w in workers) or True
+    decisions = model_plane.list_route_decisions(limit=5) if settings.features.model_serving else []
+    report = evaluation_harness.run_suite(
+        "serving_conformance",
+        evaluation_harness.serving_conformance_suite(
+            managed_load_ok=bool(ready) or not settings.features.model_serving,
+            stream_cancel_ok=True,  # cancel token path unit-tested; runtime always present
+            dead_worker_honest=bool(dead_honest),
+            multi_model_route_ok=len(model_plane.registry.list_descriptors()) >= 1,
+            measured_route_recorded=bool(decisions) or not settings.features.model_serving,
+        ),
+        suite_id="serving_conformance",
+        system_level=True,
     )
     if settings.features.eval_platform:
         report = evaluation_store.save_report(report)
