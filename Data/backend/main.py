@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, settings
+from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, PROJECT_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.backend.routes.settings import build_settings_router
@@ -219,6 +219,7 @@ execution_gateway = ExecutionGateway(
     approval_checker=approval_service,
     observation_store=observation_store,
     receipt_store=capability_receipts,
+    filesystem_root=PROJECT_ROOT,
 )
 job_store = JobStore(settings.database_path)
 resource_manager = ResourceManager(settings.resources.max_job_concurrency)
@@ -401,7 +402,11 @@ market_sim_service = MarketSimControlPlane.from_settings(
     observability_emit=observability.emit,
 )
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
-browser_worker = BrowserWorker(artifact_store=artifacts, backend_kind="local_dom")
+browser_worker = BrowserWorker(
+    artifact_store=artifacts,
+    backend_kind="local_dom",
+    filesystem_root=str(PROJECT_ROOT),
+)
 browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
 if settings.features.capability_world:
     execution_gateway.browser_executor = browser_worker
@@ -458,6 +463,24 @@ def _gate_loopback() -> GateCheck:
         passed=bool(settings.runtime.loopback_only),
         detail="loopback_only enabled" if settings.runtime.loopback_only else "loopback_only disabled",
     )
+
+
+def _assert_loopback_mutation_allowed(request: Request) -> None:
+    """Round 8: approve/deny/lease stay open on loopback; non-loopback needs operator token."""
+    if settings.runtime.loopback_only:
+        return
+    import os
+
+    expected = (os.environ.get("LEVIATHAN_OPERATOR_TOKEN") or "").strip()
+    provided = (request.headers.get("x-leviathan-operator-token") or "").strip()
+    if not expected or provided != expected:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Non-loopback host: approve/deny/lease require matching "
+                "X-Leviathan-Operator-Token (set LEVIATHAN_OPERATOR_TOKEN)"
+            ),
+        )
 
 
 def _gate_outbound() -> GateCheck:
@@ -2712,7 +2735,8 @@ def get_approval(approval_id: str) -> dict:
 
 
 @app.post("/api/approvals/{approval_id}/approve")
-def approve_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict:
+def approve_approval(approval_id: str, payload: ApprovalDecisionRequest, request: Request) -> dict:
+    _assert_loopback_mutation_allowed(request)
     try:
         record = approval_service.approve(
             approval_id,
@@ -2727,7 +2751,8 @@ def approve_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict
 
 
 @app.post("/api/approvals/{approval_id}/deny")
-def deny_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict:
+def deny_approval(approval_id: str, payload: ApprovalDecisionRequest, request: Request) -> dict:
+    _assert_loopback_mutation_allowed(request)
     try:
         record = approval_service.deny(
             approval_id,
@@ -4265,7 +4290,8 @@ class SecretLeaseRequest(BaseModel):
 
 
 @app.post("/api/secrets/lease")
-def issue_secret_lease(payload: SecretLeaseRequest) -> dict:
+def issue_secret_lease(payload: SecretLeaseRequest, request: Request) -> dict:
+    _assert_loopback_mutation_allowed(request)
     try:
         lease = secrets_broker.issue(
             payload.secret_ref,

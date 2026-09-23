@@ -74,7 +74,10 @@ class IsolationGuard:
             missing = sorted(m.value for m in requested - eff_set)
             notes.append(f"Requested modes not in application-intended set: {missing}")
         else:
-            notes.append("All requested modes are present in application-intended set")
+            notes.append(
+                "All requested modes are present in application-intended set "
+                "(not OS-enforcement proof)"
+            )
         if not os_enforced:
             notes.append(
                 "OS-enforced isolation unmeasured — application intent is not OS proof"

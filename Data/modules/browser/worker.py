@@ -298,6 +298,7 @@ class BrowserWorker:
         backend_kind: str | BrowserBackendKind | None = None,
         allow_network: bool = False,
         allow_uploads: bool = True,
+        filesystem_root: str | None = None,
     ) -> None:
         if backend is not None:
             self.backend = backend
@@ -306,6 +307,7 @@ class BrowserWorker:
                 backend_kind,
                 allow_network=allow_network,
                 allow_uploads=allow_uploads,
+                filesystem_root=filesystem_root,
             )
         else:
             # Explicit Fixture default for unit tests / CI without pages on disk.
@@ -497,6 +499,7 @@ def resolve_browser_backend(
     *,
     allow_network: bool = False,
     allow_uploads: bool = True,
+    filesystem_root: str | None = None,
 ) -> BrowserBackend:
     """Select browser backend. Fixture is test-only; default real path is local_dom."""
     import os
@@ -518,7 +521,11 @@ def resolve_browser_backend(
         return PlaywrightBrowserBackend(allow_uploads=allow_uploads)
     from .dom_backend import LocalDomBrowserBackend
 
-    return LocalDomBrowserBackend(allow_network=allow_network, allow_uploads=allow_uploads)
+    return LocalDomBrowserBackend(
+        allow_network=allow_network,
+        allow_uploads=allow_uploads,
+        filesystem_root=filesystem_root,
+    )
 
 
 # Honest unavailable stub retained for feature-off / release gates.
