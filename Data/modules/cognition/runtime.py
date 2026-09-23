@@ -24,6 +24,7 @@ from .errors import (
     CognitionTransitionInvalid,
 )
 from .experience import ExperienceStore
+from .failure import FailureCategory, classify_failure, should_blind_retry
 from .hydration import (
     action_from_dict,
     beliefs_from_dict,
@@ -39,6 +40,7 @@ from .loop_detection import LoopDetector
 from .meta_controller import MetaController, MetaDecision
 from .perception import PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
+from .steering import SteerKind, classify_steer
 from .store import CognitionStore
 from .task_model import TaskModel, TaskModelBuilder
 from .types import (
@@ -315,12 +317,30 @@ class CognitiveRuntime:
         text = (instruction or "").strip()
         if not text:
             return state.public_status()
+        classified = classify_steer(text)
         state.steering.append(text)
-        state.task.constraints.append(f"steer:{text}")
-        state.working_memory.upsert("constraint", text, priority=0.88)
-        if state.plan is not None:
-            self.planner.mark_stale(state.plan, reason=f"user_steer:{text[:80]}")
-        self._emit(state, "user_steering", {"instruction": text})
+        # Preserve existing constraints unless goal replacement explicitly supersedes one.
+        if classified.kind == SteerKind.STATUS_REQUEST:
+            self._emit(state, "user_steering", classified.public_dict())
+            return {
+                **state.public_status(),
+                "steering_classification": classified.public_dict(),
+            }
+        if classified.kind == SteerKind.GOAL_REPLACEMENT and classified.replaces_goal:
+            state.task.goal = text[:240]
+            state.working_memory.set_goal(state.task.goal)
+        elif classified.kind == SteerKind.NEW_CONSTRAINT:
+            state.task.constraints.append(text)
+            state.working_memory.upsert("constraint", text, priority=0.95, verified=True)
+        elif classified.kind == SteerKind.CORRECTION:
+            state.task.constraints.append(f"correction:{text}")
+            state.working_memory.upsert("constraint", f"correction:{text}", priority=0.9)
+        else:
+            state.task.constraints.append(f"steer:{text}")
+            state.working_memory.upsert("constraint", text, priority=0.88)
+        if state.plan is not None and classified.kind != SteerKind.STATUS_REQUEST:
+            self.planner.mark_stale(state.plan, reason=f"user_steer:{classified.kind.value}:{text[:80]}")
+        self._emit(state, "user_steering", classified.public_dict())
         state.observations.append(
             CognitiveObservation(
                 kind=CognitiveObservationKind.USER_STEERING,
@@ -328,9 +348,13 @@ class CognitiveRuntime:
                 summary=text,
                 source_type=EpistemicType.USER_STATEMENT,
                 success=True,
+                payload=classified.public_dict(),
             )
         )
-        return state.public_status()
+        return {
+            **state.public_status(),
+            "steering_classification": classified.public_dict(),
+        }
 
     def status(self, run_id: str) -> dict[str, Any]:
         return self._require(run_id).public_status()
@@ -742,6 +766,7 @@ class CognitiveRuntime:
                 decision,
                 previous=state.plan,
                 reason=str(action.arguments.get("reason", "replan")),
+                observations=state.observations,
             )
             self._emit(state, "plan_revised", state.plan.public_dict())
             self._transition(state, CognitiveRunStatus.REASONING)
@@ -761,11 +786,82 @@ class CognitiveRuntime:
                     success=False,
                     error="COGNITION_DELEGATION_DISABLED",
                 )
+            agent_kind = str(action.arguments.get("agent_kind") or "generic")
+            goal = str(action.arguments.get("goal") or state.task.goal)
+            # Idempotent: do not re-create irreversible specialist side effects.
+            prior_agent = next(
+                (
+                    o
+                    for o in state.observations
+                    if o.kind == CognitiveObservationKind.AGENT_RESULT
+                    and (o.payload or {}).get("metadata", {}).get("side_effect_duplicated") is False
+                    and (
+                        agent_kind.lower() in str((o.payload or {}).get("metadata", {})).lower()
+                        or goal[:80] in (o.summary or "")
+                        or any(agent_kind in ref for ref in o.artifact_refs)
+                        or any(
+                            str((o.payload or {}).get("metadata", {}).get(k) or "")
+                            for k in ("session_id", "project_id")
+                        )
+                    )
+                    and o.success is not False
+                ),
+                None,
+            )
+            # Stronger idempotency: same agent_kind already produced an artifact ref.
+            prior_same_kind = next(
+                (
+                    o
+                    for o in state.observations
+                    if o.kind == CognitiveObservationKind.AGENT_RESULT
+                    and o.success is not False
+                    and (
+                        any(
+                            ref.startswith("coding_session:")
+                            for ref in o.artifact_refs
+                        )
+                        and agent_kind.lower().startswith("coding")
+                    )
+                    or (
+                        any(
+                            ref.startswith("research_project:")
+                            for ref in o.artifact_refs
+                        )
+                        and agent_kind.lower().startswith("research")
+                    )
+                ),
+                None,
+            )
+            reuse = prior_same_kind or prior_agent
+            if reuse is not None:
+                return CognitiveObservation(
+                    kind=CognitiveObservationKind.AGENT_RESULT,
+                    observation_id=str(uuid.uuid4()),
+                    summary=f"idempotent reuse of prior delegation: {reuse.summary}",
+                    source_type=EpistemicType.TOOL_OBSERVATION,
+                    success=True,
+                    evidence_refs=reuse.evidence_refs,
+                    artifact_refs=reuse.artifact_refs,
+                    payload={
+                        **(reuse.payload or {}),
+                        "idempotent_reuse": True,
+                        "side_effect_duplicated": False,
+                    },
+                )
             state.usage.agent_delegations += 1
             self._transition(state, CognitiveRunStatus.EXECUTING)
+            meta = {
+                "conversation_id": (state.task.metadata or {}).get("conversation_id"),
+            }
+            # Pass prior IDs if present in working memory for resume.
+            for item in state.working_memory.items.values():
+                if item.kind == "artifact" and item.content.startswith("coding_session:"):
+                    meta["existing_session_id"] = item.content.split(":", 1)[-1]
+                if item.kind == "artifact" and item.content.startswith("research_project:"):
+                    meta["existing_project_id"] = item.content.split(":", 1)[-1]
             req = self.delegation.build_request(
-                goal=str(action.arguments.get("goal") or state.task.goal),
-                agent_kind=str(action.arguments.get("agent_kind") or "generic"),
+                goal=goal,
+                agent_kind=agent_kind,
                 task_ref=state.task.task_id,
                 success_criteria=list(action.arguments.get("success_criteria") or state.task.success_criteria),
                 authority_ceiling=str(action.arguments.get("authority_ceiling") or state.task.risk_class.value),
@@ -773,19 +869,35 @@ class CognitiveRuntime:
                 parent_trace_id=state.trace_id,
                 required_evidence=list(state.task.required_evidence),
             )
+            req.metadata.update(meta)
             self._emit(state, "agent_delegated", req.public_dict())
             result = self.delegation.delegate(req)
+            for ref in result.artifact_refs:
+                state.working_memory.upsert("artifact", ref, priority=0.7, verified=True)
             self._transition(state, CognitiveRunStatus.OBSERVING)
+            category = None
+            if result.error or result.status in {"FAILED", "UNAVAILABLE"}:
+                category = classify_failure(
+                    error=result.error,
+                    observation_summary=result.summary,
+                    payload=result.public_dict(),
+                )
             return CognitiveObservation(
                 kind=CognitiveObservationKind.AGENT_RESULT,
                 observation_id=str(uuid.uuid4()),
                 summary=result.summary,
                 source_type=EpistemicType.TOOL_OBSERVATION,
-                success=result.status in {"COMPLETED", "COMPLETED_VERIFIED", "OK", "SUCCESS"},
+                success=result.status in {"COMPLETED", "COMPLETED_VERIFIED", "OK", "SUCCESS", "PARTIAL"},
                 error=result.error,
                 evidence_refs=tuple(result.evidence_refs),
                 artifact_refs=tuple(result.artifact_refs),
-                payload=result.public_dict(),
+                payload={
+                    **result.public_dict(),
+                    "failure_category": category.value if category else None,
+                    "blind_retry_forbidden": (
+                        category is not None and not should_blind_retry(category)
+                    ),
+                },
             )
 
         if kind == CognitiveActionKind.INVOKE_CAPABILITY:

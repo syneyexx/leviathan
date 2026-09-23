@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from Data.modules.context.compaction import extract_hard_constraints
 from Data.modules.reasoning import ReasoningEngine, ReasoningPlan
 
 from .types import RiskClass
@@ -151,6 +152,8 @@ class TaskModelBuilder:
             "medium" if plan.complexity == "medium" else "light"
         )
         preferred = "external_worker" if domain in {"coding", "research", "training"} and plan.complexity != "low" else "in_process"
+        extracted = extract_hard_constraints(text)
+        merged_constraints = list(dict.fromkeys([*(constraints or []), *extracted]))
 
         return TaskModel(
             task_id=str(uuid.uuid4()),
@@ -160,7 +163,7 @@ class TaskModelBuilder:
             domain=domain,
             task_type=task_type,
             requested_outputs=self._outputs(domain, task_type),
-            constraints=list(constraints or []),
+            constraints=merged_constraints,
             success_criteria=criteria,
             risk_class=risk,
             side_effect_expectations=side_effects,
@@ -169,7 +172,9 @@ class TaskModelBuilder:
             unknowns=unknowns,
             ambiguities=ambiguities,
             dependencies=[],
-            time_sensitivity="urgent" if any(t in text.lower() for t in ("asap", "urgent", "now")) else "normal",
+            time_sensitivity="urgent" if any(
+                t in text.lower() for t in ("asap", "urgent", "now", "nu meteen")
+            ) else "normal",
             resource_expectation=resource,
             privacy_class="sensitive" if any(t in text.lower() for t in _HIGH_RISK_TERMS) else "standard",
             initial_uncertainty=uncertainty,
@@ -180,9 +185,37 @@ class TaskModelBuilder:
                 "conversation_id": conversation_id,
                 "legacy_complexity": plan.complexity,
                 "use_knowledge": plan.use_knowledge,
+                "hard_constraints": extracted,
+                "permissions": self._permissions(merged_constraints, side_effects, risk),
+                "uncertainties": unknowns + ambiguities,
             },
             legacy_plan=plan,
         )
+
+    def _permissions(
+        self,
+        constraints: list[str],
+        side_effects: list[str],
+        risk: RiskClass,
+    ) -> dict[str, Any]:
+        joined = " ".join(constraints).lower()
+        write_blocked = any(
+            t in joined
+            for t in (
+                "wijzig nooit",
+                "never modify",
+                "never change",
+                "do not modify",
+                "nooit bestanden",
+                "buiten de projectmap",
+            )
+        )
+        return {
+            "filesystem_write": ("filesystem_write" in side_effects) and not write_blocked,
+            "network": "network_mutation" not in side_effects or risk != RiskClass.CRITICAL,
+            "approval_required": risk in {RiskClass.HIGH, RiskClass.CRITICAL} or bool(side_effects),
+            "workspace_bound": "projectmap" in joined or "project map" in joined or "workspace" in joined,
+        }
 
     def _goal(self, text: str, domain: str) -> str:
         first = text.split("\n", 1)[0].strip()

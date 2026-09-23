@@ -133,6 +133,11 @@ class ActionSelector:
             and not any(o.kind.value == "AGENT_RESULT" for o in observations)
         ):
             target = task.allowed_delegation[0]
+            # Prefer domain-aligned specialist when available.
+            if task.domain == "coding" and "coding" in task.allowed_delegation:
+                target = "coding"
+            elif task.domain == "research" and "research" in task.allowed_delegation:
+                target = "research"
             return CognitiveAction(
                 kind=CognitiveActionKind.DELEGATE_AGENT,
                 action_id=str(uuid.uuid4()),

@@ -40,24 +40,71 @@ _STOP = frozenset(
         "would",
         "vs",
         "versus",
+        # Dutch stopwords — first-class query decomposition
+        "de",
+        "het",
+        "een",
+        "en",
+        "of",
+        "van",
+        "voor",
+        "met",
+        "over",
+        "wat",
+        "hoe",
+        "waarom",
+        "wanneer",
+        "waar",
+        "wie",
+        "is",
+        "zijn",
+        "was",
+        "waren",
+        "niet",
+        "geen",
+        "dit",
+        "dat",
+        "deze",
+        "die",
     }
 )
 
 
 def _tokenize(text: str) -> list[str]:
-    return [t for t in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{1,}", text.lower()) if t not in _STOP]
+    return [
+        t
+        for t in re.findall(r"[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9_-]{1,}", text.lower())
+        if t not in _STOP
+    ]
 
 
 def _subquestions(topic: str, objective: str, limit: int) -> list[str]:
     base = topic.strip().rstrip("?")
-    seeds = [
-        f"What is established about {base}?",
-        f"What evidence supports claims related to {base}?",
-        f"What contradictory or alternative accounts exist for {base}?",
-        f"What open questions remain about {base}?",
-    ]
-    if objective.strip():
-        seeds.insert(1, f"How does evidence address the objective: {objective.strip()}?")
+    dutchish = bool(
+        re.search(
+            r"\b(de|het|een|wat|hoe|waarom|onderzoek|bewijs|bronnen|tegenstrijdig)\b",
+            topic,
+            re.I,
+        )
+    )
+    if dutchish:
+        seeds = [
+            f"Wat is vastgesteld over {base}?",
+            f"Welk bewijs ondersteunt claims over {base}?",
+            f"Welke tegenstrijdige of alternatieve accounts bestaan er over {base}?",
+            f"Welke open vragen blijven over {base}?",
+        ]
+        if objective.strip():
+            seeds.insert(1, f"Hoe adresseert het bewijs het doel: {objective.strip()}?")
+    else:
+        seeds = [
+            f"What is established about {base}?",
+            f"What evidence supports claims related to {base}?",
+            f"What contradictory or alternative accounts exist for {base}?",
+            f"What open questions remain about {base}?",
+        ]
+        if objective.strip():
+            seeds.insert(1, f"How does evidence address the objective: {objective.strip()}?")
     return seeds[: max(1, limit)]
 
 

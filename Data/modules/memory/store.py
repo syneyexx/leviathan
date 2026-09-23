@@ -139,6 +139,20 @@ class MemoryStore:
                 "Refusing to store raw model_output as memory trust; "
                 "use explicit/imported/derived with human or policy authority"
             )
+        # Model speculation must never become user FACT.
+        source_l = (source or "").lower()
+        if kind == MemoryKind.FACT and source_l in {
+            "model",
+            "assistant",
+            "llm",
+            "inference",
+            "speculation",
+            "model_inference",
+        }:
+            raise ValueError(
+                "Refusing to store model speculation as FACT; "
+                "use NOTE/RESIDUE with trust=derived or wait for explicit user confirmation"
+            )
         if scope is None:
             scope = MemoryScope.CONVERSATION if conversation_id else MemoryScope.GLOBAL
         elif isinstance(scope, str):
