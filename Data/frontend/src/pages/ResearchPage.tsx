@@ -408,7 +408,7 @@ export function ResearchPage() {
   const [hasLiveProject, setHasLiveProject] = useState(false);
 
   const selectedModel = useMemo(
-    () => models.find((m) => m.id === modelId) ?? models[0] ?? null,
+    () => (modelId ? models.find((m) => m.id === modelId) ?? null : null),
     [models, modelId],
   );
 
@@ -529,20 +529,39 @@ export function ResearchPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const [modelRes, budgetRes] = await Promise.all([
-          api.listModels(),
-          api.researchBudgets(),
-        ]);
+      // Load independently — a budget failure must not leave Start Research stuck
+      // behind an empty model gate.
+      const [modelOutcome, budgetOutcome] = await Promise.allSettled([
+        api.listModels(),
+        api.researchBudgets(),
+      ]);
+      if (cancelled) return;
+
+      if (modelOutcome.status === "fulfilled") {
+        let listed = modelOutcome.value.models ?? [];
+        if (listed.length === 0) {
+          try {
+            const refreshed = await api.refreshModels();
+            if (!cancelled) listed = refreshed.models ?? [];
+          } catch {
+            /* empty registry is allowed — research can start on Auto */
+          }
+        }
         if (cancelled) return;
-        setModels(modelRes.models);
+        setModels(listed);
+        setModelId((prev) => prev || listed[0]?.id || "");
+      } else if (!cancelled) {
+        toast(errMsg(modelOutcome.reason, "Failed to load models"));
+      }
+
+      if (budgetOutcome.status === "fulfilled") {
+        const budgetRes = budgetOutcome.value;
         setBudgetCatalog(budgetRes);
-        if (!modelId && modelRes.models[0]) setModelId(modelRes.models[0].id);
         const normal = budgetRes.execution_modes.normal;
         setCustomWorkers(normal.research_workers);
         setCustomRounds(normal.rounds);
-      } catch (err) {
-        if (!cancelled) toast(errMsg(err, "Failed to load research configuration"));
+      } else if (!cancelled) {
+        toast(errMsg(budgetOutcome.reason, "Failed to load research budgets"));
       }
     })();
     return () => {
@@ -761,10 +780,6 @@ export function ResearchPage() {
       toast("Ask a research question first");
       return;
     }
-    if (!selectedModel) {
-      toast("No model available — check Models");
-      return;
-    }
     setBusy(true);
     try {
       const seeds = buildSeedUrls();
@@ -775,10 +790,13 @@ export function ResearchPage() {
         depth,
         allowWeb: !!context.web,
         executionMode,
-        modelProfile: {
-          modelId: selectedModel.id,
-          displayName: selectedModel.displayName,
-        },
+        // Model is optional — backend falls back to wired model_caller / deterministic analysis.
+        modelProfile: selectedModel
+          ? {
+              modelId: selectedModel.id,
+              displayName: selectedModel.displayName,
+            }
+          : { modelId: "auto", displayName: "Auto (default LLM)" },
         budget: {
           research_workers: effectiveWorkers,
           rounds: effectiveRounds,
@@ -908,17 +926,13 @@ export function ResearchPage() {
                 value={modelId}
                 aria-label="Model"
                 onChange={(e) => setModelId(e.target.value)}
-                disabled={!models.length}
               >
-                {models.length === 0 ? (
-                  <option value="">No models</option>
-                ) : (
-                  models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.displayName}
-                    </option>
-                  ))
-                )}
+                <option value="">Auto (default LLM)</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.displayName}
+                  </option>
+                ))}
               </select>
             </div>
             <textarea
@@ -1025,8 +1039,15 @@ export function ResearchPage() {
                 <button
                   type="button"
                   className="lv-rd-start"
-                  disabled={busy || !query.trim() || !selectedModel}
+                  disabled={busy || !query.trim()}
                   onClick={() => void onStartResearch()}
+                  title={
+                    !query.trim()
+                      ? "Enter a research question first"
+                      : selectedModel
+                        ? `Start with ${selectedModel.displayName}`
+                        : "Start with Auto (default LLM)"
+                  }
                 >
                   {busy ? "Starting…" : "Start Research →"}
                 </button>
