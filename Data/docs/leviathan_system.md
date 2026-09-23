@@ -12,7 +12,7 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel guardrails**, **Wave 2 evaluation as release authority**, and **Wave 3 managed local model serving** (vLLM-class / llama.cpp adapters, measured routing, honest worker recovery).
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel**, **Wave 2 evaluation as release authority**, **Wave 3 managed local model serving**, and **Wave 4 context/memory/knowledge substrate** (pinned constraints, scoped memory, retrieval thresholds).
 
 **Implemented and real:**
 
