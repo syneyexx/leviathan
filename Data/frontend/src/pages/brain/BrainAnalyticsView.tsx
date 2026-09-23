@@ -10,6 +10,8 @@ type AnalyticsKpi = {
   suffix?: string;
 };
 
+type DistributionMode = "count" | "percentage";
+
 function formatCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
@@ -35,9 +37,10 @@ function movingSpark(values: readonly number[]): number[] {
   return [];
 }
 
-export function BrainAnalyticsView({ nodes, edges, stats }: { nodes: LiveBrainNode[]; edges: LiveBrainEdge[]; stats?: Record<string, unknown> | null; onToast?: (msg: string) => void }) {
+export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: LiveBrainNode[]; edges: LiveBrainEdge[]; stats?: Record<string, unknown> | null; onToast?: (msg: string) => void }) {
   const analytics = useMemo(() => buildAnalytics(nodes, edges, stats ?? null), [nodes, edges, stats]);
   const [growthRange, setGrowthRange] = useState("30D");
+  const [distributionMode, setDistributionMode] = useState<DistributionMode>("count");
 
   const degree = useMemo(() => {
     const map = new Map<string, number>();
@@ -162,8 +165,14 @@ export function BrainAnalyticsView({ nodes, edges, stats }: { nodes: LiveBrainNo
         </Panel>
 
         <Panel title="Node Type Distribution" className="lv-ba-types">
-          <div className="lv-ba-count-toggle"><button type="button" className="is-active">Count</button><button type="button">Percentage</button></div>
-          <ul className="lv-ba-bars">{typeRows.map(([type, count]) => <li key={type}><span><i className="lv-bc-dot" style={{ background: colorForType(type) }} />{pretty(type)}</span><em>{formatCount(count)}</em><div className="lv-ba-bar-track"><i style={{ width: `${Math.max(3, (count / maxTypeCount) * 100)}%`, background: colorForType(type) }} /></div><small>{analytics.nodeCount ? ((count / analytics.nodeCount) * 100).toFixed(1) : "0.0"}%</small></li>)}</ul>
+          <div className="lv-ba-count-toggle">
+            <button type="button" className={distributionMode === "count" ? "is-active" : ""} aria-pressed={distributionMode === "count"} onClick={() => setDistributionMode("count")}>Count</button>
+            <button type="button" className={distributionMode === "percentage" ? "is-active" : ""} aria-pressed={distributionMode === "percentage"} onClick={() => setDistributionMode("percentage")}>Percentage</button>
+          </div>
+          <ul className="lv-ba-bars">{typeRows.map(([type, count]) => {
+            const percentage = analytics.nodeCount ? (count / analytics.nodeCount) * 100 : 0;
+            return <li key={type}><span><i className="lv-bc-dot" style={{ background: colorForType(type) }} />{pretty(type)}</span><em>{distributionMode === "count" ? formatCount(count) : `${percentage.toFixed(1)}%`}</em><div className="lv-ba-bar-track"><i style={{ width: `${Math.max(3, (count / maxTypeCount) * 100)}%`, background: colorForType(type) }} /></div><small>{distributionMode === "count" ? `${percentage.toFixed(1)}%` : `${formatCount(count)} nodes`}</small></li>;
+          })}</ul>
         </Panel>
 
         <Panel title="Latency Trends" className="lv-ba-latency">
@@ -182,7 +191,7 @@ export function BrainAnalyticsView({ nodes, edges, stats }: { nodes: LiveBrainNo
       <div className="lv-ba-footer">
         <section className="lv-ba-insights"><strong>Insights</strong><div className="lv-ba-insight-grid"><div><b>{connectedPercent.toFixed(1)}%</b><span>Nodes connected</span></div><div><b>{averageDegree.toFixed(2)}</b><span>Average degree</span></div><div><b>{analytics.typeCount}</b><span>Knowledge domains</span></div><div><b>{analytics.relations.length}</b><span>Relation types</span></div></div></section>
         <section className="lv-ba-emerging"><strong>Top Emerging Topics</strong>{emergingTopics.length ? <ol>{emergingTopics.map(([topic, count], index) => <li key={topic}><span><b>{index + 1}</b>{pretty(topic)}</span><em>{count} recent</em></li>)}</ol> : <p className="lv-br-muted">Not enough dated node labels to derive emerging topics.</p>}</section>
-        <div className="lv-ba-footer-action"><button type="button" className="lv-br-btn is-gold">View All Analytics →</button></div>
+        <div className="lv-ba-footer-action"><button type="button" className="lv-br-btn is-gold" onClick={() => { setGrowthRange("ALL"); onToast?.("Showing the full bounded analytics projection."); }}>View All Analytics →</button></div>
       </div>
     </div>
   );
