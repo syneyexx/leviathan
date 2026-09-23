@@ -199,21 +199,30 @@ class IntelligenceHealthService:
             for key, section in sections.items()
             if section.get("degraded") or section.get("degraded_reason")
         ]
-        # Critical path degradation flips the banner to DEGRADED.
+        emb_section = sections.get("embeddings") or {}
+        emb_reason = str(emb_section.get("degraded_reason") or "")
+        # auto→hash is an honest nonsemantic fallback — RAG remains operational.
+        embeddings_soft_only = emb_reason.startswith("auto_resolved_to_nonsemantic")
+
+        # Residual unavailability is expected on most installs — it must not flip the
+        # whole stack banner to DEGRADED when cognition/RAG/memory remain effective.
         critical = {
             "reasoning",
             "cognition",
             "rag",
-            "embeddings",
             "memory",
             "neuro",
-            "residual",
             "verification",
         }
+        if "embeddings" in degraded_keys and not embeddings_soft_only:
+            critical.add("embeddings")
         critical_degraded = [k for k in degraded_keys if k in critical]
+        # Soft-degraded sections (capability-gated enhancers) stay visible but non-fatal.
+        soft = {"residual", "reranker", "atlas", "assimilation", "training_feedback", "cortex", "embeddings"}
+        soft_degraded = [k for k in degraded_keys if k in soft or (k == "embeddings" and embeddings_soft_only)]
         status = "DEGRADED" if critical_degraded else "ACTIVE"
 
-        emb = sections.get("embeddings") or {}
+        emb = emb_section
         residual = sections.get("residual") or {}
         neuro = sections.get("neuro") or {}
         cortex = sections.get("cortex") or {}
@@ -257,10 +266,15 @@ class IntelligenceHealthService:
                 effective=bool(cortex.get("effective")),
                 capability=bool(cortex.get("capability_available")),
             ),
-            "residual": _banner_state(
-                desired=bool(residual.get("desired")),
-                effective=bool(residual.get("effective")),
-                capability=bool(residual.get("capability_available")),
+            "residual": (
+                "UNSUPPORTED"
+                if not residual.get("capability_available")
+                and bool(residual.get("desired"))
+                else _banner_state(
+                    desired=bool(residual.get("desired")),
+                    effective=bool(residual.get("effective")),
+                    capability=bool(residual.get("capability_available")),
+                )
             ),
             "verification": _banner_state(
                 desired=bool(verification.get("desired")),
@@ -274,6 +288,7 @@ class IntelligenceHealthService:
             ),
             "degraded_sections": degraded_keys,
             "critical_degraded": critical_degraded,
+            "soft_degraded": soft_degraded,
             "truth": {
                 "banner_reflects_effective_not_desired": True,
                 "unsupported_residual_is_degraded_not_active": True,
@@ -592,18 +607,25 @@ class IntelligenceHealthService:
             degraded = None
             if desired and not supported:
                 degraded = f"residual_runtime_unsupported_kind={kind}"
+        # consumer_active means residual steering is actually running — not merely
+        # that an UnsupportedResidualRuntime placeholder object exists.
+        port_present = self.residual_port is not None or (
+            self.neuro_advisor is not None
+            and getattr(self.neuro_advisor, "residual_port", None) is not None
+        )
         return self.build_feature_report(
             feature_key="features.neuro_residual_injection",
             desired=desired,
             effective=effective,
-            consumer="ResidualPort",
-            consumer_active=self.residual_port is not None
-            or (
-                self.neuro_advisor is not None
-                and getattr(self.neuro_advisor, "residual_port", None) is not None
-            ),
+            consumer="ResidualRuntime",
+            consumer_active=bool(port_present and supported and effective),
             capability_available=capability,
-            degraded_reason=degraded,
+            degraded_reason=degraded
+            or (
+                "selected model runtime does not expose residual hooks"
+                if desired and not supported
+                else None
+            ),
             detail={
                 "residual_kind": kind,
                 "supports_residuals": supported,

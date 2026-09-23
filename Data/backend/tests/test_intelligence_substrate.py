@@ -131,7 +131,7 @@ class IntelligenceHealthTests(unittest.TestCase):
         self.assertFalse(residual["effective"])
         self.assertTrue(residual.get("degraded") or residual.get("degraded_reason"))
         summary = payload["stack_summary"]
-        self.assertIn(summary["residual"], {"OFF", "DEGRADED"})
+        self.assertIn(summary["residual"], {"OFF", "DEGRADED", "UNSUPPORTED"})
 
 
 class KnowledgeAssimilationTests(unittest.TestCase):
