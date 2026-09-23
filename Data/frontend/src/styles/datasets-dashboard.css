@@ -170,10 +170,10 @@
 }
 
 .lv-dh-pill.is-active {
-  border-color: rgba(240, 200, 117, 0.7);
-  color: var(--lv-gold-pale);
-  box-shadow: var(--lv-glow-gold);
-  background: linear-gradient(180deg, rgba(214, 169, 87, 0.14), rgba(8, 10, 9, 0.92));
+  background: linear-gradient(180deg, rgba(214, 169, 87, 0.42), rgba(214, 169, 87, 0.22));
+  border-color: rgba(214, 169, 87, 0.85);
+  color: #f6efd8;
+  box-shadow: 0 0 14px rgba(214, 169, 87, 0.22);
 }
 
 .lv-dh-pill-ico {

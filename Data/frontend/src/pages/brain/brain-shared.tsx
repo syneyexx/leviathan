@@ -53,8 +53,13 @@ export function BrainViewTabs({
             type="button"
             role="tab"
             aria-selected={view === item}
+            data-brain-view={item}
             className={`lv-br-tab${view === item ? " is-active" : ""}`}
-            onClick={() => onChange(item)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onChange(item);
+            }}
           >
             <span className={`lv-br-tab-icon is-${item.toLowerCase()}`} aria-hidden="true" />
             {item === "Graph" ? "Graph View" : item}

@@ -138,12 +138,13 @@
 
 .lv-rd-hero-quote {
   flex: 0 0 auto;
-  max-width: 220px;
-  margin: 0;
+  align-self: flex-start;
+  max-width: 240px;
+  margin: 8px 0 0;
   padding: 12px 14px;
   border: 1px solid rgba(214, 169, 87, 0.45);
   border-radius: 4px;
-  background: rgba(5, 7, 6, 0.55);
+  background: rgba(5, 7, 6, 0.62);
   font-family: var(--lv-font-display);
   font-size: 10px;
   letter-spacing: 0.12em;
@@ -151,6 +152,7 @@
   text-align: right;
   color: var(--lv-gold-pale);
   text-transform: uppercase;
+  box-shadow: 0 0 18px rgba(214, 169, 87, 0.12);
 }
 
 /* —— Query panel —— */

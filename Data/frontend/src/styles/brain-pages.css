@@ -122,12 +122,18 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 30;
+  pointer-events: auto;
 }
 
 .lv-br-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  position: relative;
+  z-index: 31;
+  pointer-events: auto;
 }
 
 .lv-br-tab {
@@ -140,6 +146,9 @@
   background: rgba(10, 10, 12, 0.85);
   color: rgba(246, 241, 232, 0.82);
   font-size: 13px;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
 }
 

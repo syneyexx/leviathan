@@ -140,7 +140,6 @@ function layoutNodes(nodes: BrainNode[]): LayoutNode[] {
     });
   });
   if (positioned.length > 0) {
-    // Promote a central LEVIATHAN hub when present, else first node.
     const hub =
       positioned.find((n) => /leviathan/i.test(n.label)) ??
       positioned.find((n) => n.type === "atlas") ??
@@ -181,8 +180,7 @@ export function BrainPage() {
       setEdges(data.edges);
       setStats(data.stats as Record<string, unknown>);
       setUsingFallback(false);
-      const types = new Set(data.nodes.map((n) => n.type));
-      setActiveTypes(types);
+      setActiveTypes(new Set(data.nodes.map((n) => n.type)));
       if (data.nodes.length > 0) {
         setSelectedId((prev) => (prev && data.nodes.some((n) => n.id === prev) ? prev : data.nodes[0].id));
       } else {
@@ -206,7 +204,6 @@ export function BrainPage() {
   }, [load]);
 
   const liveLayout = useMemo(() => layoutNodes(nodes), [nodes]);
-
   const graphNodes: LayoutNode[] = usingFallback ? FALLBACK_NODES : liveLayout;
   const graphEdges: Array<{ id: string; source: string; target: string }> = usingFallback
     ? FALLBACK_EDGES.map(([source, target]) => ({ id: `${source}-${target}`, source, target }))
@@ -214,9 +211,7 @@ export function BrainPage() {
 
   const typeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const n of graphNodes) {
-      counts[n.type] = (counts[n.type] ?? 0) + 1;
-    }
+    for (const n of graphNodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
     return counts;
   }, [graphNodes]);
 
@@ -243,11 +238,10 @@ export function BrainPage() {
     const nodeCount = (stats?.node_count as number | undefined) ?? graphNodes.length;
     const edgeCount = (stats?.edge_count as number | undefined) ?? graphEdges.length;
     const byType = (stats?.by_type as Record<string, number> | undefined) ?? typeCounts;
-    const domains = Object.keys(byType).length;
     return [
       { label: "Nodes", value: formatCount(nodeCount), icon: "nodes" },
       { label: "Connections", value: formatCount(edgeCount), icon: "links" },
-      { label: "Knowledge Domains", value: String(domains), icon: "domains" },
+      { label: "Knowledge Domains", value: String(Object.keys(byType).length), icon: "domains" },
       {
         label: "Last Updated",
         value: loading ? "Refreshing…" : usingFallback ? "Offline preview" : "Live",
@@ -265,62 +259,40 @@ export function BrainPage() {
     });
   };
 
-  const viewTabs = (
-    <BrainViewTabs
-      view={view}
-      onChange={setView}
-      trailing={
-        <>
-          <input
-            className="lv-br-input"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void load();
-            }}
-            placeholder="Filter graph…"
-            aria-label="Filter graph"
-            style={{ width: 160 }}
-          />
-          <select
-            className="lv-br-select"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            aria-label="Type filter"
-            style={{ width: "auto" }}
-          >
-            <option value="">All types</option>
-            {typeOptions.map((t) => (
-              <option key={t} value={t}>
-                {t} ({typeCounts[t]})
-              </option>
-            ))}
-          </select>
-          <button className="lv-br-btn" type="button" onClick={() => void load()}>
-            Refresh
-          </button>
-          <button
-            className="lv-br-btn is-gold"
-            type="button"
-            onClick={() => toast("Brain is a read projection — mutate via Knowledge / Research / Datasets.")}
-          >
-            + Add Node
-          </button>
-        </>
-      }
-    />
-  );
+  const isGraph = view === "Graph";
 
-  if (view !== "Graph") {
-    return (
-      <AppShell
-        activeMode="explore"
-        modeLabel="Brain Mode"
-        searchPlaceholder="Search nodes, concepts, memories, datasets..."
-        layout="wide"
-        pageClass="lv-app--brain-views"
-      >
-        <main className="lv-main lv-br-main">
+  return (
+    <AppShell
+      activeMode="explore"
+      modeLabel="Brain Mode"
+      searchPlaceholder="Search nodes, concepts, memories, datasets..."
+      layout={isGraph ? "standard" : "wide"}
+      pageClass={isGraph ? "lv-app--brain" : "lv-app--brain-views"}
+    >
+      <main className={`lv-main${isGraph ? "" : " lv-br-main"}`}>
+        {isGraph ? (
+          <section className="lv-page-hero">
+            <div className="lv-hero-media">
+              <img src={media.architectureBg} alt="" width={1400} height={380} />
+            </div>
+            <div className="lv-hero-shade" />
+            <div className="lv-hero-content">
+              <div className="lv-hero-kicker">
+                <span />
+                Dynamic Knowledge Network
+                <span />
+              </div>
+              <h1 className="lv-hero-title">Brain</h1>
+              <p className="lv-page-quote">“All knowledge is connected.”</p>
+            </div>
+            <div className="lv-hero-rail" aria-hidden="true">
+              <span>Graph</span>
+              <span>Memory</span>
+              <span>Reason</span>
+              <span>Link</span>
+            </div>
+          </section>
+        ) : (
           <BrainHeader
             stats={headerStats}
             quote={
@@ -329,47 +301,51 @@ export function BrainPage() {
                 : "“Everything is connected.”"
             }
           />
-          {viewTabs}
-          {view === "Tree" ? <BrainTreeView onToast={toast} /> : null}
-          {view === "Timeline" ? <BrainTimelineView onToast={toast} /> : null}
-          {view === "Clusters" ? <BrainClustersView onToast={toast} /> : null}
-          {view === "Analytics" ? <BrainAnalyticsView onToast={toast} /> : null}
-        </main>
-      </AppShell>
-    );
-  }
+        )}
 
-  return (
-    <AppShell
-      activeMode="explore"
-      modeLabel="Brain Mode"
-      searchPlaceholder="Search nodes, concepts, memories, datasets..."
-      pageClass="lv-app--brain"
-    >
-      <main className="lv-main">
-        <section className="lv-page-hero">
-          <div className="lv-hero-media">
-            <img src={media.architectureBg} alt="" width={1400} height={380} />
-          </div>
-          <div className="lv-hero-shade" />
-          <div className="lv-hero-content">
-            <div className="lv-hero-kicker">
-              <span />
-              Dynamic Knowledge Network
-              <span />
-            </div>
-            <h1 className="lv-hero-title">Brain</h1>
-            <p className="lv-page-quote">“All knowledge is connected.”</p>
-          </div>
-          <div className="lv-hero-rail" aria-hidden="true">
-            <span>Graph</span>
-            <span>Memory</span>
-            <span>Reason</span>
-            <span>Link</span>
-          </div>
-        </section>
-
-        {viewTabs}
+        <BrainViewTabs
+          view={view}
+          onChange={setView}
+          trailing={
+            <>
+              <input
+                className="lv-br-input"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void load();
+                }}
+                placeholder="Filter graph…"
+                aria-label="Filter graph"
+                style={{ width: 160 }}
+              />
+              <select
+                className="lv-br-select"
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                aria-label="Type filter"
+                style={{ width: "auto" }}
+              >
+                <option value="">All types</option>
+                {typeOptions.map((t) => (
+                  <option key={t} value={t}>
+                    {t} ({typeCounts[t]})
+                  </option>
+                ))}
+              </select>
+              <button className="lv-br-btn" type="button" onClick={() => void load()}>
+                Refresh
+              </button>
+              <button
+                className="lv-br-btn is-gold"
+                type="button"
+                onClick={() => toast("Brain is a read projection — mutate via Knowledge / Research / Datasets.")}
+              >
+                + Add Node
+              </button>
+            </>
+          }
+        />
 
         {error ? (
           <div role="alert" className="lv-panel" style={{ padding: 10, fontSize: 12, color: "#f0a0a0" }}>
@@ -377,205 +353,219 @@ export function BrainPage() {
           </div>
         ) : null}
 
-        <div className="lv-brain-layout">
-          <aside className="lv-panel lv-brain-filters">
-            <div className="lv-section-label">Filter Nodes</div>
-            <div className="lv-filter-list">
-              {typeOptions.map((type) => (
-                <button
-                  key={type}
-                  className={`lv-filter-item${activeTypes.has(type) ? " is-active" : ""}`}
-                  type="button"
-                  onClick={() => toggleType(type)}
-                >
-                  <span
-                    className="lv-filter-swatch"
-                    style={{ color: colorFor(type), background: colorFor(type) }}
-                  />
-                  <span>{type}</span>
-                  <span>{typeCounts[type]}</span>
-                </button>
-              ))}
-            </div>
-            <button className="lv-toggle" type="button" onClick={() => setShowLabels((v) => !v)}>
-              <span className={`lv-switch${showLabels ? " is-on" : ""}`} />
-              Show Labels
-            </button>
-            <button className="lv-toggle" type="button" onClick={() => toast("Clusters view")}>
-              <span className="lv-switch is-on" />
-              Show Clusters
-            </button>
-            <p style={{ fontSize: 10, opacity: 0.65, margin: "8px 0 0" }}>
-              {loading
-                ? "Loading projection…"
-                : `${visibleNodes.length} visible · ${graphEdges.length} links${usingFallback ? " · preview" : ""}`}
-            </p>
-          </aside>
+        {view === "Tree" ? <BrainTreeView onToast={toast} /> : null}
+        {view === "Timeline" ? <BrainTimelineView onToast={toast} /> : null}
+        {view === "Clusters" ? <BrainClustersView onToast={toast} /> : null}
+        {view === "Analytics" ? <BrainAnalyticsView onToast={toast} /> : null}
 
-          <div className="lv-brain-workspace">
-            <div className="lv-graph-canvas" aria-label="Knowledge graph">
-              <svg viewBox="0 0 900 520" preserveAspectRatio="xMidYMid meet">
-                {graphEdges.map((e) => {
-                  const a = nodeMap.get(e.source);
-                  const b = nodeMap.get(e.target);
-                  if (!a || !b) return null;
-                  if (!visibleNodes.some((n) => n.id === e.source) || !visibleNodes.some((n) => n.id === e.target)) {
-                    return null;
-                  }
-                  return (
-                    <line
-                      key={e.id}
-                      x1={a.x}
-                      y1={a.y}
-                      x2={b.x}
-                      y2={b.y}
-                      stroke="rgba(214,169,87,0.22)"
-                      strokeWidth={a.core || b.core ? 1.4 : 1}
-                    />
-                  );
-                })}
-                {visibleNodes.map((node) => (
-                  <g
-                    key={node.id}
-                    className={`lv-graph-node${selected?.id === node.id ? " is-active" : ""}`}
-                    onClick={() => setSelectedId(node.id)}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <circle
-                      cx={node.x}
-                      cy={node.y}
-                      r={selected?.id === node.id ? node.r + 3 : node.r}
-                      fill={node.core ? "rgba(214,169,87,0.18)" : "rgba(8,10,9,0.85)"}
-                      stroke={node.color}
-                      strokeWidth={node.core ? 2.2 : 1.4}
-                    />
-                    {node.core ? (
-                      <circle cx={node.x} cy={node.y} r={8} fill={node.color} opacity={0.9} />
-                    ) : (
-                      <circle cx={node.x} cy={node.y} r={3.5} fill={node.color} />
-                    )}
-                    {showLabels ? (
-                      <text
-                        className={`lv-graph-label${node.core ? " core" : ""}`}
-                        x={node.x}
-                        y={node.y + node.r + 16}
-                        textAnchor="middle"
-                      >
-                        {node.label}
-                      </text>
-                    ) : null}
-                    <title>{`${node.label} (${node.type})`}</title>
-                  </g>
-                ))}
-              </svg>
-            </div>
-
-            <div className="lv-brain-bottom">
-              <article className="lv-panel lv-card">
-                <div className="lv-section-label">Selected Nodes</div>
-                <p className="lv-node-desc">
-                  {selected ? `${selected.label} · ${selected.type}` : "Select a node"}
-                </p>
-              </article>
-              <article className="lv-panel lv-card">
-                <div className="lv-section-label">Quick Actions</div>
-                <div className="lv-quick-actions">
-                  {[
-                    { label: "Refresh", run: () => void load() },
-                    { label: "Tree View", run: () => setView("Tree") },
-                    { label: "Find Related", run: () => toast("Related nodes shown via edges") },
-                    { label: "Analytics", run: () => setView("Analytics") },
-                  ].map((action) => (
-                    <button key={action.label} className="lv-quick-action" type="button" onClick={action.run}>
-                      {action.label}
+        {isGraph ? (
+          <>
+            <div className="lv-brain-layout">
+              <aside className="lv-panel lv-brain-filters">
+                <div className="lv-section-label">Filter Nodes</div>
+                <div className="lv-filter-list">
+                  {typeOptions.map((type) => (
+                    <button
+                      key={type}
+                      className={`lv-filter-item${activeTypes.has(type) ? " is-active" : ""}`}
+                      type="button"
+                      onClick={() => toggleType(type)}
+                    >
+                      <span
+                        className="lv-filter-swatch"
+                        style={{ color: colorFor(type), background: colorFor(type) }}
+                      />
+                      <span>{type}</span>
+                      <span>{typeCounts[type]}</span>
                     </button>
                   ))}
                 </div>
-              </article>
-              <article className="lv-panel lv-card">
-                <div className="lv-section-label">Graph Statistics</div>
-                <div className="lv-stat-strip">
-                  {headerStats.slice(0, 4).map((s) => (
-                    <div key={s.label} className="lv-stat-card">
-                      <strong>{s.value}</strong>
-                      <span>{s.label}</span>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            </div>
-          </div>
-        </div>
+                <button className="lv-toggle" type="button" onClick={() => setShowLabels((v) => !v)}>
+                  <span className={`lv-switch${showLabels ? " is-on" : ""}`} />
+                  Show Labels
+                </button>
+                <button className="lv-toggle" type="button" onClick={() => setView("Clusters")}>
+                  <span className="lv-switch is-on" />
+                  Show Clusters
+                </button>
+                <p style={{ fontSize: 10, opacity: 0.65, margin: "8px 0 0" }}>
+                  {loading
+                    ? "Loading projection…"
+                    : `${visibleNodes.length} visible · ${graphEdges.length} links${usingFallback ? " · preview" : ""}`}
+                </p>
+              </aside>
 
-        <p className="lv-footer-quote">“A greater mind is a more connected mind.” — LEVIATHAN</p>
+              <div className="lv-brain-workspace">
+                <div className="lv-graph-canvas" aria-label="Knowledge graph">
+                  <svg viewBox="0 0 900 520" preserveAspectRatio="xMidYMid meet">
+                    {graphEdges.map((e) => {
+                      const a = nodeMap.get(e.source);
+                      const b = nodeMap.get(e.target);
+                      if (!a || !b) return null;
+                      if (
+                        !visibleNodes.some((n) => n.id === e.source) ||
+                        !visibleNodes.some((n) => n.id === e.target)
+                      ) {
+                        return null;
+                      }
+                      return (
+                        <line
+                          key={e.id}
+                          x1={a.x}
+                          y1={a.y}
+                          x2={b.x}
+                          y2={b.y}
+                          stroke="rgba(214,169,87,0.22)"
+                          strokeWidth={a.core || b.core ? 1.4 : 1}
+                        />
+                      );
+                    })}
+                    {visibleNodes.map((node) => (
+                      <g
+                        key={node.id}
+                        className={`lv-graph-node${selected?.id === node.id ? " is-active" : ""}`}
+                        onClick={() => setSelectedId(node.id)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <circle
+                          cx={node.x}
+                          cy={node.y}
+                          r={selected?.id === node.id ? node.r + 3 : node.r}
+                          fill={node.core ? "rgba(214,169,87,0.18)" : "rgba(8,10,9,0.85)"}
+                          stroke={node.color}
+                          strokeWidth={node.core ? 2.2 : 1.4}
+                        />
+                        {node.core ? (
+                          <circle cx={node.x} cy={node.y} r={8} fill={node.color} opacity={0.9} />
+                        ) : (
+                          <circle cx={node.x} cy={node.y} r={3.5} fill={node.color} />
+                        )}
+                        {showLabels ? (
+                          <text
+                            className={`lv-graph-label${node.core ? " core" : ""}`}
+                            x={node.x}
+                            y={node.y + node.r + 16}
+                            textAnchor="middle"
+                          >
+                            {node.label}
+                          </text>
+                        ) : null}
+                        <title>{`${node.label} (${node.type})`}</title>
+                      </g>
+                    ))}
+                  </svg>
+                </div>
+
+                <div className="lv-brain-bottom">
+                  <article className="lv-panel lv-card">
+                    <div className="lv-section-label">Selected Nodes</div>
+                    <p className="lv-node-desc">
+                      {selected ? `${selected.label} · ${selected.type}` : "Select a node"}
+                    </p>
+                  </article>
+                  <article className="lv-panel lv-card">
+                    <div className="lv-section-label">Quick Actions</div>
+                    <div className="lv-quick-actions">
+                      {[
+                        { label: "Refresh", run: () => void load() },
+                        { label: "Tree View", run: () => setView("Tree") },
+                        { label: "Find Related", run: () => toast("Related nodes shown via edges") },
+                        { label: "Analytics", run: () => setView("Analytics") },
+                      ].map((action) => (
+                        <button key={action.label} className="lv-quick-action" type="button" onClick={action.run}>
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                  <article className="lv-panel lv-card">
+                    <div className="lv-section-label">Graph Statistics</div>
+                    <div className="lv-stat-strip">
+                      {headerStats.slice(0, 4).map((s) => (
+                        <div key={s.label} className="lv-stat-card">
+                          <strong>{s.value}</strong>
+                          <span>{s.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                </div>
+              </div>
+            </div>
+
+            <p className="lv-footer-quote">“A greater mind is a more connected mind.” — LEVIATHAN</p>
+          </>
+        ) : null}
       </main>
 
-      <aside className="lv-right">
-        <article className="lv-panel lv-panel-premium lv-node-details">
-          <div className="lv-node-details-head">
-            <h2>Node Details</h2>
-          </div>
-          {selected ? (
-            <>
-              <h3 className="lv-node-title">{selected.label}</h3>
-              <div className="lv-toolbar">
-                <span className="lv-tag gold">{selected.type}</span>
-                {usingFallback ? <span className="lv-tag">Preview</span> : <span className="lv-tag">Live</span>}
-              </div>
-              <p className="lv-node-desc">
-                {typeof selected.meta?.description === "string"
-                  ? selected.meta.description
-                  : "Bounded projection node from Knowledge, Evidence, Research, Datasets, and Runtime."}
-              </p>
-              <div className="lv-meta-grid">
-                <div className="lv-meta-item">
-                  <span>Type</span>
-                  <strong>{selected.type}</strong>
+      {isGraph ? (
+        <aside className="lv-right">
+          <article className="lv-panel lv-panel-premium lv-node-details">
+            <div className="lv-node-details-head">
+              <h2>Node Details</h2>
+            </div>
+            {selected ? (
+              <>
+                <h3 className="lv-node-title">{selected.label}</h3>
+                <div className="lv-toolbar">
+                  <span className="lv-tag gold">{selected.type}</span>
+                  {usingFallback ? <span className="lv-tag">Preview</span> : <span className="lv-tag">Live</span>}
                 </div>
-                <div className="lv-meta-item">
-                  <span>Created</span>
-                  <strong>{selected.created_at || "—"}</strong>
+                <p className="lv-node-desc">
+                  {typeof selected.meta?.description === "string"
+                    ? selected.meta.description
+                    : "Bounded projection node from Knowledge, Evidence, Research, Datasets, and Runtime."}
+                </p>
+                <div className="lv-meta-grid">
+                  <div className="lv-meta-item">
+                    <span>Type</span>
+                    <strong>{selected.type}</strong>
+                  </div>
+                  <div className="lv-meta-item">
+                    <span>Created</span>
+                    <strong>{selected.created_at || "—"}</strong>
+                  </div>
+                  <div className="lv-meta-item">
+                    <span>Connections</span>
+                    <strong>{connectionCount}</strong>
+                  </div>
+                  <div className="lv-meta-item">
+                    <span>Id</span>
+                    <strong style={{ fontSize: 10 }}>{selected.id}</strong>
+                  </div>
                 </div>
-                <div className="lv-meta-item">
-                  <span>Connections</span>
-                  <strong>{connectionCount}</strong>
-                </div>
-                <div className="lv-meta-item">
-                  <span>Id</span>
-                  <strong style={{ fontSize: 10 }}>{selected.id}</strong>
-                </div>
-              </div>
-              {selected.meta && Object.keys(selected.meta).length > 0 ? (
-                <pre style={{ fontSize: 10, maxHeight: 160, overflow: "auto", opacity: 0.8 }}>
-                  {JSON.stringify(selected.meta, null, 2)}
-                </pre>
-              ) : null}
-              <div className="lv-detail-actions">
-                {deepLink(selected) ? (
-                  <Link className="lv-btn-gold lv-btn" to={deepLink(selected)!}>
-                    Open authoritative page
-                  </Link>
-                ) : (
-                  <button
-                    className="lv-btn"
-                    type="button"
-                    onClick={() => toast("No deep-link for this node type")}
-                  >
-                    No deep-link
+                {selected.meta && Object.keys(selected.meta).length > 0 ? (
+                  <pre style={{ fontSize: 10, maxHeight: 160, overflow: "auto", opacity: 0.8 }}>
+                    {JSON.stringify(selected.meta, null, 2)}
+                  </pre>
+                ) : null}
+                <div className="lv-detail-actions">
+                  {deepLink(selected) ? (
+                    <Link className="lv-btn-gold lv-btn" to={deepLink(selected)!}>
+                      Open authoritative page
+                    </Link>
+                  ) : (
+                    <button
+                      className="lv-btn"
+                      type="button"
+                      onClick={() => toast("No deep-link for this node type")}
+                    >
+                      No deep-link
+                    </button>
+                  )}
+                  <button className="lv-btn" type="button" onClick={() => setView("Tree")}>
+                    Open in Tree
                   </button>
-                )}
-                <button className="lv-btn" type="button" onClick={() => setView("Tree")}>
-                  Open in Tree
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="lv-node-desc">
-              {loading ? "Loading…" : "No entities yet — ingest knowledge, run research, or connect MCP."}
-            </p>
-          )}
-        </article>
-      </aside>
+                </div>
+              </>
+            ) : (
+              <p className="lv-node-desc">
+                {loading ? "Loading…" : "No entities yet — ingest knowledge, run research, or connect MCP."}
+              </p>
+            )}
+          </article>
+        </aside>
+      ) : null}
     </AppShell>
   );
 }
