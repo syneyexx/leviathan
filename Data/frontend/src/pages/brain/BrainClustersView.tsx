@@ -18,11 +18,13 @@ function hash(value: string): number {
   return Math.abs(result);
 }
 
-export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; edges: LiveBrainEdge[]; onToast?: (msg: string) => void }) {
+export function BrainClustersView({ nodes, edges, onToast }: { nodes: LiveBrainNode[]; edges: LiveBrainEdge[]; onToast?: (msg: string) => void }) {
   const clusters = useMemo(() => buildClusters(nodes, edges), [nodes, edges]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"size" | "name">("size");
+  const [mapScale, setMapScale] = useState(1);
+  const [showAllConcepts, setShowAllConcepts] = useState(false);
 
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const degreeById = useMemo(() => {
@@ -76,6 +78,7 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
       .sort((a, b) => (degreeById.get(b.id) ?? 0) - (degreeById.get(a.id) ?? 0) || a.label.localeCompare(b.label));
   }, [degreeById, nodes, selected]);
 
+  const visibleConcepts = showAllConcepts ? selectedMembers : selectedMembers.slice(0, 5);
   const visualClusters = useMemo(() => clusters.slice(0, 10), [clusters]);
   const positions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
@@ -89,6 +92,12 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
     });
     return map;
   }, [selected?.id, visualClusters]);
+
+  const mapViewBox = useMemo(() => {
+    const width = 900 / mapScale;
+    const height = 410 / mapScale;
+    return `${(900 - width) / 2} ${(410 - height) / 2} ${width} ${height}`;
+  }, [mapScale]);
 
   const matrixClusters = clusters.slice(0, 6);
   const relationshipMatrix = useMemo(() => {
@@ -106,6 +115,20 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
     ? `${formatCount(selected.nodes)} live Brain projection nodes grouped by ${pretty(selected.label)}. Relationships and concepts below are derived from the current /api/brain/graph projection.`
     : "No clusters available in the current Brain projection.";
 
+  const zoomOut = () => setMapScale((value) => Math.max(0.7, Number((value - 0.1).toFixed(2))));
+  const zoomIn = () => setMapScale((value) => Math.min(1.6, Number((value + 0.1).toFixed(2))));
+  const resetZoom = () => setMapScale(1);
+  const exploreStrongestRelationship = () => {
+    const strongest = related[0];
+    if (!strongest) {
+      onToast?.("No inter-cluster relationships are available in this bounded projection.");
+      return;
+    }
+    setSelectedId(strongest.id);
+    setShowAllConcepts(false);
+    onToast?.(`Focused related cluster: ${strongest.label}.`);
+  };
+
   return (
     <div className="lv-bc lv-bc-ref">
       <div className="lv-bc-grid">
@@ -122,7 +145,7 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
           {list.length === 0 ? <p className="lv-br-muted">No clusters in the current projection.</p> : (
             <ul className="lv-bc-list">
               {list.map((cluster) => (
-                <li key={cluster.id}><button type="button" className={`lv-bc-item${selected?.id === cluster.id ? " is-active" : ""}`} onClick={() => setSelectedId(cluster.id)}><span className="lv-bc-dot" style={{ background: cluster.color, boxShadow: `0 0 8px ${cluster.color}` }} /><span>{pretty(cluster.label)}</span><em>{formatCount(cluster.nodes)} nodes</em></button></li>
+                <li key={cluster.id}><button type="button" className={`lv-bc-item${selected?.id === cluster.id ? " is-active" : ""}`} onClick={() => { setSelectedId(cluster.id); setShowAllConcepts(false); }}><span className="lv-bc-dot" style={{ background: cluster.color, boxShadow: `0 0 8px ${cluster.color}` }} /><span>{pretty(cluster.label)}</span><em>{formatCount(cluster.nodes)} nodes</em></button></li>
               ))}
             </ul>
           )}
@@ -132,7 +155,7 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
           <Panel title="Cluster Visualization" className="lv-bc-viz" action={<span className="lv-bc-viz-subtitle">Knowledge organized into semantic clusters and their relationships</span>}>
             <div className="lv-bc-map">
               <div className="lv-bc-legend"><span><i />Strong Relationship</span><span><i className="is-moderate" />Moderate Relationship</span><span><i className="is-weak" />Weak Relationship</span></div>
-              <svg className="lv-bc-links" viewBox="0 0 900 410" preserveAspectRatio="xMidYMid meet" aria-label="Cluster relationship network">
+              <svg className="lv-bc-links" viewBox={mapViewBox} preserveAspectRatio="xMidYMid meet" aria-label="Cluster relationship network">
                 <defs>{visualClusters.map((cluster) => <filter key={cluster.id} id={`cluster-glow-${hash(cluster.id)}`} x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>)}</defs>
                 {visualClusters.flatMap((source, sourceIndex) => visualClusters.slice(sourceIndex + 1).map((target) => {
                   const count = relationshipCounts.get([source.id, target.id].sort().join("\u0000")) ?? 0;
@@ -153,7 +176,7 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
                     const distance = radius + 16 + (seed % 28);
                     return { x: point.x + Math.cos(angle) * distance, y: point.y + Math.sin(angle) * distance * 0.72, r: 1.3 + seed % 3 };
                   });
-                  return <g key={cluster.id} className={`lv-bc-orbit${active ? " is-active" : ""}`} onClick={() => setSelectedId(cluster.id)} style={{ cursor: "pointer" }}>
+                  return <g key={cluster.id} className={`lv-bc-orbit${active ? " is-active" : ""}`} onClick={() => { setSelectedId(cluster.id); setShowAllConcepts(false); }} style={{ cursor: "pointer" }}>
                     {particles.map((particle, index) => <circle key={index} cx={particle.x} cy={particle.y} r={particle.r} fill={cluster.color} opacity={0.42 + (index % 4) * 0.12} />)}
                     <circle cx={point.x} cy={point.y} r={radius + 15} fill={cluster.color} opacity=".035" stroke={cluster.color} strokeOpacity=".18" strokeDasharray="2 6" />
                     <circle cx={point.x} cy={point.y} r={radius} fill="rgba(4,8,12,.9)" stroke={cluster.color} strokeWidth={active ? 2.2 : 1.5} filter={`url(#cluster-glow-${hash(cluster.id)})`} />
@@ -162,7 +185,7 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
                   </g>;
                 })}
               </svg>
-              <div className="lv-bc-map-controls"><button type="button">−</button><button type="button">＋</button><button type="button">⌗</button></div>
+              <div className="lv-bc-map-controls" aria-label="Cluster map zoom controls"><button type="button" onClick={zoomOut} aria-label="Zoom out">−</button><span>{Math.round(mapScale * 100)}%</span><button type="button" onClick={zoomIn} aria-label="Zoom in">＋</button><button type="button" onClick={resetZoom} aria-label="Reset zoom">⌗</button></div>
             </div>
           </Panel>
 
@@ -180,8 +203,8 @@ export function BrainClustersView({ nodes, edges }: { nodes: LiveBrainNode[]; ed
             <div className="lv-bc-detail-head"><div className="lv-bc-detail-icon" style={{ borderColor: selected.color, color: selected.color, boxShadow: `0 0 18px ${selected.color}55` }}>⌘</div><div><h3>{pretty(selected.label)}</h3><span className="lv-br-badge" style={{ borderColor: `${selected.color}88`, color: selected.color }}>Live Cluster</span></div></div>
             <p className="lv-br-desc">{clusterDescription}</p>
             <div className="lv-bc-metrics"><div><strong>{formatCount(selected.nodes)}</strong><span>Nodes</span></div><div><strong>{formatCount(selected.internalEdges ?? 0)}</strong><span>Internal</span></div><div><strong>{related.length}</strong><span>Related</span></div></div>
-            <section className="lv-bc-section"><strong>Top Concepts</strong><ul>{selectedMembers.slice(0, 5).map((node, index) => <li key={node.id}><span className="lv-bc-rank" style={{ color: selected.color }}>{index + 1}</span><button type="button" title={node.id}>{node.label}</button><em>{degreeById.get(node.id) ?? 0}</em></li>)}</ul><button type="button" className="lv-bc-wide-action">View All Concepts →</button></section>
-            <section className="lv-bc-section lv-bc-related"><strong>Related Clusters</strong><ul>{related.length ? related.map((row) => <li key={row.id}><div><span><i className="lv-bc-dot" style={{ background: row.color }} />{row.label}</span><em>{row.count}</em></div><div className="lv-br-bar"><span style={{ width: `${Math.max(8, row.strength * 100)}%`, background: row.color }} /></div></li>) : <li className="lv-br-muted">No inter-cluster edges in this bounded projection.</li>}</ul><button type="button" className="lv-bc-wide-action">Explore Relationships →</button></section>
+            <section className="lv-bc-section"><strong>Top Concepts</strong><ul>{visibleConcepts.map((node, index) => <li key={node.id}><span className="lv-bc-rank" style={{ color: selected.color }}>{index + 1}</span><span title={node.id}>{node.label}</span><em>{degreeById.get(node.id) ?? 0}</em></li>)}</ul>{selectedMembers.length > 5 ? <button type="button" className="lv-bc-wide-action" onClick={() => setShowAllConcepts((value) => !value)}>{showAllConcepts ? "Show Top Concepts ↑" : `View All Concepts (${selectedMembers.length}) →`}</button> : null}</section>
+            <section className="lv-bc-section lv-bc-related"><strong>Related Clusters</strong><ul>{related.length ? related.map((row) => <li key={row.id}><button type="button" className="lv-bc-related-row" onClick={() => { setSelectedId(row.id); setShowAllConcepts(false); }}><div><span><i className="lv-bc-dot" style={{ background: row.color }} />{row.label}</span><em>{row.count}</em></div><div className="lv-br-bar"><span style={{ width: `${Math.max(8, row.strength * 100)}%`, background: row.color }} /></div></button></li>) : <li className="lv-br-muted">No inter-cluster edges in this bounded projection.</li>}</ul><button type="button" className="lv-bc-wide-action" onClick={exploreStrongestRelationship} disabled={!related.length}>Explore Strongest Relationship →</button></section>
           </>}
         </Panel>
       </div>
