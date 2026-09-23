@@ -15,7 +15,9 @@ from Data.modules.knowledge import KnowledgeStore
 
 from Data.backend.config import Settings, load_settings
 
+from .annotation import AnnotationQueue
 from .canonicalize import canonical_schema_dict
+from .contamination import scan_contamination
 from .dedupe import exact_dedupe
 from .export import export_jsonl, preview_jsonl
 from .formats import detect_format
@@ -24,7 +26,10 @@ from .importers import copy_immutable_raw, inspect_local_file, reject_traversal_
 from .indexing import index_version_file
 from .jobs import DatasetJobRunner
 from .materialize import load_materialized_jsonl, materialize_from_raw, write_canonical_jsonl, write_manifest
+from .mixtures import MixtureComponent, build_mixture_manifest
+from .packing_sim import simulate_packing
 from .pii import scan_records_pii
+from .shards import ShardIngestCheckpoint, build_shard_plan, ingest_shards
 from .splits import deterministic_split
 from .store import DatasetStore, utc_now
 from .tokenize_stats import compute_token_stats
@@ -67,6 +72,7 @@ class DatasetService:
             Path(self.settings.knowledge.data_root),
         ]
         self._hf_tokens: dict[str, str | None] = {}
+        self.annotation_queue = AnnotationQueue()
         self.runner = DatasetJobRunner(store, self._build_handlers())
 
     @classmethod
@@ -99,6 +105,8 @@ class DatasetService:
             DatasetJobType.TOKENIZE_STATS.value: self._handle_tokenize_stats,
             DatasetJobType.EXPORT.value: self._handle_export,
             DatasetJobType.INDEX.value: self._handle_index,
+            DatasetJobType.SHARD_INGEST.value: self._handle_shard_ingest,
+            DatasetJobType.CONTAMINATION_SCAN.value: self._handle_contamination_scan,
         }
 
     # --- Queries ---
@@ -918,6 +926,166 @@ class DatasetService:
 
     def list_hf_files(self, repository_id: str, *, revision: str = "main", token: str | None = None) -> list[dict[str, Any]]:
         return list_hf_dataset_files(repository_id, revision=revision, token=token)
+
+    # --- Wave 8 industrial data factory ---
+
+    def create_mixture(
+        self,
+        *,
+        name: str,
+        components: list[dict[str, Any]],
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        built: list[MixtureComponent] = []
+        for raw in components:
+            version_id = str(raw.get("version_id") or raw.get("versionId") or "")
+            ver = self.get_version(version_id)
+            content_hash = str(raw.get("content_hash") or raw.get("contentHash") or ver.content_hash or "")
+            if not content_hash:
+                raise DatasetError(
+                    f"Version {version_id} missing content_hash for mixture",
+                    code="mixture_missing_hash",
+                )
+            built.append(
+                MixtureComponent(
+                    version_id=version_id,
+                    content_hash=content_hash,
+                    weight=float(raw.get("weight") or 1.0),
+                    domain=str(raw.get("domain") or "general"),
+                    quality=float(raw.get("quality") or 1.0),
+                    split=str(raw["split"]) if raw.get("split") is not None else None,
+                )
+            )
+        manifest = build_mixture_manifest(name=name, components=built, metadata=metadata)
+        return self.store.save_mixture(manifest.public_dict())
+
+    def get_mixture(self, mixture_id: str) -> dict[str, Any]:
+        mix = self.store.get_mixture(mixture_id)
+        if mix is None:
+            raise DatasetError("Mixture not found", code="not_found", http_status=404)
+        return mix
+
+    def list_mixtures(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return self.store.list_mixtures(limit=limit)
+
+    def enqueue_shard_ingest(
+        self,
+        dataset_id: str,
+        *,
+        sources: list[str],
+        interrupt_after: int | None = None,
+        resume_from_job_id: str | None = None,
+    ) -> DatasetJob:
+        self.get_dataset(dataset_id)
+        checkpoint: dict[str, Any] = {}
+        if resume_from_job_id:
+            prior = self.get_job(resume_from_job_id)
+            checkpoint = dict(prior.checkpoint or {})
+            if prior.config.get("sources") and not sources:
+                sources = list(prior.config.get("sources") or [])
+        job = self.store.create_job(
+            job_type=DatasetJobType.SHARD_INGEST,
+            dataset_id=dataset_id,
+            config={"sources": sources, "interrupt_after": interrupt_after},
+        )
+        if checkpoint:
+            job = self.store.update_job(job.job_id, checkpoint=checkpoint)
+        return job
+
+    def enqueue_contamination_scan(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        sealed_cases: list[dict[str, Any]] | None = None,
+        threshold: float = 0.35,
+    ) -> DatasetJob:
+        self.get_version(version_id)
+        return self.store.create_job(
+            job_type=DatasetJobType.CONTAMINATION_SCAN,
+            dataset_id=dataset_id,
+            version_id=version_id,
+            config={"sealed_cases": list(sealed_cases or []), "threshold": threshold},
+        )
+
+    def packing_simulation(self, version_id: str, *, max_seq_length: int = 512) -> dict[str, Any]:
+        _, records = self._load_version_records(version_id)
+        return simulate_packing(records, max_seq_length=max_seq_length).public_dict()
+
+    def enqueue_annotation(
+        self,
+        *,
+        dataset_id: str,
+        record_id: str,
+        label_type: str = "preference",
+        version_id: str | None = None,
+    ) -> dict[str, Any]:
+        self.get_dataset(dataset_id)
+        item = self.annotation_queue.enqueue(
+            dataset_id=dataset_id,
+            record_id=record_id,
+            label_type=label_type,
+            version_id=version_id,
+        )
+        return item.public_dict()
+
+    def _handle_shard_ingest(self, job: DatasetJob) -> dict[str, Any]:
+        dataset_id = job.dataset_id or ""
+        sources = [Path(p) for p in (job.config.get("sources") or [])]
+        if not sources:
+            raise DatasetError("SHARD_INGEST requires sources", code="invalid_config")
+        dest = self._dataset_dirs(dataset_id)["raw"] / "shards"
+        plan = build_shard_plan(sources, dest)
+        ckpt = ShardIngestCheckpoint.from_dict(job.checkpoint if job.checkpoint else None)
+        # Resume must keep the same plan_id as the verified checkpoint cursor.
+        if ckpt.plan_id:
+            plan.plan_id = ckpt.plan_id
+        else:
+            ckpt.plan_id = plan.plan_id
+        interrupt_after = job.config.get("interrupt_after")
+
+        def cancel() -> bool:
+            return self.runner.is_cancel_requested(job.job_id)
+
+        ckpt, outputs = ingest_shards(
+            plan,
+            checkpoint=ckpt,
+            cancel_check=cancel,
+            interrupt_after=int(interrupt_after) if interrupt_after is not None else None,
+        )
+        self.store.update_job(job.job_id, checkpoint=ckpt.to_dict())
+        if ckpt.status == "interrupted":
+            # Surface as failed/interrupted via runner — raise to mark interrupted path.
+            raise DatasetError(
+                "Shard ingest interrupted for resume",
+                code="shard_interrupted",
+                http_status=409,
+            )
+        if ckpt.status == "cancelled":
+            raise DatasetError("Shard ingest cancelled", code="cancelled", http_status=409)
+        return {
+            "plan": plan.public_dict(),
+            "checkpoint": ckpt.to_dict(),
+            "shards": outputs,
+            "truth": {"resume_uses_verified_shard_hash_state": True},
+        }
+
+    def _handle_contamination_scan(self, job: DatasetJob) -> dict[str, Any]:
+        version_id = job.version_id or ""
+        _, records = self._load_version_records(version_id)
+        sealed = list(job.config.get("sealed_cases") or [])
+        if not sealed:
+            # Fall back to empty sealed set — report passes with honesty note.
+            report = scan_contamination(records, [], threshold=float(job.config.get("threshold") or 0.35))
+            out = report.public_dict()
+            out["note"] = "No sealed cases provided — contamination gate not exercised"
+            return out
+        report = scan_contamination(
+            records,
+            sealed,
+            threshold=float(job.config.get("threshold") or 0.35),
+        )
+        return report.public_dict()
 
     def public_job(self, job: DatasetJob) -> dict[str, Any]:
         """Redact secrets from job payload for API responses."""

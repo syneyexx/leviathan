@@ -204,6 +204,8 @@ class FeatureFlags:
     coding_research_frontier: bool
     # Wave 7 — multimodal + realtime voice (media/voice fixture adapters)
     multimodal_realtime: bool
+    # Wave 8 — industrial data + training factory (mixtures, integrity gate)
+    data_training_factory: bool
 
 
 @dataclass(frozen=True)
@@ -429,6 +431,7 @@ class Settings:
                 "capability_world": self.features.capability_world,
                 "coding_research_frontier": self.features.coding_research_frontier,
                 "multimodal_realtime": self.features.multimodal_realtime,
+                "data_training_factory": self.features.data_training_factory,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -562,6 +565,7 @@ class Settings:
         capability_world = _env_bool("LEVIATHAN_FEATURE_CAPABILITY_WORLD", True)
         coding_research_frontier = _env_bool("LEVIATHAN_FEATURE_CODING_RESEARCH", True)
         multimodal_realtime = _env_bool("LEVIATHAN_FEATURE_MULTIMODAL_REALTIME", True)
+        data_training_factory = _env_bool("LEVIATHAN_FEATURE_DATA_TRAINING_FACTORY", True)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -661,6 +665,7 @@ class Settings:
                 capability_world=capability_world,
                 coding_research_frontier=coding_research_frontier,
                 multimodal_realtime=multimodal_realtime,
+                data_training_factory=data_training_factory,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,

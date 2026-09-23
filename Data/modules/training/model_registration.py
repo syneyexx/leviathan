@@ -15,12 +15,25 @@ def register_training_artifact_as_model(
     model_store: ModelStore,
     training_store: TrainingStore,
     artifact: ArtifactRecord,
+    require_integrity: bool = True,
 ) -> str:
     """Upsert a trained adapter into model_registry with honest compatibility.
 
     Returns the registered model_id. Does not claim the artifact is loadable
     by arbitrary providers — metadata.compatibility carries that truth.
+    Refuses publish when integrity checks fail (U294).
     """
+    from .integrity import verify_artifact_integrity
+
+    job = training_store.get_job(artifact.job_id) if artifact.job_id else None
+    if require_integrity:
+        report = verify_artifact_integrity(artifact, job=job)
+        if not report.passed:
+            raise RuntimeError(
+                "Refusing registry publish — integrity gate failed: "
+                + ", ".join(c.name for c in report.checks if not c.passed)
+            )
+
     model_id = f"trained:{artifact.artifact_id}"
     now = utc_now()
     if model_store.get_provider("local_trained") is None:
@@ -73,6 +86,8 @@ def register_training_artifact_as_model(
                 "evaluation": artifact.evaluation,
                 "compatibility": artifact.compatibility,
                 "inferenceReady": bool((artifact.compatibility or {}).get("inference_ready")),
+                "mixtureId": (job.config or {}).get("mixture_id") if job else None,
+                "mixtureContentHash": (job.config or {}).get("mixture_content_hash") if job else None,
                 "note": (
                     "Trained artifact registered for lineage; "
                     "loadability depends on a compatible runtime."
@@ -90,7 +105,7 @@ def sync_completed_artifacts_to_models(
     model_store: ModelStore,
     training_store: TrainingStore,
 ) -> list[dict[str, Any]]:
-    """Register any completed artifacts missing registered_model_id."""
+    """Register any completed artifacts missing registered_model_id after integrity gate."""
     synced: list[dict[str, Any]] = []
     for job in training_store.list_jobs(limit=500):
         if not job.artifact_id:
@@ -98,16 +113,28 @@ def sync_completed_artifacts_to_models(
         artifact = training_store.get_artifact(job.artifact_id)
         if artifact is None or artifact.registered_model_id:
             continue
-        model_id = register_training_artifact_as_model(
-            model_store=model_store,
-            training_store=training_store,
-            artifact=artifact,
-        )
-        synced.append(
-            {
-                "artifactId": artifact.artifact_id,
-                "modelId": model_id,
-                "jobId": job.job_id,
-            }
-        )
+        try:
+            model_id = register_training_artifact_as_model(
+                model_store=model_store,
+                training_store=training_store,
+                artifact=artifact,
+                require_integrity=True,
+            )
+            synced.append(
+                {
+                    "artifactId": artifact.artifact_id,
+                    "modelId": model_id,
+                    "jobId": job.job_id,
+                    "integrity": "passed",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — skip failed integrity; do not invent success
+            synced.append(
+                {
+                    "artifactId": artifact.artifact_id,
+                    "jobId": job.job_id,
+                    "integrity": "blocked",
+                    "error": str(exc),
+                }
+            )
     return synced

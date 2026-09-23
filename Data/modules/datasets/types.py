@@ -61,6 +61,8 @@ class DatasetJobType(str, Enum):
     TOKENIZE_STATS = "tokenize_stats"
     EXPORT = "export"
     INDEX = "index"
+    SHARD_INGEST = "shard_ingest"
+    CONTAMINATION_SCAN = "contamination_scan"
 
 
 class DatasetJobStatus(str, Enum):

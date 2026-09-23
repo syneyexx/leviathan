@@ -42,6 +42,8 @@ class TrainingConfig:
     resume_from_checkpoint: str | None = None
     fixture_steps: int = 5
     fixture_sleep_ms: int = 50
+    mixture_id: str | None = None
+    mixture_content_hash: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> list[str]:
@@ -66,8 +68,10 @@ class TrainingConfig:
         if method == "qlora" and not self.load_in_4bit:
             # QLoRA implies 4-bit; auto-correct is caller's choice — flag for planner.
             pass
-        if method != "fixture" and not self.dataset_version_id and not self.dataset_path:
-            errors.append("dataset_version_id or dataset_path is required for non-fixture methods")
+        if method != "fixture" and not self.dataset_version_id and not self.dataset_path and not self.mixture_id:
+            errors.append(
+                "dataset_version_id, dataset_path, or mixture_id is required for non-fixture methods"
+            )
         return errors
 
     def to_dict(self) -> dict[str, Any]:

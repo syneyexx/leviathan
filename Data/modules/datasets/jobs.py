@@ -130,6 +130,15 @@ class DatasetJobRunner:
                     finished_at=utc_now(),
                     worker_pid=None,
                 )
+            if getattr(exc, "code", None) == "shard_interrupted":
+                return self.store.update_job(
+                    job.job_id,
+                    status=DatasetJobStatus.INTERRUPTED,
+                    error="interrupted — resume from verified shard checkpoint",
+                    phase="interrupted",
+                    finished_at=utc_now(),
+                    worker_pid=None,
+                )
             err = redact_secrets(f"{exc}\n{traceback.format_exc()}")
             return self.store.update_job(
                 job.job_id,

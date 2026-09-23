@@ -43,6 +43,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `research/` | ResearchService — plans, claim–evidence graphs, reproducibility bundles |
 | `media/` | MediaService fixture pipelines (Gateway-dispatched; stub when feature off) |
 | `voice/` | RealtimeVoiceService fixture ASR/TTS + barge-in (Gateway-dispatched; stub when feature off) |
+| `datasets/` | DatasetService — import/materialize + mixtures/shards/contamination (Wave 8) |
+| `training/` | TrainingService — durable jobs + integrity-gated registry publish |
 | `release/` | ReleaseGateRunner + evaluation relevance |
 | `security/` | SecurityAuditor + SecretsBroker |
 | `native/` | NativeRuntimeStub |

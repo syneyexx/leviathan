@@ -6,6 +6,35 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 8 Industrial Data + Training Factory — PASS
+
+### Objective
+Industrialize dataset + training control planes (U261–U300 foundations): resumable shard ingestion, immutable mixture manifests, contamination scanning vs sealed eval, packing simulation, annotation queue, and integrity-gated registry publish — extending `datasets/` + `training/` (fixture workers only; no GPU/DeepSpeed claims).
+
+### Added / changed
+- **Datasets:** `shards.py` (content-addressed resume), `mixtures.py` (sealed weighted manifests), `contamination.py`, `packing_sim.py`, `annotation.py`
+- **Jobs:** `SHARD_INGEST` / `CONTAMINATION_SCAN` with interrupt→resume checkpoint
+- **Training:** `integrity.py` gate before `register_training_artifact_as_model`; mixture_id/hash on TrainingConfig
+- **API:** `/api/datasets/mixtures*`, shard-ingest, contamination-scan, packing-sim, annotations
+- **Migration v31** + `LEVIATHAN_FEATURE_DATA_TRAINING_FACTORY`
+- **Tests:** `test_wave8_data_training_factory.py` (exit gate: raw→mixture→train→artifact→registry after failure)
+- **Version:** `0.72.0-wave8-data-factory`
+
+### EXTERNAL-FIRST review
+- Core schedules; workers/handlers execute; integrity failure blocks registry (no fabricated publish)
+- Fixture training remains honest (`fixture_metrics_are_not_gpu_training`)
+- No new third-party dependencies
+
+### Explicitly NOT claimed
+- Production Accelerate/DeepSpeed/FSDP fleets or multi-node rendezvous
+- Full MinHash/LSH semantic dedupe productization
+- Learned contamination classifiers
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 7 Multimodal + Realtime Voice — PASS
 
 ### Objective
