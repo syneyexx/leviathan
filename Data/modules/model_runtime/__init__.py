@@ -1,5 +1,13 @@
 """Model runtime — canonical provider-facing model access + managed serving."""
 
+from .durable_requests import (
+    DurableRequestLedger,
+    DurableRequestStatus,
+    DurableServingRequest,
+    get_durable_request_ledger,
+    reset_durable_request_ledger_for_tests,
+)
+from .latency import LatencyBreakdown, LatencyTimer
 from .openai_compatible import LLMUnavailable, OpenAICompatibleLLM
 from .serving import (
     InferenceJobClass,
@@ -25,7 +33,12 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "DurableRequestLedger",
+    "DurableRequestStatus",
+    "DurableServingRequest",
     "InferenceJobClass",
+    "LatencyBreakdown",
+    "LatencyTimer",
     "LLMUnavailable",
     "ManagedLocalServingAdapter",
     "OpenAICompatibleLLM",
@@ -34,7 +47,9 @@ __all__ = [
     "StreamCancelToken",
     "WorkerState",
     "chat_truth",
+    "get_durable_request_ledger",
     "get_serving_supervisor",
+    "reset_durable_request_ledger_for_tests",
     "reset_serving_supervisor_for_tests",
     "sse_encode",
 ]
