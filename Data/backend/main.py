@@ -872,6 +872,7 @@ cognition_delegation = DelegationService()
 cognition_model_caller = build_control_plane_model_caller(model_plane, llm)
 reasoning_policy = ReasoningPolicy.from_settings(settings)
 cognition_experience_store = ExperienceStore(store=cognition_store)
+research_service.set_model_caller(cognition_model_caller)
 cognition_runtime = CognitiveRuntime(
     enabled=settings.features.cognition_enabled,
     shadow=settings.features.cognition_shadow,
@@ -1144,6 +1145,7 @@ async def lifespan(_: FastAPI):
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
     research_service.recover()
+    research_service.start_background()
     coding_service.start_background()
     mcp_bridge.initialize()
     market_sim_service.start_background()

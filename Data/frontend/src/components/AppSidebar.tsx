@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { media } from "../assets/media";
 import { isMainMenuActive, MAIN_MENU } from "../navigation/menu";
+import { sidebarReferenceArt } from "../assets/sidebarReference";
+import "../styles/sidebar-reference.css";
 import { BrandMark } from "./BrandMark";
 
 const ICONS: Record<string, ReactNode> = {
@@ -110,10 +111,10 @@ export function AppSidebar({ open }: AppSidebarProps) {
       <div className="lv-sidebar-footer">
         <img
           className="lv-sidebar-footer-mark"
-          src={media.sidebarFooter}
+          src={sidebarReferenceArt}
           alt="Discipline creates freedom"
-          width={246}
-          height={204}
+          width={150}
+          height={144}
           draggable={false}
         />
       </div>

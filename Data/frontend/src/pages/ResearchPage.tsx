@@ -8,23 +8,52 @@ import {
   RD_HERO,
   RD_IDLE_TIMELINE,
   RD_INPUT_TABS,
-  RD_MODELS,
   RD_TEMPLATES,
   type RdEvidenceItem,
   type RdInputTab,
   type RdInsight,
   type RdTimelineStep,
+  type RdTimelineStepStatus,
   type RdWebResult,
-} from "../mocks/research-dashboard";
+} from "../config/research";
 import { useAppToast } from "../state/useAppToast";
 import type {
+  DatasetJob,
+  DatasetRecord,
+  ModelDescriptor,
+  ResearchBudgetCatalog,
   ResearchClaim,
   ResearchEvidence,
   ResearchProject,
   ResearchSource,
+  ResearchWorker,
 } from "../types/api";
 
 const ACTIVE = new Set(["queued", "researching", "synthesizing", "cancelling"]);
+
+const UPLOAD_EXT = /\.(pdf|txt|md|markdown|csv|json|log)$/i;
+
+const PHASE_STEP_INDEX: Record<string, number> = {
+  idle: 0,
+  planning: 0,
+  source_ingestion: 1,
+  source_fetch: 1,
+  source_parse: 1,
+  local_retrieval: 2,
+  web_search: 2,
+  evidence_extraction: 3,
+  claim_analysis: 4,
+  conflict_analysis: 5,
+  query_adaptation: 6,
+  synthesis: 6,
+  report_generation: 7,
+  brain_sync: 8,
+  completed: 9,
+  failed: -2,
+  cancelled: -2,
+};
+
+type ExecutionMode = "normal" | "custom";
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
@@ -53,113 +82,115 @@ function relativeAgo(iso: string | null | undefined): string {
   return `${days}d ago`;
 }
 
-function confTone(n: number | null | undefined): "high" | "mid" | "muted" {
-  if (n == null || !Number.isFinite(n)) return "muted";
-  return n >= 90 ? "high" : "mid";
+function confTone(label: string): "high" | "mid" | "muted" {
+  if (label.toLowerCase().startsWith("supported")) return "high";
+  if (label.toLowerCase() === "unmeasured") return "muted";
+  return "mid";
 }
 
-function confLabel(item: { confidence: number | null; fixture?: boolean }): string {
-  if (item.fixture) return "fixture";
-  if (item.confidence == null || !Number.isFinite(item.confidence)) return "unmeasured";
-  return `${Math.round(item.confidence)}%`;
+function claimSupportLabel(claim: ResearchClaim): string {
+  const n = claim.supporting_evidence_ids?.length ?? 0;
+  if (n > 0) return `Supported by ${n} evidence span${n === 1 ? "" : "s"}`;
+  return "Unmeasured";
 }
 
 function projectProgress(project: ResearchProject | null): number {
   if (!project) return 0;
   const status = project.status;
-  if (status === "completed") return 100;
-  if (status === "failed" || status === "cancelled") return 0;
-  if (status === "draft" || status === "planned") return 8;
-  if (status === "queued") return 12;
-  if (status === "cancelling") return 40;
-  const rounds = Math.max(1, project.total_rounds || 1);
-  const roundFrac = Math.min(1, project.current_round / rounds);
-  if (status === "researching") return Math.round(18 + roundFrac * 52);
-  if (status === "synthesizing") return Math.round(72 + roundFrac * 22);
-  return 10;
-}
-
-function timelineFromProject(project: ResearchProject | null, _live: boolean): RdTimelineStep[] {
-  if (!project) return RD_IDLE_TIMELINE;
-  const status = project.status;
-  const sources = project.source_count;
-  const evidence = project.evidence_count;
-  const claims = project.claim_count;
-
-  const step = (
-    id: string,
-    label: string,
-    state: RdTimelineStep["status"],
-    meta?: string,
-    duration?: string,
-  ): RdTimelineStep => ({ id, label, status: state, meta, duration });
-
-  if (status === "draft" || status === "planned") {
-    return [
-      step("understand", "Understanding your query", status === "planned" ? "done" : "active", status === "planned" ? "Plan ready" : "Planning…"),
-      step("search", "Searching the web", "queued", "Queued"),
-      step("analyze", "Analyzing sources", "queued", "Queued"),
-      step("insights", "Extracting insights", "queued", "Queued"),
-      step("report", "Building structured report", "queued", "Queued"),
-    ];
-  }
-  if (status === "queued") {
-    return [
-      step("understand", "Understanding your query", "done", "Ready"),
-      step("search", "Searching the web", "active", "Starting…"),
-      step("analyze", "Analyzing sources", "queued", "Queued"),
-      step("insights", "Extracting insights", "queued", "Queued"),
-      step("report", "Building structured report", "queued", "Queued"),
-    ];
-  }
-  if (status === "researching") {
-    const mid = project.current_round > 1 || sources > 0;
-    return [
-      step("understand", "Understanding your query", "done"),
-      step("search", "Searching the web", mid ? "done" : "active", sources ? `${sources} sources` : "In progress…"),
-      step("analyze", "Analyzing sources", mid ? "active" : "pending", mid ? (evidence ? `${evidence} spans` : "In progress…") : "Queued"),
-      step("insights", "Extracting insights", "queued", "Queued"),
-      step("report", "Building structured report", "queued", "Queued"),
-    ];
-  }
-  if (status === "synthesizing" || status === "cancelling") {
-    return [
-      step("understand", "Understanding your query", "done"),
-      step("search", "Searching the web", "done", sources ? `${sources} sources` : undefined),
-      step("analyze", "Analyzing sources", "done", evidence ? `${evidence} spans` : undefined),
-      step("insights", "Extracting insights", status === "cancelling" ? "pending" : "active", claims ? `${claims} claims` : "In progress…"),
-      step("report", "Building structured report", "queued", "Queued"),
-    ];
+  if (status === "failed" || status === "cancelled" || status === "interrupted") {
+    const pct = project.progress_pct;
+    if (pct != null && Number.isFinite(pct)) return Math.min(99, Math.round(pct));
+    return 0;
   }
   if (status === "completed") {
-    return [
-      step("understand", "Understanding your query", "done"),
-      step("search", "Searching the web", "done", sources ? `${sources} sources` : undefined),
-      step("analyze", "Analyzing sources", "done", evidence ? `${evidence} spans` : undefined),
-      step("insights", "Extracting insights", "done", claims ? `${claims} claims` : undefined),
-      step("report", "Building structured report", "done", "Ready"),
-    ];
+    const pct = project.progress_pct;
+    return pct != null && Number.isFinite(pct) ? Math.round(pct) : 100;
   }
-  // failed / cancelled / interrupted
-  return [
-    step("understand", "Understanding your query", "done"),
-    step("search", "Searching the web", sources ? "done" : "pending", sources ? `${sources} sources` : project.error || status),
-    step("analyze", "Analyzing sources", evidence ? "done" : "queued", evidence ? `${evidence} spans` : "Stopped"),
-    step("insights", "Extracting insights", claims ? "done" : "queued", "Stopped"),
-    step("report", "Building structured report", "queued", status),
-  ];
+  const pct = project.progress_pct;
+  if (pct != null && Number.isFinite(pct)) return Math.round(pct);
+  return 0;
+}
+
+function stepMeta(id: string, project: ResearchProject): string | undefined {
+  switch (id) {
+    case "ingestion":
+      return project.source_count > 0 ? `${project.source_count} sources` : undefined;
+    case "evidence":
+      return project.evidence_count > 0 ? `${project.evidence_count} spans` : undefined;
+    case "claims":
+      return project.claim_count > 0 ? `${project.claim_count} claims` : undefined;
+    case "conflicts":
+      return project.conflict_count > 0 ? `${project.conflict_count} conflicts` : undefined;
+    case "complete":
+      return project.status === "completed" ? "Done" : undefined;
+    default:
+      return undefined;
+  }
+}
+
+function timelineFromProject(project: ResearchProject | null): RdTimelineStep[] {
+  if (!project) return RD_IDLE_TIMELINE;
+
+  const status = project.status;
+  const phaseKey = (project.phase || "idle").toLowerCase();
+  const failed =
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted" ||
+    phaseKey === "failed" ||
+    phaseKey === "cancelled";
+  const completed = status === "completed" || phaseKey === "completed";
+
+  let activeIdx = PHASE_STEP_INDEX[phaseKey] ?? 0;
+  if (status === "draft") activeIdx = -1;
+  if (completed) activeIdx = RD_IDLE_TIMELINE.length;
+
+  return RD_IDLE_TIMELINE.map((base, i) => {
+    let stepStatus: RdTimelineStepStatus = "queued";
+    let meta = base.meta;
+
+    if (completed) {
+      stepStatus = "done";
+      meta = stepMeta(base.id, project) ?? base.meta;
+    } else if (failed) {
+      const failAt = activeIdx >= 0 ? activeIdx : 0;
+      if (i < failAt) stepStatus = "done";
+      else if (i === failAt) {
+        stepStatus = "failed";
+        meta = project.error || status;
+      } else stepStatus = "queued";
+    } else if (status === "draft") {
+      stepStatus = "queued";
+      meta = "Waiting";
+    } else {
+      if (i < activeIdx) {
+        stepStatus = "done";
+        meta = stepMeta(base.id, project) ?? base.meta;
+      } else if (i === activeIdx) {
+        stepStatus = "active";
+        meta = stepMeta(base.id, project) ?? (project.phase?.replace(/_/g, " ") || "In progress…");
+      } else {
+        stepStatus = "queued";
+        meta = "Waiting";
+      }
+    }
+
+    return { ...base, status: stepStatus, meta };
+  });
 }
 
 function mapSourcesToEvidence(sources: ResearchSource[]): RdEvidenceItem[] {
   return sources.slice(0, 8).map((s) => {
     const domain = domainFromUri(s.canonical_uri ?? s.original_uri);
-    // Round 9: do not invent confidence percentages from list index.
+    const parseNote = `parse ${s.parse_status}`;
+    const brainNote = s.brain_status ? ` · brain ${s.brain_status}` : "";
     return {
       id: s.source_id,
       title: s.title || domain || "Untitled source",
       domain,
       ago: relativeAgo(s.fetched_at || s.created_at),
       confidence: null,
+      supportLabel: `${parseNote}${brainNote}`,
       favicon: (domain[0] || "?").toUpperCase(),
       url: s.canonical_uri ?? s.original_uri ?? undefined,
     };
@@ -167,7 +198,9 @@ function mapSourcesToEvidence(sources: ResearchSource[]): RdEvidenceItem[] {
 }
 
 function mapSourcesToWeb(sources: ResearchSource[], evidence: ResearchEvidence[]): RdWebResult[] {
-  const webby = sources.filter((s) => (s.source_type || "").toLowerCase().includes("web") || !!s.canonical_uri);
+  const webby = sources.filter(
+    (s) => (s.source_type || "").toLowerCase().includes("web") || !!s.canonical_uri,
+  );
   const pool = (webby.length ? webby : sources).slice(0, 3);
   return pool.map((s, i) => {
     const domain = domainFromUri(s.canonical_uri ?? s.original_uri);
@@ -186,18 +219,35 @@ function mapSourcesToWeb(sources: ResearchSource[], evidence: ResearchEvidence[]
 
 function mapClaimsToInsights(claims: ResearchClaim[]): RdInsight[] {
   const icons: RdInsight["icon"][] = ["bot", "brain", "bulb"];
-  return claims.slice(0, 5).map((c, i) => {
-    const support = c.supporting_evidence_ids?.length ?? 0;
-    // Only emit a score when there is supporting evidence; never invent %.
-    const conf = support > 0 ? Math.min(98, 60 + support * 8) : null;
-    return {
-      id: c.claim_id,
-      title: c.proposition.slice(0, 72) + (c.proposition.length > 72 ? "…" : ""),
-      body: c.raw_wording || c.proposition,
-      confidence: conf,
-      icon: icons[i % icons.length],
-    };
+  return claims.slice(0, 5).map((c, i) => ({
+    id: c.claim_id,
+    title: c.proposition.slice(0, 72) + (c.proposition.length > 72 ? "…" : ""),
+    body: c.raw_wording || c.proposition,
+    confidence: null,
+    supportLabel: claimSupportLabel(c),
+    icon: icons[i % icons.length],
+  }));
+}
+
+function datasetIndexed(ds: DatasetRecord, jobs: DatasetJob[]): boolean | null {
+  const related = jobs.filter((j) => j.datasetId === ds.datasetId);
+  const indexing = related.some((j) => {
+    const t = j.jobType.toLowerCase();
+    const s = j.status.toLowerCase();
+    return t.includes("index") && (s === "running" || s === "queued" || s === "pending");
   });
+  if (indexing) return false;
+  const done = related.some((j) => {
+    const t = j.jobType.toLowerCase();
+    const s = j.status.toLowerCase();
+    return t.includes("index") && (s === "completed" || s === "succeeded" || s === "done");
+  });
+  if (done) return true;
+  const meta = ds.metadata as Record<string, unknown> | undefined;
+  const emb = String(meta?.embeddings ?? meta?.indexStatus ?? "").toLowerCase();
+  if (emb.includes("index") && !emb.includes("not")) return true;
+  if (ds.status.toLowerCase() === "ready") return false;
+  return null;
 }
 
 function Icon({ name }: { name: string }) {
@@ -323,35 +373,65 @@ export function ResearchPage() {
 
   const [inputTab, setInputTab] = useState<RdInputTab>("Query");
   const [query, setQuery] = useState("");
-  const [model, setModel] = useState<(typeof RD_MODELS)[number]>(RD_MODELS[0]);
+  const [models, setModels] = useState<ModelDescriptor[]>([]);
+  const [modelId, setModelId] = useState("");
+  const [budgetCatalog, setBudgetCatalog] = useState<ResearchBudgetCatalog | null>(null);
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("normal");
+  const [customWorkers, setCustomWorkers] = useState(2);
+  const [customRounds, setCustomRounds] = useState(10);
+
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [depth, setDepth] = useState("deep");
   const [context, setContext] = useState<Record<string, boolean>>({
     web: true,
     files: false,
     datasets: false,
-    code: true,
+    code: false,
     images: false,
   });
-  const [fileCount, setFileCount] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
   const [scopeEditing, setScopeEditing] = useState(false);
 
+  const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
+  const [datasetJobs, setDatasetJobs] = useState<DatasetJob[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState("");
+  const [connectedDatasetLabel, setConnectedDatasetLabel] = useState<string | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [project, setProject] = useState<ResearchProject | null>(null);
+  const [workers, setWorkers] = useState<ResearchWorker[]>([]);
   const [sources, setSources] = useState<ResearchSource[]>([]);
   const [evidence, setEvidence] = useState<ResearchEvidence[]>([]);
   const [claims, setClaims] = useState<ResearchClaim[]>([]);
   const [hasLiveProject, setHasLiveProject] = useState(false);
 
+  const selectedModel = useMemo(
+    () => models.find((m) => m.id === modelId) ?? models[0] ?? null,
+    [models, modelId],
+  );
+
+  const normalMode = budgetCatalog?.execution_modes.normal;
+  const customLimits = budgetCatalog?.execution_modes.custom.limits;
+
+  const effectiveWorkers =
+    executionMode === "normal" ? (normalMode?.research_workers ?? 2) : customWorkers;
+  const effectiveRounds =
+    executionMode === "normal" ? (normalMode?.rounds ?? 10) : customRounds;
+
+  const fileSourceCount = useMemo(
+    () =>
+      sources.filter((s) => {
+        const t = (s.source_type || "").toLowerCase();
+        return t.includes("file") || t.includes("local") || t === "seed";
+      }).length,
+    [sources],
+  );
+
   const isLive = !!(project && ACTIVE.has(project.status));
   const progress = projectProgress(project);
-  const timeline = useMemo(
-    () => timelineFromProject(project, hasLiveProject),
-    [project, hasLiveProject],
-  );
+  const timeline = useMemo(() => timelineFromProject(project), [project]);
 
   const evidenceRows = useMemo(() => {
     if (sources.length > 0) return mapSourcesToEvidence(sources);
@@ -372,6 +452,28 @@ export function ResearchPage() {
   const evidenceCountLabel =
     sources.length > 0 ? `${sources.length} sources` : hasLiveProject ? "0 sources" : "no project yet";
 
+  const hydrateFromProject = useCallback((p: ResearchProject) => {
+    setProject(p);
+    setHasLiveProject(true);
+    if (p.topic && !query.trim()) setQuery(p.topic);
+    if (p.depth) setDepth(p.depth);
+    if (typeof p.allow_web === "boolean") setContext((c) => ({ ...c, web: p.allow_web }));
+    if (p.execution_mode === "normal" || p.execution_mode === "custom") {
+      setExecutionMode(p.execution_mode);
+    }
+    if (p.budget?.research_workers) setCustomWorkers(p.budget.research_workers);
+    if (p.budget?.rounds) setCustomRounds(p.budget.rounds);
+    const mp = p.model_profile as { modelId?: string; id?: string } | undefined;
+    const mid = mp?.modelId ?? mp?.id;
+    if (mid) setModelId(mid);
+    if (p.connected_datasets?.length) {
+      const first = p.connected_datasets[0] as { label?: string; datasetId?: string };
+      setConnectedDatasetLabel(first.label ?? first.datasetId ?? "Connected");
+      setContext((c) => ({ ...c, datasets: true }));
+    }
+    if (p.workers?.length) setWorkers(p.workers);
+  }, [query]);
+
   const refreshArtifacts = useCallback(async (projectId: string) => {
     const [src, ev, cl] = await Promise.all([
       api.listResearchSources(projectId).catch(() => ({ sources: [] as ResearchSource[] })),
@@ -381,6 +483,14 @@ export function ResearchPage() {
     setSources(src.sources);
     setEvidence(ev.evidence);
     setClaims(cl.claims);
+    if (src.sources.length > 0) {
+      setContext((c) => ({ ...c, files: true }));
+    }
+  }, []);
+
+  const refreshWorkers = useCallback(async (projectId: string) => {
+    const res = await api.listResearchWorkers(projectId).catch(() => ({ workers: [] as ResearchWorker[] }));
+    setWorkers(res.workers);
   }, []);
 
   const loadLatest = useCallback(async () => {
@@ -391,6 +501,7 @@ export function ResearchPage() {
       if (projects.length === 0) {
         setProject(null);
         setHasLiveProject(false);
+        setWorkers([]);
         setSources([]);
         setEvidence([]);
         setClaims([]);
@@ -401,39 +512,106 @@ export function ResearchPage() {
         projects.find((p) => p.status === "completed") ??
         projects[0];
       const detail = await api.getResearchProject(preferred.project_id);
-      setProject(detail.project);
-      setHasLiveProject(true);
+      hydrateFromProject(detail.project);
       await refreshArtifacts(detail.project.project_id);
+      if (ACTIVE.has(detail.project.status)) {
+        await refreshWorkers(detail.project.project_id);
+      }
     } catch (err) {
       setLoadError(errMsg(err, "Failed to load research projects"));
     }
-  }, [refreshArtifacts]);
+  }, [hydrateFromProject, refreshArtifacts, refreshWorkers]);
 
   useEffect(() => {
     void loadLatest();
   }, [loadLatest]);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [modelRes, budgetRes] = await Promise.all([
+          api.listModels(),
+          api.researchBudgets(),
+        ]);
+        if (cancelled) return;
+        setModels(modelRes.models);
+        setBudgetCatalog(budgetRes);
+        if (!modelId && modelRes.models[0]) setModelId(modelRes.models[0].id);
+        const normal = budgetRes.execution_modes.normal;
+        setCustomWorkers(normal.research_workers);
+        setCustomRounds(normal.rounds);
+      } catch (err) {
+        if (!cancelled) toast(errMsg(err, "Failed to load research configuration"));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [toast]);
+
+  useEffect(() => {
     if (!project || !ACTIVE.has(project.status)) return;
+    const projectId = project.project_id;
     let cancelled = false;
     const tick = async () => {
       try {
-        const res = await api.getResearchProject(project.project_id);
+        const res = await api.getResearchProject(projectId);
         if (cancelled) return;
         setProject(res.project);
-        if (!ACTIVE.has(res.project.status) || res.project.source_count !== project.source_count) {
-          await refreshArtifacts(res.project.project_id);
+        if (res.project.workers?.length) setWorkers(res.project.workers);
+        else await refreshWorkers(projectId);
+        const countsChanged =
+          res.project.source_count !== project.source_count ||
+          res.project.evidence_count !== project.evidence_count ||
+          res.project.claim_count !== project.claim_count;
+        if (countsChanged || !ACTIVE.has(res.project.status)) {
+          await refreshArtifacts(projectId);
         }
       } catch {
         /* keep last known */
       }
     };
-    const id = window.setInterval(() => void tick(), 2500);
+    const id = window.setInterval(() => void tick(), 1000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [project?.project_id, project?.status, project?.source_count, refreshArtifacts]);
+  }, [project?.project_id, project?.status, project?.source_count, project?.evidence_count, project?.claim_count, refreshArtifacts, refreshWorkers]);
+
+  const ensureDraftProject = useCallback(async (): Promise<ResearchProject> => {
+    if (project && project.status === "draft") return project;
+    const topic = query.trim() || "Research draft";
+    const created = await api.createResearchProject({
+      topic,
+      title: topic.slice(0, 80),
+      objective: topic,
+      depth,
+      allowWeb: context.web,
+      executionMode,
+      modelProfile: selectedModel
+        ? { modelId: selectedModel.id, displayName: selectedModel.displayName }
+        : undefined,
+      budget: {
+        research_workers: effectiveWorkers,
+        rounds: effectiveRounds,
+      },
+      localScopes: [],
+      seedSources: [],
+    });
+    hydrateFromProject(created.project);
+    return created.project;
+  }, [
+    project,
+    query,
+    depth,
+    context.web,
+    executionMode,
+    selectedModel,
+    effectiveWorkers,
+    effectiveRounds,
+    hydrateFromProject,
+  ]);
 
   function toggleContext(id: string) {
     setContext((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -444,10 +622,23 @@ export function ResearchPage() {
     if (!t) return;
     setTemplateId(id);
     setDepth(t.depth);
+    setExecutionMode(t.executionMode);
+    setContext((c) => ({ ...c, web: t.allowWeb }));
+    if (t.executionMode === "custom") {
+      if ("workers" in t && t.workers != null) setCustomWorkers(t.workers);
+      if ("rounds" in t && t.rounds != null) setCustomRounds(t.rounds);
+    }
     if (t.prompt) {
       setQuery((q) => (q.trim() ? q : t.prompt));
     }
     toast(`${t.label} selected`);
+  }
+
+  function buildSeedUrls(): string[] {
+    return urlDraft
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
 
   async function onFilesSelected(files: FileList | null) {
@@ -455,32 +646,30 @@ export function ResearchPage() {
     const list = Array.from(files);
     setBusy(true);
     let ok = 0;
-    const supported = /\.(txt|md|markdown|rst|csv|json|log)$/i;
     try {
+      const draft = await ensureDraftProject();
       for (const file of list) {
-        if (!supported.test(file.name)) {
-          toast(`Unsupported for research ingest: ${file.name} (use .txt/.md/.csv/.json)`);
+        if (!UPLOAD_EXT.test(file.name)) {
+          toast(`Unsupported: ${file.name} (use PDF, TXT, MD, CSV, JSON, LOG)`);
           continue;
         }
         if (file.size > 100 * 1024 * 1024) {
           toast(`${file.name} exceeds 100MB`);
           continue;
         }
-        const content = await file.text();
-        await api.createKnowledgeDocument({
-          title: file.name.replace(/\.[^.]+$/, "") || file.name,
-          content,
-          source: `research-upload:${file.name}`,
-        });
+        const res = await api.uploadResearchSource(draft.project_id, file);
         ok += 1;
+        const brain = res.source.brain_status ? ` · brain ${res.source.brain_status}` : "";
+        toast(`${file.name}: parse ${res.source.parse_status}${brain}`);
       }
       if (ok > 0) {
-        setFileCount((n) => n + ok);
         setContext((c) => ({ ...c, files: true }));
-        toast(`${ok} file(s) ingested into Knowledge (local research scope)`);
+        await refreshArtifacts(draft.project_id);
+        const detail = await api.getResearchProject(draft.project_id);
+        setProject(detail.project);
       }
     } catch (err) {
-      toast(errMsg(err, "File ingest failed"));
+      toast(errMsg(err, "File upload failed"));
     } finally {
       setBusy(false);
     }
@@ -489,7 +678,81 @@ export function ResearchPage() {
   function onDrop(e: DragEvent) {
     e.preventDefault();
     setDragOver(false);
-    onFilesSelected(e.dataTransfer.files);
+    void onFilesSelected(e.dataTransfer.files);
+  }
+
+  async function onAddUrlSource() {
+    const urls = buildSeedUrls();
+    if (!urls.length) {
+      toast("Enter at least one URL");
+      return;
+    }
+    setBusy(true);
+    try {
+      const draft = await ensureDraftProject();
+      for (const url of urls) {
+        await api.addResearchUrlSource(draft.project_id, url);
+      }
+      toast(`${urls.length} URL(s) added`);
+      setUrlDraft("");
+      await refreshArtifacts(draft.project_id);
+      const detail = await api.getResearchProject(draft.project_id);
+      setProject(detail.project);
+    } catch (err) {
+      toast(errMsg(err, "Failed to add URL source"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadDatasetsForPicker() {
+    try {
+      const [dsRes, jobsRes] = await Promise.all([
+        api.listDatasets(200),
+        api.listDatasetJobs(undefined, 200),
+      ]);
+      setDatasets(dsRes.datasets);
+      setDatasetJobs(jobsRes.jobs);
+      if (!selectedDatasetId && dsRes.datasets[0]) {
+        setSelectedDatasetId(dsRes.datasets[0].datasetId);
+      }
+    } catch (err) {
+      toast(errMsg(err, "Failed to load datasets"));
+    }
+  }
+
+  async function onConnectDataset() {
+    if (!selectedDatasetId) {
+      toast("Select a dataset first");
+      return;
+    }
+    const ds = datasets.find((d) => d.datasetId === selectedDatasetId);
+    if (!ds) {
+      toast("Dataset not found");
+      return;
+    }
+    const indexed = datasetIndexed(ds, datasetJobs);
+    if (indexed === false) {
+      toast("This dataset is not indexed yet — index it in Datasets before connecting to Research.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const draft = await ensureDraftProject();
+      const res = await api.connectResearchDataset(draft.project_id, {
+        datasetId: ds.datasetId,
+        indexed: indexed === true,
+        label: ds.name,
+      });
+      hydrateFromProject(res.project);
+      setConnectedDatasetLabel(ds.name);
+      setContext((c) => ({ ...c, datasets: true }));
+      toast(`Connected ${ds.name}`);
+    } catch (err) {
+      toast(errMsg(err, "Failed to connect dataset"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onStartResearch() {
@@ -498,27 +761,46 @@ export function ResearchPage() {
       toast("Ask a research question first");
       return;
     }
+    if (!selectedModel) {
+      toast("No model available — check Models");
+      return;
+    }
     setBusy(true);
     try {
-      const seeds = urlDraft
-        .split(/[\n,]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const created = await api.createResearchProject({
+      const seeds = buildSeedUrls();
+      const payload = {
         topic,
         title: topic.slice(0, 80),
         objective: topic,
         depth,
         allowWeb: !!context.web,
-        // Do not invent a Knowledge `source` filter. Empty scopes → search all local Knowledge.
-        // File uploads are ingested with source `research-upload:*` and remain discoverable.
-        localScopes: [],
+        executionMode,
+        modelProfile: {
+          modelId: selectedModel.id,
+          displayName: selectedModel.displayName,
+        },
+        budget: {
+          research_workers: effectiveWorkers,
+          rounds: effectiveRounds,
+        },
+        localScopes: [] as string[],
         seedSources: seeds,
-        modelProfile: { label: model },
-      });
-      const started = await api.runResearchProject(created.project.project_id);
-      setProject(started.project);
+      };
+
+      let projectId: string;
+      if (project?.status === "draft") {
+        const updated = await api.updateResearchProject(project.project_id, payload);
+        projectId = updated.project.project_id;
+        setProject(updated.project);
+      } else {
+        const created = await api.createResearchProject(payload);
+        projectId = created.project.project_id;
+        setProject(created.project);
+      }
       setHasLiveProject(true);
+      const started = await api.runResearchProject(projectId);
+      setProject(started.project);
+      setWorkers(started.project.workers ?? []);
       setSources([]);
       setEvidence([]);
       setClaims([]);
@@ -545,6 +827,10 @@ export function ResearchPage() {
   }
 
   const heroSrc = mediaPageHeroes.research || "/assets/hero-research.jpg";
+  const workerRows =
+    workers.length > 0 ? workers : (project?.workers?.length ? project.workers : []);
+
+  const phaseLabel = project?.phase?.replace(/_/g, " ") ?? (project ? project.status : "idle");
 
   return (
     <AppShell
@@ -590,7 +876,10 @@ export function ResearchPage() {
                   role="tab"
                   aria-selected={inputTab === tab}
                   className={`lv-rd-tab${inputTab === tab ? " is-active" : ""}`}
-                  onClick={() => setInputTab(tab)}
+                  onClick={() => {
+                    setInputTab(tab);
+                    if (tab === "Datasets") void loadDatasetsForPicker();
+                  }}
                 >
                   {tab}
                 </button>
@@ -600,7 +889,10 @@ export function ResearchPage() {
               type="button"
               className="lv-rd-templates-btn"
               onClick={() => {
-                const next = RD_TEMPLATES[(RD_TEMPLATES.findIndex((t) => t.id === templateId) + 1) % RD_TEMPLATES.length];
+                const next =
+                  RD_TEMPLATES[
+                    (RD_TEMPLATES.findIndex((t) => t.id === templateId) + 1) % RD_TEMPLATES.length
+                  ];
                 applyTemplate(next.id);
               }}
             >
@@ -613,15 +905,20 @@ export function ResearchPage() {
             <div className="lv-rd-composer-top">
               <select
                 className="lv-rd-model"
-                value={model}
+                value={modelId}
                 aria-label="Model"
-                onChange={(e) => setModel(e.target.value as (typeof RD_MODELS)[number])}
+                onChange={(e) => setModelId(e.target.value)}
+                disabled={!models.length}
               >
-                {RD_MODELS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
+                {models.length === 0 ? (
+                  <option value="">No models</option>
+                ) : (
+                  models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.displayName}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
             <textarea
@@ -638,14 +935,54 @@ export function ResearchPage() {
               aria-label="Research question"
             />
             {inputTab === "URLs" ? (
-              <textarea
-                className="lv-rd-textarea"
-                style={{ minHeight: 48 }}
-                value={urlDraft}
-                onChange={(e) => setUrlDraft(e.target.value)}
-                placeholder="https://example.com/paper …"
-                aria-label="Seed URLs"
-              />
+              <>
+                <textarea
+                  className="lv-rd-textarea"
+                  style={{ minHeight: 48 }}
+                  value={urlDraft}
+                  onChange={(e) => setUrlDraft(e.target.value)}
+                  placeholder="https://example.com/paper …"
+                  aria-label="Seed URLs"
+                />
+                <div className="lv-rd-composer-foot">
+                  <button
+                    type="button"
+                    className="lv-rd-ghost-btn"
+                    disabled={busy || !urlDraft.trim()}
+                    onClick={() => void onAddUrlSource()}
+                  >
+                    Add URLs to project
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {inputTab === "Datasets" ? (
+              <div className="lv-rd-composer-foot" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                <select
+                  className="lv-rd-model"
+                  value={selectedDatasetId}
+                  aria-label="Dataset"
+                  onChange={(e) => setSelectedDatasetId(e.target.value)}
+                >
+                  {datasets.length === 0 ? (
+                    <option value="">No datasets</option>
+                  ) : (
+                    datasets.map((d) => (
+                      <option key={d.datasetId} value={d.datasetId}>
+                        {d.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  type="button"
+                  className="lv-rd-ghost-btn"
+                  disabled={busy || !selectedDatasetId}
+                  onClick={() => void onConnectDataset()}
+                >
+                  Connect selected dataset
+                </button>
+              </div>
             ) : null}
             <div className="lv-rd-composer-foot">
               <div className="lv-rd-chips">
@@ -656,17 +993,28 @@ export function ResearchPage() {
                 >
                   + Add context
                 </button>
-                {RD_CONTEXT_CHIPS.map((chip) => (
-                  <button
-                    key={chip.id}
-                    type="button"
-                    className={`lv-rd-chip${context[chip.id] ? " is-active" : ""}`}
-                    onClick={() => toggleContext(chip.id)}
-                  >
-                    <Icon name={chip.icon} />
-                    {chip.label}
-                  </button>
-                ))}
+                {RD_CONTEXT_CHIPS.map((chip) => {
+                  const unavailable = "unavailable" in chip ? chip.unavailable : undefined;
+                  return (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      className={`lv-rd-chip${context[chip.id] ? " is-active" : ""}`}
+                      disabled={!!unavailable}
+                      title={unavailable ?? undefined}
+                      onClick={() => {
+                        if (unavailable) {
+                          toast(unavailable);
+                          return;
+                        }
+                        toggleContext(chip.id);
+                      }}
+                    >
+                      <Icon name={chip.icon} />
+                      {chip.label}
+                    </button>
+                  );
+                })}
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 {isLive ? (
@@ -677,7 +1025,7 @@ export function ResearchPage() {
                 <button
                   type="button"
                   className="lv-rd-start"
-                  disabled={busy || !query.trim()}
+                  disabled={busy || !query.trim() || !selectedModel}
                   onClick={() => void onStartResearch()}
                 >
                   {busy ? "Starting…" : "Start Research →"}
@@ -726,16 +1074,17 @@ export function ResearchPage() {
               <Icon name="upload" />
               <div>
                 <strong>Drop files here or click to upload</strong>
-                <small>TXT, MD, CSV, JSON, LOG (max 100MB) → Knowledge ingest</small>
+                <small>PDF, TXT, MD, CSV, JSON, LOG (max 100MB) → research sources</small>
               </div>
-              {fileCount > 0 ? <small>{fileCount} file(s) staged</small> : null}
+              {fileSourceCount > 0 ? <small>{fileSourceCount} file source(s) on project</small> : null}
             </div>
             <input
               ref={fileInputRef}
               type="file"
               multiple
+              accept=".pdf,.txt,.md,.markdown,.csv,.json,.log"
               hidden
-              onChange={(e) => onFilesSelected(e.target.files)}
+              onChange={(e) => void onFilesSelected(e.target.files)}
             />
             <div className="lv-rd-ingest-actions">
               <button
@@ -753,9 +1102,8 @@ export function ResearchPage() {
                 type="button"
                 className="lv-rd-ghost-btn"
                 onClick={() => {
-                  setContext((c) => ({ ...c, datasets: true }));
                   setInputTab("Datasets");
-                  toast("Datasets marked in scope");
+                  void loadDatasetsForPicker();
                 }}
               >
                 <Icon name="database" />
@@ -778,9 +1126,13 @@ export function ResearchPage() {
                 ) : (
                   <span className="lv-rd-badge is-count">idle</span>
                 )}
+                <span className="lv-rd-badge is-count">{phaseLabel}</span>
                 <span className="lv-rd-progress-pct">{hasLiveProject ? progress : 0}%</span>
               </div>
             </div>
+            {project?.error && (project.status === "failed" || project.status === "cancelled") ? (
+              <p className="lv-rd-error" role="alert">{project.error}</p>
+            ) : null}
             <ol className="lv-rd-timeline">
               {timeline.map((step) => (
                 <li key={step.id} className={`lv-rd-step is-${step.status}`}>
@@ -795,6 +1147,34 @@ export function ResearchPage() {
                 </li>
               ))}
             </ol>
+            {workerRows.length > 0 ? (
+              <ul className="lv-rd-insight-list" aria-label="Research workers">
+                {workerRows.map((w) => (
+                  <li key={w.worker_id} className="lv-rd-insight-item">
+                    <span className="lv-rd-insight-ico">
+                      <Icon name="bot" />
+                    </span>
+                    <div className="lv-rd-insight-copy">
+                      <strong>
+                        Worker {w.worker_index + 1} · Round {w.current_round}/{w.total_rounds}
+                      </strong>
+                      <p>
+                        {w.phase.replace(/_/g, " ")} · {w.current_query || w.current_task || "—"}
+                      </p>
+                      <small>
+                        Sources {w.sources_added} · Evidence {w.evidence_added}
+                        {w.last_error ? ` · Error: ${w.last_error}` : ""}
+                      </small>
+                    </div>
+                    <span className="lv-rd-badge is-count">{w.status}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="lv-rd-empty-note">
+                {isLive ? "Workers starting…" : "Worker details appear during an active run."}
+              </p>
+            )}
           </article>
 
           <article className="lv-rd-panel">
@@ -807,6 +1187,59 @@ export function ResearchPage() {
                 {scopeEditing ? "Done" : "Edit"}
               </button>
             </div>
+            <div className="lv-rd-scope-grid" style={{ marginBottom: 10 }}>
+              <button
+                type="button"
+                className={`lv-rd-pill${executionMode === "normal" ? " is-active" : ""}`}
+                disabled={!scopeEditing && executionMode !== "normal"}
+                onClick={() => scopeEditing && setExecutionMode("normal")}
+              >
+                Normal
+              </button>
+              <button
+                type="button"
+                className={`lv-rd-pill${executionMode === "custom" ? " is-active" : ""}`}
+                disabled={!scopeEditing && executionMode !== "custom"}
+                onClick={() => scopeEditing && setExecutionMode("custom")}
+              >
+                Custom
+              </button>
+            </div>
+            <p className="lv-rd-empty-note" style={{ margin: "0 0 10px", textAlign: "left" }}>
+              {executionMode === "normal"
+                ? (normalMode?.description ??
+                  `Locked: ${effectiveWorkers} workers, ${effectiveRounds} rounds/worker`)
+                : (budgetCatalog?.execution_modes.custom.description ??
+                  "Set workers and rounds within backend limits.")}
+            </p>
+            {executionMode === "custom" && scopeEditing ? (
+              <div className="lv-rd-scope-grid" style={{ marginBottom: 10 }}>
+                <label className="lv-rd-scope-card">
+                  <strong>Workers</strong>
+                  <input
+                    type="number"
+                    min={customLimits?.research_workers.min ?? 1}
+                    max={customLimits?.research_workers.max ?? 16}
+                    value={customWorkers}
+                    onChange={(e) => setCustomWorkers(Number(e.target.value))}
+                  />
+                </label>
+                <label className="lv-rd-scope-card">
+                  <strong>Rounds / worker</strong>
+                  <input
+                    type="number"
+                    min={customLimits?.rounds.min ?? 1}
+                    max={customLimits?.rounds.max ?? 100}
+                    value={customRounds}
+                    onChange={(e) => setCustomRounds(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            ) : (
+              <p className="lv-rd-empty-note" style={{ margin: "0 0 10px", textAlign: "left" }}>
+                {effectiveWorkers} workers · {effectiveRounds} rounds/worker
+              </p>
+            )}
             <div className="lv-rd-scope-grid">
               <button
                 type="button"
@@ -831,8 +1264,8 @@ export function ResearchPage() {
                 <Icon name="file" />
                 <strong>Your Files</strong>
                 <span>
-                  {fileCount > 0
-                    ? `${fileCount} ingested`
+                  {fileSourceCount > 0
+                    ? `${fileSourceCount} uploaded`
                     : context.files
                       ? "Enabled"
                       : "None"}
@@ -847,14 +1280,19 @@ export function ResearchPage() {
                 <Icon name="database" />
                 <strong>Datasets</strong>
                 <span className={context.datasets ? "is-on" : undefined}>
-                  {context.datasets ? "Connected" : "Not connected"}
+                  {connectedDatasetLabel ?? (context.datasets ? "Connected" : "Not connected")}
                 </span>
               </button>
               <button
                 type="button"
                 className="lv-rd-scope-card"
                 disabled={!scopeEditing}
-                onClick={() => scopeEditing && toggleContext("code")}
+                onClick={() => {
+                  if (!scopeEditing) return;
+                  const chip = RD_CONTEXT_CHIPS.find((c) => c.id === "code");
+                  if (chip && "unavailable" in chip && chip.unavailable) toast(chip.unavailable);
+                  else toggleContext("code");
+                }}
               >
                 <Icon name="code" />
                 <strong>Code Analysis</strong>
@@ -879,29 +1317,32 @@ export function ResearchPage() {
               <p className="lv-rd-empty-note">No evidence yet — start a research run to collect sources.</p>
             ) : (
               <ul className="lv-rd-evidence-list">
-                {evidenceRows.map((item) => (
-                  <li key={item.id} className="lv-rd-evidence-item">
-                    <span className="lv-rd-favicon">{item.favicon}</span>
-                    <div className="lv-rd-evidence-copy">
-                      <strong title={item.title}>{item.title}</strong>
-                      <small>
-                        {item.domain} · {item.ago}
-                      </small>
-                    </div>
-                    <span className={`lv-rd-conf is-${confTone(item.confidence)}`}>{confLabel(item)}</span>
-                    <button
-                      type="button"
-                      className="lv-rd-ext"
-                      aria-label="Open source"
-                      onClick={() => {
-                        if (item.url) window.open(item.url, "_blank", "noopener,noreferrer");
-                        else toast(item.title);
-                      }}
-                    >
-                      <Icon name="ext" />
-                    </button>
-                  </li>
-                ))}
+                {evidenceRows.map((item) => {
+                  const label = item.supportLabel ?? "Unmeasured";
+                  return (
+                    <li key={item.id} className="lv-rd-evidence-item">
+                      <span className="lv-rd-favicon">{item.favicon}</span>
+                      <div className="lv-rd-evidence-copy">
+                        <strong title={item.title}>{item.title}</strong>
+                        <small>
+                          {item.domain} · {item.ago}
+                        </small>
+                      </div>
+                      <span className={`lv-rd-conf is-${confTone(label)}`}>{label}</span>
+                      <button
+                        type="button"
+                        className="lv-rd-ext"
+                        aria-label="Open source"
+                        onClick={() => {
+                          if (item.url) window.open(item.url, "_blank", "noopener,noreferrer");
+                          else toast(item.title);
+                        }}
+                      >
+                        <Icon name="ext" />
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </article>
@@ -962,18 +1403,21 @@ export function ResearchPage() {
               <p className="lv-rd-empty-note">Insights appear once claims are synthesized.</p>
             ) : (
               <ul className="lv-rd-insight-list">
-                {insightRows.map((item) => (
-                  <li key={item.id} className="lv-rd-insight-item">
-                    <span className="lv-rd-insight-ico">
-                      <Icon name={item.icon} />
-                    </span>
-                    <div className="lv-rd-insight-copy">
-                      <strong>{item.title}</strong>
-                      <p>{item.body}</p>
-                    </div>
-                    <span className={`lv-rd-conf is-${confTone(item.confidence)}`}>{confLabel(item)}</span>
-                  </li>
-                ))}
+                {insightRows.map((item) => {
+                  const label = item.supportLabel ?? "Unmeasured";
+                  return (
+                    <li key={item.id} className="lv-rd-insight-item">
+                      <span className="lv-rd-insight-ico">
+                        <Icon name={item.icon} />
+                      </span>
+                      <div className="lv-rd-insight-copy">
+                        <strong>{item.title}</strong>
+                        <p>{item.body}</p>
+                      </div>
+                      <span className={`lv-rd-conf is-${confTone(label)}`}>{label}</span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </article>

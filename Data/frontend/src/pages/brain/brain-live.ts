@@ -30,21 +30,133 @@ const TYPE_COLORS: Record<string, string> = {
   memory: "#22C9D6",
   conversation: "#A1A1AA",
   project: "#D6A957",
+  concept: "#F0C875",
+  model: "#B45CFF",
+  agent: "#8E63FF",
+  tool: "#DB8A34",
+  code: "#20DC8C",
 };
 
 export function colorForType(type: string): string {
   return TYPE_COLORS[type] || TYPE_COLORS[type.split(".")[0]] || "#A1A1AA";
 }
 
+export type TreeNodeKind = "root" | "domain" | "type" | "node";
+
 export type TreeNode = {
   id: string;
   label: string;
   count: number;
   color: string;
+  kind: TreeNodeKind;
   children?: TreeNode[];
   description?: string;
   tags?: string[];
+  nodeType?: string;
+  createdAt?: string | null;
+  meta?: Record<string, unknown>;
 };
+
+type TreeDomain = {
+  id: string;
+  label: string;
+  color: string;
+  description: string;
+};
+
+const TREE_DOMAINS: readonly TreeDomain[] = [
+  {
+    id: "core-concepts",
+    label: "Core Concepts",
+    color: "#F0C875",
+    description: "Foundational knowledge, memory and concepts that form LEVIATHAN's working intelligence.",
+  },
+  {
+    id: "ai-models",
+    label: "AI Models",
+    color: "#B45CFF",
+    description: "Models, agents, training and evaluation structures available to LEVIATHAN.",
+  },
+  {
+    id: "data-information",
+    label: "Data & Information",
+    color: "#22C9D6",
+    description: "Datasets, evidence, embeddings and other information-bearing stores.",
+  },
+  {
+    id: "tools-systems",
+    label: "Tools & Systems",
+    color: "#DB8A34",
+    description: "Capabilities, MCP integrations, workflows and operational tooling.",
+  },
+  {
+    id: "research",
+    label: "Research",
+    color: "#20DC8C",
+    description: "Research projects, runs, findings and project knowledge.",
+  },
+] as const;
+
+function domainIdForType(type: string): string {
+  const t = type.toLowerCase();
+  if (
+    t.includes("research") ||
+    t === "run" ||
+    t === "project" ||
+    t.includes("experiment") ||
+    t.includes("hypothesis") ||
+    t.includes("finding")
+  ) {
+    return "research";
+  }
+  if (
+    t.includes("dataset") ||
+    t.includes("evidence") ||
+    t.includes("vector") ||
+    t.includes("embedding") ||
+    t.includes("atlas") ||
+    t.includes("data.") ||
+    t.includes("information")
+  ) {
+    return "data-information";
+  }
+  if (
+    t.includes("mcp") ||
+    t.includes("capability") ||
+    t.includes("workflow") ||
+    t === "tool" ||
+    t.includes("automation") ||
+    t.includes("integration") ||
+    t.includes("api") ||
+    t === "code"
+  ) {
+    return "tools-systems";
+  }
+  if (
+    t.includes("model") ||
+    t.includes("agent") ||
+    t.includes("llm") ||
+    t.includes("training") ||
+    t.includes("fine") ||
+    t.includes("evaluation") ||
+    t === "module"
+  ) {
+    return "ai-models";
+  }
+  return "core-concepts";
+}
+
+function prettyTypeLabel(type: string): string {
+  return type
+    .split(/[._-]+/g)
+    .filter(Boolean)
+    .map((part) => {
+      const upper = part.toUpperCase();
+      if (["AI", "API", "LLM", "MCP", "RAG"].includes(upper)) return upper;
+      return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+    })
+    .join(" ");
+}
 
 export function buildTree(nodes: LiveBrainNode[]): TreeNode {
   const byType = new Map<string, LiveBrainNode[]>();
@@ -53,34 +165,67 @@ export function buildTree(nodes: LiveBrainNode[]): TreeNode {
     list.push(n);
     byType.set(n.type, list);
   }
-  const children: TreeNode[] = [...byType.entries()]
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-    .map(([type, group]) => ({
+
+  const grouped = new Map<string, TreeNode[]>();
+  for (const domain of TREE_DOMAINS) grouped.set(domain.id, []);
+
+  for (const [type, group] of [...byType.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))) {
+    const domainId = domainIdForType(type);
+    const typeNode: TreeNode = {
       id: `type:${type}`,
-      label: type,
+      label: prettyTypeLabel(type),
       count: group.length,
       color: colorForType(type),
-      description: `${group.length} live projection node(s) of type ${type}`,
-      tags: [type.split(".")[0]],
+      kind: "type",
+      nodeType: type,
+      description: `${group.length} live projection node${group.length === 1 ? "" : "s"} of type ${type}.`,
+      tags: [type.split(".")[0], "live"],
       children: group
         .slice()
         .sort((a, b) => a.label.localeCompare(b.label))
-        .slice(0, 80)
         .map((n) => ({
           id: n.id,
           label: n.label,
           count: 1,
           color: colorForType(n.type),
-          description: n.created_at ? `Created ${n.created_at}` : undefined,
-          tags: Object.keys(n.meta || {}).slice(0, 5),
+          kind: "node" as const,
+          nodeType: n.type,
+          createdAt: n.created_at,
+          meta: n.meta,
+          description:
+            typeof n.meta?.description === "string"
+              ? n.meta.description
+              : n.created_at
+                ? `Created ${n.created_at}`
+                : "Live Brain projection node.",
+          tags: [n.type, ...Object.keys(n.meta || {}).slice(0, 4)],
         })),
-    }));
+    };
+    grouped.get(domainId)?.push(typeNode);
+  }
+
+  const children: TreeNode[] = TREE_DOMAINS.map((domain) => {
+    const domainChildren = grouped.get(domain.id) ?? [];
+    return {
+      id: `domain:${domain.id}`,
+      label: domain.label,
+      count: domainChildren.reduce((sum, child) => sum + child.count, 0),
+      color: domain.color,
+      kind: "domain",
+      description: domain.description,
+      tags: [domain.id, "category"],
+      children: domainChildren,
+    };
+  });
+
   return {
     id: "leviathan",
     label: "LEVIATHAN",
     count: nodes.length,
     color: "#D4AF37",
-    description: "Bounded Brain projection over authoritative stores.",
+    kind: "root",
+    description: "Bounded Brain projection over LEVIATHAN's authoritative stores.",
+    tags: ["brain", "knowledge", "live"],
     children,
   };
 }

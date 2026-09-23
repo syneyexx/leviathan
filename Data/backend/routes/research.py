@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from Data.modules.research import ResearchError, ResearchService
@@ -25,6 +25,8 @@ class ProjectCreate(BaseModel):
     budget: dict[str, Any] | None = None
     localScopes: list[str] = Field(default_factory=list)
     seedSources: list[str] = Field(default_factory=list)
+    connectedDatasets: list[dict[str, Any]] = Field(default_factory=list)
+    executionMode: str = "normal"
 
 
 class ProjectUpdate(BaseModel):
@@ -38,6 +40,8 @@ class ProjectUpdate(BaseModel):
     budget: dict[str, Any] | None = None
     localScopes: list[str] | None = None
     seedSources: list[str] | None = None
+    connectedDatasets: list[dict[str, Any]] | None = None
+    executionMode: str | None = None
 
 
 class PlanRequest(BaseModel):
@@ -58,12 +62,23 @@ class DeepenRequest(BaseModel):
     extraRounds: int = 1
 
 
+class UrlSourceRequest(BaseModel):
+    url: str
+
+
+class ConnectDatasetRequest(BaseModel):
+    datasetId: str
+    versionId: str | None = None
+    indexed: bool | None = True
+    label: str | None = None
+
+
 def build_research_router(service: ResearchService) -> APIRouter:
     router = APIRouter(tags=["research"])
 
     @router.get("/api/research/budgets")
     def budgets() -> dict:
-        return {"presets": service.list_budget_presets()}
+        return service.budget_catalog()
 
     @router.get("/api/research")
     def list_projects(limit: int = Query(100, ge=1, le=500)) -> dict:
@@ -84,6 +99,8 @@ def build_research_router(service: ResearchService) -> APIRouter:
                 budget_overrides=payload.budget,
                 local_scopes=payload.localScopes,
                 seed_sources=payload.seedSources,
+                connected_datasets=payload.connectedDatasets,
+                execution_mode=payload.executionMode,
             )
         except ResearchError as exc:
             raise_research_error(exc)
@@ -113,6 +130,8 @@ def build_research_router(service: ResearchService) -> APIRouter:
                     "budget": payload.budget,
                     "local_scopes": payload.localScopes,
                     "seed_sources": payload.seedSources,
+                    "connected_datasets": payload.connectedDatasets,
+                    "execution_mode": payload.executionMode,
                 },
             )
         except ResearchError as exc:
@@ -143,12 +162,13 @@ def build_research_router(service: ResearchService) -> APIRouter:
             raise_research_error(exc)
         return {"project": project.public_dict(), "plan": project.plan.public_dict() if project.plan else None}
 
-    @router.post("/api/research/{project_id}/run")
-    def run_project(project_id: str) -> dict:
+    @router.post("/api/research/{project_id}/run", status_code=202)
+    def run_project(project_id: str, response: Response) -> dict:
         try:
-            project = service.run(project_id)
+            project = service.run(project_id, background=True)
         except ResearchError as exc:
             raise_research_error(exc)
+        response.status_code = 202
         return {"project": project.public_dict()}
 
     @router.post("/api/research/{project_id}/cancel")
@@ -159,22 +179,75 @@ def build_research_router(service: ResearchService) -> APIRouter:
             raise_research_error(exc)
         return {"project": project.public_dict()}
 
-    @router.post("/api/research/{project_id}/resume")
-    def resume_project(project_id: str) -> dict:
+    @router.post("/api/research/{project_id}/resume", status_code=202)
+    def resume_project(project_id: str, response: Response) -> dict:
         try:
-            project = service.resume(project_id)
+            project = service.resume(project_id, background=True)
+        except ResearchError as exc:
+            raise_research_error(exc)
+        response.status_code = 202
+        return {"project": project.public_dict()}
+
+    @router.post("/api/research/{project_id}/deepen", status_code=202)
+    def deepen_project(project_id: str, payload: DeepenRequest | None = None) -> dict:
+        extra = payload.extraRounds if payload else 1
+        try:
+            project = service.deepen(project_id, extra_rounds=extra, background=True)
         except ResearchError as exc:
             raise_research_error(exc)
         return {"project": project.public_dict()}
 
-    @router.post("/api/research/{project_id}/deepen")
-    def deepen_project(project_id: str, payload: DeepenRequest | None = None) -> dict:
-        extra = payload.extraRounds if payload else 1
+    @router.post("/api/research/{project_id}/sources/upload")
+    async def upload_source(
+        project_id: str,
+        file: UploadFile = File(...),
+    ) -> dict:
         try:
-            project = service.deepen(project_id, extra_rounds=extra)
+            result = service.upload_source(
+                project_id,
+                filename=file.filename or "upload.bin",
+                stream=file.file,
+                content_type=file.content_type,
+            )
+        except ResearchError as exc:
+            raise_research_error(exc)
+        return result
+
+    @router.post("/api/research/{project_id}/sources/url")
+    def add_url(project_id: str, payload: UrlSourceRequest) -> dict:
+        try:
+            return service.add_url_source(project_id, payload.url)
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.post("/api/research/{project_id}/datasets/connect")
+    def connect_dataset(project_id: str, payload: ConnectDatasetRequest) -> dict:
+        try:
+            project = service.connect_dataset(
+                project_id,
+                dataset_id=payload.datasetId,
+                version_id=payload.versionId,
+                indexed=payload.indexed,
+                label=payload.label,
+            )
         except ResearchError as exc:
             raise_research_error(exc)
         return {"project": project.public_dict()}
+
+    @router.post("/api/research/{project_id}/sources/{source_id}/brain-retry")
+    def retry_brain(project_id: str, source_id: str) -> dict:
+        try:
+            return service.retry_brain_sync(project_id, source_id)
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.get("/api/research/{project_id}/workers")
+    def workers(project_id: str) -> dict:
+        try:
+            items = service.list_workers(project_id)
+        except ResearchError as exc:
+            raise_research_error(exc)
+        return {"workers": [w.public_dict() for w in items]}
 
     @router.get("/api/research/{project_id}/events")
     def events(project_id: str, limit: int = Query(200, ge=1, le=2000)) -> dict:
