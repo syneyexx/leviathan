@@ -2349,6 +2349,73 @@ def _m33_production_ops(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m34_product_unification(conn: sqlite3.Connection) -> None:
+    """Wave 11: projects/workspaces, work timeline, continuity markers."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_projects (
+            project_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            default_workspace_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_workspaces (
+            workspace_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_project_bindings (
+            binding_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            workspace_id TEXT,
+            domain TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            UNIQUE(project_id, domain, entity_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_product_bindings_project "
+        "ON product_project_bindings(project_id, domain, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS work_timeline_events (
+            event_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            workspace_id TEXT,
+            domain TEXT NOT NULL,
+            name TEXT NOT NULL,
+            entity_id TEXT,
+            run_id TEXT,
+            trace_id TEXT,
+            summary TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at_ms REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_work_timeline_project "
+        "ON work_timeline_events(project_id, created_at_ms)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2383,6 +2450,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=31, name="data_training_factory", apply=_m31_data_training_factory),
     Migration(version=32, name="posttraining_flywheel", apply=_m32_posttraining_flywheel),
     Migration(version=33, name="production_ops", apply=_m33_production_ops),
+    Migration(version=34, name="product_unification", apply=_m34_product_unification),
 )
 
 

@@ -122,7 +122,11 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/backend/tests/test_wave8_data_training_factory.py` | Wave 8 shard resume / mixture / integrity-gated registry exit gate |
 | `Data/backend/tests/test_wave9_posttraining_flywheel.py` | Wave 9 preference/DPO flywheel + no silent promote exit gate |
 | `Data/backend/tests/test_wave10_production_ops.py` | Wave 10 ops recovery / no-leak / no-dup exit gate |
+| `Data/backend/tests/test_wave11_product_unification.py` | Wave 11 one operating platform exit gate |
 | `Data/modules/ops/` | ProductionOpsPlane + deployment profiles |
+| `Data/modules/projects/` | ProjectStore / ContinuityPlane / ProductUnificationPlane |
+| `Data/modules/timeline/` | Unified work timeline projection |
+| `Data/modules/sdk/` | FixtureSdk over Gateway/plugins |
 | `Data/modules/media/` | MediaService fixture pipelines (Gateway-dispatched) |
 | `Data/modules/voice/` | RealtimeVoiceService fixture ASR/TTS + barge-in |
 | `Data/modules/artifacts/` | ArtifactStore |

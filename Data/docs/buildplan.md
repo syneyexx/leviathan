@@ -6,6 +6,38 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 11 Product Unification — PASS
+
+### Objective
+Unify the product surface (U381–U400 foundations): first-class Projects/Workspaces, one work timeline across chat/research/coding/browser/artifacts, editable artifact lineage, scheduled + event work, fixture SDK/custom agents/plugins, and cross-session continuity — without duplicating domain storage or creating a second gateway.
+
+### Added / changed
+- **Projects:** `ProjectStore` + workspaces + domain bindings (scope only)
+- **Timeline:** `WorkTimeline` projection across domains under one `project_id` / `trace_id`
+- **Artifacts:** `EditableArtifactRuntime` (document/spreadsheet/presentation) — edits create new content-addressed versions
+- **Continuity:** `ContinuityPlane` project-scoped memory handoff (no invent-completion; no cross-project leak)
+- **Schedules:** `ScheduleTargetKind.EVENT` + `emit_event` → same Jobs/Workflows
+- **SDK:** `FixtureSdk` for projects/timeline/invoke/plugins/custom agents
+- **API:** `/api/projects*`, timeline, artifacts edit, continuity, `/api/sdk`, `/api/schedules/events/emit`
+- **Migration v34** + `LEVIATHAN_FEATURE_PRODUCT_UNIFICATION`
+- **Tests:** `test_wave11_product_unification.py` (exit gate: one operating platform)
+- **Version:** `0.75.0-wave11-product-unification`
+
+### EXTERNAL-FIRST review
+- Domains keep own storage; project is a binding/scope layer
+- SDK/plugins/custom agents still execute through ExecutionGateway
+- No new third-party dependencies; marketplace remains private/local-first
+
+### Explicitly NOT claimed
+- Full Office suite / collaborative real-time editors
+- Published PyPI/npm SDKs or public marketplace governance
+- Multi-tenant org productization beyond deployment profiles
+
+### Status
+**PASS** — final EXTERNAL-FIRST wave (Waves 0–11 complete)
+
+---
+
 ## 2026-09-23 — Wave 10 Production Operations and Scale — PASS
 
 ### Objective

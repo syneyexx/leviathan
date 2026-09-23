@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
 from Data.modules.jobs import JobRuntime
 from Data.modules.workflows import WorkflowRuntime, WorkflowStepDef
@@ -10,7 +10,11 @@ from .types import ScheduleRecord, ScheduleTargetKind
 
 
 class ScheduleRunner:
-    """Fire due schedules into JobRuntime or WorkflowRuntime."""
+    """Fire due schedules into JobRuntime or WorkflowRuntime.
+
+    Wave 11: EVENT targets are armed until ``emit_event`` matches their
+    ``metadata.event_name`` (or target_ref), then enqueue the same Jobs/Workflows.
+    """
 
     def __init__(
         self,
@@ -22,12 +26,36 @@ class ScheduleRunner:
         self.store = store
         self.jobs = jobs
         self.workflows = workflows
-        self.telemetry: dict[str, Any] = {"ticks": 0, "fired": 0, "errors": 0}
+        self.telemetry: dict[str, Any] = {
+            "ticks": 0,
+            "fired": 0,
+            "errors": 0,
+            "events_received": 0,
+            "event_matched": 0,
+        }
+        self._armed_events: list[ScheduleRecord] = []
 
     def tick(self) -> list[dict[str, Any]]:
         self.telemetry["ticks"] += 1
         results: list[dict[str, Any]] = []
         for schedule in self.store.due(now=utc_now()):
+            if schedule.target_kind == ScheduleTargetKind.EVENT:
+                # Interval tick only re-arms; firing happens on emit_event.
+                self._armed_events = [
+                    s for s in self._armed_events if s.schedule_id != schedule.schedule_id
+                ]
+                self._armed_events.append(schedule)
+                self.store.mark_ran(schedule.schedule_id)
+                results.append(
+                    {
+                        "schedule_id": schedule.schedule_id,
+                        "ok": True,
+                        "target": "event",
+                        "armed": True,
+                        "event_name": schedule.metadata.get("event_name") or schedule.target_ref,
+                    }
+                )
+                continue
             try:
                 fired = self._fire(schedule)
                 self.store.mark_ran(schedule.schedule_id)
@@ -38,6 +66,77 @@ class ScheduleRunner:
                 results.append(
                     {"schedule_id": schedule.schedule_id, "ok": False, "error": str(exc)}
                 )
+        return results
+
+    def emit_event(
+        self,
+        event_name: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        project_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Match armed EVENT schedules and enqueue canonical Jobs/Workflows."""
+        self.telemetry["events_received"] += 1
+        results: list[dict[str, Any]] = []
+        remaining: list[ScheduleRecord] = []
+        for schedule in list(self._armed_events):
+            expected = str(schedule.metadata.get("event_name") or schedule.target_ref)
+            if expected != event_name:
+                remaining.append(schedule)
+                continue
+            sched_project = schedule.metadata.get("project_id")
+            if project_id and sched_project and sched_project != project_id:
+                remaining.append(schedule)
+                continue
+            try:
+                # EVENT schedules carry nested job/workflow target in payload.
+                nested_kind = str(schedule.target_payload.get("enqueue_kind") or "JOB").upper()
+                nested_ref = str(
+                    schedule.target_payload.get("enqueue_ref") or schedule.target_payload.get("capability_id") or ""
+                )
+                if not nested_ref:
+                    raise ValueError("EVENT schedule requires enqueue_ref/capability_id")
+                synthetic = ScheduleRecord(
+                    schedule_id=schedule.schedule_id,
+                    name=schedule.name,
+                    status=schedule.status,
+                    target_kind=ScheduleTargetKind.JOB
+                    if nested_kind == "JOB"
+                    else ScheduleTargetKind.WORKFLOW,
+                    target_ref=nested_ref,
+                    interval_seconds=schedule.interval_seconds,
+                    created_at=schedule.created_at,
+                    updated_at=schedule.updated_at,
+                    next_run_at=schedule.next_run_at,
+                    last_run_at=schedule.last_run_at,
+                    target_payload={
+                        **dict(schedule.target_payload),
+                        "arguments": {
+                            **dict(schedule.target_payload.get("arguments") or {}),
+                            **(payload or {}),
+                            **({"project_id": project_id} if project_id else {}),
+                        },
+                    },
+                    metadata=schedule.metadata,
+                )
+                fired = self._fire(synthetic)
+                self.telemetry["fired"] += 1
+                self.telemetry["event_matched"] += 1
+                results.append(
+                    {
+                        "schedule_id": schedule.schedule_id,
+                        "ok": True,
+                        "event_name": event_name,
+                        **fired,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.telemetry["errors"] += 1
+                remaining.append(schedule)
+                results.append(
+                    {"schedule_id": schedule.schedule_id, "ok": False, "error": str(exc)}
+                )
+        self._armed_events = remaining
         return results
 
     def _fire(self, schedule: ScheduleRecord) -> dict[str, Any]:
@@ -70,7 +169,6 @@ class ScheduleRunner:
                 for idx, item in enumerate(steps_raw)
             ]
             if not steps:
-                # Allow target_ref as single knowledge.search convenience.
                 steps = [
                     WorkflowStepDef(
                         step_id="s0",
