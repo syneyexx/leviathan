@@ -270,5 +270,60 @@ class Wave3RegressionSmokeTests(unittest.IsolatedAsyncioTestCase):
             await adapter.load("x")
 
 
+class RestartDurabilityTests(unittest.TestCase):
+    def test_persisted_ready_with_dead_pid_becomes_dead(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        from Data.backend.migrations import MigrationRunner
+        from Data.modules.models.control_plane import ModelControlPlane
+        from Data.modules.models.store import ModelStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "r6.db"
+            MigrationRunner(db).apply_all()
+            store = ModelStore(db)
+            store.upsert_serving_worker(
+                {
+                    "worker_id": "w-stale",
+                    "provider_id": "p1",
+                    "model_id": "m-stale",
+                    "backend_kind": "vllm_class",
+                    "endpoint": "http://127.0.0.1:9/v1",
+                    "state": "READY",
+                    "pid": 999999,  # almost certainly not alive
+                    "health_score": 1.0,
+                    "revision_id": "rev",
+                    "last_error": None,
+                    "started_at": "2020-01-01T00:00:00Z",
+                    "last_health_at": "2020-01-01T00:00:00Z",
+                    "metadata": {},
+                }
+            )
+            plane = ModelControlPlane.__new__(ModelControlPlane)
+            plane.store = store
+            plane.registry = MagicMock()
+            changed = ModelControlPlane.reconcile_persisted_serving_workers(plane)
+            self.assertEqual(len(changed), 1)
+            self.assertEqual(changed[0]["state"], "DEAD")
+            self.assertIsNone(changed[0]["pid"])
+            rows = store.list_serving_workers()
+            self.assertEqual(rows[0]["state"], "DEAD")
+            plane.registry.set_lifecycle.assert_called()
+
+
+class ChatDisconnectCancelWiringTests(unittest.TestCase):
+    def test_chat_stream_path_imports_cancel_token(self) -> None:
+        import inspect
+
+        from Data.backend import main as main_mod
+
+        source = inspect.getsource(main_mod.chat)
+        self.assertIn("StreamCancelToken", source)
+        self.assertIn("client_disconnect", source)
+        self.assertIn("is_disconnected", source)
+
+
 if __name__ == "__main__":
     unittest.main()

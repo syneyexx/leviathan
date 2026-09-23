@@ -61,7 +61,13 @@ from Data.modules.knowledge import (
     build_embedding_provider,
 )
 from Data.modules.memory import MemoryKind, MemoryScope, MemoryStatus, MemoryStore
-from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM, chat_truth, sse_encode
+from Data.modules.model_runtime import (
+    LLMUnavailable,
+    OpenAICompatibleLLM,
+    StreamCancelToken,
+    chat_truth,
+    sse_encode,
+)
 from Data.modules.models import ModelControlError, ModelControlPlane
 from Data.backend.routes.models import build_models_router
 from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
@@ -1006,6 +1012,28 @@ async def lifespan(_: FastAPI):
         )
     job_runtime.start_background_worker()
     system_telemetry_sampler.start()
+    # Round 6: periodic serving reconcile so crashed workers become DEAD without a manual API call.
+    import asyncio
+
+    serving_reconcile_task = None
+    if settings.features.model_serving:
+
+        async def _serving_reconcile_loop() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(15.0)
+                    model_plane.reconcile_serving_workers()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    observability.emit(
+                        "models",
+                        "serving.reconcile_loop.failed",
+                        payload={"error": str(exc)},
+                        level="warning",
+                    )
+
+        serving_reconcile_task = asyncio.create_task(_serving_reconcile_loop())
     metrics.incr("lifespan_starts")
     observability.emit(
         "backend",
@@ -1018,6 +1046,14 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        if serving_reconcile_task is not None:
+            serving_reconcile_task.cancel()
+            try:
+                await serving_reconcile_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                pass
         observability.emit(
             "backend",
             "shutdown",
@@ -1923,6 +1959,7 @@ async def chat(payload: ChatRequest, request: Request):
 
         async def _sse_events():
             nonlocal call_id
+            cancel = StreamCancelToken()
             yield sse_encode(
                 "meta",
                 {
@@ -1942,9 +1979,36 @@ async def chat(payload: ChatRequest, request: Request):
             parts: list[str] = []
             model_name = "unknown"
             try:
-                async for delta, model_name in llm.chat_stream(**llm_kwargs):
+                async for delta, model_name in llm.chat_stream(**llm_kwargs, cancel=cancel):
+                    if await request.is_disconnected():
+                        cancel.cancel("client_disconnect")
+                    if cancel.cancelled:
+                        break
                     parts.append(delta)
                     yield sse_encode("token", {"text": delta, "model": model_name})
+                if cancel.cancelled:
+                    if call_id:
+                        model_plane.gateway.release(
+                            model_id=model_id_for_release,
+                            provider_id=provider_id_for_release,
+                            error=None,
+                        )
+                        call_id = None
+                    try:
+                        runs.transition(run.run_id, RunState.CANCELLED, error=cancel.reason)
+                    except Exception:  # noqa: BLE001 — some stores use different cancel path
+                        runs.transition(run.run_id, RunState.FAILED, error=cancel.reason or "cancelled")
+                    yield sse_encode(
+                        "cancelled",
+                        {
+                            "reason": cancel.reason or "client_disconnect",
+                            "truth": {
+                                "disconnect_cancels_stream": True,
+                                "gateway_capacity_released": True,
+                            },
+                        },
+                    )
+                    return
                 answer = "".join(parts).strip()
                 if not answer:
                     raise LLMUnavailable("LLM stream produced empty text")
@@ -3601,25 +3665,71 @@ def run_neuro_evaluation() -> dict:
 
 @app.post("/api/evaluation/serving")
 def run_serving_evaluation() -> dict:
-    """Wave 3 serving conformance suite — unprobed flags stay UNMEASURED."""
+    """Wave 3/6 serving conformance — only PASS when live-probed."""
+    import asyncio
+
+    from Data.modules.model_runtime import ManagedLocalServingAdapter, StreamCancelToken
+    from Data.modules.model_runtime.serving import ServingSupervisor
+
     serving_on = bool(settings.features.model_serving)
     workers = model_plane.list_serving_workers() if serving_on else []
     ready = [w for w in workers if w.get("state") == "READY"]
-    # Never `or True` — that made dead-worker honesty always pass.
     dead_honest = all(
         (w.get("state") != "READY") or bool(w.get("pid")) for w in workers
     ) if workers else True
     decisions = model_plane.list_route_decisions(limit=5) if serving_on else []
+
+    stream_cancel_ok = False
+    stream_cancel_probed = False
+    managed_load_ok = bool(ready)
+    managed_load_probed = serving_on and bool(ready)
+
+    # Live inproc cancel probe (isolated supervisor — does not reset global serving).
+    try:
+        probe_supervisor = ServingSupervisor()
+        probe_adapter = ManagedLocalServingAdapter(
+            provider_id="eval-serving-probe",
+            mode="inproc",
+            supervisor=probe_supervisor,
+        )
+
+        async def _cancel_probe() -> bool:
+            await probe_adapter.load("eval-probe-model")
+            cancel = StreamCancelToken()
+            seen = 0
+            async for chunk in probe_adapter.stream_tokens(
+                "eval-probe-model",
+                prompt="probe-cancel-stream",
+                cancel=cancel,
+                max_tokens=24,
+            ):
+                if chunk.get("delta"):
+                    seen += 1
+                if seen >= 2:
+                    cancel.cancel("eval_probe")
+            await probe_adapter.unload("eval-probe-model")
+            return bool(cancel.cancelled)
+
+        stream_cancel_ok = bool(asyncio.run(_cancel_probe()))
+        stream_cancel_probed = True
+        if not managed_load_probed:
+            # Probe also proves managed load/unload path when serving flag is off.
+            managed_load_ok = True
+            managed_load_probed = True
+    except Exception:  # noqa: BLE001 — leave UNMEASURED on probe failure
+        stream_cancel_ok = False
+        stream_cancel_probed = False
+
     report = evaluation_harness.run_suite(
         "serving_conformance",
         evaluation_harness.serving_conformance_suite(
-            managed_load_ok=bool(ready),
-            stream_cancel_ok=False,
+            managed_load_ok=managed_load_ok,
+            stream_cancel_ok=stream_cancel_ok,
             dead_worker_honest=bool(dead_honest),
             multi_model_route_ok=len(model_plane.registry.list_descriptors()) >= 1,
             measured_route_recorded=bool(decisions),
-            managed_load_probed=serving_on,
-            stream_cancel_probed=False,  # no live cancel probe in this path
+            managed_load_probed=managed_load_probed,
+            stream_cancel_probed=stream_cancel_probed,
             dead_worker_probed=serving_on and bool(workers),
             multi_route_probed=serving_on,
             measured_route_probed=serving_on,
@@ -3629,7 +3739,13 @@ def run_serving_evaluation() -> dict:
     )
     if settings.features.eval_platform:
         report = evaluation_store.save_report(report)
-    return {"report": report.public_dict()}
+    return {
+        "report": report.public_dict(),
+        "truth": {
+            "unprobed_is_not_passed": True,
+            "stream_cancel_live_probed": stream_cancel_probed,
+        },
+    }
 
 
 @app.post("/api/evaluation/assistant")

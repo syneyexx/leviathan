@@ -155,8 +155,57 @@ class ModelControlPlane:
                     self.registry.activate(model.id)
                     active = model.id
                     break
+        # Round 6: stale READY rows in SQLite must become DEAD — never resurrect from disk.
+        stale = self.reconcile_persisted_serving_workers()
         self._emit("model.discovery.completed", {"summary": summary, "activeModelId": active})
-        return {"summary": summary, "activeModelId": active}
+        return {"summary": summary, "activeModelId": active, "staleServingWorkers": stale}
+
+    def reconcile_persisted_serving_workers(self) -> list[dict[str, Any]]:
+        """On restart: persisted READY/STARTING with dead/missing pid → DEAD (honest)."""
+        from Data.modules.common.process import pid_is_alive
+
+        changed: list[dict[str, Any]] = []
+        for row in self.store.list_serving_workers():
+            state = str(row.get("state") or "")
+            if state not in {"READY", "STARTING", "DRAINING", "UNHEALTHY"}:
+                continue
+            pid = row.get("pid")
+            alive = isinstance(pid, int) and pid_is_alive(pid)
+            if alive:
+                # Do not auto-reattach into in-memory supervisor from SQLite alone.
+                continue
+            updated = {
+                "worker_id": row["worker_id"],
+                "provider_id": row["provider_id"],
+                "model_id": row["model_id"],
+                "backend_kind": row.get("backend_kind") or "unknown",
+                "endpoint": row.get("endpoint"),
+                "state": "DEAD",
+                "pid": None,
+                "health_score": 0.0,
+                "revision_id": row.get("revision_id"),
+                "last_error": row.get("last_error")
+                or "stale serving worker after application restart",
+                "started_at": row.get("started_at"),
+                "last_health_at": row.get("last_health_at"),
+                "metadata": {
+                    **(row.get("metadata") or {}),
+                    "reconcile_note": "process restart — prior READY is not current truth",
+                },
+            }
+            self.store.upsert_serving_worker(updated)
+            try:
+                self.registry.set_lifecycle(
+                    row["model_id"],
+                    ModelLifecycleState.OFFLINE,
+                    health=ModelHealthState.OFFLINE,
+                    loaded=False,
+                    error=updated["last_error"],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            changed.append(updated)
+        return changed
 
     def get_adapter(self, provider_id: str) -> Any:
         if provider_id in self._adapters:
