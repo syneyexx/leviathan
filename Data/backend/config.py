@@ -196,6 +196,8 @@ class FeatureFlags:
     eval_platform: bool
     # Wave 3 — managed local model serving + measured routing
     model_serving: bool
+    # Wave 4 — context compiler / scoped memory / retrieval thresholds
+    context_substrate: bool
 
 
 @dataclass(frozen=True)
@@ -417,6 +419,7 @@ class Settings:
                 "durable_kernel": self.features.durable_kernel,
                 "eval_platform": self.features.eval_platform,
                 "model_serving": self.features.model_serving,
+                "context_substrate": self.features.context_substrate,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -546,6 +549,7 @@ class Settings:
         durable_kernel = _env_bool("LEVIATHAN_FEATURE_DURABLE_KERNEL", False)
         eval_platform = _env_bool("LEVIATHAN_FEATURE_EVAL_PLATFORM", True)
         model_serving = _env_bool("LEVIATHAN_FEATURE_MODEL_SERVING", True)
+        context_substrate = _env_bool("LEVIATHAN_FEATURE_CONTEXT_SUBSTRATE", True)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -641,6 +645,7 @@ class Settings:
                 durable_kernel=durable_kernel,
                 eval_platform=eval_platform,
                 model_serving=model_serving,
+                context_substrate=context_substrate,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,

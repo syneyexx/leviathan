@@ -22,10 +22,64 @@ class RetrievalQuery:
     use_embeddings: bool = True
     use_reranker: bool = False
     min_confidence: float | None = None
+    min_score: float | None = None  # Wave 4: drop hits below threshold (exit gate)
     time_after: str | None = None
     time_before: str | None = None
     relation_class: str | None = None
     layer: str | None = None  # evidence | atlas | any
+    record_trace: bool = True
+    detect_contradictions: bool = True
+
+
+@dataclass(frozen=True)
+class RetrievalTrace:
+    """Reproducible retrieval audit (U117)."""
+
+    query: str
+    candidate_count: int
+    selected_count: int
+    min_score: float | None
+    modalities: tuple[str, ...]
+    selected_chunk_ids: tuple[str, ...]
+    contradictions: tuple[dict[str, Any], ...] = ()
+    dropped_below_threshold: int = 0
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "candidate_count": self.candidate_count,
+            "selected_count": self.selected_count,
+            "min_score": self.min_score,
+            "modalities": list(self.modalities),
+            "selected_chunk_ids": list(self.selected_chunk_ids),
+            "contradictions": list(self.contradictions),
+            "dropped_below_threshold": self.dropped_below_threshold,
+            "truth": {
+                "vector_index_is_not_canonical_fact_store": True,
+                "model_output_is_not_evidence": True,
+            },
+        }
+
+
+@dataclass(frozen=True)
+class CitationCheck:
+    """Lightweight citation entailment gate (U109) — lexical overlap heuristic."""
+
+    claim: str
+    chunk_id: str
+    entailed: bool
+    overlap_ratio: float
+    detail: str
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "claim": self.claim,
+            "chunk_id": self.chunk_id,
+            "entailed": self.entailed,
+            "overlap_ratio": self.overlap_ratio,
+            "detail": self.detail,
+            "truth": {"heuristic_entailment_is_not_proof": True},
+        }
 
 
 @dataclass(frozen=True)
@@ -256,6 +310,12 @@ class HybridRetriever:
             if allowed:
                 hits = [h for h in hits if h.chunk_id in allowed]
 
+        before_threshold = list(hits)
+        dropped_below = 0
+        if query.min_score is not None:
+            hits = [h for h in hits if h.score >= query.min_score]
+            dropped_below = len(before_threshold) - len(hits)
+
         result = hits[: query.limit]
         # Annotate whether dense path was eligible (for observability).
         for idx, hit in enumerate(result):
@@ -279,12 +339,89 @@ class HybridRetriever:
                     layer=hit.layer,
                     provenance={**hit.provenance, "dense_eligible": True},
                 )
+
+        if query.record_trace:
+            contradictions = (
+                self._detect_contradictions(result) if query.detect_contradictions else []
+            )
+            # Stash last trace on instance for callers that want it without API change.
+            self.last_trace = RetrievalTrace(
+                query=query.text,
+                candidate_count=len(before_threshold),
+                selected_count=len(result),
+                min_score=query.min_score,
+                modalities=tuple(sorted({h.modality for h in result})),
+                selected_chunk_ids=tuple(h.chunk_id for h in result),
+                contradictions=tuple(contradictions),
+                dropped_below_threshold=dropped_below,
+            )
         return result
+
+    def search_with_trace(
+        self, query: RetrievalQuery
+    ) -> tuple[list[RetrievalHit], RetrievalTrace]:
+        hits = self.search(query)
+        trace = getattr(self, "last_trace", None)
+        if trace is None:
+            trace = RetrievalTrace(
+                query=query.text,
+                candidate_count=len(hits),
+                selected_count=len(hits),
+                min_score=query.min_score,
+                modalities=tuple(sorted({h.modality for h in hits})),
+                selected_chunk_ids=tuple(h.chunk_id for h in hits),
+            )
+        return hits, trace
+
+    @staticmethod
+    def verify_citation(claim: str, hit: RetrievalHit, *, min_overlap: float = 0.2) -> CitationCheck:
+        """Heuristic citation entailment — not a proof (U109)."""
+        claim_tokens = {t.lower() for t in claim.split() if len(t) > 2}
+        content_tokens = {t.lower() for t in hit.content.split() if len(t) > 2}
+        if not claim_tokens:
+            return CitationCheck(
+                claim=claim,
+                chunk_id=hit.chunk_id,
+                entailed=False,
+                overlap_ratio=0.0,
+                detail="empty claim",
+            )
+        overlap = len(claim_tokens & content_tokens) / len(claim_tokens)
+        entailed = overlap >= min_overlap
+        return CitationCheck(
+            claim=claim,
+            chunk_id=hit.chunk_id,
+            entailed=entailed,
+            overlap_ratio=round(overlap, 4),
+            detail="ok" if entailed else "insufficient lexical overlap",
+        )
+
+    @staticmethod
+    def _detect_contradictions(hits: list[RetrievalHit]) -> list[dict[str, Any]]:
+        """Surface obvious yes/no conflicts across top hits (U111)."""
+        contradictions: list[dict[str, Any]] = []
+        texts = [(h.chunk_id, h.content.lower()) for h in hits]
+        for i, (cid_a, text_a) in enumerate(texts):
+            for cid_b, text_b in texts[i + 1 :]:
+                a_neg = " not " in f" {text_a} " or text_a.startswith("not ")
+                b_neg = " not " in f" {text_b} " or text_b.startswith("not ")
+                # Shared content words but opposite negation → visible contradiction.
+                shared = set(text_a.split()) & set(text_b.split())
+                if len(shared) >= 3 and a_neg != b_neg:
+                    contradictions.append(
+                        {
+                            "chunk_a": cid_a,
+                            "chunk_b": cid_b,
+                            "detail": "possible negation conflict",
+                        }
+                    )
+        return contradictions
 
     @staticmethod
     def _passes_filters(hit: RetrievalHit, query: RetrievalQuery) -> bool:
         if query.min_confidence is not None and hit.confidence < query.min_confidence:
             return False
+        # min_score applied after fusion so dropped_below_threshold is measurable
         if query.layer and query.layer != "any" and hit.layer != query.layer:
             return False
         updated = str(hit.provenance.get("updated_at") or "")

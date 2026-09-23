@@ -113,6 +113,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/backend/tests/test_wave1_cognition_agents.py` | Wave 1 cognition hydrate/invoke + DAG agents |
 | `Data/backend/tests/test_wave2_evaluation.py` | Wave 2 evaluation platform / release authority |
 | `Data/backend/tests/test_wave3_model_serving.py` | Wave 3 managed serving / measured routing |
+| `Data/backend/tests/test_wave4_context_memory_knowledge.py` | Wave 4 context constraints / memory scope / retrieval thresholds |
 | `Data/modules/artifacts/` | ArtifactStore |
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
 | `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |

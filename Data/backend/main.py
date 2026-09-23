@@ -60,13 +60,14 @@ from Data.modules.knowledge import (
     WhyLibrary,
     build_embedding_provider,
 )
-from Data.modules.memory import MemoryKind, MemoryStatus, MemoryStore
+from Data.modules.memory import MemoryKind, MemoryScope, MemoryStatus, MemoryStore
 from Data.modules.model_runtime import LLMUnavailable, OpenAICompatibleLLM, chat_truth, sse_encode
 from Data.modules.models import ModelControlError, ModelControlPlane
 from Data.backend.routes.models import build_models_router
 from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
+from Data.modules.context import ContextBuilder
 from Data.modules.run import EventType, RunState, RunStore
 from Data.modules.verification import (
     VerificationEngine,
@@ -988,7 +989,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.67.0-wave3-serving", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.68.0-wave4-context", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -1499,7 +1500,15 @@ async def chat(payload: ChatRequest, request: Request):
 
     history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
-    memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
+    memory_hits = [
+        item.as_context_item()
+        for item in memory_store.search(
+            message,
+            limit=5,
+            conversation_id=conversation_id,
+            include_global=True,
+        )
+    ]
     knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
     neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
     neuro_context: list[dict] = []
@@ -2700,6 +2709,10 @@ class MemoryCreateRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     conversation_id: str | None = None
     run_id: str | None = None
+    scope: str | None = None
+    project_id: str | None = None
+    workspace_id: str | None = None
+    user_id: str | None = None
 
 
 @app.get("/api/memory")
@@ -2707,6 +2720,9 @@ def list_memory(
     status: Annotated[str | None, Query()] = "ACTIVE",
     kind: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    conversation_id: Annotated[str | None, Query()] = None,
+    project_id: Annotated[str | None, Query()] = None,
+    scope: Annotated[str | None, Query()] = None,
 ) -> dict:
     parsed_status = None
     if status:
@@ -2720,7 +2736,20 @@ def list_memory(
             parsed_kind = MemoryKind(kind.upper())
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"Invalid memory kind: {kind}") from exc
-    items = memory_store.list(status=parsed_status, kind=parsed_kind, limit=limit)
+    parsed_scope = None
+    if scope:
+        try:
+            parsed_scope = MemoryScope(scope.upper())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid memory scope: {scope}") from exc
+    items = memory_store.list(
+        status=parsed_status,
+        kind=parsed_kind,
+        limit=limit,
+        scope=parsed_scope,
+        conversation_id=conversation_id,
+        project_id=project_id,
+    )
     return {"memory": [item.public_dict() for item in items]}
 
 
@@ -2739,6 +2768,10 @@ def create_memory(payload: MemoryCreateRequest) -> dict:
             tags=payload.tags,
             conversation_id=payload.conversation_id,
             run_id=payload.run_id,
+            scope=payload.scope,
+            project_id=payload.project_id,
+            workspace_id=payload.workspace_id,
+            user_id=payload.user_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2749,9 +2782,20 @@ def create_memory(payload: MemoryCreateRequest) -> dict:
 def search_memory(
     q: Annotated[str, Query(min_length=1, max_length=500)],
     limit: Annotated[int, Query(ge=1, le=100)] = 10,
+    conversation_id: Annotated[str | None, Query()] = None,
+    project_id: Annotated[str | None, Query()] = None,
 ) -> dict:
-    items = memory_store.search(q, limit=limit)
-    return {"memory": [item.public_dict() for item in items]}
+    items = memory_store.search(
+        q,
+        limit=limit,
+        conversation_id=conversation_id,
+        project_id=project_id,
+        include_global=True,
+    )
+    return {
+        "memory": [item.public_dict() for item in items],
+        "truth": {"scope_filter_required_for_retrieval": True},
+    }
 
 
 @app.get("/api/memory/{memory_id}")
@@ -3449,6 +3493,37 @@ def run_serving_evaluation() -> dict:
     if settings.features.eval_platform:
         report = evaluation_store.save_report(report)
     return {"report": report.public_dict()}
+
+
+@app.post("/api/context/preview")
+def preview_context(
+    message: str = "preview",
+    constraints: str | None = None,
+    conversation_id: str | None = None,
+) -> dict:
+    """Compile a ContextPack preview — constraints retention + budget ledger visible."""
+    plan = reasoner.analyze(message, has_knowledge=False)
+    history: list[dict[str, str]] = [{"role": "user", "content": message}]
+    if conversation_id:
+        memory_hits = [
+            item.as_context_item()
+            for item in memory_store.search(message, limit=5, conversation_id=conversation_id)
+        ]
+    else:
+        memory_hits = []
+    pack = ContextBuilder(
+        token_budget=settings.context.token_budget,
+        max_knowledge_chars=settings.context.max_knowledge_chars,
+        max_history_messages=settings.resources.max_history_messages,
+        reserve_response_tokens=settings.context.reserve_response_tokens,
+    ).build(
+        history=history,
+        knowledge=[],
+        plan=plan,
+        memory=memory_hits,
+        constraints=constraints,
+    )
+    return {"pack": pack.public_dict()}
 
 
 @app.post("/api/evaluation/regression")

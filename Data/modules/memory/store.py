@@ -9,7 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .types import MEMORY_KIND_PRIORITY, MemoryKind, MemoryRecord, MemoryStatus
+from .types import (
+    MEMORY_KIND_PRIORITY,
+    MemoryKind,
+    MemoryRecord,
+    MemoryScope,
+    MemoryStatus,
+)
 
 
 def utc_now() -> str:
@@ -62,8 +68,25 @@ class MemoryStore:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_entries)").fetchall()}
         if "priority" not in columns:
             conn.execute("ALTER TABLE memory_entries ADD COLUMN priority REAL NOT NULL DEFAULT 0.5")
+        for col, ddl in (
+            ("scope", "scope TEXT NOT NULL DEFAULT 'CONVERSATION'"),
+            ("workspace_id", "workspace_id TEXT"),
+            ("project_id", "project_id TEXT"),
+            ("user_id", "user_id TEXT"),
+            ("confidence", "confidence REAL NOT NULL DEFAULT 0.5"),
+            ("valid_from", "valid_from TEXT"),
+            ("valid_until", "valid_until TEXT"),
+            ("supersedes_id", "supersedes_id TEXT"),
+            ("source_refs_json", "source_refs_json TEXT NOT NULL DEFAULT '[]'"),
+        ):
+            if col not in columns:
+                conn.execute(f"ALTER TABLE memory_entries ADD COLUMN {ddl}")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_status ON memory_entries(status, updated_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_scope "
+            "ON memory_entries(scope, conversation_id, project_id, status)"
         )
         conn.execute(
             """
@@ -98,6 +121,15 @@ class MemoryStore:
         metadata: dict[str, Any] | None = None,
         memory_id: str | None = None,
         priority: float | None = None,
+        scope: MemoryScope | str | None = None,
+        workspace_id: str | None = None,
+        project_id: str | None = None,
+        user_id: str | None = None,
+        confidence: float = 0.5,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
+        supersedes_id: str | None = None,
+        source_refs: list[str] | tuple[str, ...] | None = None,
     ) -> MemoryRecord:
         text = content.strip()
         if not text:
@@ -107,6 +139,18 @@ class MemoryStore:
                 "Refusing to store raw model_output as memory trust; "
                 "use explicit/imported/derived with human or policy authority"
             )
+        if scope is None:
+            scope = MemoryScope.CONVERSATION if conversation_id else MemoryScope.GLOBAL
+        elif isinstance(scope, str):
+            try:
+                scope = MemoryScope(scope.upper())
+            except ValueError as exc:
+                raise ValueError(f"Invalid memory scope: {scope}") from exc
+        # Conversation-scoped memories require a conversation_id to prevent silent global leak.
+        if scope == MemoryScope.CONVERSATION and not conversation_id:
+            raise ValueError("CONVERSATION scope requires conversation_id")
+        if scope == MemoryScope.PROJECT and not project_id:
+            raise ValueError("PROJECT scope requires project_id")
         now = utc_now()
         kind_priority = MEMORY_KIND_PRIORITY.get(kind, 0.5)
         resolved_priority = (
@@ -126,16 +170,32 @@ class MemoryStore:
             tags=tuple(tags or ()),
             metadata=metadata or {},
             priority=resolved_priority,
+            scope=scope,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            user_id=user_id,
+            confidence=max(0.0, min(1.0, float(confidence))),
+            valid_from=valid_from or now,
+            valid_until=valid_until,
+            supersedes_id=supersedes_id,
+            source_refs=tuple(source_refs or ()),
         )
         with self._lock:
             with self.connect() as conn:
                 self._ensure_schema(conn)
+                if supersedes_id:
+                    conn.execute(
+                        "UPDATE memory_entries SET status = ?, updated_at = ? WHERE memory_id = ?",
+                        (MemoryStatus.SUPERSEDED.value, now, supersedes_id),
+                    )
                 conn.execute(
                     """
                     INSERT INTO memory_entries(
                         memory_id, kind, status, content, created_at, updated_at,
-                        source, trust, run_id, conversation_id, tags_json, metadata_json, priority
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        source, trust, run_id, conversation_id, tags_json, metadata_json, priority,
+                        scope, workspace_id, project_id, user_id, confidence,
+                        valid_from, valid_until, supersedes_id, source_refs_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record.memory_id,
@@ -151,6 +211,15 @@ class MemoryStore:
                         json.dumps(list(record.tags)),
                         json.dumps(record.metadata),
                         record.priority,
+                        record.scope.value,
+                        record.workspace_id,
+                        record.project_id,
+                        record.user_id,
+                        record.confidence,
+                        record.valid_from,
+                        record.valid_until,
+                        record.supersedes_id,
+                        json.dumps(list(record.source_refs)),
                     ),
                 )
                 self._upsert_fts(conn, record)
@@ -171,7 +240,13 @@ class MemoryStore:
         *,
         status: MemoryStatus | None = MemoryStatus.ACTIVE,
         kind: MemoryKind | None = None,
+        scope: MemoryScope | None = None,
+        conversation_id: str | None = None,
+        project_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
         limit: int = 100,
+        include_global: bool = True,
     ) -> list[MemoryRecord]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -181,6 +256,18 @@ class MemoryStore:
         if kind is not None:
             clauses.append("kind = ?")
             params.append(kind.value)
+        scope_clause, scope_params = self._scope_filter_sql(
+            scope=scope,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            include_global=include_global,
+            active_filter=False,
+        )
+        if scope_clause and any((scope, conversation_id, project_id, workspace_id, user_id)):
+            clauses.append(scope_clause)
+            params.extend(scope_params)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, min(limit, 500)))
         with self._lock:
@@ -192,35 +279,66 @@ class MemoryStore:
                 ).fetchall()
         return [self._from_row(row) for row in rows]
 
-    def search(self, query: str, *, limit: int = 10) -> list[MemoryRecord]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        scope: MemoryScope | None = None,
+        conversation_id: str | None = None,
+        project_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
+        include_global: bool = True,
+        require_scope: bool = False,
+    ) -> list[MemoryRecord]:
+        """Search ACTIVE memories. Scoped filters prevent cross-conversation leakage."""
         q = query.strip()
         if not q:
             return []
+        if require_scope and not any((conversation_id, project_id, workspace_id, user_id, scope)):
+            raise ValueError(
+                "scoped memory search requires conversation_id/project_id/workspace_id/user_id/scope"
+            )
+        # Default safe behavior: if no scope context, only GLOBAL (no conversation leak).
+        scoped = any((conversation_id, project_id, workspace_id, user_id, scope))
+        scope_clause, scope_params = self._scope_filter_sql(
+            scope=scope,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            include_global=include_global,
+            active_filter=True,
+        )
         with self._lock:
             with self.connect() as conn:
                 self._ensure_schema(conn)
                 try:
-                    rows = conn.execute(
-                        """
+                    sql = """
                         SELECT m.* FROM memory_fts f
                         JOIN memory_entries m ON m.memory_id = f.memory_id
                         WHERE memory_fts MATCH ? AND m.status = ?
-                        ORDER BY rank
-                        LIMIT ?
-                        """,
-                        (q, MemoryStatus.ACTIVE.value, max(1, min(limit, 100))),
-                    ).fetchall()
+                    """
+                    params: list[Any] = [q, MemoryStatus.ACTIVE.value]
+                    if scoped or True:
+                        sql += f" AND ({scope_clause})"
+                        params.extend(scope_params)
+                    sql += " ORDER BY rank LIMIT ?"
+                    params.append(max(1, min(limit, 100)))
+                    rows = conn.execute(sql, params).fetchall()
                 except sqlite3.OperationalError:
                     like = f"%{q}%"
-                    rows = conn.execute(
-                        """
+                    sql = """
                         SELECT * FROM memory_entries
                         WHERE status = ? AND content LIKE ?
-                        ORDER BY priority DESC, updated_at DESC
-                        LIMIT ?
-                        """,
-                        (MemoryStatus.ACTIVE.value, like, max(1, min(limit, 100))),
-                    ).fetchall()
+                    """
+                    params = [MemoryStatus.ACTIVE.value, like]
+                    sql += f" AND ({scope_clause})"
+                    params.extend(scope_params)
+                    sql += " ORDER BY priority DESC, updated_at DESC LIMIT ?"
+                    params.append(max(1, min(limit, 100)))
+                    rows = conn.execute(sql, params).fetchall()
         return [self._from_row(row) for row in rows]
 
     def budgeted_retrieve(
@@ -229,12 +347,33 @@ class MemoryStore:
         *,
         token_budget: int = 400,
         limit: int = 20,
+        conversation_id: str | None = None,
+        project_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
+        include_global: bool = True,
+        require_scope: bool = False,
     ) -> list[MemoryRecord]:
         """Retrieve by relevance then pack under a token budget with priority eviction."""
-        candidates = self.search(query, limit=max(limit, 5))
+        candidates = self.search(
+            query,
+            limit=max(limit, 5),
+            conversation_id=conversation_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            include_global=include_global,
+            require_scope=require_scope,
+        )
         if not candidates:
-            candidates = self.list(limit=limit)
-        # Prefer higher priority, then newer.
+            candidates = self.list(
+                limit=limit,
+                conversation_id=conversation_id,
+                project_id=project_id,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                include_global=include_global,
+            )
         ranked = sorted(
             candidates,
             key=lambda item: (item.priority, item.updated_at),
@@ -251,6 +390,43 @@ class MemoryStore:
             if len(selected) >= limit:
                 break
         return selected
+
+    @staticmethod
+    def _scope_filter_sql(
+        *,
+        scope: MemoryScope | None,
+        conversation_id: str | None,
+        project_id: str | None,
+        workspace_id: str | None,
+        user_id: str | None,
+        include_global: bool,
+        active_filter: bool = True,
+    ) -> tuple[str, list[Any]]:
+        """Build SQL that prevents cross-conversation / cross-project leakage."""
+        _ = active_filter
+        if scope is not None and not any((conversation_id, project_id, workspace_id, user_id)):
+            return "scope = ?", [scope.value]
+
+        parts: list[str] = []
+        params: list[Any] = []
+        if include_global:
+            parts.append("scope = 'GLOBAL'")
+        if conversation_id:
+            parts.append("(scope = 'CONVERSATION' AND conversation_id = ?)")
+            params.append(conversation_id)
+        if project_id:
+            parts.append("(scope = 'PROJECT' AND project_id = ?)")
+            params.append(project_id)
+        if workspace_id:
+            parts.append("(scope = 'WORKSPACE' AND workspace_id = ?)")
+            params.append(workspace_id)
+        if user_id:
+            parts.append("(scope = 'USER' AND user_id = ?)")
+            params.append(user_id)
+        if not parts:
+            # No scope context → only GLOBAL is safe (blocks conversation leak).
+            return "scope = 'GLOBAL'", []
+        return "(" + " OR ".join(parts) + ")", params
 
     def set_status(self, memory_id: str, status: MemoryStatus) -> MemoryRecord | None:
         now = utc_now()
@@ -375,6 +551,14 @@ class MemoryStore:
             if "priority" in keys and row["priority"] is not None
             else MEMORY_KIND_PRIORITY.get(kind, 0.5)
         )
+        scope_raw = row["scope"] if "scope" in keys and row["scope"] else MemoryScope.GLOBAL.value
+        try:
+            scope = MemoryScope(str(scope_raw))
+        except ValueError:
+            scope = MemoryScope.GLOBAL
+        source_refs = ()
+        if "source_refs_json" in keys:
+            source_refs = tuple(json.loads(row["source_refs_json"] or "[]"))
         return MemoryRecord(
             memory_id=row["memory_id"],
             kind=kind,
@@ -389,4 +573,13 @@ class MemoryStore:
             tags=tuple(json.loads(row["tags_json"] or "[]")),
             metadata=json.loads(row["metadata_json"] or "{}"),
             priority=priority,
+            scope=scope,
+            workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
+            project_id=row["project_id"] if "project_id" in keys else None,
+            user_id=row["user_id"] if "user_id" in keys else None,
+            confidence=float(row["confidence"]) if "confidence" in keys and row["confidence"] is not None else 0.5,
+            valid_from=row["valid_from"] if "valid_from" in keys else None,
+            valid_until=row["valid_until"] if "valid_until" in keys else None,
+            supersedes_id=row["supersedes_id"] if "supersedes_id" in keys else None,
+            source_refs=source_refs,
         )
