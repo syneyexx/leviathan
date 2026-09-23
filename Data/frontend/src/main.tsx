@@ -23,6 +23,7 @@ import "./styles/media-facebook.css";
 import "./styles/brain-pages.css";
 import "./styles/pixel-pages.css";
 import "./styles/plugin-runtime-pages.css";
+import "./styles/onderzoek-kennis.css";
 
 const root = document.getElementById("root");
 if (!root) {

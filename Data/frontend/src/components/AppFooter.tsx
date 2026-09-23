@@ -121,7 +121,7 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M12 3.5l6.5 2.4v4.2c0 2.4-.7 4.5-2.1 6.1L12 20.5l-4.4-4.3C6.2 14.6 5.5 12.5 5.5 10.1V5.9L12 3.5z" />
     </>
   ),
-  bestanden: <path d="M4 8h6l2 2h8v8H4z" />,
+  datasets: <path d="M4 8h6l2 2h8v8H4z" />,
   performance: <path d="M5 19V9M12 19V5M19 19v-7" />,
   modules: (
     <>

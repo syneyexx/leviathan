@@ -51,6 +51,19 @@ describe("navigation menu", () => {
     expect(findMainMenuByPath("/knowledge").id).toBe("research");
   });
 
+  it("labels Datasets (not Bestanden) under Onderzoek & Kennis", () => {
+    const section = findMainMenuByPath("/datasets");
+    expect(section.id).toBe("research");
+    const datasets = section.submenu.find((item) => item.to === "/datasets");
+    expect(datasets?.id).toBe("datasets");
+    expect(datasets?.label).toBe("Datasets");
+    expect(section.submenu.some((item) => item.label === "Bestanden")).toBe(false);
+    expect(section.submenu.some((item) => item.id === "geheugen" && item.label === "Geheugen")).toBe(true);
+    expect(section.submenu.some((item) => item.id === "knowledge" && item.label === "Knowledge Library")).toBe(
+      true,
+    );
+  });
+
   it("splits Tools and Modules under Plugin & Runtime", () => {
     const section = findMainMenuByPath("/tools");
     expect(section.id).toBe("runtime");

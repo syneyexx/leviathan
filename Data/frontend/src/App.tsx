@@ -14,6 +14,7 @@ import {
 } from "./pages/pixel";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
+import { GeheugenPage } from "./pages/GeheugenPage";
 import { KnowledgeLibraryPage } from "./pages/KnowledgeLibraryPage";
 import { FacebookPage } from "./pages/media/FacebookPage";
 import { InstagramPage } from "./pages/media/InstagramPage";
@@ -81,7 +82,7 @@ export default function App() {
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />
       <Route path="/cognition" element={<CognitionPage />} />
-      <Route path="/memory" element={<SectionPage title="Geheugen" />} />
+      <Route path="/memory" element={<GeheugenPage />} />
       <Route path="/knowledge" element={<KnowledgeLibraryPage />} />
       <Route path="/evidence" element={<EvidenceVaultPage />} />
       <Route path="/datasets" element={<DatasetsPage />} />
