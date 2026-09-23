@@ -155,6 +155,92 @@ class EvaluationHarness:
             ),
         ]
 
+    def serving_conformance_suite(
+        self,
+        *,
+        managed_load_ok: bool,
+        stream_cancel_ok: bool,
+        dead_worker_honest: bool,
+        multi_model_route_ok: bool,
+        measured_route_recorded: bool,
+    ) -> list[EvalCase]:
+        """Wave 3 serving conformance before production-capable claims (U035)."""
+        return [
+            EvalCase(
+                case_id="serving-managed-load",
+                name="Managed load/unload path",
+                description="Managed adapter can load and unload a local model residency",
+                check="serving_flag",
+                params={"ok": managed_load_ok, "name": "managed_load"},
+                version="1",
+                suite_id="serving_conformance",
+                judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                component="model_runtime",
+                system_level=True,
+                tags=("serving", "conformance"),
+            ),
+            EvalCase(
+                case_id="serving-stream-cancel",
+                name="True stream cancellation",
+                description="Token stream honors cooperative cancel without fabricating SSE",
+                check="serving_flag",
+                params={"ok": stream_cancel_ok, "name": "stream_cancel"},
+                version="1",
+                suite_id="serving_conformance",
+                judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                component="model_runtime",
+                tags=("serving", "streaming"),
+            ),
+            EvalCase(
+                case_id="serving-dead-worker",
+                name="Killed worker honest recovery",
+                description="Dead serving worker is DEAD/OFFLINE, never READY",
+                check="serving_flag",
+                params={"ok": dead_worker_honest, "name": "dead_worker"},
+                version="1",
+                suite_id="serving_conformance",
+                judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                component="models",
+                tags=("serving", "recovery"),
+            ),
+            EvalCase(
+                case_id="serving-multi-route",
+                name="Multi-model route",
+                description="Router can select among multiple registered local models",
+                check="serving_flag",
+                params={"ok": multi_model_route_ok, "name": "multi_route"},
+                version="1",
+                suite_id="serving_conformance",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="models",
+                tags=("serving", "routing"),
+            ),
+            EvalCase(
+                case_id="serving-measured-audit",
+                name="Measured route audit recorded",
+                description="Route decisions persist candidates/scores for replay",
+                check="serving_flag",
+                params={"ok": measured_route_recorded, "name": "measured_audit"},
+                version="1",
+                suite_id="serving_conformance",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="models",
+                tags=("serving", "routing"),
+            ),
+            EvalCase(
+                case_id="serving-batching-qos",
+                name="Continuous batching QoS",
+                description="Interactive vs background admission under load — not claimed without measured scheduler",
+                check="always_unmeasured",
+                params={"reason": "Continuous batching / KV scheduler not instrumented in this build"},
+                version="1",
+                suite_id="serving_conformance",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="model_runtime",
+                tags=("serving", "honesty"),
+            ),
+        ]
+
     def neuro_ablation_suite(
         self,
         *,
@@ -422,6 +508,30 @@ class EvaluationHarness:
                         f"{name}={'ON' if enabled else 'OFF'} (posture recorded)",
                         judgment_kind=case.judgment_kind,
                         measurement=MeasurementState.PASS,
+                    ),
+                )
+            if case.check == "serving_flag":
+                ok = bool(case.params.get("ok"))
+                name = str(case.params.get("name") or "serving")
+                if ok:
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.PASSED,
+                            f"{name}=ok",
+                            judgment_kind=case.judgment_kind,
+                            measurement=MeasurementState.PASS,
+                        ),
+                    )
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.FAILED,
+                        f"{name}=failed",
+                        judgment_kind=case.judgment_kind,
+                        measurement=MeasurementState.FAIL,
                     ),
                 )
             if case.check == "always_unmeasured":

@@ -9,7 +9,8 @@ from Data.backend.config import Settings
 from Data.modules.context import ContextBuilder
 from Data.modules.reasoning import ReasoningPlan
 
-from .streaming import extract_delta_text, parse_openai_sse_line
+from .streaming import extract_delta_text, extract_finish_reason, parse_openai_sse_line
+from .serving import StreamCancelToken
 
 
 class LLMUnavailable(RuntimeError):
@@ -238,11 +239,13 @@ class OpenAICompatibleLLM:
         max_tokens: int | None = None,
         top_p: float | None = None,
         system_prompt: str | None = None,
+        cancel: StreamCancelToken | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Yield ``(delta_text, model_id)`` token chunks from OpenAI-compatible SSE.
 
-        If the upstream server rejects ``stream=true`` or returns non-SSE, raises
-        ``LLMUnavailable`` so the caller can degrade honestly to non-stream.
+        Honors cooperative ``cancel`` between chunks (U025). Never fabricates a
+        stream from a completed non-stream response except when the server itself
+        returns JSON (honest single-chunk degrade).
         """
         model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
         messages = self._build_messages(
@@ -278,6 +281,9 @@ class OpenAICompatibleLLM:
                     headers=headers,
                     json=payload,
                 ) as response:
+                    if cancel and cancel.cancelled:
+                        await response.aclose()
+                        raise LLMUnavailable(f"LLM stream cancelled: {cancel.reason}")
                     if response.status_code >= 400:
                         body = (await response.aread()).decode("utf-8", errors="replace")[:400]
                         raise LLMUnavailable(
@@ -299,17 +305,27 @@ class OpenAICompatibleLLM:
                         yield content.strip(), model
                         return
                     async for line in response.aiter_lines():
+                        if cancel and cancel.cancelled:
+                            await response.aclose()
+                            break
                         chunk = parse_openai_sse_line(line)
                         if chunk is None:
                             continue
                         if chunk.get("_done"):
                             break
+                        finish = extract_finish_reason(chunk)
                         delta = extract_delta_text(chunk)
                         if not delta:
+                            if finish:
+                                break
                             continue
                         yielded = True
                         yield delta, model
+                        if finish:
+                            break
         except httpx.HTTPError as exc:
             raise LLMUnavailable(f"LLM stream request failed: {exc}") from exc
+        if cancel and cancel.cancelled:
+            return
         if not yielded:
             raise LLMUnavailable("LLM stream completed without tokens.")

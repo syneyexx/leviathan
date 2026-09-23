@@ -10,7 +10,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `cognition/` | **Cognitive Runtime** — TaskModel, BeliefState, WorkingMemory, Perception, MetaController, loop, VerifiedExperience |
 | `settings/` | **Settings Control Plane** — operator catalog, SQLite overrides, hot/restart apply |
 | `context/` | `ContextBuilder`, `ContextPack` |
-| `model_runtime/` | `OpenAICompatibleLLM`, `LLMUnavailable` |
+| `model_runtime/` | OpenAICompatibleLLM + ServingSupervisor / managed local adapters |
+| `models/` | Model Control Plane (registry, measured router, managed vLLM/llama.cpp providers) |
 | `run/` | `RunStore`, Run lifecycle + versioned `EventEnvelope` |
 | `artifacts/` | `ArtifactStore`, content hash provenance |
 | `knowledge/` | Knowledge V2 documents/chunks/hybrid retrieval |
@@ -30,7 +31,9 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `module_manager/` | Universal Module Manager — single `ILeviathanModule` loader (+ optional subprocess) |
 | `plugins/` | PluginRegistry (declarative → catalog; not a second loader) |
 | `mcp/` | Universal MCP Bridge (one bridge / many sessions; Tools provider) |
-| `evaluation/` | EvaluationHarness + EvaluationPlatform (+ neuro ablations, scorecards, regression corpus) |
+| `model_runtime/` | OpenAICompatibleLLM + ServingSupervisor / managed local adapters |
+| `models/` | Model Control Plane (registry, measured router, managed vLLM/llama.cpp providers) |
+| `evaluation/` | EvaluationHarness + EvaluationPlatform (+ neuro ablations, scorecards, regression corpus, serving conformance) |
 | `isolation/` | IsolationGuard |
 | `training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `browser/` | BrowserAutomationStub |

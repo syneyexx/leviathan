@@ -85,5 +85,17 @@ def extract_delta_text(chunk: dict[str, Any]) -> str:
     return ""
 
 
+def extract_finish_reason(chunk: dict[str, Any]) -> str | None:
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        return None
+    reason = choice.get("finish_reason")
+    return str(reason) if reason else None
+
+
 def sync_chunks_to_text(chunks: Iterator[str]) -> str:
     return "".join(chunks)
+

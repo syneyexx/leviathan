@@ -499,3 +499,151 @@ class ModelStore:
                 (max(1, min(limit, 200)),),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # --- Wave 3: route decision audit + serving workers ---
+
+    def record_route_decision(self, payload: dict[str, Any]) -> str:
+        decision_id = str(payload.get("decision_id") or payload.get("decision", {}).get("traceId") or "")
+        if not decision_id:
+            import uuid
+
+            decision_id = str(uuid.uuid4())
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_route_decisions (
+                    decision_id TEXT PRIMARY KEY,
+                    recorded_at TEXT NOT NULL,
+                    policy_id TEXT,
+                    job_class TEXT,
+                    selected_model_id TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO model_route_decisions(
+                    decision_id, recorded_at, policy_id, job_class,
+                    selected_model_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision_id,
+                    payload.get("recorded_at") or utc_now(),
+                    payload.get("policy_id"),
+                    payload.get("job_class"),
+                    (payload.get("decision") or {}).get("modelId"),
+                    json.dumps(payload),
+                ),
+            )
+        return decision_id
+
+    def list_route_decisions(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_route_decisions (
+                    decision_id TEXT PRIMARY KEY,
+                    recorded_at TEXT NOT NULL,
+                    policy_id TEXT,
+                    job_class TEXT,
+                    selected_model_id TEXT,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            rows = conn.execute(
+                """
+                SELECT * FROM model_route_decisions
+                ORDER BY recorded_at DESC
+                LIMIT ?
+                """,
+                (max(1, min(limit, 200)),),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"] or "{}")
+            payload["decision_id"] = row["decision_id"]
+            out.append(payload)
+        return out
+
+    def upsert_serving_worker(self, record: dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_serving_workers (
+                    worker_id TEXT PRIMARY KEY,
+                    provider_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    backend_kind TEXT NOT NULL,
+                    endpoint TEXT,
+                    state TEXT NOT NULL,
+                    pid INTEGER,
+                    health_score REAL,
+                    revision_id TEXT,
+                    last_error TEXT,
+                    started_at TEXT,
+                    last_health_at TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO model_serving_workers(
+                    worker_id, provider_id, model_id, backend_kind, endpoint,
+                    state, pid, health_score, revision_id, last_error,
+                    started_at, last_health_at, metadata_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["worker_id"],
+                    record["provider_id"],
+                    record["model_id"],
+                    record["backend_kind"],
+                    record.get("endpoint"),
+                    record["state"],
+                    record.get("pid"),
+                    record.get("health_score"),
+                    record.get("revision_id"),
+                    record.get("last_error"),
+                    record.get("started_at"),
+                    record.get("last_health_at"),
+                    json.dumps(record.get("metadata") or {}),
+                    utc_now(),
+                ),
+            )
+
+    def list_serving_workers(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_serving_workers (
+                    worker_id TEXT PRIMARY KEY,
+                    provider_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    backend_kind TEXT NOT NULL,
+                    endpoint TEXT,
+                    state TEXT NOT NULL,
+                    pid INTEGER,
+                    health_score REAL,
+                    revision_id TEXT,
+                    last_error TEXT,
+                    started_at TEXT,
+                    last_health_at TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            rows = conn.execute(
+                "SELECT * FROM model_serving_workers ORDER BY updated_at DESC"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+            out.append(item)
+        return out
