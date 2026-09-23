@@ -1,0 +1,101 @@
+# LEVIATHAN CI — Data/ only. HADES/ and editor/ are out of scope.
+name: leviathan-ci
+
+on:
+  push:
+    paths:
+      - "Data/**"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - ".github/workflows/leviathan-ci.yml"
+      - "scripts/leviathan_ci.sh"
+  pull_request:
+    paths:
+      - "Data/**"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - ".github/workflows/leviathan-ci.yml"
+      - "scripts/leviathan_ci.sh"
+
+concurrency:
+  group: leviathan-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests + security + rounds
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Backend unit + integration
+        run: python -m pytest Data/backend/tests -q --tb=line
+      - name: Security-sensitive (Round 8)
+        run: python -m pytest Data/backend/tests/test_round8_security_isolation.py -q --tb=line
+      - name: Fixture ≠ production honesty
+        run: >
+          python -m pytest
+          Data/backend/tests/test_round7_browser_multimodal.py
+          Data/backend/tests/test_round9_product_truth.py
+          Data/backend/tests/test_round10_ci_release_gates.py
+          -k "fixture or CiPlan or not_applicable or ProductTruth"
+          -q --tb=line
+      - name: Frontier round exit gates
+        run: python -m pytest Data/backend/tests/test_round*.py -q --tb=line
+      - name: CI plan honesty (no skip→pass)
+        run: python -c "from Data.modules.release import default_leviathan_ci_plan, GateMeasurement; p=default_leviathan_ci_plan(); d=p.public_dict(); assert d['truth']['skipped_unavailable_is_not_success']; assert all(s.measurement==GateMeasurement.NOT_APPLICABLE for s in p.suites if s.suite_id in ('hades','editor')); print('ci-plan-ok', d['summary'])"
+
+  frontend:
+    name: Frontend typecheck + lint + test + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Data/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: Data/frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm run test
+      - name: Production build
+        run: npm run build
+
+  # Explicitly document out-of-scope trees so a green CI is never
+  # interpreted as HADES/editor certification.
+  scope-honesty:
+    name: Scope honesty (HADES/editor NOT_APPLICABLE)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assert scope exclusions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          assert Path("Data").is_dir()
+          # Presence of HADES/editor must not be required for CI green.
+          print("HADES present:", Path("HADES").exists(), "— NOT_APPLICABLE in LEVIATHAN CI")
+          print("editor present:", Path("editor").exists(), "— NOT_APPLICABLE in LEVIATHAN CI")
+          print("scope-ok")
+          PY
