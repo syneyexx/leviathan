@@ -63,22 +63,32 @@ class RetrievalTrace:
 
 @dataclass(frozen=True)
 class CitationCheck:
-    """Lightweight citation entailment gate (U109) — lexical overlap heuristic."""
+    """Citation entailment gate — contradiction-aware (U109).
+
+    Status vocabulary:
+      SUPPORTED | CONTRADICTED | INSUFFICIENT_EVIDENCE
+    Lexical overlap alone never overrides a detected contradiction.
+    """
 
     claim: str
     chunk_id: str
     entailed: bool
     overlap_ratio: float
     detail: str
+    status: str = "INSUFFICIENT_EVIDENCE"  # SUPPORTED | CONTRADICTED | INSUFFICIENT_EVIDENCE
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "claim": self.claim,
             "chunk_id": self.chunk_id,
             "entailed": self.entailed,
+            "status": self.status,
             "overlap_ratio": self.overlap_ratio,
             "detail": self.detail,
-            "truth": {"heuristic_entailment_is_not_proof": True},
+            "truth": {
+                "heuristic_entailment_is_not_proof": True,
+                "lexical_overlap_does_not_override_contradiction": True,
+            },
         }
 
 
@@ -375,9 +385,14 @@ class HybridRetriever:
 
     @staticmethod
     def verify_citation(claim: str, hit: RetrievalHit, *, min_overlap: float = 0.2) -> CitationCheck:
-        """Heuristic citation entailment — not a proof (U109)."""
-        claim_tokens = {t.lower() for t in claim.split() if len(t) > 2}
-        content_tokens = {t.lower() for t in hit.content.split() if len(t) > 2}
+        """Citation entailment with negation/contradiction detection.
+
+        Lexical overlap alone is never sufficient when evidence contradicts the claim.
+        """
+        claim_norm = " ".join((claim or "").lower().split())
+        content_norm = " ".join((hit.content or "").lower().split())
+        claim_tokens = {t for t in claim_norm.split() if len(t) > 2}
+        content_tokens = {t for t in content_norm.split() if len(t) > 2}
         if not claim_tokens:
             return CitationCheck(
                 claim=claim,
@@ -385,16 +400,83 @@ class HybridRetriever:
                 entailed=False,
                 overlap_ratio=0.0,
                 detail="empty claim",
+                status="INSUFFICIENT_EVIDENCE",
             )
         overlap = len(claim_tokens & content_tokens) / len(claim_tokens)
-        entailed = overlap >= min_overlap
+
+        # Negation / contradiction heuristics (must beat pure overlap).
+        contradiction = HybridRetriever._claim_contradicted_by_evidence(claim_norm, content_norm)
+        if contradiction:
+            return CitationCheck(
+                claim=claim,
+                chunk_id=hit.chunk_id,
+                entailed=False,
+                overlap_ratio=round(overlap, 4),
+                detail=contradiction,
+                status="CONTRADICTED",
+            )
+
+        if overlap >= min_overlap:
+            return CitationCheck(
+                claim=claim,
+                chunk_id=hit.chunk_id,
+                entailed=True,
+                overlap_ratio=round(overlap, 4),
+                detail="lexical support (heuristic — not proof)",
+                status="SUPPORTED",
+            )
         return CitationCheck(
             claim=claim,
             chunk_id=hit.chunk_id,
-            entailed=entailed,
+            entailed=False,
             overlap_ratio=round(overlap, 4),
-            detail="ok" if entailed else "insufficient lexical overlap",
+            detail="insufficient lexical overlap",
+            status="INSUFFICIENT_EVIDENCE",
         )
+
+    @staticmethod
+    def _claim_contradicted_by_evidence(claim: str, evidence: str) -> str | None:
+        """Return contradiction detail when evidence negates the claim; else None."""
+        import re
+
+        def _negated(text: str) -> bool:
+            return bool(
+                re.search(
+                    r"\b(does not|do not|don't|doesn't|did not|didn't|never|no longer|"
+                    r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not)\b",
+                    text,
+                )
+            )
+
+        claim_neg = _negated(claim)
+        evidence_neg = _negated(evidence)
+
+        # Strip negation markers for content comparison.
+        def _core(text: str) -> set[str]:
+            cleaned = re.sub(
+                r"\b(does not|do not|don't|doesn't|did not|didn't|never|no longer|"
+                r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not)\b",
+                " ",
+                text,
+            )
+            return {t for t in cleaned.split() if len(t) > 2}
+
+        claim_core = _core(claim)
+        evidence_core = _core(evidence)
+        shared = claim_core & evidence_core
+        # Require meaningful shared content + opposite polarity.
+        if len(shared) >= 2 and claim_neg != evidence_neg:
+            return "negation polarity conflict with shared content"
+
+        # Numeric / unit mismatch on shared entities.
+        claim_nums = re.findall(r"\b\d+(?:\.\d+)?\b", claim)
+        evidence_nums = re.findall(r"\b\d+(?:\.\d+)?\b", evidence)
+        if claim_nums and evidence_nums and set(claim_nums).isdisjoint(set(evidence_nums)):
+            # Only flag when surrounding content overlaps enough.
+            if len(shared) >= 2:
+                return "numeric mismatch with overlapping entities"
+
+        return None
 
     @staticmethod
     def _detect_contradictions(hits: list[RetrievalHit]) -> list[dict[str, Any]]:

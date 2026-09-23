@@ -13,6 +13,7 @@ from .delegation import DelegateRequest, DelegateResult, DelegationService
 from .errors import CognitionError, CognitionFeatureDisabled
 from .experience import ExperienceAdmissionPolicy, ExperienceStore, ProceduralMemoryHint, VerifiedExperience
 from .meta_controller import MetaController, MetaDecision
+from .model_adapter import build_control_plane_model_caller
 from .perception import PerceptionItem, PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .runtime import CognitiveRunState, CognitiveRuntime
@@ -82,4 +83,5 @@ __all__ = [
     "VerifiedExperience",
     "WorkingMemory",
     "WorkingMemoryItem",
+    "build_control_plane_model_caller",
 ]

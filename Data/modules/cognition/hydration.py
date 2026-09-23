@@ -183,6 +183,8 @@ def usage_from_dict(data: dict[str, Any] | None) -> BudgetUsage:
     return BudgetUsage(
         model_calls=int(raw.get("model_calls") or 0),
         model_tokens=int(raw.get("model_tokens") or 0),
+        input_tokens=int(raw.get("input_tokens") or 0),
+        output_tokens=int(raw.get("output_tokens") or 0),
         tool_calls=int(raw.get("tool_calls") or 0),
         agent_delegations=int(raw.get("agent_delegations") or 0),
         replans=int(raw.get("replans") or 0),
@@ -191,6 +193,7 @@ def usage_from_dict(data: dict[str, Any] | None) -> BudgetUsage:
         critic_passes=int(raw.get("critic_passes") or 0),
         iterations=int(raw.get("iterations") or 0),
         started_monotonic=float(raw.get("started_monotonic") or 0.0),
+        token_usage_source=str(raw.get("token_usage_source") or "unavailable"),
     )
 
 

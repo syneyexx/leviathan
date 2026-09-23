@@ -149,7 +149,21 @@ class Phase52ResidualAdapterTests(unittest.TestCase):
             ),
         )
         residual_on = next(r for r in on.results if r.case_id == "neuro-residual-port")
-        self.assertEqual(residual_on.outcome.value, "PASSED")
+        # Support flag alone is posture — not an operational residual probe.
+        self.assertEqual(residual_on.outcome.value, "UNMEASURED")
+
+        probed = harness.run_suite(
+            "neuro_ablation_probed",
+            harness.neuro_ablation_suite(
+                residual_supported=True,
+                cortex_enabled=True,
+                memory_tiers_enabled=True,
+                critic_enabled=True,
+                residual_probed=True,
+            ),
+        )
+        residual_probed = next(r for r in probed.results if r.case_id == "neuro-residual-port")
+        self.assertEqual(residual_probed.outcome.value, "PASSED")
 
 
 class Phase52CortexCriticTests(unittest.TestCase):

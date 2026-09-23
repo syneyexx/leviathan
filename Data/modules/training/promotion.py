@@ -218,12 +218,32 @@ class FlywheelControlPlane:
         eval_report_id: str | None = None,
         require_eval_gate: bool = True,
         suite_id: str = "foundation",
+        candidate_model_id: str | None = None,
+        candidate_artifact_hashes: dict[str, str] | None = None,
+        candidate_manifest_hash: str | None = None,
     ) -> PromotionRecord:
         proposal = self.require_proposal(proposal_id)
         if proposal.status in {ChallengerStatus.PROMOTED, ChallengerStatus.REJECTED}:
             raise PromotionError(f"Proposal already terminal: {proposal.status.value}")
 
-        gates: dict[str, Any] = {"require_eval_gate": require_eval_gate}
+        # Candidate binding: caller-supplied identity must match the proposal challenger.
+        if candidate_model_id is not None and candidate_model_id != proposal.challenger_model_id:
+            raise PromotionError(
+                "Promotion refused — candidate_model_id does not match proposal challenger "
+                f"({candidate_model_id!r} != {proposal.challenger_model_id!r})",
+                code="candidate_mismatch",
+            )
+
+        gates: dict[str, Any] = {
+            "require_eval_gate": require_eval_gate,
+            "candidate_binding": {
+                "challenger_model_id": proposal.challenger_model_id,
+                "candidate_model_id": candidate_model_id or proposal.challenger_model_id,
+                "candidate_manifest_hash": candidate_manifest_hash,
+                "candidate_artifact_hashes": dict(candidate_artifact_hashes or {}),
+                "eval_report_id": eval_report_id or proposal.eval_report_id,
+            },
+        }
         if require_eval_gate:
             if self.evaluation is None:
                 raise PromotionError(
@@ -239,6 +259,57 @@ class FlywheelControlPlane:
                     code="eval_gate_failed",
                 )
 
+        bound_report_id = eval_report_id or proposal.eval_report_id
+        # Bind evaluation report to the exact candidate when a real report is required/available.
+        if (
+            bound_report_id
+            and require_eval_gate
+            and self.evaluation is not None
+            and hasattr(self.evaluation, "get_report")
+        ):
+            report = self.evaluation.get_report(bound_report_id)
+            if report is None:
+                raise PromotionError(
+                    f"Promotion refused — eval report not found: {bound_report_id}",
+                    code="eval_report_missing",
+                )
+            # Bind evaluation to the exact candidate when the report carries model identity.
+            report_model = (
+                report.get("model_id")
+                or report.get("candidate_model_id")
+                or report.get("model_revision")
+                or (report.get("metadata") or {}).get("model_id")
+                or (report.get("metadata") or {}).get("candidate_model_id")
+            )
+            gates["evaluation_report"] = {
+                "eval_report_id": bound_report_id,
+                "report_model": report_model,
+            }
+            if report_model and str(report_model) not in {
+                proposal.challenger_model_id,
+                str(candidate_model_id or ""),
+            }:
+                # Allow prefix/revision forms like "model@rev" when the base id matches.
+                report_s = str(report_model)
+                challenger = proposal.challenger_model_id
+                if not (
+                    report_s == challenger
+                    or report_s.startswith(f"{challenger}@")
+                    or report_s.startswith(f"{challenger}:")
+                ):
+                    raise PromotionError(
+                        "Promotion refused — evaluation report is bound to a different candidate "
+                        f"(report={report_s!r}, challenger={challenger!r})",
+                        code="eval_candidate_mismatch",
+                    )
+        elif bound_report_id and not require_eval_gate:
+            # Operator override path — record the claimed evidence id without inventing a report.
+            gates["evaluation_report"] = {
+                "eval_report_id": bound_report_id,
+                "report_model": None,
+                "unverified_operator_evidence": True,
+            }
+
         # Explicit control-plane mutation — never silent.
         previous = self.model_store.get_active_model_id()
         self.model_store.set_active_model(proposal.challenger_model_id)
@@ -248,8 +319,12 @@ class FlywheelControlPlane:
             from_model_id=previous,
             to_model_id=proposal.challenger_model_id,
             decided_by=decided_by,
-            eval_report_id=eval_report_id or proposal.eval_report_id,
+            eval_report_id=bound_report_id,
             gates=gates,
+            metadata={
+                "candidate_manifest_hash": candidate_manifest_hash,
+                "candidate_artifact_hashes": dict(candidate_artifact_hashes or {}),
+            },
         )
         with self.connect() as conn:
             conn.execute(

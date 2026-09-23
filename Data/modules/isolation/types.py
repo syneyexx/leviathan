@@ -54,5 +54,7 @@ class IsolationReport:
             "metadata": self.metadata,
             "truth": {
                 "requested_isolation_is_not_effective_isolation": True,
+                "application_intended_is_not_os_enforced": True,
+                "configuration_is_not_enforcement_proof": True,
             },
         }

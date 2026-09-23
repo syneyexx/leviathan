@@ -148,6 +148,7 @@ from Data.modules.cognition import (
     PerceptionService,
     CapabilityBroker,
 )
+from Data.modules.cognition.model_adapter import build_control_plane_model_caller
 from Data.modules.security import SecretsBroker, SecurityAuditor, SecurityFinding
 from Data.modules.execution import CapabilityReceiptStore
 from Data.modules.native import NativeRuntimeStub
@@ -729,6 +730,7 @@ settings_plane = SettingsControlPlane(settings)
 
 cognition_store = CognitionStore(settings.database_path)
 cognition_delegation = DelegationService()
+cognition_model_caller = build_control_plane_model_caller(model_plane, llm)
 cognition_runtime = CognitiveRuntime(
     enabled=settings.features.cognition_enabled,
     shadow=settings.features.cognition_shadow,
@@ -749,6 +751,7 @@ cognition_runtime = CognitiveRuntime(
     delegation=cognition_delegation,
     experience_store=ExperienceStore(store=cognition_store),
     store=cognition_store,
+    model_caller=cognition_model_caller,
     neuro_advisor=neuro_advisor if settings.features.cognition_neuro else None,
     verification_engine=verification_engine,
     execution_gateway=execution_gateway,
@@ -1775,6 +1778,28 @@ async def chat(payload: ChatRequest, request: Request):
             system_prompt=profile.system_prompt or None,
         )
 
+    # ACTIVE cognition owns the authoritative answer when it produced one.
+    # SHADOW cognition may observe only — chat path remains authoritative.
+    cognition_owns_response = bool(
+        cognition_meta
+        and not cognition_meta.get("shadow")
+        and not settings.features.cognition_shadow
+        and (cognition_meta.get("response") or "").strip()
+        and cognition_meta.get("response_ownership") == "cognition"
+        and not cognition_meta.get("error")
+    )
+    if cognition_meta is not None:
+        cognition_meta = {
+            **cognition_meta,
+            "owns_final_response": cognition_owns_response,
+            "truth": {
+                **(cognition_meta.get("truth") or {}),
+                "shadow_does_not_own_final_response": True,
+                "active_cognition_owns_final_response_when_present": True,
+                "no_duplicate_authoritative_model_call": cognition_owns_response,
+            },
+        }
+
     def _finalize_chat(answer: str, model: str) -> dict:
         nonlocal call_id
         if call_id and routed is not None:
@@ -1797,8 +1822,9 @@ async def chat(payload: ChatRequest, request: Request):
                 "model": model,
                 "memory_hits": len(memory_hits),
                 "route": route_meta,
-                "streamed": use_sse,
+                "streamed": use_sse and not cognition_owns_response,
                 "streaming_degraded": streaming_degraded,
+                "cognition_owns_final_response": cognition_owns_response,
             },
         )
         completed = runs.transition(
@@ -1835,13 +1861,57 @@ async def chat(payload: ChatRequest, request: Request):
             "neuro": neuro.public_dict(),
             "cortex": cortex_report,
             "cognition": cognition_meta,
-            "streamed": use_sse,
+            "streamed": use_sse and not cognition_owns_response,
             "truth": chat_truth(
                 streaming_degraded=streaming_degraded,
                 residual_implemented=residual_runtime.supports_residuals(),
                 residual_applied=residual_applied_any,
             ),
         }
+
+    if cognition_owns_response:
+        # Cognition already performed the authoritative model call via control plane.
+        if call_id and routed is not None:
+            model_plane.gateway.release(
+                model_id=model_id_for_release, provider_id=provider_id_for_release
+            )
+            call_id = None
+        answer = str(cognition_meta.get("response") or "").strip()
+        model_name = str(model_id_for_release or "cognition")
+        result = _finalize_chat(answer, model_name)
+        result["truth"] = {
+            **(result.get("truth") or {}),
+            "response_owned_by": "cognition",
+            "no_duplicate_authoritative_model_call": True,
+        }
+        if use_sse:
+
+            async def _cognition_sse():
+                yield sse_encode(
+                    "meta",
+                    {
+                        "conversation_id": conversation_id,
+                        "run_id": run.run_id,
+                        "user_message": user_message,
+                        "reasoning": plan.public_summary(),
+                        "model": model_name,
+                        "cognition_owns_final_response": True,
+                        "truth": result["truth"],
+                    },
+                )
+                yield sse_encode("token", {"text": answer, "model": model_name})
+                yield sse_encode("done", result)
+
+            return StreamingResponse(
+                _cognition_sse(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        return result
 
     if use_sse:
 

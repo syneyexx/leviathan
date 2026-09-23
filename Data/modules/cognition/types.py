@@ -277,6 +277,8 @@ class CognitiveBudgets:
 class BudgetUsage:
     model_calls: int = 0
     model_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     tool_calls: int = 0
     agent_delegations: int = 0
     replans: int = 0
@@ -285,11 +287,16 @@ class BudgetUsage:
     critic_passes: int = 0
     iterations: int = 0
     started_monotonic: float = 0.0
+    # "provider" when usage came from the model API; "estimate" when heuristic;
+    # "unavailable" when nothing measured.
+    token_usage_source: str = "unavailable"
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "model_calls": self.model_calls,
             "model_tokens": self.model_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
             "tool_calls": self.tool_calls,
             "agent_delegations": self.agent_delegations,
             "replans": self.replans,
@@ -297,6 +304,10 @@ class BudgetUsage:
             "retrieval_rounds": self.retrieval_rounds,
             "critic_passes": self.critic_passes,
             "iterations": self.iterations,
+            "token_usage_source": self.token_usage_source,
+            "truth": {
+                "estimate_is_not_provider_usage": self.token_usage_source != "provider",
+            },
         }
 
 

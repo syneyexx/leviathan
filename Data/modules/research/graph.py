@@ -74,14 +74,83 @@ def _token_overlap(a: str, b: str) -> float:
     return len(ta & tb) / float(len(ta | tb))
 
 
+def _negation_contradiction(claim: str, evidence: str) -> str | None:
+    """Return detail when evidence negates the claim; lexical overlap must not override."""
+    import re
+
+    claim_n = " ".join((claim or "").lower().split())
+    evidence_n = " ".join((evidence or "").lower().split())
+
+    def _negated(text: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(does not|do not|don't|doesn't|did not|didn't|never|no longer|"
+                r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not)\b",
+                text,
+            )
+        )
+
+    def _core(text: str) -> set[str]:
+        cleaned = re.sub(
+            r"\b(does not|do not|don't|doesn't|did not|didn't|never|no longer|"
+            r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not)\b",
+            " ",
+            text,
+        )
+        return {t for t in cleaned.split() if len(t) > 2}
+
+    shared = _core(claim_n) & _core(evidence_n)
+    if len(shared) >= 2 and _negated(claim_n) != _negated(evidence_n):
+        return "negation polarity conflict with shared content"
+    claim_nums = re.findall(r"\b\d+(?:\.\d+)?\b", claim_n)
+    evidence_nums = re.findall(r"\b\d+(?:\.\d+)?\b", evidence_n)
+    if claim_nums and evidence_nums and set(claim_nums).isdisjoint(set(evidence_nums)) and len(shared) >= 2:
+        return "numeric mismatch with overlapping entities"
+    return None
+
+
 def citation_entailment_check(claim: str, span: str, *, min_overlap: float = 0.15) -> dict[str, Any]:
-    """Heuristic entailment before finalizing high-confidence claims (U228)."""
+    """Heuristic entailment before finalizing high-confidence claims (U228).
+
+    Status vocabulary: SUPPORTED | CONTRADICTED | INSUFFICIENT_EVIDENCE.
+    Lexical overlap alone never overrides a detected contradiction.
+    """
     score = _token_overlap(claim, span)
+    contradiction = _negation_contradiction(claim, span)
+    if contradiction:
+        return {
+            "overlap_ratio": score,
+            "passed": False,
+            "status": "CONTRADICTED",
+            "min_overlap": min_overlap,
+            "detail": contradiction,
+            "truth": {
+                "heuristic_entailment_is_not_proof": True,
+                "lexical_overlap_does_not_override_contradiction": True,
+            },
+        }
+    if score >= min_overlap:
+        return {
+            "overlap_ratio": score,
+            "passed": True,
+            "status": "SUPPORTED",
+            "min_overlap": min_overlap,
+            "detail": "lexical support (heuristic)",
+            "truth": {
+                "heuristic_entailment_is_not_proof": True,
+                "lexical_overlap_does_not_override_contradiction": True,
+            },
+        }
     return {
         "overlap_ratio": score,
-        "passed": score >= min_overlap,
+        "passed": False,
+        "status": "INSUFFICIENT_EVIDENCE",
         "min_overlap": min_overlap,
-        "truth": {"heuristic_entailment_is_not_proof": True},
+        "detail": "insufficient lexical overlap",
+        "truth": {
+            "heuristic_entailment_is_not_proof": True,
+            "lexical_overlap_does_not_override_contradiction": True,
+        },
     }
 
 
@@ -103,6 +172,44 @@ class ClaimEvidenceGraphBuilder:
                 if ev is None:
                     continue
                 check = citation_entailment_check(claim.proposition, ev.span_text)
+                if check.get("status") == "CONTRADICTED":
+                    edges.append(
+                        ClaimEvidenceEdge(
+                            edge_id=f"edge_{uuid.uuid4().hex[:10]}",
+                            claim_id=claim.claim_id,
+                            evidence_id=eid,
+                            relation="contradicts",
+                            uncertainty="high",
+                            entailment_score=float(check["overlap_ratio"]),
+                            entailment_passed=False,
+                        )
+                    )
+                    if gate_high_confidence and status in {
+                        ClaimStatus.SUPPORTED,
+                        ClaimStatus.WEAKLY_SUPPORTED,
+                    }:
+                        status = ClaimStatus.DISPUTED
+                        claim = ResearchClaim(
+                            claim_id=claim.claim_id,
+                            project_id=claim.project_id,
+                            proposition=claim.proposition,
+                            status=status,
+                            created_at=claim.created_at,
+                            updated_at=_utc_now(),
+                            raw_wording=claim.raw_wording,
+                            supporting_evidence_ids=list(claim.supporting_evidence_ids),
+                            contradicting_evidence_ids=list(
+                                dict.fromkeys([*claim.contradicting_evidence_ids, eid])
+                            ),
+                            source_diversity=claim.source_diversity,
+                            metadata={
+                                **dict(claim.metadata or {}),
+                                "entailment_contradicted": True,
+                                "entailment": check,
+                            },
+                        )
+                        self.store.upsert_claim(claim)
+                    continue
                 if gate_high_confidence and status == ClaimStatus.SUPPORTED and not check["passed"]:
                     # Downgrade high-confidence claim when entailment fails (U228).
                     status = ClaimStatus.WEAKLY_SUPPORTED
@@ -114,8 +221,8 @@ class ClaimEvidenceGraphBuilder:
                         created_at=claim.created_at,
                         updated_at=_utc_now(),
                         raw_wording=claim.raw_wording,
-                        supporting_evidence_ids=claim.supporting_evidence_ids,
-                        contradicting_evidence_ids=claim.contradicting_evidence_ids,
+                        supporting_evidence_ids=list(claim.supporting_evidence_ids),
+                        contradicting_evidence_ids=list(claim.contradicting_evidence_ids),
                         source_diversity=claim.source_diversity,
                         metadata={
                             **dict(claim.metadata or {}),

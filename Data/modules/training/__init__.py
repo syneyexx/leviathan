@@ -8,7 +8,7 @@ from .evaluation import evaluate_job
 from .events import TrainingEventLog
 from .hardware import probe_hardware
 from .launcher import TrainingLauncher
-from .integrity import IntegrityReport, verify_artifact_integrity
+from .integrity import IntegrityReport, build_artifact_manifest, verify_artifact_integrity
 from .lineage import LineageEdge, ModelLineageStore
 from .model_registration import register_training_artifact_as_model, sync_completed_artifacts_to_models
 from .planner import plan_training
@@ -69,6 +69,7 @@ __all__ = [
     "GeneratorProvenance",
     "HardwareSnapshot",
     "IntegrityReport",
+    "build_artifact_manifest",
     "LineageEdge",
     "MetricRecord",
     "MinedCandidate",
