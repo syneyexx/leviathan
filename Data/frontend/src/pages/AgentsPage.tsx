@@ -986,6 +986,7 @@ export function AgentsPage() {
       layout="wide"
       pageClass="lv-app--agents"
     >
+      <div className="lv-ag-shell">
       <main className="lv-main lv-ag-main">
         <section className="lv-ag-hero" aria-label="Agents">
           <div className="lv-ag-hero-media">
@@ -2026,6 +2027,7 @@ export function AgentsPage() {
           </div>
         </div>
       ) : null}
+      </div>
     </AppShell>
   );
 }
