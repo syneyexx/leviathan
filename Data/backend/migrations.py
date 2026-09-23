@@ -2295,6 +2295,58 @@ def _m32_posttraining_flywheel(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m33_production_ops(conn: sqlite3.Connection) -> None:
+    """Wave 10: ops recovery audit + deployment profile markers + object refs."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ops_recovery_actions (
+            action_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            previous_worker_id TEXT,
+            new_worker_id TEXT,
+            status TEXT NOT NULL,
+            detail TEXT,
+            duplicate_effect_prevented INTEGER NOT NULL DEFAULT 0,
+            secrets_revoked INTEGER NOT NULL DEFAULT 0,
+            project_id TEXT,
+            profile_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            recorded_at_ms REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ops_recovery_job "
+        "ON ops_recovery_actions(job_id, recorded_at_ms)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ops_deployment_state (
+            singleton_id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS object_store_refs (
+            object_id TEXT PRIMARY KEY,
+            content_hash TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            project_id TEXT,
+            object_key TEXT,
+            backend TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_object_store_project "
+        "ON object_store_refs(project_id, created_at)"
+    )
 
 
 MIGRATIONS: Sequence[Migration] = (
@@ -2330,6 +2382,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=30, name="multimodal_realtime", apply=_m30_multimodal_realtime),
     Migration(version=31, name="data_training_factory", apply=_m31_data_training_factory),
     Migration(version=32, name="posttraining_flywheel", apply=_m32_posttraining_flywheel),
+    Migration(version=33, name="production_ops", apply=_m33_production_ops),
 )
 
 

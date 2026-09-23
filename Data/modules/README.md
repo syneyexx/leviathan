@@ -52,7 +52,12 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `market_sim/` | MarketSimControlPlane + causal engine + multi-agent worker (flagged) |
 | `backup/` | BackupService (local SQLite snapshots) |
 | `metrics/` | MetricsCollector (in-process) |
-| `chaos/` | ChaosInjector (default OFF) |
+| `chaos/` | ChaosInjector + scenario presets (default OFF) |
+| `ops/` | ProductionOpsPlane + deployment profiles (Wave 10) |
+| `jobs/` | JobRuntime + fleet registry / GPU fixture scheduler / lease recovery |
+| `observability/` | ObservabilityHub + fixture OTel exporter / SLO registry |
+| `artifacts/` | ArtifactStore + object-store backends (local FS / fixture) |
+| `isolation/` | IsolationGuard + fixture sandbox |
 | `master/` | MasterGateRunner (phases 0–45 summary) |
 | `common/` | Shared helpers + CorrelationIds + ownership matrix |
 | `settings/` | Settings Control Plane + BehaviorProfile |

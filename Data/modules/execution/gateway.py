@@ -165,6 +165,8 @@ class ExecutionGateway:
     module_executor: ModuleExecutor | None = None
     receipt_store: CapabilityReceiptStore | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
+    # Wave 10: short-circuit duplicate side effects for the same idempotency key.
+    _idempotency_results: dict[str, CapabilityResult] = field(default_factory=dict, repr=False)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
             "requests": 0,
@@ -176,6 +178,7 @@ class ExecutionGateway:
             "approval_required": 0,
             "observations_recorded": 0,
             "receipts_recorded": 0,
+            "idempotent_replays": 0,
         }
     )
 
@@ -189,6 +192,30 @@ class ExecutionGateway:
         request_id = request.request_id or str(uuid.uuid4())
         started = time.perf_counter()
         self.telemetry["requests"] += 1
+
+        # Wave 10: idempotent replay — return prior result, do not re-dispatch effects.
+        if request.idempotency_key:
+            cached = self._idempotency_results.get(request.idempotency_key)
+            if cached is not None:
+                self.telemetry["idempotent_replays"] = int(self.telemetry.get("idempotent_replays", 0)) + 1
+                replay = CapabilityResult(
+                    request_id=request_id,
+                    capability_id=cached.capability_id,
+                    status=cached.status,
+                    output=dict(cached.output or {}),
+                    error=cached.error,
+                    side_effects=cached.side_effects,
+                    provider_kind=cached.provider_kind,
+                    provider_ref=cached.provider_ref,
+                    approval_id=cached.approval_id,
+                    telemetry={
+                        **(cached.telemetry or {}),
+                        "idempotent_replay": True,
+                        "original_request_id": cached.request_id,
+                        "duration_ms": (time.perf_counter() - started) * 1000,
+                    },
+                )
+                return replay
 
         definition = self.catalog.get(request.capability_id)
         if definition is None:
@@ -734,3 +761,11 @@ class ExecutionGateway:
                 result.telemetry["receipt_id"] = receipt.receipt_id
             except Exception as exc:  # noqa: BLE001 — never fail execution on receipt write
                 result.telemetry["receipt_persist_error"] = str(exc)
+
+        if (
+            request is not None
+            and request.idempotency_key
+            and result.status in {CapabilityStatus.COMPLETED, CapabilityStatus.FAILED}
+            and not (result.telemetry or {}).get("idempotent_replay")
+        ):
+            self._idempotency_results[request.idempotency_key] = result

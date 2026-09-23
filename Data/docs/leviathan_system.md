@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of **Wave 9 Post-Training Flywheel** (`0.73.0-wave9-flywheel`) on Wave 8 Data/Training Factory (v31) + Wave 7 Multimodal (v30) + Wave 6 Coding/Research (v29) + Wave 5 Capability World (v28) + Wave 4 Context Substrate (v27) + Wave 3 Model Serving (v26) + Wave 2 Evaluation (v25) + Wave 1 Cognition + Wave 0 Durable Kernel (v24).
+> This is the implementation truth for the repository as of **Wave 10 Production Operations** (`0.74.0-wave10-production-ops`) on Wave 9 Post-Training Flywheel (v32) + Wave 8 Data/Training Factory (v31) + Wave 7 Multimodal (v30) + Wave 6 Coding/Research (v29) + Wave 5 Capability World (v28) + Wave 4 Context Substrate (v27) + Wave 3 Model Serving (v26) + Wave 2 Evaluation (v25) + Wave 1 Cognition + Wave 0 Durable Kernel (v24).
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,11 +12,12 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel**, **Wave 2 evaluation as release authority**, **Wave 3 managed local model serving**, **Wave 4 context/memory/knowledge substrate**, **Wave 5 capability world interface**, **Wave 6 coding/research frontier**, **Wave 7 multimodal + realtime voice**, **Wave 8 industrial data + training factory**, and **Wave 9 post-training improvement flywheel** (preferences/DPO, synthetic+active learning, champion/challenger promotion boundary).
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel**, **Wave 2 evaluation as release authority**, **Wave 3 managed local model serving**, **Wave 4 context/memory/knowledge substrate**, **Wave 5 capability world interface**, **Wave 6 coding/research frontier**, **Wave 7 multimodal + realtime voice**, **Wave 8 industrial data + training factory**, **Wave 9 post-training improvement flywheel**, and **Wave 10 production operations / scale foundations** (OTel fixture traces/SLOs, sandbox fixture, chaos scenarios, fleet/GPU fixture scheduler, object-store isolation, deployment profiles, lease recovery without duplicate effects).
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.73.0-wave9-flywheel`);
+- FastAPI backend composition root (`0.74.0-wave10-production-ops`);
+- **Wave 10 production ops** — fixture OTel/SLOs, deployment profiles, WorkerFleetRegistry + GPU claims, FixtureObjectStore project isolation, chaos scenarios, LeaseRecoveryPlane reclaim (idempotent gateway replay), secrets revoke-on-worker-death;
 - **Wave 9 post-training flywheel** — PreferenceRecord store, DPO/reward recipes, synthetic provenance + active-learning govern step, lineage edges, FlywheelControlPlane promote/rollback (no silent replace);
 - **Wave 8 data/training factory** — resumable shard ingest, sealed mixture manifests, contamination scan, packing sim, annotation queue, integrity gate before model registry publish;
 - **Wave 7 multimodal/realtime** — MultimodalSession parts+sync_id, MediaService + RealtimeVoiceService fixtures via ExecutionGateway, VisionCapabilityProfile, cross-modal caption index, barge-in cancel;

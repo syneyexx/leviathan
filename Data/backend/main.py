@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -155,6 +156,7 @@ from Data.modules.trading import TradingStub
 from Data.modules.backup import BackupError, BackupService
 from Data.modules.chaos import ChaosInjector, ChaosPlan
 from Data.modules.master import MasterGateCheck, MasterGateRunner, MasterGateStatus
+from Data.modules.ops import ProductionOpsPlane, get_profile, list_profiles
 
 db = Database(settings.database_path)
 runs = RunStore(settings.database_path)
@@ -605,6 +607,19 @@ chaos = ChaosInjector(
         error_rate=settings.chaos.error_rate,
     )
 )
+_ops_profile = (
+    os.environ.get("LEVIATHAN_DEPLOYMENT_PROFILE", "ci_fixture")
+    if settings.features.production_ops
+    else "local_desktop"
+)
+production_ops = ProductionOpsPlane.from_profile(
+    _ops_profile if settings.features.production_ops else "local_desktop",
+    store=job_store,
+    gateway=execution_gateway,
+    secrets=secrets_broker,
+    chaos=chaos,
+    artifacts_root=settings.artifacts.root / "object_store",
+)
 
 
 def _master_release_check() -> MasterGateCheck:
@@ -1035,7 +1050,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.73.0-wave9-flywheel", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.74.0-wave10-production-ops", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -3870,6 +3885,102 @@ def list_promotions(limit: int = 50) -> dict:
 def get_model_lineage(model_id: str, limit: int = 100) -> dict:
     edges = flywheel.lineage.list_for_model(model_id, limit=limit)
     return {"model_id": model_id, "edges": [e.public_dict() for e in edges]}
+
+
+class OpsChaosScenarioRequest(BaseModel):
+    scenario_id: str = Field(min_length=1, max_length=80)
+    run_hooks: bool = True
+
+
+class OpsRecoveryRequest(BaseModel):
+    project_id: str | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+@app.get("/api/ops/status")
+def ops_status() -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    return production_ops.public_dict()
+
+
+@app.get("/api/ops/profiles")
+def ops_profiles() -> dict:
+    return {"profiles": [p.public_dict() for p in list_profiles()]}
+
+
+@app.get("/api/ops/profiles/{profile_id}")
+def ops_profile(profile_id: str) -> dict:
+    try:
+        return {"profile": get_profile(profile_id).public_dict()}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/ops/otel/spans")
+def ops_otel_spans(trace_id: str | None = None, limit: int = 100) -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    spans = production_ops.otel.list_spans(trace_id=trace_id, limit=limit)
+    return {
+        "spans": [s.public_dict() for s in spans],
+        "export": production_ops.otel.export_otlp_shaped(limit=limit),
+    }
+
+
+@app.get("/api/ops/slos")
+def ops_slos() -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    evaluations = []
+    for definition in production_ops.slos.list_definitions():
+        evaluations.append(production_ops.slos.evaluate(definition.slo_id).public_dict())
+    return {"definitions": production_ops.slos.public_dict(), "evaluations": evaluations}
+
+
+@app.get("/api/ops/fleet")
+def ops_fleet() -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    return production_ops.fleet.public_dict()
+
+
+@app.get("/api/ops/gpu")
+def ops_gpu() -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    return production_ops.gpu.public_dict()
+
+
+@app.get("/api/ops/chaos/scenarios")
+def ops_chaos_scenarios() -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    return production_ops.chaos_runner.public_dict()
+
+
+@app.post("/api/ops/chaos/scenarios/apply")
+def ops_chaos_apply(payload: OpsChaosScenarioRequest) -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    try:
+        scenario = production_ops.chaos_runner.apply(
+            payload.scenario_id, run_hooks=payload.run_hooks
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"scenario": scenario.public_dict(), "chaos": production_ops.chaos_runner.public_dict()}
+
+
+@app.post("/api/ops/recovery/reclaim")
+def ops_recovery_reclaim(payload: OpsRecoveryRequest) -> dict:
+    if not settings.features.production_ops:
+        raise HTTPException(status_code=404, detail="production_ops feature disabled")
+    actions = production_ops.run_recovery(project_id=payload.project_id, limit=payload.limit)
+    return {
+        "actions": [a.public_dict() for a in actions],
+        "recovery": production_ops.recovery.public_dict() if production_ops.recovery else None,
+    }
 
 
 @app.post("/api/training")
