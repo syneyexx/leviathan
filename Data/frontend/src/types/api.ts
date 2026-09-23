@@ -521,12 +521,22 @@ export type DatasetJobCheckpoint = {
   repositoryId?: string;
   revision?: string;
   filename?: string;
+  relativePath?: string;
   bytesDownloaded?: number;
+  bytesTotal?: number | null;
   totalBytes?: number | null;
+  filesTotal?: number | null;
+  filesCompleted?: number | null;
+  filesFailed?: number | null;
+  bytesPerSecond?: number | null;
+  etaSeconds?: number | null;
   etag?: string | null;
   attempts?: number;
   lastStatus?: number | null;
+  lastHttpStatus?: number | null;
   rateLimitEvents?: number;
+  file?: DatasetJobCheckpoint;
+  manifestSummary?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
@@ -542,6 +552,8 @@ export type DatasetJobDownloadSummary = {
   lastHttpStatus?: number | null;
   rateLimitEvents?: number | null;
   etag?: string | null;
+  bytesPerSecond?: number | null;
+  etaSeconds?: number | null;
 };
 
 export type DatasetActivityLevel = "info" | "progress" | "warning" | "error" | "success";

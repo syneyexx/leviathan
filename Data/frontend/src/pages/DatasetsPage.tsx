@@ -14,7 +14,7 @@ import {
   type DhStatus,
 } from "../mocks/datasets-dashboard";
 import { useAppToast } from "../state/useAppToast";
-import type { DatasetActivityEntry, DatasetJob, DatasetRecord, HfDatasetFile } from "../types/api";
+import type { DatasetActivityEntry, DatasetJob, DatasetRecord } from "../types/api";
 import { DatasetActivityConsole } from "./datasets/DatasetActivityConsole";
 import {
   isActiveJob,
@@ -83,6 +83,16 @@ function mapStatus(status: string): DhStatus {
   if (s === "offline" || s === "cached") return "offline";
   if (s.includes("validat")) return "validating";
   if (
+    s === "failed" ||
+    s === "error" ||
+    s === "interrupted" ||
+    s.includes("fail") ||
+    s.includes("error")
+  ) {
+    return "failed";
+  }
+  if (s === "cancelled" || s === "canceled") return "cancelled";
+  if (
     s === "running" ||
     s === "processing" ||
     s === "importing" ||
@@ -94,7 +104,13 @@ function mapStatus(status: string): DhStatus {
   if (s === "ready" || s === "complete" || s === "completed" || s === "processed" || s === "materialized") {
     return "ready";
   }
-  return "ready";
+  if (s === "created" || s === "raw" || s === "archived") {
+    // Durable backend states that are not failures; not Ready until materialization says so,
+    // but do not spin forever without an active job — page overlays active-job detail separately.
+    return s === "archived" ? "offline" : "processing";
+  }
+  // Unknown backend states must NOT default to Ready.
+  return "failed";
 }
 
 function mapType(ds: DatasetRecord): string {
@@ -147,16 +163,29 @@ function embeddingsForDataset(ds: DatasetRecord, jobs: DatasetJob[]): DhEmbeddin
 
 function recordToRow(ds: DatasetRecord, jobs: DatasetJob[]): DhRow {
   const sourceKind = mapSourceKind(ds.sourceType);
+  const related = jobs.filter((j) => j.datasetId === ds.datasetId);
+  const activeJob = related.find((j) => {
+    const s = j.status.toLowerCase();
+    return s === "running" || s === "queued" || s === "pending";
+  });
+  const latestJob = related[0];
+  const status = mapStatus(ds.status);
+  const detail =
+    status === "processing" || status === "validating"
+      ? jobProgressDetail(activeJob || latestJob)
+      : status === "failed"
+        ? jobProgressDetail(latestJob) || latestJob?.error || null
+        : null;
   return {
     id: ds.datasetId,
     name: ds.name,
-    description: ds.description || ds.originalFilename || ds.datasetId,
+    description: detail || ds.description || ds.originalFilename || ds.datasetId,
     source: mapSourceLabel(ds.sourceType, sourceKind),
     sourceKind,
     type: mapType(ds),
     size: formatBytes(ds.byteSize),
     records: formatCompactCount(ds.rowCount),
-    status: mapStatus(ds.status),
+    status,
     embeddings: embeddingsForDataset(ds, jobs),
     updated: relativeTime(ds.updatedAt),
     live: true,
@@ -219,7 +248,77 @@ function statusLabel(status: DhStatus): string {
   if (status === "ready") return "Ready";
   if (status === "offline") return "Offline";
   if (status === "validating") return "Validating";
+  if (status === "failed") return "Failed";
+  if (status === "cancelled") return "Cancelled";
   return "Processing";
+}
+
+function formatRate(bytesPerSecond: number | null | undefined): string | null {
+  if (bytesPerSecond == null || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return null;
+  if (bytesPerSecond >= 1024 ** 3) return `${(bytesPerSecond / 1024 ** 3).toFixed(2)} GB/s`;
+  if (bytesPerSecond >= 1024 ** 2) return `${(bytesPerSecond / 1024 ** 2).toFixed(1)} MB/s`;
+  if (bytesPerSecond >= 1024) return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
+  return `${Math.round(bytesPerSecond)} B/s`;
+}
+
+function formatEta(seconds: number | null | undefined): string | null {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function phaseLabel(phase: string | null | undefined): string {
+  const p = (phase || "").toLowerCase();
+  if (!p) return "Processing";
+  if (p.includes("discover")) return "Discovering repository";
+  if (p.includes("plan")) return "Planning download";
+  if (p === "rate_limited" || p.includes("rate_limit")) return "Rate limited / retrying";
+  if (p.includes("download")) return "Downloading";
+  if (p.includes("material")) return "Materializing";
+  if (p.includes("validat")) return "Validating";
+  if (p.includes("final")) return "Finalizing";
+  if (p === "done" || p === "completed") return "Ready";
+  if (p.includes("fail")) return "Failed";
+  if (p.includes("cancel")) return "Cancelled";
+  return phase || "Processing";
+}
+
+function jobProgressDetail(job: DatasetJob | undefined): string | null {
+  if (!job) return null;
+  const cp = (job.checkpoint || {}) as Record<string, unknown>;
+  const phase = phaseLabel(job.phase);
+  const filesTotal = typeof cp.filesTotal === "number" ? cp.filesTotal : null;
+  const filesCompleted = typeof cp.filesCompleted === "number" ? cp.filesCompleted : null;
+  const bytesTotal = typeof cp.bytesTotal === "number" ? cp.bytesTotal : null;
+  const bytesDownloaded = typeof cp.bytesDownloaded === "number" ? cp.bytesDownloaded : null;
+  const bps = typeof cp.bytesPerSecond === "number" ? cp.bytesPerSecond : null;
+  const eta = typeof cp.etaSeconds === "number" ? cp.etaSeconds : null;
+  const pct =
+    job.progress == null
+      ? null
+      : Math.round(Math.min(1, Math.max(0, job.progress)) * 1000) / 10;
+
+  const parts: string[] = [phase];
+  if (pct != null) parts[0] = `${phase} · ${pct}%`;
+  if (filesTotal != null && filesCompleted != null) {
+    parts.push(`${filesCompleted} / ${filesTotal} files`);
+  }
+  if (bytesDownloaded != null) {
+    parts.push(
+      bytesTotal != null
+        ? `${formatBytes(bytesDownloaded)} / ${formatBytes(bytesTotal)}`
+        : `${formatBytes(bytesDownloaded)} downloaded (total unknown)`,
+    );
+  }
+  const rate = formatRate(bps);
+  if (rate) parts.push(rate);
+  const etaLabel = formatEta(eta);
+  if (etaLabel) parts.push(`ETA ${etaLabel}`);
+  return parts.join(" · ");
 }
 
 function EmbeddingsCell({ emb }: { emb: DhEmbedding }) {
@@ -286,8 +385,6 @@ export function DatasetsPage() {
   const [hfRepo, setHfRepo] = useState("");
   const [hfRevision, setHfRevision] = useState("main");
   const [hfToken, setHfToken] = useState("");
-  const [hfFiles, setHfFiles] = useState<HfDatasetFile[]>([]);
-  const [hfFilename, setHfFilename] = useState("");
 
   const liveRows = useMemo(
     () => datasets.map((ds) => recordToRow(ds, jobs)),
@@ -412,12 +509,13 @@ export function DatasetsPage() {
             : 20
           : Math.round(Math.min(1, Math.max(0, j.progress)) * 100);
       const dsName = datasets.find((d) => d.datasetId === j.datasetId)?.name ?? j.datasetId ?? "dataset";
+      const detail = jobProgressDetail(j) || dsName;
       return {
         id: j.jobId,
         title: j.jobType.replace(/_/g, " "),
-        detail: dsName,
+        detail,
         pct,
-        eta: j.phase ? String(j.phase) : relativeTime(j.updatedAt),
+        eta: j.phase ? phaseLabel(j.phase) : relativeTime(j.updatedAt),
         tone: (j.jobType.toLowerCase().includes("index") ? "cyan" : "purple") as "cyan" | "purple" | "blue",
         icon: j.jobType.toLowerCase().includes("index") ? "brain" : "pulse",
       };
@@ -478,10 +576,8 @@ export function DatasetsPage() {
       if (res.datasets[0] && !activeId) setActiveId(res.datasets[0].datasetId);
       if (opts?.quiet) setError(null);
     } catch (err) {
-      if (!opts?.quiet) {
-        setError(errMsg(err, "Failed to load datasets"));
-        setDatasets([]);
-      }
+      setError(errMsg(err, "Failed to load datasets"));
+      if (!opts?.quiet) setDatasets([]);
     } finally {
       if (!opts?.quiet) setLoading(false);
     }
@@ -518,9 +614,11 @@ export function DatasetsPage() {
         }
         return next;
       });
+      return next;
     } catch (err) {
       jobsFailRef.current += 1;
       setJobsError(errMsg(err, "Failed to load dataset jobs"));
+      return [] as DatasetJob[];
     }
   }, []);
 
@@ -529,6 +627,7 @@ export function DatasetsPage() {
     void loadJobs();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- initial load
 
+  // Adaptive job polling for the Dataset Activity console.
   useEffect(() => {
     let cancelled = false;
 
@@ -646,48 +745,25 @@ export function DatasetsPage() {
     }, "Local import queued");
   }
 
-  async function onListHf() {
+  async function onImportHf() {
     if (!hfRepo.trim()) {
       toast("Repository id is required");
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await api.listHuggingFaceDatasetFiles({
-        repositoryId: hfRepo.trim(),
-        revision: hfRevision.trim() || "main",
-        token: hfToken.trim() || null,
-      });
-      setHfFiles(res.files);
-      if (res.files[0]) {
-        setHfFilename(String(res.files[0].path ?? res.files[0].filename ?? ""));
-      }
-      if (res.files.length === 0) toast("No files returned");
-    } catch (err) {
-      toast(errMsg(err, "HuggingFace list failed"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onImportHf() {
-    if (!hfRepo.trim() || !hfFilename.trim()) {
-      toast("Repository and filename are required");
       return;
     }
     await withBusy(async () => {
       const res = await api.importDatasetHuggingFace({
         repositoryId: hfRepo.trim(),
-        filename: hfFilename.trim(),
         revision: hfRevision.trim() || "main",
         token: hfToken.trim() || null,
         materialize: true,
       });
       setPreferredJobId(res.job.jobId);
       setModal(null);
+      setHfRepo("");
+      setHfToken("");
       await loadJobs();
       await loadDatasets({ quiet: true });
-    }, "HuggingFace import queued");
+    }, "Hugging Face repository import queued");
   }
 
   async function onCancelDatasetJob(jobId: string) {
@@ -950,6 +1026,8 @@ export function DatasetsPage() {
                       <td>
                         <span className={`lv-dh-status is-${row.status}`}>
                           {row.status === "ready" || row.status === "offline" ? (
+                            <span className="lv-dh-dot" aria-hidden="true" />
+                          ) : row.status === "failed" || row.status === "cancelled" ? (
                             <span className="lv-dh-dot" aria-hidden="true" />
                           ) : (
                             <span className="lv-dh-spin" aria-hidden="true" />
@@ -1324,15 +1402,15 @@ export function DatasetsPage() {
             {modal === "hf" ? (
               <>
                 <h2 id="lv-dh-modal-title">Connect Hugging Face</h2>
-                <p>List files from a repository, then queue an import job.</p>
+                <p>Import an entire dataset repository in one action. All data shards are discovered automatically.</p>
                 <div className="lv-dh-form">
                   <div className="lv-dh-field">
-                    <label htmlFor="dh-hf-repo">Repository id</label>
+                    <label htmlFor="dh-hf-repo">Repository ID</label>
                     <input
                       id="dh-hf-repo"
                       value={hfRepo}
                       onChange={(e) => setHfRepo(e.target.value)}
-                      placeholder="org/dataset"
+                      placeholder="owner/dataset"
                     />
                   </div>
                   <div className="lv-dh-field">
@@ -1341,52 +1419,20 @@ export function DatasetsPage() {
                       id="dh-hf-rev"
                       value={hfRevision}
                       onChange={(e) => setHfRevision(e.target.value)}
+                      placeholder="main"
                     />
                   </div>
                   <div className="lv-dh-field">
-                    <label htmlFor="dh-hf-token">Token (optional)</label>
+                    <label htmlFor="dh-hf-token">Access token (optional)</label>
                     <input
                       id="dh-hf-token"
                       type="password"
                       value={hfToken}
                       onChange={(e) => setHfToken(e.target.value)}
                       autoComplete="off"
+                      placeholder="********"
                     />
                   </div>
-                  <div className="lv-dh-modal-actions">
-                    <button type="button" className="lv-dh-btn" disabled={busy} onClick={() => void onListHf()}>
-                      List files
-                    </button>
-                  </div>
-                  {hfFiles.length > 0 ? (
-                    <div className="lv-dh-field">
-                      <label htmlFor="dh-hf-file">Filename</label>
-                      <select
-                        id="dh-hf-file"
-                        value={hfFilename}
-                        onChange={(e) => setHfFilename(e.target.value)}
-                      >
-                        {hfFiles.map((f) => {
-                          const name = String(f.path ?? f.filename ?? "");
-                          return (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="lv-dh-field">
-                      <label htmlFor="dh-hf-file-manual">Filename</label>
-                      <input
-                        id="dh-hf-file-manual"
-                        value={hfFilename}
-                        onChange={(e) => setHfFilename(e.target.value)}
-                        placeholder="data/train.jsonl"
-                      />
-                    </div>
-                  )}
                   <div className="lv-dh-modal-actions">
                     <button type="button" className="lv-dh-btn" disabled={busy} onClick={() => setModal(null)}>
                       Cancel
@@ -1394,10 +1440,10 @@ export function DatasetsPage() {
                     <button
                       type="button"
                       className="lv-dh-btn lv-dh-btn-gold"
-                      disabled={busy || !hfRepo.trim() || !hfFilename.trim()}
+                      disabled={busy || !hfRepo.trim()}
                       onClick={() => void onImportHf()}
                     >
-                      Import from Hugging Face
+                      Import Entire Dataset
                     </button>
                   </div>
                 </div>

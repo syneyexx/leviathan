@@ -92,40 +92,68 @@ export function downloadSummary(job: DatasetJob): DatasetJobDownloadSummary | nu
   const cp = job.checkpoint;
   const cfg = job.config ?? {};
   if (!cp && job.jobType !== "import_hf") return null;
-  const filename = (cp?.filename as string | undefined) ?? (cfg.filename as string | undefined) ?? null;
+  const fileCp = (cp?.file && typeof cp.file === "object" ? cp.file : null) as DatasetJob["checkpoint"];
+  const manifest = (cp?.manifestSummary && typeof cp.manifestSummary === "object"
+    ? cp.manifestSummary
+    : {}) as Record<string, unknown>;
+
+  const asNum = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+    return null;
+  };
+
+  const filename =
+    (cp?.filename as string | undefined) ??
+    (cp?.relativePath as string | undefined) ??
+    (fileCp?.filename as string | undefined) ??
+    (cfg.filename as string | undefined) ??
+    null;
+
   const bytesDownloaded =
-    typeof cp?.bytesDownloaded === "number"
-      ? cp.bytesDownloaded
-      : typeof cp?.bytesDownloaded === "string"
-        ? Number(cp.bytesDownloaded)
-        : null;
+    asNum(cp?.bytesDownloaded) ?? asNum(fileCp?.bytesDownloaded) ?? asNum(manifest.bytesDownloaded);
   const bytesTotal =
-    typeof cp?.totalBytes === "number"
-      ? cp.totalBytes
-      : cp?.totalBytes == null
-        ? null
-        : Number(cp.totalBytes);
-  return {
-    repositoryId: (cp?.repositoryId as string | undefined) ?? (cfg.repositoryId as string | undefined) ?? null,
-    revision: (cp?.revision as string | undefined) ?? (cfg.revision as string | undefined) ?? null,
-    filename,
-    bytesDownloaded: Number.isFinite(bytesDownloaded as number) ? (bytesDownloaded as number) : null,
-    bytesTotal: Number.isFinite(bytesTotal as number) ? (bytesTotal as number) : null,
-    filesTotal: filename ? 1 : null,
-    filesCompleted:
-      filename &&
-      typeof bytesDownloaded === "number" &&
-      typeof bytesTotal === "number" &&
-      Number.isFinite(bytesTotal) &&
-      bytesTotal > 0
+    asNum(cp?.bytesTotal) ??
+    asNum(cp?.totalBytes) ??
+    asNum(fileCp?.totalBytes) ??
+    asNum(fileCp?.bytesTotal) ??
+    asNum(manifest.bytesTotal);
+
+  let filesTotal = asNum(cp?.filesTotal) ?? asNum(manifest.filesTotal);
+  let filesCompleted = asNum(cp?.filesCompleted) ?? asNum(manifest.filesCompleted);
+  if (filesTotal == null && filename) {
+    filesTotal = 1;
+    filesCompleted =
+      bytesDownloaded != null && bytesTotal != null && bytesTotal > 0
         ? bytesDownloaded >= bytesTotal
           ? 1
           : 0
-        : null,
-    attempts: typeof cp?.attempts === "number" ? cp.attempts : null,
-    lastHttpStatus: typeof cp?.lastStatus === "number" ? cp.lastStatus : null,
-    rateLimitEvents: typeof cp?.rateLimitEvents === "number" ? cp.rateLimitEvents : null,
-    etag: (cp?.etag as string | null | undefined) ?? null,
+        : null;
+  }
+
+  return {
+    repositoryId:
+      (cp?.repositoryId as string | undefined) ??
+      (fileCp?.repositoryId as string | undefined) ??
+      (cfg.repositoryId as string | undefined) ??
+      null,
+    revision:
+      (cp?.revision as string | undefined) ??
+      (fileCp?.revision as string | undefined) ??
+      (cfg.revision as string | undefined) ??
+      null,
+    filename,
+    bytesDownloaded,
+    bytesTotal,
+    filesTotal,
+    filesCompleted,
+    attempts: asNum(cp?.attempts) ?? asNum(fileCp?.attempts),
+    lastHttpStatus:
+      asNum(cp?.lastHttpStatus) ?? asNum(cp?.lastStatus) ?? asNum(fileCp?.lastStatus),
+    rateLimitEvents: asNum(cp?.rateLimitEvents) ?? asNum(fileCp?.rateLimitEvents),
+    etag: (cp?.etag as string | null | undefined) ?? (fileCp?.etag as string | null | undefined) ?? null,
+    bytesPerSecond: asNum(cp?.bytesPerSecond),
+    etaSeconds: asNum(cp?.etaSeconds),
   };
 }
 
@@ -314,6 +342,19 @@ export function entriesFromJob(job: DatasetJob, prev?: DatasetJob | null): Datas
           (dl?.rateLimitEvents != null ? ` · rate-limit events ${dl.rateLimitEvents}` : ""),
       ),
       retryCount: dl?.attempts ?? undefined,
+    });
+  }
+
+  if (phase === "discovering" || phase === "planning") {
+    push({
+      key: `phase:${phase}`,
+      timestamp: job.updatedAt,
+      level: "info",
+      stage: phase === "discovering" ? "DISCOVERING" : "PLAN",
+      message:
+        phase === "discovering"
+          ? "Repository discovery started"
+          : "Repository download plan ready",
     });
   }
 

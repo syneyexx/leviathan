@@ -27,7 +27,7 @@ def _raise(exc: DatasetError) -> None:
 
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB per request; larger corpora use local/HF paths
-ALLOWED_UPLOAD_SUFFIXES = {".jsonl", ".ndjson", ".json", ".csv", ".tsv", ".txt", ".md", ".markdown"}
+ALLOWED_UPLOAD_SUFFIXES = {".jsonl", ".ndjson", ".json", ".csv", ".tsv", ".txt", ".md", ".markdown", ".parquet"}
 
 # Reserved first path segments that must never be captured by {dataset_id}.
 DATASETS_STATIC_SEGMENTS = frozenset(
@@ -66,7 +66,7 @@ class ImportLocalBody(BaseModel):
 
 class ImportHfBody(BaseModel):
     repositoryId: str
-    filename: str
+    filename: str | None = None  # optional; omit for full-repository import
     revision: str = "main"
     name: str | None = None
     description: str = ""
