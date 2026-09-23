@@ -15,12 +15,14 @@ def bind_default_consumers(
     function_runtime: Any | None = None,
     knowledge: Any | None = None,
     deep_recall: Any | None = None,
+    staged_retriever: Any | None = None,
     why_library: Any | None = None,
     mcp_bridge: Any | None = None,
     cognition_runtime: Any | None = None,
     agent_runtime: Any | None = None,
     coding_service: Any | None = None,
     research_service: Any | None = None,
+    dataset_service: Any | None = None,
     isolation_guard: Any | None = None,
     chaos: Any | None = None,
     model_plane: Any | None = None,
@@ -34,6 +36,7 @@ def bind_default_consumers(
     residual_orchestrator: Any | None = None,
     cortex_runtime: Any | None = None,
     residual_runtime: Any | None = None,
+    reasoning_policy_holder: Any | None = None,
 ) -> None:
     """Register apply callbacks that push hot settings into live consumers."""
 
@@ -67,6 +70,14 @@ def bind_default_consumers(
                 deep_recall.default_deep_recall_budget = int(value)
             elif hasattr(deep_recall, "budget"):
                 deep_recall.budget = int(value)
+
+        if key == "knowledge.rerank_policy":
+            if staged_retriever is not None and hasattr(staged_retriever, "rerank_policy"):
+                staged_retriever.rerank_policy = str(value)
+            if cognition_runtime is not None:
+                perception = getattr(cognition_runtime, "perception", None)
+                if perception is not None and hasattr(perception, "rerank_policy"):
+                    perception.rerank_policy = str(value)
 
         if key == "features.deep_recall" and deep_recall is not None and hasattr(deep_recall, "enabled"):
             deep_recall.enabled = bool(value) and bool(effective.features.rag_v3)
@@ -114,6 +125,24 @@ def bind_default_consumers(
             elif hasattr(cognition_runtime, "reasoning_iterative_retrieval"):
                 cognition_runtime.reasoning_iterative_retrieval = bool(value)
 
+        if key.startswith("reasoning.") and cognition_runtime is not None:
+            try:
+                from Data.modules.intelligence import ReasoningPolicy
+
+                policy = ReasoningPolicy.from_settings(effective)
+                meta = getattr(cognition_runtime, "meta", None)
+                if meta is not None and hasattr(meta, "set_policy"):
+                    meta.set_policy(policy)
+                if reasoning_policy_holder is not None:
+                    if isinstance(reasoning_policy_holder, dict):
+                        reasoning_policy_holder["policy"] = policy
+                    elif hasattr(reasoning_policy_holder, "reasoning_policy"):
+                        reasoning_policy_holder.reasoning_policy = policy
+                    elif hasattr(reasoning_policy_holder, "policy"):
+                        reasoning_policy_holder.policy = policy
+            except Exception:  # noqa: BLE001 — hot apply must not break settings plane
+                pass
+
         if agent_runtime is not None:
             if key == "features.agents_enabled" and hasattr(agent_runtime, "agents_enabled"):
                 agent_runtime.agents_enabled = bool(value)
@@ -142,10 +171,12 @@ def bind_default_consumers(
                 research_service, "auto_promote_verified_knowledge"
             ):
                 research_service.auto_promote_verified_knowledge = bool(value)
+
+        if dataset_service is not None:
             if key == "datasets.auto_index_ready_to_knowledge" and hasattr(
-                research_service, "datasets_auto_index_ready_to_knowledge"
+                dataset_service, "datasets_auto_index_ready_to_knowledge"
             ):
-                research_service.datasets_auto_index_ready_to_knowledge = bool(value)
+                dataset_service.datasets_auto_index_ready_to_knowledge = bool(value)
 
         if isolation_guard is not None and key == "network.allow_outbound":
             if hasattr(isolation_guard, "settings"):

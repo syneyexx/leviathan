@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from Data.modules.common.corpus import CorpusLayout, build_corpus_layout
 from Data.modules.knowledge import KnowledgeStore
@@ -24,6 +24,8 @@ from .types import (
 )
 from .web import UnconfiguredWebProvider, WebResearchProvider, build_web_provider, web_unavailable_reason
 
+ObservabilityEmit = Callable[..., Any]
+
 
 class ResearchService:
     def __init__(
@@ -37,10 +39,18 @@ class ResearchService:
         snapshots_root: Path | None = None,
         reports_root: Path | None = None,
         corpus: CorpusLayout | None = None,
+        assimilation_service: Any | None = None,
+        atlas_store: Any | None = None,
+        observability_emit: ObservabilityEmit | None = None,
+        auto_promote_verified_knowledge: bool = True,
     ) -> None:
         self.store = store
         self.knowledge = knowledge
         self.allow_outbound = bool(allow_outbound)
+        self.assimilation_service = assimilation_service
+        self.atlas_store = atlas_store
+        self._emit = observability_emit
+        self.auto_promote_verified_knowledge = bool(auto_promote_verified_knowledge)
         if corpus is not None:
             self.snapshots_root = corpus.research_snapshots
             self.reports_root = corpus.research_reports
@@ -76,6 +86,9 @@ class ResearchService:
         web: WebResearchProvider | None = None,
         search_endpoint: str | None = None,
         search_api_key: str | None = None,
+        assimilation_service: Any | None = None,
+        atlas_store: Any | None = None,
+        observability_emit: ObservabilityEmit | None = None,
     ) -> "ResearchService":
         corpus = build_corpus_layout(settings)
         store = ResearchStore(db_path)
@@ -83,9 +96,17 @@ class ResearchService:
         allow_outbound = bool(settings.network.allow_outbound)
         endpoint = search_endpoint
         api_key = search_api_key
+        auto_promote = True
         if hasattr(settings, "research_integration"):
             endpoint = endpoint or settings.research_integration.web_search_endpoint
             api_key = api_key if api_key is not None else settings.research_integration.web_search_api_key
+            auto_promote = bool(
+                getattr(
+                    settings.research_integration,
+                    "auto_promote_verified_knowledge",
+                    True,
+                )
+            )
         provider = web or build_web_provider(
             allow_outbound=allow_outbound,
             search_endpoint=endpoint,
@@ -97,6 +118,10 @@ class ResearchService:
             web=provider,
             allow_outbound=allow_outbound,
             corpus=corpus,
+            assimilation_service=assimilation_service,
+            atlas_store=atlas_store,
+            observability_emit=observability_emit,
+            auto_promote_verified_knowledge=auto_promote,
         )
 
     def reconfigure_web(
@@ -245,6 +270,8 @@ class ResearchService:
 
     def run(self, project_id: str) -> ResearchProject:
         self.runner.run(project_id)
+        project = self.get_project(project_id)
+        self._maybe_promote_knowledge(project)
         return self.get_project(project_id)
 
     def cancel(self, project_id: str) -> ResearchProject:
@@ -305,6 +332,8 @@ class ResearchService:
             )
         self.store.add_event(project_id, "round_started", "Resume requested")
         self.runner.run(project_id)
+        project = self.get_project(project_id)
+        self._maybe_promote_knowledge(project)
         return self.get_project(project_id)
 
     def deepen(self, project_id: str, *, extra_rounds: int = 1) -> ResearchProject:
@@ -320,7 +349,93 @@ class ResearchService:
                 http_status=409,
             )
         self.runner.run(project_id, deepen=True, extra_rounds=max(1, int(extra_rounds)))
+        project = self.get_project(project_id)
+        self._maybe_promote_knowledge(project)
         return self.get_project(project_id)
+
+    def _maybe_promote_knowledge(self, project: ResearchProject) -> None:
+        """Promote verified claims after COMPLETED. Never fails research completion."""
+        if project.status != ResearchStatus.COMPLETED:
+            return
+        if not bool(getattr(self, "auto_promote_verified_knowledge", True)):
+            return
+        if self.assimilation_service is None or self.knowledge is None:
+            return
+        if not hasattr(self.assimilation_service, "assimilate_research_project"):
+            return
+        claims = self.store.list_claims(project.project_id)
+        evidence = self.store.list_evidence(project.project_id)
+        try:
+            receipt = self.assimilation_service.assimilate_research_project(
+                project,
+                claims=claims,
+                evidence=evidence,
+                knowledge_store=self.knowledge,
+                atlas_store=self.atlas_store,
+            )
+            receipt_dict = (
+                receipt.public_dict() if hasattr(receipt, "public_dict") else dict(receipt or {})
+            )
+            project.model_profile = {
+                **dict(project.model_profile or {}),
+                "knowledge_promotion": receipt_dict,
+            }
+            self.store.save_project(project)
+            self.store.add_event(
+                project.project_id,
+                "knowledge_promoted",
+                "Research claims assimilated into knowledge",
+                {
+                    "receipt_id": receipt_dict.get("receipt_id"),
+                    "ok": receipt_dict.get("ok"),
+                    "success_count": receipt_dict.get("success_count"),
+                    "skipped_count": receipt_dict.get("skipped_count"),
+                    "failure_count": receipt_dict.get("failure_count"),
+                },
+            )
+            if self._emit is not None:
+                self._emit(
+                    "research",
+                    "knowledge_promoted",
+                    payload={
+                        "project_id": project.project_id,
+                        "receipt_id": receipt_dict.get("receipt_id"),
+                        "ok": receipt_dict.get("ok"),
+                        "success_count": receipt_dict.get("success_count"),
+                        "document_ids": list(receipt_dict.get("document_ids") or [])[:20],
+                    },
+                    success=bool(receipt_dict.get("ok")),
+                )
+        except Exception as exc:  # noqa: BLE001 — promotion must not fail research
+            error_payload = {
+                "error": f"{type(exc).__name__}: {exc}",
+                "project_id": project.project_id,
+            }
+            try:
+                project.model_profile = {
+                    **dict(project.model_profile or {}),
+                    "knowledge_promotion_error": error_payload,
+                }
+                self.store.save_project(project)
+                self.store.add_event(
+                    project.project_id,
+                    "knowledge_promotion_failed",
+                    str(exc),
+                    error_payload,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            if self._emit is not None:
+                try:
+                    self._emit(
+                        "research",
+                        "knowledge_promotion_failed",
+                        payload=error_payload,
+                        level="warning",
+                        success=False,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
     def list_events(self, project_id: str, *, limit: int = 200):
         self.get_project(project_id)

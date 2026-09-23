@@ -20,6 +20,37 @@ const EMPTY_CATEGORY_NOTES: Record<string, string> = {
   logs: "No operator-adjustable logging retention/verbosity settings are implemented yet.",
 };
 
+const INTELLIGENCE_BANNER_CATEGORIES = new Set([
+  "reasoning",
+  "knowledge_rag",
+  "memory",
+  "cognition_neuro",
+  "verification",
+  "learning_assimilation",
+]);
+
+type IntelligenceStackSummary = {
+  status?: string;
+  label?: string;
+  reasoning_mode?: string;
+  rag?: string;
+  semantic_retrieval?: string;
+  memory?: string;
+  cognition?: string;
+  neuro?: string;
+  cortex?: string;
+  residual?: string;
+  verification?: string;
+  learning?: string;
+};
+
+function stackSummaryFromHealth(health: Record<string, unknown> | null): IntelligenceStackSummary | null {
+  if (!health) return null;
+  const raw = health.stack_summary;
+  if (!raw || typeof raw !== "object") return null;
+  return raw as IntelligenceStackSummary;
+}
+
 const FALLBACK_CATEGORIES: SettingsCategory[] = [
   { id: "algemeen", label: "Algemeen", description: "App defaults", order: 1, setting_count: 0 },
   { id: "llm_gedrag", label: "LLM Gedrag", description: "Response style & limits", order: 2, setting_count: 0 },
@@ -70,11 +101,19 @@ export function SettingsPage() {
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState(sectionParam);
   const [statusLine, setStatusLine] = useState<string>("");
+  const [intelligenceHealth, setIntelligenceHealth] = useState<Record<string, unknown> | null>(null);
+  const [intelligenceHealthError, setIntelligenceHealthError] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const snapshot = await api.getSettings();
+      const [snapshot, healthResult] = await Promise.all([
+        api.getSettings(),
+        api.intelligenceHealth().then(
+          (payload) => ({ ok: true as const, payload }),
+          () => ({ ok: false as const, payload: null }),
+        ),
+      ]);
       setCategories(snapshot.categories.length ? snapshot.categories : FALLBACK_CATEGORIES);
       setSettings(snapshot.settings);
       const nextDrafts: Record<string, unknown> = {};
@@ -87,6 +126,13 @@ export function SettingsPage() {
       }
       setDrafts(nextDrafts);
       setStatusLine(`Loaded ${snapshot.settings.length} settings`);
+      if (healthResult.ok && healthResult.payload) {
+        setIntelligenceHealth(healthResult.payload);
+        setIntelligenceHealthError(false);
+      } else {
+        setIntelligenceHealth(null);
+        setIntelligenceHealthError(true);
+      }
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Failed to load settings";
       toast(message);
@@ -203,6 +249,8 @@ export function SettingsPage() {
 
   const activeCategory = categories.find((item) => item.id === activeId);
   const emptyNote = EMPTY_CATEGORY_NOTES[activeId];
+  const showIntelligenceBanner = INTELLIGENCE_BANNER_CATEGORIES.has(activeId);
+  const stackSummary = stackSummaryFromHealth(intelligenceHealth);
 
   return (
     <AppShell
@@ -261,6 +309,62 @@ export function SettingsPage() {
               </div>
               <div className="lv-settings-status">{loading ? "Loading…" : statusLine}</div>
             </div>
+
+            {showIntelligenceBanner ? (
+              <article className="lv-panel lv-settings-card span-2" role="status">
+                <div className="lv-section-label">Intelligence status</div>
+                {intelligenceHealthError || !stackSummary ? (
+                  <p className="lv-muted">Intelligence status unavailable</p>
+                ) : (
+                  <div className="lv-settings-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(9rem, 1fr))", gap: "0.5rem 1rem" }}>
+                    <div>
+                      <small className="lv-muted">Intelligence Stack</small>
+                      <div>{stackSummary.label || stackSummary.status || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Reasoning</small>
+                      <div>{stackSummary.reasoning_mode || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">RAG</small>
+                      <div>{stackSummary.rag || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Semantic Retrieval</small>
+                      <div>{stackSummary.semantic_retrieval || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Memory</small>
+                      <div>{stackSummary.memory || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Cognition</small>
+                      <div>{stackSummary.cognition || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Neuro</small>
+                      <div>{stackSummary.neuro || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Cortex</small>
+                      <div>{stackSummary.cortex || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Residual</small>
+                      <div>{stackSummary.residual || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Verification</small>
+                      <div>{stackSummary.verification || "—"}</div>
+                    </div>
+                    <div>
+                      <small className="lv-muted">Learning</small>
+                      <div>{stackSummary.learning || "—"}</div>
+                    </div>
+                  </div>
+                )}
+              </article>
+            ) : null}
 
             {activeId === "llm_studio" ? (
               <article className="lv-panel lv-settings-card span-2">

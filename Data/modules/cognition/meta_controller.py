@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from Data.modules.intelligence.policy import ReasoningPolicy
+
 from .task_model import TaskModel
 from .types import CognitiveBudgets, ReasoningMode, ReasoningStrategy, RiskClass
 
@@ -31,8 +33,47 @@ class MetaDecision:
         }
 
 
+_BUDGET_FIELDS: tuple[str, ...] = (
+    "max_wall_time_seconds",
+    "max_model_calls",
+    "max_model_tokens",
+    "max_tool_calls",
+    "max_agent_delegations",
+    "max_replans",
+    "max_retries",
+    "max_retrieval_rounds",
+    "max_parallel_workers",
+    "max_context_tokens",
+    "max_critic_passes",
+    "max_iterations",
+)
+
+
+def _cognitive_budgets_from_mapping(raw: dict[str, Any] | None) -> CognitiveBudgets | None:
+    if not isinstance(raw, dict) or not raw:
+        return None
+    defaults = CognitiveBudgets()
+    kwargs: dict[str, Any] = {}
+    for name in _BUDGET_FIELDS:
+        if name not in raw:
+            continue
+        try:
+            current = getattr(defaults, name)
+            kwargs[name] = type(current)(raw[name])
+        except (TypeError, ValueError):
+            continue
+    return CognitiveBudgets(**{**defaults.public_dict(), **kwargs})
+
+
 class MetaController:
     """Decide HOW MUCH cognition is justified."""
+
+    def __init__(self, policy: ReasoningPolicy | None = None) -> None:
+        self.policy = policy
+
+    def set_policy(self, policy: ReasoningPolicy | None) -> None:
+        """Hot-swap reasoning budget policy (settings control plane)."""
+        self.policy = policy
 
     def decide(
         self,
@@ -97,6 +138,16 @@ class MetaController:
         """Practical VoI heuristic — not academic Bayesian inference."""
         return round(expected_gain - cost - latency_penalty - risk_penalty, 4)
 
+    def _uncertainty_deep_threshold(self) -> float:
+        if self.policy is not None:
+            return float(self.policy.uncertainty_deep_threshold)
+        return 0.75
+
+    def _allow_fast_path(self) -> bool:
+        if self.policy is not None:
+            return bool(self.policy.allow_fast_path)
+        return True
+
     def _mode(
         self,
         task: TaskModel,
@@ -107,21 +158,24 @@ class MetaController:
         if user_depth:
             mapping = {m.value.lower(): m for m in ReasoningMode}
             forced = mapping.get(user_depth.strip().lower())
+            # ADAPTIVE falls through to heuristics (settings default_mode=adaptive).
             if forced and forced != ReasoningMode.ADAPTIVE:
                 if resource_pressure >= 0.8 and forced in {ReasoningMode.DEEP, ReasoningMode.MAXIMUM}:
                     return ReasoningMode.STANDARD
                 return forced
+        deep_threshold = self._uncertainty_deep_threshold()
+        allow_fast = self._allow_fast_path()
         if task.task_type == "simple_chat" and task.risk_class == RiskClass.LOW:
-            return ReasoningMode.FAST
+            return ReasoningMode.FAST if allow_fast else ReasoningMode.STANDARD
         if task.risk_class == RiskClass.CRITICAL or (
-            uncertainty >= 0.75 and task.domain in {"coding", "research"}
+            uncertainty >= deep_threshold and task.domain in {"coding", "research"}
         ):
             return ReasoningMode.DEEP if resource_pressure < 0.7 else ReasoningMode.STANDARD
         if task.legacy_plan and task.legacy_plan.complexity == "high":
             return ReasoningMode.STANDARD if resource_pressure >= 0.6 else ReasoningMode.DEEP
         if uncertainty >= 0.55 or task.domain in {"coding", "research"}:
             return ReasoningMode.STANDARD
-        return ReasoningMode.FAST
+        return ReasoningMode.FAST if allow_fast else ReasoningMode.STANDARD
 
     def _strategy(
         self,
@@ -130,6 +184,13 @@ class MetaController:
         evidence_coverage: float,
         contradiction_density: float,
     ) -> ReasoningStrategy:
+        contradiction_threshold = 0.3
+        if self.policy is not None:
+            contradiction_threshold = float(self.policy.contradiction_replan_threshold)
+        min_evidence = 0.3
+        if self.policy is not None:
+            min_evidence = float(self.policy.minimum_evidence_coverage)
+
         if task.task_type == "simple_chat":
             return ReasoningStrategy.DIRECT
         if task.domain == "coding":
@@ -137,12 +198,12 @@ class MetaController:
                 return ReasoningStrategy.CODING_REPAIR
             return ReasoningStrategy.DEBUG_LOOP if uncertainty >= 0.55 else ReasoningStrategy.PLAN_EXECUTE_VERIFY
         if task.domain == "research":
-            if contradiction_density >= 0.3:
+            if contradiction_density >= contradiction_threshold:
                 return ReasoningStrategy.COMPARE_ALTERNATIVES
             return ReasoningStrategy.RESEARCH_SYNTHESIS
         if task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL}:
             return ReasoningStrategy.HIGH_RISK_VERIFY
-        if evidence_coverage < 0.3 and (task.legacy_plan.use_knowledge if task.legacy_plan else True):
+        if evidence_coverage < min_evidence and (task.legacy_plan.use_knowledge if task.legacy_plan else True):
             return ReasoningStrategy.RETRIEVE_THEN_ANSWER
         if task.side_effect_expectations:
             return ReasoningStrategy.TOOL_DRIVEN
@@ -150,13 +211,29 @@ class MetaController:
             return ReasoningStrategy.HYPOTHESIS_TEST
         return ReasoningStrategy.DIRECT
 
-    def _budgets(
-        self,
-        mode: ReasoningMode,
-        task: TaskModel,
-        resource_pressure: float,
-    ) -> CognitiveBudgets:
-        presets: dict[ReasoningMode, CognitiveBudgets] = {
+    def _policy_budgets(self, mode: ReasoningMode) -> CognitiveBudgets | None:
+        if self.policy is None:
+            return None
+        raw: dict[str, Any] | None = None
+        if hasattr(self.policy, "budgets_for"):
+            try:
+                raw = self.policy.budgets_for(mode.value)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                raw = None
+        if raw is None and hasattr(self.policy, "budget_for"):
+            try:
+                raw = self.policy.budget_for(mode.value)
+            except Exception:  # noqa: BLE001
+                raw = None
+        if raw is None and isinstance(self.policy.mode_budgets, dict):
+            key = mode.value.upper()
+            candidate = self.policy.mode_budgets.get(key) or self.policy.mode_budgets.get(mode.value)
+            if isinstance(candidate, dict):
+                raw = dict(candidate)
+        return _cognitive_budgets_from_mapping(raw)
+
+    def _hardcoded_presets(self) -> dict[ReasoningMode, CognitiveBudgets]:
+        return {
             ReasoningMode.FAST: CognitiveBudgets(
                 max_wall_time_seconds=30.0,
                 max_model_calls=1,
@@ -215,7 +292,32 @@ class MetaController:
             ),
             ReasoningMode.ADAPTIVE: CognitiveBudgets(),
         }
-        base = presets.get(mode, CognitiveBudgets())
+
+    def _budgets(
+        self,
+        mode: ReasoningMode,
+        task: TaskModel,
+        resource_pressure: float,
+    ) -> CognitiveBudgets:
+        base = self._policy_budgets(mode)
+        if base is None:
+            base = self._hardcoded_presets().get(mode, CognitiveBudgets())
+        elif self.policy is not None:
+            # Global caps from settings-backed policy.
+            base = CognitiveBudgets(
+                max_wall_time_seconds=base.max_wall_time_seconds,
+                max_model_calls=base.max_model_calls,
+                max_model_tokens=base.max_model_tokens,
+                max_tool_calls=base.max_tool_calls,
+                max_agent_delegations=base.max_agent_delegations,
+                max_replans=min(base.max_replans, int(self.policy.max_replans_global)),
+                max_retries=min(base.max_retries, int(self.policy.max_retries_global)),
+                max_retrieval_rounds=base.max_retrieval_rounds,
+                max_parallel_workers=base.max_parallel_workers,
+                max_context_tokens=base.max_context_tokens,
+                max_critic_passes=base.max_critic_passes,
+                max_iterations=base.max_iterations,
+            )
         if resource_pressure >= 0.7:
             base = CognitiveBudgets(
                 max_wall_time_seconds=min(base.max_wall_time_seconds, 60.0),
@@ -256,8 +358,13 @@ class MetaController:
         evidence_coverage: float,
         contradiction_density: float,
     ) -> dict[str, float]:
+        min_evidence = 0.3
+        contradiction_threshold = 0.3
+        if self.policy is not None:
+            min_evidence = float(self.policy.minimum_evidence_coverage)
+            contradiction_threshold = float(self.policy.contradiction_replan_threshold)
         retrieve = self.estimate_value_of_action(
-            expected_gain=min(1.0, uncertainty + (0.4 if evidence_coverage < 0.3 else 0.1)),
+            expected_gain=min(1.0, uncertainty + (0.4 if evidence_coverage < min_evidence else 0.1)),
             cost=0.2,
             latency_penalty=0.05,
         )
@@ -284,7 +391,7 @@ class MetaController:
                 ),
             )
         replan = self.estimate_value_of_action(
-            expected_gain=0.5 if contradiction_density >= 0.3 else 0.15,
+            expected_gain=0.5 if contradiction_density >= contradiction_threshold else 0.15,
             cost=0.25,
         )
         return {

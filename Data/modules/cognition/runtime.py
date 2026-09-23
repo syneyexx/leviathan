@@ -150,6 +150,7 @@ class CognitiveRuntime:
         task_builder: TaskModelBuilder | None = None,
         perception: PerceptionService | None = None,
         meta: MetaController | None = None,
+        policy: Any | None = None,
         planner: CognitivePlanner | None = None,
         actions: ActionSelector | None = None,
         context_builder: ContextBuilderV3 | None = None,
@@ -176,7 +177,14 @@ class CognitiveRuntime:
 
         self.task_builder = task_builder or TaskModelBuilder()
         self.perception = perception or PerceptionService(neuro_advisor=neuro_advisor)
-        self.meta = meta or MetaController()
+        if meta is not None:
+            self.meta = meta
+            if policy is not None and hasattr(self.meta, "set_policy"):
+                self.meta.set_policy(policy)
+        elif policy is not None:
+            self.meta = MetaController(policy=policy)
+        else:
+            self.meta = MetaController()
         self.planner = planner or CognitivePlanner()
         self.broker = broker or CapabilityBroker()
         self.actions = actions or ActionSelector(self.broker)
@@ -207,17 +215,21 @@ class CognitiveRuntime:
         shadow: bool | None = None,
         constraints: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        user_requested_depth: str | None = None,
         run: bool = True,
     ) -> dict[str, Any]:
         if not self.enabled:
             raise CognitionFeatureDisabled("LEVIATHAN_FEATURE_COGNITION is disabled")
         use_shadow = self.shadow_default if shadow is None else shadow
+        meta_payload = dict(metadata or {})
+        if user_requested_depth:
+            meta_payload["user_requested_depth"] = str(user_requested_depth)
         task = self.task_builder.build(
             message,
             has_knowledge=has_knowledge,
             conversation_id=conversation_id,
             constraints=constraints,
-            metadata=metadata,
+            metadata=meta_payload,
         )
         run_id = str(uuid.uuid4())
         task.run_id = run_id
@@ -508,6 +520,8 @@ class CognitiveRuntime:
             conversation_id=(state.task.metadata or {}).get("conversation_id"),
             run_id=state.run_id,
             include_neuro=self.neuro_enabled,
+            experience_learning=self.experience_learning,
+            domain=state.task.domain,
             system_state={
                 "resource_pressure": self.resource_pressure_fn(),
                 "delegation_handlers": self.delegation.available(),
@@ -551,6 +565,23 @@ class CognitiveRuntime:
                     source_type=EpistemicType.NEURAL_ASSOCIATION,
                     priority=0.25,
                 )
+            # Procedural experience CONTEXT — advisory HYPOTHESIS only, never FACT.
+            for item in snap.by_type(EpistemicType.HYPOTHESIS)[:3]:
+                if not (item.payload or {}).get("kind") == "procedural_experience_context":
+                    continue
+                state.beliefs.add(
+                    item.summary,
+                    category=BeliefCategory.HYPOTHESIS,
+                    confidence=min(0.35, item.confidence),
+                    source_type=EpistemicType.HYPOTHESIS,
+                    status=BeliefStatus.INFERRED,
+                )
+                state.working_memory.upsert(
+                    "experience",
+                    item.summary,
+                    source_type=EpistemicType.HYPOTHESIS,
+                    priority=0.2,
+                )
             self._emit(state, "belief_revised", state.beliefs.public_dict())
 
     def _meta_decide(self, state: CognitiveRunState) -> MetaDecision:
@@ -562,9 +593,12 @@ class CognitiveRuntime:
         coverage = min(1.0, evidence_items / 5.0)
         contradictions = len(state.beliefs.contradiction_pairs)
         density = min(1.0, contradictions / 3.0)
-        depth = None
-        if self.adaptive_depth:
-            depth = "ADAPTIVE"
+        # Prefer explicit depth from submit/settings; ADAPTIVE falls through to heuristics.
+        depth = (state.task.metadata or {}).get("user_requested_depth")
+        if not depth and self.adaptive_depth:
+            policy = getattr(self.meta, "policy", None)
+            policy_default = getattr(policy, "default_mode", None) if policy is not None else None
+            depth = str(policy_default) if policy_default else "ADAPTIVE"
         return self.meta.decide(
             state.task,
             uncertainty=state.beliefs.uncertainty() if self.belief_enabled else state.task.initial_uncertainty,
@@ -1306,6 +1340,45 @@ class CognitiveRuntime:
             admitted = self.experience_store.admit(exp)
             state.experience = admitted.public_dict()
             self._emit(state, "experience_admitted" if admitted.admitted else "experience_rejected", state.experience)
+
+        # Active-learning candidates on high uncertainty or verification failure — never auto-train.
+        uncertainty = (
+            state.beliefs.uncertainty()
+            if self.belief_enabled
+            else float(getattr(state.task, "initial_uncertainty", 0.5) or 0.5)
+        )
+        verification_failed = state.verification_passed is False
+        high_uncertainty = uncertainty >= 0.75
+        if verification_failed or high_uncertainty or decision.status == CognitiveRunStatus.FAILED:
+            reason = (
+                "verification_failed"
+                if verification_failed
+                else "run_failed"
+                if decision.status == CognitiveRunStatus.FAILED
+                else "high_uncertainty"
+            )
+            candidate = {
+                "run_id": state.run_id,
+                "task_id": state.task.task_id,
+                "domain": state.task.domain,
+                "goal": state.task.goal[:300],
+                "status": decision.status.value,
+                "uncertainty": uncertainty,
+                "verification_status": (
+                    "FAILED"
+                    if verification_failed
+                    else "PASSED"
+                    if state.verification_passed is True
+                    else "UNMEASURED"
+                ),
+                "reason": reason,
+                "kind": "failure" if verification_failed or decision.status == CognitiveRunStatus.FAILED else "uncertainty",
+                "auto_promote_forbidden": True,
+                "requires_human_or_policy_approval": True,
+            }
+            if hasattr(self.experience_store, "record_active_learning_candidate"):
+                candidate = self.experience_store.record_active_learning_candidate(candidate)
+            self._emit(state, "active_learning_candidate", candidate)
 
         self._persist_update(state, final=True)
 

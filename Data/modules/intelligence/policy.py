@@ -91,6 +91,10 @@ class ReasoningPolicy:
         budgets = self.mode_budgets.get(key) or self.mode_budgets.get("STANDARD") or {}
         return dict(budgets)
 
+    def budgets_for(self, mode: str) -> dict[str, Any]:
+        """Alias for MetaController / callers that prefer plural naming."""
+        return self.budget_for(mode)
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "default_mode": self.default_mode,

@@ -88,8 +88,16 @@ class AssimilationReceipt:
 class KnowledgeAssimilationService:
     """Quality-gated promotion into the existing KnowledgeStore / AtlasStore."""
 
-    def __init__(self, *, database_path: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        database_path: Path | str | None = None,
+        knowledge_store: Any | None = None,
+        atlas_store: Any | None = None,
+    ) -> None:
         self.database_path = Path(database_path) if database_path else None
+        self.knowledge_store = knowledge_store
+        self.atlas_store = atlas_store
         self._lock = threading.RLock()
         self._memory_receipts: list[AssimilationReceipt] = []
         if self.database_path is not None:
@@ -215,10 +223,12 @@ class KnowledgeAssimilationService:
         *,
         claims: Sequence[Any],
         evidence: Sequence[Any] | None = None,
-        knowledge_store: Any,
+        knowledge_store: Any | None = None,
         atlas_store: Any | None = None,
     ) -> AssimilationReceipt:
         """Promote evidence-backed, non-contradicted claims into KnowledgeStore."""
+        knowledge_store = knowledge_store if knowledge_store is not None else self.knowledge_store
+        atlas_store = atlas_store if atlas_store is not None else self.atlas_store
         project_id = _project_id(project)
         receipt = AssimilationReceipt(
             receipt_id=str(uuid.uuid4()),
@@ -359,7 +369,7 @@ class KnowledgeAssimilationService:
     def assimilate_dataset_version(
         self,
         *,
-        knowledge_store: Any,
+        knowledge_store: Any | None = None,
         dataset_id: str,
         version_id: str,
         storage_path: Path | str | None = None,
@@ -368,6 +378,7 @@ class KnowledgeAssimilationService:
         max_records: int | None = None,
     ) -> AssimilationReceipt:
         """Thin-wrap datasets.indexing into a truthful assimilation receipt."""
+        knowledge_store = knowledge_store if knowledge_store is not None else self.knowledge_store
         receipt = AssimilationReceipt(
             receipt_id=str(uuid.uuid4()),
             kind="dataset_version",

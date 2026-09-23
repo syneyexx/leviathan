@@ -108,6 +108,14 @@ class DatasetService:
         self._hf_tokens: dict[str, str | None] = {}
         self.annotation_queue = AnnotationQueue()
         self.runner = DatasetJobRunner(store, self._build_handlers())
+        # Hot-bindable; defaults from research_integration settings.
+        self.datasets_auto_index_ready_to_knowledge = bool(
+            getattr(
+                getattr(self.settings, "research_integration", None),
+                "datasets_auto_index_ready_to_knowledge",
+                True,
+            )
+        )
 
     @classmethod
     def from_settings(
@@ -444,7 +452,7 @@ class DatasetService:
         size = int(ver.byte_size or 0)
         embedding_status = None
         if self.knowledge is not None:
-            embeddings = getattr(self.knowledge, "embeddings", None)
+            embeddings = getattr(self.knowledge, "embedding_provider", None)
             if embeddings is not None and hasattr(embeddings, "status"):
                 embedding_status = embeddings.status()
         pf = offline_index_preflight(
@@ -1255,7 +1263,7 @@ class DatasetService:
             content_hash=outcome["contentHash"],
             byte_size=outcome.get("byteSize"),
         )
-        return {
+        result = {
             "versionId": version.version_id,
             "contentHash": outcome["contentHash"],
             "rowCount": outcome["rowCount"],
@@ -1263,6 +1271,103 @@ class DatasetService:
             "validation": validation,
             "storagePath": str(dest),
         }
+        if validation.get("valid"):
+            auto = self._maybe_auto_index_ready_version(dataset_id, version.version_id)
+            if auto is not None:
+                result["autoIndex"] = auto
+        return result
+
+    def _maybe_auto_index_ready_version(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        validation: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Enqueue knowledge index when a version becomes READY (best-effort gates).
+
+        Contamination/quality gates are operator-driven and not always attached to
+        version metadata; when absent we still auto-index and document that fact.
+        """
+        if not bool(getattr(self, "datasets_auto_index_ready_to_knowledge", True)):
+            return None
+        if self.knowledge is None:
+            return {
+                "enqueued": False,
+                "reason": "no_knowledge",
+                "truth": {"contamination_quality_gates_best_effort": True},
+            }
+        try:
+            ver = self.get_version(version_id)
+        except Exception:  # noqa: BLE001
+            return {"enqueued": False, "reason": "version_missing"}
+        if ver.status != VersionStatus.READY:
+            return {"enqueued": False, "reason": "not_ready"}
+        if ver.kind not in _INDEXABLE_VERSION_KINDS:
+            return {"enqueued": False, "reason": "kind_not_indexable", "kind": ver.kind.value}
+        report = validation if validation is not None else dict(ver.validation or {})
+        if report and report.get("valid") is False:
+            return {"enqueued": False, "reason": "validation_failed"}
+        meta = dict(ver.metadata or {})
+        # Soft quarantine / contamination signals when present on the version.
+        if meta.get("quarantined") or meta.get("quarantine"):
+            return {"enqueued": False, "reason": "quarantined"}
+        contamination = meta.get("contamination") or report.get("contamination")
+        if isinstance(contamination, dict) and contamination.get("blocked"):
+            return {"enqueued": False, "reason": "contamination_blocked"}
+        quality = meta.get("quality") or report.get("quality")
+        if isinstance(quality, dict) and quality.get("blocked"):
+            return {"enqueued": False, "reason": "quality_blocked"}
+        # Skip if an index for this version is already READY / INDEXING / PENDING.
+        for idx in self.store.list_indexes(dataset_id):
+            if idx.version_id == version_id and idx.status in {
+                IndexStatus.READY,
+                IndexStatus.INDEXING,
+                IndexStatus.PENDING,
+            }:
+                return {
+                    "enqueued": False,
+                    "reason": "already_indexed",
+                    "indexId": idx.index_id,
+                    "indexStatus": idx.status.value,
+                    "truth": {"contamination_quality_gates_best_effort": True},
+                }
+        # Also skip when an INDEX job is already queued/running for this version.
+        for job in self.store.list_jobs(dataset_id=dataset_id, limit=50):
+            if (
+                job.version_id == version_id
+                and job.job_type == DatasetJobType.INDEX
+                and job.status
+                in {
+                    DatasetJobStatus.QUEUED,
+                    DatasetJobStatus.RUNNING,
+                }
+            ):
+                return {
+                    "enqueued": False,
+                    "reason": "already_indexed",
+                    "jobId": job.job_id,
+                    "jobStatus": job.status.value,
+                    "truth": {"contamination_quality_gates_best_effort": True},
+                }
+        try:
+            job = self.enqueue_index(dataset_id, version_id)
+            return {
+                "enqueued": True,
+                "jobId": job.job_id,
+                "versionId": job.version_id,
+                "truth": {
+                    "contamination_quality_gates_best_effort": True,
+                    "auto_index_after_ready": True,
+                },
+            }
+        except Exception as exc:  # noqa: BLE001 — never fail materialize/ready path
+            return {
+                "enqueued": False,
+                "reason": "enqueue_failed",
+                "error": redact_secrets(str(exc)),
+                "truth": {"contamination_quality_gates_best_effort": True},
+            }
 
     def _handle_materialize(self, job: DatasetJob) -> dict[str, Any]:
         assert job.dataset_id
@@ -1326,13 +1431,36 @@ class DatasetService:
             content_hash=content_hash,
             byte_size=byte_size,
         )
-        return self.get_version(version.version_id)
+        ready = self.get_version(version.version_id)
+        self._maybe_auto_index_ready_version(
+            dataset_id,
+            ready.version_id,
+            validation=dict(ready.validation or {}),
+        )
+        return ready
 
     def _handle_validate(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
         ver, records = self._load_version_records(job.version_id)
         report = validate_records(records)
-        self.store.update_version(ver.version_id, validation=report)
+        updates: dict[str, Any] = {"validation": report}
+        # Promote to READY when validation passes for indexable versions still building/pending.
+        if report.get("valid") and ver.status in {
+            VersionStatus.PENDING,
+            VersionStatus.BUILDING,
+            VersionStatus.READY,
+        }:
+            if ver.status != VersionStatus.READY and ver.kind in _INDEXABLE_VERSION_KINDS:
+                updates["status"] = VersionStatus.READY
+        self.store.update_version(ver.version_id, **updates)
+        if report.get("valid"):
+            auto = self._maybe_auto_index_ready_version(
+                job.dataset_id,
+                ver.version_id,
+                validation=report,
+            )
+            if auto is not None:
+                report = {**report, "autoIndex": auto}
         return report
 
     def _handle_dedupe(self, job: DatasetJob) -> dict[str, Any]:
@@ -1641,7 +1769,7 @@ class DatasetService:
         offline_only = bool(job.config.get("offlineOnly"))
         source_fingerprint = job.config.get("sourceFingerprint")
         embedding_status = None
-        embeddings = getattr(self.knowledge, "embeddings", None)
+        embeddings = getattr(self.knowledge, "embedding_provider", None)
         if embeddings is not None and hasattr(embeddings, "status"):
             embedding_status = embeddings.status()
         if offline_only:
