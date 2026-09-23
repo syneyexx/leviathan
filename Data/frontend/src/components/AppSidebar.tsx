@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { isMainMenuActive, MAIN_MENU } from "../navigation/menu";
-import { sidebarReferenceArt } from "../assets/sidebarReference";
 import "../styles/sidebar-reference.css";
 import { BrandMark } from "./BrandMark";
 
@@ -111,11 +110,13 @@ export function AppSidebar({ open }: AppSidebarProps) {
       <div className="lv-sidebar-footer">
         <img
           className="lv-sidebar-footer-mark"
-          src={sidebarReferenceArt}
+          src="/assets/sidebar-reference.svg"
           alt="Discipline creates freedom"
-          width={150}
-          height={144}
+          width={176}
+          height={155}
           draggable={false}
+          loading="eager"
+          decoding="sync"
         />
       </div>
     </aside>
