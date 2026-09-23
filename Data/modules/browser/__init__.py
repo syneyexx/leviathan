@@ -1,4 +1,4 @@
-"""Browser automation — fixture worker + honest stub (Wave 5)."""
+"""Browser automation — fixture (test-only) + local DOM + optional Playwright."""
 
 from .worker import (
     BrowserAction,
@@ -10,6 +10,7 @@ from .worker import (
     BrowserSession,
     BrowserWorker,
     FixtureBrowserBackend,
+    resolve_browser_backend,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "BrowserSession",
     "BrowserWorker",
     "FixtureBrowserBackend",
+    "resolve_browser_backend",
 ]

@@ -62,6 +62,8 @@ class MediaJob:
             "truth": {
                 "no_fabricated_media_output": True,
                 "fixture_is_not_ffmpeg": True,
+                "fixture_is_not_production": True,
+                "production_capable": False,
                 "no_private_media_artifact_store": True,
             },
         }
@@ -95,6 +97,9 @@ class VideoIngestResult:
             "truth": {
                 "timestamp_citations_preserved": True,
                 "fixture_is_not_ffmpeg": True,
+                "fixture_is_not_production": True,
+                "production_capable": False,
+                "timestamps_are_fixture_derived": True,
             },
         }
 
@@ -368,7 +373,12 @@ class MediaService:
             "width": 640,
             "height": 480,
             "detail": "Fixture image generation → versioned Artifact",
-            "truth": {"uses_shared_artifact_store": True},
+            "truth": {
+                "uses_shared_artifact_store": True,
+                "fixture_is_not_ffmpeg": True,
+                "fixture_is_not_production": True,
+                "production_capable": False,
+            },
         }
 
     def _image_edit(self, args: dict[str, Any], *, run_id: str | None, request_id: str | None) -> dict[str, Any]:

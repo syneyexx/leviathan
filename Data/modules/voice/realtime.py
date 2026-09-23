@@ -57,6 +57,8 @@ class VoiceJob:
             "truth": {
                 "no_fabricated_transcripts_or_audio": True,
                 "fixture_is_not_whisper_or_tts": True,
+                "fixture_is_not_production": True,
+                "production_capable": False,
                 "uses_shared_conversation_context": True,
             },
         }
@@ -81,7 +83,9 @@ class VoiceMetrics:
             "tts_chunks": self.tts_chunks,
             "truth": {
                 "measured_when_fixture_instrumented": True,
+                "fixture_timestamps_are_not_production_metrics": True,
                 "asr_error_requires_eval_harness": True,
+                "production_capable": False,
             },
         }
 

@@ -425,6 +425,109 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.form_fill",
+            name="Browser Form Fill",
+            description="Fill form fields in the current browser session.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="form_fill",
+            input_schema={
+                "type": "object",
+                "required": ["fields"],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "fields": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.interact",),
+            metadata={
+                "tags": ["browser", "form"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.download",
+            name="Browser Download",
+            description="Download a linked resource from the current page.",
+            side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="download",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "selector": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.interact", "artifact.write"),
+            metadata={
+                "tags": ["browser", "download"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.upload",
+            name="Browser Upload",
+            description="Upload a permitted local file into a file input.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="upload",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.interact",),
+            metadata={
+                "tags": ["browser", "upload"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.verify_state",
+            name="Browser Verify State",
+            description="Verify resulting DOM state after an interaction (click ≠ completion).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="verify_state",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "predicates": {"type": "array"},
+                    "contains_text": {"type": "string"},
+                    "selector_exists": {"type": "string"},
+                    "attribute_equals": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.read",),
+            metadata={
+                "tags": ["browser", "verify"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+                "click_is_not_task_completion": True,
+            },
+        )
+    )
     # Wave 7 — media capabilities (fixture MediaService via ExecutionGateway).
     catalog.register(
         CapabilityDefinition(
@@ -448,6 +551,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "cacheable": True,
                 "idempotent": True,
                 "worker_kind": "media",
+                "fixture_is_not_production": True,
             },
         )
     )
