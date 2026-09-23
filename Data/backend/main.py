@@ -13,8 +13,9 @@ from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.backend.routes.settings import build_settings_router
-from Data.modules.settings import SettingsControlPlane
+from Data.modules.settings import DEFAULT_BEHAVIOR_PROFILE, SettingsControlPlane
 from Data.modules.settings.bindings import bind_default_consumers
+from Data.modules.common import ownership_public_dict
 from Data.modules.agents import (
     AgentFleetService,
     AgentFleetStore,
@@ -23,7 +24,13 @@ from Data.modules.agents import (
     MultiAgentCoordinator,
 )
 from Data.modules.analytics import AnalyticsService
-from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
+from Data.modules.approvals import (
+    DEFAULT_AUTHORITY_PROFILE,
+    ApprovalService,
+    ApprovalStatus,
+    ApprovalStore,
+    PolicyEngine,
+)
 from Data.modules.coding import CodingControlPlane
 from Data.backend.routes.coding import build_coding_router
 from Data.backend.routes.agents import build_agents_router
@@ -37,6 +44,7 @@ from Data.modules.execution import (
     CapabilityStatus,
     ExecutionGateway,
     build_default_catalog,
+    build_frontier_manifest,
 )
 from Data.modules.function_runtime import FunctionCallStatus, build_default_registry, FunctionRuntime
 from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
@@ -944,7 +952,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.63.0-observability", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.64.0-wave0-kernel", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -1210,6 +1218,34 @@ async def health() -> dict:
         },
         "llm": model,
     }
+
+
+@app.get("/api/architecture/ownership")
+def architecture_ownership() -> dict:
+    """Canonical ownership matrix (Wave 0 / U001–U020)."""
+    return {
+        "ownership": ownership_public_dict(),
+        "behavior_profile": DEFAULT_BEHAVIOR_PROFILE.public_dict(include_prompt=False),
+        "authority_profile": DEFAULT_AUTHORITY_PROFILE.public_dict(),
+        "truth": {
+            "behavior_is_not_authority": True,
+            "extend_over_new": True,
+            "external_first_is_not_second_architecture": True,
+        },
+    }
+
+
+@app.get("/api/architecture/capability-manifest")
+def architecture_capability_manifest() -> dict:
+    """Frontier Capability Manifest derived from the live CapabilityCatalog (U016)."""
+    manifest = build_frontier_manifest(
+        capability_catalog,
+        metadata={
+            "durable_kernel": live_settings().features.durable_kernel,
+            "version": app.version,
+        },
+    )
+    return {"manifest": manifest.public_dict()}
 
 
 @app.get("/api/metrics")

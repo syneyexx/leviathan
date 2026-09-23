@@ -20,6 +20,15 @@ class JobRecord:
     result: dict[str, Any] | None = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Wave 0 durable kernel (U005 / U006 / U010 / U017)
+    trace_id: str | None = None
+    idempotency_key: str | None = None
+    lease_owner: str | None = None
+    lease_expires_at: str | None = None
+    last_heartbeat_at: str | None = None
+    attempt_number: int = 1
+    budget: dict[str, Any] = field(default_factory=dict)
+    latency_class: str = "background"
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -35,4 +44,12 @@ class JobRecord:
             "result": self.result,
             "error": self.error,
             "metadata": self.metadata,
+            "trace_id": self.trace_id,
+            "idempotency_key": self.idempotency_key,
+            "lease_owner": self.lease_owner,
+            "lease_expires_at": self.lease_expires_at,
+            "last_heartbeat_at": self.last_heartbeat_at,
+            "attempt_number": self.attempt_number,
+            "budget": self.budget,
+            "latency_class": self.latency_class,
         }
