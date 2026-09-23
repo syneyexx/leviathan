@@ -69,6 +69,21 @@ from .types import (
 )
 from .validation import validate_records
 
+# Canonical file-backed kinds accepted by the JSONL indexer.
+# RAW (including HF repository directories) is never indexable.
+_INDEXABLE_VERSION_KINDS: tuple[VersionKind, ...] = (
+    VersionKind.MATERIALIZED,
+    VersionKind.TRANSFORMED,
+    VersionKind.SPLIT,
+    VersionKind.EXPORT,
+)
+# Preference when resolving RAW / directory-backed versions to an indexable sibling.
+_INDEX_RESOLUTION_KIND_ORDER: tuple[VersionKind, ...] = (
+    VersionKind.MATERIALIZED,
+    VersionKind.TRANSFORMED,
+    VersionKind.SPLIT,
+)
+
 
 class DatasetService:
     """Production dataset control plane (local + HF import through indexing)."""
@@ -379,18 +394,20 @@ class DatasetService:
         source_fingerprint: str | None = None,
         rebuild: bool = False,
     ) -> DatasetJob:
-        self.get_dataset(dataset_id)
-        self.get_version(version_id)
+        # Early routing validation — worker re-resolves before indexing.
+        resolved = self._resolve_indexable_version(dataset_id, version_id)
         return self.store.create_job(
             job_type=DatasetJobType.INDEX,
             dataset_id=dataset_id,
-            version_id=version_id,
+            version_id=resolved.version_id,
             config={
                 "scope": scope,
                 "maxRecords": max_records,
                 "offlineOnly": offline_only,
                 "sourceFingerprint": source_fingerprint,
                 "rebuild": rebuild,
+                "requestedVersionId": version_id,
+                "resolvedVersionId": resolved.version_id,
             },
         )
 
@@ -511,6 +528,117 @@ class DatasetService:
             if ver.storage_path:
                 return ver
         return versions[0] if versions else None
+
+    def _storage_is_indexable_file(self, storage_path: str | None) -> bool:
+        if not storage_path:
+            return False
+        path = Path(storage_path)
+        return path.is_file()
+
+    def _is_directly_indexable(self, ver: DatasetVersion) -> bool:
+        """True when a version can be passed straight to the JSONL indexer."""
+        if ver.status != VersionStatus.READY:
+            return False
+        if ver.kind == VersionKind.RAW:
+            return False
+        if ver.kind not in _INDEXABLE_VERSION_KINDS:
+            return False
+        return self._storage_is_indexable_file(ver.storage_path)
+
+    def _pick_indexable_sibling(
+        self,
+        dataset_id: str,
+        *,
+        exclude_version_id: str | None = None,
+    ) -> DatasetVersion | None:
+        """Deterministic READY file-backed sibling by preferred kind, then created_at DESC."""
+        # list_versions is ORDER BY created_at DESC — first match per kind is newest.
+        ready = [
+            v
+            for v in self.list_versions(dataset_id)
+            if v.status == VersionStatus.READY
+            and v.version_id != exclude_version_id
+            and v.kind in _INDEX_RESOLUTION_KIND_ORDER
+            and self._storage_is_indexable_file(v.storage_path)
+        ]
+        for kind in _INDEX_RESOLUTION_KIND_ORDER:
+            for ver in ready:
+                if ver.kind == kind:
+                    return ver
+        return None
+
+    def _resolve_indexable_version(
+        self,
+        dataset_id: str,
+        version_id: str,
+    ) -> DatasetVersion:
+        """Resolve a request to one authoritative file-backed indexable version.
+
+        RAW and directory-backed storage must never reach ``index_version_file``.
+        """
+        self.get_dataset(dataset_id)
+        ver = self.get_version(version_id)
+        if ver.dataset_id != dataset_id:
+            raise DatasetError(
+                "Version does not belong to dataset",
+                code="version_mismatch",
+                http_status=400,
+            )
+
+        if self._is_directly_indexable(ver):
+            return ver
+
+        # RAW, directory-backed, missing/non-file storage, or unsuitable kind:
+        # attempt sibling resolution before failing.
+        sibling = self._pick_indexable_sibling(
+            dataset_id,
+            exclude_version_id=ver.version_id if ver.kind == VersionKind.RAW else None,
+        )
+        # When a supposedly canonical version points at a directory, prefer another
+        # valid sibling of the same dataset; do not treat the directory as JSONL.
+        if sibling is not None:
+            return sibling
+        if ver.kind == VersionKind.RAW or (ver.storage_path and Path(ver.storage_path).is_dir()):
+            raise DatasetError(
+                "Dataset has no indexable materialized version. "
+                "Materialize the dataset before indexing.",
+                code="no_indexable_version",
+                http_status=409,
+            )
+
+        if not ver.storage_path:
+            raise DatasetError(
+                "Version has no storage path",
+                code="no_storage",
+                http_status=400,
+            )
+        path = Path(ver.storage_path)
+        if not path.exists():
+            raise DatasetError(
+                f"Version storage path does not exist: {path}",
+                code="storage_missing",
+                http_status=400,
+            )
+        if not path.is_file():
+            raise DatasetError(
+                f"Version storage path is not a file: {path}",
+                code="storage_not_file",
+                http_status=400,
+            )
+        if ver.status != VersionStatus.READY:
+            raise DatasetError(
+                f"Version is not ready for indexing (status={ver.status.value})",
+                code="version_not_ready",
+                http_status=409,
+            )
+        if ver.kind not in _INDEXABLE_VERSION_KINDS:
+            raise DatasetError(
+                "Dataset has no indexable materialized version. "
+                "Materialize the dataset before indexing.",
+                code="no_indexable_version",
+                http_status=409,
+            )
+        return ver
 
     def enqueue_duplicate(
         self,
@@ -1488,9 +1616,26 @@ class DatasetService:
         assert job.version_id and job.dataset_id
         if self.knowledge is None:
             raise DatasetError("KnowledgeStore not configured", code="no_knowledge", http_status=500)
-        ver = self.get_version(job.version_id)
+        requested_version_id = str(
+            job.config.get("requestedVersionId") or job.version_id
+        )
+        # Re-resolve at execution time — filesystem / version state may have changed.
+        ver = self._resolve_indexable_version(job.dataset_id, requested_version_id)
         if not ver.storage_path:
-            raise DatasetError("Version has no storage", code="no_storage")
+            raise DatasetError("Version has no storage", code="no_storage", http_status=400)
+        storage_path = Path(ver.storage_path)
+        if not storage_path.exists():
+            raise DatasetError(
+                f"Version storage path does not exist: {storage_path}",
+                code="storage_missing",
+                http_status=400,
+            )
+        if not storage_path.is_file():
+            raise DatasetError(
+                f"Version storage path is not a file: {storage_path}",
+                code="storage_not_file",
+                http_status=400,
+            )
         scope = str(job.config.get("scope") or "dataset")
         max_records = job.config.get("maxRecords")
         offline_only = bool(job.config.get("offlineOnly"))
@@ -1514,18 +1659,23 @@ class DatasetService:
                     code="OFFLINE_PREFLIGHT_BLOCKED",
                     http_status=409,
                 )
+        # Index row and knowledge docs must reference the resolved source version.
         index = self.store.create_index(
             dataset_id=job.dataset_id,
-            version_id=job.version_id,
+            version_id=ver.version_id,
             knowledge_scope=scope,
             status=IndexStatus.INDEXING,
+            provenance={
+                "requestedVersionId": requested_version_id,
+                "resolvedVersionId": ver.version_id,
+            },
         )
         try:
             outcome = index_version_file(
                 self.knowledge,
-                Path(ver.storage_path),
+                storage_path,
                 dataset_id=job.dataset_id,
-                version_id=job.version_id,
+                version_id=ver.version_id,
                 scope=scope,
                 max_records=int(max_records) if max_records is not None else None,
             )
@@ -1535,13 +1685,15 @@ class DatasetService:
             manifest = build_projection_manifest(
                 projection_id=index.index_id,
                 dataset_id=job.dataset_id,
-                version_id=job.version_id,
+                version_id=ver.version_id,
                 source_fingerprint=str(source_fingerprint or ver.content_hash or ""),
                 job_id=job.job_id,
                 outcome=outcome,
                 embedding_status=embedding_status,
                 offline_only=offline_only,
             )
+            manifest["requestedVersionId"] = requested_version_id
+            manifest["resolvedVersionId"] = ver.version_id
             manifest_path = self.corpus.datasets_manifests / f"brain-{index.index_id}.json"
             ensure_dir(manifest_path.parent)
             atomic_write_text(
@@ -1549,7 +1701,13 @@ class DatasetService:
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             )
             manifest["manifestPath"] = str(manifest_path)
-            provenance = {**outcome, "manifest": manifest, "offlineOnly": offline_only}
+            provenance = {
+                **outcome,
+                "manifest": manifest,
+                "offlineOnly": offline_only,
+                "requestedVersionId": requested_version_id,
+                "resolvedVersionId": ver.version_id,
+            }
             self.store.update_index(
                 index.index_id,
                 status=IndexStatus.READY,
@@ -1561,7 +1719,7 @@ class DatasetService:
                 for old in self.store.list_indexes(job.dataset_id):
                     if (
                         old.index_id != index.index_id
-                        and old.version_id == job.version_id
+                        and old.version_id == ver.version_id
                         and old.status == IndexStatus.READY
                     ):
                         self.store.update_index(
@@ -1580,6 +1738,8 @@ class DatasetService:
                 "manifest": manifest,
                 "supersededIndexIds": superseded,
                 "rebuild": bool(job.config.get("rebuild")),
+                "requestedVersionId": requested_version_id,
+                "resolvedVersionId": ver.version_id,
             }
         except Exception as exc:
             self.store.update_index(
