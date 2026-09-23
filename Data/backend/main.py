@@ -494,13 +494,21 @@ def _gate_outbound() -> GateCheck:
 
 
 def _gate_frontend() -> GateCheck:
+    from Data.modules.release import GateMeasurement, ci_release_mode
+
     ready = (FRONTEND_DIST / "index.html").is_file()
+    ci = ci_release_mode()
     return GateCheck(
         gate_id="frontend_dist",
         name="Frontend dist present",
-        severity=GateSeverity.WARN,
+        severity=GateSeverity.BLOCK if ci else GateSeverity.WARN,
         passed=ready,
-        detail="dist ready" if ready else "frontend dist missing",
+        detail=(
+            "dist ready"
+            if ready
+            else ("frontend dist missing (BLOCK under CI)" if ci else "frontend dist missing")
+        ),
+        measurement=GateMeasurement.PASS if ready else GateMeasurement.FAIL,
     )
 
 
@@ -535,13 +543,16 @@ def _gate_module_manager_subprocess() -> GateCheck:
 
 def _gate_evaluation_relevance() -> GateCheck:
     """Wave 2: release authority requires a relevant recorded foundation eval."""
+    from Data.modules.release import GateMeasurement
+
     if not settings.features.eval_platform:
         return GateCheck(
             gate_id="evaluation_relevance",
             name="Relevant evaluation recorded",
             severity=GateSeverity.INFO,
             passed=True,
-            detail="eval_platform flag OFF — gate informational",
+            detail="eval_platform flag OFF — NOT_APPLICABLE (not a PASS claim)",
+            measurement=GateMeasurement.NOT_APPLICABLE,
         )
     relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
     # Soft gate: recorded foundation eval required; FAIL blocks; UNMEASURED does not
@@ -553,7 +564,70 @@ def _gate_evaluation_relevance() -> GateCheck:
     return evaluation_relevance_gate(
         relevance,
         severity=GateSeverity.BLOCK if relevance.get("measurement") == "FAIL" else GateSeverity.WARN,
+        # Promotion paths use require_pass=True separately; CI asserts honesty via is_shipable.
         require_pass=False,
+    )
+
+
+def _gate_ci_policy() -> GateCheck:
+    """Round 10: CI plan excludes HADES/editor; unavailable suites ≠ PASS."""
+    from Data.modules.release import GateMeasurement, default_leviathan_ci_plan
+
+    plan = default_leviathan_ci_plan()  # declarative — no suites executed here
+    payload = plan.public_dict()
+    hades = next(s for s in plan.suites if s.suite_id == "hades")
+    editor = next(s for s in plan.suites if s.suite_id == "editor")
+    ok = (
+        hades.measurement == GateMeasurement.NOT_APPLICABLE
+        and editor.measurement == GateMeasurement.NOT_APPLICABLE
+        and payload["truth"]["skipped_unavailable_is_not_success"]
+    )
+    return GateCheck(
+        gate_id="ci_policy",
+        name="CI scope policy (HADES/editor excluded)",
+        severity=GateSeverity.BLOCK,
+        passed=ok,
+        detail=(
+            "HADES+editor NOT_APPLICABLE; skipped≠success"
+            if ok
+            else "CI policy broken"
+        ),
+        measurement=GateMeasurement.PASS if ok else GateMeasurement.FAIL,
+    )
+
+
+def _gate_fixture_production_separation() -> GateCheck:
+    """Round 10: fixture backends must not claim production capability."""
+    from Data.modules.release import GateMeasurement
+
+    browser_kind = getattr(getattr(browser_worker, "backend", None), "kind", None)
+    kind_val = browser_kind.value if hasattr(browser_kind, "value") else str(browser_kind or "")
+    # Fixture browser is OK only when labeled fixture — never as operational production.
+    if kind_val == "fixture":
+        return GateCheck(
+            gate_id="fixture_production_separation",
+            name="Fixture ≠ production",
+            severity=GateSeverity.WARN,
+            passed=True,
+            detail="browser backend=fixture (honest, not production)",
+            measurement=GateMeasurement.PASS,
+        )
+    if kind_val in {"local_dom", "playwright"}:
+        return GateCheck(
+            gate_id="fixture_production_separation",
+            name="Fixture ≠ production",
+            severity=GateSeverity.INFO,
+            passed=True,
+            detail=f"browser backend={kind_val}",
+            measurement=GateMeasurement.PASS,
+        )
+    return GateCheck(
+        gate_id="fixture_production_separation",
+        name="Fixture ≠ production",
+        severity=GateSeverity.WARN,
+        passed=True,
+        detail="browser backend unmeasured",
+        measurement=GateMeasurement.UNMEASURED,
     )
 
 
@@ -566,6 +640,8 @@ release_gates = ReleaseGateRunner(
         _gate_neuro_residual_posture,
         _gate_module_manager_subprocess,
         _gate_evaluation_relevance,
+        _gate_ci_policy,
+        _gate_fixture_production_separation,
     ]
 )
 security_auditor = SecurityAuditor(
@@ -704,7 +780,7 @@ def _master_evaluation_check() -> MasterGateCheck:
             check_id="evaluation_foundation",
             name="Foundation evaluation",
             status=MasterGateStatus.DEGRADED,
-            detail="foundation suite has UNMEASURED (honest)",
+            detail="foundation suite has UNMEASURED (honest; not shipable under CI)",
         )
     return MasterGateCheck(
         check_id="evaluation_foundation",
@@ -4693,7 +4769,23 @@ def multimodal_session_context(session_id: str) -> dict:
 
 @app.get("/api/release/gates")
 def release_gates_status() -> dict:
-    return {"report": release_gates.run().public_dict()}
+    from Data.modules.release import is_shipable
+
+    report = release_gates.run()
+    payload = report.public_dict()
+    payload["shipable"] = is_shipable(report)
+    payload["ci_release"] = bool(
+        __import__("os").environ.get("LEVIATHAN_CI_RELEASE", "").strip()
+    )
+    return {"report": payload}
+
+
+@app.get("/api/release/ci")
+def release_ci_plan() -> dict:
+    """Declarative CI plan — suites not executed here stay UNMEASURED, never PASS."""
+    from Data.modules.release import default_leviathan_ci_plan
+
+    return {"ci": default_leviathan_ci_plan().public_dict()}
 
 
 @app.get("/api/security/audit")

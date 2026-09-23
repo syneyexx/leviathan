@@ -121,13 +121,23 @@ def validate_artifact_bytes(
         add("pdf_header", data[:5] == b"%PDF-", "header")
     else:
         add("bytes_present", len(data) > 0, f"size={len(data)}")
-        add("type_specific_unmeasured", True, "no structural validator for this type")
+        # Round 10: unmeasured type-specific validation is NOT a pass.
+        add(
+            "type_specific_unmeasured",
+            False,
+            "no structural validator for this type (UNMEASURED ≠ validated)",
+        )
 
     ok = all(c["ok"] for c in checks) if checks else False
+    unmeasured = any(c["check"] == "type_specific_unmeasured" for c in checks)
     return {
         "ok": ok,
         "checks": checks,
-        "truth": {"structure_and_content_validated": ok},
+        "measurement": "UNMEASURED" if unmeasured and not ok else ("PASS" if ok else "FAIL"),
+        "truth": {
+            "structure_and_content_validated": ok,
+            "unmeasured_is_not_validated": True,
+        },
     }
 
 
