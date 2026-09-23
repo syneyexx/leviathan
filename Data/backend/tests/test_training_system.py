@@ -257,6 +257,8 @@ def test_config_hash_stable() -> None:
 
 
 def test_sync_registers_trained_artifact(tmp_path: Path) -> None:
+    import hashlib
+
     from Data.modules.models.store import ModelStore
     from Data.modules.training.model_registration import sync_completed_artifacts_to_models
 
@@ -265,17 +267,25 @@ def test_sync_registers_trained_artifact(tmp_path: Path) -> None:
     ts = TrainingStore(db)
     ms = ModelStore(db)
     job = ts.create_job(name="j", method="fixture", base_model_ref="tiny", seed=1, config={})
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    cfg = adapter / "adapter_config.json"
+    cfg.write_text('{"method":"fixture"}', encoding="utf-8")
+    digest = hashlib.sha256(cfg.read_bytes()).hexdigest()
     art = ts.add_artifact(
         job_id=job.job_id,
         artifact_type="fixture_adapter",
-        path=str(tmp_path / "adapter"),
+        path=str(adapter),
         method="fixture",
         base_model_ref="tiny",
+        content_hash=digest,
+        config_hash=job.config_hash,
         compatibility={"inference_ready": False},
     )
     ts.update_job(job.job_id, status=DurableTrainingStatus.COMPLETED, artifact_id=art.artifact_id)
     synced = sync_completed_artifacts_to_models(model_store=ms, training_store=ts)
     assert len(synced) == 1
+    assert synced[0]["integrity"] == "passed"
     assert synced[0]["modelId"].startswith("trained:")
     row = ms.get_model(synced[0]["modelId"])
     assert row is not None

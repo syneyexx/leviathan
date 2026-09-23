@@ -1,7 +1,6 @@
-"""Datasets subsystem — import, materialize, transform, index."""
-
 from .service import DatasetService
 from .store import DatasetStore
+from .mixtures import MixtureComponent, MixtureManifest, build_mixture_manifest
 from .types import (
     CanonicalRecord,
     DatasetError,
@@ -29,7 +28,10 @@ __all__ = [
     "DatasetStore",
     "DatasetVersion",
     "DetectedFormat",
+    "MixtureComponent",
+    "MixtureManifest",
     "SourceType",
     "VersionKind",
     "VersionStatus",
+    "build_mixture_manifest",
 ]

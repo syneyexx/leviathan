@@ -840,3 +840,57 @@ class DatasetStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    # --- Mixtures (Wave 8) ---
+
+    def save_mixture(self, mixture: dict[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        mixture_id = str(mixture["mixture_id"])
+        payload = dict(mixture)
+        payload.setdefault("created_at", now)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO dataset_mixtures(
+                    mixture_id, name, content_hash, sealed, payload_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mixture_id) DO UPDATE SET
+                    name=excluded.name,
+                    content_hash=excluded.content_hash,
+                    sealed=excluded.sealed,
+                    payload_json=excluded.payload_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    mixture_id,
+                    str(payload.get("name") or ""),
+                    str(payload.get("content_hash") or ""),
+                    1 if payload.get("sealed", True) else 0,
+                    json.dumps(payload),
+                    str(payload.get("created_at") or now),
+                    now,
+                ),
+            )
+        return payload
+
+    def get_mixture(self, mixture_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM dataset_mixtures WHERE mixture_id = ?",
+                (mixture_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _loads(row["payload_json"], {})
+
+    def list_mixtures(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload_json FROM dataset_mixtures
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_loads(r["payload_json"], {}) for r in rows]

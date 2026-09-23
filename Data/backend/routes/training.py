@@ -42,6 +42,8 @@ class TrainingJobCreate(BaseModel):
     load_in_4bit: bool = False
     fixture_steps: int = 5
     fixture_sleep_ms: int = 50
+    mixture_id: str | None = None
+    mixture_content_hash: str | None = None
     auto_start: bool = False
 
 

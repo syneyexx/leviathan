@@ -119,6 +119,7 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/backend/tests/test_wave5_capability_world.py` | Wave 5 API/MCP/browser shared Run/Gateway/Evidence exit gate |
 | `Data/backend/tests/test_wave6_coding_research.py` | Wave 6 coding semantic map / transactional patches + research claim graphs |
 | `Data/backend/tests/test_wave7_multimodal_realtime.py` | Wave 7 multimodal session + media/voice Gateway + single context/run exit gate |
+| `Data/backend/tests/test_wave8_data_training_factory.py` | Wave 8 shard resume / mixture / integrity-gated registry exit gate |
 | `Data/modules/media/` | MediaService fixture pipelines (Gateway-dispatched) |
 | `Data/modules/voice/` | RealtimeVoiceService fixture ASR/TTS + barge-in |
 | `Data/modules/artifacts/` | ArtifactStore |

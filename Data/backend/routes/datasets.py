@@ -78,6 +78,33 @@ class IndexBody(BaseModel):
 class OfflineBrainIndexBody(BaseModel):
     datasetId: str
     versionId: str
+
+
+class MixtureCreateBody(BaseModel):
+    name: str
+    components: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
+
+
+class ShardIngestBody(BaseModel):
+    sources: list[str] = Field(default_factory=list)
+    interruptAfter: int | None = None
+    resumeFromJobId: str | None = None
+
+
+class ContaminationScanBody(BaseModel):
+    sealedCases: list[dict[str, Any]] = Field(default_factory=list)
+    threshold: float = 0.35
+
+
+class AnnotationEnqueueBody(BaseModel):
+    recordId: str
+    labelType: str = "preference"
+    versionId: str | None = None
+
+
+class PackingSimBody(BaseModel):
+    maxSeqLength: int = 512
     scope: str = "dataset"
     maxRecords: int | None = None
     sourceFingerprint: str | None = None
@@ -87,6 +114,33 @@ class OfflinePreflightBody(BaseModel):
     datasetId: str
     versionId: str
     offlineOnly: bool = True
+
+
+class MixtureCreateBody(BaseModel):
+    name: str
+    components: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
+
+
+class ShardIngestBody(BaseModel):
+    sources: list[str] = Field(default_factory=list)
+    interruptAfter: int | None = None
+    resumeFromJobId: str | None = None
+
+
+class ContaminationScanBody(BaseModel):
+    sealedCases: list[dict[str, Any]] = Field(default_factory=list)
+    threshold: float = 0.35
+
+
+class AnnotationEnqueueBody(BaseModel):
+    recordId: str
+    labelType: str = "preference"
+    versionId: str | None = None
+
+
+class PackingSimBody(BaseModel):
+    maxSeqLength: int = 512
 
 
 class HfListBody(BaseModel):
@@ -474,5 +528,80 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     def reconcile() -> dict:
         updated = service.reconcile()
         return {"updated": [service.public_job(j) for j in updated]}
+
+    @router.post("/api/datasets/mixtures")
+    def create_mixture(body: MixtureCreateBody) -> dict:
+        try:
+            mixture = service.create_mixture(
+                name=body.name,
+                components=body.components,
+                metadata=body.metadata,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"mixture": mixture}
+
+    @router.get("/api/datasets/mixtures")
+    def list_mixtures(limit: int = 100) -> dict:
+        return {"mixtures": service.list_mixtures(limit=limit)}
+
+    @router.get("/api/datasets/mixtures/{mixture_id}")
+    def get_mixture(mixture_id: str) -> dict:
+        try:
+            return {"mixture": service.get_mixture(mixture_id)}
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.post("/api/datasets/{dataset_id}/shard-ingest")
+    def shard_ingest(dataset_id: str, body: ShardIngestBody) -> dict:
+        try:
+            job = service.enqueue_shard_ingest(
+                dataset_id,
+                sources=body.sources,
+                interrupt_after=body.interruptAfter,
+                resume_from_job_id=body.resumeFromJobId,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/contamination-scan")
+    def contamination_scan(dataset_id: str, version_id: str, body: ContaminationScanBody) -> dict:
+        try:
+            job = service.enqueue_contamination_scan(
+                dataset_id,
+                version_id,
+                sealed_cases=body.sealedCases,
+                threshold=body.threshold,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/versions/{version_id}/packing-sim")
+    def packing_sim(version_id: str, body: PackingSimBody) -> dict:
+        try:
+            return {"simulation": service.packing_simulation(version_id, max_seq_length=body.maxSeqLength)}
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.post("/api/datasets/{dataset_id}/annotations")
+    def enqueue_annotation(dataset_id: str, body: AnnotationEnqueueBody) -> dict:
+        try:
+            item = service.enqueue_annotation(
+                dataset_id=dataset_id,
+                record_id=body.recordId,
+                label_type=body.labelType,
+                version_id=body.versionId,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"item": item}
 
     return router

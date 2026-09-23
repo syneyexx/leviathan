@@ -7,6 +7,7 @@ from .evaluation import evaluate_job
 from .events import TrainingEventLog
 from .hardware import probe_hardware
 from .launcher import TrainingLauncher
+from .integrity import IntegrityReport, verify_artifact_integrity
 from .model_registration import register_training_artifact_as_model, sync_completed_artifacts_to_models
 from .planner import plan_training
 from .preferences import PreferenceBridge
@@ -52,6 +53,7 @@ __all__ = [
     "EphemeralRecipeWorkerTrainer",
     "FixtureRecipeTrainer",
     "HardwareSnapshot",
+    "IntegrityReport",
     "MetricRecord",
     "NEURO_RECIPES",
     "PreferenceBridge",
@@ -87,4 +89,5 @@ __all__ = [
     "run_preflight",
     "safe_import",
     "sync_completed_artifacts_to_models",
+    "verify_artifact_integrity",
 ]
