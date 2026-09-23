@@ -327,21 +327,79 @@ class ModelControlPlane:
         prompt: str = "ping",
         max_tokens: int = 64,
         stream: bool = False,
+        job_class: str = "INTERACTIVE",
+        idempotency_key: str | None = None,
+        timeout_seconds: float = 30.0,
     ) -> dict[str, Any]:
         """Run a real inference through gateway capacity + provider adapter."""
+        from Data.modules.model_runtime.durable_requests import get_durable_request_ledger
+        from Data.modules.model_runtime.latency import LatencyTimer
+        from Data.modules.model_runtime.serving import InferenceJobClass
+
+        try:
+            jc = InferenceJobClass(job_class)
+        except ValueError:
+            jc = InferenceJobClass.INTERACTIVE
+
         model = self.registry.get(model_id)
+        ledger = get_durable_request_ledger()
+        durable = None
+        replay = False
+        if idempotency_key:
+            durable, replay = ledger.begin(
+                idempotency_key=idempotency_key,
+                model_id=model.id,
+                provider_id=model.provider_id,
+                job_class=jc,
+                metadata={"stream": bool(stream)},
+            )
+            if replay and durable.result is not None:
+                out = dict(durable.result)
+                out["idempotent_reuse"] = True
+                out["side_effect_duplicated"] = False
+                out["requestId"] = durable.request_id
+                return out
+
+        timer = LatencyTimer()
+        timer.begin_queue()
         call_id = self.gateway.acquire(
             model_id=model.id,
             provider_id=model.provider_id,
-            timeout_seconds=30.0,
+            timeout_seconds=timeout_seconds,
+            job_class=jc,
         )
-        started = time.perf_counter()
+        timer.end_queue()
         error_msg: str | None = None
         try:
             adapter = self.get_adapter(model.provider_id)
             _ = stream
             result = await adapter.test_inference(model.id, prompt=prompt, max_tokens=max_tokens)
-            total_ms = (time.perf_counter() - started) * 1000.0
+            # Prefer provider-reported first-token if present; else admit→done as total.
+            if result.get("latency") and isinstance(result["latency"], dict):
+                lat = dict(result["latency"])
+                if timer.queue_ms is not None:
+                    lat["queue_ms"] = timer.queue_ms
+                lat.setdefault(
+                    "truth",
+                    {
+                        "stages_are_separated": True,
+                        "unmeasured_is_not_zero": True,
+                        "single_latency_is_not_enough": True,
+                    },
+                )
+                latency_payload = lat
+                total_ms = lat.get("total_ms")
+                if total_ms is None:
+                    timer.mark_first_token()
+                    total_ms = timer.finish(source="control_plane").total_ms
+                ttft = lat.get("ttft_ms")
+            else:
+                # Mark synthetic first-token at completion for non-streaming fixture path.
+                timer.mark_first_token()
+                breakdown = timer.finish(source="control_plane")
+                latency_payload = breakdown.public_dict()
+                total_ms = breakdown.total_ms
+                ttft = breakdown.ttft_ms
             self.registry.touch_used(model.id)
             self.gateway.record_selection(model.id, trace_id=call_id)
             self._emit(
@@ -352,21 +410,26 @@ class ModelControlPlane:
                     "latencyMs": total_ms,
                     "callId": call_id,
                     "streamRequested": bool(stream),
+                    "jobClass": jc.value,
                 },
             )
-            return {
+            payload = {
                 "ok": True,
                 "modelId": model.id,
                 "providerId": model.provider_id,
                 "callId": call_id,
                 "traceId": call_id,
                 "totalLatencyMs": total_ms,
-                "ttftMs": result.get("latencyMs"),
+                "ttftMs": ttft if ttft is not None else result.get("latencyMs"),
+                "latency": latency_payload,
                 "finishReason": result.get("finishReason"),
-                "preview": result.get("preview") or result.get("content") or "",
+                "preview": result.get("preview") or result.get("content") or result.get("output") or "",
                 "raw": {k: v for k, v in result.items() if k != "preview"},
                 "streamRequested": bool(stream),
                 "streamImplemented": False,
+                "jobClass": jc.value,
+                "idempotent_reuse": False,
+                "side_effect_duplicated": False,
                 "note": (
                     "Streaming token transport is not exposed on this test endpoint yet; "
                     "non-stream completion used the real provider path."
@@ -374,11 +437,24 @@ class ModelControlPlane:
                     else None
                 ),
             }
+            if durable is not None:
+                fingerprint = f"{model.id}:{prompt}:{max_tokens}"
+                ledger.complete(
+                    durable.request_id,
+                    result=payload,
+                    side_effect_fingerprint=fingerprint,
+                )
+                payload["requestId"] = durable.request_id
+            return payload
         except ModelControlError:
             error_msg = "model_control_error"
+            if durable is not None:
+                ledger.fail(durable.request_id, error_msg)
             raise
         except Exception as exc:
             error_msg = str(exc)
+            if durable is not None:
+                ledger.fail(durable.request_id, error_msg)
             raise ModelControlError(
                 code="INFERENCE_FAILED",
                 message=error_msg,
@@ -391,6 +467,7 @@ class ModelControlPlane:
                 model_id=model.id,
                 provider_id=model.provider_id,
                 error=error_msg,
+                job_class=jc,
             )
 
     async def refresh_all(self) -> dict[str, Any]:

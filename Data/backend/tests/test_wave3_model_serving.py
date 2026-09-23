@@ -215,6 +215,7 @@ class ServingConformanceEvalTests(unittest.TestCase):
                 dead_worker_honest=True,
                 multi_model_route_ok=True,
                 measured_route_recorded=True,
+                stream_cancel_probed=True,  # this unit path supplies a real cancel probe receipt
             ),
             suite_id="serving_conformance",
         )
