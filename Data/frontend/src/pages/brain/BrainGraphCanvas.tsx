@@ -4,6 +4,7 @@ import { colorForType, type LiveBrainEdge, type LiveBrainNode } from "./brain-li
 type Point = { x: number; y: number };
 type Viewport = { x: number; y: number; scale: number };
 type PositionedNode = LiveBrainNode & Point & { r: number; color: string; cluster: string; core: boolean };
+type ClusterLayout = { type: string; label: string; color: string; x: number; y: number; count: number; radius: number };
 
 type Props = {
   nodes: LiveBrainNode[];
@@ -37,45 +38,62 @@ function prettyType(type: string): string {
     .join(" ");
 }
 
+function clusterKey(node: LiveBrainNode): string {
+  if (node.type === "capability" && typeof node.meta?.provider_kind === "string" && node.meta.provider_kind.trim()) {
+    return `capability.${node.meta.provider_kind.trim().toLowerCase()}`;
+  }
+  return node.type;
+}
+
+function clusterColor(key: string, sample: LiveBrainNode): string {
+  const base = colorForType(sample.type);
+  if (!key.startsWith("capability.")) return base;
+  const capabilityPalette = ["#E6A13A", "#F0C875", "#E8794A", "#38C9D6", "#8D6EF4", "#42C58A"];
+  return capabilityPalette[hashString(key) % capabilityPalette.length];
+}
+
 function buildLayout(nodes: LiveBrainNode[], edges: LiveBrainEdge[], physics: boolean): PositionedNode[] {
   if (nodes.length === 0) return [];
 
   const groups = new Map<string, LiveBrainNode[]>();
   for (const node of nodes) {
-    const group = groups.get(node.type) ?? [];
+    const key = clusterKey(node);
+    const group = groups.get(key) ?? [];
     group.push(node);
-    groups.set(node.type, group);
+    groups.set(key, group);
   }
 
   const groupEntries = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
-  const hub = nodes.find((node) => /leviathan/i.test(node.label)) ?? nodes.find((node) => node.type === "atlas") ?? nodes[0];
+  const actualHub = nodes.find((node) => /leviathan/i.test(node.label)) ?? nodes.find((node) => node.type === "atlas") ?? null;
   const positioned: PositionedNode[] = [];
 
-  groupEntries.forEach(([type, group], groupIndex) => {
-    const color = colorForType(type);
-    const isHubGroup = group.some((node) => node.id === hub.id);
-    const angle = groupEntries.length === 1 ? -Math.PI / 2 : (groupIndex / groupEntries.length) * Math.PI * 2 - Math.PI / 2;
-    const orbit = isHubGroup ? 62 : 205 + (groupIndex % 3) * 22;
-    const groupCenter = isHubGroup
+  groupEntries.forEach(([key, group], groupIndex) => {
+    const color = clusterColor(key, group[0]);
+    const includesHub = actualHub ? group.some((node) => node.id === actualHub.id) : false;
+    const nonHubIndex = includesHub ? Math.max(0, groupIndex - 1) : groupIndex;
+    const nonHubCount = Math.max(1, groupEntries.length - (actualHub ? 1 : 0));
+    const angle = (nonHubIndex / nonHubCount) * Math.PI * 2 - Math.PI / 2;
+    const orbit = 224 + (groupIndex % 2) * 24;
+    const groupCenter = includesHub
       ? CENTER
-      : { x: CENTER.x + Math.cos(angle) * orbit, y: CENTER.y + Math.sin(angle) * orbit * 0.76 };
+      : { x: CENTER.x + Math.cos(angle) * orbit, y: CENTER.y + Math.sin(angle) * orbit * 0.72 };
 
     group.forEach((node, index) => {
-      if (node.id === hub.id) {
-        positioned.push({ ...node, ...CENTER, r: 34, color, cluster: type, core: true });
+      if (actualHub && node.id === actualHub.id) {
+        positioned.push({ ...node, ...CENTER, r: 34, color: "#E6BD58", cluster: key, core: true });
         return;
       }
       const seed = hashString(node.id);
       const localAngle = ((seed % 360) / 180) * Math.PI + index * 0.67;
       const tier = 1 + (index % 4);
-      const localRadius = 24 + tier * 14 + ((seed >>> 8) % 18);
+      const localRadius = 28 + tier * 15 + ((seed >>> 8) % 22);
       positioned.push({
         ...node,
         x: groupCenter.x + Math.cos(localAngle) * localRadius,
-        y: groupCenter.y + Math.sin(localAngle) * localRadius * 0.78,
+        y: groupCenter.y + Math.sin(localAngle) * localRadius * 0.76,
         r: index === 0 ? Math.min(24, 13 + Math.sqrt(group.length) * 2.4) : 5.5 + Math.min(5, Math.log2(index + 2)),
         color,
-        cluster: type,
+        cluster: key,
         core: false,
       });
     });
@@ -126,6 +144,8 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
 
   const rendered = useMemo<PositionedNode[]>(() => initial.map((node) => ({ ...node, ...(positions.get(node.id) ?? { x: node.x, y: node.y }) })), [initial, positions]);
   const byId = useMemo(() => new Map(rendered.map((node) => [node.id, node])), [rendered]);
+  const hasActualCore = rendered.some((node) => node.core);
+
   const connectedToSelected = useMemo(() => {
     const ids = new Set<string>();
     if (!selectedId) return ids;
@@ -137,16 +157,17 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
     return ids;
   }, [edges, selectedId]);
 
-  const clusters = useMemo(() => {
-    const map = new Map<string, { type: string; color: string; x: number; y: number; count: number; radius: number }>();
+  const clusters = useMemo<ClusterLayout[]>(() => {
+    const map = new Map<string, ClusterLayout>();
     for (const node of rendered) {
-      const row = map.get(node.cluster) ?? { type: node.cluster, color: node.color, x: 0, y: 0, count: 0, radius: 42 };
+      if (node.core) continue;
+      const row = map.get(node.cluster) ?? { type: node.cluster, label: prettyType(node.cluster), color: node.color, x: 0, y: 0, count: 0, radius: 42 };
       row.x += node.x;
       row.y += node.y;
       row.count += 1;
       map.set(node.cluster, row);
     }
-    return [...map.values()].map((row) => ({ ...row, x: row.x / row.count, y: row.y / row.count, radius: Math.min(105, 36 + Math.sqrt(row.count) * 10) }));
+    return [...map.values()].map((row) => ({ ...row, x: row.x / Math.max(1, row.count), y: row.y / Math.max(1, row.count), radius: Math.min(112, 38 + Math.sqrt(row.count) * 11) }));
   }, [rendered]);
 
   const pointInGraph = (clientX: number, clientY: number): Point | null => {
@@ -234,12 +255,30 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
         </defs>
         <rect width={WIDTH} height={HEIGHT} fill="transparent" />
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
-          {showClusters ? clusters.map((cluster) => (
-            <g key={cluster.type} className="lv-gv-cluster-halo" pointerEvents="none">
-              <circle cx={cluster.x} cy={cluster.y} r={cluster.radius} fill={cluster.color} opacity={0.025} stroke={cluster.color} strokeOpacity={0.1} strokeDasharray="3 9" />
-              <text x={cluster.x} y={cluster.y - cluster.radius - 8} textAnchor="middle" fill={cluster.color} opacity={0.72}>{prettyType(cluster.type)}</text>
+          {showClusters ? (
+            <g className="lv-gv-scaffold" pointerEvents="none">
+              {!hasActualCore ? clusters.map((cluster) => <line key={`spoke:${cluster.type}`} x1={CENTER.x} y1={CENTER.y} x2={cluster.x} y2={cluster.y} stroke={cluster.color} strokeOpacity=".13" strokeWidth="1" strokeDasharray="2 7" />) : null}
+              {clusters.map((cluster) => (
+                <g key={cluster.type} className="lv-gv-cluster-halo">
+                  <circle cx={cluster.x} cy={cluster.y} r={cluster.radius} fill={cluster.color} opacity=".025" stroke={cluster.color} strokeOpacity=".12" strokeDasharray="3 9" />
+                  <circle cx={cluster.x} cy={cluster.y} r="14" fill="rgba(3,8,9,.94)" stroke={cluster.color} strokeOpacity=".72" filter="url(#lv-gv-glow)" />
+                  <circle cx={cluster.x} cy={cluster.y} r="3.5" fill={cluster.color} />
+                  <text x={cluster.x} y={cluster.y + 26} textAnchor="middle" fill={cluster.color} opacity=".84">{cluster.label}</text>
+                </g>
+              ))}
             </g>
-          )) : null}
+          ) : null}
+
+          {!hasActualCore ? (
+            <g className="lv-gv-visual-core" pointerEvents="none" transform={`translate(${CENTER.x} ${CENTER.y})`}>
+              <circle r="53" fill="none" stroke="#E6BD58" strokeOpacity=".13" strokeDasharray="2 8" filter="url(#lv-gv-soft-glow)" />
+              <circle r="38" fill="url(#lv-gv-core)" stroke="#E6BD58" strokeWidth="2" filter="url(#lv-gv-glow)" />
+              <circle r="7" fill="#E6BD58" />
+              <text y="4" textAnchor="middle" className="lv-gv-core-mark">L</text>
+              <text y="58" textAnchor="middle" className="lv-gv-label is-core">LEVIATHAN</text>
+            </g>
+          ) : null}
+
           <g className="lv-gv-links">
             {edges.map((edge) => {
               const source = byId.get(edge.source);
@@ -249,6 +288,7 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
               return <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={active ? "is-active" : ""} stroke={active ? source.color : "rgba(192,170,112,.28)"} strokeWidth={active ? 1.7 : 0.72} opacity={active ? 0.92 : 0.66}><title>{edge.relation}</title></line>;
             })}
           </g>
+
           {rendered.map((node) => {
             const selected = selectedId === node.id;
             const depthDimmed = showDepth && selectedId != null && !connectedToSelected.has(node.id);
