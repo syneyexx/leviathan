@@ -30,11 +30,25 @@ const edges = [
 ];
 
 describe("brain-live projections", () => {
-  it("builds a typed tree from live nodes", () => {
+  it("builds the semantic domain tree from live nodes", () => {
     const tree = buildTree(nodes);
     expect(tree.id).toBe("leviathan");
     expect(tree.count).toBe(3);
-    expect(tree.children?.some((c) => c.id === "type:memory")).toBe(true);
+    expect(tree.children?.map((child) => child.id)).toEqual([
+      "domain:core-concepts",
+      "domain:ai-models",
+      "domain:data-information",
+      "domain:tools-systems",
+      "domain:research",
+    ]);
+
+    const core = tree.children?.find((child) => child.id === "domain:core-concepts");
+    const data = tree.children?.find((child) => child.id === "domain:data-information");
+    expect(core?.children?.some((child) => child.id === "type:memory")).toBe(true);
+    expect(core?.children?.some((child) => child.id === "type:knowledge.document")).toBe(true);
+    expect(data?.children?.some((child) => child.id === "type:evidence")).toBe(true);
+    expect(core?.count).toBe(2);
+    expect(data?.count).toBe(1);
   });
 
   it("orders timeline by created_at desc", () => {
