@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of **Wave 0 Durable Kernel** (migration v24) on Cognitive Runtime (v19) + Settings Control Plane (v20) + Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of **Wave 1 Cognitive Runtime** (`0.65.0-wave1-cognition`) on Wave 0 Durable Kernel (migration v24) + Cognitive Runtime (v19) + Settings Control Plane (v20) + Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -16,7 +16,8 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.64.0-wave0-kernel`);
+- FastAPI backend composition root (`0.65.0-wave1-cognition`);
+- **Wave 1 cognition/agents** — full CognitiveRun hydrate/resume, live INVOKE_CAPABILITY via ExecutionGateway, structured agent planner, DAG multi-agent + blackboard;
 - **Wave 0 durable kernel** — `EventEnvelope`, job leases/idempotency/budgets, correlation IDs, Frontier Capability Manifest, architecture ownership API + conformance tests;
 - **Universal MCP Bridge** (`Data/modules/mcp/`) — one bridge, many stdio/HTTP sessions; tools → CapabilityCatalog (`provider_kind=MCP`); invoke only via ExecutionGateway;
 - **Coding Agent** (`Data/modules/coding/`) — sessions, XML capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker;
@@ -79,7 +80,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.64.0-wave0-kernel`).
+FastAPI application (`version=0.65.0-wave1-cognition`).
 
 Responsibilities:
 
@@ -217,13 +218,15 @@ Owner: `Data/modules/knowledge/`. See also `Data/docs/rag_v3_architecture.md`.
 - frontend dist readiness;
 - LLM availability (honest unavailable state).
 
-## 3.8b Wave 0 durable kernel
+## 3.8b Wave 0 durable kernel + Wave 1 cognition
 
 Canonical owners:
 
 - `Data/modules/run/` — parent lifecycle + versioned `EventEnvelope`
 - `Data/modules/jobs/` — schedulable work, leases, idempotency, budgets
 - `Data/modules/execution/` — CapabilityCatalog + ExecutionGateway + FrontierCapabilityManifest
+- `Data/modules/cognition/` — Cognitive Runtime with **hydrate/resume** and live **INVOKE_CAPABILITY** via Gateway
+- `Data/modules/agents/` — structured planner + DAG `MultiAgentCoordinator` + `AgentBlackboard`
 - `Data/modules/settings/behavior.py` — BehaviorProfile (SYSTEM_PROMPT)
 - `Data/modules/approvals/authority.py` — AuthorityProfile (technical scopes)
 - `Data/modules/common/ownership.py` — encoded ownership matrix for conformance tests
@@ -232,8 +235,9 @@ API:
 
 - `GET /api/architecture/ownership`
 - `GET /api/architecture/capability-manifest`
+- `/api/cognition/*` — submit / status / events / cancel / resume (hydrate-backed)
 
-Invariant: BehaviorProfile is not AuthorityProfile. UI must not invent capability availability.
+Invariant: BehaviorProfile is not AuthorityProfile. UI must not invent capability availability. A killed cognitive run can be hydrated and resumed without claiming duplicate capability effects when idempotency keys match.
 
 ## 3.9 Frontend serving
 

@@ -1,5 +1,6 @@
 """Agent strategy layer — shared gateway/jobs/verification only."""
 
+from .blackboard import AgentBlackboard, BlackboardEntry
 from .fleet import AgentFleetError, AgentFleetService
 from .fleet_types import (
     AgentDefinition,
@@ -10,12 +11,14 @@ from .fleet_types import (
     MissionStatus,
     OrchestratorConfig,
 )
-from .multi import MultiAgentCoordinator, MultiAgentResult
+from .multi import DagCycleError, DagNode, MultiAgentCoordinator, MultiAgentResult
+from .planner import StructuredAgentPlan, StructuredAgentPlanner
 from .runtime import AgentRuntime
 from .store import AgentFleetStore
 from .types import AgentKind, AgentResult, AgentStep, AgentStepKind
 
 __all__ = [
+    "AgentBlackboard",
     "AgentDefinition",
     "AgentDefinitionKind",
     "AgentEvent",
@@ -29,8 +32,13 @@ __all__ = [
     "AgentRuntime",
     "AgentStep",
     "AgentStepKind",
+    "BlackboardEntry",
+    "DagCycleError",
+    "DagNode",
     "MissionStatus",
     "MultiAgentCoordinator",
     "MultiAgentResult",
     "OrchestratorConfig",
+    "StructuredAgentPlan",
+    "StructuredAgentPlanner",
 ]

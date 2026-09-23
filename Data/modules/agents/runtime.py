@@ -6,6 +6,7 @@ from Data.modules.execution import CapabilityRequest, CapabilityStatus, Executio
 from Data.modules.jobs import JobRuntime, JobState
 from Data.modules.verification import VerificationEngine, VerificationRequirement
 
+from .planner import StructuredAgentPlan, StructuredAgentPlanner
 from .types import AgentKind, AgentResult, AgentStep, AgentStepKind
 
 
@@ -29,6 +30,7 @@ class AgentRuntime:
         agents_enabled: bool = False,
         coding: Any | None = None,
         coding_enabled: bool = False,
+        planner: StructuredAgentPlanner | None = None,
     ) -> None:
         self.gateway = gateway
         self.jobs = jobs
@@ -37,63 +39,24 @@ class AgentRuntime:
         self.agents_enabled = agents_enabled
         self.coding = coding
         self.coding_enabled = coding_enabled
+        self.planner = planner or StructuredAgentPlanner()
 
     def plan(self, request: str, *, kind: AgentKind = AgentKind.GENERIC) -> list[AgentStep]:
-        text = request.strip()
-        steps: list[AgentStep] = [
-            AgentStep(kind=AgentStepKind.PLAN, note=f"{kind.value} plan for: {text[:120]}")
-        ]
-        lowered = text.lower()
-        if "search" in lowered or "find" in lowered or kind == AgentKind.RESEARCH:
-            steps.append(
-                AgentStep(
-                    kind=AgentStepKind.CAPABILITY,
-                    capability_id="knowledge.search",
-                    arguments={"query": text, "limit": 5},
-                    note="Retrieve knowledge via capability gateway",
-                )
-            )
-        if kind == AgentKind.RESEARCH:
-            steps.append(
-                AgentStep(
-                    kind=AgentStepKind.VERIFY,
-                    note="Research completion should attach evidence when available",
-                )
-            )
-        if kind == AgentKind.CODING:
-            steps.append(
-                AgentStep(
-                    kind=AgentStepKind.PLAN,
-                    note="Coding uses shared filesystem capabilities only — no private shell",
-                )
-            )
-            if "read" in lowered or "file" in lowered or "inspect" in lowered:
-                # Coding agent still must go through capabilities — no private FS.
-                steps.append(
-                    AgentStep(
-                        kind=AgentStepKind.CAPABILITY,
-                        capability_id="file.read",
-                        arguments={},
-                        note="Coding file read requires path argument from caller",
-                    )
-                )
-            if "csv" in lowered:
-                steps.append(
-                    AgentStep(
-                        kind=AgentStepKind.CAPABILITY,
-                        capability_id="file.inspect_csv",
-                        arguments={},
-                        note="CSV inspect requires path override",
-                    )
-                )
-            steps.append(
-                AgentStep(
-                    kind=AgentStepKind.VERIFY,
-                    note="Coding claims require artifact/file evidence via VerificationEngine",
-                )
-            )
-        steps.append(AgentStep(kind=AgentStepKind.RESPOND, note="Return structured agent result"))
-        return steps
+        """Return structured plan steps (U142). Prefer ``plan_structured`` for full schema."""
+        return list(self.plan_structured(request, kind=kind).steps)
+
+    def plan_structured(
+        self,
+        request: str,
+        *,
+        kind: AgentKind = AgentKind.GENERIC,
+    ) -> StructuredAgentPlan:
+        available: list[str] = []
+        try:
+            available = [item.id for item in self.gateway.catalog.list()]
+        except Exception:  # noqa: BLE001
+            available = []
+        return self.planner.plan(request, kind=kind, available_capabilities=available)
 
     def execute(
         self,
@@ -106,6 +69,8 @@ class AgentRuntime:
         use_jobs: bool = False,
         verify_requirements: list[VerificationRequirement] | None = None,
         capability_overrides: dict[str, dict[str, Any]] | None = None,
+        trace_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> AgentResult:
         if not self.agents_enabled:
             return AgentResult(
@@ -145,13 +110,21 @@ class AgentRuntime:
             run = self.runs.create_run(user_request=request, conversation_id=conversation_id)
             created_run_id = getattr(run, "run_id", None)
 
-        plan = steps if steps is not None else self.plan(request, kind=kind)
+        structured = self.plan_structured(request, kind=kind)
+        plan = steps if steps is not None else list(structured.steps)
         result = AgentResult(agent_kind=kind, run_id=created_run_id, status="RUNNING")
         overrides = capability_overrides or {}
+        tool_budget = int((structured.budget or {}).get("max_tool_calls") or 8)
+        tools_used = 0
 
         for step in plan:
             step_record = step.public_dict()
             if step.kind == AgentStepKind.CAPABILITY:
+                if tools_used >= tool_budget:
+                    step_record["status"] = "SKIPPED"
+                    step_record["error"] = "agent tool budget exhausted"
+                    result.steps.append(step_record)
+                    continue
                 if not step.capability_id:
                     step_record["status"] = "SKIPPED"
                     step_record["error"] = "missing capability_id"
@@ -166,6 +139,7 @@ class AgentRuntime:
                     result.steps.append(step_record)
                     continue
 
+                tools_used += 1
                 if use_jobs and self.jobs is not None:
                     job = self.jobs.enqueue(
                         capability_id=step.capability_id,
@@ -173,6 +147,10 @@ class AgentRuntime:
                         approval_id=step.approval_id,
                         run_id=created_run_id,
                         requested_by=f"agent:{kind.value.lower()}",
+                        trace_id=trace_id,
+                        idempotency_key=(
+                            f"{idempotency_key}:{step.capability_id}" if idempotency_key else None
+                        ),
                     )
                     done = self.jobs.process_next()
                     result.job_ids.append(job.job_id)
@@ -190,6 +168,12 @@ class AgentRuntime:
                             approval_id=step.approval_id,
                             run_id=created_run_id,
                             requested_by=f"agent:{kind.value.lower()}",
+                            trace_id=trace_id,
+                            idempotency_key=(
+                                f"{idempotency_key}:{step.capability_id}"
+                                if idempotency_key
+                                else None
+                            ),
                         )
                     )
                     step_record["status"] = cap.status.value
