@@ -15,7 +15,46 @@ import {
 } from "../../mocks/dataset-management";
 import { useAppToast } from "../../state/useAppToast";
 import type { DatasetJob, DatasetPreviewRow, DatasetRecord, DatasetVersion } from "../../types/api";
+import { DatasetActivityConsole } from "../datasets/DatasetActivityConsole";
+import { isActiveJob, isCompletedJob } from "../datasets/datasetActivity";
+import { useDatasetActivity } from "../datasets/useDatasetActivity";
 import { PxHero, PxIcon, PxKpi } from "./pixel-shared";
+
+const UPLOAD_ACCEPT =
+  ".jsonl,.ndjson,.json,.csv,.tsv,.txt,.md,.markdown,.parquet";
+const UPLOAD_SUFFIXES = new Set([
+  ".jsonl",
+  ".ndjson",
+  ".json",
+  ".csv",
+  ".tsv",
+  ".txt",
+  ".md",
+  ".markdown",
+  ".parquet",
+]);
+
+type ModalKind = "create" | "local" | "hf" | "delete" | null;
+
+type SidebarAction = {
+  id: string;
+  label: string;
+  icon: string;
+  danger?: boolean;
+};
+
+const SIDEBAR_ACTIONS: SidebarAction[] = [
+  { id: "upload", label: "Dataset toevoegen", icon: "plus" },
+  { id: "hf", label: "Importeren (Hugging Face)", icon: "download" },
+  { id: "local", label: "Lokale bestanden importeren", icon: "upload" },
+  { id: "create", label: "Nieuwe dataset aanmaken", icon: "squareplus" },
+  { id: "delete", label: "Geselecteerde verwijderen", icon: "trash", danger: true },
+  { id: "offline", label: "Converteren naar offline", icon: "save" },
+  { id: "dup", label: "Dupliceren", icon: "copy" },
+  { id: "index", label: "Index opnieuw opbouwen", icon: "refresh" },
+  { id: "validate", label: "Valideren", icon: "checkcircle" },
+  { id: "export", label: "Exporteren", icon: "download" },
+];
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
@@ -65,6 +104,7 @@ function mapSourceLabel(sourceType: string): string {
   if (s.includes("hugging") || s === "hf") return "Hugging Face";
   if (s.includes("local") || s === "path") return "Lokaal";
   if (s.includes("upload") || s === "file") return "Lokaal";
+  if (s.includes("derived")) return "Afgeleid";
   if (s.includes("synthetic")) return "Synthetic";
   if (s.includes("open")) return "Open Data";
   return sourceType || "—";
@@ -113,24 +153,6 @@ function splitLabelFromVersion(v: DatasetVersion | null): string {
   return keys[0];
 }
 
-function jobStatusNl(status: string): string {
-  const s = status.toLowerCase();
-  if (s === "completed" || s === "succeeded" || s === "done") return "Klaar";
-  if (s === "running") return "Bezig";
-  if (s === "queued" || s === "pending") return "Wachtrij";
-  if (s === "failed" || s === "cancelled") return "Fout";
-  return status;
-}
-
-function jobProgressPct(job: DatasetJob): number {
-  if (job.progress == null) {
-    const s = job.status.toLowerCase();
-    if (s === "completed" || s === "succeeded") return 100;
-    return 0;
-  }
-  return Math.round(Math.min(1, Math.max(0, job.progress)) * 100);
-}
-
 function previewSampleText(rows: DatasetPreviewRow[]): string {
   if (rows.length === 0) return "Geen voorbeeldrijen.";
   const first = rows[0] as Record<string, unknown>;
@@ -145,39 +167,29 @@ function previewSampleText(rows: DatasetPreviewRow[]): string {
   return JSON.stringify(first, null, 2).slice(0, 2000);
 }
 
-type SidebarAction = {
-  id: string;
-  label: string;
-  icon: string;
-  danger?: boolean;
-  disabled?: boolean;
-  disabledReason?: string;
-};
+function fileSuffix(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i).toLowerCase() : "";
+}
 
-const SIDEBAR_ACTIONS: SidebarAction[] = [
-  { id: "upload", label: "Dataset toevoegen", icon: "plus" },
-  { id: "hf", label: "Importeren (Hugging Face)", icon: "download" },
-  { id: "local", label: "Lokale bestanden importeren", icon: "upload" },
-  { id: "create", label: "Nieuwe dataset aanmaken", icon: "squareplus" },
-  { id: "delete", label: "Geselecteerde verwijderen", icon: "trash", danger: true },
-  {
-    id: "offline",
-    label: "Converteren naar offline",
-    icon: "save",
-    disabled: true,
-    disabledReason: "Offline-conversie wordt niet ondersteund door DatasetService.",
-  },
-  {
-    id: "dup",
-    label: "Dupliceren",
-    icon: "copy",
-    disabled: true,
-    disabledReason: "Dupliceren is nog niet beschikbaar via de API.",
-  },
-  { id: "index", label: "Index opnieuw opbouwen", icon: "refresh" },
-  { id: "validate", label: "Valideren", icon: "checkcircle" },
-  { id: "export", label: "Exporteren", icon: "download" },
-];
+function pickUsableVersion(versions: DatasetVersion[]): DatasetVersion | null {
+  const ready = versions.filter((v) => v.status === "ready");
+  const order = ["materialized", "transformed", "split", "raw", "export"];
+  for (const kind of order) {
+    const hit = ready.find((v) => v.kind === kind);
+    if (hit) return hit;
+  }
+  return ready[0] ?? versions[0] ?? null;
+}
+
+function triggerBlobDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export function DatasetManagementPixelPage() {
   const toast = useAppToast();
@@ -193,13 +205,11 @@ export function DatasetManagementPixelPage() {
   const [versions, setVersions] = useState<DatasetVersion[]>([]);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailEpoch, setDetailEpoch] = useState(0);
 
   const [preview, setPreview] = useState<DatasetPreviewRow[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sampleTab, setSampleTab] = useState<DatasetSampleTab>("JSON");
-
-  const [jobs, setJobs] = useState<DatasetJob[]>([]);
-  const [jobsError, setJobsError] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState(DM_TYPE_FILTERS[0]);
@@ -207,41 +217,99 @@ export function DatasetManagementPixelPage() {
   const [splitFilter, setSplitFilter] = useState(DM_SPLIT_FILTERS[0]);
   const [statusFilter, setStatusFilter] = useState(DM_STATUS_FILTERS[0]);
 
-  const selected = datasets.find((d) => d.datasetId === selectedId) ?? detail;
-  const selectedVersion =
-    versions.find((v) => v.versionId === selectedVersionId) ??
-    versions.find((v) => v.status === "ready") ??
-    versions[0] ??
-    null;
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [createName, setCreateName] = useState("");
+  const [createDesc, setCreateDesc] = useState("");
+  const [createLicense, setCreateLicense] = useState("");
+  const [localPath, setLocalPath] = useState("");
+  const [localName, setLocalName] = useState("");
+  const [localDesc, setLocalDesc] = useState("");
+  const [hfRepo, setHfRepo] = useState("");
+  const [hfRevision, setHfRevision] = useState("main");
+  const [hfFilename, setHfFilename] = useState("");
+  const [hfName, setHfName] = useState("");
+  const [hfDesc, setHfDesc] = useState("");
+  const [hfToken, setHfToken] = useState("");
 
-  const loadDatasets = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const [exportArtifact, setExportArtifact] = useState<{
+    datasetId: string;
+    versionId: string;
+    jobId: string;
+  } | null>(null);
+  const exportWatchRef = useRef<string | null>(null);
+  const prevExportJobsRef = useRef<Map<string, DatasetJob>>(new Map());
+
+  const loadDatasets = useCallback(async (opts?: { quiet?: boolean; preferId?: string | null }) => {
+    if (!opts?.quiet) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await api.listDatasets();
       setDatasets(res.datasets);
-      if (res.datasets.length === 0) {
-        setSelectedId(null);
-      } else if (!selectedId || !res.datasets.some((d) => d.datasetId === selectedId)) {
-        setSelectedId(res.datasets[0].datasetId);
-      }
+      setSelectedId((prev) => {
+        if (opts?.preferId && res.datasets.some((d) => d.datasetId === opts.preferId)) {
+          return opts.preferId;
+        }
+        if (res.datasets.length === 0) return null;
+        if (prev && res.datasets.some((d) => d.datasetId === prev)) return prev;
+        return res.datasets[0].datasetId;
+      });
+      if (opts?.quiet) setError(null);
     } catch (err) {
       setError(errMsg(err, "Datasets laden mislukt"));
-      setDatasets([]);
+      if (!opts?.quiet) setDatasets([]);
     } finally {
-      setLoading(false);
-    }
-  }, [selectedId]);
-
-  const loadJobs = useCallback(async () => {
-    try {
-      const res = await api.listDatasetJobs(undefined, 50);
-      setJobs(res.jobs);
-      setJobsError(null);
-    } catch (err) {
-      setJobsError(errMsg(err, "Jobs laden mislukt"));
+      if (!opts?.quiet) setLoading(false);
     }
   }, []);
+
+  const {
+    jobs,
+    jobsError,
+    activityEntries,
+    preferredJobId,
+    setPreferredJobId,
+    loadJobs,
+    clearActivityView,
+    live,
+  } = useDatasetActivity({
+    onLifecycleChange: () => {
+      void loadDatasets({ quiet: true });
+      setDetailEpoch((n) => n + 1);
+    },
+  });
+
+  const selected = datasets.find((d) => d.datasetId === selectedId) ?? detail;
+  const selectedVersion =
+    versions.find((v) => v.versionId === selectedVersionId) ??
+    pickUsableVersion(versions);
+
+  // Watch export jobs → surface download when a real EXPORT version exists.
+  useEffect(() => {
+    const prev = prevExportJobsRef.current;
+    for (const job of jobs) {
+      if (job.jobType !== "export") continue;
+      const old = prev.get(job.jobId);
+      if (old && old.status === job.status) continue;
+      if (isCompletedJob(job)) {
+        const exportVersionId =
+          typeof job.result?.versionId === "string" ? job.result.versionId : null;
+        const datasetId = job.datasetId;
+        if (exportVersionId && datasetId) {
+          setExportArtifact({
+            datasetId,
+            versionId: exportVersionId,
+            jobId: job.jobId,
+          });
+          if (exportWatchRef.current === job.jobId) {
+            toast("Export klaar — download beschikbaar");
+          }
+        }
+      }
+    }
+    prevExportJobsRef.current = new Map(jobs.map((j) => [j.jobId, j]));
+  }, [jobs, toast]);
 
   useEffect(() => {
     void loadDatasets();
@@ -263,8 +331,10 @@ export function DatasetManagementPixelPage() {
         if (cancelled) return;
         setDetail(res.dataset);
         setVersions(res.versions);
-        const ready = res.versions.find((v) => v.status === "ready") ?? res.versions[0];
-        setSelectedVersionId(ready?.versionId ?? null);
+        setSelectedVersionId((prev) => {
+          if (prev && res.versions.some((v) => v.versionId === prev)) return prev;
+          return pickUsableVersion(res.versions)?.versionId ?? null;
+        });
       } catch (err) {
         if (!cancelled) {
           setDetail(null);
@@ -277,7 +347,7 @@ export function DatasetManagementPixelPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, detailEpoch]);
 
   useEffect(() => {
     if (!selectedVersionId) {
@@ -303,14 +373,6 @@ export function DatasetManagementPixelPage() {
       cancelled = true;
     };
   }, [selectedVersionId]);
-
-  useEffect(() => {
-    void loadJobs();
-    const id = window.setInterval(() => {
-      void loadJobs();
-    }, 4000);
-    return () => window.clearInterval(id);
-  }, [loadJobs]);
 
   async function withBusy(fn: () => Promise<void>, okMsg?: string) {
     setBusy(true);
@@ -359,14 +421,7 @@ export function DatasetManagementPixelPage() {
     () => datasets.reduce((acc, d) => acc + (d.rowCount ?? 0), 0),
     [datasets],
   );
-  const activeJobs = useMemo(
-    () =>
-      jobs.filter((j) => {
-        const s = j.status.toLowerCase();
-        return s === "queued" || s === "pending" || s === "running";
-      }),
-    [jobs],
-  );
+  const activeJobs = useMemo(() => jobs.filter(isActiveJob), [jobs]);
 
   const tagCloud = useMemo(() => {
     const counts = new Map<string, number>();
@@ -423,8 +478,18 @@ export function DatasetManagementPixelPage() {
       {
         id: "validation",
         label: "Validatie Issues",
-        value: "—",
-        hint: "Geen centrale validatieteller in API",
+        value: selectedVersion?.validation
+          ? String(
+              Number(
+                (selectedVersion.validation as Record<string, unknown>).errorCount ??
+                  (selectedVersion.validation as Record<string, unknown>).errors ??
+                  "—",
+              ),
+            )
+          : "—",
+        hint: selectedVersion?.validation
+          ? "Uit laatste validatie van geselecteerde versie"
+          : "Geen validatieresultaat op geselecteerde versie",
         icon: "shield",
         tone: "red" as const,
       },
@@ -437,13 +502,24 @@ export function DatasetManagementPixelPage() {
         tone: error ? ("red" as const) : ("green" as const),
       },
     ],
-    [loading, datasets.length, totalRows, totalBytes, activeJobs, jobsError, error],
+    [
+      loading,
+      datasets.length,
+      totalRows,
+      totalBytes,
+      activeJobs,
+      jobsError,
+      error,
+      selectedVersion,
+    ],
   );
 
   const samplePreview = useMemo(() => {
     if (previewError) return previewError;
     if (preview.length === 0) {
-      return selectedVersion ? "Geen voorbeeldrijen voor deze versie." : "Selecteer een dataset met versie.";
+      return selectedVersion
+        ? "Geen voorbeeldrijen voor deze versie."
+        : "Selecteer een dataset met versie.";
     }
     if (sampleTab === "JSON") return JSON.stringify(preview, null, 2);
     if (sampleTab === "Tekst") return previewSampleText(preview);
@@ -459,7 +535,9 @@ export function DatasetManagementPixelPage() {
         headers
           .map((h) => {
             const v = r[h];
-            return dash(typeof v === "string" || typeof v === "number" ? v : v == null ? null : String(v));
+            return dash(
+              typeof v === "string" || typeof v === "number" ? v : v == null ? null : String(v),
+            );
           })
           .join(" | "),
       );
@@ -467,75 +545,234 @@ export function DatasetManagementPixelPage() {
     return lines.join("\n");
   }, [preview, previewError, sampleTab, selectedVersion]);
 
+  function actionDisabledReason(actionId: string): string | null {
+    const needsSelection = ["delete", "offline", "dup", "index", "validate", "export"];
+    const needsVersion = ["offline", "index", "validate", "export"];
+    if (needsSelection.includes(actionId) && !selectedId) {
+      return "Selecteer eerst een dataset";
+    }
+    if (needsVersion.includes(actionId) && !selectedVersionId) {
+      return "Selecteer eerst een datasetversie";
+    }
+    return null;
+  }
+
+  async function trackJob(job: DatasetJob, okMsg?: string) {
+    setPreferredJobId(job.jobId);
+    await loadJobs();
+    if (okMsg) toast(okMsg);
+  }
+
+  async function onUploadFile(file: File | null) {
+    if (!file) return;
+    const suffix = fileSuffix(file.name);
+    if (!UPLOAD_SUFFIXES.has(suffix)) {
+      toast(
+        `Bestandstype niet ondersteund (${suffix || "onbekend"}). Toegestaan: ${[...UPLOAD_SUFFIXES].join(", ")}`,
+      );
+      return;
+    }
+    await withBusy(async () => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("materialize", "true");
+      const res = await api.uploadDataset(form);
+      await trackJob(res.job, "Upload in wachtrij");
+      await loadDatasets({ quiet: true });
+    });
+  }
+
+  async function onCreateSubmit() {
+    if (!createName.trim()) {
+      toast("Naam is verplicht");
+      return;
+    }
+    await withBusy(async () => {
+      const res = await api.createDataset({
+        name: createName.trim(),
+        description: createDesc,
+        license: createLicense.trim() || null,
+      });
+      setModal(null);
+      setCreateName("");
+      setCreateDesc("");
+      setCreateLicense("");
+      await loadDatasets({ quiet: true, preferId: res.dataset.datasetId });
+      toast("Dataset aangemaakt");
+    });
+  }
+
+  async function onLocalSubmit() {
+    if (!localPath.trim()) {
+      toast("Lokaal pad is verplicht");
+      return;
+    }
+    await withBusy(async () => {
+      try {
+        await api.inspectDatasetPath(localPath.trim());
+      } catch (err) {
+        toast(errMsg(err, "Padinspectie mislukt"));
+        return;
+      }
+      const res = await api.importDatasetLocal({
+        path: localPath.trim(),
+        name: localName.trim() || undefined,
+        description: localDesc || undefined,
+        materialize: true,
+      });
+      setModal(null);
+      setLocalPath("");
+      setLocalName("");
+      setLocalDesc("");
+      await trackJob(res.job, "Lokale import in wachtrij");
+      await loadDatasets({ quiet: true });
+    });
+  }
+
+  async function onHfSubmit() {
+    if (!hfRepo.trim()) {
+      toast("Repository ID is verplicht");
+      return;
+    }
+    await withBusy(async () => {
+      const res = await api.importDatasetHuggingFace({
+        repositoryId: hfRepo.trim(),
+        filename: hfFilename.trim() || null,
+        revision: hfRevision.trim() || "main",
+        name: hfName.trim() || undefined,
+        description: hfDesc || undefined,
+        token: hfToken.trim() || null,
+        materialize: true,
+      });
+      setModal(null);
+      setHfRepo("");
+      setHfFilename("");
+      setHfName("");
+      setHfDesc("");
+      setHfToken("");
+      setHfRevision("main");
+      await trackJob(res.job, "Hugging Face import in wachtrij");
+      await loadDatasets({ quiet: true });
+    });
+  }
+
+  async function onDeleteConfirm() {
+    if (!selectedId) return;
+    const deletedId = selectedId;
+    const remaining = datasets.filter((d) => d.datasetId !== deletedId);
+    const nextId = remaining[0]?.datasetId ?? null;
+    await withBusy(async () => {
+      await api.deleteDataset(deletedId);
+      setModal(null);
+      setExportArtifact((prev) => (prev?.datasetId === deletedId ? null : prev));
+      await loadDatasets({ quiet: true, preferId: nextId });
+      toast("Dataset verwijderd");
+    });
+  }
+
+  async function onConvertOffline() {
+    if (!selectedId || !selectedVersionId) {
+      toast("Selecteer eerst een datasetversie");
+      return;
+    }
+    await withBusy(async () => {
+      const pf = await api.offlineBrainPreflight({
+        datasetId: selectedId,
+        versionId: selectedVersionId,
+        offlineOnly: true,
+      });
+      const preflight = pf.preflight as {
+        ok?: boolean;
+        blockers?: string[];
+      };
+      if (!preflight.ok) {
+        const blockers = (preflight.blockers ?? []).join("; ") || "Offline preflight geblokkeerd";
+        toast(blockers);
+        return;
+      }
+      const res = await api.enqueueOfflineBrainIndex({
+        datasetId: selectedId,
+        versionId: selectedVersionId,
+      });
+      await trackJob(res.job, "Offline Brain-index in wachtrij");
+    });
+  }
+
+  async function onDuplicate() {
+    if (!selectedId) {
+      toast("Selecteer eerst een dataset");
+      return;
+    }
+    await withBusy(async () => {
+      const res = await api.duplicateDataset(selectedId, {
+        versionId: selectedVersionId,
+      });
+      const targetId = res.job.datasetId;
+      await trackJob(res.job, "Duplicatie in wachtrij");
+      await loadDatasets({ quiet: true, preferId: targetId ?? undefined });
+    });
+  }
+
   async function runVersionJob(
     action: () => Promise<{ job: DatasetJob }>,
     label: string,
+    opts?: { exportWatch?: boolean },
   ) {
     if (!selectedId || !selectedVersionId) {
       toast("Selecteer eerst een datasetversie");
       return;
     }
     await withBusy(async () => {
-      await action();
-      await loadJobs();
-    }, `${label} in wachtrij gezet`);
+      const res = await action();
+      if (opts?.exportWatch) {
+        exportWatchRef.current = res.job.jobId;
+      }
+      await trackJob(res.job, `${label} in wachtrij gezet`);
+    });
+  }
+
+  async function onDownloadExport() {
+    if (!exportArtifact) {
+      toast("Geen exportartifact beschikbaar");
+      return;
+    }
+    await withBusy(async () => {
+      const blob = await api.downloadDatasetExport(
+        exportArtifact.datasetId,
+        exportArtifact.versionId,
+      );
+      triggerBlobDownload(blob, `export-${exportArtifact.versionId}.jsonl`);
+      toast("Export gedownload");
+    });
   }
 
   async function onSidebarAction(actionId: string) {
+    const reason = actionDisabledReason(actionId);
+    if (reason) {
+      toast(reason);
+      return;
+    }
     switch (actionId) {
       case "upload":
         uploadRef.current?.click();
         return;
-      case "create": {
-        const name = window.prompt("Naam voor nieuwe dataset:");
-        if (!name?.trim()) return;
-        const description = window.prompt("Beschrijving (optioneel):") ?? "";
-        await withBusy(async () => {
-          await api.createDataset({ name: name.trim(), description });
-          await loadDatasets();
-        }, "Dataset aangemaakt");
+      case "create":
+        setModal("create");
         return;
-      }
-      case "local": {
-        const path = window.prompt("Absoluut pad op de server:");
-        if (!path?.trim()) return;
-        const name = window.prompt("Optionele naam:") ?? undefined;
-        await withBusy(async () => {
-          await api.importDatasetLocal({
-            path: path.trim(),
-            name: name?.trim() || undefined,
-            materialize: true,
-          });
-          await loadDatasets();
-          await loadJobs();
-        }, "Lokale import in wachtrij");
+      case "local":
+        setModal("local");
         return;
-      }
-      case "hf": {
-        const repo = window.prompt("Hugging Face repository (org/dataset):");
-        if (!repo?.trim()) return;
-        const filename = window.prompt("Bestandsnaam in de repo:");
-        if (!filename?.trim()) return;
-        await withBusy(async () => {
-          await api.importDatasetHuggingFace({
-            repositoryId: repo.trim(),
-            filename: filename.trim(),
-            materialize: true,
-          });
-          await loadJobs();
-        }, "Hugging Face import in wachtrij");
+      case "hf":
+        setModal("hf");
         return;
-      }
       case "delete":
-        if (!selectedId) {
-          toast("Geen dataset geselecteerd");
-          return;
-        }
-        if (!window.confirm(`Dataset "${selected?.name ?? selectedId}" verwijderen?`)) return;
-        await withBusy(async () => {
-          await api.deleteDataset(selectedId);
-          await loadDatasets();
-        }, "Dataset verwijderd");
+        setModal("delete");
+        return;
+      case "offline":
+        await onConvertOffline();
+        return;
+      case "dup":
+        await onDuplicate();
         return;
       case "validate":
         await runVersionJob(
@@ -547,29 +784,21 @@ export function DatasetManagementPixelPage() {
         await runVersionJob(
           () => api.exportDatasetVersion(selectedId!, selectedVersionId!),
           "Export",
+          { exportWatch: true },
         );
         return;
       case "index":
         await runVersionJob(
-          () => api.indexDatasetVersion(selectedId!, selectedVersionId!),
-          "Index",
+          () =>
+            api.indexDatasetVersion(selectedId!, selectedVersionId!, {
+              rebuild: true,
+            }),
+          "Index herbouw",
         );
         return;
       default:
         return;
     }
-  }
-
-  async function onUploadFile(file: File | null) {
-    if (!file) return;
-    await withBusy(async () => {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("materialize", "true");
-      await api.uploadDataset(form);
-      await loadDatasets();
-      await loadJobs();
-    }, "Upload in wachtrij");
   }
 
   async function onFooterAction(id: string) {
@@ -586,12 +815,19 @@ export function DatasetManagementPixelPage() {
       return;
     }
     if (id === "offline") {
-      toast("Offline-conversie wordt niet ondersteund door DatasetService.");
+      await onSidebarAction("offline");
       return;
     }
     if (id === "save") {
       toast("Metagegevens opslaan is nog niet beschikbaar via de API.");
     }
+  }
+
+  async function onCancelDatasetJob(jobId: string) {
+    await withBusy(async () => {
+      await api.cancelDatasetJob(jobId);
+      await loadJobs();
+    }, "Annuleren aangevraagd");
   }
 
   const systemItems = [
@@ -614,7 +850,7 @@ export function DatasetManagementPixelPage() {
         ref={uploadRef}
         type="file"
         hidden
-        accept=".jsonl,.ndjson,.json,.csv,.tsv,.txt,.md"
+        accept={UPLOAD_ACCEPT}
         onChange={(e) => {
           const file = e.target.files?.[0] ?? null;
           e.target.value = "";
@@ -677,26 +913,34 @@ export function DatasetManagementPixelPage() {
                 Geselecteerd: {selected ? "1 dataset" : "geen"}
               </p>
               <div className="lv-px-action-list" style={{ marginTop: 8 }}>
-                {SIDEBAR_ACTIONS.map((action) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    className={action.danger ? "is-danger" : ""}
-                    disabled={busy || action.disabled || (action.id === "delete" && !selectedId)}
-                    title={action.disabledReason ?? undefined}
-                    onClick={() => {
-                      if (action.disabled) {
-                        toast(action.disabledReason ?? "Niet ondersteund");
-                        return;
-                      }
-                      void onSidebarAction(action.id);
-                    }}
-                  >
-                    <PxIcon name={action.icon} />
-                    <span>{action.label}</span>
-                  </button>
-                ))}
+                {SIDEBAR_ACTIONS.map((action) => {
+                  const reason = actionDisabledReason(action.id);
+                  return (
+                    <button
+                      key={action.id}
+                      type="button"
+                      className={action.danger ? "is-danger" : ""}
+                      disabled={busy || Boolean(reason)}
+                      title={reason ?? undefined}
+                      onClick={() => void onSidebarAction(action.id)}
+                    >
+                      <PxIcon name={action.icon} />
+                      <span>{action.label}</span>
+                    </button>
+                  );
+                })}
               </div>
+              {exportArtifact ? (
+                <button
+                  type="button"
+                  className="lv-px-btn is-gold"
+                  style={{ marginTop: 12, width: "100%" }}
+                  disabled={busy}
+                  onClick={() => void onDownloadExport()}
+                >
+                  Download export
+                </button>
+              ) : null}
             </aside>
 
             <section className="lv-px-panel">
@@ -834,6 +1078,11 @@ export function DatasetManagementPixelPage() {
                     <p style={{ fontSize: 10, color: "var(--lv-text-secondary)" }}>
                       {selected.description || "Geen beschrijving"}
                     </p>
+                    {versions.length === 0 ? (
+                      <p style={{ fontSize: 10, color: "var(--lv-text-muted)", marginTop: 8 }}>
+                        Lege dataset — nog geen versies of rijen.
+                      </p>
+                    ) : null}
                     <dl className="lv-px-meta-grid" style={{ marginTop: 8 }}>
                       <dt>Bron</dt>
                       <dd>{mapSourceLabel(selected.sourceType)}</dd>
@@ -842,7 +1091,23 @@ export function DatasetManagementPixelPage() {
                       <dt>Locatie</dt>
                       <dd>{dash(selected.rawPath ?? selected.originalUri)}</dd>
                       <dt>Versie</dt>
-                      <dd>{dash(selectedVersion?.versionLabel)}</dd>
+                      <dd>
+                        {versions.length > 1 ? (
+                          <select
+                            className="lv-px-select"
+                            value={selectedVersionId ?? ""}
+                            onChange={(e) => setSelectedVersionId(e.target.value || null)}
+                          >
+                            {versions.map((v) => (
+                              <option key={v.versionId} value={v.versionId}>
+                                {v.versionLabel} ({v.kind})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          dash(selectedVersion?.versionLabel)
+                        )}
+                      </dd>
                       <dt>Taal</dt>
                       <dd>
                         {dash(
@@ -856,6 +1121,11 @@ export function DatasetManagementPixelPage() {
                       <dt>Licentie</dt>
                       <dd>{dash(selected.license)}</dd>
                     </dl>
+                    {selectedVersion?.validation ? (
+                      <pre className="lv-px-code" style={{ marginTop: 8, maxHeight: 120 }}>
+                        {JSON.stringify(selectedVersion.validation, null, 2)}
+                      </pre>
+                    ) : null}
                     <div className="lv-px-action-list" style={{ marginTop: 8 }}>
                       <button
                         type="button"
@@ -865,15 +1135,6 @@ export function DatasetManagementPixelPage() {
                       >
                         <PxIcon name="sliders" />
                         <span>Metagegevens bewerken</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy || !selectedId}
-                        title="Nog niet ondersteund via API"
-                        onClick={() => toast("Tags beheren is nog niet beschikbaar via de API.")}
-                      >
-                        <PxIcon name="book" />
-                        <span>Tags beheren</span>
                       </button>
                       <button
                         type="button"
@@ -926,57 +1187,6 @@ export function DatasetManagementPixelPage() {
               </section>
 
               <section className="lv-px-panel">
-                <h2 className="lv-px-panel-title">Import jobs</h2>
-                {jobsError ? (
-                  <p style={{ fontSize: 10, color: "var(--lv-text-muted)" }}>{jobsError}</p>
-                ) : jobs.length === 0 ? (
-                  <p style={{ fontSize: 10, color: "var(--lv-text-muted)" }}>Geen jobs in de wachtrij.</p>
-                ) : (
-                  jobs.slice(0, 8).map((job) => {
-                    const dsName =
-                      datasets.find((d) => d.datasetId === job.datasetId)?.name ??
-                      dash(job.datasetId);
-                    const pct = jobProgressPct(job);
-                    const cancellable =
-                      job.status.toLowerCase() === "queued" || job.status.toLowerCase() === "running";
-                    return (
-                      <div key={job.jobId} className="lv-px-queue-item">
-                        <div className="lv-px-queue-top">
-                          <strong>{dsName}</strong>
-                          <span>{jobStatusNl(job.status)}</span>
-                        </div>
-                        <div className="lv-px-progress">
-                          <i style={{ width: `${pct}%` }} />
-                        </div>
-                        <div className="lv-px-queue-meta">
-                          <span>{job.jobType}{job.phase ? ` · ${job.phase}` : ""}</span>
-                          <span>
-                            {cancellable ? (
-                              <button
-                                type="button"
-                                style={{ fontSize: 9, background: "none", border: 0, color: "inherit", cursor: "pointer" }}
-                                disabled={busy}
-                                onClick={() =>
-                                  void withBusy(async () => {
-                                    await api.cancelDatasetJob(job.jobId);
-                                    await loadJobs();
-                                  }, "Annuleren aangevraagd")
-                                }
-                              >
-                                Annuleren
-                              </button>
-                            ) : (
-                              job.updatedAt
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </section>
-
-              <section className="lv-px-panel">
                 <h2 className="lv-px-panel-title">Opslag</h2>
                 <p style={{ fontSize: 10 }}>
                   {formatBytes(totalBytes)} gebruikt ({datasets.length} datasets)
@@ -1007,20 +1217,254 @@ export function DatasetManagementPixelPage() {
           </div>
 
           <div className="lv-px-footer-bar">
-            {DM_FOOTER_ACTIONS.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                className={`lv-px-btn${a.tone === "gold" ? " is-gold" : ""}${a.tone === "danger" ? " is-danger" : ""}`}
-                disabled={busy || (a.id === "delete" && !selectedId) || (a.id === "validate" && !selectedVersionId)}
-                onClick={() => void onFooterAction(a.id)}
-              >
-                {a.label}
-              </button>
-            ))}
+            {DM_FOOTER_ACTIONS.map((a) => {
+              let reason: string | null = null;
+              if (a.id === "delete") reason = actionDisabledReason("delete");
+              if (a.id === "validate") reason = actionDisabledReason("validate");
+              if (a.id === "offline") reason = actionDisabledReason("offline");
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  className={`lv-px-btn${a.tone === "gold" ? " is-gold" : ""}${a.tone === "danger" ? " is-danger" : ""}`}
+                  disabled={busy || Boolean(reason)}
+                  title={reason ?? undefined}
+                  onClick={() => void onFooterAction(a.id)}
+                >
+                  {a.label}
+                </button>
+              );
+            })}
           </div>
+
+          <DatasetActivityConsole
+            jobs={jobs}
+            entries={activityEntries}
+            preferredJobId={preferredJobId}
+            onPreferredJobIdChange={setPreferredJobId}
+            apiError={jobsError}
+            live={live}
+            busy={busy}
+            onCancelJob={onCancelDatasetJob}
+            onClearView={clearActivityView}
+          />
         </div>
       </main>
+
+      {modal ? (
+        <div
+          className="lv-dh-modal-backdrop"
+          role="presentation"
+          onClick={() => !busy && setModal(null)}
+        >
+          <div
+            className="lv-dh-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dm-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {modal === "create" ? (
+              <>
+                <h2 id="dm-modal-title">Nieuwe dataset</h2>
+                <p>Maak een lege dataset-shell in DatasetService.</p>
+                <div className="lv-dh-form">
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-create-name">Naam</label>
+                    <input
+                      id="dm-create-name"
+                      value={createName}
+                      onChange={(e) => setCreateName(e.target.value)}
+                      placeholder="mijn-corpus"
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-create-desc">Beschrijving</label>
+                    <textarea
+                      id="dm-create-desc"
+                      value={createDesc}
+                      onChange={(e) => setCreateDesc(e.target.value)}
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-create-license">Licentie (optioneel)</label>
+                    <input
+                      id="dm-create-license"
+                      value={createLicense}
+                      onChange={(e) => setCreateLicense(e.target.value)}
+                      placeholder="MIT"
+                    />
+                  </div>
+                  <div className="lv-dh-modal-actions">
+                    <button type="button" className="lv-dh-btn" disabled={busy} onClick={() => setModal(null)}>
+                      Annuleren
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-dh-btn lv-dh-btn-gold"
+                      disabled={busy || !createName.trim()}
+                      onClick={() => void onCreateSubmit()}
+                    >
+                      Aanmaken
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {modal === "local" ? (
+              <>
+                <h2 id="dm-modal-title">Lokale bestanden importeren</h2>
+                <p>Importeer een bestand dat al bereikbaar is op de LEVIATHAN-server (allowed roots).</p>
+                <div className="lv-dh-form">
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-local-path">Absoluut of toegestaan pad</label>
+                    <input
+                      id="dm-local-path"
+                      value={localPath}
+                      onChange={(e) => setLocalPath(e.target.value)}
+                      placeholder="/data/corpus.jsonl"
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-local-name">Optionele naam</label>
+                    <input
+                      id="dm-local-name"
+                      value={localName}
+                      onChange={(e) => setLocalName(e.target.value)}
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-local-desc">Optionele beschrijving</label>
+                    <textarea
+                      id="dm-local-desc"
+                      value={localDesc}
+                      onChange={(e) => setLocalDesc(e.target.value)}
+                    />
+                  </div>
+                  <div className="lv-dh-modal-actions">
+                    <button type="button" className="lv-dh-btn" disabled={busy} onClick={() => setModal(null)}>
+                      Annuleren
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-dh-btn lv-dh-btn-gold"
+                      disabled={busy || !localPath.trim()}
+                      onClick={() => void onLocalSubmit()}
+                    >
+                      Importeren
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {modal === "hf" ? (
+              <>
+                <h2 id="dm-modal-title">Importeren (Hugging Face)</h2>
+                <p>
+                  Importeer een volledige repository (bestandsnaam optioneel) of één bestand.
+                  Token wordt niet in jobconfig of logs bewaard.
+                </p>
+                <div className="lv-dh-form">
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-hf-repo">Repository ID</label>
+                    <input
+                      id="dm-hf-repo"
+                      value={hfRepo}
+                      onChange={(e) => setHfRepo(e.target.value)}
+                      placeholder="owner/dataset"
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-hf-rev">Revision</label>
+                    <input
+                      id="dm-hf-rev"
+                      value={hfRevision}
+                      onChange={(e) => setHfRevision(e.target.value)}
+                      placeholder="main"
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-hf-file">Bestandsnaam (optioneel — leeg = volledige repo)</label>
+                    <input
+                      id="dm-hf-file"
+                      value={hfFilename}
+                      onChange={(e) => setHfFilename(e.target.value)}
+                      placeholder="train.jsonl"
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-hf-name">Weergavenaam (optioneel)</label>
+                    <input
+                      id="dm-hf-name"
+                      value={hfName}
+                      onChange={(e) => setHfName(e.target.value)}
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-hf-desc">Beschrijving (optioneel)</label>
+                    <textarea
+                      id="dm-hf-desc"
+                      value={hfDesc}
+                      onChange={(e) => setHfDesc(e.target.value)}
+                    />
+                  </div>
+                  <div className="lv-dh-field">
+                    <label htmlFor="dm-hf-token">Access token (optioneel)</label>
+                    <input
+                      id="dm-hf-token"
+                      type="password"
+                      value={hfToken}
+                      onChange={(e) => setHfToken(e.target.value)}
+                      autoComplete="off"
+                      placeholder="********"
+                    />
+                  </div>
+                  <div className="lv-dh-modal-actions">
+                    <button type="button" className="lv-dh-btn" disabled={busy} onClick={() => setModal(null)}>
+                      Annuleren
+                    </button>
+                    <button
+                      type="button"
+                      className="lv-dh-btn lv-dh-btn-gold"
+                      disabled={busy || !hfRepo.trim()}
+                      onClick={() => void onHfSubmit()}
+                    >
+                      {hfFilename.trim() ? "Bestand importeren" : "Volledige repository importeren"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {modal === "delete" ? (
+              <>
+                <h2 id="dm-modal-title">Dataset verwijderen</h2>
+                <p>
+                  Bevestig verwijdering van{" "}
+                  <strong>{selected?.name ?? selectedId}</strong>. Afhankelijkheden (zoals
+                  training-referenties) blokkeren delete via DatasetService.
+                </p>
+                <div className="lv-dh-modal-actions">
+                  <button type="button" className="lv-dh-btn" disabled={busy} onClick={() => setModal(null)}>
+                    Annuleren
+                  </button>
+                  <button
+                    type="button"
+                    className="lv-dh-btn"
+                    style={{ background: "rgba(220,80,80,0.25)", borderColor: "rgba(220,80,80,0.5)" }}
+                    disabled={busy}
+                    onClick={() => void onDeleteConfirm()}
+                  >
+                    Verwijderen
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }

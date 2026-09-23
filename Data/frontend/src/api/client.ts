@@ -175,6 +175,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+async function requestBlob(path: string, options: RequestInit = {}): Promise<Blob> {
+  const response = await fetch(path, { ...options });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const data = (await response.json()) as ApiErrorBody;
+      message = detailMessage(data, response.status);
+    } catch {
+      /* ignore non-JSON error bodies */
+    }
+    throw new ApiError(response.status, message);
+  }
+  return response.blob();
+}
+
 export const api = {
   health(): Promise<HealthResponse> {
     return request<HealthResponse>("/api/health");
@@ -1052,11 +1067,33 @@ export const api = {
   indexDatasetVersion(
     datasetId: string,
     versionId: string,
-    payload: { scope?: string; maxRecords?: number | null } = {},
+    payload: {
+      scope?: string;
+      maxRecords?: number | null;
+      offlineOnly?: boolean;
+      sourceFingerprint?: string | null;
+      rebuild?: boolean;
+    } = {},
   ): Promise<{ job: DatasetJob }> {
     return request(
       `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(versionId)}/index`,
       { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
+  duplicateDataset(
+    datasetId: string,
+    payload: { versionId?: string | null; name?: string | null } = {},
+  ): Promise<{ job: DatasetJob }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  downloadDatasetExport(datasetId: string, exportVersionId: string): Promise<Blob> {
+    return requestBlob(
+      `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(exportVersionId)}/download`,
     );
   },
 
