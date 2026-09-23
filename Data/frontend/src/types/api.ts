@@ -517,6 +517,50 @@ export type DatasetFile = {
   createdAt: string;
 };
 
+export type DatasetJobCheckpoint = {
+  repositoryId?: string;
+  revision?: string;
+  filename?: string;
+  bytesDownloaded?: number;
+  totalBytes?: number | null;
+  etag?: string | null;
+  attempts?: number;
+  lastStatus?: number | null;
+  rateLimitEvents?: number;
+  [key: string]: unknown;
+};
+
+export type DatasetJobDownloadSummary = {
+  repositoryId?: string | null;
+  revision?: string | null;
+  filename?: string | null;
+  bytesDownloaded?: number | null;
+  bytesTotal?: number | null;
+  filesTotal?: number | null;
+  filesCompleted?: number | null;
+  attempts?: number | null;
+  lastHttpStatus?: number | null;
+  rateLimitEvents?: number | null;
+  etag?: string | null;
+};
+
+export type DatasetActivityLevel = "info" | "progress" | "warning" | "error" | "success";
+
+export type DatasetActivityEntry = {
+  id: string;
+  timestamp: string;
+  datasetId?: string;
+  jobId?: string;
+  level: DatasetActivityLevel;
+  stage?: string;
+  message: string;
+  bytesCompleted?: number;
+  bytesTotal?: number;
+  filesCompleted?: number;
+  filesTotal?: number;
+  retryCount?: number;
+};
+
 export type DatasetJob = {
   jobId: string;
   datasetId?: string | null;
@@ -527,7 +571,7 @@ export type DatasetJob = {
   progress?: number | null;
   cancelRequested?: boolean;
   workerPid?: number | null;
-  checkpoint?: Record<string, unknown>;
+  checkpoint?: DatasetJobCheckpoint;
   config?: Record<string, unknown>;
   result?: Record<string, unknown>;
   error?: string | null;
@@ -537,6 +581,8 @@ export type DatasetJob = {
   startedAt?: string | null;
   updatedAt: string;
   finishedAt?: string | null;
+  /** Derived download summary from backend public_job (HF imports). */
+  download?: DatasetJobDownloadSummary | null;
 };
 
 export type DatasetIndex = {

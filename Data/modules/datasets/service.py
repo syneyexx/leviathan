@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -529,7 +530,9 @@ class DatasetService:
             "rawVersionId": raw_version.version_id,
         }
         if job.config.get("materialize", True):
+            self.store.update_job(job.job_id, phase="materializing", progress=0.92)
             mat = self._materialize_dataset(job.dataset_id, raw_path=dest, fmt=detection.format)
+            self.store.update_job(job.job_id, phase="validating", progress=0.97)
             result["materialized"] = mat
         if self.runner.is_cancel_requested(job.job_id):
             raise DatasetError("cancelled", code="cancelled", http_status=409)
@@ -550,14 +553,46 @@ class DatasetService:
         def cancel() -> bool:
             return self.runner.is_cancel_requested(job.job_id)
 
+        # Coalesce download chunk callbacks so multi-GB transfers do not
+        # rewrite the durable job row on every 1 MiB chunk.
+        progress_state: dict[str, Any] = {
+            "lastWriteAt": 0.0,
+            "lastBytes": -1,
+            "lastPhase": "",
+            "lastAttempts": -1,
+        }
+        min_interval_s = 0.75
+        min_byte_delta = 2 * 1024 * 1024  # 2 MiB
+
         def on_progress(info: dict[str, Any]) -> None:
+            phase = str(info.get("phase") or "downloading")
+            checkpoint = info.get("checkpoint") or cp.to_dict()
+            bytes_downloaded = int(info.get("bytesDownloaded") or checkpoint.get("bytesDownloaded") or 0)
+            total_bytes = info.get("totalBytes")
+            if total_bytes is None:
+                total_bytes = checkpoint.get("totalBytes")
+            attempts = int(checkpoint.get("attempts") or 0)
+            now = time.monotonic()
+            force = (
+                phase != progress_state["lastPhase"]
+                or attempts != progress_state["lastAttempts"]
+                or phase in {"rate_limited", "completed", "cancelled"}
+            )
+            byte_delta = abs(bytes_downloaded - int(progress_state["lastBytes"]))
+            elapsed = now - float(progress_state["lastWriteAt"])
+            if not force and elapsed < min_interval_s and byte_delta < min_byte_delta:
+                return
+            progress_state["lastWriteAt"] = now
+            progress_state["lastBytes"] = bytes_downloaded
+            progress_state["lastPhase"] = phase
+            progress_state["lastAttempts"] = attempts
             self.store.update_job(
                 job.job_id,
-                checkpoint=info.get("checkpoint") or cp.to_dict(),
-                phase=str(info.get("phase") or "downloading"),
+                checkpoint=checkpoint,
+                phase=phase,
                 progress=None
-                if not info.get("totalBytes")
-                else min(0.9, (info.get("bytesDownloaded") or 0) / max(1, info["totalBytes"])),
+                if not total_bytes
+                else min(0.9, bytes_downloaded / max(1, int(total_bytes))),
             )
 
         downloaded = download_hf_file(
@@ -624,7 +659,14 @@ class DatasetService:
             "rawVersionId": raw_version.version_id,
         }
         if job.config.get("materialize", True):
+            self.store.update_job(
+                job.job_id,
+                phase="materializing",
+                progress=0.92,
+                checkpoint=downloaded.checkpoint.to_dict(),
+            )
             mat = self._materialize_dataset(job.dataset_id, raw_path=final, fmt=detection.format)
+            self.store.update_job(job.job_id, phase="validating", progress=0.97)
             result["materialized"] = mat
         return result
 
@@ -1099,4 +1141,64 @@ class DatasetService:
         data["config"] = cfg
         if data.get("logPath"):
             data["logPath"] = redact_secrets(str(data["logPath"]))
+        checkpoint = dict(data.get("checkpoint") or {})
+        for key, value in list(checkpoint.items()):
+            if isinstance(value, str):
+                checkpoint[key] = redact_secrets(value)
+            elif "token" in key.lower() or "secret" in key.lower() or "authorization" in key.lower():
+                checkpoint[key] = "[REDACTED]"
+        data["checkpoint"] = checkpoint
+        # Derived download summary for the activity console (view aid, not a second store).
+        data["download"] = self._public_download_summary(job.job_type.value, cfg, checkpoint)
         return data
+
+    @staticmethod
+    def _public_download_summary(
+        job_type: str,
+        config: dict[str, Any],
+        checkpoint: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not checkpoint and job_type != DatasetJobType.IMPORT_HF.value:
+            return None
+        if job_type != DatasetJobType.IMPORT_HF.value and not any(
+            k in checkpoint for k in ("bytesDownloaded", "filename", "repositoryId")
+        ):
+            return None
+        bytes_downloaded = checkpoint.get("bytesDownloaded")
+        total_bytes = checkpoint.get("totalBytes")
+        try:
+            bytes_downloaded_i = int(bytes_downloaded) if bytes_downloaded is not None else None
+        except (TypeError, ValueError):
+            bytes_downloaded_i = None
+        try:
+            total_bytes_i = int(total_bytes) if total_bytes is not None else None
+        except (TypeError, ValueError):
+            total_bytes_i = None
+        return {
+            "repositoryId": checkpoint.get("repositoryId") or config.get("repositoryId"),
+            "revision": checkpoint.get("revision") or config.get("revision"),
+            "filename": checkpoint.get("filename") or config.get("filename"),
+            "bytesDownloaded": bytes_downloaded_i,
+            "bytesTotal": total_bytes_i,
+            "filesTotal": 1 if (checkpoint.get("filename") or config.get("filename")) else None,
+            "filesCompleted": (
+                1
+                if bytes_downloaded_i is not None
+                and total_bytes_i is not None
+                and total_bytes_i > 0
+                and bytes_downloaded_i >= total_bytes_i
+                else (
+                    0
+                    if (
+                        (checkpoint.get("filename") or config.get("filename"))
+                        and total_bytes_i is not None
+                        and total_bytes_i > 0
+                    )
+                    else None
+                )
+            ),
+            "attempts": checkpoint.get("attempts"),
+            "lastHttpStatus": checkpoint.get("lastStatus"),
+            "rateLimitEvents": checkpoint.get("rateLimitEvents"),
+            "etag": checkpoint.get("etag"),
+        }
