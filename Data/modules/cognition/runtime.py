@@ -114,6 +114,9 @@ class CognitiveRunState:
             "verification_passed": self.verification_passed,
             "completion": self.completion,
             "response_preview": (self.response_text or "")[:400],
+            # Full response only when this run owns the user-visible answer (not shadow).
+            "response": None if self.shadow else self.response_text,
+            "response_ownership": "none" if self.shadow else ("cognition" if self.response_text else "none"),
             "active_agents": [
                 o.payload.get("agent_kind")
                 for o in self.observations
@@ -123,6 +126,7 @@ class CognitiveRunState:
                 "no_private_cot": True,
                 "status_is_backend_backed": True,
                 "progress_not_fabricated_percent": True,
+                "shadow_does_not_own_final_response": True,
             },
         }
 
@@ -555,6 +559,12 @@ class CognitiveRuntime:
             return {"iterations": 0}
         elapsed = time.monotonic() - (u.started_monotonic or time.monotonic())
         wall_left = b.max_wall_time_seconds - elapsed
+        # Token budget depletes from measured usage when available; otherwise
+        # from the estimate. Never re-offer the full original max as remaining
+        # after consumption.
+        tokens_used = u.model_tokens
+        if u.input_tokens or u.output_tokens:
+            tokens_used = max(tokens_used, u.input_tokens + u.output_tokens)
         return {
             "iterations": max(0, b.max_iterations - u.iterations),
             "model_calls": max(0, b.max_model_calls - u.model_calls),
@@ -564,6 +574,7 @@ class CognitiveRuntime:
             "retries": max(0, b.max_retries - u.retries),
             "retrieval_rounds": max(0, b.max_retrieval_rounds - u.retrieval_rounds),
             "critic_passes": max(0, b.max_critic_passes - u.critic_passes),
+            "model_tokens": max(0, b.max_model_tokens - tokens_used),
             "wall_ok": 1 if wall_left > 0 else 0,
         }
 
@@ -956,11 +967,19 @@ class CognitiveRuntime:
         remaining = self._budgets_remaining(state)
         if remaining.get("model_calls", 0) <= 0:
             return state.response_text
+        if remaining.get("model_tokens", 1) <= 0:
+            self._emit(state, "token_budget_exhausted", {"role": role})
+            return state.response_text
         state.usage.model_calls += 1
         if self.model_caller is None:
             # Honest unavailable — do not fabricate answer.
             self._emit(state, "model_unavailable", {"role": role})
             return None
+        # Pass remaining token budget, not the original full ceiling.
+        remaining_tokens = remaining.get("model_tokens")
+        if remaining_tokens is None and state.decision:
+            remaining_tokens = state.decision.budgets.max_model_tokens
+        max_tokens = int(remaining_tokens or 2000)
         try:
             result = self.model_caller(
                 system_prompt=system_prompt,
@@ -968,43 +987,130 @@ class CognitiveRuntime:
                 role=role,
                 run_id=state.run_id,
                 trace_id=state.trace_id,
-                max_tokens=state.decision.budgets.max_model_tokens if state.decision else 2000,
+                max_tokens=max_tokens,
             )
+            usage: dict[str, Any] = {}
+            usage_source = "unavailable"
             if isinstance(result, tuple):
                 text = result[0]
             elif isinstance(result, dict):
                 text = result.get("text") or result.get("content")
+                usage = result.get("usage") or {}
+                usage_source = str(result.get("usage_source") or "unavailable")
             else:
                 text = result
             text_s = str(text) if text is not None else None
-            if text_s:
-                # Rough token usage heuristic.
-                state.usage.model_tokens += max(1, len(text_s) // 4)
+            self._record_token_usage(state, text_s, usage=usage, usage_source=usage_source)
             return text_s
         except Exception as exc:  # noqa: BLE001
             self._emit(state, "model_error", {"error": f"{type(exc).__name__}: {exc}"})
             return None
 
+    def _record_token_usage(
+        self,
+        state: CognitiveRunState,
+        text: str | None,
+        *,
+        usage: dict[str, Any],
+        usage_source: str,
+    ) -> None:
+        """Prefer provider usage; fall back to estimate with honest source label."""
+        in_tok = usage.get("input_tokens") or usage.get("prompt_tokens")
+        out_tok = usage.get("output_tokens") or usage.get("completion_tokens")
+        total = usage.get("total_tokens")
+        if usage_source == "provider" and (in_tok is not None or out_tok is not None or total is not None):
+            inp = int(in_tok or 0)
+            out = int(out_tok or 0)
+            tot = int(total) if total is not None else inp + out
+            state.usage.input_tokens += inp
+            state.usage.output_tokens += out
+            state.usage.model_tokens += max(tot, inp + out)
+            state.usage.token_usage_source = "provider"
+            return
+        if text:
+            # Heuristic only — never labeled as provider usage.
+            estimate = max(1, len(text) // 4)
+            state.usage.output_tokens += estimate
+            state.usage.model_tokens += estimate
+            if state.usage.token_usage_source != "provider":
+                state.usage.token_usage_source = "estimate"
+
     def _verify(self, state: CognitiveRunState) -> bool:
         if self.verification_engine is None:
-            # Without VerificationEngine, high-risk cannot claim verified.
-            if state.task.required_evidence:
-                return False
-            # Low-risk heuristic: criteria scoring only later in completion.
-            return False if state.task.risk_class.value in {"HIGH", "CRITICAL"} else False
+            # Without VerificationEngine, never claim verified.
+            return False
         try:
-            # Prefer engine API if present; otherwise fail honest.
-            if hasattr(self.verification_engine, "verify_claims"):
-                report = self.verification_engine.verify_claims(
-                    claims=state.task.success_criteria,
-                    evidence_ids=[
-                        ref
-                        for o in state.observations
-                        for ref in o.evidence_refs
-                    ],
+            from Data.modules.verification import VerificationRequirement
+
+            evidence_ids = [
+                ref
+                for o in state.observations
+                for ref in o.evidence_refs
+            ]
+            requirements: list[Any] = []
+            for req_kind in state.task.required_evidence:
+                kind = str(req_kind).strip()
+                if not kind:
+                    continue
+                requirements.append(
+                    VerificationRequirement(
+                        requirement_id=f"required:{kind}",
+                        description=f"Required evidence: {kind}",
+                        evidence_kind=kind if kind.isupper() or "_" in kind else None,
+                        min_verified=1,
+                    )
                 )
-                outcome = getattr(report, "outcome", None)
-                return str(getattr(outcome, "value", outcome)).upper() == "PASSED"
+            # Observation-linked evidence refs become OBSERVATION_REF requirements.
+            for ref in evidence_ids:
+                if ref.startswith("obs:") or ref.startswith("observation:"):
+                    requirements.append(
+                        VerificationRequirement(
+                            requirement_id=f"obs:{ref}",
+                            description=f"Observation evidence {ref}",
+                            evidence_kind="OBSERVATION_REF",
+                            observation_id=ref.split(":", 1)[-1],
+                            min_verified=1,
+                        )
+                    )
+                elif ref.startswith("artifact:") or ref.startswith("art:"):
+                    requirements.append(
+                        VerificationRequirement(
+                            requirement_id=f"art:{ref}",
+                            description=f"Artifact evidence {ref}",
+                            evidence_kind="ARTIFACT_HASH",
+                            artifact_id=ref.split(":", 1)[-1],
+                            min_verified=1,
+                        )
+                    )
+            if not requirements:
+                # No typed requirements → cannot claim PASSED.
+                self._emit(
+                    state,
+                    "verification_unmeasured",
+                    {"reason": "no_typed_requirements"},
+                )
+                return False
+
+            if not hasattr(self.verification_engine, "verify"):
+                self._emit(
+                    state,
+                    "verification_protocol_error",
+                    {"error": "VerificationEngine missing verify()"},
+                )
+                return False
+
+            report = self.verification_engine.verify(
+                requirements,
+                run_id=state.run_id,
+            )
+            outcome = getattr(report, "outcome", None)
+            outcome_s = str(getattr(outcome, "value", outcome)).upper()
+            self._emit(
+                state,
+                "verification_report",
+                report.public_dict() if hasattr(report, "public_dict") else {"outcome": outcome_s},
+            )
+            return outcome_s == "PASSED"
         except Exception as exc:  # noqa: BLE001
             self._emit(state, "verification_error", {"error": str(exc)})
         return False

@@ -171,7 +171,7 @@ class EvaluationHarness:
                 name="Managed load/unload path",
                 description="Managed adapter can load and unload a local model residency",
                 check="serving_flag",
-                params={"ok": managed_load_ok, "name": "managed_load"},
+                params={"ok": managed_load_ok, "name": "managed_load", "runtime_probed": True},
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
@@ -184,7 +184,7 @@ class EvaluationHarness:
                 name="True stream cancellation",
                 description="Token stream honors cooperative cancel without fabricating SSE",
                 check="serving_flag",
-                params={"ok": stream_cancel_ok, "name": "stream_cancel"},
+                params={"ok": stream_cancel_ok, "name": "stream_cancel", "runtime_probed": True},
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
@@ -196,7 +196,7 @@ class EvaluationHarness:
                 name="Killed worker honest recovery",
                 description="Dead serving worker is DEAD/OFFLINE, never READY",
                 check="serving_flag",
-                params={"ok": dead_worker_honest, "name": "dead_worker"},
+                params={"ok": dead_worker_honest, "name": "dead_worker", "runtime_probed": True},
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
@@ -208,7 +208,7 @@ class EvaluationHarness:
                 name="Multi-model route",
                 description="Router can select among multiple registered local models",
                 check="serving_flag",
-                params={"ok": multi_model_route_ok, "name": "multi_route"},
+                params={"ok": multi_model_route_ok, "name": "multi_route", "runtime_probed": True},
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.DETERMINISTIC,
@@ -220,7 +220,7 @@ class EvaluationHarness:
                 name="Measured route audit recorded",
                 description="Route decisions persist candidates/scores for replay",
                 check="serving_flag",
-                params={"ok": measured_route_recorded, "name": "measured_audit"},
+                params={"ok": measured_route_recorded, "name": "measured_audit", "runtime_probed": True},
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.DETERMINISTIC,
@@ -348,14 +348,27 @@ class EvaluationHarness:
                         ),
                     )
                 if cap_id in self.catalog:
+                    # Registry presence ≠ operational probe. Mark as UNMEASURED
+                    # unless an explicit runtime probe param is provided.
+                    if case.params.get("runtime_probed") is True:
+                        return self._enrich(
+                            case,
+                            EvalCaseResult(
+                                case.case_id,
+                                EvalOutcome.PASSED,
+                                f"probed {cap_id}",
+                                judgment_kind=case.judgment_kind,
+                                measurement=MeasurementState.PASS,
+                            ),
+                        )
                     return self._enrich(
                         case,
                         EvalCaseResult(
                             case.case_id,
-                            EvalOutcome.PASSED,
-                            f"found {cap_id}",
+                            EvalOutcome.UNMEASURED,
+                            f"registered {cap_id} — registration is not operational proof",
                             judgment_kind=case.judgment_kind,
-                            measurement=MeasurementState.PASS,
+                            measurement=MeasurementState.UNMEASURED,
                         ),
                     )
                 return self._enrich(
@@ -500,26 +513,40 @@ class EvaluationHarness:
             if case.check == "neuro_flag":
                 enabled = bool(case.params.get("enabled"))
                 name = str(case.params.get("name") or "flag")
+                # Feature-flag posture is informational — never PASS.
                 return self._enrich(
                     case,
                     EvalCaseResult(
                         case.case_id,
-                        EvalOutcome.PASSED,
-                        f"{name}={'ON' if enabled else 'OFF'} (posture recorded)",
+                        EvalOutcome.UNMEASURED,
+                        f"{name}={'ON' if enabled else 'OFF'} (flag posture — not operational proof)",
                         judgment_kind=case.judgment_kind,
-                        measurement=MeasurementState.PASS,
+                        measurement=MeasurementState.UNMEASURED,
                     ),
                 )
             if case.check == "serving_flag":
-                ok = bool(case.params.get("ok"))
+                # Serving flags without a real probe are UNMEASURED, never PASS.
+                ok = case.params.get("ok")
                 name = str(case.params.get("name") or "serving")
+                probed = case.params.get("runtime_probed") is True
+                if not probed:
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.UNMEASURED,
+                            f"{name} unprobed — configuration is not a serving measurement",
+                            judgment_kind=case.judgment_kind,
+                            measurement=MeasurementState.UNMEASURED,
+                        ),
+                    )
                 if ok:
                     return self._enrich(
                         case,
                         EvalCaseResult(
                             case.case_id,
                             EvalOutcome.PASSED,
-                            f"{name}=ok",
+                            f"{name}=ok (probed)",
                             judgment_kind=case.judgment_kind,
                             measurement=MeasurementState.PASS,
                         ),
@@ -529,7 +556,7 @@ class EvaluationHarness:
                     EvalCaseResult(
                         case.case_id,
                         EvalOutcome.FAILED,
-                        f"{name}=failed",
+                        f"{name}=failed (probed)",
                         judgment_kind=case.judgment_kind,
                         measurement=MeasurementState.FAIL,
                     ),

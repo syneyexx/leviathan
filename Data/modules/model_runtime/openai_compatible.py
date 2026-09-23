@@ -149,44 +149,39 @@ class OpenAICompatibleLLM:
             payload["max_tokens"] = max_tokens
         return payload
 
-    async def chat(
+    @staticmethod
+    def _extract_usage(data: dict[str, Any]) -> tuple[dict[str, int], str]:
+        """Parse provider usage when present. Never invent token counts."""
+        raw = data.get("usage") if isinstance(data, dict) else None
+        if not isinstance(raw, dict):
+            return {}, "unavailable"
+        out: dict[str, int] = {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"):
+            val = raw.get(key)
+            if isinstance(val, (int, float)) and val >= 0:
+                out[key] = int(val)
+        # Normalize aliases.
+        if "input_tokens" not in out and "prompt_tokens" in out:
+            out["input_tokens"] = out["prompt_tokens"]
+        if "output_tokens" not in out and "completion_tokens" in out:
+            out["output_tokens"] = out["completion_tokens"]
+        if not out:
+            return {}, "unavailable"
+        return out, "provider"
+
+    async def complete_messages(
         self,
-        history: list[dict[str, str]],
-        knowledge: list[dict],
-        plan: ReasoningPlan,
+        messages: list[dict[str, str]],
         *,
-        memory: list[dict] | None = None,
-        observations: list[dict] | None = None,
-        evidence: list[dict] | None = None,
-        neuro: list[dict] | None = None,
-        atlas: list[dict] | None = None,
-        why: list[dict] | None = None,
-        contradictions: list[dict] | str | None = None,
         model_id: str | None = None,
         endpoint: str | None = None,
         api_key: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
-        system_prompt: str | None = None,
-        stream: bool = False,
-    ) -> tuple[str, str]:
-        """Non-streaming chat completion. ``stream=True`` is ignored here — use chat_stream."""
-        _ = stream  # callers must use chat_stream for token streaming
+    ) -> dict[str, Any]:
+        """Low-level completion for cognition / tool loops — no ContextBuilder rewrite."""
         model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
-        messages = self._build_messages(
-            history,
-            knowledge,
-            plan,
-            memory=memory,
-            observations=observations,
-            evidence=evidence,
-            neuro=neuro,
-            atlas=atlas,
-            why=why,
-            contradictions=contradictions,
-            system_prompt=system_prompt,
-        )
         payload = self._completion_payload(
             model=model,
             messages=messages,
@@ -217,7 +212,61 @@ class OpenAICompatibleLLM:
 
         if not isinstance(content, str) or not content.strip():
             raise LLMUnavailable("LLM returned an empty response.")
-        return content.strip(), model
+        usage, usage_source = self._extract_usage(data if isinstance(data, dict) else {})
+        return {
+            "text": content.strip(),
+            "model": model,
+            "usage": usage,
+            "usage_source": usage_source,
+        }
+
+    async def chat(
+        self,
+        history: list[dict[str, str]],
+        knowledge: list[dict],
+        plan: ReasoningPlan,
+        *,
+        memory: list[dict] | None = None,
+        observations: list[dict] | None = None,
+        evidence: list[dict] | None = None,
+        neuro: list[dict] | None = None,
+        atlas: list[dict] | None = None,
+        why: list[dict] | None = None,
+        contradictions: list[dict] | str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        stream: bool = False,
+    ) -> tuple[str, str]:
+        """Non-streaming chat completion. ``stream=True`` is ignored here — use chat_stream."""
+        _ = stream  # callers must use chat_stream for token streaming
+        messages = self._build_messages(
+            history,
+            knowledge,
+            plan,
+            memory=memory,
+            observations=observations,
+            evidence=evidence,
+            neuro=neuro,
+            atlas=atlas,
+            why=why,
+            contradictions=contradictions,
+            system_prompt=system_prompt,
+        )
+        result = await self.complete_messages(
+            messages,
+            model_id=model_id,
+            endpoint=endpoint,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+        return result["text"], result["model"]
 
     async def chat_stream(
         self,
