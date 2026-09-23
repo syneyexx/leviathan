@@ -795,72 +795,72 @@ register_specialist_handlers(
 )
 
 
-def _component_health() -> list[dict]:
-    """Aggregate real component health for Performance page (no fabricated healthy)."""
-    components: list[dict] = []
+def _assess_product_truth_report():
+    """Build the Round 9 Product Truth report from live backend evidence."""
+    from Data.modules.product_truth import assess_product_truth
 
-    def add(cid: str, name: str, ctype: str, status: str, detail: str = "") -> None:
-        components.append(
-            {
-                "id": cid,
-                "name": name,
-                "type": ctype,
-                "status": status,
-                "detail": detail,
-            }
-        )
-
-    add("backend", "backend", "Core", "healthy", "process up")
-    add(
-        "observability",
-        "observability",
-        "Runtime",
-        "healthy" if observability.store is not None else "degraded",
-        "durable" if observability.store is not None else "ring_buffer_only",
-    )
-    add(
-        "job_runtime",
-        "job-runtime",
-        "Runtime",
-        "healthy",
-        f"queued={len(job_runtime.list(state=JobState.QUEUED, limit=500))}",
-    )
-    add(
-        "module_manager",
-        "module-manager",
-        "Runtime",
-        "healthy" if module_manager.enabled else "stopped",
-        f"modules={len(module_manager.list())}",
-    )
+    mcp_server_count: int | None = None
+    mcp_connected_count: int | None = None
     if settings.features.mcp_enabled:
         try:
             servers = mcp_bridge.list_servers()
-            connected = sum(
+            mcp_server_count = len(servers)
+            mcp_connected_count = sum(
                 1
                 for s in servers
                 if (s.get("connection_state") if isinstance(s, dict) else None) == "connected"
                 or (getattr(s, "connection_state", None) == "connected")
             )
-            add(
-                "mcp_bridge",
-                "mcp-bridge",
-                "Bridge",
-                "healthy" if connected or not servers else "degraded",
-                f"servers={len(servers)} connected={connected}",
-            )
-        except Exception as exc:  # noqa: BLE001
-            add("mcp_bridge", "mcp-bridge", "Bridge", "failed", type(exc).__name__)
-    else:
-        add("mcp_bridge", "mcp-bridge", "Bridge", "unavailable", "feature_disabled")
+        except Exception:  # noqa: BLE001
+            mcp_server_count = None
+            mcp_connected_count = None
 
     sample = system_telemetry_sampler.latest_public()
     dash = sample.get("dashboard") if isinstance(sample, dict) else None
-    if isinstance(dash, dict) and dash.get("cpuPct") is None and dash.get("ramPct") is None:
-        add("system_telemetry", "system-telemetry", "Sampler", "degraded", "partial_unavailable")
-    else:
-        add("system_telemetry", "system-telemetry", "Sampler", "healthy", "sampling")
+    telemetry_partial = True
+    if isinstance(dash, dict):
+        telemetry_partial = dash.get("cpuPct") is None and dash.get("ramPct") is None
 
-    return components
+    browser_kind = getattr(getattr(browser_worker, "backend", None), "kind", None)
+    browser_kind_val = browser_kind.value if hasattr(browser_kind, "value") else (
+        str(browser_kind) if browser_kind else None
+    )
+    browser_capable = None
+    if browser_kind_val == "fixture":
+        browser_capable = False
+    elif browser_kind_val == "local_dom":
+        browser_capable = True
+    elif browser_kind_val == "playwright":
+        browser_capable = False
+
+    model_cards = model_plane.status_cards()
+    return assess_product_truth(
+        backend_alive=True,
+        observability_durable=observability.store is not None,
+        jobs_queued=len(job_runtime.list(state=JobState.QUEUED, limit=500)),
+        module_manager_enabled=bool(module_manager.enabled),
+        module_count=len(module_manager.list()),
+        mcp_feature_enabled=bool(settings.features.mcp_enabled),
+        mcp_server_count=mcp_server_count,
+        mcp_connected_count=mcp_connected_count,
+        telemetry_partial=telemetry_partial,
+        browser_backend_kind=browser_kind_val,
+        browser_production_capable=browser_capable,
+        model_gateway_health=str(model_cards.get("gatewayHealth") or "") or None,
+        model_provider_count=int(model_cards.get("providerCount") or 0),
+        embedding_available=bool(retriever.embeddings.available()),
+        agents_enabled=bool(settings.features.agents_enabled),
+        training_fixture_default=True,
+    )
+
+
+def _component_health() -> list[dict]:
+    """Aggregate evidence-based component postures (Round 9 Product Truth)."""
+    return [c.public_dict() for c in _assess_product_truth_report().components]
+
+
+def _product_truth_snapshot() -> dict:
+    return _assess_product_truth_report().public_dict()
 
 
 operator_registry = build_default_operator_registry(
@@ -1368,6 +1368,7 @@ async def health() -> dict:
             "recent": len(verification_reports.list(limit=50)),
         },
         "llm": model,
+        "product_truth": _product_truth_snapshot(),
     }
 
 

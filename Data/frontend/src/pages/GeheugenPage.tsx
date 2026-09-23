@@ -530,7 +530,9 @@ export function GeheugenPage() {
               type="button"
               className="lv-ok-btn"
               style={{ marginTop: 8, width: "100%" }}
-              onClick={() => toast("Integrity check gestart — alle systemen healthy")}
+              onClick={() =>
+                toast("Integrity check gestart — resultaat volgt uit evidence, niet uit aannames")
+              }
             >
               Run Integrity Check
             </button>

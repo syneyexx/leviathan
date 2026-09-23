@@ -158,10 +158,23 @@ def build_observability_router(
             "timeseries": timeseries.snapshot(),
             "components": health,
             "observability": observability.snapshot(),
+            "product_truth": {
+                "vocabulary": [
+                    "operational",
+                    "degraded",
+                    "experimental",
+                    "fixture",
+                    "unavailable",
+                    "unconfigured",
+                    "unmeasured",
+                ],
+            },
             "truth": {
                 "measured": True,
                 "unavailable_is_null": True,
                 "no_fabricated_history": True,
+                "import_success_is_not_operational": True,
+                "status_derives_from_evidence": True,
             },
         }
 

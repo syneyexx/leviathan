@@ -58,9 +58,12 @@ export type RdEvidenceItem = {
   title: string;
   domain: string;
   ago: string;
-  confidence: number;
+  /** Null = unmeasured / no evidence-backed score (Round 9). */
+  confidence: number | null;
   favicon: string;
   url?: string;
+  /** Decorative mock rows are fixtures — never operational confidence. */
+  fixture?: boolean;
 };
 
 export const RD_DEMO_EVIDENCE: RdEvidenceItem[] = [
@@ -69,45 +72,50 @@ export const RD_DEMO_EVIDENCE: RdEvidenceItem[] = [
     title: "The Future of AI in Scientific Discovery",
     domain: "nature.com",
     ago: "2 hours ago",
-    confidence: 95,
+    confidence: null,
     favicon: "N",
     url: "https://nature.com",
+    fixture: true,
   },
   {
     id: "e2",
     title: "Scaling Laws and Multimodal Reasoning",
     domain: "arxiv.org",
     ago: "5 hours ago",
-    confidence: 92,
+    confidence: null,
     favicon: "χ",
     url: "https://arxiv.org",
+    fixture: true,
   },
   {
     id: "e3",
     title: "OpenAI Research: Agents and Tool Use",
     domain: "openai.com",
     ago: "1 day ago",
-    confidence: 89,
+    confidence: null,
     favicon: "O",
     url: "https://openai.com",
+    fixture: true,
   },
   {
     id: "e4",
     title: "Evidence Graphs for Verifiable Synthesis",
     domain: "mit.edu",
     ago: "2 days ago",
-    confidence: 87,
+    confidence: null,
     favicon: "M",
     url: "https://mit.edu",
+    fixture: true,
   },
   {
     id: "e5",
     title: "Retrieval-Augmented Generation Benchmarks",
     domain: "aclweb.org",
     ago: "3 days ago",
-    confidence: 84,
+    confidence: null,
     favicon: "A",
     url: "https://aclweb.org",
+    fixture: true,
   },
 ];
 
@@ -151,8 +159,9 @@ export type RdInsight = {
   id: string;
   title: string;
   body: string;
-  confidence: number;
+  confidence: number | null;
   icon: "bot" | "brain" | "bulb";
+  fixture?: boolean;
 };
 
 export const RD_DEMO_INSIGHTS: RdInsight[] = [
@@ -160,22 +169,25 @@ export const RD_DEMO_INSIGHTS: RdInsight[] = [
     id: "i1",
     title: "Agentic retrieval improves coverage",
     body: "Multi-hop search with scoped budgets surfaces more diverse primary sources than single-shot queries.",
-    confidence: 95,
+    confidence: null,
     icon: "bot",
+    fixture: true,
   },
   {
     id: "i2",
     title: "Evidence graphs reduce hallucination",
     body: "Linking claims to span-level evidence cuts unsupported assertions in synthesized reports.",
-    confidence: 92,
+    confidence: null,
     icon: "brain",
+    fixture: true,
   },
   {
     id: "i3",
     title: "Human review still gates conviction",
     body: "Highest-confidence outputs still benefit from analyst review before downstream decisions.",
-    confidence: 89,
+    confidence: null,
     icon: "bulb",
+    fixture: true,
   },
 ];
 
