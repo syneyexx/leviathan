@@ -44,6 +44,7 @@ class CapabilityState(str, Enum):
     UNSUPPORTED = "unsupported"
     UNKNOWN = "unknown"
     UNVERIFIED = "unverified"
+    UNMEASURED = "unmeasured"
 
 
 class ProviderHealth(str, Enum):

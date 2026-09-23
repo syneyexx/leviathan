@@ -6,6 +6,37 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 7 Multimodal + Realtime Voice — PASS
+
+### Objective
+Unify multimodal conversation (U241–U260 foundations): typed message parts with sync_id, fixture media pipelines (image generate/edit, video ingest, vision tiles, cross-modal retrieval), realtime voice with barge-in, and VisionCapabilityProfile on the Model Control Plane — extending `context/`, `media/`, `voice/`, `models/`, `execution/` (no ffmpeg/Whisper/TTS binaries in CI; no parallel voice memory).
+
+### Added / changed
+- **Schema:** `MultimodalPart` / `MultimodalMessage` / `MultimodalSession` (+ registry) with shared sync_id
+- **Media:** `MediaService` fixture (PROBE/THUMBNAIL/IMAGE_GENERATE/IMAGE_EDIT/VIDEO_INGEST/VISION_INSPECT/CROSS_MODAL_SEARCH) → shared ArtifactStore + CrossModalIndex
+- **Voice:** `RealtimeVoiceService` fixture ASR/TTS streaming + barge-in cancel metrics
+- **Vision:** `VisionCapabilityProfile` (UNMEASURED ≠ PASS) merged into model capabilities
+- **Gateway:** `MEDIA` / `VOICE` provider kinds + builtins; `/api/media|voice/request` routed via Gateway when feature on
+- **API:** `/api/multimodal/sessions*` + context compile from fused history
+- **Migration v30** + `LEVIATHAN_FEATURE_MULTIMODAL_REALTIME`
+- **Tests:** `test_wave7_multimodal_realtime.py` (exit gate: text+image+audio + tools + single ContextPack/run)
+- **Version:** `0.71.0-wave7-multimodal`
+
+### EXTERNAL-FIRST review
+- One Context compiler / one ExecutionGateway; media & voice are domain workers only
+- Fixture backends are honest (`fixture_is_not_ffmpeg`, `fixture_is_not_whisper_or_tts`)
+- No new third-party dependencies
+
+### Explicitly NOT claimed
+- Production ffmpeg / Whisper / neural TTS packaging
+- Full VLM productization or continuous multimodal eval leaderboard
+- Live WebRTC voice transport
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 6 Coding + Research Frontier — PASS
 
 ### Objective

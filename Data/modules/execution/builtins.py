@@ -425,4 +425,299 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
+    # Wave 7 — media capabilities (fixture MediaService via ExecutionGateway).
+    catalog.register(
+        CapabilityDefinition(
+            id="media.probe",
+            name="Media Probe",
+            description="Probe a media file path for kind/size without decoding (fixture).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="PROBE",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {"path": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.read",),
+            metadata={
+                "tags": ["media", "probe", "inspect"],
+                "domains": ["media"],
+                "aliases": ["probe media", "inspect file"],
+                "cacheable": True,
+                "idempotent": True,
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.thumbnail",
+            name="Media Thumbnail",
+            description="Generate a thumbnail artifact for a media path (fixture SVG).",
+            side_effects=(SideEffect.READ, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="THUMBNAIL",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {"path": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.read", "artifact.write"),
+            metadata={
+                "tags": ["media", "thumbnail", "image"],
+                "domains": ["media"],
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.image_generate",
+            name="Media Image Generate",
+            description="Generate an image artifact from a prompt into the shared ArtifactStore.",
+            side_effects=(SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="IMAGE_GENERATE",
+            input_schema={
+                "type": "object",
+                "required": ["prompt"],
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "model_revision": {"type": "string"},
+                    "sync_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.write", "artifact.write"),
+            metadata={
+                "tags": ["media", "image", "generate"],
+                "domains": ["media"],
+                "aliases": ["generate image", "draw"],
+                "worker_kind": "media",
+                "risk_tier": "write",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.image_edit",
+            name="Media Image Edit",
+            description="Edit an existing image artifact with an instruction (shared lineage).",
+            side_effects=(SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="IMAGE_EDIT",
+            input_schema={
+                "type": "object",
+                "required": ["instruction"],
+                "properties": {
+                    "source_artifact_id": {"type": "string"},
+                    "path": {"type": "string"},
+                    "instruction": {"type": "string"},
+                    "prompt": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.write", "artifact.write"),
+            metadata={
+                "tags": ["media", "image", "edit"],
+                "domains": ["media"],
+                "worker_kind": "media",
+                "risk_tier": "write",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.video_ingest",
+            name="Media Video Ingest",
+            description="Ingest video into frames/shots/transcript spans with timestamp citations.",
+            side_effects=(SideEffect.READ, SideEffect.WRITE, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="VIDEO_INGEST",
+            input_schema={
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "duration_ms": {"type": "number"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.read", "artifact.write"),
+            metadata={
+                "tags": ["media", "video", "ingest", "frames"],
+                "domains": ["media"],
+                "aliases": ["ingest video", "video frames"],
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.vision_inspect",
+            name="Media Vision Inspect",
+            description="Tile a high-res image into regions for iterative visual inspection.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="VISION_INSPECT",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "path": {"type": "string"},
+                    "artifact_id": {"type": "string"},
+                    "width": {"type": "integer"},
+                    "height": {"type": "integer"},
+                    "tile": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.read",),
+            metadata={
+                "tags": ["media", "vision", "ocr", "tiles"],
+                "domains": ["media", "vision"],
+                "aliases": ["inspect image", "vision tiles"],
+                "cacheable": True,
+                "worker_kind": "media",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="media.cross_modal_search",
+            name="Media Cross-Modal Search",
+            description="Search the modality-aware caption index (image/audio/video/text).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.MEDIA,
+            provider_ref="CROSS_MODAL_SEARCH",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "modality": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("media.read",),
+            metadata={
+                "tags": ["media", "retrieval", "cross-modal"],
+                "domains": ["media", "knowledge"],
+                "aliases": ["cross modal search", "find scene"],
+                "cacheable": True,
+                "worker_kind": "media",
+            },
+        )
+    )
+    # Wave 7 — voice capabilities (fixture RealtimeVoiceService via ExecutionGateway).
+    catalog.register(
+        CapabilityDefinition(
+            id="voice.start_session",
+            name="Voice Start Session",
+            description="Start a realtime voice session bound to shared conversation/run context.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.VOICE,
+            provider_ref="START_SESSION",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "conversation_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "sync_id": {"type": "string"},
+                    "persona": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("voice.session",),
+            metadata={
+                "tags": ["voice", "realtime", "session"],
+                "domains": ["voice"],
+                "aliases": ["start voice", "voice session"],
+                "worker_kind": "voice",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="voice.transcribe",
+            name="Voice Transcribe",
+            description="Streaming ASR with partials + VAD (fixture backend).",
+            side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.VOICE,
+            provider_ref="STREAM_ASR",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "audio_ref": {"type": "string"},
+                    "path": {"type": "string"},
+                    "text": {"type": "string"},
+                    "hint": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("voice.asr",),
+            metadata={
+                "tags": ["voice", "asr", "transcribe"],
+                "domains": ["voice"],
+                "aliases": ["speech to text", "transcribe"],
+                "worker_kind": "voice",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="voice.synthesize",
+            name="Voice Synthesize",
+            description="Streaming TTS with persona params (fixture backend).",
+            side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.VOICE,
+            provider_ref="STREAM_TTS",
+            input_schema={
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("voice.tts",),
+            metadata={
+                "tags": ["voice", "tts", "synthesize"],
+                "domains": ["voice"],
+                "aliases": ["text to speech", "speak"],
+                "worker_kind": "voice",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="voice.barge_in",
+            name="Voice Barge-In",
+            description="Cancel in-flight ASR/LLM/TTS generation on user interruption.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.VOICE,
+            provider_ref="BARGE_IN",
+            input_schema={
+                "type": "object",
+                "required": ["session_id"],
+                "properties": {"session_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("voice.session",),
+            metadata={
+                "tags": ["voice", "barge-in", "interrupt", "cancel"],
+                "domains": ["voice"],
+                "aliases": ["interrupt", "stop speaking"],
+                "worker_kind": "voice",
+            },
+        )
+    )
     return catalog

@@ -47,7 +47,7 @@ class ContextBuilder:
     def build(
         self,
         *,
-        history: list[dict[str, str]],
+        history: list[dict[str, Any]],
         knowledge: list[dict],
         plan: ReasoningPlan,
         max_knowledge_chars: int | None = None,
@@ -226,9 +226,21 @@ class ContextBuilder:
             for item in working_history
             if item.get("role") in {"user", "assistant"} and item.get("content")
         ][-self.max_history_messages :]
-        selected_history: list[dict[str, str]] = []
+        selected_history: list[dict[str, Any]] = []
+        multimodal_part_count = 0
         for item in reversed(history_items):
             content = str(item["content"])
+            parts = item.get("parts") if isinstance(item.get("parts"), list) else None
+            if parts:
+                multimodal_part_count += len(parts)
+                # Annotate content so the model sees modality refs without a parallel memory.
+                kind_counts: dict[str, int] = {}
+                for part in parts:
+                    kind = str((part or {}).get("kind") or "unknown")
+                    kind_counts[kind] = kind_counts.get(kind, 0) + 1
+                annotation = ", ".join(f"{k}×{v}" for k, v in sorted(kind_counts.items()))
+                if annotation:
+                    content = f"{content}\n[multimodal parts: {annotation}]"
             tokens = estimate_tokens(content) + 4
             if used + tokens > budget:
                 dropped.append(f"history:{item['role']}")
@@ -243,7 +255,11 @@ class ContextBuilder:
                     )
                 )
                 continue
-            selected_history.append({"role": str(item["role"]), "content": content})
+            hist_entry: dict[str, Any] = {"role": str(item["role"]), "content": content}
+            if parts:
+                hist_entry["parts"] = parts
+                hist_entry["sync_id"] = item.get("sync_id")
+            selected_history.append(hist_entry)
             used += tokens
             sections.append(
                 ContextSection(
@@ -251,7 +267,12 @@ class ContextBuilder:
                     kind="history",
                     content=content,
                     token_estimate=tokens,
-                    provenance={"role": item["role"]},
+                    provenance={
+                        "role": item["role"],
+                        "sync_id": item.get("sync_id"),
+                        "multimodal": bool(parts),
+                        "part_count": len(parts) if parts else 0,
+                    },
                     layer="conversation",
                 )
             )
@@ -265,6 +286,33 @@ class ContextBuilder:
                 )
             )
         selected_history.reverse()
+        if multimodal_part_count:
+            note = (
+                f"Multimodal session fused {multimodal_part_count} parts into the same "
+                "conversation/run history (no parallel voice memory)."
+            )
+            note_tokens = estimate_tokens(note)
+            if used + note_tokens <= budget:
+                used += note_tokens
+                sections.append(
+                    ContextSection(
+                        name="multimodal_fusion",
+                        kind="system",
+                        content=note,
+                        token_estimate=note_tokens,
+                        provenance={"source": "context.multimodal", "parts": multimodal_part_count},
+                        layer="conversation",
+                    )
+                )
+                ledger_entries.append(
+                    BudgetLedgerEntry(
+                        section="multimodal_fusion",
+                        kind="system",
+                        requested_tokens=note_tokens,
+                        selected_tokens=note_tokens,
+                        dropped=False,
+                    )
+                )
 
         knowledge_chunks, know_used, know_dropped = self._pack_knowledge(
             knowledge, budget=budget - used, max_chars=know_chars

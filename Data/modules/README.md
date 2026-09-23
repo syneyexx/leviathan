@@ -9,7 +9,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `reasoning/` | `ReasoningEngine`, `ReasoningPlan` (legacy classifier) |
 | `cognition/` | **Cognitive Runtime** — TaskModel, BeliefState, WorkingMemory, Perception, MetaController, loop, VerifiedExperience |
 | `settings/` | **Settings Control Plane** — operator catalog, SQLite overrides, hot/restart apply |
-| `context/` | ContextBuilder — sole compiler (pinned constraints, budget ledger, snapshots) |
+| `context/` | ContextBuilder — sole compiler (pinned constraints, budget ledger, multimodal sessions) |
 | `memory/` | MemoryStore — scoped durable memory (no cross-scope leak) |
 | `knowledge/` | Knowledge V2/V3 + hybrid retrieval (min_score, traces, citation heuristic) |
 | `model_runtime/` | OpenAICompatibleLLM + ServingSupervisor / managed local adapters |
@@ -41,8 +41,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `browser/` | BrowserWorker + FixtureBrowserBackend (Gateway-dispatched; stub when feature off) |
 | `coding/` | CodingControlPlane — sessions, XML/JSON loop, semantic map, transactional patches |
 | `research/` | ResearchService — plans, claim–evidence graphs, reproducibility bundles |
-| `media/` | MediaAutomationStub |
-| `voice/` | VoiceRuntimeStub |
+| `media/` | MediaService fixture pipelines (Gateway-dispatched; stub when feature off) |
+| `voice/` | RealtimeVoiceService fixture ASR/TTS + barge-in (Gateway-dispatched; stub when feature off) |
 | `release/` | ReleaseGateRunner + evaluation relevance |
 | `security/` | SecurityAuditor + SecretsBroker |
 | `native/` | NativeRuntimeStub |

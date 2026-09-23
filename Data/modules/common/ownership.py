@@ -194,6 +194,8 @@ FORBIDDEN_PRIVATE_DB_FILENAMES: frozenset[str] = frozenset(
         "agents.db",
         "browser.db",
         "coding.db",
+        "media.db",
+        "voice.db",
     }
 )
 

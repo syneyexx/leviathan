@@ -8,6 +8,7 @@ from .contracts import (
     ModelRequest,
     RouteDecision,
 )
+from .vision import VisionCapabilityProfile, VisionTask, attach_vision_profile
 
 __all__ = [
     "ModelControlPlane",
@@ -16,5 +17,8 @@ __all__ = [
     "ModelProfile",
     "ModelRequest",
     "RouteDecision",
+    "VisionCapabilityProfile",
+    "VisionTask",
+    "attach_vision_profile",
     "parse_load_options",
 ]

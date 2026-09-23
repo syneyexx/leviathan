@@ -1,5 +1,21 @@
-"""Voice runtime stub — no fabricated transcripts/audio."""
+"""Voice runtime — fixture realtime ASR/TTS + honest stub (Wave 7)."""
 
-from .stub import VoiceAction, VoiceJob, VoiceJobStatus, VoiceRuntimeStub
+from .realtime import (
+    RealtimeVoiceService,
+    RealtimeVoiceSession,
+    VoiceAction,
+    VoiceJob,
+    VoiceJobStatus,
+    VoiceMetrics,
+    VoiceRuntimeStub,
+)
 
-__all__ = ["VoiceAction", "VoiceJob", "VoiceJobStatus", "VoiceRuntimeStub"]
+__all__ = [
+    "RealtimeVoiceService",
+    "RealtimeVoiceSession",
+    "VoiceAction",
+    "VoiceJob",
+    "VoiceJobStatus",
+    "VoiceMetrics",
+    "VoiceRuntimeStub",
+]

@@ -22,6 +22,8 @@ class CapabilityProviderKind(str, Enum):
     NATIVE = "native"
     BUILTIN = "builtin"
     BROWSER = "browser"
+    MEDIA = "media"
+    VOICE = "voice"
 
 
 class CapabilityStatus(str, Enum):
