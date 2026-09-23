@@ -1908,6 +1908,78 @@ def _m26_model_serving(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m27_context_memory_scope(conn: sqlite3.Connection) -> None:
+    """Wave 4: scoped memory columns + context/retrieval trace tables."""
+
+    def _add_column(table: str, name: str, ddl: str) -> None:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if name not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_entries (
+            memory_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            trust TEXT NOT NULL,
+            run_id TEXT,
+            conversation_id TEXT,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    for col, ddl in (
+        ("priority", "priority REAL NOT NULL DEFAULT 0.5"),
+        ("scope", "scope TEXT NOT NULL DEFAULT 'GLOBAL'"),
+        ("workspace_id", "workspace_id TEXT"),
+        ("project_id", "project_id TEXT"),
+        ("user_id", "user_id TEXT"),
+        ("confidence", "confidence REAL NOT NULL DEFAULT 0.5"),
+        ("valid_from", "valid_from TEXT"),
+        ("valid_until", "valid_until TEXT"),
+        ("supersedes_id", "supersedes_id TEXT"),
+        ("source_refs_json", "source_refs_json TEXT NOT NULL DEFAULT '[]'"),
+    ):
+        _add_column("memory_entries", col, ddl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_scope "
+        "ON memory_entries(scope, conversation_id, project_id, status)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS context_snapshots (
+            snapshot_hash TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            section_count INTEGER NOT NULL DEFAULT 0,
+            token_estimate INTEGER NOT NULL DEFAULT 0,
+            constraints_retained INTEGER NOT NULL DEFAULT 0,
+            manifest_json TEXT NOT NULL DEFAULT '{}',
+            run_id TEXT,
+            conversation_id TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS retrieval_traces (
+            trace_id TEXT PRIMARY KEY,
+            recorded_at TEXT NOT NULL,
+            query TEXT NOT NULL,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            selected_count INTEGER NOT NULL DEFAULT 0,
+            min_score REAL,
+            payload_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1935,6 +2007,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=24, name="durable_kernel", apply=_m24_durable_kernel),
     Migration(version=25, name="evaluation_platform", apply=_m25_evaluation_platform),
     Migration(version=26, name="model_serving", apply=_m26_model_serving),
+    Migration(version=27, name="context_memory_scope", apply=_m27_context_memory_scope),
 )
 
 

@@ -11,7 +11,7 @@ from .embeddings import (
     SentenceTransformersEmbeddingProvider,
     build_embedding_provider,
 )
-from .retrieval import HybridRetriever, RetrievalHit, RetrievalQuery
+from .retrieval import CitationCheck, HybridRetriever, RetrievalHit, RetrievalQuery, RetrievalTrace
 from .store import KnowledgeStore
 from .types import (
     ChunkRecord,
@@ -36,6 +36,7 @@ __all__ = [
     "DocumentRecord",
     "EconomyDecision",
     "EmbeddingProvider",
+    "CitationCheck",
     "HybridRetriever",
     "IngestStatus",
     "KnowledgeStore",
@@ -45,6 +46,7 @@ __all__ = [
     "RerankerProvider",
     "RetrievalHit",
     "RetrievalQuery",
+    "RetrievalTrace",
     "SentenceTransformersEmbeddingProvider",
     "TextSpan",
     "WhyBucket",

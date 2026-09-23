@@ -6,6 +6,36 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 4 Context / Memory / Knowledge Substrate — PASS
+
+### Objective
+Build the superior context/memory/knowledge substrate: one Context compiler with pinned constraints + budget ledger + snapshots, scoped memory without cross-scope leakage, retrieval score thresholds + traces + citation heuristics — extending `context/`, `memory/`, `knowledge/`, `evidence/` (no second RAG/memory stack).
+
+### Added / changed
+- **Context (U061–U080):** pinned `constraint` sections, `BudgetLedger`, snapshot hashes, semantic compaction (derived, non-destructive), hierarchy layers, `POST /api/context/preview`
+- **Memory (U081–U100):** `MemoryScope` (GLOBAL/USER/WORKSPACE/PROJECT/CONVERSATION/AGENT_PRIVATE), supersession, confidence/validity, scoped search that blocks conversation leak
+- **Knowledge (U101–U120):** `min_score` threshold, `RetrievalTrace`, contradiction surfacing, citation entailment heuristic
+- **Evidence refs (U118):** unified `parse_evidence_ref` / `format_evidence_ref`
+- **Migration v27** + flag `LEVIATHAN_FEATURE_CONTEXT_SUBSTRATE`
+- **Tests:** `test_wave4_context_memory_knowledge.py` (constraint retention, scope leakage, retrieval thresholds)
+- **Version:** `0.68.0-wave4-context`
+
+### EXTERNAL-FIRST review
+- One compiler / one memory owner / Knowledge V2 remains corpus owner
+- UNMEASURED batching/QoS from Wave 3 unchanged; Wave 4 exit gates measured in tests
+- No second vector stack for memory
+
+### Explicitly NOT claimed
+- Production GPU embedding fleet / FAISS-Qdrant multi-backend
+- Full cross-encoder reranker productization
+- Async post-conversation memory extraction workers
+- Rich document parsers (PDF/DOCX/…) beyond existing ingest
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 3 Local Model Serving Foundation — PASS
 
 ### Objective

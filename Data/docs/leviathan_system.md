@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of **Wave 3 Model Serving** (`0.67.0-wave3-serving`) on Wave 2 Evaluation Platform (v25) + Wave 1 Cognitive Runtime + Wave 0 Durable Kernel (v24) + Model Serving (v26) + Settings Control Plane (v20) + Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of **Wave 4 Context Substrate** (`0.68.0-wave4-context`) on Wave 3 Model Serving (v26) + Wave 2 Evaluation (v25) + Wave 1 Cognition + Wave 0 Durable Kernel (v24) + Context/Memory scope (v27).
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -16,7 +16,8 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.67.0-wave3-serving`);
+- FastAPI backend composition root (`0.68.0-wave4-context`);
+- **Wave 4 context/memory/knowledge** — pinned constraints, budget ledger, scoped memory (no cross-conversation leak), retrieval min_score + traces + citation heuristic;
 - **Wave 3 model serving** — managed local adapters, serving supervisor, stream cancel, measured route audit, serving conformance eval (batching QoS UNMEASURED);
 - **Wave 2 evaluation platform** — versioned cases, JudgmentKind/MeasurementState, durable reports + regression corpus, system scorecards, release/promotion relevance (UNMEASURED ≠ PASS);
 - **Wave 1 cognition/agents** — full CognitiveRun hydrate/resume, live INVOKE_CAPABILITY via ExecutionGateway, structured agent planner, DAG multi-agent + blackboard;
@@ -26,7 +27,7 @@ LEVIATHAN is a Python-first, local-first AI control plane with Master Engineerin
 - **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v26**;
+- SQLite persistence + migrations through **v27**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
 - React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, **Market Sim** `/trading`, and **MCP** `/mcp` UI;
@@ -82,7 +83,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.67.0-wave3-serving`).
+FastAPI application (`version=0.68.0-wave4-context`).
 
 Responsibilities:
 
