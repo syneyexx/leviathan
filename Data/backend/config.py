@@ -73,7 +73,13 @@ def _parse_int_csv(raw: str) -> tuple[int, ...]:
     return tuple(values)
 
 
-def _env_float(name: str, default: float, *, minimum: float | None = None) -> float:
+def _env_float(
+    name: str,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
     raw = _env_raw(name)
     if raw is None or raw.strip() == "":
         value = default
@@ -84,6 +90,8 @@ def _env_float(name: str, default: float, *, minimum: float | None = None) -> fl
             raise ConfigurationError(f"Invalid number for {name}: {raw!r}") from exc
     if minimum is not None and value < minimum:
         raise ConfigurationError(f"{name} must be >= {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise ConfigurationError(f"{name} must be <= {maximum}, got {value}")
     return value
 
 
@@ -117,6 +125,68 @@ def _resolve_data_root(raw: str) -> Path:
     return path
 
 
+def _reasoning_budget_kwargs(prefix: str, defaults: dict[str, float | int]) -> dict[str, float | int]:
+    """Load LEVIATHAN_REASONING_{PREFIX}_MAX_* budget fields from env."""
+    env_prefix = f"LEVIATHAN_REASONING_{prefix.upper()}_"
+    out: dict[str, float | int] = {}
+    for field, default in defaults.items():
+        env_name = env_prefix + field.upper()
+        key = f"{prefix}_{field}"
+        if isinstance(default, float):
+            out[key] = _env_float(env_name, float(default), minimum=0.0)
+        else:
+            out[key] = _env_int(env_name, int(default), minimum=0)
+    return out
+
+
+_REASONING_BUDGET_DEFAULTS: dict[str, dict[str, float | int]] = {
+    "fast": {
+        "max_wall_time_seconds": 30.0,
+        "max_model_calls": 1,
+        "max_model_tokens": 2000,
+        "max_retrieval_rounds": 1,
+        "max_critic_passes": 0,
+        "max_tool_calls": 0,
+        "max_agent_delegations": 0,
+        "max_iterations": 2,
+        "max_context_tokens": 3000,
+    },
+    "standard": {
+        "max_wall_time_seconds": 90.0,
+        "max_model_calls": 3,
+        "max_model_tokens": 6000,
+        "max_retrieval_rounds": 2,
+        "max_critic_passes": 1,
+        "max_tool_calls": 4,
+        "max_agent_delegations": 1,
+        "max_iterations": 5,
+        "max_context_tokens": 6000,
+    },
+    "deep": {
+        "max_wall_time_seconds": 180.0,
+        "max_model_calls": 6,
+        "max_model_tokens": 12000,
+        "max_retrieval_rounds": 3,
+        "max_critic_passes": 2,
+        "max_tool_calls": 8,
+        "max_agent_delegations": 2,
+        "max_iterations": 8,
+        "max_context_tokens": 8000,
+    },
+    "maximum": {
+        "max_wall_time_seconds": 300.0,
+        "max_model_calls": 10,
+        "max_model_tokens": 20000,
+        "max_retrieval_rounds": 4,
+        "max_critic_passes": 3,
+        "max_tool_calls": 12,
+        "max_agent_delegations": 3,
+        "max_iterations": 12,
+        "max_context_tokens": 12000,
+    },
+}
+
+
 @dataclass(frozen=True)
 class RuntimeSettings:
     host: str
@@ -143,11 +213,88 @@ class KnowledgeSettings:
     embedding_hash_dimensions: int = 256
     reranker_model: str | None = None
     deep_recall_budget: int = 800
+    rerank_policy: str = "auto"  # off | auto | always
+    rerank_candidate_count: int = 20
+    rerank_final_count: int = 5
+    min_retrieval_score: float = 0.0
+    min_confidence: float = 0.0
+    query_expansion: bool = True
+    max_query_expansions: int = 4
+    max_retrieval_rounds: int = 3
+    diversity_enabled: bool = True
+    diversity_strength: float = 0.3
+    lexical_enabled: bool = True
+    dense_enabled: bool = True
+    hybrid_enabled: bool = True
+    rrf_k: int = 60
+    contradiction_detection: bool = True
+    retrieval_trace: bool = True
+    atlas_retrieval: bool = True
+    atlas_expansion_depth: int = 1
+    auto_dedupe: bool = True
+    integrity_checks: bool = True
 
 
 @dataclass(frozen=True)
 class ReasoningSettings:
     enabled: bool
+    default_mode: str = "adaptive"  # adaptive|fast|standard|deep|maximum
+    allow_fast_path: bool = True
+    minimum_evidence_coverage: float = 0.35
+    uncertainty_deep_threshold: float = 0.75
+    contradiction_replan_threshold: float = 0.3
+    max_replans_global: int = 4
+    max_retries_global: int = 3
+    require_verification_for_high_risk: bool = True
+    require_grounding_for_knowledge_tasks: bool = True
+    # Budget profiles (flat fields for settings path mapping)
+    fast_max_wall_time_seconds: float = 30.0
+    fast_max_model_calls: int = 1
+    fast_max_model_tokens: int = 2000
+    fast_max_retrieval_rounds: int = 1
+    fast_max_critic_passes: int = 0
+    fast_max_tool_calls: int = 0
+    fast_max_agent_delegations: int = 0
+    fast_max_iterations: int = 2
+    fast_max_context_tokens: int = 3000
+    standard_max_wall_time_seconds: float = 90.0
+    standard_max_model_calls: int = 3
+    standard_max_model_tokens: int = 6000
+    standard_max_retrieval_rounds: int = 2
+    standard_max_critic_passes: int = 1
+    standard_max_tool_calls: int = 4
+    standard_max_agent_delegations: int = 1
+    standard_max_iterations: int = 5
+    standard_max_context_tokens: int = 6000
+    deep_max_wall_time_seconds: float = 180.0
+    deep_max_model_calls: int = 6
+    deep_max_model_tokens: int = 12000
+    deep_max_retrieval_rounds: int = 3
+    deep_max_critic_passes: int = 2
+    deep_max_tool_calls: int = 8
+    deep_max_agent_delegations: int = 2
+    deep_max_iterations: int = 8
+    deep_max_context_tokens: int = 8000
+    maximum_max_wall_time_seconds: float = 300.0
+    maximum_max_model_calls: int = 10
+    maximum_max_model_tokens: int = 20000
+    maximum_max_retrieval_rounds: int = 4
+    maximum_max_critic_passes: int = 3
+    maximum_max_tool_calls: int = 12
+    maximum_max_agent_delegations: int = 3
+    maximum_max_iterations: int = 12
+    maximum_max_context_tokens: int = 12000
+
+
+@dataclass(frozen=True)
+class VerificationSettings:
+    """Verification / grounding toggles for high-risk and knowledge paths."""
+
+    factual_grounding: bool = True
+    contradiction_check: bool = True
+    require_evidence: bool = True
+    citation_required: bool = False
+    unmeasured_blocks_completion: bool = True
 
 
 @dataclass(frozen=True)
@@ -267,6 +414,13 @@ class ContextSettings:
     token_budget: int
     reserve_response_tokens: int
     max_knowledge_chars: int
+    auto_budget: bool = True
+    max_context_fraction: float = 0.72
+    reserve_response_fraction: float = 0.18
+    minimum_response_tokens: int = 256
+    retrieval_fraction: float = 0.35
+    memory_fraction: float = 0.2
+    history_fraction: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -300,6 +454,8 @@ class ResearchIntegrationSettings:
     web_search_api_key: str = ""
     training_fixture: bool = False
     corpus_root: str = ""
+    auto_promote_verified_knowledge: bool = True
+    datasets_auto_index_ready_to_knowledge: bool = True
 
 
 @dataclass(frozen=True)
@@ -322,6 +478,7 @@ class Settings:
     model: ModelSettings
     knowledge: KnowledgeSettings
     reasoning: ReasoningSettings
+    verification: VerificationSettings
     features: FeatureFlags
     coding: CodingSettings
     market_sim: MarketSimSettings
@@ -387,8 +544,82 @@ class Settings:
                 "embedding_model": self.knowledge.embedding_model,
                 "reranker_model": self.knowledge.reranker_model,
                 "deep_recall_budget": self.knowledge.deep_recall_budget,
+                "rerank_policy": self.knowledge.rerank_policy,
+                "rerank_candidate_count": self.knowledge.rerank_candidate_count,
+                "rerank_final_count": self.knowledge.rerank_final_count,
+                "min_retrieval_score": self.knowledge.min_retrieval_score,
+                "min_confidence": self.knowledge.min_confidence,
+                "query_expansion": self.knowledge.query_expansion,
+                "max_query_expansions": self.knowledge.max_query_expansions,
+                "max_retrieval_rounds": self.knowledge.max_retrieval_rounds,
+                "diversity_enabled": self.knowledge.diversity_enabled,
+                "diversity_strength": self.knowledge.diversity_strength,
+                "lexical_enabled": self.knowledge.lexical_enabled,
+                "dense_enabled": self.knowledge.dense_enabled,
+                "hybrid_enabled": self.knowledge.hybrid_enabled,
+                "rrf_k": self.knowledge.rrf_k,
+                "contradiction_detection": self.knowledge.contradiction_detection,
+                "retrieval_trace": self.knowledge.retrieval_trace,
+                "atlas_retrieval": self.knowledge.atlas_retrieval,
+                "atlas_expansion_depth": self.knowledge.atlas_expansion_depth,
+                "auto_dedupe": self.knowledge.auto_dedupe,
+                "integrity_checks": self.knowledge.integrity_checks,
             },
-            "reasoning": {"enabled": self.reasoning.enabled},
+            "reasoning": {
+                "enabled": self.reasoning.enabled,
+                "default_mode": self.reasoning.default_mode,
+                "allow_fast_path": self.reasoning.allow_fast_path,
+                "minimum_evidence_coverage": self.reasoning.minimum_evidence_coverage,
+                "uncertainty_deep_threshold": self.reasoning.uncertainty_deep_threshold,
+                "contradiction_replan_threshold": self.reasoning.contradiction_replan_threshold,
+                "max_replans_global": self.reasoning.max_replans_global,
+                "max_retries_global": self.reasoning.max_retries_global,
+                "require_verification_for_high_risk": self.reasoning.require_verification_for_high_risk,
+                "require_grounding_for_knowledge_tasks": self.reasoning.require_grounding_for_knowledge_tasks,
+                "fast_max_wall_time_seconds": self.reasoning.fast_max_wall_time_seconds,
+                "fast_max_model_calls": self.reasoning.fast_max_model_calls,
+                "fast_max_model_tokens": self.reasoning.fast_max_model_tokens,
+                "fast_max_retrieval_rounds": self.reasoning.fast_max_retrieval_rounds,
+                "fast_max_critic_passes": self.reasoning.fast_max_critic_passes,
+                "fast_max_tool_calls": self.reasoning.fast_max_tool_calls,
+                "fast_max_agent_delegations": self.reasoning.fast_max_agent_delegations,
+                "fast_max_iterations": self.reasoning.fast_max_iterations,
+                "fast_max_context_tokens": self.reasoning.fast_max_context_tokens,
+                "standard_max_wall_time_seconds": self.reasoning.standard_max_wall_time_seconds,
+                "standard_max_model_calls": self.reasoning.standard_max_model_calls,
+                "standard_max_model_tokens": self.reasoning.standard_max_model_tokens,
+                "standard_max_retrieval_rounds": self.reasoning.standard_max_retrieval_rounds,
+                "standard_max_critic_passes": self.reasoning.standard_max_critic_passes,
+                "standard_max_tool_calls": self.reasoning.standard_max_tool_calls,
+                "standard_max_agent_delegations": self.reasoning.standard_max_agent_delegations,
+                "standard_max_iterations": self.reasoning.standard_max_iterations,
+                "standard_max_context_tokens": self.reasoning.standard_max_context_tokens,
+                "deep_max_wall_time_seconds": self.reasoning.deep_max_wall_time_seconds,
+                "deep_max_model_calls": self.reasoning.deep_max_model_calls,
+                "deep_max_model_tokens": self.reasoning.deep_max_model_tokens,
+                "deep_max_retrieval_rounds": self.reasoning.deep_max_retrieval_rounds,
+                "deep_max_critic_passes": self.reasoning.deep_max_critic_passes,
+                "deep_max_tool_calls": self.reasoning.deep_max_tool_calls,
+                "deep_max_agent_delegations": self.reasoning.deep_max_agent_delegations,
+                "deep_max_iterations": self.reasoning.deep_max_iterations,
+                "deep_max_context_tokens": self.reasoning.deep_max_context_tokens,
+                "maximum_max_wall_time_seconds": self.reasoning.maximum_max_wall_time_seconds,
+                "maximum_max_model_calls": self.reasoning.maximum_max_model_calls,
+                "maximum_max_model_tokens": self.reasoning.maximum_max_model_tokens,
+                "maximum_max_retrieval_rounds": self.reasoning.maximum_max_retrieval_rounds,
+                "maximum_max_critic_passes": self.reasoning.maximum_max_critic_passes,
+                "maximum_max_tool_calls": self.reasoning.maximum_max_tool_calls,
+                "maximum_max_agent_delegations": self.reasoning.maximum_max_agent_delegations,
+                "maximum_max_iterations": self.reasoning.maximum_max_iterations,
+                "maximum_max_context_tokens": self.reasoning.maximum_max_context_tokens,
+            },
+            "verification": {
+                "factual_grounding": self.verification.factual_grounding,
+                "contradiction_check": self.verification.contradiction_check,
+                "require_evidence": self.verification.require_evidence,
+                "citation_required": self.verification.citation_required,
+                "unmeasured_blocks_completion": self.verification.unmeasured_blocks_completion,
+            },
             "features": {
                 "reasoning_iterative_retrieval": self.features.reasoning_iterative_retrieval,
                 "memory_semantic": self.features.memory_semantic,
@@ -471,6 +702,13 @@ class Settings:
                 "token_budget": self.context.token_budget,
                 "reserve_response_tokens": self.context.reserve_response_tokens,
                 "max_knowledge_chars": self.context.max_knowledge_chars,
+                "auto_budget": self.context.auto_budget,
+                "max_context_fraction": self.context.max_context_fraction,
+                "reserve_response_fraction": self.context.reserve_response_fraction,
+                "minimum_response_tokens": self.context.minimum_response_tokens,
+                "retrieval_fraction": self.context.retrieval_fraction,
+                "memory_fraction": self.context.memory_fraction,
+                "history_fraction": self.context.history_fraction,
             },
             "network": {"allow_outbound": self.network.allow_outbound},
             "artifacts": {"root": str(self.artifacts.root)},
@@ -488,6 +726,12 @@ class Settings:
                 ),
                 "training_fixture": self.research_integration.training_fixture,
                 "corpus_root": self.research_integration.corpus_root or None,
+                "auto_promote_verified_knowledge": (
+                    self.research_integration.auto_promote_verified_knowledge
+                ),
+                "datasets_auto_index_ready_to_knowledge": (
+                    self.research_integration.datasets_auto_index_ready_to_knowledge
+                ),
             },
             "database_path": str(self.database_path),
         }
@@ -546,21 +790,21 @@ class Settings:
             _env_bool("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES", True) if mcp_enabled else False
         )
         market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", False)
-        rag_v3 = _env_bool("LEVIATHAN_FEATURE_RAG_V3", False)
-        deep_recall = _env_bool("LEVIATHAN_FEATURE_DEEP_RECALL", False)
-        why_library = _env_bool("LEVIATHAN_FEATURE_WHY_LIBRARY", False)
-        residual_production = _env_bool("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION", False)
+        rag_v3 = _env_bool("LEVIATHAN_FEATURE_RAG_V3", True)
+        deep_recall = _env_bool("LEVIATHAN_FEATURE_DEEP_RECALL", True)
+        why_library = _env_bool("LEVIATHAN_FEATURE_WHY_LIBRARY", True)
+        residual_production = _env_bool("LEVIATHAN_FEATURE_RESIDUAL_PRODUCTION", True)
         chat_streaming = _env_bool("LEVIATHAN_FEATURE_CHAT_STREAMING", False)
         chat_sse = _env_bool("LEVIATHAN_FEATURE_CHAT_SSE", False)
-        cognition_enabled = _env_bool("LEVIATHAN_FEATURE_COGNITION", False)
+        cognition_enabled = _env_bool("LEVIATHAN_FEATURE_COGNITION", True)
         # Children are read independently; hierarchy enforced in validate().
         cognition_shadow = _env_bool("LEVIATHAN_FEATURE_COGNITION_SHADOW", False)
-        cognition_iterative = _env_bool("LEVIATHAN_FEATURE_COGNITION_ITERATIVE_LOOP", False)
-        cognition_belief = _env_bool("LEVIATHAN_FEATURE_COGNITION_BELIEF_STATE", False)
-        cognition_neuro = _env_bool("LEVIATHAN_FEATURE_COGNITION_NEURO", False)
-        cognition_adaptive = _env_bool("LEVIATHAN_FEATURE_COGNITION_ADAPTIVE_DEPTH", False)
-        cognition_delegation = _env_bool("LEVIATHAN_FEATURE_COGNITION_DELEGATION", False)
-        cognition_experience = _env_bool("LEVIATHAN_FEATURE_COGNITION_EXPERIENCE_LEARNING", False)
+        cognition_iterative = _env_bool("LEVIATHAN_FEATURE_COGNITION_ITERATIVE_LOOP", True)
+        cognition_belief = _env_bool("LEVIATHAN_FEATURE_COGNITION_BELIEF_STATE", True)
+        cognition_neuro = _env_bool("LEVIATHAN_FEATURE_COGNITION_NEURO", True)
+        cognition_adaptive = _env_bool("LEVIATHAN_FEATURE_COGNITION_ADAPTIVE_DEPTH", True)
+        cognition_delegation = _env_bool("LEVIATHAN_FEATURE_COGNITION_DELEGATION", True)
+        cognition_experience = _env_bool("LEVIATHAN_FEATURE_COGNITION_EXPERIENCE_LEARNING", True)
         durable_kernel = _env_bool("LEVIATHAN_FEATURE_DURABLE_KERNEL", False)
         eval_platform = _env_bool("LEVIATHAN_FEATURE_EVAL_PLATFORM", True)
         model_serving = _env_bool("LEVIATHAN_FEATURE_MODEL_SERVING", True)
@@ -571,7 +815,7 @@ class Settings:
         data_training_factory = _env_bool("LEVIATHAN_FEATURE_DATA_TRAINING_FACTORY", True)
         posttraining_flywheel = _env_bool("LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL", True)
         embedding_provider = (
-            _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
+            _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "auto" if rag_v3 else "null") or ("auto" if rag_v3 else "null")
         ).strip().lower()
         embedding_model = (_env_raw("LEVIATHAN_EMBEDDING_MODEL", "") or "").strip() or None
         reranker_model = (_env_raw("LEVIATHAN_RERANKER_MODEL", "") or "").strip() or None
@@ -619,23 +863,113 @@ class Settings:
                 deep_recall_budget=_env_int(
                     "LEVIATHAN_DEEP_RECALL_BUDGET", 800, minimum=64, maximum=20_000
                 ),
-            ),
-            reasoning=ReasoningSettings(enabled=_env_bool("LEVIATHAN_REASONING_ENABLED", True)),
-            features=FeatureFlags(
-                reasoning_iterative_retrieval=_env_bool("LEVIATHAN_FEATURE_ITERATIVE_RETRIEVAL", False),
-                memory_semantic=_env_bool("LEVIATHAN_FEATURE_MEMORY_SEMANTIC", False),
-                neuro_enabled=_env_bool("LEVIATHAN_FEATURE_NEURO", False),
-                neuro_associative_memory=_env_bool("LEVIATHAN_FEATURE_NEURO_ASSOCIATIVE_MEMORY", False),
-                neuro_process_critic=_env_bool("LEVIATHAN_FEATURE_NEURO_PROCESS_CRITIC", False),
-                neuro_residual_injection=_env_bool("LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION", False),
-                neuro_cortex=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX", False),
-                neuro_memory_tiers=_env_bool("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS", False),
-                neuro_residual_orchestrator=_env_bool(
-                    "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR", False
+                rerank_policy=(
+                    _env_raw("LEVIATHAN_RERANK_POLICY", "auto") or "auto"
+                ).strip().lower(),
+                rerank_candidate_count=_env_int(
+                    "LEVIATHAN_RERANK_CANDIDATE_COUNT", 20, minimum=1, maximum=500
                 ),
-                neuro_cortex_blocks=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS", False),
+                rerank_final_count=_env_int(
+                    "LEVIATHAN_RERANK_FINAL_COUNT", 5, minimum=1, maximum=100
+                ),
+                min_retrieval_score=_env_float(
+                    "LEVIATHAN_KNOWLEDGE_MIN_RETRIEVAL_SCORE", 0.0, minimum=0.0, maximum=1.0
+                ),
+                min_confidence=_env_float(
+                    "LEVIATHAN_KNOWLEDGE_MIN_CONFIDENCE", 0.0, minimum=0.0, maximum=1.0
+                ),
+                query_expansion=_env_bool("LEVIATHAN_KNOWLEDGE_QUERY_EXPANSION", True),
+                max_query_expansions=_env_int(
+                    "LEVIATHAN_KNOWLEDGE_MAX_QUERY_EXPANSIONS", 4, minimum=0, maximum=32
+                ),
+                max_retrieval_rounds=_env_int(
+                    "LEVIATHAN_KNOWLEDGE_MAX_RETRIEVAL_ROUNDS", 3, minimum=1, maximum=16
+                ),
+                diversity_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_DIVERSITY_ENABLED", True),
+                diversity_strength=_env_float(
+                    "LEVIATHAN_KNOWLEDGE_DIVERSITY_STRENGTH", 0.3, minimum=0.0, maximum=1.0
+                ),
+                lexical_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_LEXICAL_ENABLED", True),
+                dense_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_DENSE_ENABLED", True),
+                hybrid_enabled=_env_bool("LEVIATHAN_KNOWLEDGE_HYBRID_ENABLED", True),
+                rrf_k=_env_int("LEVIATHAN_KNOWLEDGE_RRF_K", 60, minimum=1, maximum=10_000),
+                contradiction_detection=_env_bool(
+                    "LEVIATHAN_KNOWLEDGE_CONTRADICTION_DETECTION", True
+                ),
+                retrieval_trace=_env_bool("LEVIATHAN_KNOWLEDGE_RETRIEVAL_TRACE", True),
+                atlas_retrieval=_env_bool("LEVIATHAN_KNOWLEDGE_ATLAS_RETRIEVAL", True),
+                atlas_expansion_depth=_env_int(
+                    "LEVIATHAN_KNOWLEDGE_ATLAS_EXPANSION_DEPTH", 1, minimum=0, maximum=8
+                ),
+                auto_dedupe=_env_bool("LEVIATHAN_KNOWLEDGE_AUTO_DEDUPE", True),
+                integrity_checks=_env_bool("LEVIATHAN_KNOWLEDGE_INTEGRITY_CHECKS", True),
+            ),
+            reasoning=ReasoningSettings(
+                enabled=_env_bool("LEVIATHAN_REASONING_ENABLED", True),
+                default_mode=(
+                    _env_raw("LEVIATHAN_REASONING_DEFAULT_MODE", "adaptive") or "adaptive"
+                ).strip().lower(),
+                allow_fast_path=_env_bool("LEVIATHAN_REASONING_ALLOW_FAST_PATH", True),
+                minimum_evidence_coverage=_env_float(
+                    "LEVIATHAN_REASONING_MINIMUM_EVIDENCE_COVERAGE",
+                    0.35,
+                    minimum=0.0,
+                    maximum=1.0,
+                ),
+                uncertainty_deep_threshold=_env_float(
+                    "LEVIATHAN_REASONING_UNCERTAINTY_DEEP_THRESHOLD",
+                    0.75,
+                    minimum=0.0,
+                    maximum=1.0,
+                ),
+                contradiction_replan_threshold=_env_float(
+                    "LEVIATHAN_REASONING_CONTRADICTION_REPLAN_THRESHOLD",
+                    0.3,
+                    minimum=0.0,
+                    maximum=1.0,
+                ),
+                max_replans_global=_env_int(
+                    "LEVIATHAN_REASONING_MAX_REPLANS_GLOBAL", 4, minimum=0, maximum=64
+                ),
+                max_retries_global=_env_int(
+                    "LEVIATHAN_REASONING_MAX_RETRIES_GLOBAL", 3, minimum=0, maximum=64
+                ),
+                require_verification_for_high_risk=_env_bool(
+                    "LEVIATHAN_REASONING_REQUIRE_VERIFICATION_FOR_HIGH_RISK", True
+                ),
+                require_grounding_for_knowledge_tasks=_env_bool(
+                    "LEVIATHAN_REASONING_REQUIRE_GROUNDING_FOR_KNOWLEDGE_TASKS", True
+                ),
+                **{  # type: ignore[arg-type]
+                    k: v
+                    for profile, defaults in _REASONING_BUDGET_DEFAULTS.items()
+                    for k, v in _reasoning_budget_kwargs(profile, defaults).items()
+                },
+            ),
+            verification=VerificationSettings(
+                factual_grounding=_env_bool("LEVIATHAN_VERIFICATION_FACTUAL_GROUNDING", True),
+                contradiction_check=_env_bool("LEVIATHAN_VERIFICATION_CONTRADICTION_CHECK", True),
+                require_evidence=_env_bool("LEVIATHAN_VERIFICATION_REQUIRE_EVIDENCE", True),
+                citation_required=_env_bool("LEVIATHAN_VERIFICATION_CITATION_REQUIRED", False),
+                unmeasured_blocks_completion=_env_bool(
+                    "LEVIATHAN_VERIFICATION_UNMEASURED_BLOCKS_COMPLETION", True
+                ),
+            ),
+            features=FeatureFlags(
+                reasoning_iterative_retrieval=_env_bool("LEVIATHAN_FEATURE_ITERATIVE_RETRIEVAL", True),
+                memory_semantic=_env_bool("LEVIATHAN_FEATURE_MEMORY_SEMANTIC", True),
+                neuro_enabled=_env_bool("LEVIATHAN_FEATURE_NEURO", True),
+                neuro_associative_memory=_env_bool("LEVIATHAN_FEATURE_NEURO_ASSOCIATIVE_MEMORY", True),
+                neuro_process_critic=_env_bool("LEVIATHAN_FEATURE_NEURO_PROCESS_CRITIC", True),
+                neuro_residual_injection=_env_bool("LEVIATHAN_FEATURE_NEURO_RESIDUAL_INJECTION", True),
+                neuro_cortex=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX", True),
+                neuro_memory_tiers=_env_bool("LEVIATHAN_FEATURE_NEURO_MEMORY_TIERS", True),
+                neuro_residual_orchestrator=_env_bool(
+                    "LEVIATHAN_FEATURE_NEURO_RESIDUAL_ORCHESTRATOR", True
+                ),
+                neuro_cortex_blocks=_env_bool("LEVIATHAN_FEATURE_NEURO_CORTEX_BLOCKS", True),
                 neuro_contrastive_training=_env_bool(
-                    "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING", False
+                    "LEVIATHAN_FEATURE_NEURO_CONTRASTIVE_TRAINING", True
                 ),
                 neuro_soak_long=_env_bool("LEVIATHAN_FEATURE_NEURO_SOAK_LONG", False),
                 neuro_training_real_worker=_env_bool("LEVIATHAN_NEURO_TRAINING_REAL_WORKER", False),
@@ -729,6 +1063,25 @@ class Settings:
                 max_knowledge_chars=_env_int(
                     "LEVIATHAN_CONTEXT_MAX_KNOWLEDGE_CHARS", 1800, minimum=200, maximum=50_000
                 ),
+                auto_budget=_env_bool("LEVIATHAN_CONTEXT_AUTO_BUDGET", True),
+                max_context_fraction=_env_float(
+                    "LEVIATHAN_CONTEXT_MAX_CONTEXT_FRACTION", 0.72, minimum=0.05, maximum=1.0
+                ),
+                reserve_response_fraction=_env_float(
+                    "LEVIATHAN_CONTEXT_RESERVE_RESPONSE_FRACTION", 0.18, minimum=0.0, maximum=1.0
+                ),
+                minimum_response_tokens=_env_int(
+                    "LEVIATHAN_CONTEXT_MINIMUM_RESPONSE_TOKENS", 256, minimum=32, maximum=32_000
+                ),
+                retrieval_fraction=_env_float(
+                    "LEVIATHAN_CONTEXT_RETRIEVAL_FRACTION", 0.35, minimum=0.0, maximum=1.0
+                ),
+                memory_fraction=_env_float(
+                    "LEVIATHAN_CONTEXT_MEMORY_FRACTION", 0.2, minimum=0.0, maximum=1.0
+                ),
+                history_fraction=_env_float(
+                    "LEVIATHAN_CONTEXT_HISTORY_FRACTION", 0.25, minimum=0.0, maximum=1.0
+                ),
             ),
             network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", False)),
             artifacts=ArtifactSettings(root=artifacts_root),
@@ -746,6 +1099,12 @@ class Settings:
                 web_search_api_key=(_env_raw("LEVIATHAN_WEB_SEARCH_API_KEY", "") or "").strip(),
                 training_fixture=_env_bool("LEVIATHAN_TRAINING_FIXTURE", False),
                 corpus_root=(_env_raw("LEVIATHAN_CORPUS_ROOT", "") or "").strip(),
+                auto_promote_verified_knowledge=_env_bool(
+                    "LEVIATHAN_RESEARCH_AUTO_PROMOTE_VERIFIED_KNOWLEDGE", True
+                ),
+                datasets_auto_index_ready_to_knowledge=_env_bool(
+                    "LEVIATHAN_DATASETS_AUTO_INDEX_READY_TO_KNOWLEDGE", True
+                ),
             ),
             database_path=database_path,
         )
@@ -882,6 +1241,7 @@ class Settings:
             "null",
             "none",
             "off",
+            "auto",
             "hash",
             "local_hash",
             "local",
@@ -892,6 +1252,24 @@ class Settings:
             "hf",
         }:
             raise ConfigurationError(f"LEVIATHAN_EMBEDDING_PROVIDER invalid: {emb!r}")
+        if self.knowledge.rerank_policy not in {"off", "auto", "always"}:
+            raise ConfigurationError(
+                f"LEVIATHAN_RERANK_POLICY invalid: {self.knowledge.rerank_policy!r}"
+            )
+        if self.knowledge.rerank_final_count > self.knowledge.rerank_candidate_count:
+            raise ConfigurationError(
+                "LEVIATHAN_RERANK_FINAL_COUNT must be <= LEVIATHAN_RERANK_CANDIDATE_COUNT"
+            )
+        if self.reasoning.default_mode not in {
+            "adaptive",
+            "fast",
+            "standard",
+            "deep",
+            "maximum",
+        }:
+            raise ConfigurationError(
+                f"LEVIATHAN_REASONING_DEFAULT_MODE invalid: {self.reasoning.default_mode!r}"
+            )
         kind = self.neuro_runtime.residual_kind
         if kind not in {
             "unsupported",
