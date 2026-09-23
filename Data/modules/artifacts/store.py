@@ -83,6 +83,9 @@ class ArtifactStore:
             raise FileExistsError(f"Artifact path already exists: {dest}")
         digest = sha256_bytes(data)
         dest.write_bytes(data)
+        from Data.modules.observability.redaction import redact_payload
+
+        safe_meta = redact_payload(dict(metadata or {}))
         record = ArtifactRecord(
             artifact_id=artifact_id,
             run_id=run_id,
@@ -94,7 +97,7 @@ class ArtifactStore:
             created_at=utc_now(),
             producer=producer,
             verification_status="unverified",
-            metadata=metadata or {},
+            metadata=safe_meta,
         )
         with self.connect() as conn:
             conn.execute(

@@ -6,8 +6,12 @@ import re
 from typing import Any
 
 _SECRET_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*([^\s,;]+)"),
-    re.compile(r"(?i)bearer\s+[a-z0-9\-._~+/]+=*"),
+    # Bearer first so "Authorization: Bearer <token>" does not leave the token
+    # behind after a partial authorization-key match on the word "Bearer".
+    re.compile(r"(?i)bearer\s+([a-z0-9\-._~+/]+=*)"),
+    re.compile(
+        r"(?i)(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*(?:Bearer\s+)?([^\s,;]+)"
+    ),
     re.compile(r"sk-[A-Za-z0-9]{16,}"),
     re.compile(r"hf_[A-Za-z0-9]{16,}"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -33,8 +37,8 @@ def scan_pii_flags(text: str) -> list[dict[str, Any]]:
     """Return detection flags (not proof) for obvious PII/secret patterns."""
     findings: list[dict[str, Any]] = []
     for label, pattern in (
-        ("secret_like", _SECRET_PATTERNS[0]),
-        ("bearer_token", _SECRET_PATTERNS[1]),
+        ("bearer_token", _SECRET_PATTERNS[0]),
+        ("secret_like", _SECRET_PATTERNS[1]),
         ("openai_key_like", _SECRET_PATTERNS[2]),
         ("hf_token_like", _SECRET_PATTERNS[3]),
         ("private_key_pem", _SECRET_PATTERNS[4]),
