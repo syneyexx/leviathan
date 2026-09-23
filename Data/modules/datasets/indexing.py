@@ -8,7 +8,7 @@ from typing import Any
 from Data.modules.knowledge import KnowledgeStore
 
 from .materialize import load_materialized_jsonl
-from .types import CanonicalRecord
+from .types import CanonicalRecord, DatasetError
 
 
 def _record_document_text(rec: CanonicalRecord) -> str:
@@ -83,7 +83,20 @@ def index_version_file(
     scope: str = "dataset",
     max_records: int | None = None,
 ) -> dict[str, Any]:
-    records = load_materialized_jsonl(storage_path)
+    path = Path(storage_path)
+    if not path.exists():
+        raise DatasetError(
+            f"Index storage path does not exist: {path}",
+            code="storage_missing",
+            http_status=400,
+        )
+    if not path.is_file():
+        raise DatasetError(
+            f"Index storage path is not a file: {path}",
+            code="storage_not_file",
+            http_status=400,
+        )
+    records = load_materialized_jsonl(path)
     return index_records(
         knowledge,
         records,
