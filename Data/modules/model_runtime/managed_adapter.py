@@ -7,8 +7,10 @@ second registry or job database (U021–U024).
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, AsyncIterator
 
+from Data.modules.model_runtime.latency import LatencyTimer
 from Data.modules.model_runtime.serving import (
     ServingSupervisor,
     StreamCancelToken,
@@ -229,7 +231,12 @@ class ManagedLocalServingAdapter:
         await self.unload(model_id)
 
     async def test_inference(
-        self, model_id: str, *, prompt: str = "ping", max_tokens: int = 8
+        self,
+        model_id: str,
+        *,
+        prompt: str = "ping",
+        max_tokens: int = 8,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         worker_id = self._model_to_worker.get(model_id)
         worker = self.supervisor.get_worker(worker_id) if worker_id else None
@@ -241,17 +248,34 @@ class ManagedLocalServingAdapter:
                 model_id=model_id,
                 http_status=409,
             )
+        timer = LatencyTimer()
+        timer.mark_admitted()
         # Inproc: deterministic echo — not a fabricated quality score.
         text = f"pong:{prompt[:max_tokens]}"
+        timer.mark_first_token()
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ModelControlError(
+                code=CAPABILITY_NOT_SUPPORTED,
+                message="inference timeout",
+                provider_id=self.provider_id,
+                model_id=model_id,
+                http_status=408,
+            )
+        latency = timer.finish(source="inproc_fixture")
         return {
             "ok": True,
             "output": text,
+            "content": text,
+            "preview": text,
             "model_id": model_id,
             "revision_id": worker.revision_id,
             "streaming": False,
+            "latencyMs": latency.total_ms,
+            "latency": latency.public_dict(),
             "truth": {
                 "fixture_inference": worker.backend_kind == "inproc",
                 "unmeasured_quality": True,
+                "stages_are_separated": True,
             },
         }
 
@@ -262,8 +286,10 @@ class ManagedLocalServingAdapter:
         prompt: str,
         cancel: StreamCancelToken | None = None,
         max_tokens: int = 32,
+        timeout_seconds: float | None = None,
+        token_delay_seconds: float = 0.0,
     ) -> AsyncIterator[dict[str, Any]]:
-        """True token stream with cooperative cancellation (U025). Never fakes SSE from full text."""
+        """True token stream with cancel + timeout (U025 / Round 6). Never fakes SSE from full text."""
         worker_id = self._model_to_worker.get(model_id)
         worker = self.supervisor.get_worker(worker_id) if worker_id else None
         if worker is None or worker.state != WorkerState.READY:
@@ -274,32 +300,60 @@ class ManagedLocalServingAdapter:
                 model_id=model_id,
                 http_status=409,
             )
-        # Inproc stream: emit characters as deltas; honor cancel between tokens.
+        timer = LatencyTimer()
+        timer.mark_admitted()
+        deadline = (
+            time.perf_counter() + timeout_seconds if timeout_seconds is not None else None
+        )
+        # Inproc stream: emit characters as deltas; honor cancel / timeout between tokens.
         payload = f"echo:{prompt}"[: max(1, max_tokens)]
         for index, ch in enumerate(payload):
             if cancel and cancel.cancelled:
+                latency = timer.finish(source="inproc_stream_cancelled")
                 yield {
                     "delta": "",
                     "finish_reason": "cancelled",
                     "index": index,
                     "revision_id": worker.revision_id,
                     "cancelled": True,
-                    "reason": cancel.reason,
+                    "reason": cancel.reason or "client_disconnect",
+                    "latency": latency.public_dict(),
                 }
                 return
-            await asyncio.sleep(0)  # yield event loop
+            if deadline is not None and time.perf_counter() >= deadline:
+                if cancel is not None:
+                    cancel.cancel("timeout")
+                latency = timer.finish(source="inproc_stream_timeout")
+                yield {
+                    "delta": "",
+                    "finish_reason": "timeout",
+                    "index": index,
+                    "revision_id": worker.revision_id,
+                    "cancelled": True,
+                    "reason": "timeout",
+                    "latency": latency.public_dict(),
+                }
+                return
+            if token_delay_seconds > 0:
+                await asyncio.sleep(token_delay_seconds)
+            else:
+                await asyncio.sleep(0)  # yield event loop
+            if index == 0:
+                timer.mark_first_token()
             yield {
                 "delta": ch,
                 "finish_reason": None,
                 "index": index,
                 "revision_id": worker.revision_id,
             }
+        latency = timer.finish(source="inproc_stream")
         yield {
             "delta": "",
             "finish_reason": "stop",
             "index": len(payload),
             "revision_id": worker.revision_id,
             "usage": {"completion_tokens": len(payload)},
+            "latency": latency.public_dict(),
         }
 
     def reconcile_workers(self) -> list[dict[str, Any]]:
