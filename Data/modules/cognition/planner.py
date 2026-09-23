@@ -35,10 +35,21 @@ class CognitivePlanner:
         *,
         previous: CognitivePlan | None,
         reason: str,
+        observations: list[Any] | None = None,
     ) -> CognitivePlan:
         plan = self.plan(task, decision)
         plan.revision = (previous.revision + 1) if previous else 1
         plan.assumptions.append(f"replan_reason:{reason}")
+        if observations:
+            # Trace plan change to concrete observations (adaptive, not blind restart).
+            refs = []
+            for o in observations[-5:]:
+                oid = getattr(o, "observation_id", None) or (o.get("observation_id") if isinstance(o, dict) else None)
+                summary = getattr(o, "summary", None) or (o.get("summary") if isinstance(o, dict) else "")
+                if oid:
+                    refs.append(f"{oid}:{str(summary)[:60]}")
+            if refs:
+                plan.assumptions.append("observation_trace:" + " | ".join(refs))
         return plan
 
     def mark_stale(self, plan: CognitivePlan, *, reason: str) -> CognitivePlan:

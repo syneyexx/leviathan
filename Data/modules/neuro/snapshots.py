@@ -167,6 +167,7 @@ class ContrastiveRetrievalReport:
     detail: str
     measured: bool = False
     temperature: float = 0.07
+    embedding_is_semantic: bool | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -176,11 +177,13 @@ class ContrastiveRetrievalReport:
             "detail": self.detail,
             "measured": self.measured,
             "temperature": self.temperature,
+            "embedding_is_semantic": self.embedding_is_semantic,
             "truth": {
                 "unmeasured_embeddings_are_not_passed": True,
                 "unmeasured_is_not_passed": not self.measured,
                 "model_output_is_not_evidence": True,
                 "neural_signal_is_not_authority": True,
+                "hash_vectors_are_not_semantic_embeddings": self.embedding_is_semantic is False,
             },
         }
 
@@ -189,7 +192,8 @@ class ContrastiveRetrievalHead:
     """Contrastive retrieval head — InfoNCE-style scoring via EmbeddingProvider when available.
 
     Methods:
-      - embedding — real cosine / InfoNCE proxy over EmbeddingProvider vectors
+      - embedding — real cosine / InfoNCE proxy over *semantic* EmbeddingProvider vectors
+      - hash_embedding — deterministic hash fixtures (not semantic; never claimed measured semantic)
       - lexical  — honest UNMEASURED fallback (never claimed PASSED)
     """
 
@@ -208,6 +212,34 @@ class ContrastiveRetrievalHead:
             self.embeddings_available = bool(embedding_provider.available())
         else:
             self.embeddings_available = embeddings_available
+
+    def _provider_is_semantic(self) -> bool:
+        provider = self.embedding_provider
+        if provider is None:
+            return False
+        provider_id = str(getattr(provider, "provider_id", "") or "").lower()
+        if provider_id in {"local_hash", "hash", "null"}:
+            return False
+        if hasattr(provider, "is_semantic"):
+            try:
+                return bool(provider.is_semantic)
+            except Exception:  # noqa: BLE001
+                pass
+        status: dict[str, Any] = {}
+        try:
+            if hasattr(provider, "status"):
+                status = provider.status() or {}
+        except Exception:  # noqa: BLE001
+            status = {}
+        if "is_semantic" in status:
+            return bool(status["is_semantic"])
+        truth = status.get("truth") or {}
+        if truth.get("hash_embedding_is_not_neural_model") or truth.get(
+            "hash_vectors_are_not_semantic_embeddings"
+        ):
+            return False
+        # Available non-hash providers (e.g. sentence-transformers, test fakes) count as semantic.
+        return True
 
     def _cosine(self, a: Sequence[float], b: Sequence[float]) -> float:
         if not a or not b or len(a) != len(b):
@@ -241,6 +273,7 @@ class ContrastiveRetrievalHead:
             )
         bundle = self.facade.retrieve(query, tiers=tiers, limit_per_tier=max(limit, 8))
         if self.embeddings_available and self.embedding_provider is not None:
+            semantic = self._provider_is_semantic()
             try:
                 q_vec = self.embedding_provider.embed_query(query)
                 sims: list[float] = []
@@ -259,15 +292,30 @@ class ContrastiveRetrievalHead:
                     item = dict(payload)
                     item["contrastive_score"] = round(sim, 4)
                     item["infonce_weight"] = round(weight, 6)
+                    item["embedding_is_semantic"] = semantic
                     ranked.append((sim, item))
                 ranked.sort(key=lambda item: item[0], reverse=True)
+                if semantic:
+                    return ContrastiveRetrievalReport(
+                        available=True,
+                        method="embedding",
+                        hits=tuple(item[1] for item in ranked[:limit]),
+                        detail="Semantic EmbeddingProvider InfoNCE-style contrastive ranking",
+                        measured=True,
+                        temperature=self.temperature,
+                        embedding_is_semantic=True,
+                    )
                 return ContrastiveRetrievalReport(
                     available=True,
-                    method="embedding",
+                    method="hash_embedding",
                     hits=tuple(item[1] for item in ranked[:limit]),
-                    detail="EmbeddingProvider InfoNCE-style contrastive ranking",
-                    measured=True,
+                    detail=(
+                        "Deterministic hash-vector ranking fixture — not a semantic embedding; "
+                        "contrastive semantic quality UNMEASURED"
+                    ),
+                    measured=False,
                     temperature=self.temperature,
+                    embedding_is_semantic=False,
                 )
             except Exception as exc:  # noqa: BLE001
                 return ContrastiveRetrievalReport(
@@ -277,6 +325,7 @@ class ContrastiveRetrievalHead:
                     detail=f"Embedding path failed ({exc}) — lexical proxy (UNMEASURED)",
                     measured=False,
                     temperature=self.temperature,
+                    embedding_is_semantic=None,
                 )
         return ContrastiveRetrievalReport(
             available=True,
@@ -285,4 +334,5 @@ class ContrastiveRetrievalHead:
             detail="Embeddings unavailable — lexical proxy only (contrastive UNMEASURED)",
             measured=False,
             temperature=self.temperature,
+            embedding_is_semantic=None,
         )

@@ -48,6 +48,15 @@ def run_training_loop(
     cancel_check: CancelCheck,
 ) -> dict[str, Any]:
     ensure_dir(output_dir)
+    method = (config.method or "").lower()
+    if method == "dpo":
+        # Honesty: durable worker must not silently run causal-LM LoRA under method=dpo.
+        # Preference optimization is the recipe `dpo_micro` path (DpoRecipeTrainer).
+        raise RuntimeError(
+            "Durable job method=dpo does not run causal-LM LoRA. "
+            "Use recipe pref_dpo_v1 / DpoRecipeTrainer (dpo_micro) for preference pairs. "
+            "HF/GPU production DPO is not claimed."
+        )
     if _fixture_forced(config):
         return run_fixture_loop(
             job_id=job_id,
@@ -228,11 +237,18 @@ def run_lora_loop(
     from peft import LoraConfig, get_peft_model  # type: ignore[import-not-found]
 
     events.emit("log", message=f"Loading tokenizer/model: {config.base_model_ref}")
-    tokenizer = AutoTokenizer.from_pretrained(config.base_model_ref)
+    tok_kwargs: dict[str, Any] = {}
+    model_kwargs: dict[str, Any] = {}
+    if config.tokenizer_revision:
+        tok_kwargs["revision"] = config.tokenizer_revision
+    if config.base_model_revision:
+        model_kwargs["revision"] = config.base_model_revision
+        tok_kwargs.setdefault("revision", config.base_model_revision)
+    tokenizer = AutoTokenizer.from_pretrained(config.base_model_ref, **tok_kwargs)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    load_kwargs: dict[str, Any] = {}
+    load_kwargs: dict[str, Any] = dict(model_kwargs)
     if config.load_in_4bit or (config.method or "").lower() == "qlora":
         bnb = safe_import("bitsandbytes")
         if bnb is None:
@@ -243,6 +259,14 @@ def run_lora_loop(
         load_kwargs["device_map"] = "auto"
 
     model = AutoModelForCausalLM.from_pretrained(config.base_model_ref, **load_kwargs)
+    if config.load_in_4bit or (config.method or "").lower() == "qlora":
+        # Required for stable k-bit LoRA; without this, QLoRA is fragile.
+        try:
+            from peft import prepare_model_for_kbit_training  # type: ignore[import-not-found]
+
+            model = prepare_model_for_kbit_training(model)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"QLoRA requires prepare_model_for_kbit_training: {exc}") from exc
     lora = LoraConfig(
         r=int(config.lora_r),
         lora_alpha=int(config.lora_alpha),
@@ -253,9 +277,42 @@ def run_lora_loop(
     )
     model = get_peft_model(model, lora)
 
-    texts = _load_text_examples(Path(dataset_path))
-    if len(texts) < 1:
-        raise RuntimeError("Dataset contains no usable training examples")
+    from ..sft_data import (
+        examples_from_raw_texts,
+        pack_examples,
+        revision_provenance,
+        split_examples,
+    )
+
+    raw = _load_dataset_payload(Path(dataset_path))
+    examples = examples_from_raw_texts(
+        raw["texts"],
+        messages_list=raw.get("messages_list") or None,
+        chat_template=config.chat_template,
+        assistant_loss_masking=bool(config.assistant_loss_masking and raw.get("messages_list")),
+    )
+    if config.packing:
+        examples = pack_examples(examples, max_chars=int(config.packing_max_chars))
+    split = split_examples(
+        examples,
+        seed=int(config.seed),
+        val_ratio=float(config.val_split_ratio),
+        test_ratio=float(config.test_split_ratio),
+    )
+    train_texts = [ex.text for ex in split.train]
+    if len(train_texts) < 1:
+        raise RuntimeError("Dataset contains no usable training examples after split")
+    sft_prov = revision_provenance(
+        base_model_ref=config.base_model_ref,
+        base_model_revision=config.base_model_revision,
+        tokenizer_revision=config.tokenizer_revision,
+        chat_template=config.chat_template,
+        seed=int(config.seed),
+        assistant_loss_masking=bool(config.assistant_loss_masking),
+        packing=bool(config.packing),
+    )
+    sft_prov["split"] = split.public_dict()
+    events.emit("sft_provenance", provenance=sft_prov)
 
     def tokenize_batch(batch: dict[str, list[str]]) -> dict[str, Any]:
         return tokenizer(
@@ -268,14 +325,19 @@ def run_lora_loop(
     # Prefer HF datasets if available; else simple torch Dataset.
     datasets_mod = safe_import("datasets")
     if datasets_mod is not None:
-        ds = datasets_mod.Dataset.from_dict({"text": texts})
+        ds = datasets_mod.Dataset.from_dict({"text": train_texts})
         ds = ds.map(tokenize_batch, batched=True, remove_columns=["text"])
+        eval_ds = None
+        if split.validation:
+            eval_ds = datasets_mod.Dataset.from_dict({"text": [ex.text for ex in split.validation]})
+            eval_ds = eval_ds.map(tokenize_batch, batched=True, remove_columns=["text"])
     else:
         raise RuntimeError("datasets package required for LoRA training path")
 
     args = TrainingArguments(
         output_dir=str(output_dir / "hf_runs"),
         per_device_train_batch_size=int(config.train_batch_size),
+        per_device_eval_batch_size=int(config.eval_batch_size),
         gradient_accumulation_steps=int(config.gradient_accumulation),
         learning_rate=float(config.learning_rate),
         num_train_epochs=float(config.epochs or 1.0),
@@ -290,6 +352,7 @@ def run_lora_loop(
         report_to=[],
         seed=int(config.seed),
         remove_unused_columns=False,
+        evaluation_strategy="epoch" if eval_ds is not None else "no",
     )
 
     class _CancelCallback:
@@ -319,7 +382,13 @@ def run_lora_loop(
             return control
 
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    trainer = Trainer(model=model, args=args, train_dataset=ds, data_collator=collator)
+    trainer = Trainer(
+        model=model,
+        args=args,
+        train_dataset=ds,
+        eval_dataset=eval_ds,
+        data_collator=collator,
+    )
     # Attach cancel by wrapping train loop checks via callback if available.
     try:
         from transformers import TrainerCallback  # type: ignore[import-not-found]
@@ -376,11 +445,29 @@ def run_lora_loop(
     tokenizer.save_pretrained(str(adapter_dir))
 
     metrics = dict(getattr(train_result, "metrics", {}) or {})
-    evaluation = {"train_metrics": metrics}
+    evaluation: dict[str, Any] = {"train_metrics": metrics, "sft_provenance": sft_prov}
     store.update_job(job_id, status=DurableTrainingStatus.EVALUATING, phase="evaluating")
     events.emit("evaluation_started")
-    # Held-out eval only when eval dataset present — do not invent scores.
-    evaluation["note"] = "Train metrics only unless a separate eval split is configured"
+    # Held-out evaluation — training loss is not evaluation.
+    if eval_ds is not None:
+        try:
+            eval_metrics = dict(trainer.evaluate() or {})
+            evaluation["eval_metrics"] = eval_metrics
+            eval_loss = eval_metrics.get("eval_loss")
+            if eval_loss is not None:
+                store.append_metric(
+                    job_id,
+                    metric_name="eval_loss",
+                    metric_value=float(eval_loss),
+                    step=int(metrics.get("train_steps") or metrics.get("global_step") or 0),
+                    metadata={"held_out": True},
+                )
+            evaluation["note"] = "Held-out validation metrics recorded — train loss is not evaluation"
+        except Exception as exc:  # noqa: BLE001
+            evaluation["eval_error"] = str(exc)[:400]
+            evaluation["note"] = "Held-out eval attempted but failed; train metrics only"
+    else:
+        evaluation["note"] = "No validation split — train metrics only; not an improvement claim"
     events.emit("evaluation_finished", evaluation=evaluation)
 
     card_path = output_dir / "MODEL_CARD.md"
@@ -393,8 +480,12 @@ def run_lora_loop(
                 {
                     "method": config.method,
                     "base_model_ref": config.base_model_ref,
+                    "base_model_revision": config.base_model_revision,
+                    "tokenizer_revision": config.tokenizer_revision or config.base_model_revision,
                     "config_hash": config.config_hash(),
                     "seed": config.seed,
+                    "sft_provenance": sft_prov,
+                    "resume_from_checkpoint": config.resume_from_checkpoint,
                 },
                 indent=2,
             )
@@ -428,8 +519,10 @@ def run_lora_loop(
     return {"status": "completed", "mode": "lora", "artifact_id": artifact.artifact_id, "metrics": metrics}
 
 
-def _load_text_examples(path: Path) -> list[str]:
+def _load_dataset_payload(path: Path) -> dict[str, Any]:
+    """Load texts and optional chat message lists for SFT."""
     texts: list[str] = []
+    messages_list: list[list[dict[str, str]]] = []
     if path.is_dir():
         files = sorted(path.glob("**/*.jsonl")) + sorted(path.glob("**/*.txt"))
     else:
@@ -446,21 +539,30 @@ def _load_text_examples(path: Path) -> list[str]:
                 except json.JSONDecodeError:
                     continue
                 if isinstance(obj, dict):
+                    if isinstance(obj.get("messages"), list):
+                        msgs = [m for m in obj["messages"] if isinstance(m, dict)]
+                        if msgs:
+                            messages_list.append(msgs)  # type: ignore[arg-type]
+                            parts = [
+                                str(m.get("content") or "")
+                                for m in msgs
+                                if isinstance(m, dict) and m.get("content") is not None
+                            ]
+                            if parts:
+                                texts.append("\n".join(parts))
+                            continue
                     if "text" in obj:
                         texts.append(str(obj["text"]))
-                    elif "messages" in obj:
-                        parts = []
-                        for msg in obj["messages"]:
-                            if isinstance(msg, dict) and "content" in msg:
-                                parts.append(str(msg["content"]))
-                        if parts:
-                            texts.append("\n".join(parts))
         else:
             for block in raw.split("\n\n"):
                 block = block.strip()
                 if block:
                     texts.append(block)
-    return texts
+    return {"texts": texts, "messages_list": messages_list or None}
+
+
+def _load_text_examples(path: Path) -> list[str]:
+    return list(_load_dataset_payload(path)["texts"])
 
 
 def _write_fixture_checkpoint(output_dir: Path, *, step: int, loss: float) -> Path:

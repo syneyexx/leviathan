@@ -48,12 +48,18 @@ class NullEmbeddingProvider:
             "provider_id": self.provider_id,
             "available": False,
             "reason": "null_provider",
+            "is_semantic": False,
             "truth": {"unavailable_is_not_success": True},
         }
 
+    @property
+    def is_semantic(self) -> bool:
+        return False
+
 
 def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]{2,}", text.lower(), flags=re.UNICODE)
+    # Unicode letters/digits so Dutch (and other) queries are not silently zeroed.
+    return re.findall(r"[^\W_]{2,}", text.lower(), flags=re.UNICODE)
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
@@ -83,11 +89,17 @@ class LocalHashEmbeddingProvider:
             "available": True,
             "dimensions": self.dimensions,
             "production_grade": False,
+            "is_semantic": False,
             "truth": {
                 "hash_embedding_is_not_neural_model": True,
+                "hash_vectors_are_not_semantic_embeddings": True,
                 "local_deterministic": True,
             },
         }
+
+    @property
+    def is_semantic(self) -> bool:
+        return False
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [self.embed_query(text) for text in texts]
@@ -147,11 +159,17 @@ class SentenceTransformersEmbeddingProvider:
             "dimensions": self._dimensions,
             "error": self._error,
             "production_grade": self.available(),
+            "is_semantic": self.available(),
             "truth": {
                 "optional_dependency": True,
                 "unavailable_is_not_success": True,
+                "neural_embeddings_when_available": self.available(),
             },
         }
+
+    @property
+    def is_semantic(self) -> bool:
+        return self.available()
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if self._model is None:

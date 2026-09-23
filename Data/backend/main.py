@@ -149,6 +149,7 @@ from Data.modules.cognition import (
     CapabilityBroker,
 )
 from Data.modules.cognition.model_adapter import build_control_plane_model_caller
+from Data.modules.cognition.specialists import register_specialist_handlers
 from Data.modules.security import SecretsBroker, SecurityAuditor, SecurityFinding
 from Data.modules.execution import CapabilityReceiptStore
 from Data.modules.native import NativeRuntimeStub
@@ -757,6 +758,11 @@ cognition_runtime = CognitiveRuntime(
     execution_gateway=execution_gateway,
     observability=observability,
     resource_pressure_fn=lambda: 0.0,
+)
+register_specialist_handlers(
+    cognition_delegation,
+    coding_service=coding_service,
+    research_service=research_service,
 )
 
 
@@ -3595,19 +3601,28 @@ def run_neuro_evaluation() -> dict:
 
 @app.post("/api/evaluation/serving")
 def run_serving_evaluation() -> dict:
-    """Wave 3 serving conformance suite — records measured flags only."""
-    workers = model_plane.list_serving_workers() if settings.features.model_serving else []
+    """Wave 3 serving conformance suite — unprobed flags stay UNMEASURED."""
+    serving_on = bool(settings.features.model_serving)
+    workers = model_plane.list_serving_workers() if serving_on else []
     ready = [w for w in workers if w.get("state") == "READY"]
-    dead_honest = all(w.get("state") != "READY" or w.get("pid") for w in workers) or True
-    decisions = model_plane.list_route_decisions(limit=5) if settings.features.model_serving else []
+    # Never `or True` — that made dead-worker honesty always pass.
+    dead_honest = all(
+        (w.get("state") != "READY") or bool(w.get("pid")) for w in workers
+    ) if workers else True
+    decisions = model_plane.list_route_decisions(limit=5) if serving_on else []
     report = evaluation_harness.run_suite(
         "serving_conformance",
         evaluation_harness.serving_conformance_suite(
-            managed_load_ok=bool(ready) or not settings.features.model_serving,
-            stream_cancel_ok=True,  # cancel token path unit-tested; runtime always present
+            managed_load_ok=bool(ready),
+            stream_cancel_ok=False,
             dead_worker_honest=bool(dead_honest),
             multi_model_route_ok=len(model_plane.registry.list_descriptors()) >= 1,
-            measured_route_recorded=bool(decisions) or not settings.features.model_serving,
+            measured_route_recorded=bool(decisions),
+            managed_load_probed=serving_on,
+            stream_cancel_probed=False,  # no live cancel probe in this path
+            dead_worker_probed=serving_on and bool(workers),
+            multi_route_probed=serving_on,
+            measured_route_probed=serving_on,
         ),
         suite_id="serving_conformance",
         system_level=True,
@@ -3615,6 +3630,30 @@ def run_serving_evaluation() -> dict:
     if settings.features.eval_platform:
         report = evaluation_store.save_report(report)
     return {"report": report.public_dict()}
+
+
+@app.post("/api/evaluation/assistant")
+def run_assistant_benchmark_evaluation() -> dict:
+    """Round 5 end-to-end assistant benchmark."""
+    if not settings.features.eval_platform:
+        raise HTTPException(status_code=503, detail="eval platform disabled")
+    return evaluation_platform.run_assistant_benchmark(persist=True)
+
+
+@app.post("/api/evaluation/paired")
+def run_paired_benchmark_evaluation() -> dict:
+    """Round 5 paired BASELINE vs LEVIATHAN evaluation."""
+    if not settings.features.eval_platform:
+        raise HTTPException(status_code=503, detail="eval platform disabled")
+    return evaluation_platform.run_paired_evaluation(persist=True)
+
+
+@app.post("/api/evaluation/ablations")
+def run_ablation_evaluation() -> dict:
+    """Round 5 feature ablations with raw run evidence."""
+    if not settings.features.eval_platform:
+        raise HTTPException(status_code=503, detail="eval platform disabled")
+    return evaluation_platform.run_ablations(persist=True)
 
 
 @app.post("/api/context/preview")

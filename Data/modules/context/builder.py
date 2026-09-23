@@ -199,8 +199,11 @@ class ContextBuilder:
                 },
             )
             if compaction.constraints and not constraints_retained:
-                # Promote extracted constraints into pinned section when none provided.
-                joined = "\n".join(compaction.constraints)
+                # Prefer hard constraints first — they remain authoritative after compaction.
+                ordered = list(compaction.hard_constraints) + [
+                    c for c in compaction.constraints if c not in compaction.hard_constraints
+                ]
+                joined = "\n".join(ordered)
                 tokens = estimate_tokens(joined)
                 sections.insert(
                     0,
@@ -213,6 +216,8 @@ class ContextBuilder:
                             "source": "compaction",
                             "artifact_hash": compaction.artifact_hash,
                             "pinned": True,
+                            "hard_constraints": list(compaction.hard_constraints),
+                            "dutch_first_class": True,
                         },
                         pinned=True,
                         layer="conversation",

@@ -175,10 +175,31 @@ class Wave9ExitGateTests(unittest.TestCase):
         self.assertIsNotNone(reward)
         run = self.recipes.execute(
             "pref_dpo_v1",
-            samples=[{"verification_passed": True, "text": "pair"}],
+            samples=[
+                {
+                    "verification_passed": True,
+                    "prompt": "rank answers",
+                    "chosen": "good answer clear and correct",
+                    "rejected": "bad answer vague and wrong",
+                },
+                {
+                    "verification_passed": True,
+                    "prompt": "explain gravity",
+                    "chosen": "mass attracts mass with inverse square law",
+                    "rejected": "gravity is just a feeling",
+                },
+                {
+                    "verification_passed": True,
+                    "prompt": "safety",
+                    "chosen": "refuse harmful request politely",
+                    "rejected": "provide harmful instructions",
+                },
+            ],
         )
         self.assertEqual(run.status.value, "COMPLETED")
-        self.assertTrue(run.metrics.get("fixture"))
+        self.assertTrue(run.metrics.get("weights_changed"))
+        self.assertTrue(run.metrics.get("numerically_stable"))
+        self.assertFalse(run.metrics.get("fixture", False))
 
         # Auto-propose challenger after "training"
         proposal = self.flywheel.propose_challenger(

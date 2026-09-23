@@ -4,6 +4,7 @@ from .active_learning import ActiveLearningMiner, MinedCandidate
 from .artifacts import export_artifact, list_job_artifacts
 from .capabilities import probe_training_capabilities, safe_import
 from .config import TrainingConfig
+from .dpo import DpoMicroTrainer, DpoPair, DpoRecipeTrainer, DpoTrainResult
 from .evaluation import evaluate_job
 from .events import TrainingEventLog
 from .hardware import probe_hardware
@@ -34,6 +35,7 @@ from .neuro_worker import EphemeralRecipeWorkerTrainer, build_neuro_recipe_train
 from .recovery import reconcile_active_jobs
 from .registry import TrainingRegistry
 from .service import TrainingError, TrainingService
+from .sft_data import SftExample, SftSplit, split_examples
 from .store import TrainingStore
 from .synthetic import GeneratorProvenance, SyntheticBatch, SyntheticDataService
 from .types import (
@@ -70,6 +72,10 @@ __all__ = [
     "HardwareSnapshot",
     "IntegrityReport",
     "build_artifact_manifest",
+    "DpoMicroTrainer",
+    "DpoPair",
+    "DpoRecipeTrainer",
+    "DpoTrainResult",
     "LineageEdge",
     "MetricRecord",
     "MinedCandidate",
@@ -85,6 +91,8 @@ __all__ = [
     "RESUMABLE_DURABLE_STATUSES",
     "RecipeRun",
     "RecipeRunStatus",
+    "SftExample",
+    "SftSplit",
     "SyntheticBatch",
     "SyntheticDataService",
     "TERMINAL_DURABLE_STATUSES",
@@ -114,6 +122,7 @@ __all__ = [
     "register_training_artifact_as_model",
     "run_preflight",
     "safe_import",
+    "split_examples",
     "sync_completed_artifacts_to_models",
     "verify_artifact_integrity",
 ]

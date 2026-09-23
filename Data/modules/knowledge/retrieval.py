@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 from .embeddings import (
@@ -12,6 +14,19 @@ from .embeddings import (
 from .store import KnowledgeStore
 from .types import IngestStatus
 
+# Reciprocal Rank Fusion constant (Cormack et al.). Rank-based: does not assume
+# positive BM25 magnitudes. SQLite FTS5 bm25() returns lower (more negative) = better.
+RRF_K = 60
+
+
+class RetrievalMode(str, Enum):
+    """Explicit retrieval modality for evaluation and callers."""
+
+    LEXICAL = "lexical"
+    DENSE = "dense"
+    HYBRID = "hybrid"
+    HYBRID_RERANK = "hybrid_rerank"
+
 
 @dataclass(frozen=True)
 class RetrievalQuery:
@@ -21,6 +36,7 @@ class RetrievalQuery:
     status: IngestStatus = IngestStatus.READY
     use_embeddings: bool = True
     use_reranker: bool = False
+    mode: RetrievalMode | str | None = None
     min_confidence: float | None = None
     min_score: float | None = None  # Wave 4: drop hits below threshold (exit gate)
     time_after: str | None = None
@@ -29,6 +45,19 @@ class RetrievalQuery:
     layer: str | None = None  # evidence | atlas | any
     record_trace: bool = True
     detect_contradictions: bool = True
+    require_source_valid: bool = True
+    rrf_k: int = RRF_K
+
+    def resolved_mode(self) -> RetrievalMode:
+        if self.mode is not None:
+            if isinstance(self.mode, RetrievalMode):
+                return self.mode
+            return RetrievalMode(str(self.mode).strip().lower())
+        if self.use_reranker:
+            return RetrievalMode.HYBRID_RERANK
+        if self.use_embeddings:
+            return RetrievalMode.HYBRID
+        return RetrievalMode.LEXICAL
 
 
 @dataclass(frozen=True)
@@ -43,6 +72,10 @@ class RetrievalTrace:
     selected_chunk_ids: tuple[str, ...]
     contradictions: tuple[dict[str, Any], ...] = ()
     dropped_below_threshold: int = 0
+    mode: str = "hybrid"
+    fusion: str = "none"
+    embedding_is_semantic: bool | None = None
+    bm25_semantics: str = "sqlite_fts5_bm25_lower_is_better"
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -54,9 +87,15 @@ class RetrievalTrace:
             "selected_chunk_ids": list(self.selected_chunk_ids),
             "contradictions": list(self.contradictions),
             "dropped_below_threshold": self.dropped_below_threshold,
+            "mode": self.mode,
+            "fusion": self.fusion,
+            "embedding_is_semantic": self.embedding_is_semantic,
+            "bm25_semantics": self.bm25_semantics,
             "truth": {
                 "vector_index_is_not_canonical_fact_store": True,
                 "model_output_is_not_evidence": True,
+                "hash_vectors_are_not_semantic_embeddings": self.embedding_is_semantic is False,
+                "sqlite_bm25_is_not_assumed_positive": True,
             },
         }
 
@@ -153,11 +192,34 @@ class RetrievalHit:
         }
 
 
+def bm25_relevance(bm25_raw: float) -> float:
+    """Convert SQLite FTS5 bm25 (lower/more-negative = better) to higher-is-better.
+
+    Does not assume conventional positive Okapi BM25 scores.
+    """
+    return float(-bm25_raw)
+
+
+def reciprocal_rank_fusion(
+    ranked_lists: list[list[str]],
+    *,
+    k: int = RRF_K,
+) -> dict[str, float]:
+    """RRF over 1-based ranks. Mathematically appropriate across incomparable score spaces."""
+    fused: dict[str, float] = {}
+    kk = max(1, int(k))
+    for ranked in ranked_lists:
+        for rank, chunk_id in enumerate(ranked, start=1):
+            fused[chunk_id] = fused.get(chunk_id, 0.0) + 1.0 / (kk + rank)
+    return fused
+
+
 class HybridRetriever:
-    """Lexical + optional dense retrieval with score fusion (HybridRetriever V3).
+    """Lexical + optional dense retrieval with rank fusion (HybridRetriever V3).
 
     Vector path is only used when EmbeddingProvider.available() is true.
     Null/unavailable providers produce lexical-only results — never fabricated vectors.
+    Hash embedding providers may participate in dense fusion but are never labeled semantic.
     """
 
     def __init__(
@@ -169,6 +231,7 @@ class HybridRetriever:
         lexical_weight: float = 0.55,
         dense_weight: float = 0.45,
         candidate_multiplier: int = 3,
+        rrf_k: int = RRF_K,
     ) -> None:
         self.store = store
         self.embeddings = embeddings or NullEmbeddingProvider()
@@ -176,27 +239,50 @@ class HybridRetriever:
         self.lexical_weight = lexical_weight
         self.dense_weight = dense_weight
         self.candidate_multiplier = max(1, candidate_multiplier)
+        self.rrf_k = max(1, int(rrf_k))
 
     def search(self, query: RetrievalQuery) -> list[RetrievalHit]:
+        mode = query.resolved_mode()
         fetch_limit = max(query.limit * self.candidate_multiplier, query.limit)
-        lexical_rows = self.store.search_lexical(
-            query.text,
-            limit=fetch_limit,
-            source=query.source,
-            status=query.status,
-        )
-        by_chunk: dict[str, RetrievalHit] = {}
-        for row in lexical_rows:
-            rank = float(row.get("rank") or 0.0)
-            score = 1.0 / (1.0 + max(rank, 0.0))
-            hit = self._row_to_hit(row, score=score, modality="lexical")
-            if not self._passes_filters(hit, query):
-                continue
-            by_chunk[hit.chunk_id] = hit
+        embedding_is_semantic = self._embedding_is_semantic()
+        fusion_used = "none"
 
-        dense_used = False
-        if query.use_embeddings and self.embeddings.available():
-            dense_used = True
+        lexical_hits: list[RetrievalHit] = []
+        dense_hits: list[RetrievalHit] = []
+        by_chunk: dict[str, RetrievalHit] = {}
+
+        if mode in {RetrievalMode.LEXICAL, RetrievalMode.HYBRID, RetrievalMode.HYBRID_RERANK}:
+            lexical_rows = self.store.search_lexical(
+                query.text,
+                limit=fetch_limit,
+                source=query.source,
+                status=query.status,
+            )
+            for position, row in enumerate(lexical_rows, start=1):
+                bm25_raw = float(row.get("rank") if row.get("rank") is not None else 0.0)
+                relevance = bm25_relevance(bm25_raw)
+                hit = self._row_to_hit(
+                    row,
+                    score=relevance,
+                    modality="lexical",
+                    extra_provenance={
+                        "bm25_raw": bm25_raw,
+                        "bm25_relevance": relevance,
+                        "lexical_rank": position,
+                        "bm25_semantics": "sqlite_fts5_bm25_lower_is_better",
+                    },
+                )
+                if not self._passes_filters(hit, query):
+                    continue
+                lexical_hits.append(hit)
+                by_chunk[hit.chunk_id] = hit
+
+        dense_eligible = (
+            mode in {RetrievalMode.DENSE, RetrievalMode.HYBRID, RetrievalMode.HYBRID_RERANK}
+            and self.embeddings.available()
+        )
+        query_vec: list[float] | None = None
+        if dense_eligible:
             query_vec = self.embeddings.embed_query(query.text)
             dense_rows = self.store.search_dense(
                 query_vec,
@@ -204,81 +290,195 @@ class HybridRetriever:
                 source=query.source,
                 status=query.status,
             )
-            for row in dense_rows:
+            for position, row in enumerate(dense_rows, start=1):
                 dense_score = float(row.get("dense_score") or 0.0)
                 existing = by_chunk.get(row["chunk_id"])
                 if existing is None:
-                    hit = self._row_to_hit(row, score=dense_score, modality="vector")
-                    if not self._passes_filters(hit, query):
-                        continue
-                    by_chunk[hit.chunk_id] = hit
-                else:
-                    fused = (
-                        self.lexical_weight * existing.score + self.dense_weight * dense_score
-                    )
-                    by_chunk[existing.chunk_id] = RetrievalHit(
-                        document_id=existing.document_id,
-                        chunk_id=existing.chunk_id,
-                        chunk_index=existing.chunk_index,
-                        title=existing.title,
-                        source=existing.source,
-                        content=existing.content,
-                        score=round(fused, 6),
-                        modality="hybrid",
-                        original_path=existing.original_path,
-                        document_hash=existing.document_hash,
-                        chunk_hash=existing.chunk_hash,
-                        confidence=existing.confidence,
-                        start_offset=existing.start_offset,
-                        end_offset=existing.end_offset,
-                        source_type=existing.source_type,
-                        layer=existing.layer,
-                        provenance={
-                            **existing.provenance,
-                            "lexical_score": existing.score,
+                    hit = self._row_to_hit(
+                        row,
+                        score=dense_score,
+                        modality="vector",
+                        extra_provenance={
                             "dense_score": dense_score,
-                            "fusion": "weighted_sum",
+                            "dense_rank": position,
+                            "embedding_provider": getattr(self.embeddings, "provider_id", "unknown"),
+                            "embedding_is_semantic": embedding_is_semantic,
                         },
                     )
+                    if not self._passes_filters(hit, query):
+                        continue
+                    dense_hits.append(hit)
+                    by_chunk[hit.chunk_id] = hit
+                else:
+                    dense_hits.append(
+                        RetrievalHit(
+                            document_id=existing.document_id,
+                            chunk_id=existing.chunk_id,
+                            chunk_index=existing.chunk_index,
+                            title=existing.title,
+                            source=existing.source,
+                            content=existing.content,
+                            score=dense_score,
+                            modality="vector",
+                            original_path=existing.original_path,
+                            document_hash=existing.document_hash,
+                            chunk_hash=existing.chunk_hash,
+                            confidence=existing.confidence,
+                            start_offset=existing.start_offset,
+                            end_offset=existing.end_offset,
+                            source_type=existing.source_type,
+                            layer=existing.layer,
+                            provenance={
+                                **existing.provenance,
+                                "dense_score": dense_score,
+                                "dense_rank": position,
+                                "embedding_provider": getattr(
+                                    self.embeddings, "provider_id", "unknown"
+                                ),
+                                "embedding_is_semantic": embedding_is_semantic,
+                            },
+                        )
+                    )
 
-            # Also upgrade pure lexical hits that have stored embeddings.
+            # Fill dense list for lexical-only chunks that have stored embeddings
+            # (dense search may already include them; avoid duplicate ranks).
+            seen_dense = {h.chunk_id for h in dense_hits}
             for chunk_id, hit in list(by_chunk.items()):
-                if hit.modality != "lexical":
+                if chunk_id in seen_dense or query_vec is None:
                     continue
                 stored = self.store.get_chunk_embedding(chunk_id)
                 if stored is None:
                     continue
                 dense_score = cosine_similarity(query_vec, stored)
-                fused = self.lexical_weight * hit.score + self.dense_weight * dense_score
-                by_chunk[chunk_id] = RetrievalHit(
-                    document_id=hit.document_id,
-                    chunk_id=hit.chunk_id,
-                    chunk_index=hit.chunk_index,
-                    title=hit.title,
-                    source=hit.source,
-                    content=hit.content,
-                    score=round(fused, 6),
-                    modality="hybrid",
-                    original_path=hit.original_path,
-                    document_hash=hit.document_hash,
-                    chunk_hash=hit.chunk_hash,
-                    confidence=hit.confidence,
-                    start_offset=hit.start_offset,
-                    end_offset=hit.end_offset,
-                    source_type=hit.source_type,
-                    layer=hit.layer,
-                    provenance={
-                        **hit.provenance,
-                        "lexical_score": hit.score,
-                        "dense_score": dense_score,
-                        "fusion": "weighted_sum",
-                    },
+                dense_hits.append(
+                    RetrievalHit(
+                        document_id=hit.document_id,
+                        chunk_id=hit.chunk_id,
+                        chunk_index=hit.chunk_index,
+                        title=hit.title,
+                        source=hit.source,
+                        content=hit.content,
+                        score=dense_score,
+                        modality="vector",
+                        original_path=hit.original_path,
+                        document_hash=hit.document_hash,
+                        chunk_hash=hit.chunk_hash,
+                        confidence=hit.confidence,
+                        start_offset=hit.start_offset,
+                        end_offset=hit.end_offset,
+                        source_type=hit.source_type,
+                        layer=hit.layer,
+                        provenance={
+                            **hit.provenance,
+                            "dense_score": dense_score,
+                            "embedding_provider": getattr(self.embeddings, "provider_id", "unknown"),
+                            "embedding_is_semantic": embedding_is_semantic,
+                        },
+                    )
                 )
+            dense_hits.sort(key=lambda h: h.score, reverse=True)
+            # Re-assign dense ranks after sort
+            dense_hits = [
+                RetrievalHit(
+                    document_id=h.document_id,
+                    chunk_id=h.chunk_id,
+                    chunk_index=h.chunk_index,
+                    title=h.title,
+                    source=h.source,
+                    content=h.content,
+                    score=h.score,
+                    modality=h.modality,
+                    original_path=h.original_path,
+                    document_hash=h.document_hash,
+                    chunk_hash=h.chunk_hash,
+                    confidence=h.confidence,
+                    start_offset=h.start_offset,
+                    end_offset=h.end_offset,
+                    source_type=h.source_type,
+                    layer=h.layer,
+                    provenance={**h.provenance, "dense_rank": i},
+                )
+                for i, h in enumerate(dense_hits, start=1)
+            ]
 
-        hits = sorted(by_chunk.values(), key=lambda item: item.score, reverse=True)
+        # Mode-specific assembly
+        if mode == RetrievalMode.LEXICAL:
+            hits = sorted(lexical_hits, key=lambda h: h.score, reverse=True)
+            fusion_used = "bm25_relevance"
+        elif mode == RetrievalMode.DENSE:
+            if not dense_eligible:
+                hits = []
+            else:
+                hits = list(dense_hits)
+            fusion_used = "cosine"
+        else:
+            # HYBRID / HYBRID_RERANK — RRF across available ranked lists
+            lists: list[list[str]] = []
+            if lexical_hits:
+                lists.append([h.chunk_id for h in lexical_hits])
+            if dense_hits:
+                lists.append([h.chunk_id for h in dense_hits])
+            if not lists:
+                hits = []
+            elif len(lists) == 1:
+                # Single modality present — keep that modality's scores
+                if lexical_hits and not dense_hits:
+                    hits = sorted(lexical_hits, key=lambda h: h.score, reverse=True)
+                    fusion_used = "bm25_relevance"
+                else:
+                    hits = list(dense_hits)
+                    fusion_used = "cosine"
+            else:
+                k = query.rrf_k if query.rrf_k else self.rrf_k
+                fused_scores = reciprocal_rank_fusion(lists, k=k)
+                fusion_used = "rrf"
+                # Merge hit metadata preferring lexical base then dense-only
+                merged: dict[str, RetrievalHit] = {h.chunk_id: h for h in lexical_hits}
+                for h in dense_hits:
+                    if h.chunk_id not in merged:
+                        merged[h.chunk_id] = h
+                hits = []
+                for chunk_id, rrf_score in fused_scores.items():
+                    base = merged[chunk_id]
+                    lex = next((x for x in lexical_hits if x.chunk_id == chunk_id), None)
+                    den = next((x for x in dense_hits if x.chunk_id == chunk_id), None)
+                    modality = "hybrid" if lex and den else (lex.modality if lex else "vector")
+                    hits.append(
+                        RetrievalHit(
+                            document_id=base.document_id,
+                            chunk_id=base.chunk_id,
+                            chunk_index=base.chunk_index,
+                            title=base.title,
+                            source=base.source,
+                            content=base.content,
+                            score=round(rrf_score, 6),
+                            modality=modality,
+                            original_path=base.original_path,
+                            document_hash=base.document_hash,
+                            chunk_hash=base.chunk_hash,
+                            confidence=base.confidence,
+                            start_offset=base.start_offset,
+                            end_offset=base.end_offset,
+                            source_type=base.source_type,
+                            layer=base.layer,
+                            provenance={
+                                **base.provenance,
+                                **(den.provenance if den else {}),
+                                "lexical_rank": (lex.provenance.get("lexical_rank") if lex else None),
+                                "dense_rank": (den.provenance.get("dense_rank") if den else None),
+                                "bm25_raw": (lex.provenance.get("bm25_raw") if lex else None),
+                                "dense_score": (den.provenance.get("dense_score") if den else None),
+                                "fusion": "rrf",
+                                "rrf_k": k,
+                                "rrf_score": round(rrf_score, 6),
+                                "embedding_is_semantic": embedding_is_semantic,
+                            },
+                        )
+                    )
+                hits.sort(key=lambda h: h.score, reverse=True)
 
         if (
-            query.use_reranker
+            mode == RetrievalMode.HYBRID_RERANK
             and self.reranker is not None
             and self.reranker.available()
             and hits
@@ -305,13 +505,17 @@ class HybridRetriever:
                         end_offset=hit.end_offset,
                         source_type=hit.source_type,
                         layer=hit.layer,
-                        provenance={**hit.provenance, "pre_rerank_score": hit.score},
+                        provenance={
+                            **hit.provenance,
+                            "pre_rerank_score": hit.score,
+                            "fusion": hit.provenance.get("fusion", fusion_used),
+                        },
                     )
                 )
             hits = sorted(reranked, key=lambda item: item.score, reverse=True)
+            fusion_used = f"{fusion_used}+rerank"
 
         if query.relation_class:
-            # Soft filter via store relation atoms attached to chunks.
             allowed = {
                 atom.chunk_id
                 for atom in self.store.list_relation_atoms(limit=500)
@@ -327,34 +531,39 @@ class HybridRetriever:
             dropped_below = len(before_threshold) - len(hits)
 
         result = hits[: query.limit]
-        # Annotate whether dense path was eligible (for observability).
         for idx, hit in enumerate(result):
-            if dense_used and "dense_eligible" not in hit.provenance:
-                result[idx] = RetrievalHit(
-                    document_id=hit.document_id,
-                    chunk_id=hit.chunk_id,
-                    chunk_index=hit.chunk_index,
-                    title=hit.title,
-                    source=hit.source,
-                    content=hit.content,
-                    score=hit.score,
-                    modality=hit.modality,
-                    original_path=hit.original_path,
-                    document_hash=hit.document_hash,
-                    chunk_hash=hit.chunk_hash,
-                    confidence=hit.confidence,
-                    start_offset=hit.start_offset,
-                    end_offset=hit.end_offset,
-                    source_type=hit.source_type,
-                    layer=hit.layer,
-                    provenance={**hit.provenance, "dense_eligible": True},
-                )
+            prov = {
+                **hit.provenance,
+                "dense_eligible": dense_eligible,
+                "embedding_is_semantic": embedding_is_semantic,
+                "retrieval_mode": mode.value,
+            }
+            if "fusion" not in prov:
+                prov["fusion"] = fusion_used
+            result[idx] = RetrievalHit(
+                document_id=hit.document_id,
+                chunk_id=hit.chunk_id,
+                chunk_index=hit.chunk_index,
+                title=hit.title,
+                source=hit.source,
+                content=hit.content,
+                score=hit.score,
+                modality=hit.modality,
+                original_path=hit.original_path,
+                document_hash=hit.document_hash,
+                chunk_hash=hit.chunk_hash,
+                confidence=hit.confidence,
+                start_offset=hit.start_offset,
+                end_offset=hit.end_offset,
+                source_type=hit.source_type,
+                layer=hit.layer,
+                provenance=prov,
+            )
 
         if query.record_trace:
             contradictions = (
                 self._detect_contradictions(result) if query.detect_contradictions else []
             )
-            # Stash last trace on instance for callers that want it without API change.
             self.last_trace = RetrievalTrace(
                 query=query.text,
                 candidate_count=len(before_threshold),
@@ -364,6 +573,9 @@ class HybridRetriever:
                 selected_chunk_ids=tuple(h.chunk_id for h in result),
                 contradictions=tuple(contradictions),
                 dropped_below_threshold=dropped_below,
+                mode=mode.value,
+                fusion=fusion_used,
+                embedding_is_semantic=embedding_is_semantic if dense_eligible else None,
             )
         return result
 
@@ -380,8 +592,27 @@ class HybridRetriever:
                 min_score=query.min_score,
                 modalities=tuple(sorted({h.modality for h in hits})),
                 selected_chunk_ids=tuple(h.chunk_id for h in hits),
+                mode=query.resolved_mode().value,
             )
         return hits, trace
+
+    def _embedding_is_semantic(self) -> bool:
+        status = {}
+        try:
+            status = self.embeddings.status() if hasattr(self.embeddings, "status") else {}
+        except Exception:  # noqa: BLE001
+            status = {}
+        if "is_semantic" in status:
+            return bool(status["is_semantic"])
+        if hasattr(self.embeddings, "is_semantic"):
+            return bool(getattr(self.embeddings, "is_semantic"))
+        provider_id = str(getattr(self.embeddings, "provider_id", "") or "").lower()
+        if provider_id in {"local_hash", "hash", "null"}:
+            return False
+        truth = status.get("truth") or {}
+        if truth.get("hash_embedding_is_not_neural_model"):
+            return False
+        return bool(status.get("production_grade")) and provider_id not in {"", "null"}
 
     @staticmethod
     def verify_citation(claim: str, hit: RetrievalHit, *, min_overlap: float = 0.2) -> CitationCheck:
@@ -404,7 +635,6 @@ class HybridRetriever:
             )
         overlap = len(claim_tokens & content_tokens) / len(claim_tokens)
 
-        # Negation / contradiction heuristics (must beat pure overlap).
         contradiction = HybridRetriever._claim_contradicted_by_evidence(claim_norm, content_norm)
         if contradiction:
             return CitationCheck(
@@ -443,7 +673,8 @@ class HybridRetriever:
             return bool(
                 re.search(
                     r"\b(does not|do not|don't|doesn't|did not|didn't|never|no longer|"
-                    r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not)\b",
+                    r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not|"
+                    r"niet|nooit|geen)\b",
                     text,
                 )
             )
@@ -451,11 +682,11 @@ class HybridRetriever:
         claim_neg = _negated(claim)
         evidence_neg = _negated(evidence)
 
-        # Strip negation markers for content comparison.
         def _core(text: str) -> set[str]:
             cleaned = re.sub(
                 r"\b(does not|do not|don't|doesn't|did not|didn't|never|no longer|"
-                r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not)\b",
+                r"cannot|can't|is not|are not|isn't|aren't|was not|weren't|not|"
+                r"niet|nooit|geen)\b",
                 " ",
                 text,
             )
@@ -464,15 +695,12 @@ class HybridRetriever:
         claim_core = _core(claim)
         evidence_core = _core(evidence)
         shared = claim_core & evidence_core
-        # Require meaningful shared content + opposite polarity.
         if len(shared) >= 2 and claim_neg != evidence_neg:
             return "negation polarity conflict with shared content"
 
-        # Numeric / unit mismatch on shared entities.
         claim_nums = re.findall(r"\b\d+(?:\.\d+)?\b", claim)
         evidence_nums = re.findall(r"\b\d+(?:\.\d+)?\b", evidence)
         if claim_nums and evidence_nums and set(claim_nums).isdisjoint(set(evidence_nums)):
-            # Only flag when surrounding content overlaps enough.
             if len(shared) >= 2:
                 return "numeric mismatch with overlapping entities"
 
@@ -487,7 +715,6 @@ class HybridRetriever:
             for cid_b, text_b in texts[i + 1 :]:
                 a_neg = " not " in f" {text_a} " or text_a.startswith("not ")
                 b_neg = " not " in f" {text_b} " or text_b.startswith("not ")
-                # Shared content words but opposite negation → visible contradiction.
                 shared = set(text_a.split()) & set(text_b.split())
                 if len(shared) >= 3 and a_neg != b_neg:
                     contradictions.append(
@@ -503,18 +730,65 @@ class HybridRetriever:
     def _passes_filters(hit: RetrievalHit, query: RetrievalQuery) -> bool:
         if query.min_confidence is not None and hit.confidence < query.min_confidence:
             return False
-        # min_score applied after fusion so dropped_below_threshold is measurable
         if query.layer and query.layer != "any" and hit.layer != query.layer:
             return False
-        updated = str(hit.provenance.get("updated_at") or "")
+        if query.require_source_valid and not HybridRetriever._source_is_valid(hit):
+            return False
+        updated = str(
+            hit.provenance.get("updated_at")
+            or hit.provenance.get("source_mtime")
+            or ""
+        )
         if query.time_after and updated and updated < query.time_after:
             return False
         if query.time_before and updated and updated > query.time_before:
             return False
+        # Temporal validity from trust_metadata.valid_until / valid_from
+        trust = hit.provenance.get("trust_metadata") or {}
+        valid_until = str(trust.get("valid_until") or "")
+        valid_from = str(trust.get("valid_from") or "")
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if valid_until and valid_until < now:
+            return False
+        if valid_from and valid_from > now:
+            return False
         return True
 
     @staticmethod
-    def _row_to_hit(row: dict[str, Any], *, score: float, modality: str) -> RetrievalHit:
+    def _source_is_valid(hit: RetrievalHit) -> bool:
+        trust = hit.provenance.get("trust_metadata") or {}
+        if trust.get("valid") is False:
+            return False
+        if trust.get("revoked") or trust.get("invalid") or trust.get("expired"):
+            return False
+        if str(trust.get("source_validity") or "").lower() in {"invalid", "revoked", "expired"}:
+            return False
+        return True
+
+    @staticmethod
+    def _row_to_hit(
+        row: dict[str, Any],
+        *,
+        score: float,
+        modality: str,
+        extra_provenance: dict[str, Any] | None = None,
+    ) -> RetrievalHit:
+        trust_meta = row.get("trust_metadata")
+        if trust_meta is None and row.get("trust_metadata_json"):
+            import json
+
+            try:
+                trust_meta = json.loads(row["trust_metadata_json"] or "{}")
+            except Exception:  # noqa: BLE001
+                trust_meta = {}
+        provenance = {
+            "updated_at": row.get("updated_at"),
+            "source_mtime": row.get("source_mtime"),
+            "uncertainty_notes": row.get("uncertainty_notes") or "",
+            "trust_metadata": trust_meta or {},
+        }
+        if extra_provenance:
+            provenance.update(extra_provenance)
         return RetrievalHit(
             document_id=row["document_id"],
             chunk_id=row["chunk_id"],
@@ -532,8 +806,5 @@ class HybridRetriever:
             end_offset=int(row.get("end_offset") or 0),
             source_type=str(row.get("source_type") or "document"),
             layer="evidence",
-            provenance={
-                "updated_at": row.get("updated_at"),
-                "uncertainty_notes": row.get("uncertainty_notes") or "",
-            },
+            provenance=provenance,
         )

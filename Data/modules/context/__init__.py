@@ -1,7 +1,7 @@
 """Context Engine — sole model prompt/context compiler (U061)."""
 
 from .builder import ContextBuilder
-from .compaction import CompactionResult, compact_conversation
+from .compaction import CompactionResult, compact_conversation, extract_hard_constraints
 from .multimodal import (
     MultimodalMessage,
     MultimodalPart,
@@ -36,6 +36,7 @@ __all__ = [
     "PartKind",
     "compact_conversation",
     "estimate_tokens",
+    "extract_hard_constraints",
     "new_sync_id",
     "snapshot_context_pack",
 ]

@@ -1,6 +1,12 @@
 from .service import DatasetService
 from .store import DatasetStore
 from .mixtures import MixtureComponent, MixtureManifest, build_mixture_manifest
+from .quality import (
+    quality_balance_report,
+    semantic_dedupe,
+    semantic_fingerprint,
+    train_eval_separation,
+)
 from .types import (
     CanonicalRecord,
     DatasetError,
@@ -34,4 +40,8 @@ __all__ = [
     "VersionKind",
     "VersionStatus",
     "build_mixture_manifest",
+    "quality_balance_report",
+    "semantic_dedupe",
+    "semantic_fingerprint",
+    "train_eval_separation",
 ]

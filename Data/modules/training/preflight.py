@@ -64,6 +64,18 @@ def run_preflight(
                     message="QLoRA requires bitsandbytes",
                 )
             )
+        if method == "dpo":
+            issues.append(
+                PreflightIssue(
+                    severity="error",
+                    code="dpo_not_durable_lora",
+                    message=(
+                        "method=dpo is not a durable LoRA/CLM job. "
+                        "Use recipe pref_dpo_v1 (dpo_micro) for preference optimization. "
+                        "HF/GPU production DPO is not claimed."
+                    ),
+                )
+            )
         if method in {"lora", "qlora", "sft"} and not hw.cuda_available:
             issues.append(
                 PreflightIssue(
