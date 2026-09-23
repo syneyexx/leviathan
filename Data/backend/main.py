@@ -157,6 +157,8 @@ from Data.modules.backup import BackupError, BackupService
 from Data.modules.chaos import ChaosInjector, ChaosPlan
 from Data.modules.master import MasterGateCheck, MasterGateRunner, MasterGateStatus
 from Data.modules.ops import ProductionOpsPlane, get_profile, list_profiles
+from Data.modules.projects import ProductUnificationPlane
+from Data.modules.artifacts import EditableArtifactRuntime
 
 db = Database(settings.database_path)
 runs = RunStore(settings.database_path)
@@ -620,6 +622,14 @@ production_ops = ProductionOpsPlane.from_profile(
     chaos=chaos,
     artifacts_root=settings.artifacts.root / "object_store",
 )
+product_plane = ProductUnificationPlane.create(
+    settings.database_path,
+    artifact_store=artifacts,
+    memory=memory_store,
+    gateway=execution_gateway,
+    plugins=plugin_registry,
+    schedule_runner=schedule_runner,
+)
 
 
 def _master_release_check() -> MasterGateCheck:
@@ -1050,7 +1060,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.74.0-wave10-production-ops", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.75.0-wave11-product-unification", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -3981,6 +3991,198 @@ def ops_recovery_reclaim(payload: OpsRecoveryRequest) -> dict:
         "actions": [a.public_dict() for a in actions],
         "recovery": production_ops.recovery.public_dict() if production_ops.recovery else None,
     }
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    workspace_name: str = "default"
+
+
+class TimelineAppendRequest(BaseModel):
+    project_id: str
+    domain: str
+    name: str
+    entity_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    workspace_id: str | None = None
+    summary: str = ""
+
+
+class ArtifactCreateRequest(BaseModel):
+    project_id: str
+    artifact_type: str = "document"
+    title: str
+    sections: list[dict] | None = None
+
+
+class ArtifactEditRequest(BaseModel):
+    sections: list[dict] | None = None
+    title: str | None = None
+    patch_note: str = ""
+
+
+class ContinuityHandoffRequest(BaseModel):
+    project_id: str
+    from_session_id: str
+    to_session_kind: str
+    summary: str
+    workspace_id: str | None = None
+
+
+class ScheduleEventEmitRequest(BaseModel):
+    event_name: str
+    project_id: str | None = None
+    payload: dict | None = None
+
+
+@app.get("/api/product/status")
+def product_status() -> dict:
+    if not settings.features.product_unification:
+        raise HTTPException(status_code=404, detail="product_unification feature disabled")
+    return product_plane.public_dict()
+
+
+@app.post("/api/projects")
+def create_project(payload: ProjectCreateRequest) -> dict:
+    if not settings.features.product_unification:
+        raise HTTPException(status_code=404, detail="product_unification feature disabled")
+    project, workspace = product_plane.projects.create_project(
+        payload.name, workspace_name=payload.workspace_name
+    )
+    return {"project": project.public_dict(), "workspace": workspace.public_dict()}
+
+
+@app.get("/api/projects")
+def list_projects(limit: int = 50) -> dict:
+    return {"projects": [p.public_dict() for p in product_plane.projects.list_projects(limit=limit)]}
+
+
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: str) -> dict:
+    project = product_plane.projects.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    return {
+        "project": project.public_dict(),
+        "workspaces": [w.public_dict() for w in product_plane.projects.list_workspaces(project_id)],
+        "bindings": [b.public_dict() for b in product_plane.projects.list_bindings(project_id)],
+    }
+
+
+@app.get("/api/projects/{project_id}/timeline")
+def project_timeline(project_id: str, limit: int = 200) -> dict:
+    if not settings.features.product_unification:
+        raise HTTPException(status_code=404, detail="product_unification feature disabled")
+    events = product_plane.timeline.list_for_project(project_id, limit=limit)
+    return {
+        "project_id": project_id,
+        "events": [e.public_dict() for e in events],
+        "domains": product_plane.timeline.domains_present(project_id),
+    }
+
+
+@app.post("/api/projects/{project_id}/timeline")
+def append_project_timeline(project_id: str, payload: TimelineAppendRequest) -> dict:
+    if project_id != payload.project_id:
+        raise HTTPException(status_code=422, detail="project_id mismatch")
+    event = product_plane.timeline.append(
+        project_id=payload.project_id,
+        domain=payload.domain,
+        name=payload.name,
+        entity_id=payload.entity_id,
+        run_id=payload.run_id,
+        trace_id=payload.trace_id,
+        workspace_id=payload.workspace_id,
+        summary=payload.summary,
+    )
+    return {"event": event.public_dict()}
+
+
+@app.post("/api/projects/{project_id}/artifacts")
+def create_project_artifact(project_id: str, payload: ArtifactCreateRequest) -> dict:
+    if project_id != payload.project_id:
+        raise HTTPException(status_code=422, detail="project_id mismatch")
+    version = product_plane.artifacts.create(
+        artifact_type=payload.artifact_type,
+        title=payload.title,
+        sections=payload.sections,
+        project_id=project_id,
+    )
+    product_plane.timeline.append(
+        project_id=project_id,
+        domain="artifact",
+        name="create",
+        entity_id=version.artifact_id,
+        summary=payload.title,
+        metadata={"version": version.version, "lineage_id": version.lineage_id},
+    )
+    return {"artifact": version.public_dict()}
+
+
+@app.post("/api/artifacts/{artifact_id}/edit")
+def edit_artifact(artifact_id: str, payload: ArtifactEditRequest) -> dict:
+    try:
+        version = product_plane.artifacts.edit(
+            artifact_id,
+            sections=payload.sections,
+            title=payload.title,
+            patch_note=payload.patch_note,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    project_id = version.metadata.get("project_id")
+    if project_id:
+        product_plane.timeline.append(
+            project_id=str(project_id),
+            domain="artifact",
+            name="edit",
+            entity_id=version.artifact_id,
+            summary=payload.patch_note or f"v{version.version}",
+            metadata={"version": version.version, "parent": artifact_id},
+        )
+    return {"artifact": version.public_dict()}
+
+
+@app.post("/api/projects/{project_id}/continuity/handoff")
+def continuity_handoff(project_id: str, payload: ContinuityHandoffRequest) -> dict:
+    if project_id != payload.project_id:
+        raise HTTPException(status_code=422, detail="project_id mismatch")
+    try:
+        handoff = product_plane.continuity.handoff(
+            project_id=payload.project_id,
+            from_session_id=payload.from_session_id,
+            to_session_kind=payload.to_session_kind,
+            summary=payload.summary,
+            workspace_id=payload.workspace_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"handoff": handoff.public_dict()}
+
+
+@app.get("/api/projects/{project_id}/continuity/resume")
+def continuity_resume(project_id: str, other_project_id: str | None = None) -> dict:
+    return product_plane.continuity.resume_context(
+        project_id=project_id, other_project_id=other_project_id
+    )
+
+
+@app.get("/api/sdk")
+def sdk_status() -> dict:
+    return product_plane.sdk.public_dict()
+
+
+@app.post("/api/schedules/events/emit")
+def emit_schedule_event(payload: ScheduleEventEmitRequest) -> dict:
+    if not settings.features.product_unification:
+        raise HTTPException(status_code=404, detail="product_unification feature disabled")
+    results = schedule_runner.emit_event(
+        payload.event_name,
+        payload=payload.payload,
+        project_id=payload.project_id,
+    )
+    return {"results": results, "telemetry": dict(schedule_runner.telemetry)}
 
 
 @app.post("/api/training")

@@ -210,6 +210,8 @@ class FeatureFlags:
     posttraining_flywheel: bool
     # Wave 10 — production operations / scale foundations
     production_ops: bool
+    # Wave 11 — product unification (projects/timeline/continuity)
+    product_unification: bool
 
 
 @dataclass(frozen=True)
@@ -438,6 +440,7 @@ class Settings:
                 "data_training_factory": self.features.data_training_factory,
                 "posttraining_flywheel": self.features.posttraining_flywheel,
                 "production_ops": self.features.production_ops,
+                "product_unification": self.features.product_unification,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -574,6 +577,7 @@ class Settings:
         data_training_factory = _env_bool("LEVIATHAN_FEATURE_DATA_TRAINING_FACTORY", True)
         posttraining_flywheel = _env_bool("LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL", True)
         production_ops = _env_bool("LEVIATHAN_FEATURE_PRODUCTION_OPS", True)
+        product_unification = _env_bool("LEVIATHAN_FEATURE_PRODUCT_UNIFICATION", True)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -676,6 +680,7 @@ class Settings:
                 data_training_factory=data_training_factory,
                 posttraining_flywheel=posttraining_flywheel,
                 production_ops=production_ops,
+                product_unification=product_unification,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,

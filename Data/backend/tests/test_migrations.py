@@ -50,6 +50,7 @@ class MigrationRunnerTests(unittest.TestCase):
                     31,
                     32,
                     33,
+                    34,
                 ],
             )
             self.assertEqual(second, [])
@@ -57,7 +58,7 @@ class MigrationRunnerTests(unittest.TestCase):
             import sqlite3
 
             with sqlite3.connect(path) as conn:
-                self.assertEqual(conn_version.current_version(conn), 33)
+                self.assertEqual(conn_version.current_version(conn), 34)
                 tables = {
                     row[0]
                     for row in conn.execute(
@@ -90,6 +91,10 @@ class MigrationRunnerTests(unittest.TestCase):
                 self.assertIn("ops_recovery_actions", tables)
                 self.assertIn("ops_deployment_state", tables)
                 self.assertIn("object_store_refs", tables)
+                self.assertIn("product_projects", tables)
+                self.assertIn("product_workspaces", tables)
+                self.assertIn("product_project_bindings", tables)
+                self.assertIn("work_timeline_events", tables)
 
     def test_rejects_non_contiguous_versions(self) -> None:
         with self.assertRaises(MigrationError):

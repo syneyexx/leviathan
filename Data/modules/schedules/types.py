@@ -14,6 +14,7 @@ class ScheduleStatus(str, Enum):
 class ScheduleTargetKind(str, Enum):
     WORKFLOW = "WORKFLOW"
     JOB = "JOB"
+    EVENT = "EVENT"  # Wave 11: event-triggered enqueue into Jobs/Workflows
 
 
 @dataclass(frozen=True)

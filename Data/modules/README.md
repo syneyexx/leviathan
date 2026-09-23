@@ -54,6 +54,9 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `metrics/` | MetricsCollector (in-process) |
 | `chaos/` | ChaosInjector + scenario presets (default OFF) |
 | `ops/` | ProductionOpsPlane + deployment profiles (Wave 10) |
+| `projects/` | ProjectStore / workspaces / ContinuityPlane / ProductUnificationPlane (Wave 11) |
+| `timeline/` | WorkTimeline — unified project work projection |
+| `sdk/` | FixtureSdk — local client surface over Gateway |
 | `jobs/` | JobRuntime + fleet registry / GPU fixture scheduler / lease recovery |
 | `observability/` | ObservabilityHub + fixture OTel exporter / SLO registry |
 | `artifacts/` | ArtifactStore + object-store backends (local FS / fixture) |
