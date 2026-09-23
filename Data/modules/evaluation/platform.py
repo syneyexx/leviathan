@@ -100,7 +100,15 @@ class EvaluationPlatform:
     def build_system_scorecard(
         self,
         *,
-        suite_ids: tuple[str, ...] = ("foundation", "regression"),
+        suite_ids: tuple[str, ...] = (
+            "foundation",
+            "regression",
+            "assistant_benchmark",
+            "paired_assistant",
+            "ablations",
+            "neuro_ablation",
+            "serving_conformance",
+        ),
         required_components: tuple[str, ...] | None = None,
     ) -> Scorecard:
         reports_raw: list[dict[str, Any]] = []
