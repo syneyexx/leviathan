@@ -48,6 +48,15 @@ def run_training_loop(
     cancel_check: CancelCheck,
 ) -> dict[str, Any]:
     ensure_dir(output_dir)
+    method = (config.method or "").lower()
+    if method == "dpo":
+        # Honesty: durable worker must not silently run causal-LM LoRA under method=dpo.
+        # Preference optimization is the recipe `dpo_micro` path (DpoRecipeTrainer).
+        raise RuntimeError(
+            "Durable job method=dpo does not run causal-LM LoRA. "
+            "Use recipe pref_dpo_v1 / DpoRecipeTrainer (dpo_micro) for preference pairs. "
+            "HF/GPU production DPO is not claimed."
+        )
     if _fixture_forced(config):
         return run_fixture_loop(
             job_id=job_id,
@@ -250,6 +259,14 @@ def run_lora_loop(
         load_kwargs["device_map"] = "auto"
 
     model = AutoModelForCausalLM.from_pretrained(config.base_model_ref, **load_kwargs)
+    if config.load_in_4bit or (config.method or "").lower() == "qlora":
+        # Required for stable k-bit LoRA; without this, QLoRA is fragile.
+        try:
+            from peft import prepare_model_for_kbit_training  # type: ignore[import-not-found]
+
+            model = prepare_model_for_kbit_training(model)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"QLoRA requires prepare_model_for_kbit_training: {exc}") from exc
     lora = LoraConfig(
         r=int(config.lora_r),
         lora_alpha=int(config.lora_alpha),
