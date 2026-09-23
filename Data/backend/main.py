@@ -1026,6 +1026,9 @@ async def lifespan(_: FastAPI):
         neuro_soak=neuro_soak,
         module_manager=module_manager,
         market_sim_service=market_sim_service,
+        residual_orchestrator=residual_orchestrator,
+        cortex_runtime=cortex_runtime,
+        residual_runtime=residual_runtime,
     )
     settings_plane._run_callbacks_for_all_hot()
     observability.emit(

@@ -185,6 +185,16 @@ def validate_feature_hierarchy(desired: dict[str, Any]) -> None:
                 http_status=422,
             )
 
+    rerank_candidates = desired.get("knowledge.rerank_candidate_count")
+    rerank_final = desired.get("knowledge.rerank_final_count")
+    if rerank_candidates is not None and rerank_final is not None:
+        if int(rerank_final) > int(rerank_candidates):
+            raise SettingsError(
+                "INVALID_RANGE",
+                "knowledge.rerank_final_count must be <= knowledge.rerank_candidate_count",
+                http_status=422,
+            )
+
     if flag("chaos.enabled") and desired.get("runtime.loopback_only") is False:
         raise SettingsError(
             "SECURITY_POLICY",
