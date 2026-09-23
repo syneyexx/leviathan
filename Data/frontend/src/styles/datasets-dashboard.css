@@ -15,6 +15,16 @@
   padding-bottom: clamp(12px, 1.6vh, 20px);
 }
 
+/*
+  Scroll the page — do not flex-shrink content sections.
+  Flex items with overflow != visible get an automatic min-size of 0; when the
+  Dataset Activity console was added, .lv-dh-panel (overflow: hidden) could be
+  crushed to zero height while filter counts / overview still showed data.
+*/
+.lv-dh-main > * {
+  flex-shrink: 0;
+}
+
 /* ---------- Hero ---------- */
 
 .lv-dh-hero {
@@ -397,7 +407,10 @@
 
 .lv-dh-panel {
   position: relative;
+  /* Inventory must remain visible alongside Dataset Activity — never collapse. */
+  flex: 0 0 auto;
   min-width: 0;
+  min-height: 160px;
   border-radius: var(--lv-radius-md);
   border: 1px solid rgba(214, 169, 87, 0.28);
   background:
@@ -460,6 +473,7 @@
 
 .lv-dh-table-wrap {
   overflow: auto;
+  min-height: 140px;
   max-height: min(52vh, 520px);
 }
 
@@ -1255,6 +1269,8 @@
 }
 
 .lv-dac {
+  /* Complementary to inventory — own section, does not replace the dataset list. */
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
