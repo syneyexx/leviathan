@@ -11,7 +11,16 @@ from .embeddings import (
     SentenceTransformersEmbeddingProvider,
     build_embedding_provider,
 )
-from .retrieval import CitationCheck, HybridRetriever, RetrievalHit, RetrievalQuery, RetrievalTrace
+from .retrieval import (
+    CitationCheck,
+    HybridRetriever,
+    RetrievalHit,
+    RetrievalMode,
+    RetrievalQuery,
+    RetrievalTrace,
+    bm25_relevance,
+    reciprocal_rank_fusion,
+)
 from .store import KnowledgeStore
 from .types import (
     ChunkRecord,
@@ -45,6 +54,7 @@ __all__ = [
     "RelationClass",
     "RerankerProvider",
     "RetrievalHit",
+    "RetrievalMode",
     "RetrievalQuery",
     "RetrievalTrace",
     "SentenceTransformersEmbeddingProvider",
@@ -52,5 +62,7 @@ __all__ = [
     "WhyBucket",
     "WhyLibrary",
     "WhyRecord",
+    "bm25_relevance",
     "build_embedding_provider",
+    "reciprocal_rank_fusion",
 ]
