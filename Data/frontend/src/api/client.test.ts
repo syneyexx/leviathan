@@ -216,6 +216,71 @@ describe("api client — datasets / training / research / model test", () => {
     expect(res.agents).toEqual([]);
   });
 
+  it("createAgent posts orchestrator payload", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { agent: { agentId: "o1", kind: "orchestrator" } }, capture);
+    await api.createAgent({
+      name: "Lead",
+      kind: "orchestrator",
+      orchestrator: { memberAgentIds: ["a1"], strategy: "sequential" },
+    });
+    expect(capture.url).toBe("/api/agents");
+    expect(capture.init?.method).toBe("POST");
+    const body = JSON.parse(String(capture.init?.body));
+    expect(body.orchestrator.memberAgentIds).toEqual(["a1"]);
+  });
+
+  it("updateAgent patches /api/agents/{id}", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { agent: { agentId: "a1", capabilities: ["file.read"] } }, capture);
+    await api.updateAgent("a1", { capabilities: ["file.read"] });
+    expect(capture.url).toBe("/api/agents/a1");
+    expect(capture.init?.method).toBe("PATCH");
+  });
+
+  it("getAgentMission and cancelAgentMission hit mission routes", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    mockFetch(
+      200,
+      {
+        mission: { missionId: "m1" },
+        children: [],
+        events: [],
+      },
+      capture,
+    );
+    await api.getAgentMission("m1");
+    expect(capture.url).toBe("/api/agents/missions/m1");
+
+    mockFetch(200, { mission: { missionId: "m1", status: "cancelled" } }, capture);
+    await api.cancelAgentMission("m1");
+    expect(capture.url).toBe("/api/agents/missions/m1/cancel");
+    expect(capture.init?.method).toBe("POST");
+  });
+
+  it("reconcileAgents posts /api/agents/reconcile", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { updated: ["m1"], count: 1 }, capture);
+    const res = await api.reconcileAgents();
+    expect(capture.url).toBe("/api/agents/reconcile");
+    expect(res.count).toBe(1);
+  });
+
+  it("launchAgentMission posts dryRun and title", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { mission: { missionId: "m1", status: "completed" } }, capture);
+    await api.launchAgentMission("agent_1", {
+      request: "plan",
+      title: "Dry",
+      dryRun: true,
+      priority: "high",
+    });
+    expect(capture.url).toBe("/api/agents/agent_1/missions");
+    const body = JSON.parse(String(capture.init?.body));
+    expect(body.dryRun).toBe(true);
+    expect(body.title).toBe("Dry");
+  });
+
   it("systemTelemetry hits /api/system/telemetry", async () => {
     const capture: { url?: string } = {};
     mockFetch(

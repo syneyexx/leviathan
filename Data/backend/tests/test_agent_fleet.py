@@ -155,6 +155,110 @@ class AgentFleetTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.fleet.archive_agent(member_id)
 
+    def test_multiple_orchestrators(self) -> None:
+        members = [
+            a.agent_id
+            for a in self.fleet.list_agents()
+            if a.kind != AgentDefinitionKind.ORCHESTRATOR and not a.archived
+        ][:2]
+        second = self.fleet.create_agent(
+            {
+                "name": "Second Planner",
+                "kind": "orchestrator",
+                "orchestrator": {
+                    "memberAgentIds": members,
+                    "strategy": "parallel_bounded",
+                    "parallelismLimit": 2,
+                    "failureStrategy": "continue",
+                },
+            }
+        )
+        orchs = [a for a in self.fleet.list_agents() if a.kind == AgentDefinitionKind.ORCHESTRATOR]
+        self.assertGreaterEqual(len(orchs), 2)
+        self.assertEqual(second.orchestrator.strategy, "parallel_bounded")
+
+    def test_update_orchestrator_members(self) -> None:
+        orch = next(a for a in self.fleet.list_agents() if a.kind == AgentDefinitionKind.ORCHESTRATOR)
+        research = next(a for a in self.fleet.list_agents() if a.kind == AgentDefinitionKind.RESEARCH)
+        coding = next(a for a in self.fleet.list_agents() if a.kind == AgentDefinitionKind.CODING)
+        updated = self.fleet.update_agent(
+            orch.agent_id,
+            {"orchestrator": {"memberAgentIds": [research.agent_id, coding.agent_id], "strategy": "sequential"}},
+        )
+        self.assertEqual(updated.orchestrator.member_agent_ids, [research.agent_id, coding.agent_id])
+
+    def test_clone_and_enable_disable(self) -> None:
+        research = next(a for a in self.fleet.list_agents() if a.kind == AgentDefinitionKind.RESEARCH)
+        cloned = self.fleet.clone_agent(research.agent_id)
+        self.assertNotEqual(cloned.agent_id, research.agent_id)
+        self.assertEqual(cloned.kind, research.kind)
+        disabled = self.fleet.set_enabled(cloned.agent_id, False)
+        self.assertFalse(disabled.enabled)
+        enabled = self.fleet.set_enabled(cloned.agent_id, True)
+        self.assertTrue(enabled.enabled)
+
+    def test_concurrency_limit(self) -> None:
+        from Data.modules.agents.fleet_types import AgentMission, MissionStatus
+        from Data.modules.agents.store import utc_now
+
+        agent = self.fleet.create_agent({"name": "Limited", "kind": "research", "maxConcurrency": 1})
+        running = AgentMission(
+            mission_id=AgentFleetStore.new_id("msn"),
+            agent_id=agent.agent_id,
+            title="hold",
+            request="x",
+            status=MissionStatus.RUNNING,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+            started_at=utc_now(),
+        )
+        self.fleet.store.create_mission(running)
+        with self.assertRaises(Exception) as ctx:
+            self.fleet.launch_mission(agent_id=agent.agent_id, request="search more", dry_run=True)
+        self.assertIn("CONCURRENCY", str(ctx.exception.code).upper())
+
+    def test_orchestrator_mission_creates_children(self) -> None:
+        orch = next(a for a in self.fleet.list_agents() if a.kind == AgentDefinitionKind.ORCHESTRATOR)
+        # Keep one healthy research member only to reduce side effects
+        research = next(a for a in self.fleet.list_agents() if a.kind == AgentDefinitionKind.RESEARCH)
+        self.fleet.update_agent(
+            orch.agent_id,
+            {"orchestrator": {"memberAgentIds": [research.agent_id], "strategy": "sequential"}},
+        )
+        mission = self.fleet.launch_mission(
+            agent_id=orch.agent_id,
+            request="search leviathan agent fleet",
+            dry_run=False,
+        )
+        children = [
+            m for m in self.fleet.store.list_missions(limit=100) if m.parent_mission_id == mission.mission_id
+        ]
+        self.assertGreaterEqual(len(children), 1)
+        self.assertEqual(children[0].agent_id, research.agent_id)
+        self.assertIn(mission.status.value, {"completed", "failed"})
+
+    def test_parallel_bounded_dry_run_plan(self) -> None:
+        members = [
+            a.agent_id
+            for a in self.fleet.list_agents()
+            if a.kind != AgentDefinitionKind.ORCHESTRATOR
+        ][:2]
+        orch = self.fleet.create_agent(
+            {
+                "name": "Parallel Orch",
+                "kind": "orchestrator",
+                "orchestrator": {
+                    "memberAgentIds": members,
+                    "strategy": "parallel_bounded",
+                    "parallelismLimit": 2,
+                },
+            }
+        )
+        mission = self.fleet.launch_mission(agent_id=orch.agent_id, request="fan out", dry_run=True)
+        self.assertTrue(mission.result.get("dryRun"))
+        self.assertEqual(mission.result["plan"]["strategy"], "parallel_bounded")
+        self.assertEqual(len(mission.result["plan"]["members"]), 2)
+
 
 class AnalyticsServiceTests(unittest.TestCase):
     def setUp(self) -> None:

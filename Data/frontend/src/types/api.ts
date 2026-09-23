@@ -1674,12 +1674,24 @@ export type AgentDefinition = {
   truth?: Record<string, boolean>;
 };
 
+export type AgentMissionStatus =
+  | "queued"
+  | "starting"
+  | "running"
+  | "cancelling"
+  | "cancelled"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "disabled"
+  | string;
+
 export type AgentMission = {
   missionId: string;
   agentId: string;
   title: string;
   request: string;
-  status: string;
+  status: AgentMissionStatus;
   priority: string;
   progress: number;
   parentMissionId?: string | null;
