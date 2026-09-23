@@ -84,10 +84,40 @@ class ManagedServingAdapterTests(unittest.IsolatedAsyncioTestCase):
         # Simulate external kill for inproc by marking dead directly.
         self.supervisor.mark_dead(worker_id, "simulated kill")
         changed = adapter.reconcile_workers()
-        self.assertTrue(any(c["state"] == WorkerState.DEAD.value for c in changed) or True)
         worker = self.supervisor.get_worker(worker_id)
         assert worker is not None
         self.assertEqual(worker.state, WorkerState.DEAD)
+        self.assertNotEqual(worker.state, WorkerState.READY)
+        # mark_dead already mutated state; reconcile may return empty for inproc.
+        self.assertTrue(
+            worker.state == WorkerState.DEAD
+            and (not changed or any(c["state"] == WorkerState.DEAD.value for c in changed))
+        )
+
+    async def test_subprocess_kill_reconcile_marks_dead(self) -> None:
+        adapter = ManagedLocalServingAdapter(
+            provider_id="vllm-subproc",
+            backend_kind="vllm_class",
+            mode="subprocess",
+            command=["python3", "-c", "import time; time.sleep(60)"],
+            endpoint="http://127.0.0.1:9/v1",
+            supervisor=self.supervisor,
+        )
+        loaded = await adapter.load("subproc-model")
+        worker_id = loaded["worker"]["worker_id"]
+        worker = self.supervisor.get_worker(worker_id)
+        assert worker is not None
+        self.assertIn(worker.state, {WorkerState.READY, WorkerState.STARTING, WorkerState.UNHEALTHY})
+        # Kill the process if we have a handle.
+        proc = self.supervisor._processes.get(worker_id)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        changed = self.supervisor.reconcile()
+        worker = self.supervisor.get_worker(worker_id)
+        assert worker is not None
+        self.assertEqual(worker.state, WorkerState.DEAD)
+        self.assertTrue(any(c.state == WorkerState.DEAD for c in changed))
         self.assertNotEqual(worker.state, WorkerState.READY)
 
 
