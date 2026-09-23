@@ -248,6 +248,7 @@ class EvaluationHarness:
         cortex_enabled: bool,
         memory_tiers_enabled: bool,
         critic_enabled: bool,
+        residual_probed: bool = False,
     ) -> list[EvalCase]:
         """Ablation checks. Missing residual hardware ⇒ UNMEASURED, not PASSED."""
         return [
@@ -256,7 +257,10 @@ class EvaluationHarness:
                 name="Residual port availability",
                 description="Residual-capable runtime present",
                 check="neuro_residual",
-                params={"supported": residual_supported},
+                params={
+                    "supported": residual_supported,
+                    "runtime_probed": residual_probed,
+                },
                 version="1",
                 suite_id="neuro_ablation",
                 judgment_kind=JudgmentKind.DETERMINISTIC,
@@ -489,6 +493,7 @@ class EvaluationHarness:
                 )
             if case.check == "neuro_residual":
                 supported = bool(case.params.get("supported"))
+                probed = case.params.get("runtime_probed") is True
                 if not supported:
                     return self._enrich(
                         case,
@@ -500,12 +505,24 @@ class EvaluationHarness:
                             measurement=MeasurementState.UNMEASURED,
                         ),
                     )
+                # Capability/support flag alone is posture, not an operational residual probe.
+                if not probed:
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.UNMEASURED,
+                            "residual support flag set — not an executed residual probe",
+                            judgment_kind=case.judgment_kind,
+                            measurement=MeasurementState.UNMEASURED,
+                        ),
+                    )
                 return self._enrich(
                     case,
                     EvalCaseResult(
                         case.case_id,
                         EvalOutcome.PASSED,
-                        "residual runtime supports hooks",
+                        "residual runtime supports hooks (probed)",
                         judgment_kind=case.judgment_kind,
                         measurement=MeasurementState.PASS,
                     ),

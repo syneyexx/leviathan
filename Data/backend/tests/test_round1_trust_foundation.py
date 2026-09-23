@@ -108,6 +108,17 @@ class CitationContradictionTests(unittest.TestCase):
             check.public_dict()["truth"]["lexical_overlap_does_not_override_contradiction"]
         )
 
+    def test_research_graph_contradiction_not_supported(self) -> None:
+        from Data.modules.research.graph import citation_entailment_check
+
+        check = citation_entailment_check(
+            "The service stores passwords securely.",
+            "The service does not store passwords securely.",
+        )
+        self.assertEqual(check["status"], "CONTRADICTED")
+        self.assertFalse(check["passed"])
+        self.assertTrue(check["truth"]["lexical_overlap_does_not_override_contradiction"])
+
 
 class ToolExplanationTests(unittest.TestCase):
     def test_example_json_in_prose_does_not_execute(self) -> None:
