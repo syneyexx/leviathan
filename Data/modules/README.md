@@ -18,7 +18,7 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `artifacts/` | `ArtifactStore`, content hash provenance |
 | `knowledge/` | Knowledge V2 documents/chunks/hybrid retrieval |
 | `function_runtime/` | FunctionRegistry + lazy ON_DEMAND runtime |
-| `execution/` | CapabilityCatalog + ExecutionGateway + FrontierCapabilityManifest |
+| `execution/` | CapabilityCatalog + ExecutionGateway + FrontierCapabilityManifest + receipts |
 | `approvals/` | PolicyEngine + ApprovalStore + ApprovalService + AuthorityProfile |
 | `jobs/` | JobStore + JobRuntime + ResourceManager + leases/budgets |
 | `observations/` | ToolObservation + durable effect ledger |
@@ -38,11 +38,11 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `evaluation/` | EvaluationHarness + EvaluationPlatform (+ neuro ablations, scorecards, regression corpus, serving conformance) |
 | `isolation/` | IsolationGuard |
 | `training/` | TrainingRegistry stub + TrainingRecipeRegistry |
-| `browser/` | BrowserAutomationStub |
+| `browser/` | BrowserWorker + FixtureBrowserBackend (Gateway-dispatched; stub when feature off) |
 | `media/` | MediaAutomationStub |
 | `voice/` | VoiceRuntimeStub |
 | `release/` | ReleaseGateRunner + evaluation relevance |
-| `security/` | SecurityAuditor (posture, not pentest) |
+| `security/` | SecurityAuditor + SecretsBroker |
 | `native/` | NativeRuntimeStub |
 | `trading/` | TradingStub (real broker refused) |
 | `market_sim/` | MarketSimControlPlane + causal engine + multi-agent worker (flagged) |

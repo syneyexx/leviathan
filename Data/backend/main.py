@@ -121,7 +121,7 @@ from Data.modules.common.corpus import build_corpus_layout
 from Data.backend.routes.datasets import build_datasets_router
 from Data.backend.routes.training import build_training_router
 from Data.backend.routes.research import build_research_router
-from Data.modules.browser import BrowserAction, BrowserAutomationStub
+from Data.modules.browser import BrowserAction, BrowserAutomationStub, BrowserWorker
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
 from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner, evaluation_relevance_gate
@@ -137,7 +137,8 @@ from Data.modules.cognition import (
     PerceptionService,
     CapabilityBroker,
 )
-from Data.modules.security import SecurityAuditor, SecurityFinding
+from Data.modules.security import SecretsBroker, SecurityAuditor, SecurityFinding
+from Data.modules.execution import CapabilityReceiptStore
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
 from Data.modules.backup import BackupError, BackupService
@@ -188,6 +189,8 @@ capability_catalog = build_default_catalog()
 approval_store = ApprovalStore(settings.database_path)
 approval_service = ApprovalService(approval_store, PolicyEngine())
 observation_store = ObservationStore(settings.database_path)
+capability_receipts = CapabilityReceiptStore(settings.database_path)
+secrets_broker = SecretsBroker(settings.database_path)
 execution_gateway = ExecutionGateway(
     catalog=capability_catalog,
     function_runtime=function_runtime,
@@ -196,6 +199,7 @@ execution_gateway = ExecutionGateway(
     artifact_store=artifacts,
     approval_checker=approval_service,
     observation_store=observation_store,
+    receipt_store=capability_receipts,
 )
 job_store = JobStore(settings.database_path)
 resource_manager = ResourceManager(settings.resources.max_job_concurrency)
@@ -368,7 +372,10 @@ market_sim_service = MarketSimControlPlane.from_settings(
     observability_emit=observability.emit,
 )
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
-browser_stub = BrowserAutomationStub()
+browser_worker = BrowserWorker(artifact_store=artifacts)
+browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
+if settings.features.capability_world:
+    execution_gateway.browser_executor = browser_worker
 media_stub = MediaAutomationStub()
 voice_stub = VoiceRuntimeStub()
 
@@ -387,6 +394,9 @@ def _gate_catalog_builtins() -> GateCheck:
         "coding.run_tests",
         "git.status",
         "git.diff",
+        "browser.navigate",
+        "browser.extract_text",
+        "browser.screenshot",
     }
     missing = sorted(required - {item.id for item in capability_catalog.list()})
     return GateCheck(
@@ -872,6 +882,8 @@ async def lifespan(_: FastAPI):
     job_store.initialize()
     observation_store.initialize()
     evidence_store.initialize()
+    capability_receipts.initialize()
+    secrets_broker.initialize()
     memory_store.initialize()
     neuro_snapshots.initialize()
     residual_receipts.initialize()
@@ -989,7 +1001,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.68.0-wave4-context", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.69.0-wave5-capability", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -2393,7 +2405,10 @@ class CapabilityExecuteRequest(BaseModel):
     arguments: dict = Field(default_factory=dict)
     approval_id: str | None = None
     run_id: str | None = None
+    job_id: str | None = None
     requested_by: str = "api"
+    trace_id: str | None = None
+    idempotency_key: str | None = None
 
 
 @app.post("/api/capabilities/{capability_id}/execute")
@@ -2406,7 +2421,10 @@ def execute_capability(capability_id: str, payload: CapabilityExecuteRequest) ->
             arguments=payload.arguments,
             approval_id=payload.approval_id,
             run_id=payload.run_id,
+            job_id=payload.job_id,
             requested_by=payload.requested_by,
+            trace_id=payload.trace_id,
+            idempotency_key=payload.idempotency_key,
         )
     )
     observability.emit(
@@ -3664,19 +3682,152 @@ def create_training(payload: TrainingCreateRequest) -> dict:
 class BrowserRequest(BaseModel):
     action: str = Field(min_length=1, max_length=40)
     url: str | None = None
+    session_id: str | None = None
+    selector: str | None = None
+    text: str | None = None
+    approval_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    via_job: bool = False
+
+
+_BROWSER_ACTION_TO_CAPABILITY = {
+    "NAVIGATE": "browser.navigate",
+    "EXTRACT_TEXT": "browser.extract_text",
+    "SCREENSHOT": "browser.screenshot",
+    "CLICK": "browser.click",
+    "TYPE": "browser.type",
+}
 
 
 @app.post("/api/browser/request")
 def browser_request(payload: BrowserRequest) -> dict:
+    """Browser actions go through ExecutionGateway (no private bypass)."""
     try:
         action = BrowserAction(payload.action.upper())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid browser action: {payload.action}") from exc
-    job = browser_stub.request(action=action, url=payload.url)
-    status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
-    if status != 200:
-        raise HTTPException(status_code=status, detail=job.public_dict())
-    return {"job": job.public_dict()}
+
+    if not settings.features.capability_world:
+        job = browser_stub.request(action=action, url=payload.url)
+        status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
+        if status != 200:
+            raise HTTPException(status_code=status, detail=job.public_dict())
+        return {"job": job.public_dict(), "truth": {"capability_world_disabled": True}}
+
+    capability_id = _BROWSER_ACTION_TO_CAPABILITY.get(action.value)
+    if capability_id is None:
+        raise HTTPException(status_code=422, detail=f"No capability mapping for action {action.value}")
+
+    arguments: dict = {}
+    if payload.url is not None:
+        arguments["url"] = payload.url
+    if payload.session_id is not None:
+        arguments["session_id"] = payload.session_id
+    if payload.selector is not None:
+        arguments["selector"] = payload.selector
+    if payload.text is not None:
+        arguments["text"] = payload.text
+
+    if payload.via_job:
+        job = job_runtime.enqueue(
+            capability_id=capability_id,
+            arguments=arguments,
+            run_id=payload.run_id,
+            approval_id=payload.approval_id,
+            requested_by="api.browser",
+            trace_id=payload.trace_id,
+            metadata={"browser_action": action.value},
+        )
+        processed = job_runtime.process_next()
+        final = job_runtime.get(job.job_id) or processed or job
+        return {
+            "job": final.public_dict(),
+            "capability_id": capability_id,
+            "truth": {
+                "requires_capability_gateway": True,
+                "no_private_browser_bypass": True,
+                "routed_via_job": True,
+            },
+        }
+
+    result = execution_gateway.execute(
+        CapabilityRequest(
+            capability_id=capability_id,
+            arguments=arguments,
+            approval_id=payload.approval_id,
+            run_id=payload.run_id,
+            requested_by="api.browser",
+            trace_id=payload.trace_id,
+        )
+    )
+    observability.emit(
+        "browser",
+        "request",
+        payload={
+            "capability_id": capability_id,
+            "status": result.status.value,
+            "request_id": result.request_id,
+            "run_id": payload.run_id,
+            "trace_id": payload.trace_id,
+        },
+        level="info" if result.status.value == "COMPLETED" else "warn",
+    )
+    status_code = 200
+    if result.status == CapabilityStatus.REJECTED:
+        reason = (result.telemetry or {}).get("reason")
+        status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+    elif result.status == CapabilityStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {
+        "result": result.public_dict(),
+        "capability_id": capability_id,
+        "truth": {
+            "requires_capability_gateway": True,
+            "no_private_browser_bypass": True,
+            "fixture_is_not_chromium": True,
+        },
+    }
+
+
+@app.get("/api/capabilities/receipts/recent")
+def recent_capability_receipts(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
+    return {"receipts": [item.public_dict() for item in capability_receipts.recent(limit=limit)]}
+
+
+@app.get("/api/capabilities/receipts/by-run/{run_id}")
+def capability_receipts_by_run(run_id: str, limit: Annotated[int, Query(ge=1, le=200)] = 100) -> dict:
+    return {
+        "run_id": run_id,
+        "receipts": [item.public_dict() for item in capability_receipts.list_for_run(run_id, limit=limit)],
+    }
+
+
+class SecretLeaseRequest(BaseModel):
+    secret_ref: str = Field(min_length=1, max_length=240)
+    scope: str = Field(min_length=1, max_length=120)
+    issued_to: str = Field(min_length=1, max_length=120)
+    ttl_seconds: int | None = Field(default=None, ge=30, le=3600)
+    run_id: str | None = None
+    job_id: str | None = None
+
+
+@app.post("/api/secrets/lease")
+def issue_secret_lease(payload: SecretLeaseRequest) -> dict:
+    try:
+        lease = secrets_broker.issue(
+            payload.secret_ref,
+            scope=payload.scope,
+            issued_to=payload.issued_to,
+            ttl_seconds=payload.ttl_seconds,
+            run_id=payload.run_id,
+            job_id=payload.job_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"lease": lease.public_dict()}
 
 
 class MediaRequest(BaseModel):

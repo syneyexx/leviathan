@@ -198,6 +198,8 @@ class FeatureFlags:
     model_serving: bool
     # Wave 4 — context compiler / scoped memory / retrieval thresholds
     context_substrate: bool
+    # Wave 5 — capability world interface (receipts, secrets broker, browser worker)
+    capability_world: bool
 
 
 @dataclass(frozen=True)
@@ -420,6 +422,7 @@ class Settings:
                 "eval_platform": self.features.eval_platform,
                 "model_serving": self.features.model_serving,
                 "context_substrate": self.features.context_substrate,
+                "capability_world": self.features.capability_world,
             },
             "coding": {
                 "enabled": self.features.coding_enabled,
@@ -550,6 +553,7 @@ class Settings:
         eval_platform = _env_bool("LEVIATHAN_FEATURE_EVAL_PLATFORM", True)
         model_serving = _env_bool("LEVIATHAN_FEATURE_MODEL_SERVING", True)
         context_substrate = _env_bool("LEVIATHAN_FEATURE_CONTEXT_SUBSTRATE", True)
+        capability_world = _env_bool("LEVIATHAN_FEATURE_CAPABILITY_WORLD", True)
         embedding_provider = (
             _env_raw("LEVIATHAN_EMBEDDING_PROVIDER", "hash" if rag_v3 else "null") or ("hash" if rag_v3 else "null")
         ).strip().lower()
@@ -646,6 +650,7 @@ class Settings:
                 eval_platform=eval_platform,
                 model_serving=model_serving,
                 context_substrate=context_substrate,
+                capability_world=capability_world,
             ),
             coding=CodingSettings(
                 workspace=coding_workspace,

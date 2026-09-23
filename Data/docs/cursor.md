@@ -105,15 +105,18 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/backend/routes/models.py` | Models HTTP API surface (included from `main.py`) |
 | `Data/modules/run/` | RunStore / EventEnvelope / transitions + correlation |
 | `Data/modules/jobs/` | JobStore / JobRuntime / leases / budgets / ResourceManager |
-| `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway / FrontierCapabilityManifest |
+| `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway / FrontierCapabilityManifest / receipts |
 | `Data/modules/approvals/` | Policy + ApprovalService + AuthorityProfile |
 | `Data/modules/settings/` | Settings Control Plane + BehaviorProfile |
 | `Data/modules/common/` | CorrelationIds + ownership matrix |
+| `Data/modules/browser/` | BrowserWorker + FixtureBrowserBackend (Gateway-dispatched) |
+| `Data/modules/security/` | SecurityAuditor + SecretsBroker |
 | `Data/backend/tests/test_architecture_wave0.py` | Wave 0 architecture conformance exit gate |
 | `Data/backend/tests/test_wave1_cognition_agents.py` | Wave 1 cognition hydrate/invoke + DAG agents |
 | `Data/backend/tests/test_wave2_evaluation.py` | Wave 2 evaluation platform / release authority |
 | `Data/backend/tests/test_wave3_model_serving.py` | Wave 3 managed serving / measured routing |
 | `Data/backend/tests/test_wave4_context_memory_knowledge.py` | Wave 4 context constraints / memory scope / retrieval thresholds |
+| `Data/backend/tests/test_wave5_capability_world.py` | Wave 5 API/MCP/browser shared Run/Gateway/Evidence exit gate |
 | `Data/modules/artifacts/` | ArtifactStore |
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
 | `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |

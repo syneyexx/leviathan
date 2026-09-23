@@ -293,6 +293,136 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("artifact.write",),
+            metadata={"tags": ["artifact"], "domains": ["artifact"], "cacheable": False},
+        )
+    )
+    # Wave 5 — browser capabilities (fixture worker via ExecutionGateway).
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.navigate",
+            name="Browser Navigate",
+            description="Navigate a supervised browser session to a URL (fixture or real backend).",
+            side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="navigate",
+            input_schema={
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": {"type": "string"},
+                    "session_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.navigate",),
+            metadata={
+                "tags": ["browser", "navigate", "web", "dom"],
+                "domains": ["browser"],
+                "aliases": ["open page", "goto", "browse"],
+                "worker_kind": "browser",
+                "isolation": "session",
+                "risk_tier": "network",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.extract_text",
+            name="Browser Extract Text",
+            description="Extract DOM/accessibility text from the current browser session page.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="extract_text",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {"session_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.read",),
+            metadata={
+                "tags": ["browser", "dom", "extract", "read"],
+                "domains": ["browser"],
+                "aliases": ["page text", "read page"],
+                "cacheable": True,
+                "idempotent": True,
+                "worker_kind": "browser",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.screenshot",
+            name="Browser Screenshot",
+            description="Capture a page screenshot artifact from the browser session.",
+            side_effects=(SideEffect.READ, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="screenshot",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {"session_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.read", "artifact.write"),
+            metadata={
+                "tags": ["browser", "screenshot", "vision"],
+                "domains": ["browser"],
+                "aliases": ["capture page", "snapshot"],
+                "worker_kind": "browser",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.click",
+            name="Browser Click",
+            description="Click a target in the current browser session.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="click",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "target": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.interact",),
+            metadata={
+                "tags": ["browser", "click", "interact"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.type",
+            name="Browser Type",
+            description="Type text into a target in the current browser session.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="type",
+            input_schema={
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.interact",),
+            metadata={
+                "tags": ["browser", "type", "input"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+            },
         )
     )
     return catalog

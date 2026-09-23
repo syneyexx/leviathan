@@ -11,6 +11,8 @@ from .manifest import (
     ManifestEntry,
     build_frontier_manifest,
 )
+from .metadata import METADATA_SCHEMA_VERSION, normalize_capability_metadata, schema_hash
+from .receipts import CapabilityCallReceipt, CapabilityReceiptStore, build_receipt_from_result
 from .types import (
     CapabilityDefinition,
     CapabilityProviderKind,
@@ -20,9 +22,12 @@ from .types import (
 )
 
 __all__ = [
+    "METADATA_SCHEMA_VERSION",
+    "CapabilityCallReceipt",
     "CapabilityCatalog",
     "CapabilityDefinition",
     "CapabilityProviderKind",
+    "CapabilityReceiptStore",
     "CapabilityRequest",
     "CapabilityResult",
     "CapabilityStatus",
@@ -35,4 +40,7 @@ __all__ = [
     "SideEffect",
     "build_default_catalog",
     "build_frontier_manifest",
+    "build_receipt_from_result",
+    "normalize_capability_metadata",
+    "schema_hash",
 ]

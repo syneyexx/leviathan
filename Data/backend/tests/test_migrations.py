@@ -44,6 +44,7 @@ class MigrationRunnerTests(unittest.TestCase):
                     25,
                     26,
                     27,
+                    28,
                 ],
             )
             self.assertEqual(second, [])
@@ -51,7 +52,7 @@ class MigrationRunnerTests(unittest.TestCase):
             import sqlite3
 
             with sqlite3.connect(path) as conn:
-                self.assertEqual(conn_version.current_version(conn), 27)
+                self.assertEqual(conn_version.current_version(conn), 28)
                 tables = {
                     row[0]
                     for row in conn.execute(
@@ -65,6 +66,9 @@ class MigrationRunnerTests(unittest.TestCase):
                 self.assertIn("model_route_decisions", tables)
                 self.assertIn("context_snapshots", tables)
                 self.assertIn("retrieval_traces", tables)
+                self.assertIn("capability_call_receipts", tables)
+                self.assertIn("secret_credential_leases", tables)
+                self.assertIn("browser_sessions", tables)
 
     def test_rejects_non_contiguous_versions(self) -> None:
         with self.assertRaises(MigrationError):

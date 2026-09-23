@@ -6,6 +6,36 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 5 Capability World Interface — PASS
+
+### Objective
+Complete the capability world interface (U161–U200 foundations): unified capability metadata, semantic shortlist, secrets broker, immutable receipts, and a supervised fixture browser worker — extending `execution/`, `browser/`, `security/`, `cognition/` (no second gateway or browser control plane).
+
+### Added / changed
+- **Metadata (U161–U164):** normalized catalog metadata (tags/domains/aliases/cacheable) + schema hashes
+- **Semantic shortlist:** CapabilityCatalog.search + CapabilityBroker inspect top hits without schema dump
+- **Secrets broker (U171/U199):** scoped short-lived credential leases; plaintext never in public_dict/prompts
+- **Receipts (U177):** durable `capability_call_receipts` emitted by ExecutionGateway
+- **Browser (U181+):** FixtureBrowserBackend + BrowserWorker (no Chromium in CI); Gateway `BROWSER` dispatch; `/api/browser/request` routed via Gateway/Jobs (bypass removed when feature on)
+- **Migration v28** + flag `LEVIATHAN_FEATURE_CAPABILITY_WORLD`
+- **Tests:** `test_wave5_capability_world.py` (shared Run/trace across API + MCP + browser)
+- **Version:** `0.69.0-wave5-capability`
+
+### EXTERNAL-FIRST review
+- One CapabilityCatalog / ExecutionGateway; browser is domain worker only
+- Fixture backend is honest (`fixture_is_not_chromium`); Playwright reserved, not claimed
+- No new third-party dependencies
+
+### Explicitly NOT claimed
+- Production Playwright/Chromium packaging
+- Full OAuth/OIDC connector productization / vision-grounded clicker
+- Continuous browser recovery lab under real sites
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 4 Context / Memory / Knowledge Substrate — PASS
 
 ### Objective

@@ -1980,6 +1980,84 @@ def _m27_context_memory_scope(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m28_capability_world(conn: sqlite3.Connection) -> None:
+    """Wave 5: capability receipts + secret leases + browser sessions."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS capability_call_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            provider_kind TEXT,
+            provider_ref TEXT,
+            status TEXT NOT NULL,
+            authority_decision TEXT NOT NULL,
+            side_effects_json TEXT NOT NULL,
+            latency_ms REAL,
+            run_id TEXT,
+            job_id TEXT,
+            trace_id TEXT,
+            observation_id TEXT,
+            effect_id TEXT,
+            approval_id TEXT,
+            idempotency_key TEXT,
+            artifact_refs_json TEXT NOT NULL DEFAULT '[]',
+            evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            recorded_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_capability_receipts_run "
+        "ON capability_call_receipts(run_id, recorded_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_capability_receipts_trace "
+        "ON capability_call_receipts(trace_id, recorded_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS secret_credential_leases (
+            lease_id TEXT PRIMARY KEY,
+            secret_ref TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            issued_to TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            run_id TEXT,
+            job_id TEXT,
+            token_fingerprint TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_secret_leases_expires "
+        "ON secret_credential_leases(expires_at, revoked)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS browser_sessions (
+            session_id TEXT PRIMARY KEY,
+            run_id TEXT,
+            url TEXT,
+            title TEXT,
+            backend TEXT NOT NULL DEFAULT 'fixture',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_browser_sessions_run "
+        "ON browser_sessions(run_id, updated_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2008,6 +2086,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=25, name="evaluation_platform", apply=_m25_evaluation_platform),
     Migration(version=26, name="model_serving", apply=_m26_model_serving),
     Migration(version=27, name="context_memory_scope", apply=_m27_context_memory_scope),
+    Migration(version=28, name="capability_world", apply=_m28_capability_world),
 )
 
 
