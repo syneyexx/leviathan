@@ -111,6 +111,37 @@ class PlatformIntegrationTests(unittest.TestCase):
         self.assertTrue(abl["truth"]["feature_flag_is_not_ablation_result"])
         self.assertIsNotNone(abl.get("persisted_report_id"))
 
+        # Scorecard default suite_ids include Round 5 suites once reports exist.
+        scorecard = self.platform.build_system_scorecard()
+        components = {e.component for e in scorecard.entries}
+        self.assertIn("assistant", components)
+
+
+class ServingHonestyTests(unittest.TestCase):
+    def test_unprobed_stream_cancel_is_unmeasured(self) -> None:
+        from Data.modules.evaluation import EvalOutcome, EvaluationHarness, MeasurementState
+
+        harness = EvaluationHarness()
+        report = harness.run_suite(
+            "serving_conformance",
+            harness.serving_conformance_suite(
+                managed_load_ok=False,
+                stream_cancel_ok=True,
+                dead_worker_honest=True,
+                multi_model_route_ok=False,
+                measured_route_recorded=False,
+                managed_load_probed=False,
+                stream_cancel_probed=False,
+                dead_worker_probed=False,
+                multi_route_probed=False,
+                measured_route_probed=False,
+            ),
+            suite_id="serving_conformance",
+        )
+        cancel = next(r for r in report.results if r.case_id == "serving-stream-cancel")
+        self.assertEqual(cancel.outcome, EvalOutcome.UNMEASURED)
+        self.assertEqual(cancel.resolved_measurement(), MeasurementState.UNMEASURED)
+
 
 if __name__ == "__main__":
     unittest.main()

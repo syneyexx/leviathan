@@ -163,15 +163,27 @@ class EvaluationHarness:
         dead_worker_honest: bool,
         multi_model_route_ok: bool,
         measured_route_recorded: bool,
+        managed_load_probed: bool = True,
+        stream_cancel_probed: bool = False,
+        dead_worker_probed: bool = True,
+        multi_route_probed: bool = True,
+        measured_route_probed: bool = True,
     ) -> list[EvalCase]:
-        """Wave 3 serving conformance before production-capable claims (U035)."""
+        """Wave 3 serving conformance before production-capable claims (U035).
+
+        Unprobed flags stay UNMEASURED — configuration is not a serving measurement.
+        """
         return [
             EvalCase(
                 case_id="serving-managed-load",
                 name="Managed load/unload path",
                 description="Managed adapter can load and unload a local model residency",
                 check="serving_flag",
-                params={"ok": managed_load_ok, "name": "managed_load", "runtime_probed": True},
+                params={
+                    "ok": managed_load_ok,
+                    "name": "managed_load",
+                    "runtime_probed": managed_load_probed,
+                },
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
@@ -184,7 +196,11 @@ class EvaluationHarness:
                 name="True stream cancellation",
                 description="Token stream honors cooperative cancel without fabricating SSE",
                 check="serving_flag",
-                params={"ok": stream_cancel_ok, "name": "stream_cancel", "runtime_probed": True},
+                params={
+                    "ok": stream_cancel_ok,
+                    "name": "stream_cancel",
+                    "runtime_probed": stream_cancel_probed,
+                },
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
@@ -196,7 +212,11 @@ class EvaluationHarness:
                 name="Killed worker honest recovery",
                 description="Dead serving worker is DEAD/OFFLINE, never READY",
                 check="serving_flag",
-                params={"ok": dead_worker_honest, "name": "dead_worker", "runtime_probed": True},
+                params={
+                    "ok": dead_worker_honest,
+                    "name": "dead_worker",
+                    "runtime_probed": dead_worker_probed,
+                },
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
@@ -208,7 +228,11 @@ class EvaluationHarness:
                 name="Multi-model route",
                 description="Router can select among multiple registered local models",
                 check="serving_flag",
-                params={"ok": multi_model_route_ok, "name": "multi_route", "runtime_probed": True},
+                params={
+                    "ok": multi_model_route_ok,
+                    "name": "multi_route",
+                    "runtime_probed": multi_route_probed,
+                },
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.DETERMINISTIC,
@@ -220,7 +244,11 @@ class EvaluationHarness:
                 name="Measured route audit recorded",
                 description="Route decisions persist candidates/scores for replay",
                 check="serving_flag",
-                params={"ok": measured_route_recorded, "name": "measured_audit", "runtime_probed": True},
+                params={
+                    "ok": measured_route_recorded,
+                    "name": "measured_audit",
+                    "runtime_probed": measured_route_probed,
+                },
                 version="1",
                 suite_id="serving_conformance",
                 judgment_kind=JudgmentKind.DETERMINISTIC,
