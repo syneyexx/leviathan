@@ -28,11 +28,16 @@ class OpenAICompatibleLLM:
 
     def __init__(self, settings: Settings, context_builder: ContextBuilder | None = None) -> None:
         self.settings = settings
+        ctx = settings.context
         self.context_builder = context_builder or ContextBuilder(
-            token_budget=settings.context.token_budget,
-            max_knowledge_chars=settings.context.max_knowledge_chars,
+            token_budget=ctx.token_budget,
+            max_knowledge_chars=ctx.max_knowledge_chars,
             max_history_messages=settings.resources.max_history_messages,
-            reserve_response_tokens=settings.context.reserve_response_tokens,
+            reserve_response_tokens=ctx.reserve_response_tokens,
+            auto_budget=bool(getattr(ctx, "auto_budget", True)),
+            max_context_fraction=float(getattr(ctx, "max_context_fraction", 0.72)),
+            reserve_response_fraction=float(getattr(ctx, "reserve_response_fraction", 0.18)),
+            minimum_response_tokens=int(getattr(ctx, "minimum_response_tokens", 256)),
         )
         self._resolved_model: str | None = settings.llm_model
 

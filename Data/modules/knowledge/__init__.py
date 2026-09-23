@@ -21,6 +21,7 @@ from .retrieval import (
     bm25_relevance,
     reciprocal_rank_fusion,
 )
+from .staged_retrieval import StagedRetrievalResult, StagedRetriever, resolve_use_reranker
 from .store import KnowledgeStore
 from .types import (
     ChunkRecord,
@@ -58,6 +59,8 @@ __all__ = [
     "RetrievalQuery",
     "RetrievalTrace",
     "SentenceTransformersEmbeddingProvider",
+    "StagedRetrievalResult",
+    "StagedRetriever",
     "TextSpan",
     "WhyBucket",
     "WhyLibrary",
@@ -65,4 +68,5 @@ __all__ = [
     "bm25_relevance",
     "build_embedding_provider",
     "reciprocal_rank_fusion",
+    "resolve_use_reranker",
 ]

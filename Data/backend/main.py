@@ -57,8 +57,10 @@ from Data.modules.knowledge import (
     KnowledgeStore,
     RerankerProvider,
     RetrievalQuery,
+    StagedRetriever,
     WhyLibrary,
     build_embedding_provider,
+    resolve_use_reranker,
 )
 from Data.modules.memory import MemoryKind, MemoryScope, MemoryStatus, MemoryStore
 from Data.modules.model_runtime import (
@@ -151,11 +153,17 @@ from Data.modules.cognition import (
     CognitiveRuntime,
     DelegationService,
     ExperienceStore,
+    MetaController,
     PerceptionService,
     CapabilityBroker,
 )
 from Data.modules.cognition.model_adapter import build_control_plane_model_caller
 from Data.modules.cognition.specialists import register_specialist_handlers
+from Data.modules.intelligence import (
+    IntelligenceHealthService,
+    KnowledgeAssimilationService,
+    ReasoningPolicy,
+)
 from Data.modules.security import SecretsBroker, SecurityAuditor, SecurityFinding
 from Data.modules.execution import CapabilityReceiptStore
 from Data.modules.native import NativeRuntimeStub
@@ -184,7 +192,20 @@ knowledge = KnowledgeStore(
     chunk_overlap=settings.knowledge.chunk_overlap,
     embedding_provider=embedding_provider,
 )
-retriever = HybridRetriever(knowledge, embeddings=embedding_provider, reranker=reranker_provider)
+retriever = HybridRetriever(
+    knowledge,
+    embeddings=embedding_provider,
+    reranker=reranker_provider,
+    diversity_enabled=bool(settings.knowledge.diversity_enabled),
+    diversity_strength=float(settings.knowledge.diversity_strength),
+)
+staged_retriever = StagedRetriever(
+    retriever,
+    deep_recall=None,  # wired after deep_recall_service is constructed
+    rerank_policy=settings.knowledge.rerank_policy,
+    query_expansion=bool(settings.knowledge.query_expansion),
+    max_query_expansions=int(settings.knowledge.max_query_expansions),
+)
 atlas_store = AtlasStore(settings.database_path)
 why_library = WhyLibrary(settings.database_path, enabled=settings.features.why_library)
 economy_governor = CognitiveEconomyGovernor(
@@ -197,6 +218,12 @@ deep_recall_service = DeepRecallService(
     retriever=retriever,
     db_path=settings.database_path,
     enabled=settings.features.deep_recall,
+)
+staged_retriever.deep_recall = deep_recall_service
+assimilation_service = KnowledgeAssimilationService(
+    database_path=settings.database_path,
+    knowledge_store=knowledge,
+    atlas_store=atlas_store,
 )
 function_registry = build_default_registry()
 function_runtime = FunctionRuntime(
@@ -259,6 +286,9 @@ timeseries = TimeSeriesStore(max_points_per_series=3_600)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001
     "knowledge", name, payload=payload
 )
+retriever._emit = observability.emit  # noqa: SLF001
+staged_retriever._emit = observability.emit  # noqa: SLF001
+assimilation_service._emit = observability.emit  # noqa: SLF001
 neuro_snapshots = NeuroSnapshotStore(settings.database_path)
 residual_receipts = ResidualReceiptStore(settings.database_path)
 residual_runtime = build_residual_runtime(
@@ -378,6 +408,9 @@ research_service = ResearchService.from_settings(
     settings,
     db_path=settings.database_path,
     knowledge=knowledge,
+    assimilation_service=assimilation_service,
+    atlas_store=atlas_store,
+    observability_emit=observability.emit,
 )
 coding_service = CodingControlPlane.from_settings(
     settings,
@@ -837,6 +870,8 @@ settings_plane = SettingsControlPlane(settings)
 cognition_store = CognitionStore(settings.database_path)
 cognition_delegation = DelegationService()
 cognition_model_caller = build_control_plane_model_caller(model_plane, llm)
+reasoning_policy = ReasoningPolicy.from_settings(settings)
+cognition_experience_store = ExperienceStore(store=cognition_store)
 research_service.set_model_caller(cognition_model_caller)
 cognition_runtime = CognitiveRuntime(
     enabled=settings.features.cognition_enabled,
@@ -847,16 +882,20 @@ cognition_runtime = CognitiveRuntime(
     adaptive_depth=settings.features.cognition_adaptive_depth,
     delegation_enabled=settings.features.cognition_delegation,
     experience_learning=settings.features.cognition_experience_learning,
+    meta=MetaController(policy=reasoning_policy),
     perception=PerceptionService(
         knowledge_store=knowledge,
+        knowledge_retriever=staged_retriever,
         memory_store=memory_store,
         evidence_service=evidence_service,
         capability_catalog=capability_catalog,
         neuro_advisor=neuro_advisor if settings.features.cognition_neuro else None,
+        experience_store=cognition_experience_store,
+        rerank_policy=settings.knowledge.rerank_policy,
     ),
     broker=CapabilityBroker(capability_catalog),
     delegation=cognition_delegation,
-    experience_store=ExperienceStore(store=cognition_store),
+    experience_store=cognition_experience_store,
     store=cognition_store,
     model_caller=cognition_model_caller,
     neuro_advisor=neuro_advisor if settings.features.cognition_neuro else None,
@@ -869,6 +908,25 @@ register_specialist_handlers(
     cognition_delegation,
     coding_service=coding_service,
     research_service=research_service,
+)
+
+intelligence_health = IntelligenceHealthService(
+    settings_plane=settings_plane,
+    cognition_runtime=cognition_runtime,
+    neuro_advisor=neuro_advisor,
+    residual_port=residual_runtime,
+    knowledge=knowledge,
+    retriever=retriever,
+    memory_store=memory_store,
+    deep_recall=deep_recall_service,
+    atlas=atlas_store,
+    verification_engine=verification_engine,
+    assimilation_service=assimilation_service,
+    embedding_provider=embedding_provider,
+    reranker=reranker_provider,
+    cortex=cortex_runtime,
+    experience_store=getattr(cognition_runtime, "experience_store", None),
+    reasoning_policy=reasoning_policy,
 )
 
 
@@ -1012,12 +1070,14 @@ async def lifespan(_: FastAPI):
         function_runtime=function_runtime,
         knowledge=knowledge,
         deep_recall=deep_recall_service,
+        staged_retriever=staged_retriever,
         why_library=why_library,
         mcp_bridge=mcp_bridge,
         cognition_runtime=cognition_runtime,
         agent_runtime=agent_runtime,
         coding_service=coding_service,
         research_service=research_service,
+        dataset_service=dataset_service,
         isolation_guard=isolation_guard,
         chaos=chaos,
         model_plane=model_plane,
@@ -1027,6 +1087,11 @@ async def lifespan(_: FastAPI):
         neuro_soak=neuro_soak,
         module_manager=module_manager,
         market_sim_service=market_sim_service,
+        residual_orchestrator=residual_orchestrator,
+        cortex_runtime=cortex_runtime,
+        residual_runtime=residual_runtime,
+        reasoning_policy_holder=intelligence_health,
+        context_builder=getattr(llm, "context_builder", None),
     )
     settings_plane._run_callbacks_for_all_hot()
     observability.emit(
@@ -1467,7 +1532,14 @@ async def health() -> dict:
         },
         "llm": model,
         "product_truth": product_truth,
+        "intelligence": intelligence_health.build(),
     }
+
+
+@app.get("/api/intelligence/health")
+async def intelligence_health_endpoint() -> dict:
+    """Truthful intelligence-stack health for Settings banner & diagnostics."""
+    return intelligence_health.build()
 
 
 @app.get("/api/product/truth")
@@ -1633,6 +1705,7 @@ async def chat(payload: ChatRequest, request: Request):
                 has_knowledge=has_knowledge,
                 shadow=True if settings.features.cognition_shadow else False,
                 metadata={"chat_run_id": run.run_id},
+                user_requested_depth=live_settings().reasoning.default_mode,
                 run=True,
             )
             observability.emit(
@@ -1651,9 +1724,19 @@ async def chat(payload: ChatRequest, request: Request):
                 "truth": {"cognition_failure_does_not_fail_chat": True},
             }
 
+    # ACTIVE cognition owns the answer — skip duplicate retrieval / neuro / model acquire.
+    cognition_early_own = bool(
+        cognition_meta
+        and not cognition_meta.get("shadow")
+        and not settings.features.cognition_shadow
+        and (cognition_meta.get("response") or "").strip()
+        and cognition_meta.get("response_ownership") == "cognition"
+        and not cognition_meta.get("error")
+    )
+
     runs.transition(
         run.run_id,
-        RunState.RETRIEVING if plan.use_knowledge else RunState.EXECUTING,
+        RunState.RETRIEVING if (plan.use_knowledge and not cognition_early_own) else RunState.EXECUTING,
         intent=plan.intent,
         complexity=plan.complexity,
     )
@@ -1663,205 +1746,264 @@ async def chat(payload: ChatRequest, request: Request):
     why_hits: list[dict] = []
     contradictions: list[str] = []
     deep_recall_result = None
-    if plan.use_knowledge:
-        runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
-        if plan.use_deep_recall and economy.allow_deep_recall:
-            deep_recall_result = deep_recall_service.recall(
-                DeepRecallRequest(
-                    current_question=message,
-                    maximum_context_budget=economy.deep_recall_budget,
-                    hydrate_limit=live_settings().knowledge_top_k,
-                    required_precision="high" if plan.complexity == "high" else "normal",
-                )
-            )
-            atlas_hits = list(deep_recall_result.atlas_matches)
-            contradictions = list(deep_recall_result.contradictions_found)
-            knowledge_hits = [
-                {
-                    "id": detail.get("document_id") or detail.get("ref"),
-                    "title": detail.get("title") or "evidence",
-                    "content": detail.get("content") or "",
-                    "source": "deep_recall",
-                    "chunk_id": detail.get("chunk_id") or detail.get("ref"),
-                    "content_hash": detail.get("content_hash"),
-                    "layer": "evidence",
-                }
-                for detail in deep_recall_result.exact_details
-            ]
-            observability.emit(
-                "knowledge",
-                "deep_recall",
-                payload={
-                    "context_cost": deep_recall_result.context_cost,
-                    "stopped_reason": deep_recall_result.stopped_reason,
-                    "evidence_count": len(knowledge_hits),
-                },
-            )
-        else:
-            if plan.use_atlas and settings.features.rag_v3:
-                atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
-            hits = retriever.search(
-                RetrievalQuery(text=message, limit=live_settings().knowledge_top_k)
-            )
-            knowledge_hits = [hit.as_context_document() for hit in hits]
-        if settings.features.why_library:
-            why_hits = [item.as_context_item() for item in why_library.search(message, limit=3)]
-        runs.append_event(
-            run.run_id,
-            EventType.RETRIEVAL_COMPLETED,
-            {
-                "count": len(knowledge_hits),
-                "atlas_count": len(atlas_hits),
-                "deep_recall": bool(deep_recall_result and deep_recall_result.available),
-            },
-        )
-        runs.transition(run.run_id, RunState.EXECUTING)
-
-    history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
-    history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
-    memory_hits = [
-        item.as_context_item()
-        for item in memory_store.search(
-            message,
-            limit=5,
-            conversation_id=conversation_id,
-            include_global=True,
-        )
-    ]
-    knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
-    neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
+    memory_hits: list[dict] = []
     neuro_context: list[dict] = []
     cortex_report = None
     residual_applied_any = False
-    if neuro.enabled:
-        observability.emit(
-            "neuro",
-            "assess",
-            payload={"signals": len(neuro.signals)},
-        )
-        for signal in neuro.signals:
-            neuro_context.append(
+    from Data.modules.neuro.types import NeuroAssessment
+
+    neuro = NeuroAssessment(
+        enabled=False,
+        signals=(),
+        notes=(("skipped — cognition early-own path",) if cognition_early_own else ()),
+    )
+
+    if cognition_early_own:
+        # Record retrieval cognition already performed (perception / usage) without re-running RAG.
+        usage = (cognition_meta or {}).get("usage") or {}
+        retrieval_rounds = int(usage.get("retrieval_rounds") or 0)
+        observations = (cognition_meta or {}).get("observations") or []
+        if retrieval_rounds > 0 or observations:
+            runs.append_event(
+                run.run_id,
+                EventType.RETRIEVAL_COMPLETED,
                 {
-                    "id": signal.signal_id,
-                    "content": f"[{signal.kind} strength={signal.strength}] {signal.summary}",
-                    "status": "advisory",
-                }
+                    "count": retrieval_rounds,
+                    "source": "cognition",
+                    "observation_count": len(observations) if isinstance(observations, list) else 0,
+                    "early_own": True,
+                },
             )
-        if settings.features.neuro_memory_tiers and neuro_memory.enabled:
-            try:
-                neuro_memory.write_working(
-                    message[:800],
-                    tags=("chat_turn",),
-                    metadata={"run_id": run.run_id, "conversation_id": conversation_id},
+        history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
+        history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+    else:
+        if plan.use_knowledge:
+            runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
+            if plan.use_deep_recall and economy.allow_deep_recall:
+                deep_recall_result = deep_recall_service.recall(
+                    DeepRecallRequest(
+                        current_question=message,
+                        maximum_context_budget=economy.deep_recall_budget,
+                        hydrate_limit=live_settings().knowledge_top_k,
+                        required_precision="high" if plan.complexity == "high" else "normal",
+                    )
                 )
-            except (RuntimeError, ValueError):
-                pass
-            bundle = neuro_memory.retrieve(message, tiers=(0, 1, 2), limit_per_tier=3)
-            for hit in bundle.hits:
-                memory_hits.append(
+                atlas_hits = list(deep_recall_result.atlas_matches)
+                contradictions = list(deep_recall_result.contradictions_found)
+                knowledge_hits = [
                     {
-                        "memory_id": hit.ref_id,
-                        "content": f"[tier{hit.tier}] {hit.content}",
-                        "status": "ACTIVE",
-                        "kind": f"neuro_tier_{hit.tier}",
+                        "id": detail.get("document_id") or detail.get("ref"),
+                        "title": detail.get("title") or "evidence",
+                        "content": detail.get("content") or "",
+                        "source": "deep_recall",
+                        "chunk_id": detail.get("chunk_id") or detail.get("ref"),
+                        "content_hash": detail.get("content_hash"),
+                        "layer": "evidence",
+                    }
+                    for detail in deep_recall_result.exact_details
+                ]
+                observability.emit(
+                    "knowledge",
+                    "deep_recall",
+                    payload={
+                        "context_cost": deep_recall_result.context_cost,
+                        "stopped_reason": deep_recall_result.stopped_reason,
+                        "evidence_count": len(knowledge_hits),
+                    },
+                )
+        else:
+            if plan.use_atlas and settings.features.rag_v3:
+                atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
+            use_reranker = resolve_use_reranker(
+                live_settings().knowledge.rerank_policy,
+                reranker_available=bool(
+                    retriever.reranker is not None and retriever.reranker.available()
+                ),
+                embedding_is_semantic=retriever._embedding_is_semantic(),  # noqa: SLF001
+            )
+            staged = staged_retriever.search(
+                message,
+                limit=live_settings().knowledge_top_k,
+                use_deep_recall=False,
+                rerank_policy=live_settings().knowledge.rerank_policy,
+            )
+            # Prefer staged hits; fall back to direct hybrid with policy-aware rerank.
+            if staged.hits:
+                knowledge_hits = [hit.as_context_document() for hit in staged.hits]
+            else:
+                hits = retriever.search(
+                    RetrievalQuery(
+                        text=message,
+                        limit=live_settings().knowledge_top_k,
+                        use_reranker=use_reranker,
+                    )
+                )
+                knowledge_hits = [hit.as_context_document() for hit in hits]
+            if staged.negative_reasons:
+                observability.emit(
+                    "knowledge",
+                    "staged_retrieval.negative",
+                    payload={
+                        "reasons": list(staged.negative_reasons),
+                        "coverage": staged.coverage,
+                        "early_exit": staged.early_exit,
+                    },
+                )
+            if settings.features.why_library:
+                why_hits = [item.as_context_item() for item in why_library.search(message, limit=3)]
+            runs.append_event(
+                run.run_id,
+                EventType.RETRIEVAL_COMPLETED,
+                {
+                    "count": len(knowledge_hits),
+                    "atlas_count": len(atlas_hits),
+                    "deep_recall": bool(deep_recall_result and deep_recall_result.available),
+                },
+            )
+            runs.transition(run.run_id, RunState.EXECUTING)
+
+        history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
+        history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+        memory_hits = [
+            item.as_context_item()
+            for item in memory_store.search(
+                message,
+                limit=5,
+                conversation_id=conversation_id,
+                include_global=True,
+            )
+        ]
+        knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
+        neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
+        if neuro.enabled:
+            observability.emit(
+                "neuro",
+                "assess",
+                payload={"signals": len(neuro.signals)},
+            )
+            for signal in neuro.signals:
+                neuro_context.append(
+                    {
+                        "id": signal.signal_id,
+                        "content": f"[{signal.kind} strength={signal.strength}] {signal.summary}",
+                        "status": "advisory",
                     }
                 )
-            if settings.features.neuro_contrastive_training:
-                contrastive = neuro_contrastive.retrieve(message, tiers=(1, 2), limit=3)
-                for hit in contrastive.hits[:3]:
+            if settings.features.neuro_memory_tiers and neuro_memory.enabled:
+                try:
+                    neuro_memory.write_working(
+                        message[:800],
+                        tags=("chat_turn",),
+                        metadata={"run_id": run.run_id, "conversation_id": conversation_id},
+                    )
+                except (RuntimeError, ValueError):
+                    pass
+                bundle = neuro_memory.retrieve(message, tiers=(0, 1, 2), limit_per_tier=3)
+                for hit in bundle.hits:
                     memory_hits.append(
                         {
-                            "memory_id": hit.get("ref_id") or hit.get("memory_id") or "contrastive",
-                            "content": f"[contrastive:{contrastive.method}] {hit.get('content') or ''}",
+                            "memory_id": hit.ref_id,
+                            "content": f"[tier{hit.tier}] {hit.content}",
                             "status": "ACTIVE",
-                            "kind": "neuro_contrastive",
+                            "kind": f"neuro_tier_{hit.tier}",
                         }
                     )
-        if settings.features.neuro_cortex:
-            engagement = next((s for s in neuro.signals if s.kind == "cortex_engagement"), None)
-            depth = 0
-            critic_rounds = 0
-            if engagement is not None:
-                depth = int((engagement.provenance or {}).get("depth") or 0)
-                critic_rounds = int((engagement.provenance or {}).get("critic_rounds") or 0)
-            if depth > 0 or residual_runtime.supports_residuals():
-                report = cortex_runtime.run(
-                    messages=[{"role": "user", "content": message}],
-                    depth=max(depth, 1 if residual_runtime.supports_residuals() else 0),
-                    critic_rounds=critic_rounds,
-                    knowledge_ids=knowledge_ids,
-                    plan_steps=list(plan.steps),
-                )
-                cortex_report = report.public_dict()
-                if settings.features.residual_production or settings.features.neuro_residual_injection:
-                    for receipt_dict in report.inject_receipts:
-                        # Re-hydrate minimal receipt fields for durable audit trail.
-                        from Data.modules.neuro.residual import ResidualHookPoint, ResidualInjectReceipt
-
-                        hook_raw = receipt_dict.get("hook") or {}
-                        residual_receipts.record(
-                            ResidualInjectReceipt(
-                                implemented=bool(receipt_dict.get("implemented")),
-                                mode=str(receipt_dict.get("mode") or "DISABLED"),
-                                hook=ResidualHookPoint(
-                                    layer_index=int(hook_raw.get("layer_index") or 0),
-                                    name=str(hook_raw.get("name") or "unknown"),
-                                    site=str(hook_raw.get("site") or "block_out"),
-                                ),
-                                applied=bool(receipt_dict.get("applied")),
-                                detail=str(receipt_dict.get("detail") or ""),
-                                reason=str(receipt_dict.get("reason") or ""),
-                                degraded_to_chat_completions=bool(
-                                    receipt_dict.get("degraded_to_chat_completions")
-                                ),
-                            ),
-                            metadata={"run_id": run.run_id, "source": "cortex_runtime"},
+                if settings.features.neuro_contrastive_training:
+                    contrastive = neuro_contrastive.retrieve(message, tiers=(1, 2), limit=3)
+                    for hit in contrastive.hits[:3]:
+                        memory_hits.append(
+                            {
+                                "memory_id": hit.get("ref_id") or hit.get("memory_id") or "contrastive",
+                                "content": f"[contrastive:{contrastive.method}] {hit.get('content') or ''}",
+                                "status": "ACTIVE",
+                                "kind": "neuro_contrastive",
+                            }
                         )
-                        if receipt_dict.get("applied"):
-                            residual_applied_any = True
-                if settings.features.neuro_residual_orchestrator:
-                    orch = residual_orchestrator.orchestrate(
+            if settings.features.neuro_cortex:
+                engagement = next((s for s in neuro.signals if s.kind == "cortex_engagement"), None)
+                depth = 0
+                critic_rounds = 0
+                if engagement is not None:
+                    depth = int((engagement.provenance or {}).get("depth") or 0)
+                    critic_rounds = int((engagement.provenance or {}).get("critic_rounds") or 0)
+                if depth > 0 or residual_runtime.supports_residuals():
+                    report = cortex_runtime.run(
                         messages=[{"role": "user", "content": message}],
-                        complexity=str(plan.complexity or "medium"),
-                        token_budget=settings.context.token_budget,
-                        payload_ref=knowledge_ids[0] if knowledge_ids else None,
-                        run_forward=False,
-                        run_id=run.run_id,
+                        depth=max(depth, 1 if residual_runtime.supports_residuals() else 0),
+                        critic_rounds=critic_rounds,
+                        knowledge_ids=knowledge_ids,
+                        plan_steps=list(plan.steps),
                     )
-                    for receipt in orch.receipts:
-                        residual_receipts.record(
-                            receipt,
-                            metadata={"run_id": run.run_id, "source": "residual_orchestrator"},
+                    cortex_report = report.public_dict()
+                    if settings.features.residual_production or settings.features.neuro_residual_injection:
+                        for receipt_dict in report.inject_receipts:
+                            # Re-hydrate minimal receipt fields for durable audit trail.
+                            from Data.modules.neuro.residual import ResidualHookPoint, ResidualInjectReceipt
+
+                            hook_raw = receipt_dict.get("hook") or {}
+                            residual_receipts.record(
+                                ResidualInjectReceipt(
+                                    implemented=bool(receipt_dict.get("implemented")),
+                                    mode=str(receipt_dict.get("mode") or "DISABLED"),
+                                    hook=ResidualHookPoint(
+                                        layer_index=int(hook_raw.get("layer_index") or 0),
+                                        name=str(hook_raw.get("name") or "unknown"),
+                                        site=str(hook_raw.get("site") or "block_out"),
+                                    ),
+                                    applied=bool(receipt_dict.get("applied")),
+                                    detail=str(receipt_dict.get("detail") or ""),
+                                    reason=str(receipt_dict.get("reason") or ""),
+                                    degraded_to_chat_completions=bool(
+                                        receipt_dict.get("degraded_to_chat_completions")
+                                    ),
+                                ),
+                                metadata={"run_id": run.run_id, "source": "cortex_runtime"},
+                            )
+                            if receipt_dict.get("applied"):
+                                residual_applied_any = True
+                    if settings.features.neuro_residual_orchestrator:
+                        orch = residual_orchestrator.orchestrate(
+                            messages=[{"role": "user", "content": message}],
+                            complexity=str(plan.complexity or "medium"),
+                            token_budget=settings.context.token_budget,
+                            payload_ref=knowledge_ids[0] if knowledge_ids else None,
+                            run_forward=False,
+                            run_id=run.run_id,
                         )
-                        if receipt.applied:
-                            residual_applied_any = True
+                        for receipt in orch.receipts:
+                            residual_receipts.record(
+                                receipt,
+                                metadata={"run_id": run.run_id, "source": "residual_orchestrator"},
+                            )
+                            if receipt.applied:
+                                residual_applied_any = True
+                        neuro_context.append(
+                            {
+                                "id": f"residual-orch-{run.run_id}",
+                                "content": (
+                                    f"[residual_orchestrator layers={list(orch.selected_layers)} "
+                                    f"applied={sum(1 for r in orch.receipts if r.applied)}] {orch.detail}"
+                                ),
+                                "status": "advisory",
+                            }
+                        )
+                    observability.emit(
+                        "neuro",
+                        "cortex_engagement",
+                        payload={"engaged": report.engaged, "degraded": report.degraded},
+                    )
+                    metrics.incr("neuro_cortex_runs")
                     neuro_context.append(
                         {
-                            "id": f"residual-orch-{run.run_id}",
+                            "id": f"cortex-{run.run_id}",
                             "content": (
-                                f"[residual_orchestrator layers={list(orch.selected_layers)} "
-                                f"applied={sum(1 for r in orch.receipts if r.applied)}] {orch.detail}"
+                                f"[cortex engaged={report.engaged} depth={report.depth} "
+                                f"early_exit={report.early_exit} k={report.k_used}/{report.max_k}] "
+                                f"{report.detail}"
                             ),
                             "status": "advisory",
                         }
                     )
-                observability.emit(
-                    "neuro",
-                    "cortex_engagement",
-                    payload={"engaged": report.engaged, "degraded": report.degraded},
-                )
-                metrics.incr("neuro_cortex_runs")
-                neuro_context.append(
-                    {
-                        "id": f"cortex-{run.run_id}",
-                        "content": (
-                            f"[cortex engaged={report.engaged} depth={report.depth} "
-                            f"early_exit={report.early_exit} k={report.k_used}/{report.max_k}] "
-                            f"{report.detail}"
-                        ),
-                        "status": "advisory",
-                    }
-                )
 
     # Streaming posture: residual-aware forward rarely streams — degrade honestly.
     accept = (request.headers.get("accept") or "").lower()
@@ -1878,79 +2020,91 @@ async def chat(payload: ChatRequest, request: Request):
     )
     use_sse = bool(wants_sse and stream_enabled)
 
-    runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
     route_meta: dict | None = None
     call_id: str | None = None
     provider_id_for_release = "unknown"
     model_id_for_release = "unknown"
     routed: dict | None = None
     profile = None
-    try:
-        routed = model_plane.resolve_for_chat(
-            explicit_model_id=payload.model_id,
-            preferred_role=payload.preferred_role,
-        )
-        decision = routed["decision"]
-        profile = routed["profile"]
-        provider_id_for_release = routed["provider_id"]
-        model_id_for_release = routed["model"].id
-        call_id = model_plane.gateway.acquire(
-            model_id=model_id_for_release,
-            provider_id=provider_id_for_release,
-            timeout_seconds=min(settings.llm_timeout_seconds, 30.0),
-        )
-        route_meta = {
-            "decision": decision.public_dict(),
-            "traceId": call_id,
-        }
-        runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
-    except ModelControlError as exc:
-        if call_id:
-            model_plane.gateway.release(
+    llm_kwargs: dict = {}
+
+    if not cognition_early_own:
+        runs.append_event(run.run_id, EventType.MODEL_STARTED, {})
+        try:
+            routed = model_plane.resolve_for_chat(
+                explicit_model_id=payload.model_id,
+                preferred_role=payload.preferred_role,
+            )
+            decision = routed["decision"]
+            profile = routed["profile"]
+            provider_id_for_release = routed["provider_id"]
+            model_id_for_release = routed["model"].id
+            call_id = model_plane.gateway.acquire(
                 model_id=model_id_for_release,
                 provider_id=provider_id_for_release,
-                error=exc.code,
+                timeout_seconds=min(settings.llm_timeout_seconds, 30.0),
             )
-            call_id = None
-        if exc.code in {"ROUTER_EXHAUSTED", "MODEL_NOT_FOUND"} and not payload.model_id:
-            routed = None
-            profile = None
             route_meta = {
-                "decision": {
-                    "reason": "legacy_settings_fallback",
-                    "fallbackUsed": True,
-                    "fallbackReason": exc.code,
-                }
+                "decision": decision.public_dict(),
+                "traceId": call_id,
             }
-            model_plane.gateway.record_fallback(exc.code)
-        else:
-            runs.transition(run.run_id, RunState.FAILED, error=str(exc))
-            raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
+            runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
+        except ModelControlError as exc:
+            if call_id:
+                model_plane.gateway.release(
+                    model_id=model_id_for_release,
+                    provider_id=provider_id_for_release,
+                    error=exc.code,
+                )
+                call_id = None
+            if exc.code in {"ROUTER_EXHAUSTED", "MODEL_NOT_FOUND"} and not payload.model_id:
+                routed = None
+                profile = None
+                route_meta = {
+                    "decision": {
+                        "reason": "legacy_settings_fallback",
+                        "fallbackUsed": True,
+                        "fallbackReason": exc.code,
+                    }
+                }
+                model_plane.gateway.record_fallback(exc.code)
+            else:
+                runs.transition(run.run_id, RunState.FAILED, error=str(exc))
+                raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
 
-    llm_kwargs = dict(
-        history=history,
-        knowledge=knowledge_hits,
-        plan=plan,
-        memory=memory_hits,
-        neuro=neuro_context or None,
-        atlas=atlas_hits or None,
-        why=why_hits or None,
-        contradictions=contradictions or None,
-    )
-    if routed is not None and profile is not None:
-        llm_kwargs.update(
-            model_id=routed["provider_model_id"],
-            endpoint=routed["endpoint"],
-            api_key=routed["api_key"],
-            temperature=profile.temperature,
-            max_tokens=profile.max_tokens,
-            top_p=profile.top_p,
-            system_prompt=profile.system_prompt or None,
+        llm_kwargs = dict(
+            history=history,
+            knowledge=knowledge_hits,
+            plan=plan,
+            memory=memory_hits,
+            neuro=neuro_context or None,
+            atlas=atlas_hits or None,
+            why=why_hits or None,
+            contradictions=contradictions or None,
         )
+        if routed is not None and profile is not None:
+            llm_kwargs.update(
+                model_id=routed["provider_model_id"],
+                endpoint=routed["endpoint"],
+                api_key=routed["api_key"],
+                temperature=profile.temperature,
+                max_tokens=profile.max_tokens,
+                top_p=profile.top_p,
+                system_prompt=profile.system_prompt or None,
+            )
+    else:
+        model_id_for_release = "cognition"
+        route_meta = {
+            "decision": {
+                "reason": "cognition_early_own",
+                "fallbackUsed": False,
+            }
+        }
+        runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
 
     # ACTIVE cognition owns the authoritative answer when it produced one.
     # SHADOW cognition may observe only — chat path remains authoritative.
-    cognition_owns_response = bool(
+    cognition_owns_response = bool(cognition_early_own) or bool(
         cognition_meta
         and not cognition_meta.get("shadow")
         and not settings.features.cognition_shadow

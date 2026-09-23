@@ -1652,6 +1652,10 @@ export const api = {
     return request("/api/cognition/health");
   },
 
+  intelligenceHealth(): Promise<Record<string, unknown>> {
+    return request("/api/intelligence/health");
+  },
+
   cognitionSubmit(payload: {
     message: string;
     conversation_id?: string | null;

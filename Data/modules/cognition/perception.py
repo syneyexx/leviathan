@@ -85,18 +85,24 @@ class PerceptionService:
         self,
         *,
         knowledge_store: Any | None = None,
+        knowledge_retriever: Any | None = None,
         memory_store: Any | None = None,
         evidence_service: Any | None = None,
         capability_catalog: Any | None = None,
         neuro_advisor: Any | None = None,
+        experience_store: Any | None = None,
         default_budget: int = 16,
+        rerank_policy: str = "auto",
     ) -> None:
         self.knowledge_store = knowledge_store
+        self.knowledge_retriever = knowledge_retriever
         self.memory_store = memory_store
         self.evidence_service = evidence_service
         self.capability_catalog = capability_catalog
         self.neuro_advisor = neuro_advisor
+        self.experience_store = experience_store
         self.default_budget = default_budget
+        self.rerank_policy = rerank_policy
 
     def perceive(
         self,
@@ -106,6 +112,8 @@ class PerceptionService:
         conversation_id: str | None = None,
         run_id: str | None = None,
         include_neuro: bool = False,
+        experience_learning: bool = False,
+        domain: str | None = None,
         budgets: dict[str, int] | None = None,
         system_state: dict[str, Any] | None = None,
     ) -> PerceptionSnapshot:
@@ -117,10 +125,16 @@ class PerceptionService:
             "history": 6,
             "capabilities": 4,
             "system": 2,
+            "experience": 3,
             **(budgets or {}),
         }
         items: list[PerceptionItem] = []
         dropped: list[str] = []
+        conversation_terms: list[str] = []
+        for msg in (history or [])[-4:]:
+            content = (msg.get("content") or "").strip()
+            if content:
+                conversation_terms.extend(content.split()[:6])
 
         # Conversation / user statements
         for msg in (history or [])[-budgets["history"] :]:
@@ -145,10 +159,16 @@ class PerceptionService:
                 )
             )
 
-        # Knowledge
-        if self.knowledge_store is not None and budgets["knowledge"] > 0:
+        # Knowledge — prefer staged / hybrid retriever when wired.
+        if budgets["knowledge"] > 0 and (
+            self.knowledge_retriever is not None or self.knowledge_store is not None
+        ):
             try:
-                matches = self._safe_search(self.knowledge_store, query, budgets["knowledge"])
+                matches = self._search_knowledge(
+                    query,
+                    budgets["knowledge"],
+                    conversation_terms=conversation_terms,
+                )
                 scored = sorted(
                     (( _relevance(query, self._text(m)), m) for m in matches),
                     key=lambda p: -p[0],
@@ -270,6 +290,74 @@ class PerceptionService:
             except Exception as exc:  # noqa: BLE001
                 dropped.append(f"neuro_error:{type(exc).__name__}")
 
+        # Verified procedural experience hints — CONTEXT only, never FACT / model guesses.
+        if (
+            experience_learning
+            and self.experience_store is not None
+            and budgets.get("experience", 0) > 0
+        ):
+            try:
+                hints = []
+                if hasattr(self.experience_store, "procedural_hints"):
+                    hints = list(
+                        self.experience_store.procedural_hints(domain=domain) or []
+                    )
+                if not hints and hasattr(self.experience_store, "list_admitted"):
+                    admitted = list(self.experience_store.list_admitted() or [])
+                    if domain:
+                        admitted = [e for e in admitted if getattr(e, "domain", None) == domain]
+                    hints = admitted[: budgets["experience"]]
+                for hint in hints[: budgets["experience"]]:
+                    if hasattr(hint, "public_dict"):
+                        payload = hint.public_dict()
+                        summary = (
+                            f"[procedural hint] domain={payload.get('domain')} "
+                            f"strategy={payload.get('strategy')} "
+                            f"pattern={payload.get('pattern') or payload.get('task_type')}"
+                        )
+                        verification = str(
+                            payload.get("verification")
+                            or payload.get("verification_status")
+                            or "verified"
+                        )
+                    elif isinstance(hint, dict):
+                        payload = dict(hint)
+                        summary = (
+                            f"[procedural hint] {payload.get('pattern') or payload.get('task_summary') or payload}"
+                        )[:500]
+                        verification = str(payload.get("verification") or "verified")
+                    else:
+                        payload = {"repr": str(hint)[:200]}
+                        summary = f"[procedural hint] {hint}"[:500]
+                        verification = "verified"
+                    items.append(
+                        PerceptionItem(
+                            item_id=str(uuid.uuid4()),
+                            # HYPOTHESIS keeps this out of FACT promotion paths.
+                            source_type=EpistemicType.HYPOTHESIS,
+                            summary=summary[:500],
+                            source_ref=str(
+                                payload.get("experience_id")
+                                or payload.get("domain")
+                                or "experience"
+                            ),
+                            trust=0.35,
+                            confidence=0.3,
+                            freshness="experience",
+                            authority="experience_store",
+                            verification_status=verification,
+                            payload={
+                                **payload,
+                                "kind": "procedural_experience_context",
+                                "epistemic_role": "CONTEXT",
+                                "advisory_only": True,
+                                "not_fact": True,
+                            },
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                dropped.append(f"experience_error:{type(exc).__name__}")
+
         # System state
         if system_state and budgets["system"] > 0:
             for key, value in list(system_state.items())[: budgets["system"]]:
@@ -306,8 +394,62 @@ class PerceptionService:
                 "query": query[:200],
                 "run_id": run_id,
                 "conversation_id": conversation_id,
+                "domain": domain,
+                "experience_learning": experience_learning,
             },
         )
+
+    def _search_knowledge(
+        self,
+        query: str,
+        limit: int,
+        *,
+        conversation_terms: list[str] | None = None,
+    ) -> list[Any]:
+        retriever = self.knowledge_retriever
+        if retriever is not None:
+            # StagedRetriever.search(text, limit=...) → StagedRetrievalResult
+            if hasattr(retriever, "early_exit_enabled") or getattr(
+                retriever, "__class__", type
+            ).__name__ == "StagedRetriever":
+                staged = retriever.search(
+                    query,
+                    limit=limit,
+                    conversation_terms=conversation_terms,
+                    rerank_policy=self.rerank_policy,
+                )
+                return list(getattr(staged, "hits", []) or [])
+            # HybridRetriever with RetrievalQuery
+            try:
+                from Data.modules.knowledge.retrieval import RetrievalQuery
+                from Data.modules.knowledge.staged_retrieval import resolve_use_reranker
+
+                reranker = getattr(retriever, "reranker", None)
+                available = bool(
+                    reranker is not None
+                    and hasattr(reranker, "available")
+                    and reranker.available()
+                )
+                use_reranker = resolve_use_reranker(
+                    self.rerank_policy,
+                    reranker_available=available,
+                )
+                hits = retriever.search(
+                    RetrievalQuery(
+                        text=query,
+                        limit=limit,
+                        use_reranker=use_reranker,
+                    )
+                )
+                return list(hits or [])
+            except TypeError:
+                try:
+                    return list(retriever.search(query, limit=limit) or [])
+                except Exception:  # noqa: BLE001
+                    pass
+        if self.knowledge_store is not None:
+            return self._safe_search(self.knowledge_store, query, limit)
+        return []
 
     def _safe_search(self, store: Any, query: str, limit: int) -> list[Any]:
         if hasattr(store, "search"):

@@ -15,12 +15,14 @@ def bind_default_consumers(
     function_runtime: Any | None = None,
     knowledge: Any | None = None,
     deep_recall: Any | None = None,
+    staged_retriever: Any | None = None,
     why_library: Any | None = None,
     mcp_bridge: Any | None = None,
     cognition_runtime: Any | None = None,
     agent_runtime: Any | None = None,
     coding_service: Any | None = None,
     research_service: Any | None = None,
+    dataset_service: Any | None = None,
     isolation_guard: Any | None = None,
     chaos: Any | None = None,
     model_plane: Any | None = None,
@@ -31,6 +33,10 @@ def bind_default_consumers(
     module_manager: Any | None = None,
     market_sim_service: Any | None = None,
     context_builder: Any | None = None,
+    residual_orchestrator: Any | None = None,
+    cortex_runtime: Any | None = None,
+    residual_runtime: Any | None = None,
+    reasoning_policy_holder: Any | None = None,
 ) -> None:
     """Register apply callbacks that push hot settings into live consumers."""
 
@@ -65,6 +71,37 @@ def bind_default_consumers(
             elif hasattr(deep_recall, "budget"):
                 deep_recall.budget = int(value)
 
+        if key == "knowledge.rerank_policy":
+            if staged_retriever is not None and hasattr(staged_retriever, "rerank_policy"):
+                staged_retriever.rerank_policy = str(value)
+            if cognition_runtime is not None:
+                perception = getattr(cognition_runtime, "perception", None)
+                if perception is not None and hasattr(perception, "rerank_policy"):
+                    perception.rerank_policy = str(value)
+
+        if key == "knowledge.query_expansion" and staged_retriever is not None:
+            if hasattr(staged_retriever, "query_expansion"):
+                staged_retriever.query_expansion = bool(value)
+
+        if key == "knowledge.max_query_expansions" and staged_retriever is not None:
+            if hasattr(staged_retriever, "max_query_expansions"):
+                staged_retriever.max_query_expansions = max(0, int(value))
+
+        if key == "knowledge.diversity_enabled" and knowledge is not None:
+            # Prefer live HybridRetriever when passed as staged's authority.
+            target = None
+            if staged_retriever is not None and hasattr(staged_retriever, "retriever"):
+                target = staged_retriever.retriever
+            if target is not None and hasattr(target, "diversity_enabled"):
+                target.diversity_enabled = bool(value)
+
+        if key == "knowledge.diversity_strength":
+            target = None
+            if staged_retriever is not None and hasattr(staged_retriever, "retriever"):
+                target = staged_retriever.retriever
+            if target is not None and hasattr(target, "diversity_strength"):
+                target.diversity_strength = float(value)
+
         if key == "features.deep_recall" and deep_recall is not None and hasattr(deep_recall, "enabled"):
             deep_recall.enabled = bool(value) and bool(effective.features.rag_v3)
 
@@ -92,7 +129,8 @@ def bind_default_consumers(
         if cognition_runtime is not None:
             mapping = {
                 "features.cognition_enabled": "enabled",
-                "features.cognition_shadow": "shadow",
+                # CognitiveRuntime stores the flag as shadow_default (not shadow).
+                "features.cognition_shadow": "shadow_default",
                 "features.cognition_iterative_loop": "iterative",
                 "features.cognition_belief_state": "belief_enabled",
                 "features.cognition_neuro": "neuro_enabled",
@@ -103,6 +141,30 @@ def bind_default_consumers(
             attr = mapping.get(key)
             if attr and hasattr(cognition_runtime, attr):
                 setattr(cognition_runtime, attr, bool(value))
+
+        if key == "features.reasoning_iterative_retrieval" and cognition_runtime is not None:
+            if hasattr(cognition_runtime, "iterative_retrieval"):
+                cognition_runtime.iterative_retrieval = bool(value)
+            elif hasattr(cognition_runtime, "reasoning_iterative_retrieval"):
+                cognition_runtime.reasoning_iterative_retrieval = bool(value)
+
+        if key.startswith("reasoning.") and cognition_runtime is not None:
+            try:
+                from Data.modules.intelligence import ReasoningPolicy
+
+                policy = ReasoningPolicy.from_settings(effective)
+                meta = getattr(cognition_runtime, "meta", None)
+                if meta is not None and hasattr(meta, "set_policy"):
+                    meta.set_policy(policy)
+                if reasoning_policy_holder is not None:
+                    if isinstance(reasoning_policy_holder, dict):
+                        reasoning_policy_holder["policy"] = policy
+                    elif hasattr(reasoning_policy_holder, "reasoning_policy"):
+                        reasoning_policy_holder.reasoning_policy = policy
+                    elif hasattr(reasoning_policy_holder, "policy"):
+                        reasoning_policy_holder.policy = policy
+            except Exception:  # noqa: BLE001 — hot apply must not break settings plane
+                pass
 
         if agent_runtime is not None:
             if key == "features.agents_enabled" and hasattr(agent_runtime, "agents_enabled"):
@@ -128,6 +190,16 @@ def bind_default_consumers(
                         search_endpoint=effective.research_integration.web_search_endpoint,
                         api_key=effective.research_integration.web_search_api_key,
                     )
+            if key == "research.auto_promote_verified_knowledge" and hasattr(
+                research_service, "auto_promote_verified_knowledge"
+            ):
+                research_service.auto_promote_verified_knowledge = bool(value)
+
+        if dataset_service is not None:
+            if key == "datasets.auto_index_ready_to_knowledge" and hasattr(
+                dataset_service, "datasets_auto_index_ready_to_knowledge"
+            ):
+                dataset_service.datasets_auto_index_ready_to_knowledge = bool(value)
 
         if isolation_guard is not None and key == "network.allow_outbound":
             if hasattr(isolation_guard, "settings"):
@@ -157,7 +229,9 @@ def bind_default_consumers(
             if key == "model.model" and hasattr(llm, "model"):
                 llm.model = value
 
-        if neuro_advisor is not None and key.startswith("features.neuro"):
+        if neuro_advisor is not None and (
+            key.startswith("features.neuro") or key in {"features.residual_production", "features.memory_semantic"}
+        ):
             mapping = {
                 "features.neuro_enabled": "enabled",
                 "features.neuro_associative_memory": "associative_memory",
@@ -165,10 +239,70 @@ def bind_default_consumers(
                 "features.neuro_residual_injection": "residual_injection",
                 "features.neuro_cortex": "cortex_enabled",
                 "features.neuro_memory_tiers": "memory_tiers_enabled",
+                "features.neuro_residual_orchestrator": "residual_orchestrator_enabled",
+                "features.neuro_cortex_blocks": "cortex_blocks_enabled",
             }
             attr = mapping.get(key)
             if attr and hasattr(neuro_advisor, attr):
                 setattr(neuro_advisor, attr, bool(value))
+
+            if key == "features.neuro_cortex":
+                planner = getattr(neuro_advisor, "cortex_planner", None)
+                if planner is not None and hasattr(planner, "enabled"):
+                    planner.enabled = bool(value)
+
+            if key == "features.memory_semantic":
+                facade = getattr(neuro_advisor, "memory_facade", None)
+                if facade is not None and hasattr(facade, "use_embeddings"):
+                    facade.use_embeddings = bool(value)
+
+            if key == "features.neuro_memory_tiers":
+                facade = getattr(neuro_advisor, "memory_facade", None)
+                if facade is not None and hasattr(facade, "enabled"):
+                    facade.enabled = bool(value) and bool(effective.features.neuro_enabled)
+
+        if residual_orchestrator is not None and key in {
+            "features.neuro_residual_orchestrator",
+            "features.neuro_enabled",
+        }:
+            if hasattr(residual_orchestrator, "enabled"):
+                residual_orchestrator.enabled = bool(
+                    effective.features.neuro_enabled and effective.features.neuro_residual_orchestrator
+                )
+
+        if cortex_runtime is not None:
+            if key == "features.neuro_cortex_blocks" and hasattr(cortex_runtime, "named_blocks_enabled"):
+                cortex_runtime.named_blocks_enabled = bool(value)
+            if key in {"neuro_runtime.cortex_max_k", "memory.tier0_max_slots"}:
+                pass  # handled below for planner / capacity
+
+        if key == "neuro_runtime.cortex_max_k":
+            max_k = int(value)
+            if cortex_runtime is not None and hasattr(cortex_runtime, "max_k"):
+                cortex_runtime.max_k = max_k
+            planner = getattr(neuro_advisor, "cortex_planner", None) if neuro_advisor is not None else None
+            if planner is not None:
+                if hasattr(planner, "max_k"):
+                    planner.max_k = max_k
+                if hasattr(planner, "max_depth"):
+                    planner.max_depth = min(2, max(0, max_k))
+                if hasattr(planner, "max_critic_rounds"):
+                    planner.max_critic_rounds = max_k
+
+        if key == "memory.tier0_max_slots":
+            capacity = int(value)
+            facade = getattr(neuro_advisor, "memory_facade", None) if neuro_advisor is not None else None
+            working = getattr(facade, "working", None) if facade is not None else None
+            if working is not None and hasattr(working, "capacity"):
+                working.capacity = capacity
+
+        if key == "features.residual_production" and residual_runtime is not None:
+            if hasattr(residual_runtime, "enabled"):
+                residual_runtime.enabled = bool(value) and bool(
+                    effective.features.neuro_enabled and effective.features.neuro_residual_injection
+                )
+            elif hasattr(residual_runtime, "production_enabled"):
+                residual_runtime.production_enabled = bool(value)
 
         if neuro_critic is not None and key == "features.neuro_process_critic":
             if hasattr(neuro_critic, "enabled"):
@@ -199,17 +333,22 @@ def bind_default_consumers(
                 market_sim_service.settings = effective
 
         if context_builder is not None and key.startswith("context."):
-            if key == "context.token_budget" and hasattr(context_builder, "token_budget"):
-                context_builder.token_budget = int(value)
-            if key == "context.reserve_response_tokens" and hasattr(
-                context_builder, "reserve_response_tokens"
-            ):
-                context_builder.reserve_response_tokens = int(value)
-            if key == "context.max_knowledge_chars" and hasattr(context_builder, "max_knowledge_chars"):
-                context_builder.max_knowledge_chars = int(value)
+            attr = key.split(".", 1)[1]
+            if hasattr(context_builder, attr):
+                current = getattr(context_builder, attr)
+                if isinstance(current, bool) or attr == "auto_budget":
+                    setattr(context_builder, attr, bool(value))
+                elif isinstance(current, float) or "fraction" in attr:
+                    setattr(context_builder, attr, float(value))
+                else:
+                    setattr(context_builder, attr, int(value) if isinstance(value, (int, float)) else value)
             if key == "resources.max_history_messages" and hasattr(
                 context_builder, "max_history_messages"
             ):
+                context_builder.max_history_messages = int(value)
+
+        if key == "resources.max_history_messages" and context_builder is not None:
+            if hasattr(context_builder, "max_history_messages"):
                 context_builder.max_history_messages = int(value)
 
         if key == "hf_token":

@@ -120,6 +120,7 @@ class ExperienceStore:
     def __init__(self, store: Any | None = None) -> None:
         self._items: dict[str, VerifiedExperience] = {}
         self._procedural: list[ProceduralMemoryHint] = []
+        self._active_learning: list[dict[str, Any]] = []
         self._db_store = store
         self.policy = ExperienceAdmissionPolicy()
 
@@ -191,9 +192,21 @@ class ExperienceStore:
             return list(self._procedural)
         return [p for p in self._procedural if p.domain == domain]
 
+    def record_active_learning_candidate(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        """Queue a structured active-learning candidate — never auto-trains."""
+        payload = {
+            **dict(candidate),
+            "candidate_id": str(candidate.get("candidate_id") or uuid.uuid4()),
+            "requires_human_or_policy_approval": True,
+            "auto_promote_forbidden": True,
+            "created_at": candidate.get("created_at") or _now(),
+        }
+        self._active_learning.append(payload)
+        return payload
+
     def training_candidates(self) -> list[dict[str, Any]]:
         """Controlled bridge payload — never auto-promotes models."""
-        return [
+        admitted = [
             {
                 "experience_id": e.experience_id,
                 "domain": e.domain,
@@ -201,6 +214,17 @@ class ExperienceStore:
                 "verification_status": e.verification_status,
                 "requires_human_or_policy_approval": True,
                 "auto_promote_forbidden": True,
+                "source": "verified_experience",
             }
             for e in self.list_admitted()
         ]
+        active = [
+            {
+                **c,
+                "requires_human_or_policy_approval": True,
+                "auto_promote_forbidden": True,
+                "source": c.get("source") or "active_learning",
+            }
+            for c in self._active_learning
+        ]
+        return admitted + active

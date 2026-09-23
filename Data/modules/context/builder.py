@@ -23,6 +23,10 @@ class ContextBuilder:
       2. recent history (newest first)
       3. knowledge / evidence / memory
       4. advisory extras (neuro/why/atlas)
+
+    When ``auto_budget`` is on and a model window is known, packing uses
+    ``max_context_fraction`` / ``reserve_response_fraction``. Otherwise the
+    fixed ``token_budget`` / ``reserve_response_tokens`` fallback applies.
     """
 
     def __init__(
@@ -32,6 +36,11 @@ class ContextBuilder:
         max_knowledge_chars: int = 1800,
         max_history_messages: int = 24,
         reserve_response_tokens: int = 512,
+        auto_budget: bool = True,
+        max_context_fraction: float = 0.72,
+        reserve_response_fraction: float = 0.18,
+        minimum_response_tokens: int = 256,
+        model_context_window: int | None = None,
     ) -> None:
         if token_budget < 256:
             raise ValueError("token_budget must be >= 256")
@@ -39,10 +48,79 @@ class ContextBuilder:
         self.max_knowledge_chars = max_knowledge_chars
         self.max_history_messages = max_history_messages
         self.reserve_response_tokens = reserve_response_tokens
+        self.auto_budget = bool(auto_budget)
+        self.max_context_fraction = float(max_context_fraction)
+        self.reserve_response_fraction = float(reserve_response_fraction)
+        self.minimum_response_tokens = max(0, int(minimum_response_tokens))
+        self.model_context_window = (
+            int(model_context_window) if model_context_window is not None else None
+        )
+
+    def resolve_budgets(
+        self,
+        *,
+        model_context_window: int | None = None,
+        token_budget: int | None = None,
+    ) -> dict[str, Any]:
+        """Resolve pack usable budget + response reserve (model-aware when possible)."""
+        window = model_context_window if model_context_window is not None else self.model_context_window
+        if window is not None:
+            try:
+                window_i = int(window)
+            except (TypeError, ValueError):
+                window_i = 0
+        else:
+            window_i = 0
+
+        used_auto = bool(self.auto_budget and window_i >= 256)
+        if used_auto:
+            frac = min(1.0, max(0.05, float(self.max_context_fraction)))
+            reserve_frac = min(1.0, max(0.0, float(self.reserve_response_fraction)))
+            # Context pack + response share the window; pack gets max_context_fraction,
+            # response reserve is max(fraction of window, minimum floor), capped so pack
+            # retains at least 256 tokens.
+            pack_cap = max(256, int(window_i * frac))
+            reserve = max(
+                self.minimum_response_tokens,
+                int(window_i * reserve_frac),
+            )
+            # If explicit token_budget override is passed, treat it as pack ceiling.
+            if token_budget is not None:
+                pack_cap = min(pack_cap, max(256, int(token_budget)))
+            # Ensure pack + reserve fit the window when possible.
+            if pack_cap + reserve > window_i:
+                reserve = max(self.minimum_response_tokens, window_i - pack_cap)
+            if pack_cap + reserve > window_i:
+                pack_cap = max(256, window_i - reserve)
+            usable = pack_cap
+            source = "auto_fraction"
+        else:
+            base = int(token_budget) if token_budget is not None else int(self.token_budget)
+            reserve = int(self.reserve_response_tokens)
+            usable = max(256, base - reserve)
+            # When caller passes token_budget to build(), historically that value *is*
+            # the usable pack budget (already net of reserve). Preserve that contract.
+            if token_budget is not None:
+                usable = max(256, int(token_budget))
+                reserve = int(self.reserve_response_tokens)
+            source = "fixed"
+
+        return {
+            "usable_budget": usable,
+            "reserve_response_tokens": reserve,
+            "token_budget_base": (
+                int(window_i) if used_auto else int(self.token_budget if token_budget is None else token_budget)
+            ),
+            "model_context_window": window_i or None,
+            "auto_budget_applied": used_auto,
+            "source": source,
+            "max_context_fraction": float(self.max_context_fraction),
+            "reserve_response_fraction": float(self.reserve_response_fraction),
+        }
 
     @property
     def usable_budget(self) -> int:
-        return max(256, self.token_budget - self.reserve_response_tokens)
+        return int(self.resolve_budgets()["usable_budget"])
 
     def build(
         self,
@@ -59,6 +137,7 @@ class ContextBuilder:
         why: list[dict[str, Any]] | None = None,
         contradictions: list[dict[str, Any] | str] | None = None,
         token_budget: int | None = None,
+        model_context_window: int | None = None,
         mode: str | None = None,
         constraints: str | None = None,
         file_kinds: list[dict[str, Any]] | None = None,
@@ -66,7 +145,11 @@ class ContextBuilder:
         behavior_profile_prompt: str | None = None,
         reasoning_mode: str | None = None,
     ) -> ContextPack:
-        budget = token_budget if token_budget is not None else self.usable_budget
+        resolved = self.resolve_budgets(
+            model_context_window=model_context_window,
+            token_budget=token_budget,
+        )
+        budget = int(resolved["usable_budget"])
         know_chars = max_knowledge_chars if max_knowledge_chars is not None else self.max_knowledge_chars
         sections: list[ContextSection] = []
         dropped: list[str] = []
@@ -471,6 +554,14 @@ class ContextBuilder:
                 "atlas_included": sum(1 for s in sections if s.kind == "atlas" and s.included),
                 "why_included": sum(1 for s in sections if s.kind == "why" and s.included),
                 "constraints_retained": constraints_retained,
+                "budget_resolution": {
+                    "source": resolved["source"],
+                    "auto_budget_applied": resolved["auto_budget_applied"],
+                    "model_context_window": resolved["model_context_window"],
+                    "reserve_response_tokens": resolved["reserve_response_tokens"],
+                    "max_context_fraction": resolved["max_context_fraction"],
+                    "reserve_response_fraction": resolved["reserve_response_fraction"],
+                },
             },
             budget_ledger=ledger,
             manifest=manifest,

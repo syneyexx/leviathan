@@ -42,6 +42,8 @@ class NeuroAdvisor:
         self.residual_injection = residual_injection
         self.cortex_enabled = cortex_enabled
         self.memory_tiers_enabled = memory_tiers_enabled
+        self.residual_orchestrator_enabled = False
+        self.cortex_blocks_enabled = False
         self.residual_port = residual_port or UnsupportedResidualRuntime()
         self.memory_facade = memory_facade
         self.cortex_planner = cortex_planner or CortexPlanner(enabled=cortex_enabled)

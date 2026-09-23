@@ -238,8 +238,22 @@ def build_embedding_provider(
     model_name: str | None = None,
     hash_dimensions: int = 256,
 ) -> EmbeddingProvider:
-    """Factory used by Core. Never auto-installs packages."""
+    """Factory used by Core. Never auto-installs packages.
+
+    ``kind="auto"`` resolves via the intelligence substrate resolver:
+    local sentence-transformers when already available, else LocalHash.
+    Never auto-downloads when ST is unavailable.
+    """
     normalized = (kind or "null").strip().lower()
+    if normalized == "auto":
+        from Data.modules.intelligence.embeddings_resolve import resolve_embedding_provider
+
+        provider, _info = resolve_embedding_provider(
+            kind="auto",
+            model_name=model_name,
+            hash_dimensions=hash_dimensions,
+        )
+        return provider
     if normalized in {"null", "none", "off"}:
         return NullEmbeddingProvider()
     if normalized in {"hash", "local_hash", "local"}:

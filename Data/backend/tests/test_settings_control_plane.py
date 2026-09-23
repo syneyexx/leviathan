@@ -91,14 +91,50 @@ class SettingsControlPlaneTests(unittest.TestCase):
             self.plane.patch_many({"features.mcp_stdio": True})
 
     def test_feature_hierarchy_deep_recall_requires_rag(self) -> None:
+        self.plane.patch_many(
+            {
+                "features.deep_recall": False,
+                "features.why_library": False,
+                "features.rag_v3": False,
+            }
+        )
         with self.assertRaises(SettingsError):
             self.plane.patch_many({"features.deep_recall": True})
 
     def test_cognition_child_requires_parent(self) -> None:
+        self.plane.patch_many(
+            {
+                "features.cognition_shadow": False,
+                "features.cognition_iterative_loop": False,
+                "features.cognition_belief_state": False,
+                "features.cognition_neuro": False,
+                "features.cognition_adaptive_depth": False,
+                "features.cognition_delegation": False,
+                "features.cognition_experience_learning": False,
+                "features.cognition_enabled": False,
+            }
+        )
         with self.assertRaises(SettingsError):
             self.plane.patch_many({"features.cognition_shadow": True})
 
     def test_neuro_child_requires_parent(self) -> None:
+        self.plane.patch_many(
+            {
+                "features.cognition_neuro": False,
+                "features.residual_production": False,
+                "features.neuro_associative_memory": False,
+                "features.neuro_process_critic": False,
+                "features.neuro_residual_injection": False,
+                "features.neuro_cortex_blocks": False,
+                "features.neuro_cortex": False,
+                "features.neuro_memory_tiers": False,
+                "features.neuro_residual_orchestrator": False,
+                "features.neuro_contrastive_training": False,
+                "features.neuro_soak_long": False,
+                "features.neuro_training_real_worker": False,
+                "features.neuro_enabled": False,
+            }
+        )
         with self.assertRaises(SettingsError):
             self.plane.patch_many({"features.neuro_residual_injection": True})
 
