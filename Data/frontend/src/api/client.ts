@@ -1126,9 +1126,33 @@ export const api = {
     roots: Array<{ id: string; path: string }>;
     sources: Array<Record<string, unknown>>;
     count: number;
+    dataRoot?: string;
     truth?: Record<string, boolean>;
   }> {
     return request(`/api/datasets/offline/discover?maxFiles=${encodeURIComponent(String(maxFiles))}`);
+  },
+
+  refreshDatasetLibrary(maxFiles = 500): Promise<{
+    created: number;
+    updated: number;
+    missingSources: number;
+    discovered: number;
+    registeredDatasetIds: string[];
+    roots: Array<{ id: string; path: string }>;
+    dataRoot?: string;
+    datasets: DatasetRecord[];
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/datasets/library/refresh?maxFiles=${encodeURIComponent(String(maxFiles))}`, {
+      method: "POST",
+    });
+  },
+
+  listLearnedDatasets(limit = 100): Promise<{
+    datasets: DatasetRecord[];
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/datasets/learned?limit=${encodeURIComponent(String(limit))}`);
   },
 
   listOfflineBrainIndexes(limit = 100): Promise<{ indexes: DatasetIndex[] }> {
@@ -1146,14 +1170,33 @@ export const api = {
     });
   },
 
+  /** @deprecated Prefer learnDataset — offline index is Brain ingestion. */
   enqueueOfflineBrainIndex(payload: {
     datasetId: string;
-    versionId: string;
+    versionId?: string | null;
     scope?: string;
     maxRecords?: number | null;
     sourceFingerprint?: string | null;
+    rebuild?: boolean;
   }): Promise<{ job: DatasetJob }> {
     return request("/api/datasets/offline/index", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  learnDataset(
+    datasetId: string,
+    payload: {
+      versionId?: string | null;
+      scope?: string;
+      maxRecords?: number | null;
+      sourceFingerprint?: string | null;
+      rebuild?: boolean;
+      offlineOnly?: boolean;
+    } = {},
+  ): Promise<{ job: DatasetJob }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/learn`, {
       method: "POST",
       body: JSON.stringify(payload),
     });

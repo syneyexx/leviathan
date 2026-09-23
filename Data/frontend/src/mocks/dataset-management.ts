@@ -113,7 +113,7 @@ export const DM_ACTIONS = [
   { id: "local", label: "Lokale bestanden importeren", icon: "upload", toast: "Lokale import" },
   { id: "create", label: "Nieuwe dataset aanmaken", icon: "squareplus", toast: "Nieuwe dataset" },
   { id: "delete", label: "Geselecteerde verwijderen", icon: "trash", toast: "Verwijderen (demo)", danger: true },
-  { id: "offline", label: "Converteren naar offline", icon: "save", toast: "Offline conversie" },
+  { id: "learn", label: "Kennis leren", icon: "database", toast: "Kennis leren" },
   { id: "dup", label: "Dupliceren", icon: "copy", toast: "Dataset gedupliceerd" },
   { id: "index", label: "Index opnieuw opbouwen", icon: "refresh", toast: "Index rebuild gestart" },
   { id: "validate", label: "Valideren", icon: "checkcircle", toast: "Validatie gestart" },
@@ -324,8 +324,9 @@ export const DM_TAG_CLOUD = [
 
 export const DM_FOOTER_ACTIONS = [
   { id: "import", label: "Importeer dataset", tone: "outline" as const },
+  { id: "rescan", label: "Opnieuw scannen", tone: "outline" as const },
   { id: "validate", label: "Valideer dataset", tone: "outline" as const },
-  { id: "offline", label: "Converteer naar offline", tone: "outline" as const },
+  { id: "learn", label: "Kennis leren", tone: "outline" as const },
   { id: "save", label: "Sla metagegevens op", tone: "gold" as const },
   { id: "delete", label: "Verwijder dataset", tone: "danger" as const },
 ] as const;

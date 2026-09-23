@@ -462,6 +462,22 @@ export type ModelInferenceTestResult = {
 
 /* ---------- Datasets ---------- */
 
+export type DatasetBrainStatus = {
+  brainStatus: string;
+  label?: string;
+  indexId?: string | null;
+  chunkCount?: number | null;
+  documentCount?: number | null;
+  jobId?: string | null;
+  progress?: number | null;
+  phase?: string | null;
+  updatedAt?: string | null;
+  sourceMissing?: boolean;
+  learned?: boolean;
+  versionId?: string;
+  error?: unknown;
+};
+
 export type DatasetRecord = {
   datasetId: string;
   name: string;
@@ -482,6 +498,11 @@ export type DatasetRecord = {
   rawPath?: string | null;
   createdAt: string;
   updatedAt: string;
+  brain?: DatasetBrainStatus;
+  brainStatus?: string;
+  learned?: boolean;
+  sourceMissing?: boolean;
+  indexes?: DatasetIndex[];
 };
 
 export type DatasetVersion = {

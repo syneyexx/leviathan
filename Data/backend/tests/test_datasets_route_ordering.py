@@ -75,6 +75,8 @@ class DatasetRouteOrderingTests(unittest.TestCase):
         self.assertIn("jobs", DATASETS_STATIC_SEGMENTS)
         self.assertIn("mixtures", DATASETS_STATIC_SEGMENTS)
         self.assertIn("offline", DATASETS_STATIC_SEGMENTS)
+        self.assertIn("library", DATASETS_STATIC_SEGMENTS)
+        self.assertIn("learned", DATASETS_STATIC_SEGMENTS)
         self.assertIn("versions", DATASETS_STATIC_SEGMENTS)
 
     def test_list_jobs_not_shadowed_by_dataset_id(self) -> None:

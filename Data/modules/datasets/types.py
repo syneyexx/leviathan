@@ -331,11 +331,22 @@ class DatasetIndex:
 
 
 class DatasetError(Exception):
-    def __init__(self, message: str, *, code: str = "dataset_error", http_status: int = 400) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "dataset_error",
+        http_status: int = 400,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.http_status = http_status
+        self.details = dict(details or {})
 
     def public_dict(self) -> dict[str, Any]:
-        return {"code": self.code, "message": self.message}
+        out: dict[str, Any] = {"code": self.code, "message": self.message}
+        if self.details:
+            out["details"] = self.details
+        return out
