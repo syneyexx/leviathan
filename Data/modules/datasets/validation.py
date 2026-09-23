@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from .types import CanonicalRecord
 
@@ -67,13 +67,16 @@ def validate_record(record: CanonicalRecord, *, index: int = 0) -> list[dict[str
 
 
 def validate_records(
-    records: list[CanonicalRecord],
+    records: list[CanonicalRecord] | Iterable[CanonicalRecord],
     *,
     max_issues: int = 200,
 ) -> dict[str, Any]:
+    """Validate records incrementally — works for lists or streaming iterables."""
     all_issues: list[dict[str, Any]] = []
     empty = 0
+    row_count = 0
     for idx, rec in enumerate(records):
+        row_count += 1
         issues = validate_record(rec, index=idx)
         if any(i.get("code") == "empty_content" for i in issues):
             empty += 1
@@ -82,12 +85,11 @@ def validate_records(
                 all_issues.append(issue)
     errors = [i for i in all_issues if i.get("severity") != "warning"]
     warnings = [i for i in all_issues if i.get("severity") == "warning"]
-    # Also count truncated
-    truncated = len(records) > 0 and len(all_issues) >= max_issues
+    truncated = row_count > 0 and len(all_issues) >= max_issues
     valid = len(errors) == 0
     return {
         "valid": valid,
-        "rowCount": len(records),
+        "rowCount": row_count,
         "errorCount": len(errors),
         "warningCount": len(warnings),
         "emptyContentCount": empty,

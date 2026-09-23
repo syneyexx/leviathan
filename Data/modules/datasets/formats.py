@@ -56,14 +56,35 @@ def detect_format(path: Path, *, sample_bytes: int = 64_000) -> FormatDetection:
     suffix = path.suffix.lower().lstrip(".")
     suffix_map = {
         "jsonl": DetectedFormat.JSONL,
+        "ndjson": DetectedFormat.JSONL,
         "json": DetectedFormat.JSON,
         "csv": DetectedFormat.CSV,
         "tsv": DetectedFormat.TSV,
         "txt": DetectedFormat.TXT,
         "md": DetectedFormat.MD,
         "markdown": DetectedFormat.MD,
+        "parquet": DetectedFormat.PARQUET,
     }
     suffix_hint = suffix_map.get(suffix)
+
+    # Parquet is binary — do not UTF-8 sniff as text.
+    if suffix_hint == DetectedFormat.PARQUET or suffix == "parquet":
+        details: dict[str, Any] = {"suffixHint": suffix}
+        try:
+            raw = path.read_bytes()[:4]
+            if raw == b"PAR1":
+                return FormatDetection(
+                    format=DetectedFormat.PARQUET,
+                    confidence=0.99,
+                    details={**details, "magic": "PAR1"},
+                )
+        except OSError as exc:
+            return FormatDetection(
+                format=DetectedFormat.PARQUET,
+                confidence=0.5,
+                details={**details, "error": str(exc)},
+            )
+        return FormatDetection(format=DetectedFormat.PARQUET, confidence=0.85, details=details)
 
     try:
         raw = path.read_bytes()[:sample_bytes]
