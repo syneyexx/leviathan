@@ -6,6 +6,36 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 9 Post-Training Improvement Flywheel — PASS
+
+### Objective
+Close the post-training loop (U301–U320 foundations): preference schema/DPO + reward recipes, synthetic generation with provenance, active-learning mining with governed ingestion, model lineage edges, and champion/challenger promotion that cannot silently replace production — extending `training/` + `evaluation/` + `models/`.
+
+### Added / changed
+- **Preferences:** `PreferenceRecord` schema + durable `PreferenceStore`; PreferenceBridge saves human pairs
+- **Recipes:** `reward_model_v1`; DPO fixture path honesty (`can_run_dpo` recipe/fixture, GPU slice not claimed)
+- **Synthetic / active learning:** filter cascade + immutable generator provenance; mine failures only via explicit govern step
+- **Flywheel:** `FlywheelControlPlane` propose → shadow → **explicit promote** (eval gate) → one-action rollback; append-only lineage
+- **API:** `/api/training/preferences`, synthetic/generate, active-learning/*, `/api/flywheel/*`
+- **Migration v32** + `LEVIATHAN_FEATURE_POSTTRAINING_FLYWHEEL`
+- **Tests:** `test_wave9_posttraining_flywheel.py` (exit gate: no silent replace without promotion evidence)
+- **Version:** `0.73.0-wave9-flywheel`
+
+### EXTERNAL-FIRST review
+- Promotion is a separate control-plane operation; proposals do not mutate active model
+- Synthetic/fixture metrics remain honest; no fabricated preference labels
+- No new third-party dependencies
+
+### Explicitly NOT claimed
+- Production GRPO/PPO fleets or unstable RL workers in default path
+- Learned LLM-judge calibration productization
+- Automatic silent production model swap
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 8 Industrial Data + Training Factory — PASS
 
 ### Objective
