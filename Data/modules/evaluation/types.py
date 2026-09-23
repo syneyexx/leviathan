@@ -18,6 +18,7 @@ class MeasurementState(str, Enum):
     """Wave 2 explicit measurement vocabulary (U338).
 
     UNMEASURED must never be treated as PASS.
+    Round 10: NOT_APPLICABLE is scoped-out — also never PASS.
     """
 
     PASS = "PASS"
@@ -27,6 +28,7 @@ class MeasurementState(str, Enum):
     UNAVAILABLE = "UNAVAILABLE"
     DISABLED = "DISABLED"
     DEGRADED = "DEGRADED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
 class JudgmentKind(str, Enum):
@@ -49,7 +51,7 @@ def outcome_to_measurement(outcome: EvalOutcome) -> MeasurementState:
 
 
 def measurement_is_pass(state: MeasurementState) -> bool:
-    """Only PASS counts as pass. UNMEASURED/PARTIAL/DEGRADED never do."""
+    """Only PASS counts as pass. UNMEASURED/PARTIAL/DEGRADED/NOT_APPLICABLE never do."""
     return state == MeasurementState.PASS
 
 

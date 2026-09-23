@@ -30,6 +30,14 @@ def measurement_blocks_release(state: GateMeasurement, *, severity: str) -> bool
     return state == GateMeasurement.FAIL
 
 
+def ci_release_mode() -> bool:
+    """True when LEVIATHAN_CI_RELEASE is enabled (Round 10 CI ship profile)."""
+    import os
+
+    raw = (os.environ.get("LEVIATHAN_CI_RELEASE") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class CiSuiteResult:
     suite_id: str

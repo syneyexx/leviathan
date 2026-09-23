@@ -154,7 +154,84 @@ class ReleaseGateMeasurementTests(unittest.TestCase):
         )
 
 
-class WorkflowPresenceTests(unittest.TestCase):
+class CiShipProfileTests(unittest.TestCase):
+    def test_ci_release_mode_blocks_soft_warn_fail(self) -> None:
+        from Data.modules.release import is_shipable
+
+        runner = ReleaseGateRunner(
+            checks=[
+                lambda: GateCheck(
+                    "frontend_dist",
+                    "Frontend dist",
+                    GateSeverity.WARN,
+                    False,
+                    "missing",
+                    measurement=GateMeasurement.FAIL,
+                )
+            ]
+        )
+        report = runner.run()
+        self.assertTrue(report.ready)
+        self.assertTrue(is_shipable(report, ci_release=False))
+        self.assertFalse(is_shipable(report, ci_release=True))
+
+    def test_ci_release_mode_blocks_unmeasured_warn(self) -> None:
+        from Data.modules.release import is_shipable
+
+        runner = ReleaseGateRunner(
+            checks=[
+                lambda: GateCheck(
+                    "probe",
+                    "Probe",
+                    GateSeverity.WARN,
+                    True,
+                    "not run",
+                    measurement=GateMeasurement.UNMEASURED,
+                )
+            ]
+        )
+        report = runner.run()
+        self.assertFalse(is_shipable(report, ci_release=True))
+        self.assertTrue(is_shipable(report, ci_release=False))
+
+    def test_not_applicable_does_not_block_ship(self) -> None:
+        from Data.modules.release import is_shipable
+
+        runner = ReleaseGateRunner(
+            checks=[
+                lambda: GateCheck(
+                    "core",
+                    "core",
+                    GateSeverity.BLOCK,
+                    True,
+                    "ok",
+                    measurement=GateMeasurement.PASS,
+                ),
+                lambda: GateCheck(
+                    "hades",
+                    "HADES",
+                    GateSeverity.INFO,
+                    True,
+                    "out of scope",
+                    measurement=GateMeasurement.NOT_APPLICABLE,
+                ),
+            ]
+        )
+        self.assertTrue(is_shipable(runner.run(), ci_release=True))
+
+    def test_measurement_state_not_applicable_is_not_pass(self) -> None:
+        from Data.modules.evaluation import MeasurementState, measurement_is_pass
+
+        self.assertFalse(measurement_is_pass(MeasurementState.NOT_APPLICABLE))
+        self.assertFalse(measurement_is_pass(MeasurementState.UNMEASURED))
+
+    def test_artifact_unmeasured_type_is_not_ok(self) -> None:
+        from Data.modules.artifacts.validate import validate_artifact_bytes
+
+        result = validate_artifact_bytes(b"abc", artifact_type="blob", filename="x.bin")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["measurement"], "UNMEASURED")
+        self.assertTrue(result["truth"]["unmeasured_is_not_validated"])
     def test_github_workflow_exists_and_excludes_hades_editor(self) -> None:
         from pathlib import Path
 

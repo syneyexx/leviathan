@@ -494,13 +494,21 @@ def _gate_outbound() -> GateCheck:
 
 
 def _gate_frontend() -> GateCheck:
+    from Data.modules.release import GateMeasurement, ci_release_mode
+
     ready = (FRONTEND_DIST / "index.html").is_file()
+    ci = ci_release_mode()
     return GateCheck(
         gate_id="frontend_dist",
         name="Frontend dist present",
-        severity=GateSeverity.WARN,
+        severity=GateSeverity.BLOCK if ci else GateSeverity.WARN,
         passed=ready,
-        detail="dist ready" if ready else "frontend dist missing",
+        detail=(
+            "dist ready"
+            if ready
+            else ("frontend dist missing (BLOCK under CI)" if ci else "frontend dist missing")
+        ),
+        measurement=GateMeasurement.PASS if ready else GateMeasurement.FAIL,
     )
 
 
@@ -556,6 +564,7 @@ def _gate_evaluation_relevance() -> GateCheck:
     return evaluation_relevance_gate(
         relevance,
         severity=GateSeverity.BLOCK if relevance.get("measurement") == "FAIL" else GateSeverity.WARN,
+        # Promotion paths use require_pass=True separately; CI asserts honesty via is_shipable.
         require_pass=False,
     )
 
@@ -771,7 +780,7 @@ def _master_evaluation_check() -> MasterGateCheck:
             check_id="evaluation_foundation",
             name="Foundation evaluation",
             status=MasterGateStatus.DEGRADED,
-            detail="foundation suite has UNMEASURED (honest)",
+            detail="foundation suite has UNMEASURED (honest; not shipable under CI)",
         )
     return MasterGateCheck(
         check_id="evaluation_foundation",
@@ -4760,7 +4769,15 @@ def multimodal_session_context(session_id: str) -> dict:
 
 @app.get("/api/release/gates")
 def release_gates_status() -> dict:
-    return {"report": release_gates.run().public_dict()}
+    from Data.modules.release import is_shipable
+
+    report = release_gates.run()
+    payload = report.public_dict()
+    payload["shipable"] = is_shipable(report)
+    payload["ci_release"] = bool(
+        __import__("os").environ.get("LEVIATHAN_CI_RELEASE", "").strip()
+    )
+    return {"report": payload}
 
 
 @app.get("/api/release/ci")

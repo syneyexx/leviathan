@@ -4,8 +4,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
-from .ci import GateMeasurement, measurement_blocks_release, measurement_counts_as_success
-
+from .ci import (
+    GateMeasurement,
+    ci_release_mode,
+    measurement_blocks_release,
+    measurement_counts_as_success,
+)
 
 class GateSeverity(str, Enum):
     INFO = "INFO"
@@ -169,3 +173,30 @@ def evaluation_relevance_gate(
         detail=detail,
         measurement=m,
     )
+
+
+def is_shipable(report: ReleaseGateReport, *, ci_release: bool | None = None) -> bool:
+    """Whether a release may ship under local vs CI profiles.
+
+    Local: no BLOCK failures (``report.ready``).
+    CI (``LEVIATHAN_CI_RELEASE``): WARN/BLOCK FAIL and UNMEASURED also block ship.
+    NOT_APPLICABLE never counts as PASS and does not by itself block.
+    """
+    if ci_release is None:
+        ci_release = ci_release_mode()
+    if not report.ready:
+        return False
+    if not ci_release:
+        return True
+    for item in report.checks:
+        m = item.measurement
+        if not item.passed and m == GateMeasurement.PASS:
+            m = GateMeasurement.FAIL
+        if m == GateMeasurement.FAIL:
+            return False
+        if m == GateMeasurement.UNMEASURED and item.severity in {
+            GateSeverity.BLOCK,
+            GateSeverity.WARN,
+        }:
+            return False
+    return True
