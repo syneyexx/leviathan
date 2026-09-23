@@ -93,7 +93,7 @@ export function BrainPage() {
       setNodes(data.nodes);
       setEdges(data.edges);
       setStats(data.stats as Record<string, unknown>);
-      setActiveTypes(new Set(data.nodes.map((node) => node.type));
+      setActiveTypes(new Set(data.nodes.map((node) => node.type)));
       setSelectedId((previous) => {
         if (previous && data.nodes.some((node) => node.id === previous)) return previous;
         return data.nodes.find((node) => /leviathan/i.test(node.label))?.id ?? data.nodes[0]?.id ?? null;
