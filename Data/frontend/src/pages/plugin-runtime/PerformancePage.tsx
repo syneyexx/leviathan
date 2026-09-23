@@ -9,16 +9,21 @@ import { Bar, Panel, Pill, PrHero, Spark, type PillTone } from "./shared";
 
 function statusPillTone(status: string): PillTone {
   const s = status.toLowerCase();
-  if (s === "healthy" || s === "ok") return "ok";
-  if (s === "degraded" || s === "belast" || s === "warning") return "gold";
+  if (s === "operational" || s === "healthy" || s === "ok") return "ok";
+  if (s === "degraded" || s === "belast" || s === "warning" || s === "experimental") return "gold";
+  if (s === "fixture" || s === "unconfigured" || s === "unmeasured") return "muted";
   if (s === "failed" || s === "error" || s === "unavailable") return "err";
   return "muted";
 }
 
 function statusLabel(status: string): string {
   const s = status.toLowerCase();
-  if (s === "healthy") return "Gezond";
-  if (s === "degraded") return "Belast";
+  if (s === "operational" || s === "healthy") return "Operational";
+  if (s === "degraded") return "Degraded";
+  if (s === "experimental") return "Experimental";
+  if (s === "fixture") return "Fixture";
+  if (s === "unconfigured") return "Unconfigured";
+  if (s === "unmeasured") return "Unmeasured";
   if (s === "unavailable" || s === "stopped") return "Unavailable";
   if (s === "failed") return "Failed";
   return status;
@@ -260,7 +265,17 @@ export function PerformancePage() {
               <label>
                 Status
                 <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-                  {["Alle statussen", "Gezond", "Belast", "Unavailable", "Failed"].map((t) => (
+                  {[
+                    "Alle statussen",
+                    "Operational",
+                    "Degraded",
+                    "Experimental",
+                    "Fixture",
+                    "Unconfigured",
+                    "Unmeasured",
+                    "Unavailable",
+                    "Failed",
+                  ].map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>

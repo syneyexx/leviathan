@@ -283,6 +283,7 @@ class McpServerSession:
             env_public=self.config.env_public,
             secret_refs=self.config.secret_refs,
             overrides=self.secret_overrides,
+            inherit=False,
         )
         self._secret_values = secrets
         transport = StdioTransport(

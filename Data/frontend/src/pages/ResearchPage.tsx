@@ -56,8 +56,15 @@ function relativeAgo(iso: string | null | undefined): string {
   return `${days}d ago`;
 }
 
-function confTone(n: number): "high" | "mid" {
+function confTone(n: number | null | undefined): "high" | "mid" | "muted" {
+  if (n == null || !Number.isFinite(n)) return "muted";
   return n >= 90 ? "high" : "mid";
+}
+
+function confLabel(item: { confidence: number | null; fixture?: boolean }): string {
+  if (item.fixture) return "fixture";
+  if (item.confidence == null || !Number.isFinite(item.confidence)) return "unmeasured";
+  return `${Math.round(item.confidence)}%`;
 }
 
 function projectProgress(project: ResearchProject | null): number {
@@ -147,15 +154,15 @@ function timelineFromProject(project: ResearchProject | null, live: boolean): Rd
 }
 
 function mapSourcesToEvidence(sources: ResearchSource[]): RdEvidenceItem[] {
-  return sources.slice(0, 8).map((s, i) => {
+  return sources.slice(0, 8).map((s) => {
     const domain = domainFromUri(s.canonical_uri ?? s.original_uri);
-    const conf = Math.max(72, 96 - i * 3 - (s.parse_status === "failed" ? 12 : 0));
+    // Round 9: do not invent confidence percentages from list index.
     return {
       id: s.source_id,
       title: s.title || domain || "Untitled source",
       domain,
       ago: relativeAgo(s.fetched_at || s.created_at),
-      confidence: conf,
+      confidence: null,
       favicon: (domain[0] || "?").toUpperCase(),
       url: s.canonical_uri ?? s.original_uri ?? undefined,
     };
@@ -184,7 +191,8 @@ function mapClaimsToInsights(claims: ResearchClaim[]): RdInsight[] {
   const icons: RdInsight["icon"][] = ["bot", "brain", "bulb"];
   return claims.slice(0, 5).map((c, i) => {
     const support = c.supporting_evidence_ids?.length ?? 0;
-    const conf = Math.min(98, 78 + support * 4 + (c.source_diversity || 0) * 3);
+    // Only emit a score when there is supporting evidence; never invent %.
+    const conf = support > 0 ? Math.min(98, 60 + support * 8) : null;
     return {
       id: c.claim_id,
       title: c.proposition.slice(0, 72) + (c.proposition.length > 72 ? "…" : ""),
@@ -368,7 +376,7 @@ export function ResearchPage() {
       ? `${sources.length} sources`
       : hasLiveProject
         ? "0 sources"
-        : "24 sources";
+        : "fixture preview";
 
   const refreshArtifacts = useCallback(async (projectId: string) => {
     const [src, ev, cl] = await Promise.all([
@@ -831,7 +839,7 @@ export function ResearchPage() {
                         {item.domain} · {item.ago}
                       </small>
                     </div>
-                    <span className={`lv-rd-conf is-${confTone(item.confidence)}`}>{item.confidence}%</span>
+                    <span className={`lv-rd-conf is-${confTone(item.confidence)}`}>{confLabel(item)}</span>
                     <button
                       type="button"
                       className="lv-rd-ext"
@@ -907,7 +915,7 @@ export function ResearchPage() {
                       <strong>{item.title}</strong>
                       <p>{item.body}</p>
                     </div>
-                    <span className={`lv-rd-conf is-${confTone(item.confidence)}`}>{item.confidence}%</span>
+                    <span className={`lv-rd-conf is-${confTone(item.confidence)}`}>{confLabel(item)}</span>
                   </li>
                 ))}
               </ul>

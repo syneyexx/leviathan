@@ -109,6 +109,12 @@ class ObservationStore:
         effect_id = str(uuid.uuid4())
         now = utc_now()
         effects = tuple(side_effects)
+        from Data.modules.common.secrets import redact_secrets
+        from Data.modules.observability.redaction import redact_payload
+
+        safe_output = redact_payload(output) if isinstance(output, dict) else output
+        safe_error = redact_secrets(error) if isinstance(error, str) else error
+        safe_meta = redact_payload(dict(metadata or {}))
         observation = ToolObservation(
             observation_id=observation_id,
             request_id=request_id,
@@ -121,11 +127,11 @@ class ObservationStore:
             approval_id=approval_id,
             run_id=run_id,
             job_id=job_id,
-            output=output,
-            error=error,
+            output=safe_output if isinstance(safe_output, dict) else output,
+            error=safe_error,
             duration_ms=duration_ms,
             effect_id=effect_id,
-            metadata=metadata or {},
+            metadata=safe_meta,
         )
         effect = EffectRecord(
             effect_id=effect_id,

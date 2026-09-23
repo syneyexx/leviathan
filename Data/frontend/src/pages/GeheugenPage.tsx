@@ -1,7 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { onderzoekHeroes } from "../assets/onderzoekKennisAssets";
+import { api } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
+import type { HealthResponse } from "../types/api";
 import {
   OkBars,
   OkGauge,
@@ -108,12 +110,13 @@ const TABS: { id: TabId; label: string; hint: string; icon: ReactNode }[] = [
 ];
 
 const HEALTH_STATS = [
-  { value: "1.2M", label: "Total Memories" },
-  { value: "98%", label: "Integrity Score" },
-  { value: "12ms", label: "Avg. Recall Time" },
-  { value: "99.7%", label: "Availability" },
+  { value: "—", label: "Total Memories" },
+  { value: "unmeasured", label: "Integrity Score" },
+  { value: "unmeasured", label: "Avg. Recall Time" },
+  { value: "unmeasured", label: "Availability" },
 ] as const;
 
+/** Decorative spark only — not a measured growth series. */
 const GROWTH_POINTS = [42, 48, 45, 52, 58, 55, 63, 68, 66, 74, 78, 82] as const;
 
 const MEMORY_TYPES = [
@@ -221,6 +224,42 @@ export function GeheugenPage() {
   const [selectedTrace, setSelectedTrace] = useState(TRACES[0].id);
   const [selectedType, setSelectedType] = useState(MEMORY_TYPES[0].id);
   const [contextFill] = useState(12);
+  const [posture, setPosture] = useState<string>("unmeasured");
+  const [memoryCount, setMemoryCount] = useState<number | null>(null);
+  const [healthStats, setHealthStats] = useState<Array<{ value: string; label: string }>>(
+    [...HEALTH_STATS],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [health, mem] = await Promise.all([
+          api.health().catch(() => null as HealthResponse | null),
+          api.listMemory({ limit: 500 }).catch(() => null),
+        ]);
+        if (cancelled) return;
+        const overall = health?.posture || health?.product_truth?.overall || "unmeasured";
+        setPosture(String(overall));
+        const count = mem?.memory?.length ?? null;
+        setMemoryCount(count);
+        setHealthStats([
+          {
+            value: count == null ? "—" : String(count),
+            label: "Active Memories (sampled)",
+          },
+          { value: "unmeasured", label: "Integrity Score" },
+          { value: "unmeasured", label: "Avg. Recall Time" },
+          { value: String(overall), label: "Product Posture" },
+        ]);
+      } catch {
+        if (!cancelled) setPosture("unmeasured");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function switchTab(id: TabId) {
     setTab(id);
@@ -228,8 +267,19 @@ export function GeheugenPage() {
   }
 
   function runRecall() {
-    toast(`Recall (${recallMode}): “${query.trim() || "geheugen"}” — 24 hits · 12ms`);
+    toast(`Recall (${recallMode}): “${query.trim() || "geheugen"}” — results follow evidence, not demo latency`);
   }
+
+  const gaugeValue =
+    posture === "operational" ? 80 : posture === "degraded" ? 45 : posture === "fixture" ? 20 : 0;
+  const gaugeLabel =
+    posture === "operational"
+      ? "Operational"
+      : posture === "degraded"
+        ? "Degraded"
+        : posture === "fixture"
+          ? "Fixture"
+          : "Unmeasured";
 
   return (
     <AppShell
@@ -267,14 +317,18 @@ export function GeheugenPage() {
         <OkPanel className="lv-gh-health-panel" title="Memory Health">
           <div className="lv-gh-health">
             <div className="lv-gh-gauge-wrap">
-              <OkGauge value={92} label="Health" size={88} />
+              <OkGauge value={gaugeValue} label={gaugeLabel} size={88} />
               <div className="lv-gh-gauge-meta">
-                <strong>Memory Systems Optimal</strong>
-                <span>All systems operational</span>
+                <strong>Memory posture from evidence</strong>
+                <span>
+                  {memoryCount == null
+                    ? "Counts unmeasured until /api/memory responds"
+                    : `${memoryCount} active memories sampled · posture ${posture}`}
+                </span>
               </div>
             </div>
             <div className="lv-gh-stats">
-              {HEALTH_STATS.map((stat) => (
+              {healthStats.map((stat) => (
                 <button
                   key={stat.label}
                   type="button"
@@ -288,8 +342,8 @@ export function GeheugenPage() {
             </div>
             <div className="lv-gh-growth">
               <div className="lv-gh-growth-head">
-                <strong>+12%</strong>
-                <span>Growth (30d)</span>
+                <strong>fixture</strong>
+                <span>Growth spark (decorative)</span>
               </div>
               <OkSpark points={GROWTH_POINTS} width={140} height={40} />
             </div>
@@ -530,7 +584,9 @@ export function GeheugenPage() {
               type="button"
               className="lv-ok-btn"
               style={{ marginTop: 8, width: "100%" }}
-              onClick={() => toast("Integrity check gestart — alle systemen healthy")}
+              onClick={() =>
+                toast("Integrity check gestart — resultaat volgt uit evidence, niet uit aannames")
+              }
             >
               Run Integrity Check
             </button>

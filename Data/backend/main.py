@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, settings
+from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, PROJECT_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
 from Data.backend.routes.settings import build_settings_router
@@ -219,6 +219,7 @@ execution_gateway = ExecutionGateway(
     approval_checker=approval_service,
     observation_store=observation_store,
     receipt_store=capability_receipts,
+    filesystem_root=PROJECT_ROOT,
 )
 job_store = JobStore(settings.database_path)
 resource_manager = ResourceManager(settings.resources.max_job_concurrency)
@@ -401,7 +402,11 @@ market_sim_service = MarketSimControlPlane.from_settings(
     observability_emit=observability.emit,
 )
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
-browser_worker = BrowserWorker(artifact_store=artifacts, backend_kind="local_dom")
+browser_worker = BrowserWorker(
+    artifact_store=artifacts,
+    backend_kind="local_dom",
+    filesystem_root=str(PROJECT_ROOT),
+)
 browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
 if settings.features.capability_world:
     execution_gateway.browser_executor = browser_worker
@@ -458,6 +463,24 @@ def _gate_loopback() -> GateCheck:
         passed=bool(settings.runtime.loopback_only),
         detail="loopback_only enabled" if settings.runtime.loopback_only else "loopback_only disabled",
     )
+
+
+def _assert_loopback_mutation_allowed(request: Request) -> None:
+    """Round 8: approve/deny/lease stay open on loopback; non-loopback needs operator token."""
+    if settings.runtime.loopback_only:
+        return
+    import os
+
+    expected = (os.environ.get("LEVIATHAN_OPERATOR_TOKEN") or "").strip()
+    provided = (request.headers.get("x-leviathan-operator-token") or "").strip()
+    if not expected or provided != expected:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Non-loopback host: approve/deny/lease require matching "
+                "X-Leviathan-Operator-Token (set LEVIATHAN_OPERATOR_TOKEN)"
+            ),
+        )
 
 
 def _gate_outbound() -> GateCheck:
@@ -772,72 +795,87 @@ register_specialist_handlers(
 )
 
 
-def _component_health() -> list[dict]:
-    """Aggregate real component health for Performance page (no fabricated healthy)."""
-    components: list[dict] = []
+def _assess_product_truth_report():
+    """Build the Round 9 Product Truth report from live backend evidence."""
+    from Data.modules.product_truth import assess_product_truth
 
-    def add(cid: str, name: str, ctype: str, status: str, detail: str = "") -> None:
-        components.append(
-            {
-                "id": cid,
-                "name": name,
-                "type": ctype,
-                "status": status,
-                "detail": detail,
-            }
-        )
-
-    add("backend", "backend", "Core", "healthy", "process up")
-    add(
-        "observability",
-        "observability",
-        "Runtime",
-        "healthy" if observability.store is not None else "degraded",
-        "durable" if observability.store is not None else "ring_buffer_only",
-    )
-    add(
-        "job_runtime",
-        "job-runtime",
-        "Runtime",
-        "healthy",
-        f"queued={len(job_runtime.list(state=JobState.QUEUED, limit=500))}",
-    )
-    add(
-        "module_manager",
-        "module-manager",
-        "Runtime",
-        "healthy" if module_manager.enabled else "stopped",
-        f"modules={len(module_manager.list())}",
-    )
+    mcp_server_count: int | None = None
+    mcp_connected_count: int | None = None
     if settings.features.mcp_enabled:
         try:
             servers = mcp_bridge.list_servers()
-            connected = sum(
+            mcp_server_count = len(servers)
+            mcp_connected_count = sum(
                 1
                 for s in servers
                 if (s.get("connection_state") if isinstance(s, dict) else None) == "connected"
                 or (getattr(s, "connection_state", None) == "connected")
             )
-            add(
-                "mcp_bridge",
-                "mcp-bridge",
-                "Bridge",
-                "healthy" if connected or not servers else "degraded",
-                f"servers={len(servers)} connected={connected}",
-            )
-        except Exception as exc:  # noqa: BLE001
-            add("mcp_bridge", "mcp-bridge", "Bridge", "failed", type(exc).__name__)
-    else:
-        add("mcp_bridge", "mcp-bridge", "Bridge", "unavailable", "feature_disabled")
+        except Exception:  # noqa: BLE001
+            mcp_server_count = None
+            mcp_connected_count = None
 
     sample = system_telemetry_sampler.latest_public()
     dash = sample.get("dashboard") if isinstance(sample, dict) else None
-    if isinstance(dash, dict) and dash.get("cpuPct") is None and dash.get("ramPct") is None:
-        add("system_telemetry", "system-telemetry", "Sampler", "degraded", "partial_unavailable")
-    else:
-        add("system_telemetry", "system-telemetry", "Sampler", "healthy", "sampling")
+    telemetry_partial = True
+    if isinstance(dash, dict):
+        telemetry_partial = dash.get("cpuPct") is None and dash.get("ramPct") is None
 
-    return components
+    browser_kind = getattr(getattr(browser_worker, "backend", None), "kind", None)
+    browser_kind_val = browser_kind.value if hasattr(browser_kind, "value") else (
+        str(browser_kind) if browser_kind else None
+    )
+    browser_capable = None
+    if browser_kind_val == "fixture":
+        browser_capable = False
+    elif browser_kind_val == "local_dom":
+        browser_capable = True
+    elif browser_kind_val == "playwright":
+        browser_capable = False
+
+    model_cards = model_plane.status_cards()
+    # Media/voice services are real entry points but fixture/stub backends are not production.
+    media_capable = False
+    voice_capable = False
+    media_kind = "fixture"
+    voice_kind = "fixture"
+    if settings.features.multimodal_realtime:
+        media_kind = "service"
+        voice_kind = "realtime"
+        # Existing stubs advertise fixture_is_not_production in job truth — keep honest.
+        media_capable = False
+        voice_capable = False
+    return assess_product_truth(
+        backend_alive=True,
+        observability_durable=observability.store is not None,
+        jobs_queued=len(job_runtime.list(state=JobState.QUEUED, limit=500)),
+        module_manager_enabled=bool(module_manager.enabled),
+        module_count=len(module_manager.list()),
+        mcp_feature_enabled=bool(settings.features.mcp_enabled),
+        mcp_server_count=mcp_server_count,
+        mcp_connected_count=mcp_connected_count,
+        telemetry_partial=telemetry_partial,
+        browser_backend_kind=browser_kind_val,
+        browser_production_capable=browser_capable,
+        model_gateway_health=str(model_cards.get("gatewayHealth") or "") or None,
+        model_provider_count=int(model_cards.get("providerCount") or 0),
+        embedding_available=bool(retriever.embeddings.available()),
+        agents_enabled=bool(settings.features.agents_enabled),
+        training_fixture_default=True,
+        media_backend_kind=media_kind,
+        media_production_capable=media_capable,
+        voice_backend_kind=voice_kind,
+        voice_production_capable=voice_capable,
+    )
+
+
+def _component_health() -> list[dict]:
+    """Aggregate evidence-based component postures (Round 9 Product Truth)."""
+    return [c.public_dict() for c in _assess_product_truth_report().components]
+
+
+def _product_truth_snapshot() -> dict:
+    return _assess_product_truth_report().public_dict()
 
 
 operator_registry = build_default_operator_registry(
@@ -1204,8 +1242,12 @@ async def health() -> dict:
     metrics.set_gauge("capabilities_registered", float(len(capability_catalog)))
     metrics.set_gauge("approvals_pending", float(len(approval_service.list(status=ApprovalStatus.PENDING, limit=500))))
     model_status = model_plane.status_cards()
+    product_truth = _product_truth_snapshot()
+    # ``ok`` is process liveness only — subsystem truth lives under product_truth.
     return {
         "ok": True,
+        "liveness": "alive",
+        "posture": product_truth.get("overall"),
         "version": app.version,
         "database": str(settings.database_path),
         "reasoning_enabled": settings.reasoning_enabled,
@@ -1345,7 +1387,14 @@ async def health() -> dict:
             "recent": len(verification_reports.list(limit=50)),
         },
         "llm": model,
+        "product_truth": product_truth,
     }
+
+
+@app.get("/api/product/truth")
+def get_product_truth() -> dict:
+    """Thin alias for Round 9 Product Truth report (same as health.product_truth)."""
+    return {"product_truth": _product_truth_snapshot()}
 
 
 @app.get("/api/architecture/ownership")
@@ -2712,7 +2761,8 @@ def get_approval(approval_id: str) -> dict:
 
 
 @app.post("/api/approvals/{approval_id}/approve")
-def approve_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict:
+def approve_approval(approval_id: str, payload: ApprovalDecisionRequest, request: Request) -> dict:
+    _assert_loopback_mutation_allowed(request)
     try:
         record = approval_service.approve(
             approval_id,
@@ -2727,7 +2777,8 @@ def approve_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict
 
 
 @app.post("/api/approvals/{approval_id}/deny")
-def deny_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict:
+def deny_approval(approval_id: str, payload: ApprovalDecisionRequest, request: Request) -> dict:
+    _assert_loopback_mutation_allowed(request)
     try:
         record = approval_service.deny(
             approval_id,
@@ -4265,7 +4316,8 @@ class SecretLeaseRequest(BaseModel):
 
 
 @app.post("/api/secrets/lease")
-def issue_secret_lease(payload: SecretLeaseRequest) -> dict:
+def issue_secret_lease(payload: SecretLeaseRequest, request: Request) -> dict:
+    _assert_loopback_mutation_allowed(request)
     try:
         lease = secrets_broker.issue(
             payload.secret_ref,

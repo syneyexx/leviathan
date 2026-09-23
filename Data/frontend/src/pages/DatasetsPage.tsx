@@ -422,7 +422,9 @@ export function DatasetsPage() {
   }, [usingDemo, jobs, datasets]);
 
   const healthItems = useMemo(() => {
-    if (usingDemo) return DH_DEMO_HEALTH;
+    if (usingDemo) {
+      return DH_DEMO_HEALTH;
+    }
     const total = liveRows.length || 1;
     const ready = liveRows.filter((r) => r.status === "ready").length;
     const indexed = liveRows.filter((r) => r.embeddings.kind === "indexed").length;
@@ -430,31 +432,36 @@ export function DatasetsPage() {
     const validating = liveRows.filter((r) => r.status === "validating").length;
     return [
       {
-        id: "integrity",
-        label: "Data Integrity",
-        pct: Math.round((ready / total) * 100) || 0,
-        hint: null as string | null,
+        id: "ready",
+        label: "Ready Coverage",
+        pct: Math.round((ready / total) * 100),
+        hint: `${ready}/${liveRows.length} ready (status counts, not integrity proof)`,
         tone: "green" as const,
       },
       {
         id: "schema",
         label: "Schema Validation",
-        pct: Math.max(0, 100 - validating * 4),
-        hint: validating ? `${validating} warning${validating === 1 ? "" : "s"}` : null,
+        // Do not invent a health % from warning count.
+        pct: null as number | null,
+        hint: validating
+          ? `${validating} validating`
+          : liveRows.length
+            ? "0 validating (no schema probe score)"
+            : "unmeasured",
         tone: "teal" as const,
       },
       {
         id: "embedding",
         label: "Embedding Coverage",
-        pct: Math.round((indexed / total) * 100) || 0,
-        hint: `${Math.max(0, total - indexed)} datasets pending`,
+        pct: Math.round((indexed / total) * 100),
+        hint: `${Math.max(0, liveRows.length - indexed)} datasets not indexed`,
         tone: "blue" as const,
       },
       {
         id: "offline",
         label: "Offline Availability",
-        pct: Math.round((offline / total) * 100) || 0,
-        hint: `${offline} datasets available offline`,
+        pct: Math.round((offline / total) * 100),
+        hint: `${offline} datasets marked offline`,
         tone: "orange" as const,
       },
     ];
@@ -1104,16 +1111,20 @@ export function DatasetsPage() {
               <h2>Dataset Health</h2>
             </div>
             <ul className="lv-dh-health-list">
-              {healthItems.map((item) => (
-                <li key={item.id}>
-                  <span className="lv-dh-health-label">{item.label}</span>
-                  <span className={`lv-dh-health-pct is-${item.tone}`}>{item.pct}%</span>
-                  {item.hint ? <span className="lv-dh-health-hint">{item.hint}</span> : null}
-                  <div className={`lv-dh-health-bar is-${item.tone}`}>
-                    <i style={{ width: `${item.pct}%` }} />
-                  </div>
-                </li>
-              ))}
+              {healthItems.map((item) => {
+                const pctLabel = item.pct == null ? "unmeasured" : `${item.pct}%`;
+                const barWidth = item.pct == null ? 0 : item.pct;
+                return (
+                  <li key={item.id}>
+                    <span className="lv-dh-health-label">{item.label}</span>
+                    <span className={`lv-dh-health-pct is-${item.tone}`}>{pctLabel}</span>
+                    {item.hint ? <span className="lv-dh-health-hint">{item.hint}</span> : null}
+                    <div className={`lv-dh-health-bar is-${item.tone}`}>
+                      <i style={{ width: `${barWidth}%` }} />
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </article>
         </div>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from Data.modules.function_runtime.types import FunctionCallStatus, SideEffect
@@ -15,6 +16,20 @@ from .types import (
     CapabilityRequest,
     CapabilityResult,
     CapabilityStatus,
+)
+
+# Argument keys that name filesystem paths and must stay under filesystem_root.
+_PATH_ARGUMENT_KEYS = frozenset(
+    {
+        "path",
+        "cwd",
+        "workspace_root",
+        "file_path",
+        "source_path",
+        "dest_path",
+        "target",
+        "output_path",
+    }
 )
 
 # Side effects that may proceed without an approval_id in Phase 9.
@@ -164,6 +179,8 @@ class ExecutionGateway:
     voice_executor: VoiceExecutor | None = None
     module_executor: ModuleExecutor | None = None
     receipt_store: CapabilityReceiptStore | None = None
+    # When set, path-bearing args are confined under this root (Round 8).
+    filesystem_root: str | Path | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
@@ -221,6 +238,7 @@ class ExecutionGateway:
         authority_decision = "pending"
         try:
             self._validate_args(definition, request.arguments)
+            request = self._confine_filesystem_args(request)
         except GatewayRejection as exc:
             return self._reject(
                 request_id,
@@ -338,6 +356,45 @@ class ExecutionGateway:
             result.telemetry["approval_consumed"] = True
         except Exception as exc:  # noqa: BLE001 — do not fail completed work on ledger consume
             result.telemetry["approval_consume_error"] = str(exc)
+
+    def _confine_filesystem_args(self, request: CapabilityRequest) -> CapabilityRequest:
+        """Refuse path escape when filesystem_root is configured (Round 8)."""
+        if self.filesystem_root is None:
+            return request
+        from Data.modules.coding.workspace import confine
+        from Data.modules.common.paths import PathEscapeError
+
+        root = Path(self.filesystem_root)
+        args = dict(request.arguments)
+        changed = False
+        for key in _PATH_ARGUMENT_KEYS:
+            if key not in args or args[key] is None:
+                continue
+            raw = str(args[key]).strip()
+            if not raw:
+                continue
+            try:
+                confined = confine(root, raw)
+            except PathEscapeError as exc:
+                raise GatewayRejection(
+                    f"Path escapes filesystem_root for {key!r}: {exc}",
+                    reason="path_escape",
+                ) from exc
+            args[key] = str(confined)
+            changed = True
+        if not changed:
+            return request
+        return CapabilityRequest(
+            capability_id=request.capability_id,
+            arguments=args,
+            request_id=request.request_id,
+            run_id=request.run_id,
+            job_id=request.job_id,
+            approval_id=request.approval_id,
+            requested_by=request.requested_by,
+            trace_id=request.trace_id,
+            idempotency_key=request.idempotency_key,
+        )
 
     def _enforce_policy(self, definition: CapabilityDefinition, request: CapabilityRequest) -> None:
         needs_approval = any(effect not in _AUTO_ALLOWED_EFFECTS for effect in definition.side_effects)
