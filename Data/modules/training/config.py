@@ -44,6 +44,15 @@ class TrainingConfig:
     fixture_sleep_ms: int = 50
     mixture_id: str | None = None
     mixture_content_hash: str | None = None
+    # Round 4 SFT reproducibility / quality knobs
+    base_model_revision: str | None = None
+    tokenizer_revision: str | None = None
+    chat_template: str | None = None
+    assistant_loss_masking: bool = True
+    packing: bool = False
+    packing_max_chars: int = 2048
+    val_split_ratio: float = 0.1
+    test_split_ratio: float = 0.1
     extra: dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> list[str]:
