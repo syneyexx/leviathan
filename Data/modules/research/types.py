@@ -27,6 +27,11 @@ class ResearchDepth(str, Enum):
     EXPERT = "expert"
 
 
+class ResearchExecutionMode(str, Enum):
+    NORMAL = "normal"
+    CUSTOM = "custom"
+
+
 class ClaimStatus(str, Enum):
     SUPPORTED = "supported"
     WEAKLY_SUPPORTED = "weakly_supported"
@@ -48,6 +53,54 @@ class ParseStatus(str, Enum):
     OK = "ok"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class BrainStatus(str, Enum):
+    PENDING = "pending"
+    SYNCED = "synced"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class ResearchPhase(str, Enum):
+    IDLE = "idle"
+    PLANNING = "planning"
+    SOURCE_INGESTION = "source_ingestion"
+    LOCAL_RETRIEVAL = "local_retrieval"
+    WEB_SEARCH = "web_search"
+    SOURCE_FETCH = "source_fetch"
+    SOURCE_PARSE = "source_parse"
+    EVIDENCE_EXTRACTION = "evidence_extraction"
+    CLAIM_ANALYSIS = "claim_analysis"
+    CONFLICT_ANALYSIS = "conflict_analysis"
+    QUERY_ADAPTATION = "query_adaptation"
+    SYNTHESIS = "synthesis"
+    REPORT_GENERATION = "report_generation"
+    BRAIN_SYNC = "brain_sync"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class WorkerStatus(str, Enum):
+    QUEUED = "queued"
+    PLANNING = "planning"
+    RETRIEVING_LOCAL = "retrieving_local"
+    SEARCHING_WEB = "searching_web"
+    FETCHING_SOURCE = "fetching_source"
+    PARSING_SOURCE = "parsing_source"
+    EXTRACTING_EVIDENCE = "extracting_evidence"
+    ANALYZING = "analyzing"
+    WAITING_AT_BARRIER = "waiting_at_barrier"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AnalysisMode(str, Enum):
+    DETERMINISTIC_FALLBACK = "deterministic_fallback"
+    MODEL = "model"
 
 
 TERMINAL_STATUSES = frozenset(
@@ -242,6 +295,9 @@ class ResearchSource:
     snapshot_path: str | None = None
     parse_status: ParseStatus = ParseStatus.PENDING
     parser: str | None = None
+    brain_status: BrainStatus = BrainStatus.NOT_APPLICABLE
+    brain_document_id: str | None = None
+    brain_error: str | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -261,9 +317,98 @@ class ResearchSource:
             "snapshot_path": self.snapshot_path,
             "parse_status": self.parse_status.value,
             "parser": self.parser,
+            "brain_status": self.brain_status.value,
+            "brain_document_id": self.brain_document_id,
+            "brain_error": self.brain_error,
             "provenance": dict(self.provenance),
             "metadata": dict(self.metadata),
             "created_at": self.created_at,
+        }
+
+
+@dataclass
+class ResearchWorker:
+    worker_id: str
+    project_id: str
+    run_id: str
+    worker_index: int
+    status: WorkerStatus
+    total_rounds: int
+    created_at: str
+    updated_at: str
+    phase: str = ""
+    current_round: int = 0
+    current_query: str | None = None
+    current_task: str | None = None
+    sources_added: int = 0
+    evidence_added: int = 0
+    started_at: str | None = None
+    heartbeat_at: str | None = None
+    finished_at: str | None = None
+    last_error: str | None = None
+    completed_rounds: int = 0
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "worker_id": self.worker_id,
+            "project_id": self.project_id,
+            "run_id": self.run_id,
+            "worker_index": self.worker_index,
+            "status": self.status.value,
+            "phase": self.phase,
+            "current_round": self.current_round,
+            "total_rounds": self.total_rounds,
+            "completed_rounds": self.completed_rounds,
+            "current_query": self.current_query,
+            "current_task": self.current_task,
+            "sources_added": self.sources_added,
+            "evidence_added": self.evidence_added,
+            "started_at": self.started_at,
+            "heartbeat_at": self.heartbeat_at,
+            "finished_at": self.finished_at,
+            "last_error": self.last_error,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
+class ResearchRun:
+    run_id: str
+    project_id: str
+    status: ResearchStatus
+    execution_mode: ResearchExecutionMode
+    workers: int
+    rounds_per_worker: int
+    created_at: str
+    updated_at: str
+    phase: ResearchPhase = ResearchPhase.IDLE
+    completed_worker_rounds: int = 0
+    total_worker_rounds: int = 0
+    progress_pct: float = 0.0
+    analysis_mode: AnalysisMode = AnalysisMode.DETERMINISTIC_FALLBACK
+    error: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "project_id": self.project_id,
+            "status": self.status.value,
+            "execution_mode": self.execution_mode.value,
+            "workers": self.workers,
+            "rounds_per_worker": self.rounds_per_worker,
+            "phase": self.phase.value,
+            "completed_worker_rounds": self.completed_worker_rounds,
+            "total_worker_rounds": self.total_worker_rounds,
+            "progress_pct": self.progress_pct,
+            "analysis_mode": self.analysis_mode.value,
+            "error": self.error,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
 
 
@@ -425,6 +570,7 @@ class ResearchProject:
     coverage: CoverageSummary | None = None
     local_scopes: list[str] = field(default_factory=list)
     seed_sources: list[str] = field(default_factory=list)
+    connected_datasets: list[dict[str, Any]] = field(default_factory=list)
     current_round: int = 0
     total_rounds: int = 1
     error: str | None = None
@@ -434,12 +580,20 @@ class ResearchProject:
     report_version: int = 0
     started_at: str | None = None
     finished_at: str | None = None
+    execution_mode: ResearchExecutionMode = ResearchExecutionMode.CUSTOM
+    phase: ResearchPhase = ResearchPhase.IDLE
+    progress_pct: float = 0.0
+    analysis_mode: AnalysisMode = AnalysisMode.DETERMINISTIC_FALLBACK
+    active_run_id: str | None = None
+    completed_worker_rounds: int = 0
+    total_worker_rounds: int = 0
     # Runtime-only counters filled by service when listing.
     source_count: int = 0
     claim_count: int = 0
     evidence_count: int = 0
     conflict_count: int = 0
     web_unavailable_reason: str | None = None
+    workers: list[dict[str, Any]] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -457,6 +611,7 @@ class ResearchProject:
             "coverage": self.coverage.public_dict() if self.coverage else None,
             "local_scopes": list(self.local_scopes),
             "seed_sources": list(self.seed_sources),
+            "connected_datasets": [dict(d) for d in self.connected_datasets],
             "current_round": self.current_round,
             "total_rounds": self.total_rounds,
             "error": self.error,
@@ -468,11 +623,19 @@ class ResearchProject:
             "updated_at": self.updated_at,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "execution_mode": self.execution_mode.value,
+            "phase": self.phase.value,
+            "progress_pct": self.progress_pct,
+            "analysis_mode": self.analysis_mode.value,
+            "active_run_id": self.active_run_id,
+            "completed_worker_rounds": self.completed_worker_rounds,
+            "total_worker_rounds": self.total_worker_rounds,
             "source_count": self.source_count,
             "claim_count": self.claim_count,
             "evidence_count": self.evidence_count,
             "conflict_count": self.conflict_count,
             "web_unavailable_reason": self.web_unavailable_reason,
+            "workers": list(self.workers),
         }
 
 

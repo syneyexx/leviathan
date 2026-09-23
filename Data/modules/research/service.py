@@ -2,26 +2,40 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, Callable
 
 from Data.modules.common.corpus import CorpusLayout, build_corpus_layout
 from Data.modules.knowledge import KnowledgeStore
 
-from .budgets import budget_for_depth, list_presets, merge_budget_overrides
+from .brain_sync import ResearchBrainSync
+from .budgets import (
+    budget_catalog,
+    budget_for_depth,
+    list_presets,
+    merge_budget_overrides,
+    resolve_execution_budget,
+)
 from .evidence import EvidenceLedger
 from .local_retrieval import LocalResearchRetriever, build_default_local_retriever
 from .planner import apply_plan_edits, build_plan
 from .reports import ReportBuilder
 from .runner import ResearchRunner
-from .store import ResearchStore
+from .ssrf import validate_url_for_fetch
+from .store import ResearchStore, utc_now
 from .types import (
+    ACTIVE_STATUSES,
+    AnalysisMode,
     ResearchDepth,
     ResearchError,
+    ResearchExecutionMode,
+    ResearchPhase,
     ResearchProject,
     ResearchStatus,
     TERMINAL_STATUSES,
 )
+from .uploads import UploadIngestor
 from .web import UnconfiguredWebProvider, WebResearchProvider, build_web_provider, web_unavailable_reason
 
 
@@ -36,24 +50,35 @@ class ResearchService:
         allow_outbound: bool = False,
         snapshots_root: Path | None = None,
         reports_root: Path | None = None,
+        sources_root: Path | None = None,
         corpus: CorpusLayout | None = None,
+        model_caller: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self.store = store
         self.knowledge = knowledge
         self.allow_outbound = bool(allow_outbound)
+        self.model_caller = model_caller
         if corpus is not None:
             self.snapshots_root = corpus.research_snapshots
             self.reports_root = corpus.research_reports
             self.exports_root = corpus.research_exports
+            self.sources_root = corpus.research_sources
         else:
             self.snapshots_root = Path(snapshots_root or store.db_path.parent / "research_snapshots")
             self.reports_root = Path(reports_root or store.db_path.parent / "research_reports")
             self.exports_root = self.reports_root.parent / "research_exports"
+            self.sources_root = Path(sources_root or store.db_path.parent / "research_sources")
         self.local = local or build_default_local_retriever(knowledge)
         self.web = web or (
             build_web_provider(allow_outbound=allow_outbound)
             if allow_outbound
             else UnconfiguredWebProvider()
+        )
+        self.brain = ResearchBrainSync(store, knowledge)
+        self.uploads = UploadIngestor(
+            store,
+            sources_root=self.sources_root,
+            snapshots_root=self.snapshots_root,
         )
         self.runner = ResearchRunner(
             store,
@@ -62,9 +87,17 @@ class ResearchService:
             allow_outbound=self.allow_outbound,
             snapshots_root=self.snapshots_root,
             reports_root=self.reports_root,
+            brain_sync=self._sync_report,
         )
         self.ledger = EvidenceLedger(store)
         self.reports = ReportBuilder(store, reports_root=self.reports_root)
+        self._bg_lock = threading.Lock()
+        self._bg_threads: dict[str, threading.Thread] = {}
+        self._dispatcher_stop = threading.Event()
+        self._dispatcher_thread: threading.Thread | None = None
+
+    def _sync_report(self, project: ResearchProject, report: Any) -> None:
+        self.brain.sync_report(project, report)
 
     @classmethod
     def from_settings(
@@ -76,6 +109,7 @@ class ResearchService:
         web: WebResearchProvider | None = None,
         search_endpoint: str | None = None,
         search_api_key: str | None = None,
+        model_caller: Callable[..., dict[str, Any]] | None = None,
     ) -> "ResearchService":
         corpus = build_corpus_layout(settings)
         store = ResearchStore(db_path)
@@ -97,6 +131,7 @@ class ResearchService:
             web=provider,
             allow_outbound=allow_outbound,
             corpus=corpus,
+            model_caller=model_caller,
         )
 
     def reconfigure_web(
@@ -117,14 +152,53 @@ class ResearchService:
         )
         if hasattr(self, "runner") and self.runner is not None:
             self.runner.allow_outbound = self.allow_outbound
-            if hasattr(self.runner, "web"):
-                self.runner.web = self.web
+            self.runner.web = self.web
+            if hasattr(self.runner, "coordinator"):
+                self.runner.coordinator.allow_outbound = self.allow_outbound
+                self.runner.coordinator.web = self.web
+
+    def set_model_caller(self, caller: Callable[..., dict[str, Any]] | None) -> None:
+        self.model_caller = caller
+
+    def start_background(self, *, poll_seconds: float = 0.5) -> None:
+        """Background dispatcher for queued research runs."""
+        if self._dispatcher_thread and self._dispatcher_thread.is_alive():
+            return
+
+        def _loop() -> None:
+            while not self._dispatcher_stop.wait(poll_seconds):
+                try:
+                    self._dispatch_queued()
+                except Exception:  # noqa: BLE001 — never kill dispatcher
+                    continue
+
+        self._dispatcher_stop.clear()
+        self._dispatcher_thread = threading.Thread(
+            target=_loop, name="research-dispatcher", daemon=True
+        )
+        self._dispatcher_thread.start()
+
+    def stop_background(self) -> None:
+        self._dispatcher_stop.set()
+
+    def _dispatch_queued(self) -> None:
+        for project in self.store.list_projects(limit=100):
+            if project.status != ResearchStatus.QUEUED:
+                continue
+            with self._bg_lock:
+                t = self._bg_threads.get(project.project_id)
+                if t and t.is_alive():
+                    continue
+            self._spawn_run(project.project_id, deepen=False, extra_rounds=0, resume=False)
 
     def recover(self) -> list[str]:
         return self.runner.recover_interrupted()
 
     def list_budget_presets(self) -> dict[str, dict]:
         return list_presets()
+
+    def budget_catalog(self) -> dict:
+        return budget_catalog()
 
     def create_project(
         self,
@@ -139,12 +213,33 @@ class ResearchService:
         budget_overrides: dict[str, Any] | None = None,
         local_scopes: list[str] | None = None,
         seed_sources: list[str] | None = None,
+        connected_datasets: list[dict[str, Any]] | None = None,
+        execution_mode: str | ResearchExecutionMode = ResearchExecutionMode.CUSTOM,
     ) -> ResearchProject:
         topic_clean = (topic or "").strip()
         if not topic_clean:
             raise ResearchError("VALIDATION_ERROR", "topic is required", http_status=422)
         depth_enum = ResearchDepth(depth.value if isinstance(depth, ResearchDepth) else str(depth).lower())
-        budget = merge_budget_overrides(budget_for_depth(depth_enum), budget_overrides)
+        mode = (
+            execution_mode
+            if isinstance(execution_mode, ResearchExecutionMode)
+            else ResearchExecutionMode(str(execution_mode or "normal").lower())
+        )
+        base = budget_for_depth(depth_enum)
+        # Custom may pass overrides; Normal forces 2×10.
+        if mode == ResearchExecutionMode.NORMAL:
+            budget = resolve_execution_budget(execution_mode=mode, base=base)
+        else:
+            budget = resolve_execution_budget(
+                execution_mode=mode,
+                base=merge_budget_overrides(base, budget_overrides),
+                overrides=budget_overrides,
+            )
+        analysis = (
+            AnalysisMode.MODEL
+            if (model_profile and self.model_caller)
+            else AnalysisMode.DETERMINISTIC_FALLBACK
+        )
         project = self.store.create_project(
             title=(title or topic_clean)[:200],
             topic=topic_clean,
@@ -156,7 +251,12 @@ class ResearchService:
             budget=budget,
             local_scopes=local_scopes,
             seed_sources=seed_sources,
+            connected_datasets=connected_datasets,
+            execution_mode=mode,
         )
+        project.analysis_mode = analysis
+        project.total_worker_rounds = budget.research_workers * budget.rounds
+        self.store.save_project(project)
         reason = web_unavailable_reason(
             allow_web=project.allow_web,
             allow_outbound=self.allow_outbound,
@@ -209,18 +309,36 @@ class ResearchService:
             project.local_scopes = list(updates["local_scopes"])
         if "seed_sources" in updates and updates["seed_sources"] is not None:
             project.seed_sources = list(updates["seed_sources"])
+        if "connected_datasets" in updates and updates["connected_datasets"] is not None:
+            project.connected_datasets = list(updates["connected_datasets"])
+        if "execution_mode" in updates and updates["execution_mode"] is not None:
+            project.execution_mode = ResearchExecutionMode(str(updates["execution_mode"]).lower())
         if "depth" in updates and updates["depth"] is not None:
             project.depth = ResearchDepth(str(updates["depth"]).lower())
-            project.budget = budget_for_depth(project.depth)
+            base = budget_for_depth(project.depth)
+            project.budget = resolve_execution_budget(
+                execution_mode=project.execution_mode,
+                base=base,
+                overrides=updates.get("budget") if isinstance(updates.get("budget"), dict) else None,
+            )
             project.total_rounds = project.budget.rounds
+            project.total_worker_rounds = project.budget.research_workers * project.budget.rounds
         if "budget" in updates and isinstance(updates["budget"], dict):
-            project.budget = merge_budget_overrides(project.budget, updates["budget"])
+            if project.execution_mode == ResearchExecutionMode.NORMAL:
+                project.budget = resolve_execution_budget(
+                    execution_mode=ResearchExecutionMode.NORMAL,
+                    base=project.budget,
+                )
+            else:
+                project.budget = merge_budget_overrides(project.budget, updates["budget"])
             project.total_rounds = project.budget.rounds
+            project.total_worker_rounds = project.budget.research_workers * project.budget.rounds
         if "model_profile" in updates and updates["model_profile"] is not None:
             project.model_profile = dict(updates["model_profile"])
-        # Editing invalidates prior plan visibility — regenerate on next plan call unless plan edits provided.
+            project.analysis_mode = (
+                AnalysisMode.MODEL if self.model_caller else AnalysisMode.DETERMINISTIC_FALLBACK
+            )
         if project.status == ResearchStatus.COMPLETED:
-            # Keep completed; edits prepare for deepen/resume.
             pass
         elif project.status not in TERMINAL_STATUSES:
             project.status = ResearchStatus.DRAFT
@@ -239,13 +357,78 @@ class ResearchService:
         project.plan = plan
         project.budget = plan.budget
         project.total_rounds = plan.rounds
+        project.total_worker_rounds = plan.budget.research_workers * plan.rounds
         project.status = ResearchStatus.PLANNED
+        project.phase = ResearchPhase.PLANNING
         self.store.save_project(project)
         return self.get_project(project_id)
 
-    def run(self, project_id: str) -> ResearchProject:
+    def run(self, project_id: str, *, background: bool = False) -> ResearchProject:
+        project = self.get_project(project_id)
+        if project.status in ACTIVE_STATUSES:
+            # Idempotent: return current state rather than starting a competing run.
+            return project
+        if background:
+            return self.enqueue_run(project_id)
         self.runner.run(project_id)
         return self.get_project(project_id)
+
+    def enqueue_run(
+        self,
+        project_id: str,
+        *,
+        deepen: bool = False,
+        extra_rounds: int = 0,
+        resume: bool = False,
+    ) -> ResearchProject:
+        project = self.get_project(project_id)
+        if project.status in ACTIVE_STATUSES and not deepen and not resume:
+            return project
+        project.status = ResearchStatus.QUEUED
+        project.phase = ResearchPhase.PLANNING
+        project.error = None
+        project.cancel_requested = False
+        project.finished_at = None
+        project.progress_pct = max(1.0, float(project.progress_pct or 0))
+        self.store.save_project(project)
+        self.store.add_event(project_id, "queued", "Research queued for execution")
+        self._spawn_run(project_id, deepen=deepen, extra_rounds=extra_rounds, resume=resume)
+        return self.get_project(project_id)
+
+    def _spawn_run(
+        self,
+        project_id: str,
+        *,
+        deepen: bool,
+        extra_rounds: int,
+        resume: bool,
+    ) -> None:
+        with self._bg_lock:
+            existing = self._bg_threads.get(project_id)
+            if existing and existing.is_alive():
+                return
+
+            def _target() -> None:
+                try:
+                    self.runner.run(
+                        project_id,
+                        deepen=deepen,
+                        extra_rounds=extra_rounds,
+                        resume=resume,
+                    )
+                except Exception:  # noqa: BLE001 — runner persists failure
+                    pass
+                finally:
+                    with self._bg_lock:
+                        self._bg_threads.pop(project_id, None)
+
+            thread = threading.Thread(
+                target=_target,
+                name=f"research-run-{project_id[:8]}",
+                daemon=True,
+            )
+            self._bg_threads[project_id] = thread
+            thread.start()
 
     def cancel(self, project_id: str) -> ResearchProject:
         project = self.get_project(project_id)
@@ -259,31 +442,30 @@ class ResearchService:
             )
         self.store.request_cancel(project_id)
         self.store.add_event(project_id, "cancelled", "Cancel requested")
-        # Cooperative cancel for in-process runs; if not running, finalize now.
         latest = self.get_project(project_id)
+        with self._bg_lock:
+            alive = bool(
+                self._bg_threads.get(project_id) and self._bg_threads[project_id].is_alive()
+            )
         if latest.status in {
             ResearchStatus.DRAFT,
             ResearchStatus.PLANNED,
             ResearchStatus.QUEUED,
             ResearchStatus.INTERRUPTED,
             ResearchStatus.CANCELLING,
-        } and not (
-            latest.worker_pid and latest.status == ResearchStatus.CANCELLING
-        ):
-            # If no active worker loop will observe the flag, mark cancelled immediately
-            # unless currently researching in this process (runner checks flag).
-            if latest.status != ResearchStatus.CANCELLING or latest.worker_pid is None:
+        } and not alive:
+            if latest.worker_pid is None:
                 latest.status = ResearchStatus.CANCELLED
+                latest.phase = ResearchPhase.CANCELLED
                 latest.cancel_requested = False
                 latest.worker_pid = None
-                from .store import utc_now
-
                 latest.finished_at = utc_now()
                 latest.error = latest.error or "Cancelled by request"
+                latest.progress_pct = min(95.0, float(latest.progress_pct or 0))
                 self.store.save_project(latest)
         return self.get_project(project_id)
 
-    def resume(self, project_id: str) -> ResearchProject:
+    def resume(self, project_id: str, *, background: bool = False) -> ResearchProject:
         project = self.get_project(project_id)
         if project.status not in {
             ResearchStatus.INTERRUPTED,
@@ -298,16 +480,26 @@ class ResearchService:
                     "Project already completed; use deepen instead of resume",
                     http_status=409,
                 )
+            if project.status in ACTIVE_STATUSES:
+                return project
             raise ResearchError(
                 "RESEARCH_NOT_RESUMABLE",
                 f"Cannot resume from status {project.status.value}",
                 http_status=409,
             )
         self.store.add_event(project_id, "round_started", "Resume requested")
-        self.runner.run(project_id)
+        if background:
+            return self.enqueue_run(project_id, resume=True)
+        self.runner.run(project_id, resume=True)
         return self.get_project(project_id)
 
-    def deepen(self, project_id: str, *, extra_rounds: int = 1) -> ResearchProject:
+    def deepen(
+        self,
+        project_id: str,
+        *,
+        extra_rounds: int = 1,
+        background: bool = False,
+    ) -> ResearchProject:
         project = self.get_project(project_id)
         if project.status not in {
             ResearchStatus.COMPLETED,
@@ -319,8 +511,173 @@ class ResearchService:
                 f"Cannot deepen from status {project.status.value}",
                 http_status=409,
             )
-        self.runner.run(project_id, deepen=True, extra_rounds=max(1, int(extra_rounds)))
+        if background:
+            return self.enqueue_run(
+                project_id, deepen=True, extra_rounds=max(1, int(extra_rounds))
+            )
+        self.runner.run(
+            project_id, deepen=True, extra_rounds=max(1, int(extra_rounds))
+        )
         return self.get_project(project_id)
+
+    def upload_source(
+        self,
+        project_id: str,
+        *,
+        filename: str,
+        stream: BinaryIO,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        source, text = self.uploads.from_upload_stream(
+            project.project_id,
+            filename=filename,
+            stream=stream,
+            content_type=content_type,
+        )
+        self.store.add_event(
+            project_id,
+            "source_parsed",
+            source.title or filename,
+            {
+                "source_id": source.source_id,
+                "parse_status": source.parse_status.value,
+                "mime_type": source.mime_type,
+            },
+        )
+        synced = self.brain.sync_uploaded_source(source, text)
+        self.store.add_event(
+            project_id,
+            "brain_sync" if synced.brain_status.value == "synced" else "brain_sync_failed",
+            synced.brain_error or "Upload synced to Brain",
+            {
+                "source_id": synced.source_id,
+                "brain_status": synced.brain_status.value,
+                "brain_document_id": synced.brain_document_id,
+            },
+        )
+        return {
+            "source": synced.public_dict(),
+            "extracted_chars": len(text),
+            "page_count": (synced.provenance or {}).get("page_count"),
+        }
+
+    def add_url_source(self, project_id: str, url: str) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        cleaned = (url or "").strip()
+        if not cleaned:
+            raise ResearchError("VALIDATION_ERROR", "url is required", http_status=422)
+        decision = validate_url_for_fetch(cleaned)
+        if not decision.allowed:
+            raise ResearchError(
+                "URL_BLOCKED",
+                decision.reason or "URL blocked by SSRF policy",
+                http_status=400,
+                details={"url": cleaned, "reason": decision.reason},
+            )
+        reason = web_unavailable_reason(
+            allow_web=True,
+            allow_outbound=self.allow_outbound,
+            provider=self.web,
+        )
+        if reason:
+            # Still record seed so research can attempt later if web becomes available.
+            seeds = list(project.seed_sources)
+            if cleaned not in seeds:
+                seeds.append(cleaned)
+                project.seed_sources = seeds
+                self.store.save_project(project)
+            raise ResearchError(
+                "WEB_SEARCH_UNCONFIGURED" if "unconfigured" in reason else "WEB_UNAVAILABLE",
+                f"Cannot fetch URL: {reason}",
+                http_status=503,
+                details={"reason": reason, "url": cleaned, "seeded": True},
+            )
+        try:
+            page = self.web.fetch_page(
+                cleaned,
+                respect_robots_txt=project.respect_robots_txt,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise ResearchError(
+                "SOURCE_FETCH_FAILED",
+                str(exc),
+                http_status=502,
+                details={"url": cleaned},
+            ) from exc
+        from .sources import SourceIngestor
+
+        ingestor = SourceIngestor(self.store, self.snapshots_root)
+        source, text = ingestor.from_web_page(project_id, page)
+        synced = self.brain.sync_web_page(source, text)
+        self.store.add_event(
+            project_id,
+            "source_fetched",
+            synced.title or cleaned,
+            {"source_id": synced.source_id, "url": cleaned},
+        )
+        return {"source": synced.public_dict()}
+
+    def connect_dataset(
+        self,
+        project_id: str,
+        *,
+        dataset_id: str,
+        version_id: str | None = None,
+        indexed: bool | None = None,
+        label: str | None = None,
+    ) -> ResearchProject:
+        project = self.get_project(project_id)
+        if not dataset_id:
+            raise ResearchError("VALIDATION_ERROR", "dataset_id is required", http_status=422)
+        entry = {
+            "dataset_id": dataset_id,
+            "version_id": version_id,
+            "indexed": bool(indexed) if indexed is not None else False,
+            "label": label or dataset_id,
+        }
+        if indexed is False:
+            raise ResearchError(
+                "DATASET_NOT_INDEXED",
+                "Dataset is not indexed into Brain yet",
+                http_status=409,
+                details=entry,
+            )
+        # Scope local retrieval to dataset knowledge source if provided as label/source.
+        scope = f"dataset:{dataset_id}"
+        if version_id:
+            scope = f"dataset:{dataset_id}:{version_id}"
+        datasets = [d for d in project.connected_datasets if d.get("dataset_id") != dataset_id]
+        datasets.append(entry)
+        project.connected_datasets = datasets
+        scopes = list(project.local_scopes)
+        if scope not in scopes:
+            scopes.append(scope)
+        # Also allow generic dataset source tag used by Knowledge ingest pipelines.
+        for candidate in (f"dataset:{dataset_id}", "dataset"):
+            if candidate not in scopes:
+                scopes.append(candidate)
+        project.local_scopes = scopes
+        self.store.save_project(project)
+        self.store.add_event(
+            project_id,
+            "dataset_connected",
+            entry["label"],
+            entry,
+        )
+        return self.get_project(project_id)
+
+    def retry_brain_sync(self, project_id: str, source_id: str) -> dict[str, Any]:
+        self.get_project(project_id)
+        source = self.store.get_source(source_id)
+        if source is None or source.project_id != project_id:
+            raise ResearchError("SOURCE_NOT_FOUND", "Unknown source", http_status=404)
+        synced = self.brain.retry_brain_sync(source_id)
+        return {"source": synced.public_dict()}
+
+    def list_workers(self, project_id: str):
+        self.get_project(project_id)
+        return self.store.list_workers(project_id)
 
     def list_events(self, project_id: str, *, limit: int = 200):
         self.get_project(project_id)
@@ -368,6 +725,10 @@ class ResearchService:
             f"Report version {report.version}",
             {"report_id": report.report_id},
         )
+        try:
+            self.brain.sync_report(project, report)
+        except Exception as exc:  # noqa: BLE001
+            self.store.add_event(project_id, "brain_sync_failed", str(exc), {"stage": "report"})
         return report
 
     def export(self, project_id: str, *, fmt: str = "markdown") -> dict:
@@ -380,8 +741,6 @@ class ResearchService:
     def resolve_citation(self, project_id: str, citation_key: str):
         self.get_project(project_id)
         return self.ledger.resolve_citation(project_id, citation_key)
-
-    # --- Wave 6 research graph / reproducibility ---------------------------
 
     def claim_evidence_graph(self, project_id: str) -> dict[str, Any]:
         self.get_project(project_id)
