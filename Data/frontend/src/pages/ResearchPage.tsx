@@ -510,7 +510,9 @@ export function ResearchPage() {
         objective: topic,
         depth,
         allowWeb: !!context.web,
-        localScopes: context.files || context.code || context.datasets ? ["workspace"] : [],
+        // Do not invent a Knowledge `source` filter. Empty scopes → search all local Knowledge.
+        // File uploads are ingested with source `research-upload:*` and remain discoverable.
+        localScopes: [],
         seedSources: seeds,
         modelProfile: { label: model },
       });
