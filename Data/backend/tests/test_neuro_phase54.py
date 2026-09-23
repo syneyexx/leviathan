@@ -167,8 +167,13 @@ class Phase54ContrastiveTests(unittest.TestCase):
             provider = LocalHashEmbeddingProvider(dimensions=32)
             vector = ContrastiveRetrievalHead(facade, embedding_provider=provider)
             vreport = vector.retrieve("gateway")
-            self.assertEqual(vreport.method, "embedding")
-            self.assertTrue(vreport.measured)
+            # Hash fixtures must not be presented as measured semantic embeddings.
+            self.assertEqual(vreport.method, "hash_embedding")
+            self.assertFalse(vreport.measured)
+            self.assertFalse(vreport.embedding_is_semantic)
+            self.assertTrue(
+                vreport.public_dict()["truth"]["hash_vectors_are_not_semantic_embeddings"]
+            )
             if vreport.hits:
                 self.assertIn("infonce_weight", vreport.hits[0])
                 self.assertIn("contrastive_score", vreport.hits[0])

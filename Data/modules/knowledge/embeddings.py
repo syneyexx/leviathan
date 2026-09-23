@@ -58,7 +58,8 @@ class NullEmbeddingProvider:
 
 
 def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]{2,}", text.lower(), flags=re.UNICODE)
+    # Unicode letters/digits so Dutch (and other) queries are not silently zeroed.
+    return re.findall(r"[^\W_]{2,}", text.lower(), flags=re.UNICODE)
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
