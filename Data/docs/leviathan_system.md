@@ -2,7 +2,7 @@
 
 > Purpose: describe **how LEVIATHAN currently works**.
 >
-> This is the implementation truth for the repository as of the **Cognitive Runtime** (migration v19) on Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
+> This is the implementation truth for the repository as of **Wave 3 Model Serving** (`0.67.0-wave3-serving`) on Wave 2 Evaluation Platform (v25) + Wave 1 Cognitive Runtime + Wave 0 Durable Kernel (v24) + Model Serving (v26) + Settings Control Plane (v20) + Universal MCP Bridge (v17) + Market Simulation (v16) + Coding Agent + Models + Datasets/Training/Research foundation.
 >
 > HADES remains a behavioral reference for future subsystems. It is **not** implemented here.
 
@@ -12,17 +12,21 @@ When this document disagrees with executable code and tests, **code and tests wi
 
 # 1. What LEVIATHAN is today
 
-LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, and a **Universal MCP Bridge** for Tools.
+LEVIATHAN is a Python-first, local-first AI control plane with Master Engineering Program foundation (phases 0–45), Neuro Layer phases 46–53, a full **Model Control Plane**, Datasets/Training/Research (v14), Coding Agent, **Market Simulation** for `/trading`, a **Universal MCP Bridge** for Tools, **Wave 0 durable kernel guardrails**, **Wave 2 evaluation as release authority**, and **Wave 3 managed local model serving** (vLLM-class / llama.cpp adapters, measured routing, honest worker recovery).
 
 **Implemented and real:**
 
-- FastAPI backend composition root (`0.57.0-mcp`);
+- FastAPI backend composition root (`0.67.0-wave3-serving`);
+- **Wave 3 model serving** — managed local adapters, serving supervisor, stream cancel, measured route audit, serving conformance eval (batching QoS UNMEASURED);
+- **Wave 2 evaluation platform** — versioned cases, JudgmentKind/MeasurementState, durable reports + regression corpus, system scorecards, release/promotion relevance (UNMEASURED ≠ PASS);
+- **Wave 1 cognition/agents** — full CognitiveRun hydrate/resume, live INVOKE_CAPABILITY via ExecutionGateway, structured agent planner, DAG multi-agent + blackboard;
+- **Wave 0 durable kernel** — `EventEnvelope`, job leases/idempotency/budgets, correlation IDs, Frontier Capability Manifest, architecture ownership API + conformance tests;
 - **Universal MCP Bridge** (`Data/modules/mcp/`) — one bridge, many stdio/HTTP sessions; tools → CapabilityCatalog (`provider_kind=MCP`); invoke only via ExecutionGateway;
 - **Coding Agent** (`Data/modules/coding/`) — sessions, XML capability loop, workspace confinement (HADES excluded), approval-gated writes, background worker;
 - **Market Simulation** (`Data/modules/market_sim/`) — causal OHLCV engine, strategy versions, multi-agent deliberation + brain hooks, paper fills only (flagged);
 - **Model Control Plane** (`Data/modules/models/`) — registry, profiles, providers, gateway, router, lifecycle, import/download, probes;
 - OpenAI-compatible LLM client used as the inference executor (LM Studio–friendly);
-- SQLite persistence + migrations through **v17**;
+- SQLite persistence + migrations through **v26**;
 - Domain modules through Master gates including Universal Module Manager, neuro residual adapters, cortex runtime, memory snapshots, ModelData absorb via Knowledge V2, training recipes, subprocess isolation flag;
 - Honest stubs: Training execution / Browser / Media / Voice / Native / Trading / llama.cpp managed runtime;
 - React + TypeScript + Vite frontend with operator `/status`, production `/models`, **Coding Agent** `/coding`, **Market Sim** `/trading`, and **MCP** `/mcp` UI;
@@ -78,7 +82,7 @@ Ownership rule: one responsibility → one clear owner. Do not invent parallel d
 
 ## 3.1 Composition root — `Data/backend/main.py`
 
-FastAPI application (`version=0.61.0-cognition`).
+FastAPI application (`version=0.67.0-wave3-serving`).
 
 Responsibilities:
 
@@ -91,7 +95,7 @@ Responsibilities:
 
 ## 3.2 Configuration — `Data/backend/config.py`
 
-`Settings` dataclass loaded from environment / `.env`:
+`Settings` dataclass loaded from environment / `.env`, then merged with SQLite `settings_overrides` when present (`load_settings()`). Operator mutations go through the **Settings Control Plane** (`Data/modules/settings/`) — see `Data/docs/settings_control_plane.md`.
 
 | Setting | Env var | Default |
 |---|---|---|
@@ -108,7 +112,7 @@ Path constants: `PROJECT_ROOT`, `DATA_ROOT`, `BACKEND_ROOT`, `FRONTEND_ROOT`, `F
 
 ## 3.3 Persistence — `Data/backend/database.py` + migrations
 
-SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v19**).
+SQLite with WAL + foreign keys. Schema evolution via `Data/backend/migrations.py` (`schema_migrations`, currently through **v24**).
 
 Core chat tables (also ensured in `Database.initialize`):
 
@@ -215,6 +219,39 @@ Owner: `Data/modules/knowledge/`. See also `Data/docs/rag_v3_architecture.md`.
 - reasoning flag;
 - frontend dist readiness;
 - LLM availability (honest unavailable state).
+
+## 3.8b Wave 0–3 kernel / cognition / evaluation / serving
+
+Canonical owners:
+
+- `Data/modules/run/` — parent lifecycle + versioned `EventEnvelope`
+- `Data/modules/jobs/` — schedulable work, leases, idempotency, budgets
+- `Data/modules/execution/` — CapabilityCatalog + ExecutionGateway + FrontierCapabilityManifest
+- `Data/modules/cognition/` — Cognitive Runtime with **hydrate/resume** and live **INVOKE_CAPABILITY** via Gateway
+- `Data/modules/agents/` — StructuredAgentPlanner, DAG MultiAgentCoordinator, AgentBlackboard
+- `Data/modules/evaluation/` — EvaluationHarness + EvaluationPlatform (durable reports, scorecards, regression corpus); UNMEASURED ≠ PASS
+- `Data/modules/models/` — Model Control Plane (registry, measured router, managed serving providers)
+- `Data/modules/model_runtime/` — OpenAI-compatible client + ServingSupervisor / managed adapters
+- `Data/modules/native/` — stub only; **not** a second model platform
+- `Data/modules/release/` — ReleaseGateRunner consumes evaluation relevance for promotion readiness
+- `Data/modules/approvals/` — AuthorityProfile (technical scopes)
+- `Data/modules/settings/` — BehaviorProfile (SYSTEM_PROMPT; not capability grant)
+- `Data/modules/common/` — CorrelationIds + CANONICAL_OWNERSHIP
+
+Wave 2 truth: evaluation is release authority, not theatre. Missing measurement stays UNMEASURED and is never treated as PASS.
+Wave 3 truth: managed serving adapters report honest UNAVAILABLE/DEAD; selection ≠ permission.
+- `Data/modules/agents/` — structured planner + DAG `MultiAgentCoordinator` + `AgentBlackboard`
+- `Data/modules/settings/behavior.py` — BehaviorProfile (SYSTEM_PROMPT)
+- `Data/modules/approvals/authority.py` — AuthorityProfile (technical scopes)
+- `Data/modules/common/ownership.py` — encoded ownership matrix for conformance tests
+
+API:
+
+- `GET /api/architecture/ownership`
+- `GET /api/architecture/capability-manifest`
+- `/api/cognition/*` — submit / status / events / cancel / resume (hydrate-backed)
+
+Invariant: BehaviorProfile is not AuthorityProfile. UI must not invent capability availability. A killed cognitive run can be hydrated and resumed without claiming duplicate capability effects when idempotency keys match.
 
 ## 3.9 Frontend serving
 

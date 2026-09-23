@@ -115,4 +115,175 @@ describe("api client — datasets / training / research / model test", () => {
       message: "web_blocked: Web disabled",
     });
   });
+
+  it("chat sends model_id when selected and omits it for Auto", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { conversation_id: "c1" }, capture);
+    await api.chat("hi", { conversationId: "c1", modelId: "model-a" });
+    expect(JSON.parse(String(capture.init?.body))).toMatchObject({
+      message: "hi",
+      conversation_id: "c1",
+      model_id: "model-a",
+    });
+
+    const captureAuto: { init?: RequestInit } = {};
+    mockFetch(200, { conversation_id: "c1" }, captureAuto);
+    await api.chat("hi", { conversationId: "c1" });
+    const body = JSON.parse(String(captureAuto.init?.body)) as Record<string, unknown>;
+    expect(body.model_id).toBeUndefined();
+  });
+
+  it("coding create/turn emit camelCase contract fields", async () => {
+    const createCap: { init?: RequestInit } = {};
+    mockFetch(200, { session: { session_id: "s1" } }, createCap);
+    await api.createCodingSession({
+      goal: "fix",
+      mission: "FIX",
+      workspaceRoot: "/ws",
+      modelId: "m1",
+    });
+    expect(JSON.parse(String(createCap.init?.body))).toEqual({
+      goal: "fix",
+      mission: "FIX",
+      workspaceRoot: "/ws",
+      modelId: "m1",
+    });
+
+    const turnCap: { init?: RequestInit; url?: string } = {};
+    mockFetch(200, { session: { session_id: "s1", status: "RUNNING" } }, turnCap);
+    const turn = await api.codingTurn("s1", { approvalId: "a1", capabilityId: "file.write" });
+    expect(turnCap.url).toBe("/api/coding/sessions/s1/turn");
+    expect(JSON.parse(String(turnCap.init?.body))).toEqual({
+      approvalId: "a1",
+      capabilityId: "file.write",
+    });
+    expect(turn.session.session_id).toBe("s1");
+  });
+
+  it("updateConversation and deleteConversation hit conversation routes", async () => {
+    const patchCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { conversation: { id: "c1", title: "T", pinned: true } }, patchCap);
+    await api.updateConversation("c1", { pinned: true, title: "T" });
+    expect(patchCap.url).toBe("/api/conversations/c1");
+    expect(patchCap.init?.method).toBe("PATCH");
+
+    const delCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { deleted: true, id: "c1" }, delCap);
+    await api.deleteConversation("c1");
+    expect(delCap.url).toBe("/api/conversations/c1");
+    expect(delCap.init?.method).toBe("DELETE");
+  });
+
+  it("analyticsOverview hits /api/analytics/overview with rangeKey", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(
+      200,
+      {
+        overview: {
+          range: "7d",
+          from: "a",
+          to: "b",
+          collectedAt: "b",
+          totals: { trainingJobs: { total: 0 } },
+        },
+      },
+      capture,
+    );
+    const res = await api.analyticsOverview("30d");
+    expect(capture.url).toBe("/api/analytics/overview?rangeKey=30d");
+    expect(res.overview.range).toBe("7d");
+  });
+
+  it("listAgents hits /api/agents", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(
+      200,
+      {
+        agents: [],
+        summary: {
+          agentsEnabled: true,
+          agentCount: 0,
+          orchestratorCount: 0,
+          health: {},
+          activeMissions: 0,
+          recentMissions: 0,
+        },
+      },
+      capture,
+    );
+    const res = await api.listAgents();
+    expect(capture.url).toBe("/api/agents");
+    expect(res.agents).toEqual([]);
+  });
+
+  it("systemTelemetry hits /api/system/telemetry", async () => {
+    const capture: { url?: string } = {};
+    mockFetch(
+      200,
+      {
+        collectedAt: "now",
+        ageMs: 1,
+        cpu: { available: true, utilizationPct: 1 },
+        memory: {
+          available: true,
+          totalBytes: 1,
+          usedBytes: 1,
+          availableBytes: 0,
+          utilizationPct: 100,
+        },
+        gpu: { available: false, devices: [] },
+        truth: { measured: true, synthetic: false },
+        dashboard: { cpuPct: 1, ramPct: 100, gpuPct: null, vramPct: null },
+      },
+      capture,
+    );
+    const res = await api.systemTelemetry();
+    expect(capture.url).toBe("/api/system/telemetry");
+    expect(res.dashboard.gpuPct).toBeNull();
+  });
+
+  it("listWorkflows returns empty list honestly", async () => {
+    mockFetch(200, { workflows: [] });
+    const res = await api.listWorkflows();
+    expect(res.workflows).toEqual([]);
+  });
+
+  it("createWorkflow / runWorkflow / cancelWorkflow hit workflow routes", async () => {
+    const createCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { workflow: { workflow_id: "w1", name: "demo", state: "CREATED", steps: [] } }, createCap);
+    await api.createWorkflow({
+      name: "demo",
+      steps: [{ capability_id: "knowledge.search", arguments: { query: "x" } }],
+    });
+    expect(createCap.url).toBe("/api/workflows");
+    expect(createCap.init?.method).toBe("POST");
+    expect(JSON.parse(String(createCap.init?.body))).toMatchObject({
+      name: "demo",
+      steps: [{ capability_id: "knowledge.search", arguments: { query: "x" } }],
+    });
+
+    const runCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { workflow: { workflow_id: "w1", state: "COMPLETED" } }, runCap);
+    await api.runWorkflow("w1");
+    expect(runCap.url).toBe("/api/workflows/w1/run");
+    expect(runCap.init?.method).toBe("POST");
+
+    const cancelCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { workflow: { workflow_id: "w1", state: "CANCELLED" } }, cancelCap);
+    await api.cancelWorkflow("w1");
+    expect(cancelCap.url).toBe("/api/workflows/w1/cancel");
+    expect(cancelCap.init?.method).toBe("POST");
+  });
+
+  it("listSchedules and pauseSchedule hit schedule routes", async () => {
+    mockFetch(200, { schedules: [] });
+    const listed = await api.listSchedules({ limit: 10 });
+    expect(listed.schedules).toEqual([]);
+
+    const pauseCap: { url?: string; init?: RequestInit } = {};
+    mockFetch(200, { schedule: { schedule_id: "s1", status: "PAUSED" } }, pauseCap);
+    await api.pauseSchedule("s1");
+    expect(pauseCap.url).toBe("/api/schedules/s1/pause");
+    expect(pauseCap.init?.method).toBe("POST");
+  });
 });

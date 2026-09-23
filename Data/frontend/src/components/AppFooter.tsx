@@ -187,7 +187,7 @@ function DockIcon({ item }: { item: SubMenuItem }) {
 export function AppFooter() {
   const location = useLocation();
   const section = findMainMenuByPath(location.pathname);
-  const active = findSubMenuItem(section, location.pathname);
+  const active = findSubMenuItem(section, location.pathname, location.search);
 
   return (
     <footer className="lv-footer">

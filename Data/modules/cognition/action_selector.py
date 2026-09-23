@@ -100,6 +100,31 @@ class ActionSelector:
                 arguments={"query": task.goal, "domain": task.domain},
             )
 
+        # Invoke a shortlisted capability through ExecutionGateway (U123).
+        caps = working_memory.list_by_kind("capability")
+        if (
+            caps
+            and budgets_remaining.get("tool_calls", 0) > 0
+            and not any(o.kind.value == "TOOL_RESULT" for o in observations)
+            and strategy
+            in {
+                ReasoningStrategy.TOOL_DRIVEN,
+                ReasoningStrategy.PLAN_EXECUTE_VERIFY,
+                ReasoningStrategy.RETRIEVE_THEN_ANSWER,
+            }
+        ):
+            capability_id = caps[0].content.strip().split()[0]
+            return CognitiveAction(
+                kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                action_id=str(uuid.uuid4()),
+                capability_id=capability_id,
+                rationale="invoke shortlisted capability via ExecutionGateway",
+                arguments={"query": task.goal, "limit": 5},
+                expected_observation="tool observation",
+                risk_class=task.risk_class,
+                requires_approval=task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL},
+            )
+
         # Delegation when justified.
         if (
             budgets_remaining.get("agent_delegations", 0) > 0

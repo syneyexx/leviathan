@@ -13,6 +13,8 @@ from Data.modules.models.benchmarks import BenchmarkService
 from Data.modules.models.capability_probe import CapabilityProbeService
 from Data.modules.models.contracts import (
     LoadOptions,
+    ModelHealthState,
+    ModelLifecycleState,
     ModelRequest,
     ProviderHealth,
     ProviderRecord,
@@ -29,11 +31,16 @@ from Data.modules.models.import_service import ImportService
 from Data.modules.models.profiles import ProfileService
 from Data.modules.models.providers import build_adapter
 from Data.modules.models.providers.openai_compatible import normalize_openai_base
+from Data.modules.models.measured_routing import MeasuredRouter
 from Data.modules.models.registry import ModelRegistry
 from Data.modules.models.resource_manager import ResourceManager
 from Data.modules.models.router import ModelRouter
 from Data.modules.models.runtime_manager import RuntimeManager
 from Data.modules.models.store import ModelStore, utc_now
+from Data.modules.model_runtime.serving import (
+    InferenceJobClass,
+    get_serving_supervisor,
+)
 from Data.modules.observability import ObservabilityHub
 
 
@@ -58,11 +65,13 @@ class ModelControlPlane:
             self.gateway,
             get_models=self.registry.list_descriptors,
         )
+        self.measured_router = MeasuredRouter(self.store, self.router.resolve)
         self.runtime = RuntimeManager(
             self.registry,
             self.resources,
             get_adapter=self.get_adapter,
         )
+        self.serving = get_serving_supervisor()
         self.probes = CapabilityProbeService(
             self.store,
             self.registry,
@@ -503,6 +512,111 @@ class ModelControlPlane:
             "provider_model_id": provider_model_id,
             "provider_id": model.provider_id,
         }
+
+    def resolve_measured(
+        self,
+        *,
+        explicit_model_id: str | None = None,
+        preferred_role: str | None = None,
+        required_capabilities: list[str] | None = None,
+        job_class: str = "INTERACTIVE",
+        persist: bool = True,
+    ) -> dict[str, Any]:
+        try:
+            jc = InferenceJobClass(job_class)
+        except ValueError:
+            jc = InferenceJobClass.INTERACTIVE
+        models = self.registry.list_descriptors()
+        health_by_model: dict[str, float | None] = {}
+        for worker in self.serving.list_workers():
+            if worker.model_id not in health_by_model or worker.health_score is not None:
+                health_by_model[worker.model_id] = worker.health_score
+        measured = self.measured_router.resolve_measured(
+            ModelRequest(
+                explicit_model_id=explicit_model_id,
+                preferred_role=preferred_role,
+                required_capabilities=tuple(required_capabilities or ()),
+                job_class=jc.value,
+            ),
+            models=models,
+            job_class=jc,
+            health_by_model=health_by_model,
+            persist=persist,
+        )
+        self._emit("model.router.measured", measured.public_dict())
+        return measured.public_dict()
+
+    def list_serving_workers(self) -> list[dict[str, Any]]:
+        workers = [w.public_dict() for w in self.serving.list_workers()]
+        for worker in workers:
+            self.store.upsert_serving_worker(
+                {
+                    "worker_id": worker["worker_id"],
+                    "provider_id": worker["provider_id"],
+                    "model_id": worker["model_id"],
+                    "backend_kind": worker["backend_kind"],
+                    "endpoint": worker.get("endpoint"),
+                    "state": worker["state"],
+                    "pid": worker.get("pid"),
+                    "health_score": worker.get("health_score"),
+                    "revision_id": worker.get("revision_id"),
+                    "last_error": worker.get("last_error"),
+                    "started_at": worker.get("started_at"),
+                    "last_health_at": worker.get("last_health_at"),
+                    "metadata": worker.get("metadata") or {},
+                }
+            )
+        return workers
+
+    def reconcile_serving_workers(self) -> dict[str, Any]:
+        """Honest recovery: killed workers → DEAD; registry loaded flags cleared."""
+        changed = self.serving.reconcile()
+        adapter_changes: list[dict[str, Any]] = []
+        for provider in self.list_providers():
+            adapter = self.get_adapter(provider.provider_id)
+            if hasattr(adapter, "reconcile_workers"):
+                adapter_changes.extend(adapter.reconcile_workers())
+        for worker in changed:
+            self.store.upsert_serving_worker(
+                {
+                    "worker_id": worker.worker_id,
+                    "provider_id": worker.provider_id,
+                    "model_id": worker.model_id,
+                    "backend_kind": worker.backend_kind,
+                    "endpoint": worker.endpoint,
+                    "state": worker.state.value,
+                    "pid": worker.pid,
+                    "health_score": worker.health_score,
+                    "revision_id": worker.revision_id,
+                    "last_error": worker.last_error,
+                    "started_at": worker.started_at,
+                    "last_health_at": worker.last_health_at,
+                    "metadata": worker.metadata,
+                }
+            )
+            if worker.state.value == "DEAD":
+                try:
+                    self.registry.set_lifecycle(
+                        worker.model_id,
+                        ModelLifecycleState.OFFLINE,
+                        health=ModelHealthState.OFFLINE,
+                        loaded=False,
+                        error=worker.last_error or "serving worker dead",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+        return {
+            "changed": [w.public_dict() for w in changed],
+            "adapter_changes": adapter_changes,
+            "workers": self.list_serving_workers(),
+            "truth": {
+                "dead_is_not_ready": True,
+                "killed_worker_recovery_is_honest": True,
+            },
+        }
+
+    def list_route_decisions(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        return self.store.list_route_decisions(limit=limit)
 
     def _row_to_provider(self, row: dict[str, Any]) -> ProviderRecord:
         caps_raw = row.get("capabilities_json") or "{}"

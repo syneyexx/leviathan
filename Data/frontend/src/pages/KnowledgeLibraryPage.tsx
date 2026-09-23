@@ -1,482 +1,537 @@
-import { useState } from "react";
-import { onderzoekHeroes } from "../assets/onderzoekKennisAssets";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
-import { OkBars, OkHero, OkIcon, OkPanel, OkProgress, OkSpark } from "./onderzoek/ok-shared";
+import type { KnowledgeChunk, KnowledgeDocument, KnowledgeSearchHit } from "../types/api";
+import { PxHero, PxIcon, PxKpi } from "./pixel/pixel-shared";
 
-type TabId =
-  | "overzicht"
-  | "zoeken"
-  | "bronnen"
-  | "netwerk"
-  | "curatie"
-  | "governance"
-  | "instellingen";
+type TabId = "documents" | "search" | "create";
 
-type SearchMode = "hybride" | "semantisch" | "exact";
+function errMsg(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
 
-const TABS: { id: TabId; title: string; subtitle: string; icon: string }[] = [
-  { id: "overzicht", title: "Overzicht", subtitle: "Kennisbibliotheek", icon: "M4 6h16M4 12h16M4 18h10" },
-  { id: "zoeken", title: "Zoeken & Verkennen", subtitle: "Vind kennis", icon: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm10-2-4.35-4.35" },
-  { id: "bronnen", title: "Bronnen", subtitle: "Ingestie & connecties", icon: "M8 12h.01M12 12h.01M16 12h.01M9 16a7 7 0 1 1 6 0" },
-  { id: "netwerk", title: "Semantisch Netwerk", subtitle: "Relaties & context", icon: "M8 8h.01M16 8h.01M8 16h.01M16 16h.01M9 9l6 6M15 9l-6 6" },
-  { id: "curatie", title: "Curatie", subtitle: "Tags, labels & taxonomie", icon: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" },
-  { id: "governance", title: "Governance", subtitle: "Validatie & kwaliteit", icon: "M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4Z" },
-  { id: "instellingen", title: "Instellingen", subtitle: "Voorkeuren & beheer", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1l2-1.5-2-3.5-2.4 1a7.6 7.6 0 0 0-1.7-1L13 3h-2l-.2 2.5a7.6 7.6 0 0 0-1.7 1L6.7 5.5l-2 3.5 2 1.5a7.4 7.4 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a7.6 7.6 0 0 0 1.7 1L11 21h2l.2-2.5a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5c.1-.3.1-.7.1-1Z" },
-];
+function dash(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
 
-const DOMAINS = [
-  { name: "Strategie & Organisatie", sub: "Beleid, roadmap, besluitvorming", count: "48.2K", pct: 72 },
-  { name: "Technologie & Innovatie", sub: "Architectuur, AI, platformen", count: "62.1K", pct: 88 },
-  { name: "Markt & Concurrentie", sub: "Trends, peers, positionering", count: "38.4K", pct: 58 },
-  { name: "Juridisch & Compliance", sub: "Regelgeving, AI Act, contracts", count: "22.7K", pct: 34 },
-  { name: "Product & Engineering", sub: "Specs, releases, technische docs", count: "51.0K", pct: 76 },
-  { name: "Mens & Cultuur", sub: "Talent, processen, organisatie", count: "18.9K", pct: 28 },
-] as const;
+function excerpt(text: string, max = 160): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, max - 1)}…`;
+}
 
-const RECENT = [
-  { title: "AI Governance Framework", when: "2u geleden", type: "Whitepaper", tags: ["Governance", "AI Act", "Policy"] },
-  { title: "Marktanalyse Generatieve AI", when: "4u geleden", type: "Rapport", tags: ["Markt", "GenAI", "Analyse"] },
-  { title: "RAG Architectuur Notities", when: "6u geleden", type: "Notitie", tags: ["RAG", "Vector", "Retrieval"] },
-  { title: "EU AI Act Samenvatting", when: "1d geleden", type: "Briefing", tags: ["EU", "Compliance", "Wet"] },
-  { title: "Leviathan Knowledge Spec", when: "2d geleden", type: "Spec", tags: ["Leviathan", "Kennis", "Design"] },
-] as const;
-
-const QUEUE = [
-  { name: "McKinsey - State of AI 2024.pdf", status: "Verwerken", pct: 87, tone: "cyan" as const },
-  { name: "Zendesk Knowledge Base", status: "In wachtrij", pct: 12, tone: "gold" as const },
-  { name: "Policy.md", status: "Gereed", pct: 100, tone: "green" as const },
-] as const;
-
-const GOVERNANCE = [
-  ["Gevalideerde items", "94%"],
-  ["Betrouwbare bronnen", "98%"],
-  ["Handmatige validatie", "12%"],
-  ["Open issues", "3%"],
-  ["Verouderde items", "6%"],
-] as const;
-
-const TOPICS_7D = [
-  { rank: 1, name: "Generatieve AI", count: "12.4K", delta: "+24%" },
-  { rank: 2, name: "AI Governance", count: "8.1K", delta: "+18%" },
-  { rank: 3, name: "Digitale Transformatie", count: "6.7K", delta: "+11%" },
-  { rank: 4, name: "RAG & Retrieval", count: "5.2K", delta: "+31%" },
-  { rank: 5, name: "EU AI Act", count: "4.8K", delta: "+9%" },
-] as const;
-
-const TOPICS_30D = [
-  { rank: 1, name: "Generatieve AI", count: "48.2K", delta: "+41%" },
-  { rank: 2, name: "Digitale Transformatie", count: "29.6K", delta: "+16%" },
-  { rank: 3, name: "AI Governance", count: "27.1K", delta: "+22%" },
-  { rank: 4, name: "Cloud Strategie", count: "18.4K", delta: "+7%" },
-  { rank: 5, name: "Data Privacy", count: "15.9K", delta: "+13%" },
-] as const;
-
-const CURATION = [
-  { label: "Ongetagde items", value: "342" },
-  { label: "Suggesties", value: "124" },
-  { label: "Te reviewen", value: "28" },
-  { label: "Nieuwe tags", value: "17" },
-] as const;
-
-const SEARCH_OPTS = [
-  { id: "syn", label: "Synoniemen & uitbreidingen" },
-  { id: "concept", label: "Conceptuele matching" },
-  { id: "cross", label: "Cross-domein zoeken" },
-  { id: "cite", label: "Bronvermelding tonen" },
-] as const;
-
-const INSIGHT_ACTIONS = [
-  { id: "sum", label: "Samenvatting genereren", path: "M4 6h16M4 12h10M4 18h14" },
-  { id: "rel", label: "Gerelateerde kennis", path: "M8 8h.01M16 8h.01M8 16h.01M16 16h.01M9 9l6 6M15 9l-6 6" },
-  { id: "trend", label: "Trends analyseren", path: "M3 17l6-6 4 4 7-8" },
-] as const;
-
-const SPARK = [18, 24, 22, 30, 28, 36, 42, 40, 48, 52];
-const BARS = [20, 28, 24, 36, 44, 40, 52, 48];
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
 
 export function KnowledgeLibraryPage() {
   const toast = useAppToast();
-  const [tab, setTab] = useState<TabId>("overzicht");
-  const [mode, setMode] = useState<SearchMode>("hybride");
-  const [query, setQuery] = useState("");
-  const [topicRange, setTopicRange] = useState<"7d" | "30d">("7d");
-  const [opts, setOpts] = useState<Record<string, boolean>>({
-    syn: true,
-    concept: true,
-    cross: false,
-    cite: true,
-  });
+  const [tab, setTab] = useState<TabId>("documents");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const topics = topicRange === "7d" ? TOPICS_7D : TOPICS_30D;
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<KnowledgeDocument | null>(null);
+  const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchSource, setSearchSource] = useState("");
+  const [hits, setHits] = useState<KnowledgeSearchHit[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
+
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [source, setSource] = useState("manual");
+
+  const sources = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const doc of documents) {
+      const key = doc.source || "unknown";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [documents]);
+
+  const readyCount = documents.filter((d) => (d.status ?? "READY").toUpperCase() === "READY").length;
+  const failedCount = documents.filter((d) => (d.status ?? "").toUpperCase() === "FAILED").length;
+
+  const loadDocuments = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.listKnowledgeDocuments();
+      setDocuments(res.documents);
+      if (res.documents.length === 0) {
+        setSelectedId(null);
+      } else if (!selectedId || !res.documents.some((d) => d.id === selectedId)) {
+        setSelectedId(res.documents[0].id);
+      }
+    } catch (err) {
+      setError(errMsg(err, "Failed to load knowledge documents"));
+      setDocuments([]);
+      setSelectedId(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedId]);
+
+  useEffect(() => {
+    void loadDocuments();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- initial load
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      setChunks([]);
+      setDetailError(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setDetailError(null);
+      try {
+        const res = await api.getKnowledgeDocument(selectedId);
+        if (cancelled) return;
+        setDetail(res.document);
+        setChunks(res.chunks);
+      } catch (err) {
+        if (!cancelled) {
+          setDetail(null);
+          setChunks([]);
+          setDetailError(errMsg(err, "Failed to load document"));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
+  async function onSearch() {
+    const q = searchQuery.trim();
+    if (!q) {
+      toast("Enter a search query");
+      return;
+    }
+    setBusy(true);
+    setSearchError(null);
+    setSearched(true);
+    try {
+      const res = await api.searchKnowledge({
+        q,
+        limit: 20,
+        source: searchSource.trim() || undefined,
+      });
+      setHits(res.hits);
+      if (res.hits.length === 0) toast("No matches");
+    } catch (err) {
+      setHits([]);
+      setSearchError(errMsg(err, "Search failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCreate() {
+    if (!title.trim() || !content.trim()) {
+      toast("Title and content are required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.createKnowledgeDocument({
+        title: title.trim(),
+        content: content.trim(),
+        source: source.trim() || "manual",
+      });
+      setTitle("");
+      setContent("");
+      setSource("manual");
+      setSelectedId(res.document.id);
+      setTab("documents");
+      await loadDocuments();
+      toast("Document saved");
+    } catch (err) {
+      toast(errMsg(err, "Failed to create document"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDelete(documentId: string) {
+    if (!window.confirm("Delete this knowledge document?")) return;
+    setBusy(true);
+    try {
+      await api.deleteKnowledgeDocument(documentId);
+      if (selectedId === documentId) setSelectedId(null);
+      await loadDocuments();
+      toast("Document deleted");
+    } catch (err) {
+      toast(errMsg(err, "Failed to delete document"));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <AppShell
       activeMode="explore"
-      modeLabel="Research Mode"
-      searchPlaceholder="Zoek kennis, documenten, concepten, bronnen..."
-      systemItems={["SYSTEMS ONLINE", "LLM", "RAG", "MEMORY", "TOOLS"]}
+      modeLabel="Knowledge Library"
+      searchPlaceholder="Search knowledge documents…"
+      systemItems={[
+        "KNOWLEDGE",
+        `${documents.length} DOCS`,
+        loading ? "LOADING" : error ? "ERROR" : "LIVE",
+      ]}
       layout="wide"
-      pageClass="lv-app--onderzoek"
+      pageClass="lv-app--pixel-knowledge"
     >
-      <main className="lv-main lv-ok-main">
-        <OkHero
-          title="KNOWLEDGE LIBRARY"
-          kicker="VERZAMELEN. STRUCTUREREN. VERBINDEN. TOEPASSEN."
-          quote="Kennis krijgt pas waarde wanneer het in verband wordt gebracht."
-          image={onderzoekHeroes.knowledge}
-          rails={["ALLE KENNIS", "ÉÉN ECOSYSTEEM", "DIEPERE INZICHTEN", "GROTERE IMPACT"]}
-        />
+      <main className="lv-main lv-px-main">
+        <div className="lv-px-stack">
+          <PxHero
+            title="KNOWLEDGE LIBRARY"
+            subtitle="INGEST. INDEX. RETRIEVE. APPLY."
+            quote="Empty until real documents exist — no fabricated library inventory."
+          />
 
-        <section className="lv-ok-actions" aria-label="Knowledge navigatie">
-          {TABS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`lv-ok-action${tab === item.id ? " is-active" : ""}`}
-              onClick={() => {
-                setTab(item.id);
-                toast(`${item.title} geopend`);
-              }}
-            >
-              <OkIcon>
-                <path d={item.icon} />
-              </OkIcon>
-              <strong>{item.title}</strong>
-              <small>{item.subtitle}</small>
-            </button>
-          ))}
-        </section>
+          <nav className="lv-px-tabs" aria-label="Knowledge Library sections">
+            {(
+              [
+                { id: "documents" as const, label: "Documents", sub: "Library inventory", icon: "folder" },
+                { id: "search" as const, label: "Search", sub: "Retrieve chunks", icon: "search" },
+                { id: "create" as const, label: "Add", sub: "Write a document", icon: "plus" },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`lv-px-tab lv-px-tab-rich${tab === item.id ? " is-active" : ""}`}
+                onClick={() => setTab(item.id)}
+              >
+                <PxIcon name={item.icon} />
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.sub}</small>
+                </span>
+              </button>
+            ))}
+          </nav>
 
-        <section className="lv-ok-kpis is-4" aria-label="Knowledge KPI's">
-          <article className="lv-ok-kpi">
-            <div className="lv-kl-kpi-top">
-              <span className="lv-ok-kpi-label">Totaal Kennisitems</span>
-              <OkIcon>
-                <path d="M7 3h7l5 5v13H7V3Z M14 3v5h5" />
-              </OkIcon>
-            </div>
-            <span className="lv-ok-kpi-value">482K</span>
-            <span className="lv-ok-kpi-meta">↑ +12% · kennisitems in bibliotheek</span>
-          </article>
-          <article className="lv-ok-kpi">
-            <div className="lv-kl-kpi-top">
-              <span className="lv-ok-kpi-label">Geïndexeerde Bronnen</span>
-              <OkIcon>
-                <path d="M4 7h16M4 12h16M4 17h16" />
-              </OkIcon>
-            </div>
-            <span className="lv-ok-kpi-value">1.2K</span>
-            <span className="lv-ok-kpi-meta">↑ +8% · documenten, systemen, feeds</span>
-          </article>
-          <article className="lv-ok-kpi">
-            <div className="lv-kl-kpi-top">
-              <span className="lv-ok-kpi-label">Zoeknauwkeurigheid</span>
-              <OkIcon>
-                <circle cx="12" cy="12" r="7" />
-                <circle cx="12" cy="12" r="2.5" />
-              </OkIcon>
-            </div>
-            <span className="lv-ok-kpi-value">98%</span>
-            <span className="lv-ok-kpi-meta">↑ +3% · relevante resultaten (RAG)</span>
-          </article>
-          <article className="lv-ok-kpi">
-            <div className="lv-kl-kpi-top">
-              <span className="lv-ok-kpi-label">Update Velociteit</span>
-              <OkIcon>
-                <path d="M3 12h4l2-6 4 12 2-6h6" />
-              </OkIcon>
-            </div>
-            <span className="lv-ok-kpi-value">1.3K</span>
-            <span className="lv-ok-kpi-meta">↑ +28% · nieuwe items / week</span>
-            <div className="lv-kl-kpi-charts">
-              <OkSpark points={SPARK} width={88} height={28} />
-              <OkBars values={BARS} height={28} />
-            </div>
-          </article>
-        </section>
+          <div className="lv-px-kpi-row">
+            <PxKpi label="Documents" value={loading ? "…" : String(documents.length)} icon="book" hint="from /api/knowledge" />
+            <PxKpi
+              label="Ready"
+              value={loading ? "…" : String(readyCount)}
+              icon="checkcircle"
+              hintTone="cyan"
+              hint="ingest status READY"
+            />
+            <PxKpi
+              label="Failed"
+              value={loading ? "…" : String(failedCount)}
+              icon="shield"
+              hintTone={failedCount > 0 ? "red" : "muted"}
+              hint={failedCount > 0 ? "needs attention" : "none"}
+            />
+            <PxKpi
+              label="Sources"
+              value={loading ? "…" : String(sources.length)}
+              icon="database"
+              hint="distinct source labels"
+            />
+          </div>
 
-        <section className="lv-kl-mid">
-          <OkPanel title="Kennisdomeinen">
-            <ul className="lv-ok-list lv-kl-domains">
-              {DOMAINS.map((d) => (
-                <li key={d.name}>
-                  <button type="button" onClick={() => toast(`Domein · ${d.name}`)}>
-                    <span className="lv-ok-list-copy">
-                      <strong>{d.name}</strong>
-                      <small>{d.sub}</small>
-                      <OkProgress value={d.pct} />
-                    </span>
-                    <span className="lv-ok-count">{d.count}</span>
+          {error ? (
+            <section className="lv-px-panel" role="alert">
+              <h2 className="lv-px-panel-title">Knowledge unavailable</h2>
+              <p style={{ fontSize: 12 }}>{error}</p>
+              <button type="button" className="lv-px-btn is-gold" disabled={busy} onClick={() => void loadDocuments()}>
+                Retry
+              </button>
+            </section>
+          ) : null}
+
+          {tab === "documents" ? (
+            <div className="lv-px-mid-grid">
+              <section className="lv-px-panel" aria-label="Document list">
+                <div className="lv-px-panel-head">
+                  <h2 className="lv-px-panel-title">
+                    <PxIcon name="folder" /> Documents
+                  </h2>
+                  <button type="button" className="lv-px-btn" disabled={busy || loading} onClick={() => void loadDocuments()}>
+                    Refresh
                   </button>
-                </li>
-              ))}
-            </ul>
-            <button
-              className="lv-ok-btn is-gold"
-              type="button"
-              style={{ marginTop: 8, width: "100%" }}
-              onClick={() => toast("Nieuw domein")}
-            >
-              + Nieuw domein
-            </button>
-          </OkPanel>
-
-          <OkPanel title="Recente Kennisitems" action={<span className="lv-ok-muted">Laatste 48u</span>}>
-            <ul className="lv-ok-list lv-kl-recent">
-              {RECENT.map((item) => (
-                <li key={item.title}>
-                  <button type="button" className="lv-kl-recent-row" onClick={() => toast(item.title)}>
-                    <span className="lv-kl-recent-ico" aria-hidden="true">
-                      <OkIcon>
-                        <path d="M7 3h7l5 5v13H7V3Z M14 3v5h5" />
-                      </OkIcon>
-                    </span>
-                    <span className="lv-ok-list-copy">
-                      <strong>{item.title}</strong>
-                      <small>
-                        {item.when} · {item.type}
-                      </small>
-                      <span className="lv-ok-chip-row">
-                        {item.tags.map((t) => (
-                          <span key={t} className="lv-ok-tag">
-                            {t}
-                          </span>
-                        ))}
-                      </span>
-                    </span>
-                    <span className="lv-kl-more" aria-hidden="true">
-                      ···
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </OkPanel>
-
-          <OkPanel title="Kennis Zoeken & Ophalen">
-            <div className="lv-kl-search">
-              <input
-                className="lv-ok-input"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Stel je vraag of zoek in de kennisbibliotheek..."
-              />
-              <div className="lv-ok-chip-row">
-                {(
-                  [
-                    ["hybride", "Hybride"],
-                    ["semantisch", "Semantisch"],
-                    ["exact", "Exact"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`lv-ok-chip${mode === id ? " is-active" : ""}`}
-                    onClick={() => setMode(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="lv-kl-filters">
-                <select className="lv-ok-select" defaultValue="all">
-                  <option value="all">Alle domeinen</option>
-                  <option value="tech">Technologie</option>
-                  <option value="markt">Markt</option>
-                </select>
-                <select className="lv-ok-select" defaultValue="all">
-                  <option value="all">Alle brontypes</option>
-                  <option value="pdf">PDF</option>
-                  <option value="web">Web</option>
-                </select>
-                <select className="lv-ok-select" defaultValue="all">
-                  <option value="all">Alle periodes</option>
-                  <option value="7d">7 dagen</option>
-                  <option value="30d">30 dagen</option>
-                </select>
-                <button
-                  className="lv-ok-btn is-gold"
-                  type="button"
-                  onClick={() => toast(query.trim() ? `Zoeken · ${query}` : `Zoeken · ${mode}`)}
-                >
-                  Zoeken
-                </button>
-              </div>
-              <div className="lv-kl-opts">
-                <span className="lv-ok-muted">Zoekopties</span>
-                {SEARCH_OPTS.map((opt) => (
-                  <label key={opt.id} className="lv-kl-toggle">
-                    <input
-                      type="checkbox"
-                      checked={!!opts[opt.id]}
-                      onChange={(e) => setOpts((prev) => ({ ...prev, [opt.id]: e.target.checked }))}
-                    />
-                    <span>{opt.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </OkPanel>
-
-          <OkPanel
-            title="Context & Inzichten"
-            action={<span className="lv-ok-pill is-cyan">Nieuw</span>}
-          >
-            <div className="lv-kl-insight">
-              <h3>Generatieve AI in de Zorg</h3>
-              <div className="lv-ok-chip-row">
-                <span className="lv-ok-tag">Zorg</span>
-                <span className="lv-ok-tag">AI</span>
-                <span className="lv-ok-tag">Implementatie</span>
-              </div>
-              <p className="lv-ok-muted">
-                24 gerelateerde documenten · clusters rond adoptie, compliance en klinische toepassingen.
-              </p>
-              <div className="lv-kl-insight-actions">
-                {INSIGHT_ACTIONS.map((a) => (
-                  <button key={a.id} type="button" className="lv-ok-btn" onClick={() => toast(a.label)}>
-                    <OkIcon>
-                      <path d={a.path} />
-                    </OkIcon>
-                    {a.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </OkPanel>
-        </section>
-
-        <section className="lv-kl-bottom">
-          <OkPanel title="Broningestie Queue">
-            <div className="lv-ok-queue">
-              {QUEUE.map((item) => (
-                <div key={item.name} className="lv-ok-queue-item">
-                  <header>
-                    <strong>{item.name}</strong>
-                    <span className={`lv-ok-pill is-${item.tone}`}>{item.status}</span>
-                  </header>
-                  <OkProgress value={item.pct} tone={item.tone} />
                 </div>
-              ))}
-            </div>
-          </OkPanel>
+                {loading ? (
+                  <p style={{ fontSize: 11, color: "var(--lv-text-muted)" }}>Loading documents…</p>
+                ) : null}
+                {!loading && documents.length === 0 ? (
+                  <div className="lv-models-empty" style={{ padding: "24px 8px" }}>
+                    <h2>NO DOCUMENTS</h2>
+                    <p>The knowledge store is empty. Add a document or ingest from disk — nothing is invented here.</p>
+                    <button type="button" className="lv-px-btn is-gold" onClick={() => setTab("create")}>
+                      Add document
+                    </button>
+                  </div>
+                ) : null}
+                {!loading && documents.length > 0 ? (
+                  <ul className="lv-px-domain-list">
+                    {documents.map((doc) => (
+                      <li key={doc.id}>
+                        <button
+                          type="button"
+                          className={`lv-px-domain-row${doc.id === selectedId ? " is-active" : ""}`}
+                          onClick={() => setSelectedId(doc.id)}
+                        >
+                          <PxIcon name="file" />
+                          <span>
+                            <strong style={{ display: "block", fontSize: 11 }}>{doc.title || doc.id}</strong>
+                            <small style={{ color: "var(--lv-text-muted)" }}>
+                              {doc.source} · {dash(doc.status)}
+                            </small>
+                          </span>
+                          <span className="lv-px-domain-count">{formatBytes(doc.size_bytes ?? doc.content?.length)}</span>
+                          <PxIcon name="chevron" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
 
-          <OkPanel title="Kennisgrafiek" action={<button className="lv-ok-btn is-ghost" type="button" onClick={() => toast("Grafiek openen")}>Openen</button>}>
-            <div className="lv-kl-graph" aria-hidden="true">
-              <svg className="lv-kl-graph-svg" viewBox="0 0 280 120" width="100%" height="120">
-                <g stroke="rgba(34,201,214,0.35)" strokeWidth="1">
-                  <line x1="40" y1="60" x2="110" y2="30" />
-                  <line x1="40" y1="60" x2="120" y2="90" />
-                  <line x1="110" y1="30" x2="180" y2="50" />
-                  <line x1="120" y1="90" x2="180" y2="50" />
-                  <line x1="180" y1="50" x2="240" y2="28" />
-                  <line x1="180" y1="50" x2="250" y2="85" />
-                  <line x1="110" y1="30" x2="70" y2="20" />
-                </g>
-                <circle cx="40" cy="60" r="7" fill="#22c9d6" />
-                <circle cx="110" cy="30" r="6" fill="#d6a957" />
-                <circle cx="120" cy="90" r="5" fill="#22c9d6" />
-                <circle cx="180" cy="50" r="8" fill="#d6a957" />
-                <circle cx="240" cy="28" r="4" fill="#22c9d6" />
-                <circle cx="250" cy="85" r="5" fill="#22c9d6" />
-                <circle cx="70" cy="20" r="3.5" fill="#d6a957" />
-              </svg>
-              <span className="lv-kl-graph-node" style={{ left: "8%", top: "42%" }}>
-                AI
-              </span>
-              <span className="lv-kl-graph-node" style={{ left: "58%", top: "28%" }}>
-                RAG
-              </span>
-              <span className="lv-kl-graph-node" style={{ left: "72%", top: "68%" }}>
-                Policy
-              </span>
+              <section className="lv-px-panel" aria-label="Document detail">
+                <div className="lv-px-panel-head">
+                  <h2 className="lv-px-panel-title">Detail</h2>
+                  {selectedId ? (
+                    <button
+                      type="button"
+                      className="lv-px-btn"
+                      disabled={busy}
+                      onClick={() => void onDelete(selectedId)}
+                    >
+                      <PxIcon name="trash" /> Delete
+                    </button>
+                  ) : null}
+                </div>
+                {detailError ? (
+                  <p style={{ fontSize: 12, color: "var(--lv-danger)" }} role="alert">
+                    {detailError}
+                  </p>
+                ) : null}
+                {!selectedId ? (
+                  <p style={{ fontSize: 11, color: "var(--lv-text-muted)" }}>Select a document to inspect.</p>
+                ) : null}
+                {detail ? (
+                  <>
+                    <strong style={{ fontSize: 13 }}>{detail.title}</strong>
+                    <dl className="lv-px-meta-grid" style={{ marginTop: 8 }}>
+                      <dt>ID</dt>
+                      <dd>{detail.id}</dd>
+                      <dt>Source</dt>
+                      <dd>{dash(detail.source)}</dd>
+                      <dt>Status</dt>
+                      <dd>{dash(detail.status)}</dd>
+                      <dt>Hash</dt>
+                      <dd style={{ fontFamily: "monospace", fontSize: 10 }}>{dash(detail.content_hash)}</dd>
+                      <dt>Updated</dt>
+                      <dd>{dash(detail.updated_at)}</dd>
+                      <dt>Chunks</dt>
+                      <dd>{chunks.length}</dd>
+                    </dl>
+                    <p style={{ marginTop: 10, fontSize: 11, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                      {excerpt(detail.content, 800)}
+                    </p>
+                    {chunks.length > 0 ? (
+                      <div style={{ marginTop: 12 }}>
+                        <h3 className="lv-px-panel-title" style={{ fontSize: 11 }}>
+                          Chunks · {chunks.length}
+                        </h3>
+                        <ol style={{ margin: 0, paddingLeft: 18, fontSize: 10, lineHeight: 1.45 }}>
+                          {chunks.slice(0, 12).map((chunk) => (
+                            <li key={chunk.chunk_id} style={{ marginBottom: 6 }}>
+                              <span className="lv-px-pill is-cyan" style={{ marginRight: 6 }}>
+                                #{chunk.chunk_index}
+                              </span>
+                              {excerpt(chunk.content, 120)}
+                            </li>
+                          ))}
+                        </ol>
+                        {chunks.length > 12 ? (
+                          <p style={{ fontSize: 10, color: "var(--lv-text-muted)" }}>
+                            +{chunks.length - 12} more chunks
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </section>
             </div>
-            <div className="lv-kl-graph-stats">
-              <span>
-                <strong>12.4K</strong> Concepten
-              </span>
-              <span>
-                <strong>48.7K</strong> Relaties
-              </span>
-            </div>
-          </OkPanel>
+          ) : null}
 
-          <OkPanel
-            title="Validatie & Governance"
-            action={<span className="lv-ok-pill is-green">Gezond</span>}
-          >
-            <ul className="lv-ok-check">
-              {GOVERNANCE.map(([label, value]) => (
-                <li key={label}>
-                  <span>{label}</span>
-                  <span>{value}</span>
-                </li>
-              ))}
-            </ul>
-            <button
-              className="lv-ok-btn"
-              type="button"
-              style={{ marginTop: 8, width: "100%" }}
-              onClick={() => toast("Kwaliteitsrapport")}
-            >
-              Kwaliteitsrapport bekijken
-            </button>
-          </OkPanel>
+          {tab === "search" ? (
+            <div className="lv-px-mid-grid">
+              <section className="lv-px-panel">
+                <h2 className="lv-px-panel-title">
+                  <PxIcon name="search" /> Search &amp; retrieve
+                </h2>
+                <div className="lv-px-filters">
+                  <label className="lv-px-search" style={{ flex: "1 1 100%" }}>
+                    <PxIcon name="search" />
+                    <input
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && void onSearch()}
+                      placeholder="Query the knowledge index…"
+                      aria-label="Search query"
+                    />
+                  </label>
+                  <input
+                    className="lv-px-select"
+                    value={searchSource}
+                    onChange={(e) => setSearchSource(e.target.value)}
+                    placeholder="Filter source (optional)"
+                    aria-label="Source filter"
+                    list="klib-sources"
+                  />
+                  <datalist id="klib-sources">
+                    {sources.map(([src]) => (
+                      <option key={src} value={src} />
+                    ))}
+                  </datalist>
+                  <button type="button" className="lv-px-btn is-gold" disabled={busy} onClick={() => void onSearch()}>
+                    Search
+                  </button>
+                </div>
+                {searchError ? (
+                  <p style={{ fontSize: 12, color: "var(--lv-danger)" }} role="alert">
+                    {searchError}
+                  </p>
+                ) : null}
+              </section>
 
-          <OkPanel
-            title="Top Onderwerpen"
-            action={
-              <div className="lv-ok-chip-row">
-                {(["7d", "30d"] as const).map((r) => (
+              <section className="lv-px-panel" aria-label="Search results">
+                <h2 className="lv-px-panel-title">Results · {hits.length}</h2>
+                {!searched ? (
+                  <p style={{ fontSize: 11, color: "var(--lv-text-muted)" }}>
+                    Run a search against `/api/knowledge/search`. Results come from indexed chunks only.
+                  </p>
+                ) : null}
+                {searched && hits.length === 0 && !searchError ? (
+                  <div className="lv-models-empty" style={{ padding: "16px 4px" }}>
+                    <h2>NO MATCHES</h2>
+                    <p>Nothing in the index matched that query.</p>
+                  </div>
+                ) : null}
+                {hits.map((hit) => (
                   <button
-                    key={r}
+                    key={`${hit.document_id}-${hit.chunk_id ?? hit.chunk_index ?? hit.content.slice(0, 24)}`}
                     type="button"
-                    className={`lv-ok-chip${topicRange === r ? " is-active" : ""}`}
-                    onClick={() => setTopicRange(r)}
+                    className="lv-px-recent-item"
+                    style={{ display: "block", width: "100%", textAlign: "left" }}
+                    onClick={() => {
+                      setSelectedId(hit.document_id);
+                      setTab("documents");
+                    }}
                   >
-                    {r}
+                    <strong style={{ fontSize: 11 }}>{hit.title || hit.document_id}</strong>
+                    <p style={{ margin: "4px 0", fontSize: 10, color: "var(--lv-text-secondary)" }}>
+                      {excerpt(hit.content, 180)}
+                    </p>
+                    <div style={{ display: "flex", gap: 8, fontSize: 9, color: "var(--lv-text-muted)" }}>
+                      <span>{hit.source}</span>
+                      {hit.score != null ? <span>score {hit.score.toFixed?.(3) ?? hit.score}</span> : null}
+                      {hit.confidence != null ? <span>conf {hit.confidence}</span> : null}
+                    </div>
                   </button>
                 ))}
-              </div>
-            }
-          >
-            <ol className="lv-kl-rank">
-              {topics.map((t) => (
-                <li key={t.name}>
-                  <button type="button" onClick={() => toast(t.name)}>
-                    <span className="lv-kl-rank-n">{t.rank}</span>
-                    <span className="lv-ok-list-copy">
-                      <strong>{t.name}</strong>
-                    </span>
-                    <span className="lv-ok-count">{t.count}</span>
-                    <span className="lv-ok-kpi-meta">{t.delta}</span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-          </OkPanel>
+              </section>
+            </div>
+          ) : null}
 
-          <OkPanel title="Curatie & Tagging">
-            <ul className="lv-kl-curation">
-              {CURATION.map((c) => (
-                <li key={c.label}>
-                  <span>{c.label}</span>
-                  <strong>{c.value}</strong>
-                </li>
-              ))}
-            </ul>
-            <button
-              className="lv-ok-btn is-gold"
-              type="button"
-              style={{ marginTop: 8, width: "100%" }}
-              onClick={() => toast("Tags beheren")}
-            >
-              Tags beheren
-            </button>
-          </OkPanel>
-        </section>
+          {tab === "create" ? (
+            <section className="lv-px-panel" aria-label="Create knowledge document">
+              <h2 className="lv-px-panel-title">
+                <PxIcon name="plus" /> Add document
+              </h2>
+              <div className="lv-form-grid" style={{ marginTop: 8 }}>
+                <div className="lv-form-field">
+                  <label htmlFor="kl-title">Title</label>
+                  <input
+                    id="kl-title"
+                    className="lv-input"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Document title"
+                  />
+                </div>
+                <div className="lv-form-field">
+                  <label htmlFor="kl-source">Source</label>
+                  <input
+                    id="kl-source"
+                    className="lv-input"
+                    value={source}
+                    onChange={(e) => setSource(e.target.value)}
+                    placeholder="manual"
+                  />
+                </div>
+                <div className="lv-form-field full">
+                  <label htmlFor="kl-content">Content</label>
+                  <textarea
+                    id="kl-content"
+                    className="lv-input"
+                    rows={10}
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    placeholder="Paste or write the document body…"
+                  />
+                </div>
+                <div className="lv-form-actions full">
+                  <button
+                    type="button"
+                    className="lv-px-btn is-gold"
+                    disabled={busy || !title.trim() || !content.trim()}
+                    onClick={() => void onCreate()}
+                  >
+                    Save document
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {sources.length > 0 && tab === "documents" ? (
+            <section className="lv-px-panel">
+              <h2 className="lv-px-panel-title">Sources in library</h2>
+              <ul className="lv-px-domain-list">
+                {sources.map(([src, count]) => (
+                  <li key={src}>
+                    <div className="lv-px-domain-row">
+                      <PxIcon name="database" />
+                      <span>{src}</span>
+                      <span className="lv-px-domain-count">{count}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          <footer className="lv-px-page-footer">
+            <span>Live knowledge · /api/knowledge</span>
+            <span>{documents.length === 0 ? "Empty store" : `${documents.length} document(s)`}</span>
+          </footer>
+        </div>
       </main>
     </AppShell>
   );

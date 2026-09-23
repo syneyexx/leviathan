@@ -96,17 +96,26 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/cognition/` | **Cognitive Runtime** — TaskModel, BeliefState, WorkingMemory, Perception, MetaController, iterative loop, experience |
 | `Data/backend/routes/cognition.py` | Cognition HTTP API (`/api/cognition/*`) |
 | `Data/docs/cognitive_runtime.md` | Cognitive Runtime architecture reference |
+| `Data/modules/settings/` | **Settings Control Plane** — catalog, overrides, validation, hot/restart apply |
+| `Data/backend/routes/settings.py` | Settings HTTP API (`/api/settings*`) |
+| `Data/docs/settings_control_plane.md` | Settings ownership, precedence, secrets |
 | `Data/modules/context/` | ContextBuilder |
 | `Data/modules/model_runtime/` | OpenAICompatibleLLM |
 | `Data/modules/models/` | **Model Control Plane** (registry, profiles, gateway, router, providers, downloads) |
 | `Data/backend/routes/models.py` | Models HTTP API surface (included from `main.py`) |
-| `Data/modules/run/` | RunStore / events / transitions |
+| `Data/modules/run/` | RunStore / EventEnvelope / transitions + correlation |
+| `Data/modules/jobs/` | JobStore / JobRuntime / leases / budgets / ResourceManager |
+| `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway / FrontierCapabilityManifest |
+| `Data/modules/approvals/` | Policy + ApprovalService + AuthorityProfile |
+| `Data/modules/settings/` | Settings Control Plane + BehaviorProfile |
+| `Data/modules/common/` | CorrelationIds + ownership matrix |
+| `Data/backend/tests/test_architecture_wave0.py` | Wave 0 architecture conformance exit gate |
+| `Data/backend/tests/test_wave1_cognition_agents.py` | Wave 1 cognition hydrate/invoke + DAG agents |
+| `Data/backend/tests/test_wave2_evaluation.py` | Wave 2 evaluation platform / release authority |
+| `Data/backend/tests/test_wave3_model_serving.py` | Wave 3 managed serving / measured routing |
 | `Data/modules/artifacts/` | ArtifactStore |
 | `Data/modules/knowledge/` | KnowledgeStore / HybridRetriever |
 | `Data/modules/function_runtime/` | FunctionRegistry / FunctionRuntime |
-| `Data/modules/execution/` | CapabilityCatalog / ExecutionGateway |
-| `Data/modules/approvals/` | PolicyEngine / ApprovalStore / ApprovalService |
-| `Data/modules/jobs/` | JobStore / JobRuntime / ResourceManager |
 | `Data/modules/observations/` | ToolObservation / Effect ledger |
 | `Data/modules/evidence/` | EvidenceStore / EvidenceService |
 | `Data/modules/memory/` | MemoryStore |
@@ -123,13 +132,15 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/modules/mcp/` | **Universal MCP Bridge** — one bridge, many sessions; Tools provider |
 | `Data/backend/routes/mcp.py` | MCP HTTP API (`/api/mcp/*`; call via ExecutionGateway) |
 | `Data/docs/mcp_bridge.md` | MCP architecture reference |
-| `Data/modules/evaluation/` | EvaluationHarness (+ neuro ablation suite) |
+| `Data/modules/evaluation/` | EvaluationHarness + EvaluationPlatform (scorecards, regression corpus) |
+| `Data/modules/models/` | Model Control Plane + measured router + managed serving providers |
+| `Data/modules/model_runtime/` | OpenAI-compatible LLM + ServingSupervisor / managed adapters |
 | `Data/modules/isolation/` | IsolationGuard |
 | `Data/modules/training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `Data/modules/browser/` | BrowserAutomationStub |
 | `Data/modules/media/` | MediaAutomationStub |
 | `Data/modules/voice/` | VoiceRuntimeStub |
-| `Data/modules/release/` | ReleaseGateRunner |
+| `Data/modules/release/` | ReleaseGateRunner + evaluation relevance gate |
 | `Data/modules/security/` | SecurityAuditor |
 | `Data/modules/backup/` | BackupService |
 | `Data/modules/metrics/` | MetricsCollector |
@@ -261,7 +272,7 @@ SQLite persistence
 | Isolation | `Data/modules/isolation/` |
 | Training | `Data/modules/training/` (registry stub) |
 | Browser / Media / Voice | stub modules under `Data/modules/{browser,media,voice}/` |
-| Release gates | `Data/modules/release/` |
+| Release gates | `Data/modules/release/` (consumes evaluation relevance) |
 | Security posture | `Data/modules/security/` |
 | Backup / restore | `Data/modules/backup/` |
 | Metrics | `Data/modules/metrics/` |

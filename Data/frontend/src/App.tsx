@@ -6,6 +6,12 @@ import { ChatPage } from "./pages/ChatPage";
 import { CodingPage } from "./pages/CodingPage";
 import { CognitionPage } from "./pages/CognitionPage";
 import { CommandPage } from "./pages/CommandPage";
+import {
+  DatasetManagementPixelPage,
+  ModelsPixelPage,
+  OfflineDatasetsPixelPage,
+  TrainingPixelPage,
+} from "./pages/pixel";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
 import { GeheugenPage } from "./pages/GeheugenPage";
@@ -20,20 +26,21 @@ import { MediaQueuePage } from "./pages/media/MediaQueuePage";
 import { MediaViralPage } from "./pages/media/MediaViralPage";
 import { TikTokPage } from "./pages/media/TikTokPage";
 import { YouTubePage } from "./pages/media/YouTubePage";
-import { ModelsPage } from "./pages/ModelsPage";
-import { ResearchPixelPage } from "./pages/ResearchPixelPage";
+import { ResearchPage } from "./pages/ResearchPage";
+import { PerformancePage } from "./pages/PerformancePage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
+import { ModulesPage } from "./pages/ModulesPage";
 import { McpPage } from "./pages/McpPage";
+import { ConsolePage } from "./pages/ConsolePage";
 import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
 import { MarktdataPage } from "./pages/trading/MarktdataPage";
 import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
 import { PortefeuillePage } from "./pages/trading/PortefeuillePage";
 import { SimulatiePage } from "./pages/trading/SimulatiePage";
 import { StrategieenPage } from "./pages/trading/StrategieenPage";
-import { TrainingPage } from "./pages/TrainingPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
 
 export default function App() {
@@ -45,8 +52,10 @@ export default function App() {
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/coding" element={<CodingPage />} />
 
-      <Route path="/models" element={<ModelsPage />} />
-      <Route path="/training" element={<TrainingPage />} />
+      <Route path="/models" element={<ModelsPixelPage />} />
+      <Route path="/training" element={<TrainingPixelPage />} />
+      <Route path="/dataset-management" element={<DatasetManagementPixelPage />} />
+      <Route path="/offline-datasets" element={<OfflineDatasetsPixelPage />} />
       <Route path="/agents" element={<AgentsPage />} />
       <Route path="/analytics" element={<AnalyticsPage />} />
 
@@ -70,7 +79,7 @@ export default function App() {
       <Route path="/trading/paper" element={<PaperTradingPage />} />
       <Route path="/trading/broker" element={<BrokerTradingPage />} />
 
-      <Route path="/research" element={<ResearchPixelPage />} />
+      <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />
       <Route path="/cognition" element={<CognitionPage />} />
       <Route path="/memory" element={<GeheugenPage />} />
@@ -78,22 +87,23 @@ export default function App() {
       <Route path="/evidence" element={<EvidenceVaultPage />} />
       <Route path="/datasets" element={<DatasetsPage />} />
 
-      <Route path="/performance" element={<SectionPage title="Performance" />} />
+      <Route path="/performance" element={<PerformancePage />} />
       <Route path="/tools" element={<ToolsPage />} />
+      <Route path="/modules" element={<ModulesPage />} />
       <Route path="/mcp" element={<McpPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
-      <Route path="/console" element={<SectionPage title="Console" />} />
+      <Route path="/console" element={<ConsolePage />} />
 
       <Route path="/settings" element={<SettingsPage />} />
-      <Route path="/settings/llm-gedrag" element={<SectionPage title="LLM Gedrag" />} />
-      <Route path="/settings/llm-studio" element={<SectionPage title="LLM Studio" />} />
-      <Route path="/settings/rechten" element={<SectionPage title="Rechten & Security" />} />
-      <Route path="/settings/benchmarks" element={<SectionPage title="Model Benchmarks" />} />
-      <Route path="/settings/mediacenter" element={<SectionPage title="Mediacenter" />} />
-      <Route path="/settings/opslag" element={<SectionPage title="Opslag" />} />
-      <Route path="/settings/python" element={<SectionPage title="Python & Runtime" />} />
-      <Route path="/settings/console" element={<SectionPage title="Console" />} />
-      <Route path="/settings/logs" element={<SectionPage title="Logs" />} />
+      <Route path="/settings/llm-gedrag" element={<Navigate to="/settings?section=llm_gedrag" replace />} />
+      <Route path="/settings/llm-studio" element={<Navigate to="/settings?section=llm_studio" replace />} />
+      <Route path="/settings/rechten" element={<Navigate to="/settings?section=rechten" replace />} />
+      <Route path="/settings/benchmarks" element={<Navigate to="/settings?section=benchmarks" replace />} />
+      <Route path="/settings/mediacenter" element={<Navigate to="/settings?section=mediacenter" replace />} />
+      <Route path="/settings/opslag" element={<Navigate to="/settings?section=opslag" replace />} />
+      <Route path="/settings/python" element={<Navigate to="/settings?section=python" replace />} />
+      <Route path="/settings/console" element={<Navigate to="/settings?section=console" replace />} />
+      <Route path="/settings/logs" element={<Navigate to="/settings?section=logs" replace />} />
 
       <Route path="/chat.html" element={<Navigate to="/chat" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />

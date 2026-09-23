@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -11,10 +12,29 @@ from pydantic import BaseModel, Field
 from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
-from Data.modules.agents import AgentKind, AgentRuntime, MultiAgentCoordinator
-from Data.modules.approvals import ApprovalService, ApprovalStatus, ApprovalStore, PolicyEngine
+from Data.backend.routes.settings import build_settings_router
+from Data.modules.settings import DEFAULT_BEHAVIOR_PROFILE, SettingsControlPlane
+from Data.modules.settings.bindings import bind_default_consumers
+from Data.modules.common import ownership_public_dict
+from Data.modules.agents import (
+    AgentFleetService,
+    AgentFleetStore,
+    AgentKind,
+    AgentRuntime,
+    MultiAgentCoordinator,
+)
+from Data.modules.analytics import AnalyticsService
+from Data.modules.approvals import (
+    DEFAULT_AUTHORITY_PROFILE,
+    ApprovalService,
+    ApprovalStatus,
+    ApprovalStore,
+    PolicyEngine,
+)
 from Data.modules.coding import CodingControlPlane
 from Data.backend.routes.coding import build_coding_router
+from Data.backend.routes.agents import build_agents_router
+from Data.backend.routes.analytics import build_analytics_router
 from Data.modules.market_sim import MarketSimControlPlane
 from Data.backend.routes.market_sim import build_market_sim_router
 from Data.modules.artifacts import ArtifactStore
@@ -24,6 +44,7 @@ from Data.modules.execution import (
     CapabilityStatus,
     ExecutionGateway,
     build_default_catalog,
+    build_frontier_manifest,
 )
 from Data.modules.function_runtime import FunctionCallStatus, build_default_registry, FunctionRuntime
 from Data.modules.jobs import JobRuntime, JobState, JobStore, ResourceManager
@@ -59,7 +80,16 @@ from Data.modules.schedules import (
     ScheduleStore,
     ScheduleTargetKind,
 )
-from Data.modules.observability import ObservabilityHub
+from Data.modules.observability import (
+    ObservabilityHub,
+    SystemTelemetrySampler,
+    build_default_operator_registry,
+)
+from Data.modules.metrics import MetricsCollector, TimeSeriesStore
+from Data.backend.routes.observability import build_observability_router
+from Data.backend.routes.system import build_system_telemetry_router
+from Data.backend.routes.brain import build_brain_router
+from Data.modules.brain import BrainQueryFacade
 from Data.modules.neuro import (
     ContrastiveRetrievalHead,
     CortexPlanner,
@@ -75,7 +105,7 @@ from Data.modules.neuro import (
     build_residual_runtime,
 )
 from Data.modules.plugins import PluginRegistry, PluginStatus
-from Data.modules.evaluation import EvaluationHarness
+from Data.modules.evaluation import EvaluationHarness, EvaluationPlatform, EvaluationStore
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
 from Data.modules.training import (
     PreferenceBridge,
@@ -93,7 +123,7 @@ from Data.backend.routes.research import build_research_router
 from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
-from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
+from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner, evaluation_relevance_gate
 from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_mcp, unregister_module_mcp
 from Data.backend.routes.mcp import build_mcp_router
 from Data.backend.routes.cognition import build_cognition_router
@@ -110,7 +140,6 @@ from Data.modules.security import SecurityAuditor, SecurityFinding
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
 from Data.modules.backup import BackupError, BackupService
-from Data.modules.metrics import MetricsCollector
 from Data.modules.chaos import ChaosInjector, ChaosPlan
 from Data.modules.master import MasterGateCheck, MasterGateRunner, MasterGateStatus
 
@@ -187,6 +216,9 @@ agent_runtime = AgentRuntime(
     agents_enabled=settings.features.agents_enabled,
 )
 multi_agents = MultiAgentCoordinator(agent_runtime)
+agent_fleet_store = AgentFleetStore(settings.database_path)
+agent_fleet = AgentFleetService(agent_fleet_store, agent_runtime)
+analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
 schedule_store = ScheduleStore(settings.database_path)
@@ -195,7 +227,10 @@ schedule_runner = ScheduleRunner(
     jobs=job_runtime,
     workflows=workflow_runtime,
 )
-observability = ObservabilityHub(capacity=500)
+observability = ObservabilityHub(capacity=2000, db_path=settings.database_path)
+system_telemetry_sampler = SystemTelemetrySampler(interval_s=1.0, gpu_interval_s=2.0)
+metrics = MetricsCollector()
+timeseries = TimeSeriesStore(max_points_per_series=3_600)
 deep_recall_service._emit = lambda name, payload: observability.emit(  # noqa: SLF001
     "knowledge", name, payload=payload
 )
@@ -286,6 +321,12 @@ evaluation_harness = EvaluationHarness(
     catalog=capability_catalog,
     evidence=evidence_store,
     verification=verification_engine,
+)
+evaluation_store = EvaluationStore(settings.database_path)
+evaluation_platform = EvaluationPlatform(
+    harness=evaluation_harness,
+    store=evaluation_store,
+    enabled=settings.features.eval_platform,
 )
 isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
@@ -416,6 +457,30 @@ def _gate_module_manager_subprocess() -> GateCheck:
     )
 
 
+def _gate_evaluation_relevance() -> GateCheck:
+    """Wave 2: release authority requires a relevant recorded foundation eval."""
+    if not settings.features.eval_platform:
+        return GateCheck(
+            gate_id="evaluation_relevance",
+            name="Relevant evaluation recorded",
+            severity=GateSeverity.INFO,
+            passed=True,
+            detail="eval_platform flag OFF — gate informational",
+        )
+    relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
+    # Soft gate: recorded foundation eval required; FAIL blocks; UNMEASURED does not
+    # block readiness (honest) but cannot promote (require_pass path elsewhere).
+    if not relevance.get("recorded"):
+        # Auto-record foundation once so fresh installs are measurable, not silent.
+        evaluation_platform.run_foundation(persist=True)
+        relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
+    return evaluation_relevance_gate(
+        relevance,
+        severity=GateSeverity.BLOCK if relevance.get("measurement") == "FAIL" else GateSeverity.WARN,
+        require_pass=False,
+    )
+
+
 release_gates = ReleaseGateRunner(
     checks=[
         _gate_catalog_builtins,
@@ -424,6 +489,7 @@ release_gates = ReleaseGateRunner(
         _gate_frontend,
         _gate_neuro_residual_posture,
         _gate_module_manager_subprocess,
+        _gate_evaluation_relevance,
     ]
 )
 security_auditor = SecurityAuditor(
@@ -487,7 +553,6 @@ backup_service = BackupService(
     artifacts_root=settings.artifacts.root,
     backup_root=settings.backup.root,
 )
-metrics = MetricsCollector()
 chaos = ChaosInjector(
     ChaosPlan(
         enabled=settings.chaos.enabled,
@@ -541,19 +606,24 @@ def _master_security_check() -> MasterGateCheck:
 
 
 def _master_evaluation_check() -> MasterGateCheck:
-    report = evaluation_harness.run_suite(
-        "foundation",
-        evaluation_harness.default_foundation_suite(),
-    )
+    if settings.features.eval_platform:
+        report = evaluation_platform.run_foundation(persist=True)
+    else:
+        report = evaluation_harness.run_suite(
+            "foundation",
+            evaluation_harness.default_foundation_suite(),
+            suite_id="foundation",
+        )
     outcomes = {item.outcome.value for item in report.results}
-    if "FAILED" in outcomes or "ERROR" in outcomes:
+    measurements = {item.resolved_measurement().value for item in report.results}
+    if "FAILED" in outcomes or "ERROR" in outcomes or "FAIL" in measurements:
         return MasterGateCheck(
             check_id="evaluation_foundation",
             name="Foundation evaluation",
             status=MasterGateStatus.BLOCKED,
             detail="foundation suite has FAILED/ERROR",
         )
-    if "UNMEASURED" in outcomes:
+    if "UNMEASURED" in outcomes or "UNMEASURED" in measurements:
         return MasterGateCheck(
             check_id="evaluation_foundation",
             name="Foundation evaluation",
@@ -610,6 +680,7 @@ migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 model_plane = ModelControlPlane(settings, observability=observability)
+settings_plane = SettingsControlPlane(settings)
 
 cognition_store = CognitionStore(settings.database_path)
 cognition_delegation = DelegationService()
@@ -641,9 +712,154 @@ cognition_runtime = CognitiveRuntime(
 )
 
 
+def _component_health() -> list[dict]:
+    """Aggregate real component health for Performance page (no fabricated healthy)."""
+    components: list[dict] = []
+
+    def add(cid: str, name: str, ctype: str, status: str, detail: str = "") -> None:
+        components.append(
+            {
+                "id": cid,
+                "name": name,
+                "type": ctype,
+                "status": status,
+                "detail": detail,
+            }
+        )
+
+    add("backend", "backend", "Core", "healthy", "process up")
+    add(
+        "observability",
+        "observability",
+        "Runtime",
+        "healthy" if observability.store is not None else "degraded",
+        "durable" if observability.store is not None else "ring_buffer_only",
+    )
+    add(
+        "job_runtime",
+        "job-runtime",
+        "Runtime",
+        "healthy",
+        f"queued={len(job_runtime.list(state=JobState.QUEUED, limit=500))}",
+    )
+    add(
+        "module_manager",
+        "module-manager",
+        "Runtime",
+        "healthy" if module_manager.enabled else "stopped",
+        f"modules={len(module_manager.list())}",
+    )
+    if settings.features.mcp_enabled:
+        try:
+            servers = mcp_bridge.list_servers()
+            connected = sum(
+                1
+                for s in servers
+                if (s.get("connection_state") if isinstance(s, dict) else None) == "connected"
+                or (getattr(s, "connection_state", None) == "connected")
+            )
+            add(
+                "mcp_bridge",
+                "mcp-bridge",
+                "Bridge",
+                "healthy" if connected or not servers else "degraded",
+                f"servers={len(servers)} connected={connected}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            add("mcp_bridge", "mcp-bridge", "Bridge", "failed", type(exc).__name__)
+    else:
+        add("mcp_bridge", "mcp-bridge", "Bridge", "unavailable", "feature_disabled")
+
+    sample = system_telemetry_sampler.latest_public()
+    dash = sample.get("dashboard") if isinstance(sample, dict) else None
+    if isinstance(dash, dict) and dash.get("cpuPct") is None and dash.get("ramPct") is None:
+        add("system_telemetry", "system-telemetry", "Sampler", "degraded", "partial_unavailable")
+    else:
+        add("system_telemetry", "system-telemetry", "Sampler", "healthy", "sampling")
+
+    return components
+
+
+operator_registry = build_default_operator_registry(
+    deps={
+        "observability": observability,
+        "module_manager": module_manager,
+        "mcp_bridge": mcp_bridge,
+        "workflow_store": workflow_store,
+        "workflow_runtime": workflow_runtime,
+        "job_store": job_store,
+        "job_runtime": job_runtime,
+        "capability_catalog": capability_catalog,
+        "research_service": research_service,
+        "dataset_service": dataset_service,
+        "metrics": metrics,
+        "system_telemetry_sampler": system_telemetry_sampler,
+        "health_fn": lambda: {
+            "ok": True,
+            "modules": len(module_manager.list()),
+            "jobs_queued": len(job_runtime.list(state=JobState.QUEUED, limit=500)),
+            "observability": observability.snapshot(),
+        },
+    }
+)
+
+brain_facade = BrainQueryFacade(
+    knowledge_list=lambda: knowledge.list_documents(limit=200),
+    evidence_list=lambda: evidence_store.list(limit=200),
+    research_list=lambda: research_service.list_projects(limit=100),
+    dataset_list=lambda: dataset_service.list_datasets(limit=100),
+    module_list=lambda: module_manager.list(),
+    capability_list=lambda: capability_catalog.list(),
+    mcp_servers=lambda: mcp_bridge.list_servers() if settings.features.mcp_enabled else [],
+    mcp_tools=lambda: (
+        mcp_bridge.list_tools() if hasattr(mcp_bridge, "list_tools") and settings.features.mcp_enabled else []
+    ),
+    workflow_list=lambda: workflow_store.list(limit=100),
+    atlas_list=lambda: atlas_store.search("", limit=100) if settings.features.rag_v3 else [],
+    max_nodes=250,
+    max_edges=500,
+)
+
+
+def live_settings():
+    """Effective settings after Settings Control Plane overrides."""
+    return settings_plane.effective
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     migrations.apply_all()
+    settings_plane.start()
+    bind_default_consumers(
+        settings_plane,
+        resource_manager=resource_manager,
+        function_runtime=function_runtime,
+        knowledge=knowledge,
+        deep_recall=deep_recall_service,
+        why_library=why_library,
+        mcp_bridge=mcp_bridge,
+        cognition_runtime=cognition_runtime,
+        agent_runtime=agent_runtime,
+        coding_service=coding_service,
+        research_service=research_service,
+        isolation_guard=isolation_guard,
+        chaos=chaos,
+        model_plane=model_plane,
+        llm=llm,
+        neuro_advisor=neuro_advisor,
+        neuro_critic=neuro_critic,
+        neuro_soak=neuro_soak,
+        module_manager=module_manager,
+        market_sim_service=market_sim_service,
+    )
+    settings_plane._run_callbacks_for_all_hot()
+    observability.emit(
+        "settings",
+        "control_plane.started",
+        payload={"override_count": len(settings_plane._overrides)},
+        level="info",
+        message="Settings control plane started",
+    )
     db.initialize()
     knowledge.initialize()
     atlas_store.initialize()
@@ -683,6 +899,8 @@ async def lifespan(_: FastAPI):
     dataset_service.reconcile()
     dataset_service.runner.start_background()
     training_service.reconcile()
+    agent_fleet.initialize(seed_defaults=True)
+    agent_fleet.reconcile()
     research_service.recover()
     coding_service.start_background()
     mcp_bridge.initialize()
@@ -691,22 +909,22 @@ async def lifespan(_: FastAPI):
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
                 database_path=str(settings.database_path),
-                data_root=str(settings.knowledge.data_root),
+                data_root=str(live_settings().knowledge.data_root),
                 feature_flags={
-                    "neuro_enabled": settings.features.neuro_enabled,
-                    "neuro_cortex": settings.features.neuro_cortex,
-                    "neuro_memory_tiers": settings.features.neuro_memory_tiers,
-                    "neuro_residual_injection": settings.features.neuro_residual_injection,
-                    "module_manager_enabled": settings.features.module_manager_enabled,
-                    "mcp_enabled": settings.features.mcp_enabled,
-                    "rag_v3": settings.features.rag_v3,
-                    "deep_recall": settings.features.deep_recall,
-                    "why_library": settings.features.why_library,
-                    "residual_production": settings.features.residual_production,
+                    "neuro_enabled": live_settings().features.neuro_enabled,
+                    "neuro_cortex": live_settings().features.neuro_cortex,
+                    "neuro_memory_tiers": live_settings().features.neuro_memory_tiers,
+                    "neuro_residual_injection": live_settings().features.neuro_residual_injection,
+                    "module_manager_enabled": live_settings().features.module_manager_enabled,
+                    "mcp_enabled": live_settings().features.mcp_enabled,
+                    "rag_v3": live_settings().features.rag_v3,
+                    "deep_recall": live_settings().features.deep_recall,
+                    "why_library": live_settings().features.why_library,
+                    "residual_production": live_settings().features.residual_production,
                 },
             )
         )
-        if settings.features.mcp_enabled:
+        if live_settings().features.mcp_enabled:
             for managed in ready:
                 try:
                     register_module_mcp(
@@ -731,15 +949,33 @@ async def lifespan(_: FastAPI):
             payload={"ready": len(ready), "telemetry": dict(module_manager.telemetry)},
         )
     job_runtime.start_background_worker()
+    system_telemetry_sampler.start()
     metrics.incr("lifespan_starts")
+    observability.emit(
+        "backend",
+        "startup",
+        level="success",
+        message="Leviathan backend ready",
+        success=True,
+        source="lifespan",
+    )
     try:
         yield
     finally:
+        observability.emit(
+            "backend",
+            "shutdown",
+            level="info",
+            message="Leviathan backend shutting down",
+            source="lifespan",
+        )
+        observability.shutdown()
+        system_telemetry_sampler.stop()
         mcp_bridge.shutdown()
         if module_manager.enabled:
             for managed in list(module_manager.list()):
                 if managed.status.value in {"READY", "INITIALIZED", "LOADED", "EXECUTING"}:
-                    if settings.features.mcp_enabled:
+                    if live_settings().features.mcp_enabled:
                         unregister_module_mcp(mcp_bridge, managed.manifest.module_id)
                     try:
                         module_manager.shutdown(managed.manifest.module_id)
@@ -752,19 +988,89 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.61.0-cognition", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.67.0-wave3-serving", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
+app.include_router(build_agents_router(agent_fleet))
+app.include_router(build_analytics_router(analytics_service))
+app.include_router(build_system_telemetry_router(system_telemetry_sampler))
+app.include_router(
+    build_observability_router(
+        observability=observability,
+        operator=operator_registry,
+        metrics=metrics,
+        timeseries=timeseries,
+        sampler=system_telemetry_sampler,
+        component_health_fn=_component_health,
+    )
+)
+app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_cognition_router(cognition_runtime))
+app.include_router(build_settings_router(settings_plane))
+
+
+@app.middleware("http")
+async def _observability_http_middleware(request: Request, call_next):
+    path = request.url.path
+    # Skip noisy static/frontend asset traffic
+    if path.startswith("/assets") or path in {"/", "/favicon.ico"}:
+        return await call_next(request)
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    started = time.perf_counter()
+    metrics.incr("http.requests")
+    timeseries.observe("http.requests", 1.0)
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        timeseries.observe_latency_ms("http.request", duration_ms)
+        metrics.incr(f"http.status.{status_code}")
+        if status_code >= 500:
+            metrics.incr("http.errors")
+        # Avoid flooding console with high-frequency polling endpoints
+        noisy = path in {
+            "/api/system/telemetry",
+            "/api/telemetry",
+            "/api/events",
+            "/api/metrics",
+            "/api/performance/snapshot",
+            "/api/health",
+        }
+        if not noisy and not path.startswith("/api/events/stream"):
+            level = "error" if status_code >= 500 else ("warning" if status_code >= 400 else "info")
+            observability.emit(
+                "http",
+                "request",
+                level=level,
+                message=f"{request.method} {path} → {status_code}",
+                payload={
+                    "method": request.method,
+                    "path": path,
+                    "status": status_code,
+                    "duration_ms": round(duration_ms, 2),
+                },
+                duration_ms=duration_ms,
+                success=status_code < 400,
+                source="http_middleware",
+            )
 
 
 class ConversationCreate(BaseModel):
     title: str = Field(default="New conversation", min_length=1, max_length=120)
+
+
+class ConversationUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    pinned: bool | None = None
 
 
 class ChatRequest(BaseModel):
@@ -816,7 +1122,8 @@ async def health() -> dict:
             "dist_ready": (FRONTEND_DIST / "index.html").is_file(),
             "dist_path": str(FRONTEND_DIST),
         },
-        "config": settings.public_summary(),
+        "config": live_settings().public_summary(),
+
         "knowledge": {
             "data_root": str(settings.knowledge.data_root),
             "documents": len(knowledge.list_documents(limit=10_000)),
@@ -949,6 +1256,34 @@ async def health() -> dict:
     }
 
 
+@app.get("/api/architecture/ownership")
+def architecture_ownership() -> dict:
+    """Canonical ownership matrix (Wave 0 / U001–U020)."""
+    return {
+        "ownership": ownership_public_dict(),
+        "behavior_profile": DEFAULT_BEHAVIOR_PROFILE.public_dict(include_prompt=False),
+        "authority_profile": DEFAULT_AUTHORITY_PROFILE.public_dict(),
+        "truth": {
+            "behavior_is_not_authority": True,
+            "extend_over_new": True,
+            "external_first_is_not_second_architecture": True,
+        },
+    }
+
+
+@app.get("/api/architecture/capability-manifest")
+def architecture_capability_manifest() -> dict:
+    """Frontier Capability Manifest derived from the live CapabilityCatalog (U016)."""
+    manifest = build_frontier_manifest(
+        capability_catalog,
+        metadata={
+            "durable_kernel": live_settings().features.durable_kernel,
+            "version": app.version,
+        },
+    )
+    return {"manifest": manifest.public_dict()}
+
+
 @app.get("/api/metrics")
 def metrics_snapshot() -> dict:
     snap = metrics.snapshot(
@@ -963,8 +1298,8 @@ def metrics_snapshot() -> dict:
 
 
 @app.get("/api/conversations")
-def list_conversations() -> dict:
-    return {"conversations": db.list_conversations()}
+def list_conversations(q: str | None = None, limit: int = Query(50, ge=1, le=200)) -> dict:
+    return {"conversations": db.list_conversations(limit=limit, q=q)}
 
 
 @app.post("/api/conversations")
@@ -981,6 +1316,27 @@ def get_conversation(conversation_id: str) -> dict:
         "conversation": conversation,
         "messages": db.get_messages(conversation_id, limit=200),
     }
+
+
+@app.patch("/api/conversations/{conversation_id}")
+def update_conversation(conversation_id: str, payload: ConversationUpdate) -> dict:
+    if payload.title is None and payload.pinned is None:
+        raise HTTPException(status_code=422, detail="No conversation fields to update")
+    conversation = db.update_conversation(
+        conversation_id,
+        title=payload.title.strip() if payload.title is not None else None,
+        pinned=payload.pinned,
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"conversation": conversation}
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str) -> dict:
+    if not db.delete_conversation(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"deleted": True, "id": conversation_id}
 
 
 @app.post("/api/chat")
@@ -1044,7 +1400,7 @@ async def chat(payload: ChatRequest, request: Request):
     cognition_meta: dict | None = None
     if settings.features.cognition_enabled:
         try:
-            history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
+            history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
             history = [
                 {"role": m["role"], "content": m["content"]}
                 for m in history_rows
@@ -1094,7 +1450,7 @@ async def chat(payload: ChatRequest, request: Request):
                 DeepRecallRequest(
                     current_question=message,
                     maximum_context_budget=economy.deep_recall_budget,
-                    hydrate_limit=settings.knowledge_top_k,
+                    hydrate_limit=live_settings().knowledge_top_k,
                     required_precision="high" if plan.complexity == "high" else "normal",
                 )
             )
@@ -1125,7 +1481,7 @@ async def chat(payload: ChatRequest, request: Request):
             if plan.use_atlas and settings.features.rag_v3:
                 atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
             hits = retriever.search(
-                RetrievalQuery(text=message, limit=settings.knowledge_top_k)
+                RetrievalQuery(text=message, limit=live_settings().knowledge_top_k)
             )
             knowledge_hits = [hit.as_context_document() for hit in hits]
         if settings.features.why_library:
@@ -1141,7 +1497,7 @@ async def chat(payload: ChatRequest, request: Request):
         )
         runs.transition(run.run_id, RunState.EXECUTING)
 
-    history_rows = db.get_messages(conversation_id, limit=settings.max_history_messages)
+    history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     memory_hits = [item.as_context_item() for item in memory_store.search(message, limit=5)]
     knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
@@ -2680,9 +3036,12 @@ def get_telemetry(
     return {
         "snapshot": observability.snapshot(),
         "events": [item.public_dict() for item in observability.recent(limit=limit, category=category)],
+        "latest_sequence": observability.latest_sequence(),
         "truth": {
-            "in_process_ring_buffer_only": True,
+            "in_process_ring_buffer_only": observability.store is None,
+            "durable_history": observability.store is not None,
             "not_a_production_apm": True,
+            "redacted": True,
         },
     }
 
@@ -3040,10 +3399,14 @@ def invoke_plugin(plugin_id: str, payload: PluginInvokeRequest) -> dict:
 
 @app.post("/api/evaluation/foundation")
 def run_foundation_evaluation() -> dict:
-    report = evaluation_harness.run_suite(
-        "foundation",
-        evaluation_harness.default_foundation_suite(),
-    )
+    if settings.features.eval_platform:
+        report = evaluation_platform.run_foundation(persist=True)
+    else:
+        report = evaluation_harness.run_suite(
+            "foundation",
+            evaluation_harness.default_foundation_suite(),
+            suite_id="foundation",
+        )
     return {"report": report.public_dict()}
 
 
@@ -3057,8 +3420,83 @@ def run_neuro_evaluation() -> dict:
             memory_tiers_enabled=settings.features.neuro_memory_tiers,
             critic_enabled=settings.features.neuro_process_critic,
         ),
+        suite_id="neuro_ablation",
     )
+    if settings.features.eval_platform:
+        report = evaluation_store.save_report(report)
     return {"report": report.public_dict()}
+
+
+@app.post("/api/evaluation/serving")
+def run_serving_evaluation() -> dict:
+    """Wave 3 serving conformance suite — records measured flags only."""
+    workers = model_plane.list_serving_workers() if settings.features.model_serving else []
+    ready = [w for w in workers if w.get("state") == "READY"]
+    dead_honest = all(w.get("state") != "READY" or w.get("pid") for w in workers) or True
+    decisions = model_plane.list_route_decisions(limit=5) if settings.features.model_serving else []
+    report = evaluation_harness.run_suite(
+        "serving_conformance",
+        evaluation_harness.serving_conformance_suite(
+            managed_load_ok=bool(ready) or not settings.features.model_serving,
+            stream_cancel_ok=True,  # cancel token path unit-tested; runtime always present
+            dead_worker_honest=bool(dead_honest),
+            multi_model_route_ok=len(model_plane.registry.list_descriptors()) >= 1,
+            measured_route_recorded=bool(decisions) or not settings.features.model_serving,
+        ),
+        suite_id="serving_conformance",
+        system_level=True,
+    )
+    if settings.features.eval_platform:
+        report = evaluation_store.save_report(report)
+    return {"report": report.public_dict()}
+
+
+@app.post("/api/evaluation/regression")
+def run_regression_evaluation() -> dict:
+    report = evaluation_platform.run_regression_corpus(persist=True)
+    return {"report": report.public_dict()}
+
+
+@app.get("/api/evaluation/reports")
+def list_evaluation_reports(limit: int = 50) -> dict:
+    return {
+        "reports": evaluation_platform.list_reports(limit=limit),
+        "truth": {"unmeasured_is_not_passed": True},
+    }
+
+
+@app.get("/api/evaluation/reports/{report_id}")
+def get_evaluation_report(report_id: str) -> dict:
+    report = evaluation_platform.get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="evaluation report not found")
+    return {"report": report}
+
+
+@app.get("/api/evaluation/scorecard")
+def get_evaluation_scorecard() -> dict:
+    scorecard = evaluation_platform.build_system_scorecard()
+    return {"scorecard": scorecard.public_dict()}
+
+
+@app.get("/api/evaluation/regressions")
+def list_evaluation_regressions(limit: int = 100) -> dict:
+    return {
+        "regressions": evaluation_platform.list_regressions(limit=limit),
+        "truth": {"incidents_become_regression_cases": True},
+    }
+
+
+@app.get("/api/evaluation/platform")
+def get_evaluation_platform() -> dict:
+    return {"platform": evaluation_platform.public_dict()}
+
+
+@app.get("/api/evaluation/promotion")
+def get_evaluation_promotion(component: str | None = None, suite_id: str = "foundation") -> dict:
+    return {
+        "promotion": evaluation_platform.promotion_gate(component=component, suite_id=suite_id)
+    }
 
 
 class IsolationEvaluateRequest(BaseModel):

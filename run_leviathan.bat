@@ -51,11 +51,11 @@ if errorlevel 1 (
   goto :fail
 )
 
-echo [LEVIATHAN] Starting on http://127.0.0.1:8765
+echo [LEVIATHAN] Starting via leviathan.py (host/port from settings)
 echo [LEVIATHAN] Keep this window open. Press Ctrl+C to stop.
 echo.
 
-"%PY%" -m uvicorn Data.backend.main:app --host 127.0.0.1 --port 8765
+"%PY%" leviathan.py
 set "EXITCODE=%ERRORLEVEL%"
 
 if not "%EXITCODE%"=="0" (

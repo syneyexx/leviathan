@@ -58,6 +58,10 @@ export function createChrome(ctx, panels) {
     ui.hud = $("[data-role='hud']");
     ui.leftTabs = $("[data-role='left-tabs']");
     ui.bottomTabs = $("[data-role='bottom-tabs']");
+    ui.pageMeta = $("[data-role='page-meta']");
+    ui.saveMeta = $("[data-role='save-meta']");
+    ui.perfMeta = $("[data-role='perf-meta']");
+    ui.dimHud = null;
 
     for (const panel of panels) {
       if (panel.zone === "modal") {
@@ -151,9 +155,11 @@ export function createChrome(ctx, panels) {
         <button type="button" class="lvb-mini" data-act="zoom-out" aria-label="Zoom out">−</button>
         <button type="button" class="lvb-zoom" data-role="zoom" data-act="zoom-reset">100%</button>
         <button type="button" class="lvb-mini" data-act="zoom-in" aria-label="Zoom in">+</button>
+        <span data-role="page-meta" class="lvb-status-meta"></span>
         <span data-role="tool-label">Select</span>
         <span data-role="sel-meta"></span>
         <button type="button" class="lvb-mini" data-act="toggle-snap">Snap</button>
+        <button type="button" class="lvb-mini" data-act="snap-density" title="Smart guides density">Guides</button>
         <button type="button" class="lvb-mini" data-act="toggle-grid">Grid</button>
         <button type="button" class="lvb-mini" data-act="toggle-layers">Layers</button>
         <button type="button" class="lvb-mini" data-act="toggle-dock">Inspect</button>
@@ -162,7 +168,9 @@ export function createChrome(ctx, panels) {
         <button type="button" class="lvb-mini" data-act="preset-focus">Focus</button>
         <button type="button" class="lvb-mini" data-act="preset-code">Code</button>
         <span class="lvb-status" data-role="status">Start…</span>
+        <span data-role="save-meta" class="lvb-status-meta"></span>
         <span data-role="renderer-meta"></span>
+        <span data-role="perf-meta" class="lvb-status-meta"></span>
       </div>
       <div class="lvb-hud" data-role="hud" hidden></div>
       <div class="lvb-canvas-grid" data-role="grid" hidden>
@@ -179,7 +187,7 @@ export function createChrome(ctx, panels) {
       <div class="lvb-menu" data-role="menu" hidden></div>
       <div class="lvb-media" data-role="media" hidden></div>
       <div class="lvb-palette" data-role="palette" hidden></div>
-      <input type="file" accept="image/*" data-role="file" hidden />`;
+      <input type="file" accept="image/*,.svg,.webp" data-role="file" hidden />`;
   }
 
   function rightTabs() {
@@ -204,13 +212,24 @@ export function createChrome(ctx, panels) {
       const z = s.zoom || 1;
       const w = Math.round(r.width / z);
       const h = Math.round(r.height / z);
-      selInfo = count > 1 ? `${count} selected · ${w}×${h}` : `${ctx.selection.labelFor(primary)} · ${w}×${h}`;
+      const name = ctx.selection.labelFor(primary);
+      selInfo = count > 1 ? `${count} selected · ${name} · ${w}×${h}` : `${name} · ${w}×${h}`;
     }
     if (ui.selMeta) ui.selMeta.textContent = selInfo;
+    if (ui.pageMeta) {
+      const path = ctx.pages?.currentPage?.() || s.page || location.pathname || "/";
+      ui.pageMeta.textContent = `page ${path}`;
+    }
     const saveState = s.saveState || (s.contentDirty ? "dirty" : "clean");
     if (ui.savePill) {
       ui.savePill.dataset.state = saveState;
-      ui.savePill.textContent = saveState;
+      const rev = s.contentRevision ?? s.localRevision ?? "";
+      ui.savePill.textContent = rev !== "" ? `${saveState} · r${rev}` : saveState;
+    }
+    if (ui.saveMeta) {
+      const local = s.localRevision ?? "";
+      const saved = s.savedRevision ?? "";
+      ui.saveMeta.textContent = local !== "" ? `rev ${local}${saved !== "" ? `/${saved}` : ""}` : "";
     }
     const dirty = s.contentDirty || Object.values(s.dirtyFiles || {}).some(Boolean) || saveState === "dirty" || saveState === "saving";
     const base = s.status || "";
@@ -220,9 +239,23 @@ export function createChrome(ctx, panels) {
       const backend = ctx.renderer?.backend?.() || ctx.session.rendererBackend || "dom";
       ui.rendererMeta.textContent = `renderer:${backend}`;
     }
+    if (ui.perfMeta) {
+      const stats = ctx.renderer?.getStats?.() || ctx.diagnostics?.stats?.();
+      if (stats?.fps != null && (s.showCode || s.rightTab === "diagnostics")) {
+        ui.perfMeta.textContent = `${Math.round(stats.fps)} fps${stats.backend === "webgpu" ? " · GPU" : ""}`;
+      } else {
+        ui.perfMeta.textContent = "";
+      }
+    }
     root.querySelectorAll("[data-tool]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.tool === s.tool));
     root.querySelectorAll("[data-bp]").forEach((btn) => btn.classList.toggle("is-on", btn.dataset.bp === s.breakpoint));
     root.querySelector("[data-act='toggle-snap']")?.classList.toggle("is-on", s.snap);
+    const density = s.snapDensity || "sparse";
+    const densBtn = root.querySelector("[data-act='snap-density']");
+    if (densBtn) {
+      densBtn.classList.toggle("is-on", density !== "off");
+      densBtn.textContent = density === "off" ? "Guides off" : density === "dense" ? "Guides dense" : "Guides";
+    }
     root.querySelector("[data-act='toggle-grid']")?.classList.toggle("is-on", s.showGrid);
     root.querySelector("[data-act='toggle-layers']")?.classList.toggle("is-on", s.showLeft);
     root.querySelector("[data-act='toggle-dock']")?.classList.toggle("is-on", s.showRight);
@@ -241,7 +274,7 @@ export function createChrome(ctx, panels) {
     }
     placeFrame();
     // Right tabs: Design / Inspect / AI first, then others
-    const preferred = ["inspector", "ai", "tokens", "components", "diagnostics", "help"];
+    const preferred = ["inspector", "ai", "tokens", "components", "problems", "diagnostics", "help"];
     const tabs = rightTabs().slice().sort((a, b) => preferred.indexOf(a.id) - preferred.indexOf(b.id));
     ui.tabs.innerHTML = tabs
       .map((panel) => `<button type="button" class="lvb-tab${s.rightTab === panel.id ? " is-on" : ""}" data-tab="${panel.id}">${panel.title}</button>`)
@@ -263,20 +296,28 @@ export function createChrome(ctx, panels) {
       else if (panel.zone === "bottom") panel.host.hidden = false;
     }
     updateHud();
+    updateDimHud();
   }
 
   function updateHud() {
     if (!ui.hud) return;
     const primary = ctx.session.primary;
-    if (!primary?.isConnected || ctx.session.phase !== "idle") {
+    if (!primary?.isConnected) {
+      ui.hud.hidden = true;
+      return;
+    }
+    if (ctx.session.phase !== "idle" && ctx.session.phase !== "resize") {
       ui.hud.hidden = true;
       return;
     }
     const r = primary.getBoundingClientRect();
+    const isImg = primary.tagName === "IMG" || ctx.widgets?.hasBackgroundImage?.(primary);
     ui.hud.hidden = false;
     ui.hud.innerHTML = `
       <button type="button" class="lvb-mini" data-hud="align-left" title="Align left">⫷</button>
       <button type="button" class="lvb-mini" data-hud="align-center" title="Align center">☰</button>
+      <button type="button" class="lvb-mini ${ctx.session.aspectLock ? "is-on" : ""}" data-hud="aspect" title="Lock natural aspect">▭</button>
+      ${isImg ? `<button type="button" class="lvb-mini" data-hud="replace" title="Replace image">Img</button>` : ""}
       <button type="button" class="lvb-mini" data-hud="duplicate" title="Duplicate">⧉</button>
       <button type="button" class="lvb-mini" data-hud="component" title="Component">◆</button>
       <button type="button" class="lvb-mini" data-hud="why" title="Why is this here?">?</button>`;
@@ -284,6 +325,43 @@ export function createChrome(ctx, panels) {
     const left = Math.min(window.innerWidth - 220, Math.max(60, r.left));
     ui.hud.style.top = `${top}px`;
     ui.hud.style.left = `${left}px`;
+  }
+
+  function updateDimHud() {
+    let node = ui.dimHud;
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "lvb-dim-hud";
+      node.hidden = true;
+      root.appendChild(node);
+      ui.dimHud = node;
+    }
+    const live = ctx.session._resizeLive;
+    if (!live || ctx.session.phase !== "resize") {
+      node.hidden = true;
+      node.classList.remove("is-limit");
+      return;
+    }
+    const w = Math.round(live.width);
+    const h = Math.round(live.height);
+    const dw = Math.round(live.dw);
+    const dh = Math.round(live.dh);
+    const ratio = live.aspect ? live.aspect.toFixed(2) : "—";
+    node.hidden = false;
+    node.classList.toggle("is-limit", !!live.hitLimit || (ctx.session._limitFlashUntil || 0) > performance.now());
+    node.textContent = `${w} × ${h}  (${dw >= 0 ? "+" : ""}${dw} × ${dh >= 0 ? "+" : ""}${dh})  ·  ${ratio}`;
+    const primary = ctx.session.primary;
+    if (primary?.isConnected) {
+      const r = primary.getBoundingClientRect();
+      const dir = live.dir || "se";
+      let x = r.left + r.width / 2;
+      let y = r.bottom + 8;
+      if (dir.includes("n")) y = r.top - 28;
+      if (dir.includes("e") && !dir.includes("w")) x = r.right + 8;
+      if (dir.includes("w") && !dir.includes("e")) x = r.left - 8;
+      node.style.left = `${Math.min(window.innerWidth - 160, Math.max(8, x))}px`;
+      node.style.top = `${Math.min(window.innerHeight - 32, Math.max(56, y))}px`;
+    }
   }
 
   function visible(panel) {
@@ -322,6 +400,8 @@ export function createChrome(ctx, panels) {
     paintRaf = requestAnimationFrame(() => {
       paintRaf = 0;
       ctx.renderer?.paint?.(ui);
+      updateDimHud();
+      if (ctx.session.phase === "resize") updateHud();
     });
   }
 
@@ -550,6 +630,8 @@ export function createChrome(ctx, panels) {
         if (action === "align-center") ctx.registry.run("align-center");
         if (action === "duplicate") ctx.registry.run("duplicate");
         if (action === "component") ctx.registry.run("component-create");
+        if (action === "aspect") ctx.registry.run("aspect-lock");
+        if (action === "replace") ctx.registry.run("replace-image");
         if (action === "why") {
           const info = ctx.studio?.explainLayout?.(ctx.session.primary);
           ctx.content.setStatus(info?.rules?.join(" · ") || "Geen layoutinfo", "ok");
@@ -603,7 +685,7 @@ export function createChrome(ctx, panels) {
             const name = prompt("Checkpoint naam");
             if (name) ctx.studio?.createCheckpoint?.(name);
           }},
-          { id: "stress", label: "Responsive Stress Lab", run: () => ctx.studio?.runStressLab?.().then((r) => ctx.content.setStatus(`${r.findings?.length || 0} stress findings`, "ok")) },
+          { id: "stress", label: "Container probe (geen viewport MQ)", run: () => ctx.studio?.runStressLab?.().then((r) => ctx.content.setStatus(`${r.findings?.length || 0} container-probe findings · gen ${r.generation ?? "—"}`, "ok")) },
           { id: "branch", label: "Nieuwe design branch", run: () => {
             const br = ctx.studio?.createBranch?.();
             ctx.content.setStatus(br ? `Branch ${br.name}` : "Branch mislukt", "ok");
@@ -635,6 +717,7 @@ export function createChrome(ctx, panels) {
         ctx.store.setState({ snap: !ctx.store.getState().snap });
         ctx.content.setStatus(ctx.store.getState().snap ? "Snap aan" : "Snap uit", "ok");
       }
+      if (act === "snap-density") ctx.registry.run("snap-density");
       if (act === "toggle-grid") ctx.store.setState({ showGrid: !ctx.store.getState().showGrid });
       if (act === "toggle-columns") ctx.store.setState({ showColumns: !ctx.store.getState().showColumns });
       if (act === "toggle-layers") {

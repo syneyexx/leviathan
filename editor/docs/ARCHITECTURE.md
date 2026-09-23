@@ -14,22 +14,42 @@ Selection, layers, commands, CSS overrides, and runtime (`editorContentRuntime.t
 
 ## History
 
-One **global** command stack. Gestures/`capture` store a **scoped patch** (`js/patches.js`) — only changed entry keys, nodes, components, and CSS files. Undo of page A never replaces page B entries.
+One **global** command stack. Gestures/`capture` store a **scoped patch** (`js/patches.js`):
+
+- Entries by identity key
+- Nodes/components via identity-addressed ops (`insert` / `delete` / `update` / `reorder`)
+- Meta by top-level key diff
+- CSS files as whole-file ownership (not fine-grained block isolation)
+
+Undo of page A must not replace unrelated nodes introduced on page B.
 
 Page bags keep selection + camera only (no stack swap).
+
+Gestures use a **gesture draft** (`js/gesture-draft.js`) that captures style/attribute chrome before the first DOM mutation. Cancel / failed promotion restores DOM and model; autosave skips while a gesture is active.
 
 ## Save
 
 `js/save.js` + `POST /api/save`:
 
-- One active save; newer snapshots queue (latest wins)
-- `localRevision` bumps on every edit; clean only after server ack when revisions match
-- States: clean / dirty / saving / saved / error / conflict / offline
-- Optimistic concurrency via `baseRevision` + `baseHash` → HTTP 409
-- Server: session token, Origin allow-list, write lock, journal + `os.replace` temp files, last-good checkpoint
-- Multi-file + JSON is journal/rollback recoverable — **not** crash-atomic across files as a single OS transaction
+- Distinct counters: `localGeneration`, `acknowledgedLocalGeneration`, `serverRevision`, `serverHash`
+- One active immutable snapshot; newer intents coalesce
+- Queued drain **re-stamps** `baseRevision`/`baseHash` from the last acknowledgement
+- Callers resolve only when their generation (or a later superseding one) is acknowledged
+- Conflict/offline pauses automatic drain until explicit retry
+- Cleanliness compares the live buffer to the **acknowledged** baseline (not local vs server counters)
+
+Server (`server.py`):
+
+- Metadata read, precondition check, canonical hash, and persistence share one `WRITE_LOCK` critical section
+- Every write endpoint (`/api/save`, `/api/content`, `/api/file`) requires the revision contract
+- Startup rolls back incomplete journals before accepting writes
+- Process lock refuses a second API process on the same project
+- Journal + `os.replace` is **not** crash-atomic as a single OS transaction
+
+Client FNV `hashDocument` must never substitute for the server concurrency hash.
 
 Corrupt JSON is **not** silently replaced with an empty document.
+Future schema versions are rejected — never silently normalized to v3.
 
 ## Viewport
 
@@ -41,3 +61,18 @@ Camera transform stays on `#root` and is never written into exported document CS
 ## Recovery
 
 `localStorage` key `lvb.recovery.v1` — draft with base revision/hash; user chooses apply / compare / discard via Studio menu.
+
+## AI / OmniRoute Editor Gateway
+
+See `AI_EDITOR_ARCHITECTURE.md`.
+
+Preview-first AI mutations:
+
+1. Context collector builds Editor Context Protocol v1 (no giant DOM dumps).
+2. Optional page/selection snapshots (ephemeral).
+3. `POST /api/editor-ai` → gateway → provider → normalized result.
+4. Preview state only — **no** document write.
+5. Accept → promote temp asset → `commands.capture` → normal dirty/save path.
+6. Reject → cleanup temps, no undo entry.
+
+HADES Coding OmniRoute remains a separate coding-LLM boundary; Studio uses capability adapters.

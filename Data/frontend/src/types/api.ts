@@ -3,6 +3,7 @@ export type Conversation = {
   title: string;
   created_at: string;
   updated_at: string;
+  pinned?: boolean;
 };
 
 export type Message = {
@@ -11,6 +12,13 @@ export type Message = {
   role: "system" | "user" | "assistant";
   content: string;
   created_at: string;
+};
+
+export type ChatOptions = {
+  conversationId?: string | null;
+  modelId?: string | null;
+  preferredRole?: string | null;
+  stream?: boolean;
 };
 
 export type ReasoningSummary = {
@@ -899,6 +907,89 @@ export type ResearchProjectCreate = {
   seedSources?: string[];
 };
 
+/* ---------- Knowledge Library ---------- */
+
+export type KnowledgeDocument = {
+  id: string;
+  title: string;
+  content: string;
+  source: string;
+  status?: string;
+  content_hash?: string;
+  original_path?: string | null;
+  source_mtime?: string | null;
+  size_bytes?: number | null;
+  parser?: string;
+  parser_version?: string;
+  ingest_version?: number;
+  trust_metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  error?: string | null;
+};
+
+export type KnowledgeChunk = {
+  chunk_id: string;
+  document_id: string;
+  chunk_index: number;
+  content: string;
+  content_hash?: string;
+  token_estimate?: number;
+  start_offset?: number;
+  end_offset?: number;
+  confidence?: number;
+  uncertainty_notes?: string;
+  source_type?: string;
+  provenance?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+};
+
+export type KnowledgeSearchHit = {
+  document_id: string;
+  chunk_id?: string;
+  chunk_index?: number;
+  title: string;
+  source: string;
+  content: string;
+  score?: number;
+  modality?: string;
+  confidence?: number;
+  original_path?: string | null;
+  document_hash?: string;
+  chunk_hash?: string;
+  start_offset?: number;
+  end_offset?: number;
+  source_type?: string;
+  layer?: string;
+  provenance?: Record<string, unknown>;
+};
+
+/* ---------- Evidence Vault ---------- */
+
+export type EvidenceKind = "ARTIFACT_HASH" | "OBSERVATION_REF" | "FILE_EXISTS" | "COMPOSITE" | string;
+
+export type EvidenceStatus = "UNVERIFIED" | "VERIFIED" | "FAILED" | string;
+
+export type EvidenceRecord = {
+  evidence_id: string;
+  kind: EvidenceKind;
+  status: EvidenceStatus;
+  claim: string;
+  created_at: string;
+  verified_at?: string | null;
+  observation_id?: string | null;
+  artifact_id?: string | null;
+  run_id?: string | null;
+  job_id?: string | null;
+  content_hash?: string | null;
+  path?: string | null;
+  error?: string | null;
+  metadata?: Record<string, unknown>;
+  /** Present only when backend provides an assessment — never invent a score. */
+  confidence?: number | null;
+  truth?: Record<string, boolean>;
+};
+
 /* ---------- Coding Agent ---------- */
 
 export type CodingMission = "SCAFFOLD" | "REVIEW" | "TEST" | "FIX" | "GENERIC";
@@ -939,6 +1030,14 @@ export type CodingSession = {
   created_at: string;
   updated_at: string;
   run_id?: string | null;
+  pending_capability?: {
+    capability_id?: string;
+    approval_id?: string;
+    arguments?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+  feature_truth?: Record<string, unknown> | null;
+  round_count?: number;
 };
 
 export type CodingStep = {
@@ -947,6 +1046,9 @@ export type CodingStep = {
   kind: string;
   capability_id: string | null;
   status: string;
+  /** Canonical backend field from CodingStep.public_dict(). */
+  output?: Record<string, unknown> | null;
+  /** @deprecated Prefer `output` — kept for transitional reads. */
   output_json?: Record<string, unknown> | null;
   error?: string | null;
   created_at?: string;
@@ -966,8 +1068,9 @@ export type CodingPatch = {
 };
 
 export type CodingVerification = {
-  report_id: string;
-  outcome: "PASSED" | "FAILED" | "UNMEASURED";
+  verification_id?: string | null;
+  report_id?: string;
+  outcome?: "PASSED" | "FAILED" | "UNMEASURED";
   requirements?: Array<{ requirement_id: string; outcome: string; detail?: string | null }>;
 };
 
@@ -989,9 +1092,67 @@ export type CodingSessionDetail = {
   neuro: CodingNeuroSnapshot | null;
 };
 
+export type CodingTurnResponse = {
+  session: CodingSession;
+};
+
 export type CodingWorkspaceTreeResponse = {
   entries: Array<{ path: string; type: "file" | "dir"; size?: number; mark?: "M" | "A" | null }>;
   root?: string;
+};
+
+export type SystemTelemetryResponse = {
+  collectedAt: string | null;
+  ageMs: number | null;
+  cpu: { available: boolean; utilizationPct: number | null };
+  memory: {
+    available: boolean;
+    totalBytes: number | null;
+    usedBytes: number | null;
+    availableBytes: number | null;
+    utilizationPct: number | null;
+  };
+  gpu: {
+    available: boolean;
+    devices: Array<{
+      index: number;
+      name: string;
+      utilizationPct: number | null;
+      vramTotalBytes: number | null;
+      vramUsedBytes: number | null;
+      vramFreeBytes: number | null;
+      vramUtilizationPct: number | null;
+      driverVersion?: string | null;
+    }>;
+  };
+  notes?: string[];
+  truth: {
+    measured: boolean;
+    synthetic: boolean;
+    unavailableIsNotZero?: boolean;
+  };
+  dashboard: {
+    cpuPct: number | null;
+    ramPct: number | null;
+    gpuPct: number | null;
+    vramPct: number | null;
+  };
+};
+
+export type CapabilityListItem = {
+  id: string;
+  name?: string;
+  description?: string;
+  side_effects?: string[];
+  enabled?: boolean;
+  available?: boolean;
+  availability_reason?: string | null;
+  /** Alias some gateways surface instead of availability_reason. */
+  unavailable_reason?: string | null;
+  provider_kind?: string;
+  provider_ref?: string;
+  input_schema?: Record<string, unknown>;
+  [key: string]: unknown;
 };
 
 
@@ -1002,6 +1163,8 @@ export type McpServerRuntime = {
   protocol_version?: string | null;
   server_version?: string | null;
   tool_count: number;
+  last_connected_at?: string | null;
+  last_seen_at?: string | null;
   last_error_code?: string | null;
   last_error_message?: string | null;
   pid?: number | null;
@@ -1041,6 +1204,7 @@ export type McpCallRecord = {
   server_id: string;
   capability_id: string;
   external_tool_name: string;
+  requester?: string;
   status: string;
   duration_ms?: number | null;
   error_message?: string | null;
@@ -1189,4 +1353,448 @@ export type MarketSimLiveState = {
   messages: MarketSimMessage[];
   equity: Array<{ bar_index: number; ts: string; equity: number; cash: number; position_qty: number }>;
   truth: Record<string, unknown>;
+};
+
+export type SettingsCategory = {
+  id: string;
+  label: string;
+  description: string;
+  order: number;
+  setting_count: number;
+};
+
+export type SettingState = {
+  key: string;
+  category: string;
+  label: string;
+  description: string;
+  type: string;
+  default_value: unknown;
+  desired_value: unknown;
+  effective_value: unknown;
+  source: string;
+  editable: boolean;
+  secret: boolean;
+  configured?: boolean | null;
+  restart_required: boolean;
+  apply_mode: string;
+  status: string;
+  dangerous: boolean;
+  experimental: boolean;
+  requires: string[];
+  enum_values: string[];
+  min_value?: number | null;
+  max_value?: number | null;
+  consumer: string;
+  effective_now: boolean;
+};
+
+export type SettingsSnapshot = {
+  categories: SettingsCategory[];
+  settings: SettingState[];
+  effective_summary?: Record<string, unknown>;
+};
+
+export type SettingMutationResult = {
+  key: string;
+  status: string;
+  message: string;
+  desired_value?: unknown;
+  effective_value?: unknown;
+  restart_required?: boolean;
+  saved?: boolean;
+  applied?: boolean;
+};
+
+/** Canonical runtime event from ObservabilityHub (durable + live). */
+export type RuntimeEventLevel =
+  | "DEBUG"
+  | "INFO"
+  | "SUCCESS"
+  | "WARNING"
+  | "ERROR"
+  | "CRITICAL"
+  | string;
+
+export type RuntimeEvent = {
+  sequence: number;
+  event_id: string;
+  created_at_ms: number;
+  level: RuntimeEventLevel;
+  category: string;
+  subsystem: string;
+  name: string;
+  message: string;
+  payload: Record<string, unknown>;
+  source: string;
+  request_id?: string | null;
+  correlation_id?: string | null;
+  parent_correlation_id?: string | null;
+  actor?: string | null;
+  run_id?: string | null;
+  job_id?: string | null;
+  workflow_id?: string | null;
+  workflow_run_id?: string | null;
+  workflow_step_id?: string | null;
+  module_id?: string | null;
+  mcp_server_id?: string | null;
+  tool_id?: string | null;
+  capability_id?: string | null;
+  research_project_id?: string | null;
+  dataset_id?: string | null;
+  evidence_id?: string | null;
+  duration_ms?: number | null;
+  success?: boolean | null;
+  redacted?: boolean;
+};
+
+export type EventsListResponse = {
+  events: RuntimeEvent[];
+  latest_sequence: number;
+  snapshot?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type OperatorCommandResult = {
+  ok: boolean;
+  command: string;
+  output: unknown;
+  error?: string | null;
+  events_emitted?: number;
+};
+
+export type PerformanceSnapshot = {
+  system: SystemTelemetryResponse;
+  metrics: MetricsSnapshot;
+  latency: Record<
+    string,
+    { p50: number | null; p95: number | null; p99: number | null; count: number; avg: number | null }
+  >;
+  hot_paths: Array<{
+    name: string;
+    count: number;
+    avg_ms: number;
+    p50_ms: number;
+    p95_ms: number;
+    p99_ms: number;
+  }>;
+  timeseries: Record<string, unknown>;
+  components: Array<{
+    id: string;
+    name: string;
+    type: string;
+    status: string;
+    detail?: string;
+  }>;
+  observability: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type ModuleSnapshot = {
+  enabled?: boolean;
+  modules?: Array<{
+    manifest?: {
+      module_id?: string;
+      name?: string;
+      version?: string;
+      capabilities?: unknown[];
+      isolation?: string;
+      source_path?: string;
+    };
+    status?: string;
+    error?: string | null;
+    health?: Record<string, unknown> | null;
+    last_result?: Record<string, unknown> | null;
+  }>;
+  telemetry?: Record<string, number>;
+  discovery_roots?: string[];
+  truth?: Record<string, boolean>;
+};
+
+/* ---------- Workflows ---------- */
+
+export type WorkflowState = "CREATED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+
+export type WorkflowStepDef = {
+  step_id: string;
+  capability_id: string;
+  arguments?: Record<string, unknown>;
+  approval_id?: string | null;
+};
+
+export type WorkflowStepResult = {
+  step_id: string;
+  capability_id: string;
+  status: string;
+  result?: Record<string, unknown>;
+};
+
+export type WorkflowRecord = {
+  workflow_id: string;
+  name: string;
+  state: WorkflowState | string;
+  steps: WorkflowStepDef[];
+  created_at: string;
+  updated_at: string;
+  current_step?: number;
+  run_id?: string | null;
+  step_results?: WorkflowStepResult[];
+  error?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type WorkflowCreatePayload = {
+  name: string;
+  run_id?: string | null;
+  steps: Array<{
+    step_id?: string;
+    capability_id: string;
+    arguments?: Record<string, unknown>;
+    approval_id?: string | null;
+  }>;
+};
+
+/* ---------- Schedules ---------- */
+
+export type ScheduleStatus = "ACTIVE" | "PAUSED" | "DISABLED";
+
+export type ScheduleTargetKind = "WORKFLOW" | "JOB";
+
+export type ScheduleRecord = {
+  schedule_id: string;
+  name: string;
+  status: ScheduleStatus | string;
+  target_kind: ScheduleTargetKind | string;
+  target_ref: string;
+  interval_seconds: number;
+  created_at: string;
+  updated_at: string;
+  next_run_at: string;
+  last_run_at?: string | null;
+  target_payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+};
+
+export type ScheduleCreatePayload = {
+  name: string;
+  target_kind?: string;
+  target_ref: string;
+  interval_seconds?: number;
+  target_payload?: Record<string, unknown>;
+  start_after_seconds?: number;
+};
+
+/* ---------- Agent fleet ---------- */
+
+export type OperationalJobStatus =
+  | "queued"
+  | "starting"
+  | "running"
+  | "pausing"
+  | "paused"
+  | "cancelling"
+  | "cancelled"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "disabled"
+  | "unknown";
+
+export type AgentDefinitionKind =
+  | "generic"
+  | "coding"
+  | "research"
+  | "orchestrator"
+  | "specialist";
+
+export type AgentHealth = "unknown" | "idle" | "busy" | "disabled" | "error" | "archived";
+
+export type OrchestratorConfig = {
+  memberAgentIds: string[];
+  strategy: string;
+  routingRules: Record<string, unknown>[];
+  maxDelegationDepth: number;
+  parallelismLimit: number;
+  fanOutPolicy: string;
+  retryPolicy: Record<string, unknown>;
+  perNodeTimeoutS?: number | null;
+  overallTimeoutS?: number | null;
+  approvalEscalation: string;
+  failureStrategy: string;
+  verificationRequired: boolean;
+  aggregationAgentId?: string | null;
+  defaultModelFallback?: string | null;
+};
+
+export type AgentDefinition = {
+  agentId: string;
+  name: string;
+  kind: AgentDefinitionKind | string;
+  description: string;
+  role: string;
+  enabled: boolean;
+  archived: boolean;
+  modelRef?: string | null;
+  systemPolicy?: string | null;
+  capabilities: string[];
+  knowledgeSources: string[];
+  memoryPolicy: string;
+  datasetAccess: string;
+  approvalMode: string;
+  autonomy: number;
+  maxConcurrency: number;
+  timeoutS?: number | null;
+  maxRetries: number;
+  tokenBudget?: number | null;
+  tags: string[];
+  version: number;
+  orchestrator?: OrchestratorConfig | null;
+  health: AgentHealth | string;
+  healthReason?: string | null;
+  lastRunAt?: string | null;
+  lastMissionId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type AgentMission = {
+  missionId: string;
+  agentId: string;
+  title: string;
+  request: string;
+  status: string;
+  priority: string;
+  progress: number;
+  parentMissionId?: string | null;
+  runId?: string | null;
+  jobIds: string[];
+  result?: Record<string, unknown>;
+  error?: string | null;
+  cancelRequested?: boolean;
+  traceId?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  updatedAt: string;
+  finishedAt?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type AgentEvent = {
+  eventId: string;
+  agentId?: string | null;
+  missionId?: string | null;
+  category: string;
+  message: string;
+  level: string;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AgentFleetSummary = {
+  agentsEnabled: boolean;
+  agentCount: number;
+  orchestratorCount: number;
+  health: Record<string, number>;
+  activeMissions: number;
+  recentMissions: number;
+  truth?: Record<string, boolean>;
+};
+
+export type AgentCreatePayload = {
+  name: string;
+  kind?: string;
+  description?: string;
+  role?: string;
+  enabled?: boolean;
+  modelRef?: string | null;
+  systemPolicy?: string | null;
+  capabilities?: string[];
+  knowledgeSources?: string[];
+  memoryPolicy?: string;
+  datasetAccess?: string;
+  approvalMode?: string;
+  autonomy?: number;
+  maxConcurrency?: number;
+  timeoutS?: number | null;
+  maxRetries?: number;
+  tokenBudget?: number | null;
+  tags?: string[];
+  orchestrator?: Partial<OrchestratorConfig> | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type AgentMissionLaunchPayload = {
+  request: string;
+  title?: string;
+  priority?: string;
+  useJobs?: boolean;
+  dryRun?: boolean;
+};
+
+/* ---------- Analytics ---------- */
+
+export type AnalyticsOverview = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  totals: Record<string, { total?: number; completed?: number; failed?: number; running?: number; cancelled?: number; other?: number } | number>;
+  statusBreakdown?: Record<string, Record<string, number>>;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsAgentsResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  agents: Array<{
+    agentId: string;
+    name?: string | null;
+    total: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    active: number;
+  }>;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsTrainingResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  byStatus: Record<string, number>;
+  byMethod: Array<{ method: string; count: number }>;
+  checkpoints: number;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsDatasetsResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  inventory: { datasets: number; versions: number; indexes: number };
+  jobsByStatus: Record<string, number>;
+  jobsByType: Array<{ jobType: string; count: number }>;
+  truth?: Record<string, boolean>;
+};
+
+export type AnalyticsToolsResponse = {
+  range: string;
+  from: string;
+  to: string;
+  collectedAt: string;
+  capabilities: Array<{
+    capabilityId: string;
+    total: number;
+    completed: number;
+    failed: number;
+  }>;
+  approvals: { total: number };
+  truth?: Record<string, boolean>;
 };

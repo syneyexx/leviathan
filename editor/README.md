@@ -13,37 +13,73 @@ Without `LEVIATHAN_EDITOR=1` there is no editor UI. Saved content still applies 
 
 Use normal start (`run_leviathan.bat` / installer / build). No editor chrome. Camera transforms are never persisted into document CSS.
 
+## AI / Generate (OmniRoute Editor Gateway)
+
+Studio AI is preview-first: Generate → Review → Accept / Reject. Accept applies through normal history + save coordinator.
+
+| Mode | How |
+| --- | --- |
+| Unavailable (default) | No provider configured — panel explains; editor otherwise fully usable |
+| Dev mock | `LEVIATHAN_EDITOR_AI_MOCK=1` — deterministic placeholder images, labeled **MOCK** |
+| Real images | `LEVIATHAN_EDITOR_AI_IMAGE_ENDPOINT` + API key (OpenAI Images-compatible, `b64_json`) |
+| Text rewrite | Reuses `LEVIATHAN_LLM_*` / `LEVIATHAN_EDITOR_AI_LLM_*` when reachable |
+
+Style source defaults to **Current page + selected element**. Optional page/selection snapshots feed visual context when enabled. See `docs/AI_EDITOR_ARCHITECTURE.md`.
+
+Honest gaps: image edit / outpaint / background removal have protocol + UI unavailable states but no real provider binding yet.
+
 ## Start / test / verify
 
 ```bash
 # API smoke (no Vite, temp content)
 python3 editor/test/test_api.py
 
-# Unit / regression
-node --test editor/test/core.test.mjs editor/test/resize.test.mjs editor/test/studio.test.mjs
+# AI gateway / protocol
+python3 editor/test/test_ai_gateway.py
+
+# Unit / regression (full suite)
+node --test editor/test/*.mjs
+
+# API smoke + concurrency / journal recovery
+python3 editor/test/test_api.py
+python3 editor/test/test_concurrency.py
 
 # Full studio (Windows)
 editor\EDIT_LAYOUT.bat
 
 # Full studio (Linux/mac — from repo root)
-LEVIATHAN_EDITOR_NO_BROWSER=1 python3 editor/server.py
+LEVIATHAN_EDITOR_NO_BROWSER=1 LEVIATHAN_EDITOR_AI_MOCK=1 python3 editor/server.py
 # then open http://127.0.0.1:5173
 ```
 
-Visual checklist: workspace overview, selection+inspector, layers/components, Design/Preview breakpoints, command palette (⌘K), save conflict, AI unavailable state. Screenshots: `editor/artifacts/` when captured.
+Visual checklist: workspace overview, selection+inspector, layers/components, Design/Preview breakpoints, command palette (⌘K), save conflict, AI panel (capabilities / mock generate / reject / accept / undo), multi-select resize, image replace + Fit/Fill, dimension HUD. Screenshots: `editor/artifacts/` when captured.
+
+## User-facing behaviour notes (Studio polish)
+
+- **Multi-select resize**: Inspector toggle *Scale group* (default) vs *Resize independently*. Shift locks aspect per gesture; Alt resizes from center.
+- **Keyboard resize**: Alt+Arrows (Shift = 10px, Ctrl/Cmd = from center). Plain arrows still nudge.
+- **Image replace**: context menu / inspector / double-click image / drop file on selected IMG. After replace, Fit · Fill · Stretch · Original. Old assets are never auto-deleted; use Studio → Orphan cleanup.
+- **AI**: select a region → AI tab → prompt (e.g. “in deze stijl”) → Generate → preview variants → Accept (undoable) or Reject (no dirty).
+- **Smart guides**: status bar *Guides* cycles Off / Sparse / Dense; equal-spacing for 3+ siblings.
+- **Measurement pin**: completed measure stays pinned until Escape (idle) or *Clear last measurement pin*.
+- **Recovery**: `lvb.recovery.v1` also stores in-progress free-transform boxes mid-resize. Uncommitted gesture previews are not autosaved; cancel restores DOM + model.
+- **Save**: dirty state tracks acknowledged local generation vs live buffer. Conflicts pause the save drain until explicit retry. Server concurrency token is always the acknowledged server hash (not the local FNV helper).
 
 ## Architecture
 
-See `docs/ARCHITECTURE.md`, `docs/STUDIO_PLAN.md`, `docs/CAPABILITY_MATRIX.md`.
+See `docs/ARCHITECTURE.md`, `docs/AI_EDITOR_ARCHITECTURE.md`, `docs/STUDIO_PLAN.md`, `docs/CAPABILITY_MATRIX.md`.
 
 | Module | Role |
 | --- | --- |
 | `js/identity.js` | Stable node/shell keys, v2→v3 migration |
-| `js/patches.js` | Scoped history patches |
-| `js/save.js` | Save coordinator + revision queue |
+| `js/patches.js` | Identity-scoped history patches (entries + node/component ops) |
+| `js/save.js` | Save coordinator: generations, ack bases, coalesced waiters |
+| `js/gesture-draft.js` | Pre-mutation DOM chrome capture for cancel/failed promote |
 | `js/studio/viewport.js` | Design vs Preview iframe |
+| `js/ai/*` | Context, snapshots, preview, tools (MCP-ready) |
+| `ai/*` | OmniRoute Editor Gateway + providers + temp assets |
 | `js/capabilities/*` | Issues + capability registry |
 | `js/studio/features.js` | Stress lab, branches, recipes, recovery, … |
-| `server.py` | Session auth, transactional save, no global text replace |
+| `server.py` | Session auth, transactional save, AI gateway endpoints |
 
 Shell (`.lv-app` …) is never deleted or reparented. Free-transform widgets use `data-lvb-node` / `data-lvb-id`.

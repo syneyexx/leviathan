@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { layoutBoxFromScreen, measureBetween, resizeRect, roundLayoutBox } from "../js/geometry.js";
+import {
+  equalSpacingGuides,
+  groupAabb,
+  handleHitPx,
+  handleScreenPx,
+  layoutBoxFromScreen,
+  measureBetween,
+  resizeGroupMembers,
+  resizeRect,
+  roundLayoutBox,
+  snapThresholdForDensity,
+} from "../js/geometry.js";
 
 const start = { left: 100, top: 50, width: 240, height: 120 };
 
@@ -39,6 +50,8 @@ test("west drag until minW: further dx does not move left; right stays", () => {
   assert.equal(further.width, 16);
   assert.equal(further.left, leftAtMin);
   assert.equal(rightEdge(further), rightEdge(start));
+  assert.equal(atMin.hitLimit, true);
+  assert.equal(atMin.hitMinW, true);
 });
 
 test("north drag: top moves, bottom frozen, width same", () => {
@@ -111,11 +124,29 @@ test("zoom 0.5 and zoom 2: same layout deltas (already converted)", () => {
   const dxLayout = 10;
   const a = resizeRect({ start, dir: "e", dx: dxLayout });
   const b = resizeRect({ start, dir: "e", dx: dxLayout });
-  assert.deepEqual(a, b);
+  assert.equal(a.width, b.width);
+  assert.equal(a.left, b.left);
   const screenHalf = layoutBoxFromScreen({ left: 50, top: 20, width: 100, height: 40 }, 0.5);
   const screenDouble = layoutBoxFromScreen({ left: 200, top: 80, width: 400, height: 160 }, 2);
   assert.deepEqual(screenHalf, { left: 100, top: 40, width: 200, height: 80 });
   assert.deepEqual(screenDouble, { left: 100, top: 40, width: 200, height: 80 });
+});
+
+test("west/north at zoom 0.25 / 1 / 4: layout deltas identical after screen→layout convert", () => {
+  for (const zoom of [0.25, 1, 4]) {
+    const screenDx = -40;
+    const screenDy = -20;
+    const dx = screenDx / zoom;
+    const dy = screenDy / zoom;
+    const west = resizeRect({ start, dir: "w", dx, dy });
+    const north = resizeRect({ start, dir: "n", dx, dy });
+    assert.equal(west.top, start.top, `zoom ${zoom} west must not touch top`);
+    assert.equal(west.height, start.height);
+    assert.equal(rightEdge(west), rightEdge(start));
+    assert.equal(north.left, start.left, `zoom ${zoom} north must not touch left`);
+    assert.equal(north.width, start.width);
+    assert.equal(bottomEdge(north), bottomEdge(start));
+  }
 });
 
 test("west must not touch top; north must not touch left", () => {
@@ -123,6 +154,34 @@ test("west must not touch top; north must not touch left", () => {
   assert.equal(west.top, start.top);
   const north = resizeRect({ start, dir: "n", dx: -50, dy: -5 });
   assert.equal(north.left, start.left);
+});
+
+test("fromCenter + aspect + min-size simultaneously", () => {
+  const aspect = 2;
+  const box = { left: 0, top: 0, width: 40, height: 20 };
+  const next = resizeRect({
+    start: box,
+    dir: "se",
+    dx: -100,
+    dy: -100,
+    aspect,
+    fromCenter: true,
+    minW: 16,
+    minH: 8,
+  });
+  assert.equal(next.width, 16);
+  assert.equal(next.height, 8);
+  assert.ok(Math.abs(next.width / next.height - aspect) < 1e-9);
+  assert.ok(Math.abs(next.left + next.width / 2 - 20) < 1e-6);
+  assert.ok(Math.abs(next.top + next.height / 2 - 10) < 1e-6);
+  assert.equal(next.hitLimit, true);
+});
+
+test("maxW soft clamp flashes hitLimit", () => {
+  const next = resizeRect({ start, dir: "e", dx: 500, maxW: 280, minW: 16 });
+  assert.equal(next.width, 280);
+  assert.equal(next.hitMaxW, true);
+  assert.equal(next.hitLimit, true);
 });
 
 test("roundLayoutBox rounds on commit", () => {
@@ -136,4 +195,82 @@ test("measureBetween reports horizontal gap labels", () => {
   const m = measureBetween(a, b);
   assert.equal(m.dx, 20);
   assert.equal(m.labelX.value, 20);
+});
+
+test("groupAabb unions layout boxes", () => {
+  const aabb = groupAabb([
+    { left: 10, top: 20, width: 40, height: 30 },
+    { left: 60, top: 10, width: 20, height: 50 },
+  ]);
+  assert.deepEqual(aabb, { left: 10, top: 10, width: 70, height: 50, right: 80, bottom: 60 });
+});
+
+test("multi-select proportional scale keeps relative geometry", () => {
+  const members = [
+    { left: 0, top: 0, width: 100, height: 50 },
+    { left: 100, top: 0, width: 100, height: 50 },
+  ];
+  const next = resizeGroupMembers({
+    members,
+    primaryIndex: 0,
+    dir: "e",
+    dx: 100,
+    mode: "scale",
+    aspect: null,
+  });
+  assert.equal(next.length, 2);
+  // Group width 200 → 300 (sx=1.5); heights unchanged without aspect on E-only group.
+  assert.ok(Math.abs(next[0].width - 150) < 1e-6);
+  assert.ok(Math.abs(next[1].width - 150) < 1e-6);
+  assert.ok(Math.abs(next[1].left - 150) < 1e-6);
+  assert.equal(next[0].top, 0);
+});
+
+test("multi-select independent only moves primary", () => {
+  const members = [
+    { left: 0, top: 0, width: 100, height: 50 },
+    { left: 120, top: 10, width: 40, height: 40 },
+  ];
+  const next = resizeGroupMembers({
+    members,
+    primaryIndex: 0,
+    dir: "e",
+    dx: 20,
+    mode: "independent",
+  });
+  assert.equal(next[0].width, 120);
+  assert.equal(next[1].left, 120);
+  assert.equal(next[1].width, 40);
+});
+
+test("image height:auto preservation: east without aspect leaves height unchanged", () => {
+  // Pure width drag must not invent a new height — caller skips writing height.
+  const next = resizeRect({ start, dir: "e", dx: 30, dy: 80 });
+  assert.equal(next.height, start.height);
+  assert.equal(next.width, 270);
+  assert.equal(next.top, start.top);
+});
+
+test("handle hit targets stay ≥ 10px at 0.25 and 4 zoom", () => {
+  assert.equal(handleScreenPx(0.25), 10);
+  assert.equal(handleScreenPx(4), 10);
+  assert.ok(handleHitPx(0.25).hit >= 10);
+  assert.ok(handleHitPx(4).hit >= 10);
+  assert.ok(handleHitPx(0.25).hit >= handleHitPx(1).hit);
+});
+
+test("snap density thresholds", () => {
+  assert.equal(snapThresholdForDensity("off"), 0);
+  assert.equal(snapThresholdForDensity("sparse", 6), 6);
+  assert.equal(snapThresholdForDensity("dense", 6), 10);
+});
+
+test("equalSpacingGuides for three siblings", () => {
+  const boxes = [
+    { left: 0, top: 0, width: 10, height: 10 },
+    { left: 20, top: 0, width: 10, height: 10 },
+    { left: 40, top: 0, width: 10, height: 10 },
+  ];
+  const guides = equalSpacingGuides(boxes, "x");
+  assert.ok(guides.some((g) => g.kind === "equal-spacing" && g.gap === 10));
 });

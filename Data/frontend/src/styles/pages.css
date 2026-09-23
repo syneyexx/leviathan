@@ -892,6 +892,119 @@
   overflow: auto;
 }
 
+.lv-settings-grid--fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.lv-settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lv-content-gap);
+  min-height: 0;
+  overflow: auto;
+}
+
+.lv-settings-content-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.lv-settings-status {
+  font-size: var(--lv-text-xs);
+  color: var(--lv-text-muted);
+  text-align: right;
+  max-width: 40%;
+}
+
+.lv-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lv-settings-field.is-dangerous {
+  border-left: 2px solid rgba(196, 92, 72, 0.7);
+  padding-left: 10px;
+}
+
+.lv-settings-field-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.lv-settings-field-desc {
+  margin: 0;
+  font-size: var(--lv-text-xs);
+  color: var(--lv-text-muted);
+}
+
+.lv-settings-field-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.lv-settings-field-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.lv-settings-secret-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lv-settings-secret-row .lv-input {
+  flex: 1;
+}
+
+.lv-settings-effective-diff {
+  margin: 0;
+  font-size: var(--lv-text-xs);
+  color: var(--lv-gold);
+}
+
+.lv-settings-badge {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid var(--lv-divider);
+  border-radius: 4px;
+  color: var(--lv-text-muted);
+  white-space: nowrap;
+}
+
+.lv-settings-badge.is-live {
+  border-color: rgba(90, 160, 110, 0.45);
+  color: rgb(140, 200, 150);
+}
+
+.lv-settings-badge.is-restart {
+  border-color: rgba(214, 169, 87, 0.55);
+  color: var(--lv-gold);
+}
+
+.lv-settings-badge.is-locked {
+  border-color: rgba(140, 140, 150, 0.45);
+}
+
+.lv-settings-badge.is-experimental {
+  border-color: rgba(120, 140, 200, 0.5);
+  color: rgb(160, 175, 220);
+}
+
+.lv-settings-danger-mark {
+  color: rgb(196, 92, 72);
+  margin-left: 4px;
+}
+
 .lv-settings-card {
   padding: 14px;
   display: flex;

@@ -38,6 +38,7 @@ import { createStudioFeatures } from "./js/studio/features.js";
 import { createViewport } from "./js/studio/viewport.js";
 import { parseTokens } from "./js/util.js";
 import { createWidgets } from "./js/widgets.js";
+import { createAiTools } from "./js/ai/tools.js";
 
 const apiOrigin =
   globalThis.document?.querySelector("script[data-lv-editor-api]")?.getAttribute("data-lv-editor-api") ||
@@ -50,6 +51,7 @@ const store = createStore({
   panX: 0,
   panY: 0,
   snap: true,
+  snapDensity: "sparse",
   showGrid: false,
   showColumns: false,
   autoSave: true,
@@ -102,11 +104,12 @@ const ctx = {
     uiEpoch: 0,
     aspectLock: false,
     aspect: 1,
+    groupResizeMode: "scale",
     styleClipboard: null,
     link: { padding: true, margin: true, radius: true },
     layerQuery: "",
     layerState: new Map(),
-    measure: { a: null, b: null },
+    measure: { a: null, b: null, pinned: null },
     space: false,
     imageMode: "insert",
     applying: false,
@@ -114,6 +117,7 @@ const ctx = {
     dragLayer: "",
     _snapGuides: null,
     _marquee: null,
+    _resizeLive: null,
     dropEl: null,
     freePositionMode: false,
     rendererBackend: "dom",
@@ -142,6 +146,7 @@ ctx.pages = createPages(ctx);
 ctx.viewport = createViewport(ctx);
 ctx.studio = createStudioFeatures(ctx);
 ctx.issues = createIssues(ctx);
+ctx.ai = createAiTools(ctx);
 seedStudioCapabilities();
 
 const panels = [
@@ -183,8 +188,23 @@ function boot() {
       .then(() => {
         ctx.issues.schedule(400);
         setCapability("studio-shell", { status: Status.IMPLEMENTED, evidence: "chrome boot" });
-        const caps = ctx.store.getState();
-        void caps;
+        return ctx.ai.get_capabilities();
+      })
+      .then((caps) => {
+        if (caps?.available) {
+          setCapability("ai-copilot", {
+            status: Status.IMPLEMENTED,
+            evidence: caps.mockEnabled ? "mock provider enabled" : "provider available",
+            blocker: null,
+          });
+        } else {
+          setCapability("ai-copilot", {
+            status: Status.UNAVAILABLE,
+            evidence: caps?.reason || caps?.disabledReason || "no provider",
+            blocker: caps?.reason || "no-provider",
+          });
+        }
+        ctx.ai.syncDimensionsFromSelection();
       })
       .catch((err) => {
         ctx.content.setStatus(`API offline? Start EDIT_LAYOUT.bat — ${err.message || err}`, "dirty");
@@ -193,6 +213,18 @@ function boot() {
 
     store.subscribe(() => {
       if (store.getState().contentDirty || store.getState().uiEpoch) ctx.issues.schedule();
+    });
+    // Sync AI target dims when selection string changes
+    let lastSel = store.getState().sel;
+    store.subscribe(() => {
+      const sel = store.getState().sel;
+      if (sel === lastSel) return;
+      lastSel = sel;
+      try {
+        ctx.ai?.syncDimensionsFromSelection?.();
+      } catch {
+        /* ignore */
+      }
     });
   } catch (err) {
     ctx.content.setStatus(`Studio start mislukt: ${err?.message || err}`, "dirty");

@@ -558,34 +558,166 @@ export function createWidgets(ctx) {
     });
   }
 
-  async function uploadFile(file, mode = "insert") {
+  /** Replace IMG src or background-image; never auto-deletes the old asset.
+   * Captures stable target identity at initiation so async completion cannot
+   * redirect to a later selection.
+   */
+  function hasBackgroundImage(el) {
+    if (!(el instanceof Element) || el.tagName === "IMG") return false;
+    try {
+      const bg = getComputedStyle(el).backgroundImage;
+      return !!(bg && bg !== "none");
+    } catch {
+      return false;
+    }
+  }
+
+  async function replaceImageWithUrl(url, { targetEl, targetKey, generation } = {}) {
+    const token = {
+      key: targetKey || null,
+      generation: generation ?? ctx.session.uiEpoch ?? 0,
+    };
+    let el = targetEl || null;
+    if (!el && token.key) {
+      el = document.querySelector(`[data-lvb-node="${CSS.escape(token.key)}"], [data-lvb-id="${CSS.escape(token.key)}"]`);
+    }
+    if (!el) el = ctx.session.primary;
+    if (!el) {
+      ctx.content.setStatus("Vervangen geannuleerd — geen doel", "dirty");
+      return { ok: false, reason: "no-target" };
+    }
+    // Re-resolve by stable id; cancel if deleted or ineligible
+    const id = el.dataset?.lvbNode || el.dataset?.lvbId || null;
+    if (token.key && id && token.key !== id) {
+      ctx.content.setStatus("Vervangen geannuleerd — doel gewijzigd", "dirty");
+      return { ok: false, reason: "target-changed" };
+    }
+    if (!el.isConnected) {
+      ctx.content.setStatus("Vervangen geannuleerd — doel verwijderd", "dirty");
+      return { ok: false, reason: "target-gone" };
+    }
+    if (el.tagName === "IMG") {
+      ctx.commands.capture("image", () => {
+        el.setAttribute("src", url);
+        ctx.content.patchEntry(ctx.selection.selectorFor(el), { src: url });
+      });
+      ctx.content.setStatus("Image vervangen", "ok");
+      return { ok: true, el, mode: "img" };
+    }
+    if (hasBackgroundImage(el)) {
+      const value = `url("${url}")`;
+      ctx.commands.capture("image", () => {
+        ctx.content.applyProp(el, "background-image", value);
+      });
+      ctx.content.setStatus("Achtergrondimage vervangen", "ok");
+      return { ok: true, el, mode: "background" };
+    }
+    ctx.content.setStatus("Vervangen geannuleerd — geen image-doel", "dirty");
+    return { ok: false, reason: "ineligible" };
+  }
+
+  async function uploadFile(file, mode = "insert", { signal } = {}) {
+    if (signal?.aborted) throw new Error("Upload geannuleerd");
+    const primary = ctx.session.primary;
+    const targetKey = primary?.dataset?.lvbNode || primary?.dataset?.lvbId || null;
+    const generation = ctx.session.uiEpoch ?? 0;
+    const targetEl = primary;
     ctx.content.setStatus("Image uploaden…", "");
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
       reader.onerror = () => reject(new Error("Bestand lezen mislukt"));
+      if (signal) {
+        signal.addEventListener("abort", () => reject(new Error("Upload geannuleerd")), { once: true });
+      }
       reader.readAsDataURL(file);
     });
+    if (signal?.aborted) throw new Error("Upload geannuleerd");
     const uploaded = await ctx.api.upload(file.name, dataUrl);
-    if (mode === "replace" && ctx.session.primary?.tagName === "IMG") {
-      const el = ctx.session.primary;
-      const oldSrc = el.getAttribute("src") || "";
-      ctx.commands.capture("image", () => {
-        el.setAttribute("src", uploaded.url);
-        ctx.content.patchEntry(ctx.selection.selectorFor(el), { src: uploaded.url });
-      });
-      if (oldSrc && oldSrc !== uploaded.url && !el.dataset.lvbId) {
-        try {
-          await ctx.api.replaceText(oldSrc, uploaded.url);
-        } catch (err) {
-          ctx.content.setStatus(String(err.message || err), "dirty");
-        }
-      }
-      ctx.content.setStatus("Image vervangen", "ok");
+    if (signal?.aborted) throw new Error("Upload geannuleerd");
+    if (mode === "replace") {
+      const result = await replaceImageWithUrl(uploaded.url, { targetEl, targetKey, generation });
+      if (!result.ok) return null;
     } else {
       insertImageAtUrl(uploaded.url, file.name);
     }
     return uploaded.url;
+  }
+
+  /**
+   * Smart fit after replace — only writes width/height/object-fit as needed.
+   * @param {"fit"|"fill"|"stretch"|"original"} mode
+   */
+  function applyImageFit(el, mode = "fit") {
+    if (!(el instanceof Element) || el.tagName !== "IMG") return;
+    const box = ctx.layout.ensureFreeTransform?.(el) || ctx.layout.readWrittenBox?.(el);
+    const naturalW = el.naturalWidth || parseFloat(el.style.width) || 240;
+    const naturalH = el.naturalHeight || parseFloat(el.style.height) || 135;
+    ctx.commands.capture(`image-${mode}`, () => {
+      if (mode === "original") {
+        el.style.width = `${naturalW}px`;
+        el.style.height = `${naturalH}px`;
+        ctx.content.applyProp(el, "width", `${naturalW}px`);
+        ctx.content.applyProp(el, "height", `${naturalH}px`);
+        ctx.content.applyProp(el, "object-fit", "none");
+      } else if (mode === "stretch") {
+        ctx.content.applyProp(el, "object-fit", "fill");
+        if (box) {
+          ctx.content.applyProp(el, "width", `${Math.round(box.width)}px`);
+          ctx.content.applyProp(el, "height", `${Math.round(box.height)}px`);
+        }
+      } else if (mode === "fill") {
+        ctx.content.applyProp(el, "object-fit", "cover");
+        if (box) {
+          ctx.content.applyProp(el, "width", `${Math.round(box.width)}px`);
+          ctx.content.applyProp(el, "height", `${Math.round(box.height)}px`);
+        }
+      } else {
+        // fit = contain inside current box
+        ctx.content.applyProp(el, "object-fit", "contain");
+        if (box) {
+          ctx.content.applyProp(el, "width", `${Math.round(box.width)}px`);
+          ctx.content.applyProp(el, "height", `${Math.round(box.height)}px`);
+        }
+      }
+      ctx.layout.commitBox?.(el);
+    });
+    ctx.chrome?.schedulePaint?.();
+    ctx.content.setStatus(`Image ${mode}`, "ok");
+  }
+
+  function offerImageFit(el) {
+    const target = el || ctx.session.primary;
+    if (!target || target.tagName !== "IMG") return;
+    ctx.chrome?.showMenu?.(
+      Math.min(window.innerWidth - 220, 120),
+      80,
+      [
+        { id: "fit", label: "Fit (contain)", run: () => applyImageFit(target, "fit") },
+        { id: "fill", label: "Fill (cover)", run: () => applyImageFit(target, "fill") },
+        { id: "stretch", label: "Stretch", run: () => applyImageFit(target, "stretch") },
+        { id: "original", label: "Original size", run: () => applyImageFit(target, "original") },
+      ],
+    );
+  }
+
+  /** Collect asset URLs still referenced in the live document. */
+  function referencedAssetUrls() {
+    const urls = new Set();
+    const root = document.getElementById("root");
+    root?.querySelectorAll("img[src]").forEach((img) => {
+      if (img.closest?.("#lvb-root")) return;
+      const src = img.getAttribute("src");
+      if (src) urls.add(src);
+    });
+    const content = ctx.content.ensure?.() || ctx.store.getState().content;
+    for (const entry of Object.values(content?.entries || {})) {
+      if (entry?.src) urls.add(entry.src);
+      const bg = entry?.styles?.["background-image"];
+      const m = String(bg || "").match(/url\(["']?([^"')]+)/);
+      if (m) urls.add(m[1]);
+    }
+    return urls;
   }
 
   return {
@@ -612,5 +744,10 @@ export function createWidgets(ctx) {
     updateMaster,
     renameComponent,
     uploadFile,
+    replaceImageWithUrl,
+    applyImageFit,
+    offerImageFit,
+    hasBackgroundImage,
+    referencedAssetUrls,
   };
 }

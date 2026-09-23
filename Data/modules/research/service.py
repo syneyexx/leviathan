@@ -81,10 +81,15 @@ class ResearchService:
         store = ResearchStore(db_path)
         store.initialize()
         allow_outbound = bool(settings.network.allow_outbound)
+        endpoint = search_endpoint
+        api_key = search_api_key
+        if hasattr(settings, "research_integration"):
+            endpoint = endpoint or settings.research_integration.web_search_endpoint
+            api_key = api_key if api_key is not None else settings.research_integration.web_search_api_key
         provider = web or build_web_provider(
             allow_outbound=allow_outbound,
-            search_endpoint=search_endpoint,
-            api_key=search_api_key,
+            search_endpoint=endpoint,
+            api_key=api_key,
         )
         return cls(
             store,
@@ -93,6 +98,27 @@ class ResearchService:
             allow_outbound=allow_outbound,
             corpus=corpus,
         )
+
+    def reconfigure_web(
+        self,
+        *,
+        allow_outbound: bool,
+        search_endpoint: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        """Hot-apply outbound / search provider settings from the Settings Control Plane."""
+        from Data.modules.research.web import build_web_provider
+
+        self.allow_outbound = bool(allow_outbound)
+        self.web = build_web_provider(
+            allow_outbound=self.allow_outbound,
+            search_endpoint=search_endpoint,
+            api_key=api_key,
+        )
+        if hasattr(self, "runner") and self.runner is not None:
+            self.runner.allow_outbound = self.allow_outbound
+            if hasattr(self.runner, "web"):
+                self.runner.web = self.web
 
     def recover(self) -> list[str]:
         return self.runner.recover_interrupted()

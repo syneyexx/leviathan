@@ -1,4 +1,15 @@
 import type {
+  AgentCreatePayload,
+  AgentDefinition,
+  AgentEvent,
+  AgentFleetSummary,
+  AgentMission,
+  AgentMissionLaunchPayload,
+  AnalyticsAgentsResponse,
+  AnalyticsDatasetsResponse,
+  AnalyticsOverview,
+  AnalyticsToolsResponse,
+  AnalyticsTrainingResponse,
   ApiErrorBody,
   BackupManifest,
   ChatResponse,
@@ -56,8 +67,12 @@ import type {
   CodingStatusResponse,
   CodingSession,
   CodingSessionDetail,
+  CodingTurnResponse,
   CodingMission,
   CodingWorkspaceTreeResponse,
+  ChatOptions,
+  CapabilityListItem,
+  SystemTelemetryResponse,
   McpCallRecord,
   McpServerPublic,
   McpToolRecord,
@@ -67,6 +82,22 @@ import type {
   MarketStrategyVersion,
   MarketSimRun,
   MarketSimLiveState,
+  SettingsSnapshot,
+  SettingState,
+  SettingMutationResult,
+  RuntimeEvent,
+  EventsListResponse,
+  OperatorCommandResult,
+  PerformanceSnapshot,
+  ModuleSnapshot,
+  KnowledgeDocument,
+  KnowledgeChunk,
+  KnowledgeSearchHit,
+  EvidenceRecord,
+  WorkflowRecord,
+  WorkflowCreatePayload,
+  ScheduleRecord,
+  ScheduleCreatePayload,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -151,8 +182,15 @@ export const api = {
     return request<{ metrics: MetricsSnapshot }>("/api/metrics");
   },
 
-  listConversations(): Promise<{ conversations: Conversation[] }> {
-    return request<{ conversations: Conversation[] }>("/api/conversations");
+  listConversations(opts?: {
+    q?: string;
+    limit?: number;
+  }): Promise<{ conversations: Conversation[] }> {
+    const params = new URLSearchParams();
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request<{ conversations: Conversation[] }>(`/api/conversations${q ? `?${q}` : ""}`);
   },
 
   createConversation(title = "New conversation"): Promise<{ conversation: Conversation }> {
@@ -170,12 +208,35 @@ export const api = {
     );
   },
 
-  chat(message: string, conversationId: string | null): Promise<ChatResponse> {
+  updateConversation(
+    conversationId: string,
+    patch: { title?: string; pinned?: boolean },
+  ): Promise<{ conversation: Conversation }> {
+    return request<{ conversation: Conversation }>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      },
+    );
+  },
+
+  deleteConversation(conversationId: string): Promise<{ deleted: boolean; id: string }> {
+    return request<{ deleted: boolean; id: string }>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  chat(message: string, options: ChatOptions = {}): Promise<ChatResponse> {
     return request<ChatResponse>("/api/chat", {
       method: "POST",
       body: JSON.stringify({
         message,
-        conversation_id: conversationId,
+        conversation_id: options.conversationId ?? null,
+        ...(options.modelId ? { model_id: options.modelId } : {}),
+        ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
+        ...(options.stream != null ? { stream: options.stream } : {}),
       }),
     });
   },
@@ -186,7 +247,7 @@ export const api = {
    */
   async chatStream(
     message: string,
-    conversationId: string | null,
+    options: ChatOptions,
     handlers: {
       onMeta?: (data: Record<string, unknown>) => void;
       onToken?: (text: string, model?: string) => void;
@@ -202,8 +263,10 @@ export const api = {
       },
       body: JSON.stringify({
         message,
-        conversation_id: conversationId,
+        conversation_id: options.conversationId ?? null,
         stream: true,
+        ...(options.modelId ? { model_id: options.modelId } : {}),
+        ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
       }),
     });
 
@@ -291,10 +354,6 @@ export const api = {
     return donePayload;
   },
 
-  listCapabilities(): Promise<{ capabilities: unknown[] }> {
-    return request<{ capabilities: unknown[] }>("/api/capabilities");
-  },
-
   listApprovals(status?: string): Promise<{ approvals: unknown[] }> {
     const query = status ? `?status=${encodeURIComponent(status)}` : "";
     return request<{ approvals: unknown[] }>(`/api/approvals${query}`);
@@ -347,8 +406,186 @@ export const api = {
     });
   },
 
-  telemetry(): Promise<{ events: unknown[]; snapshot?: unknown }> {
-    return request<{ events: unknown[]; snapshot?: unknown }>("/api/telemetry");
+  telemetry(): Promise<{ events: RuntimeEvent[]; snapshot?: unknown; latest_sequence?: number }> {
+    return request<{ events: RuntimeEvent[]; snapshot?: unknown; latest_sequence?: number }>("/api/telemetry");
+  },
+
+  listEvents(opts?: {
+    limit?: number;
+    before?: number;
+    after?: number;
+    level?: string;
+    category?: string;
+    subsystem?: string;
+    source?: string;
+    correlation_id?: string;
+    q?: string;
+    since_ms?: number;
+    until_ms?: number;
+  }): Promise<EventsListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.before != null) params.set("before", String(opts.before));
+    if (opts?.after != null) params.set("after", String(opts.after));
+    if (opts?.level) params.set("level", opts.level);
+    if (opts?.category) params.set("category", opts.category);
+    if (opts?.subsystem) params.set("subsystem", opts.subsystem);
+    if (opts?.source) params.set("source", opts.source);
+    if (opts?.correlation_id) params.set("correlation_id", opts.correlation_id);
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.since_ms != null) params.set("since_ms", String(opts.since_ms));
+    if (opts?.until_ms != null) params.set("until_ms", String(opts.until_ms));
+    const q = params.toString();
+    return request<EventsListResponse>(`/api/events${q ? `?${q}` : ""}`);
+  },
+
+  listOperatorCommands(): Promise<{ commands: Array<{ name: string; help: string }> }> {
+    return request("/api/console/commands");
+  },
+
+  runOperatorCommand(command: string): Promise<{ result: OperatorCommandResult }> {
+    return request("/api/console/command", {
+      method: "POST",
+      body: JSON.stringify({ command }),
+    });
+  },
+
+  performanceSnapshot(): Promise<PerformanceSnapshot> {
+    return request<PerformanceSnapshot>("/api/performance/snapshot");
+  },
+
+  performanceSeries(
+    name: string,
+    opts?: { since_ms?: number; until_ms?: number; limit?: number },
+  ): Promise<{ name: string; points: Array<{ ts_ms: number; value: number }> }> {
+    const params = new URLSearchParams({ name });
+    if (opts?.since_ms != null) params.set("since_ms", String(opts.since_ms));
+    if (opts?.until_ms != null) params.set("until_ms", String(opts.until_ms));
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    return request(`/api/performance/series?${params.toString()}`);
+  },
+
+  listModules(): Promise<ModuleSnapshot> {
+    return request<ModuleSnapshot>("/api/modules");
+  },
+
+  discoverModules(): Promise<{ discovered: unknown[]; snapshot: ModuleSnapshot }> {
+    return request("/api/modules/discover", { method: "POST" });
+  },
+
+  executeModule(
+    moduleId: string,
+    operation: string,
+    arguments_: Record<string, unknown> = {},
+  ): Promise<{ result: unknown }> {
+    return request(`/api/modules/${encodeURIComponent(moduleId)}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ operation, arguments: arguments_ }),
+    });
+  },
+
+  listWorkflows(limit = 100): Promise<{ workflows: WorkflowRecord[] }> {
+    return request(`/api/workflows?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  createWorkflow(payload: WorkflowCreatePayload): Promise<{ workflow: WorkflowRecord }> {
+    return request("/api/workflows", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  getWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}`);
+  },
+
+  runWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/run`, { method: "POST" });
+  },
+
+  cancelWorkflow(workflowId: string): Promise<{ workflow: WorkflowRecord }> {
+    return request(`/api/workflows/${encodeURIComponent(workflowId)}/cancel`, { method: "POST" });
+  },
+
+  listSchedules(opts?: {
+    status?: string;
+    limit?: number;
+  }): Promise<{ schedules: ScheduleRecord[]; telemetry?: Record<string, unknown> }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/schedules${q ? `?${q}` : ""}`);
+  },
+
+  createSchedule(payload: ScheduleCreatePayload): Promise<{ schedule: ScheduleRecord }> {
+    return request("/api/schedules", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  getSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}`);
+  },
+
+  pauseSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}/pause`, { method: "POST" });
+  },
+
+  resumeSchedule(scheduleId: string): Promise<{ schedule: ScheduleRecord }> {
+    return request(`/api/schedules/${encodeURIComponent(scheduleId)}/resume`, { method: "POST" });
+  },
+
+  listEvidence(opts?: {
+    status?: string;
+    run_id?: string;
+    limit?: number;
+  }): Promise<{ evidence: EvidenceRecord[] }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.run_id) params.set("run_id", opts.run_id);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/evidence${q ? `?${q}` : ""}`);
+  },
+
+  getEvidence(evidenceId: string): Promise<{ evidence: EvidenceRecord }> {
+    return request(`/api/evidence/${encodeURIComponent(evidenceId)}`);
+  },
+
+  verifyEvidence(evidenceId: string): Promise<{ evidence: EvidenceRecord }> {
+    return request(`/api/evidence/${encodeURIComponent(evidenceId)}/verify`, { method: "POST" });
+  },
+
+  listKnowledgeDocuments(): Promise<{ documents: KnowledgeDocument[] }> {
+    return request("/api/knowledge");
+  },
+
+  getKnowledgeDocument(documentId: string): Promise<{ document: KnowledgeDocument; chunks: KnowledgeChunk[] }> {
+    return request(`/api/knowledge/${encodeURIComponent(documentId)}`);
+  },
+
+  createKnowledgeDocument(payload: {
+    id?: string;
+    title: string;
+    content: string;
+    source?: string;
+  }): Promise<{ document: KnowledgeDocument }> {
+    return request("/api/knowledge", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  deleteKnowledgeDocument(documentId: string): Promise<{ deleted: boolean; id: string }> {
+    return request(`/api/knowledge/${encodeURIComponent(documentId)}`, { method: "DELETE" });
+  },
+
+  searchKnowledge(opts: {
+    q: string;
+    limit?: number;
+    source?: string;
+  }): Promise<{ hits: KnowledgeSearchHit[]; documents: KnowledgeDocument[] }> {
+    const params = new URLSearchParams({ q: opts.q });
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.source) params.set("source", opts.source);
+    return request(`/api/knowledge/search?${params.toString()}`);
+  },
+
+  listFunctions(): Promise<{ functions: unknown[]; loaded?: unknown[]; telemetry?: unknown }> {
+    return request("/api/functions");
   },
 
   neuroAssess(text: string): Promise<NeuroAssessmentResponse> {
@@ -400,12 +637,6 @@ export const api = {
 
   neuroEvaluation(): Promise<{ report: unknown }> {
     return request<{ report: unknown }>("/api/evaluation/neuro", { method: "POST" });
-  },
-
-  listModules(): Promise<{ enabled?: boolean; modules?: unknown[]; truth?: Record<string, boolean> }> {
-    return request<{ enabled?: boolean; modules?: unknown[]; truth?: Record<string, boolean> }>(
-      "/api/modules",
-    );
   },
 
   listTrainingRecipes(): Promise<{ recipes: TrainingRecipe[] }> {
@@ -787,6 +1018,43 @@ export const api = {
     return request("/api/datasets/jobs/reconcile", { method: "POST" });
   },
 
+  discoverOfflineDatasets(maxFiles = 500): Promise<{
+    roots: Array<{ id: string; path: string }>;
+    sources: Array<Record<string, unknown>>;
+    count: number;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/datasets/offline/discover?maxFiles=${encodeURIComponent(String(maxFiles))}`);
+  },
+
+  listOfflineBrainIndexes(limit = 100): Promise<{ indexes: DatasetIndex[] }> {
+    return request(`/api/datasets/offline/indexes?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  offlineBrainPreflight(payload: {
+    datasetId: string;
+    versionId: string;
+    offlineOnly?: boolean;
+  }): Promise<{ preflight: Record<string, unknown> }> {
+    return request("/api/datasets/offline/preflight", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  enqueueOfflineBrainIndex(payload: {
+    datasetId: string;
+    versionId: string;
+    scope?: string;
+    maxRecords?: number | null;
+    sourceFingerprint?: string | null;
+  }): Promise<{ job: DatasetJob }> {
+    return request("/api/datasets/offline/index", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   /* ---------- Training ---------- */
 
   trainingCapabilities(): Promise<{ capabilities: TrainingCapabilities }> {
@@ -996,12 +1264,21 @@ export const api = {
   createCodingSession(payload: {
     goal: string;
     mission?: CodingMission;
-    workspace_root?: string;
-    model_id?: string;
+    workspaceRoot?: string;
+    modelId?: string;
+    conversationId?: string;
+    title?: string;
   }): Promise<{ session: CodingSession }> {
     return request("/api/coding/sessions", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        goal: payload.goal,
+        ...(payload.mission ? { mission: payload.mission } : {}),
+        ...(payload.workspaceRoot ? { workspaceRoot: payload.workspaceRoot } : {}),
+        ...(payload.modelId ? { modelId: payload.modelId } : {}),
+        ...(payload.conversationId ? { conversationId: payload.conversationId } : {}),
+        ...(payload.title ? { title: payload.title } : {}),
+      }),
     });
   },
 
@@ -1011,11 +1288,15 @@ export const api = {
 
   codingTurn(
     sessionId: string,
-    payload: { message?: string; approval_id?: string; capability_id?: string },
-  ): Promise<CodingSessionDetail> {
+    payload: { message?: string; approvalId?: string; capabilityId?: string } = {},
+  ): Promise<CodingTurnResponse> {
     return request(`/api/coding/sessions/${encodeURIComponent(sessionId)}/turn`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...(payload.message != null ? { message: payload.message } : {}),
+        ...(payload.approvalId ? { approvalId: payload.approvalId } : {}),
+        ...(payload.capabilityId ? { capabilityId: payload.capabilityId } : {}),
+      }),
     });
   },
 
@@ -1028,12 +1309,39 @@ export const api = {
   codingWorkspaceTree(opts?: {
     path?: string;
     recursive?: boolean;
+    sessionId?: string;
   }): Promise<CodingWorkspaceTreeResponse> {
     const params = new URLSearchParams();
     if (opts?.path) params.set("path", opts.path);
     if (opts?.recursive != null) params.set("recursive", String(opts.recursive));
+    if (opts?.sessionId) params.set("session_id", opts.sessionId);
     const q = params.toString();
     return request(`/api/coding/workspace/tree${q ? `?${q}` : ""}`);
+  },
+
+  systemTelemetry(): Promise<SystemTelemetryResponse> {
+    return request<SystemTelemetryResponse>("/api/system/telemetry");
+  },
+
+  listCapabilities(opts?: {
+    q?: string;
+    limit?: number;
+  }): Promise<{ capabilities: CapabilityListItem[] }> {
+    const params = new URLSearchParams();
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request<{ capabilities: CapabilityListItem[] }>(`/api/capabilities${q ? `?${q}` : ""}`);
+  },
+
+  executeCapability(
+    capabilityId: string,
+    arguments_: Record<string, unknown> = {},
+  ): Promise<{ result: unknown }> {
+    return request(`/api/capabilities/${encodeURIComponent(capabilityId)}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ arguments: arguments_, requested_by: "ui" }),
+    });
   },
 
   mcpServers(): Promise<{ servers: McpServerPublic[]; feature_enabled: boolean }> {
@@ -1224,5 +1532,223 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ instruction }),
     });
+  },
+
+  getSettings(): Promise<SettingsSnapshot> {
+    return request("/api/settings");
+  },
+
+  getSettingsCatalog(): Promise<Record<string, unknown>> {
+    return request("/api/settings/catalog");
+  },
+
+  getSettingsCategory(category: string): Promise<{ category: string; settings: SettingState[] }> {
+    return request(`/api/settings/categories/${encodeURIComponent(category)}`);
+  },
+
+  patchSettings(
+    values: Record<string, unknown>,
+    confirmDangerous = false,
+  ): Promise<{ results: SettingMutationResult[]; settings: SettingState[] }> {
+    return request("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ values, confirm_dangerous: confirmDangerous }),
+    });
+  },
+
+  patchSetting(
+    key: string,
+    value: unknown,
+    opts?: { confirmDangerous?: boolean; clearSecret?: boolean },
+  ): Promise<{ result: SettingMutationResult; setting: SettingState }> {
+    return request(`/api/settings/keys/${key.split("/").map(encodeURIComponent).join("/")}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        value,
+        confirm_dangerous: opts?.confirmDangerous ?? false,
+        clear_secret: opts?.clearSecret ?? false,
+      }),
+    });
+  },
+
+  resetSetting(key: string): Promise<{ result: SettingMutationResult; setting: SettingState }> {
+    return request(`/api/settings/reset/${key.split("/").map(encodeURIComponent).join("/")}`, {
+      method: "POST",
+    });
+  },
+
+  resetSettingsCategory(
+    category: string,
+  ): Promise<{ results: SettingMutationResult[]; settings: SettingState[] }> {
+    return request(`/api/settings/reset-category/${encodeURIComponent(category)}`, {
+      method: "POST",
+    });
+  },
+
+  brainGraph(opts?: {
+    limit?: number;
+    q?: string;
+    types?: string;
+    root?: string;
+  }): Promise<{
+    nodes: Array<{
+      id: string;
+      type: string;
+      label: string;
+      created_at?: string | null;
+      meta?: Record<string, unknown>;
+    }>;
+    edges: Array<{ id: string; source: string; target: string; relation: string }>;
+    stats: {
+      node_count: number;
+      edge_count: number;
+      by_type?: Record<string, number>;
+      by_relation?: Record<string, number>;
+    };
+    truth?: Record<string, boolean>;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.q) params.set("q", opts.q);
+    if (opts?.types) params.set("types", opts.types);
+    if (opts?.root) params.set("root", opts.root);
+    const q = params.toString();
+    return request(`/api/brain/graph${q ? `?${q}` : ""}`);
+  },
+
+  brainStats(): Promise<{ stats: Record<string, unknown>; truth?: Record<string, boolean> }> {
+    return request("/api/brain/stats");
+  },
+
+  /* ---------- Agent fleet ---------- */
+
+  listAgents(opts?: {
+    includeArchived?: boolean;
+    kind?: string;
+  }): Promise<{ agents: AgentDefinition[]; summary: AgentFleetSummary }> {
+    const params = new URLSearchParams();
+    if (opts?.includeArchived) params.set("includeArchived", "true");
+    if (opts?.kind) params.set("kind", opts.kind);
+    const q = params.toString();
+    return request(`/api/agents${q ? `?${q}` : ""}`);
+  },
+
+  getAgentFleetSummary(): Promise<{ summary: AgentFleetSummary }> {
+    return request("/api/agents/summary");
+  },
+
+  getAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}`);
+  },
+
+  createAgent(payload: AgentCreatePayload): Promise<{ agent: AgentDefinition }> {
+    return request("/api/agents", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updateAgent(
+    agentId: string,
+    payload: Partial<AgentCreatePayload> & { enabled?: boolean },
+  ): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  cloneAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/clone`, { method: "POST" });
+  },
+
+  enableAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/enable`, { method: "POST" });
+  },
+
+  disableAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/disable`, { method: "POST" });
+  },
+
+  archiveAgent(agentId: string): Promise<{ agent: AgentDefinition }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/archive`, { method: "POST" });
+  },
+
+  launchAgentMission(
+    agentId: string,
+    payload: AgentMissionLaunchPayload,
+  ): Promise<{ mission: AgentMission }> {
+    return request(`/api/agents/${encodeURIComponent(agentId)}/missions`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listAgentMissions(opts?: {
+    agentId?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<{ missions: AgentMission[] }> {
+    const params = new URLSearchParams();
+    if (opts?.agentId) params.set("agentId", opts.agentId);
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/missions${q ? `?${q}` : ""}`);
+  },
+
+  getAgentMission(missionId: string): Promise<{
+    mission: AgentMission;
+    children: AgentMission[];
+    events: AgentEvent[];
+  }> {
+    return request(`/api/agents/missions/${encodeURIComponent(missionId)}`);
+  },
+
+  cancelAgentMission(missionId: string): Promise<{ mission: AgentMission }> {
+    return request(`/api/agents/missions/${encodeURIComponent(missionId)}/cancel`, {
+      method: "POST",
+    });
+  },
+
+  listAgentEvents(opts?: {
+    agentId?: string;
+    missionId?: string;
+    category?: string;
+    limit?: number;
+  }): Promise<{ events: AgentEvent[] }> {
+    const params = new URLSearchParams();
+    if (opts?.agentId) params.set("agentId", opts.agentId);
+    if (opts?.missionId) params.set("missionId", opts.missionId);
+    if (opts?.category) params.set("category", opts.category);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/events${q ? `?${q}` : ""}`);
+  },
+
+  reconcileAgents(): Promise<{ updated: string[]; count: number }> {
+    return request("/api/agents/reconcile", { method: "POST" });
+  },
+
+  /* ---------- Analytics ---------- */
+
+  analyticsOverview(rangeKey = "7d"): Promise<{ overview: AnalyticsOverview }> {
+    return request(`/api/analytics/overview?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsAgents(rangeKey = "7d"): Promise<{ agents: AnalyticsAgentsResponse }> {
+    return request(`/api/analytics/agents?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsTraining(rangeKey = "7d"): Promise<{ training: AnalyticsTrainingResponse }> {
+    return request(`/api/analytics/training?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsDatasets(rangeKey = "7d"): Promise<{ datasets: AnalyticsDatasetsResponse }> {
+    return request(`/api/analytics/datasets?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  analyticsTools(rangeKey = "7d"): Promise<{ tools: AnalyticsToolsResponse }> {
+    return request(`/api/analytics/tools?rangeKey=${encodeURIComponent(rangeKey)}`);
   },
 };

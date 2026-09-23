@@ -16,10 +16,13 @@ import "./styles/coding.css";
 import "./styles/media-platform.css";
 import "./styles/media-pages.css";
 import "./styles/media-control.css";
+import "./styles/media-research-pages.css";
 import "./styles/agents.css";
 import "./styles/media-instagram.css";
 import "./styles/media-facebook.css";
-import "./styles/pixel-mock-pages.css";
+import "./styles/brain-pages.css";
+import "./styles/pixel-pages.css";
+import "./styles/plugin-runtime-pages.css";
 import "./styles/onderzoek-kennis.css";
 
 const root = document.getElementById("root");

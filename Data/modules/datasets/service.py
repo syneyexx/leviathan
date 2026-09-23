@@ -327,6 +327,8 @@ class DatasetService:
         *,
         scope: str = "dataset",
         max_records: int | None = None,
+        offline_only: bool = False,
+        source_fingerprint: str | None = None,
     ) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
@@ -334,7 +336,90 @@ class DatasetService:
             job_type=DatasetJobType.INDEX,
             dataset_id=dataset_id,
             version_id=version_id,
-            config={"scope": scope, "maxRecords": max_records},
+            config={
+                "scope": scope,
+                "maxRecords": max_records,
+                "offlineOnly": offline_only,
+                "sourceFingerprint": source_fingerprint,
+            },
+        )
+
+    def discover_offline_sources(self, *, max_files: int = 500) -> dict[str, Any]:
+        from .offline import discover_under_roots
+
+        roots = [
+            ("datasets_raw", self.corpus.datasets_raw),
+            ("datasets_materialized", self.corpus.datasets_materialized),
+            ("datasets_exports", self.corpus.datasets_exports),
+        ]
+        sources = discover_under_roots(roots, max_files=max_files, follow_symlinks=False)
+        return {
+            "roots": [{"id": rid, "path": str(path)} for rid, path in roots],
+            "sources": [s.public_dict() for s in sources],
+            "count": len(sources),
+            "truth": {
+                "explicit_allowed_roots_only": True,
+                "no_full_filesystem_scan": True,
+            },
+        }
+
+    def offline_brain_preflight(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        offline_only: bool = True,
+    ) -> dict[str, Any]:
+        from .offline import offline_index_preflight
+
+        self.get_dataset(dataset_id)
+        ver = self.get_version(version_id)
+        size = int(ver.byte_size or 0)
+        embedding_status = None
+        if self.knowledge is not None:
+            embeddings = getattr(self.knowledge, "embeddings", None)
+            if embeddings is not None and hasattr(embeddings, "status"):
+                embedding_status = embeddings.status()
+        pf = offline_index_preflight(
+            target_dir=self.corpus.datasets_manifests,
+            source_size_bytes=size,
+            embedding_status=embedding_status,
+            offline_only=offline_only,
+        )
+        return pf.public_dict()
+
+    def list_brain_indexes(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for ds in self.store.list_datasets(limit=max(1, min(limit, 200))):
+            for idx in self.store.list_indexes(ds.dataset_id):
+                out.append(idx.public_dict())
+                if len(out) >= limit:
+                    return out
+        return out
+
+    def enqueue_offline_brain_index(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        scope: str = "dataset",
+        max_records: int | None = None,
+        source_fingerprint: str | None = None,
+    ) -> DatasetJob:
+        pf = self.offline_brain_preflight(dataset_id, version_id, offline_only=True)
+        if not pf.get("ok"):
+            raise DatasetError(
+                "; ".join(pf.get("blockers") or ["offline preflight blocked"]),
+                code="OFFLINE_PREFLIGHT_BLOCKED",
+                http_status=409,
+            )
+        return self.enqueue_index(
+            dataset_id,
+            version_id,
+            scope=scope,
+            max_records=max_records,
+            offline_only=True,
+            source_fingerprint=source_fingerprint,
         )
 
     def cancel_job(self, job_id: str) -> DatasetJob:
@@ -759,6 +844,27 @@ class DatasetService:
             raise DatasetError("Version has no storage", code="no_storage")
         scope = str(job.config.get("scope") or "dataset")
         max_records = job.config.get("maxRecords")
+        offline_only = bool(job.config.get("offlineOnly"))
+        source_fingerprint = job.config.get("sourceFingerprint")
+        embedding_status = None
+        embeddings = getattr(self.knowledge, "embeddings", None)
+        if embeddings is not None and hasattr(embeddings, "status"):
+            embedding_status = embeddings.status()
+        if offline_only:
+            from .offline import offline_index_preflight
+
+            pf = offline_index_preflight(
+                target_dir=self.corpus.datasets_manifests,
+                source_size_bytes=int(ver.byte_size or 0),
+                embedding_status=embedding_status,
+                offline_only=True,
+            )
+            if not pf.ok:
+                raise DatasetError(
+                    "; ".join(pf.blockers),
+                    code="OFFLINE_PREFLIGHT_BLOCKED",
+                    http_status=409,
+                )
         index = self.store.create_index(
             dataset_id=job.dataset_id,
             version_id=job.version_id,
@@ -774,13 +880,34 @@ class DatasetService:
                 scope=scope,
                 max_records=int(max_records) if max_records is not None else None,
             )
+            from .offline import build_projection_manifest
+            from Data.modules.common.atomic import atomic_write_text
+
+            manifest = build_projection_manifest(
+                projection_id=index.index_id,
+                dataset_id=job.dataset_id,
+                version_id=job.version_id,
+                source_fingerprint=str(source_fingerprint or ver.content_hash or ""),
+                job_id=job.job_id,
+                outcome=outcome,
+                embedding_status=embedding_status,
+                offline_only=offline_only,
+            )
+            manifest_path = self.corpus.datasets_manifests / f"brain-{index.index_id}.json"
+            ensure_dir(manifest_path.parent)
+            atomic_write_text(
+                manifest_path,
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            )
+            manifest["manifestPath"] = str(manifest_path)
+            provenance = {**outcome, "manifest": manifest, "offlineOnly": offline_only}
             self.store.update_index(
                 index.index_id,
                 status=IndexStatus.READY,
                 chunk_count=outcome["chunkCount"],
-                provenance=outcome,
+                provenance=provenance,
             )
-            return {"indexId": index.index_id, **outcome}
+            return {"indexId": index.index_id, **outcome, "manifest": manifest}
         except Exception as exc:
             self.store.update_index(
                 index.index_id,

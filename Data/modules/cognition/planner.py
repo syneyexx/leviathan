@@ -225,6 +225,8 @@ class CognitivePlanner:
                     objective="Search and shortlist relevant capabilities",
                     expected_observation="capability shortlist",
                     acceptance_condition="shortlist without schema dump",
+                    completion_criteria=("capability shortlist recorded",),
+                    resource_estimate={"tool_calls": 0, "model_calls": 0},
                     risk_class=RiskClass.LOW,
                 ),
                 PlanStep(
@@ -233,6 +235,9 @@ class CognitivePlanner:
                     dependencies=("s1",),
                     expected_observation="tool observation",
                     acceptance_condition="gateway path used",
+                    likely_capabilities=("knowledge.search",),
+                    completion_criteria=("CapabilityResult observation ingested",),
+                    resource_estimate={"tool_calls": 1},
                     risk_class=risk,
                 ),
                 PlanStep(
@@ -241,6 +246,7 @@ class CognitivePlanner:
                     dependencies=("s2",),
                     expected_observation="final reply",
                     acceptance_condition="tool data treated as untrusted content",
+                    completion_criteria=("response produced from observations",),
                     risk_class=risk,
                 ),
             ]

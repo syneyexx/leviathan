@@ -15,12 +15,22 @@ describe("navigation menu", () => {
     expect(findMainMenuByPath("/coding").id).toBe("hades");
   });
 
-  it("maps models/training/agents/analytics under LLM", () => {
+  it("maps models/training/agents/analytics/dataset pages under LLM", () => {
     expect(findMainMenuByPath("/models").id).toBe("llm");
     expect(findMainMenuByPath("/training").id).toBe("llm");
     expect(findMainMenuByPath("/agents").id).toBe("llm");
     expect(findMainMenuByPath("/analytics").id).toBe("llm");
-    expect(findMainMenuByPath("/agents").submenu.some((item) => item.id === "agents")).toBe(true);
+    expect(findMainMenuByPath("/dataset-management").id).toBe("llm");
+    expect(findMainMenuByPath("/offline-datasets").id).toBe("llm");
+    const llm = findMainMenuByPath("/models");
+    expect(llm.submenu.map((item) => item.label)).toEqual([
+      "Modellen",
+      "Agents",
+      "Training",
+      "Dataset Management",
+      "Offline Datasets",
+      "Statestieken",
+    ]);
   });
 
   it("labels Coding Agent under Hades and Workflows under Plugin & Runtime", () => {
@@ -31,10 +41,14 @@ describe("navigation menu", () => {
     expect(runtime.submenu.some((item) => item.id === "workflows" && item.to === "/workflows")).toBe(true);
   });
 
-  it("restores Brain under Onderzoek & Kennis", () => {
+  it("restores Brain under Onderzoek & Kennis and renames Bestanden to Datasets", () => {
     const section = findMainMenuByPath("/brain");
     expect(section.id).toBe("research");
     expect(section.submenu.some((item) => item.id === "brain" && item.to === "/brain")).toBe(true);
+    expect(section.submenu.some((item) => item.id === "datasets" && item.label === "Datasets")).toBe(true);
+    expect(section.submenu.some((item) => item.label === "Bestanden")).toBe(false);
+    expect(findMainMenuByPath("/datasets").id).toBe("research");
+    expect(findMainMenuByPath("/knowledge").id).toBe("research");
   });
 
   it("labels Datasets (not Bestanden) under Onderzoek & Kennis", () => {
@@ -50,12 +64,24 @@ describe("navigation menu", () => {
     );
   });
 
-  it("renames plugins entry to Modules under Plugin & Runtime", () => {
+  it("splits Tools and Modules under Plugin & Runtime", () => {
     const section = findMainMenuByPath("/tools");
     expect(section.id).toBe("runtime");
+    const tools = section.submenu.find((item) => item.id === "tools");
+    expect(tools?.label).toBe("Tools");
+    expect(tools?.to).toBe("/tools");
     const modules = section.submenu.find((item) => item.id === "modules");
     expect(modules?.label).toBe("Modules");
-    expect(modules?.to).toBe("/tools");
+    expect(modules?.to).toBe("/modules");
+    expect(findMainMenuByPath("/modules").id).toBe("runtime");
+    expect(section.submenu.map((item) => item.label)).toEqual([
+      "Performance",
+      "Tools",
+      "Modules",
+      "MCP",
+      "Workflows",
+      "Console",
+    ]);
   });
 
   it("marks hoofdmenu active only for the owning section", () => {

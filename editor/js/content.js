@@ -100,8 +100,11 @@ export function createContent(ctx) {
 
   function scheduleSave() {
     if (!state().autoSave) return;
+    // Never persist an uncommitted pointer preview
+    if (ctx.commands?.isGesturing?.()) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
+      if (ctx.commands?.isGesturing?.()) return;
       saveAll().catch((err) => setStatus(String(err.message || err), "dirty"));
     }, 550);
   }

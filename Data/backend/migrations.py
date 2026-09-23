@@ -1516,6 +1516,398 @@ def _m19_cognitive_runtime(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m20_settings_overrides(conn: sqlite3.Connection) -> None:
+    """Operator settings override store for the Settings Control Plane."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings_overrides (
+            key TEXT PRIMARY KEY,
+            value_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL DEFAULT 'operator',
+            version INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+
+
+def _m21_conversation_pinned(conn: sqlite3.Connection) -> None:
+    """Durable pin/favorite flag for conversations (chat control plane)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversations (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+    if "pinned" not in cols:
+        conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversations_pinned_updated "
+        "ON conversations(pinned DESC, updated_at DESC)"
+    )
+
+
+def _m22_agent_fleet(conn: sqlite3.Connection) -> None:
+    """Durable agent definitions, missions, and fleet events for LLM Agents page."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_definitions (
+            agent_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            archived INTEGER NOT NULL DEFAULT 0,
+            model_ref TEXT,
+            system_policy TEXT,
+            capabilities_json TEXT NOT NULL DEFAULT '[]',
+            knowledge_sources_json TEXT NOT NULL DEFAULT '[]',
+            memory_policy TEXT NOT NULL DEFAULT 'default',
+            dataset_access TEXT NOT NULL DEFAULT 'none',
+            approval_mode TEXT NOT NULL DEFAULT 'inherit',
+            autonomy INTEGER NOT NULL DEFAULT 50,
+            max_concurrency INTEGER NOT NULL DEFAULT 1,
+            timeout_s INTEGER,
+            max_retries INTEGER NOT NULL DEFAULT 0,
+            token_budget INTEGER,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            version INTEGER NOT NULL DEFAULT 1,
+            orchestrator_json TEXT,
+            health TEXT NOT NULL DEFAULT 'unknown',
+            health_reason TEXT,
+            last_run_at TEXT,
+            last_mission_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_definitions_kind ON agent_definitions(kind, enabled)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_missions (
+            mission_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            request TEXT NOT NULL,
+            status TEXT NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'med',
+            progress REAL NOT NULL DEFAULT 0,
+            parent_mission_id TEXT,
+            run_id TEXT,
+            job_ids_json TEXT NOT NULL DEFAULT '[]',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            trace_id TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(agent_id) REFERENCES agent_definitions(agent_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_missions_status ON agent_missions(status, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_missions_agent ON agent_missions(agent_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_events (
+            event_id TEXT PRIMARY KEY,
+            agent_id TEXT,
+            mission_id TEXT,
+            category TEXT NOT NULL,
+            message TEXT NOT NULL,
+            level TEXT NOT NULL DEFAULT 'info',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_events_created ON agent_events(created_at)"
+    )
+
+
+def _m23_observability_events(conn: sqlite3.Connection) -> None:
+    """Durable bounded console/runtime event history."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS observability_events (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            created_at_ms REAL NOT NULL,
+            level TEXT NOT NULL,
+            category TEXT NOT NULL,
+            subsystem TEXT NOT NULL,
+            name TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            source TEXT NOT NULL DEFAULT '',
+            request_id TEXT,
+            correlation_id TEXT,
+            parent_correlation_id TEXT,
+            actor TEXT,
+            run_id TEXT,
+            job_id TEXT,
+            workflow_id TEXT,
+            workflow_run_id TEXT,
+            workflow_step_id TEXT,
+            module_id TEXT,
+            mcp_server_id TEXT,
+            tool_id TEXT,
+            capability_id TEXT,
+            research_project_id TEXT,
+            dataset_id TEXT,
+            evidence_id TEXT,
+            duration_ms REAL,
+            success INTEGER,
+            redacted INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_created "
+        "ON observability_events(created_at_ms DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_level "
+        "ON observability_events(level, created_at_ms DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_category "
+        "ON observability_events(category, created_at_ms DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_correlation "
+        "ON observability_events(correlation_id, sequence)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_events_subsystem "
+        "ON observability_events(subsystem, created_at_ms DESC)"
+    )
+
+
+def _m24_durable_kernel(conn: sqlite3.Connection) -> None:
+    """Wave 0 durable kernel: job leases/idempotency + Behavior/Authority profile tables."""
+
+    def _add_column(table: str, name: str, ddl: str) -> None:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if name not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            capability_id TEXT NOT NULL,
+            arguments_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            run_id TEXT,
+            approval_id TEXT,
+            requested_by TEXT NOT NULL,
+            result_json TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    _add_column("jobs", "trace_id", "trace_id TEXT")
+    _add_column("jobs", "idempotency_key", "idempotency_key TEXT")
+    _add_column("jobs", "lease_owner", "lease_owner TEXT")
+    _add_column("jobs", "lease_expires_at", "lease_expires_at TEXT")
+    _add_column("jobs", "last_heartbeat_at", "last_heartbeat_at TEXT")
+    _add_column("jobs", "attempt_number", "attempt_number INTEGER NOT NULL DEFAULT 1")
+    _add_column("jobs", "budget_json", "budget_json TEXT NOT NULL DEFAULT '{}'")
+    _add_column("jobs", "latency_class", "latency_class TEXT NOT NULL DEFAULT 'background'")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency "
+        "ON jobs(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_lease_expires ON jobs(lease_expires_at, state)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS effect_ledger (
+            effect_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            capability_id TEXT NOT NULL,
+            side_effects_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            provider_kind TEXT,
+            provider_ref TEXT,
+            approval_id TEXT,
+            run_id TEXT,
+            job_id TEXT,
+            observation_id TEXT,
+            error TEXT
+        )
+        """
+    )
+    _add_column("effect_ledger", "idempotency_key", "idempotency_key TEXT")
+    _add_column("effect_ledger", "trace_id", "trace_id TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_effect_ledger_idempotency "
+        "ON effect_ledger(idempotency_key) WHERE idempotency_key IS NOT NULL"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS behavior_profiles (
+            id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            system_prompt TEXT NOT NULL,
+            overlays_json TEXT NOT NULL DEFAULT '{}',
+            reasoning_mode_default TEXT NOT NULL DEFAULT 'standard',
+            tool_use_style TEXT NOT NULL DEFAULT 'balanced',
+            hash TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS authority_profiles (
+            id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            capability_scopes_json TEXT NOT NULL DEFAULT '[]',
+            side_effect_policy TEXT NOT NULL DEFAULT 'standard',
+            approval_mode TEXT NOT NULL DEFAULT 'standard',
+            resource_ceilings_json TEXT NOT NULL DEFAULT '{}',
+            network_scopes_json TEXT NOT NULL DEFAULT '[]',
+            filesystem_scopes_json TEXT NOT NULL DEFAULT '[]',
+            credential_grants_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _m25_evaluation_platform(conn: sqlite3.Connection) -> None:
+    """Wave 2 evaluation platform: durable reports + regression corpus."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS eval_reports (
+            report_id TEXT PRIMARY KEY,
+            suite_id TEXT NOT NULL,
+            suite_version TEXT NOT NULL DEFAULT '1',
+            name TEXT NOT NULL,
+            system_level INTEGER NOT NULL DEFAULT 0,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            component_scope_json TEXT NOT NULL DEFAULT '[]',
+            artifact_refs_json TEXT NOT NULL DEFAULT '[]',
+            results_json TEXT NOT NULL DEFAULT '[]',
+            recorded_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_eval_reports_suite "
+        "ON eval_reports(suite_id, recorded_at DESC)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS eval_case_results (
+            result_id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL,
+            case_id TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            measurement TEXT NOT NULL,
+            judgment_kind TEXT NOT NULL,
+            detail TEXT,
+            component TEXT,
+            artifact_refs_json TEXT NOT NULL DEFAULT '[]',
+            evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(report_id) REFERENCES eval_reports(report_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_eval_case_results_report "
+        "ON eval_case_results(report_id, case_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS eval_regression_corpus (
+            regression_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            incident_ref TEXT NOT NULL,
+            case_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reproducible INTEGER NOT NULL DEFAULT 1,
+            notes TEXT
+        )
+        """
+    )
+
+
+def _m26_model_serving(conn: sqlite3.Connection) -> None:
+    """Wave 3 managed serving workers + measured route decision audit."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_serving_workers (
+            worker_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            backend_kind TEXT NOT NULL,
+            endpoint TEXT,
+            state TEXT NOT NULL,
+            pid INTEGER,
+            health_score REAL,
+            revision_id TEXT,
+            last_error TEXT,
+            started_at TEXT,
+            last_health_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_serving_workers_model "
+        "ON model_serving_workers(model_id, state)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_route_decisions (
+            decision_id TEXT PRIMARY KEY,
+            recorded_at TEXT NOT NULL,
+            policy_id TEXT,
+            job_class TEXT,
+            selected_model_id TEXT,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_route_decisions_recorded "
+        "ON model_route_decisions(recorded_at DESC)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -1536,6 +1928,13 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=17, name="mcp_bridge", apply=_m17_mcp_bridge),
     Migration(version=18, name="rag_v3", apply=_m18_rag_v3),
     Migration(version=19, name="cognitive_runtime", apply=_m19_cognitive_runtime),
+    Migration(version=20, name="settings_overrides", apply=_m20_settings_overrides),
+    Migration(version=21, name="conversation_pinned", apply=_m21_conversation_pinned),
+    Migration(version=22, name="agent_fleet", apply=_m22_agent_fleet),
+    Migration(version=23, name="observability_events", apply=_m23_observability_events),
+    Migration(version=24, name="durable_kernel", apply=_m24_durable_kernel),
+    Migration(version=25, name="evaluation_platform", apply=_m25_evaluation_platform),
+    Migration(version=26, name="model_serving", apply=_m26_model_serving),
 )
 
 

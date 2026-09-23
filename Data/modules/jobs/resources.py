@@ -52,3 +52,17 @@ class ResourceManager:
             self._active.discard(job_id)
         self._semaphore.release()
         self.telemetry["released"] += 1
+
+    def set_max_job_concurrency(self, value: int) -> None:
+        """Hot-adjust admission ceiling. Active jobs are never force-killed."""
+        if value < 1:
+            raise ValueError("max_job_concurrency must be >= 1")
+        with self._lock:
+            delta = value - self.max_job_concurrency
+            self.max_job_concurrency = value
+            if delta > 0:
+                for _ in range(delta):
+                    self._semaphore.release()
+            elif delta < 0:
+                for _ in range(-delta):
+                    self._semaphore.acquire(blocking=False)

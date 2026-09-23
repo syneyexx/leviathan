@@ -1,5 +1,17 @@
-"""Release gates — local readiness checks, not production certification."""
+"""Local release readiness gates. ready ≠ production certified."""
 
-from .gates import GateCheck, GateSeverity, ReleaseGateReport, ReleaseGateRunner
+from .gates import (
+    GateCheck,
+    GateSeverity,
+    ReleaseGateReport,
+    ReleaseGateRunner,
+    evaluation_relevance_gate,
+)
 
-__all__ = ["GateCheck", "GateSeverity", "ReleaseGateReport", "ReleaseGateRunner"]
+__all__ = [
+    "GateCheck",
+    "GateSeverity",
+    "ReleaseGateReport",
+    "ReleaseGateRunner",
+    "evaluation_relevance_gate",
+]

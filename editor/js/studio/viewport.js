@@ -38,8 +38,11 @@ export function createViewport(ctx) {
     ctx.store.setState({ viewMode: mode });
     const host = ensureChrome();
     if (!host) return;
+    const iframe = host.querySelector("[data-role='viewport-iframe']");
     if (mode === "design") {
       host.hidden = true;
+      host.classList.remove("is-design-frame");
+      if (iframe) iframe.hidden = false;
       document.body.classList.remove("lvb-preview-mode");
       // Clear old max-width hack classes — preview owns viewport sizing
       document.body.classList.remove("lvb-bp-tablet", "lvb-bp-mobile");
@@ -48,6 +51,13 @@ export function createViewport(ctx) {
     }
     document.body.classList.add("lvb-preview-mode");
     host.hidden = false;
+    host.classList.remove("is-design-frame");
+    // Design-mode mobile/tablet hides the iframe; Preview must show it again
+    if (iframe) {
+      iframe.hidden = false;
+      // Force reload so a late design-frame state cannot leave a blank surface
+      delete iframe.dataset.src;
+    }
     refresh();
     ctx.content?.setStatus?.("Preview-viewport (echte mediaqueries)", "ok");
   }

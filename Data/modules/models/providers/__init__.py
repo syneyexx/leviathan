@@ -8,6 +8,7 @@ from Data.modules.models.providers.llama_cpp import LlamaCppAdapter
 from Data.modules.models.providers.lm_studio import LMStudioAdapter
 from Data.modules.models.providers.ollama import OllamaAdapter
 from Data.modules.models.providers.openai_compatible import OpenAICompatibleAdapter
+from Data.modules.models.providers.vllm_class import VllmClassAdapter
 
 
 def build_adapter(
@@ -20,6 +21,7 @@ def build_adapter(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     kind = (provider_type or "").strip().lower()
+    meta = metadata or {}
     if kind in {"lm_studio", "lmstudio"}:
         return LMStudioAdapter(
             provider_id=provider_id,
@@ -35,13 +37,37 @@ def build_adapter(
             timeout_seconds=timeout_seconds,
         )
     if kind in {"llama_cpp", "llamacpp", "llama.cpp"}:
-        meta = metadata or {}
+        command = meta.get("command")
+        if isinstance(command, str):
+            command_list = command.split()
+        elif isinstance(command, list):
+            command_list = [str(x) for x in command]
+        else:
+            command_list = None
         return LlamaCppAdapter(
             provider_id=provider_id,
             endpoint=endpoint,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
             managed=bool(meta.get("managed", False)),
+            mode=str(meta.get("mode") or "") or None,
+            command=command_list,
+        )
+    if kind in {"vllm", "vllm_class", "vllm-class"}:
+        command = meta.get("command")
+        if isinstance(command, str):
+            command_list = command.split()
+        elif isinstance(command, list):
+            command_list = [str(x) for x in command]
+        else:
+            command_list = None
+        return VllmClassAdapter(
+            provider_id=provider_id,
+            endpoint=endpoint or "http://127.0.0.1:8000/v1",
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            mode=str(meta.get("mode") or "inproc"),
+            command=command_list,
         )
     return OpenAICompatibleAdapter(
         provider_id=provider_id,

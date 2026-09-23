@@ -6,6 +6,155 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 3 Local Model Serving Foundation — PASS
+
+### Objective
+Make local model serving frontier-capable under the existing Model Control Plane: managed vLLM-class / llama.cpp adapters, true stream cancellation, measured routing audit, honest killed-worker recovery, and a serving conformance eval suite — without a second model platform under `native/`.
+
+### Added / changed
+- **Serving supervisor** (`model_runtime/serving.py`): worker lifecycle READY/DEAD/UNAVAILABLE, health scores, reconcile killed processes
+- **Managed adapters:** `ManagedLocalServingAdapter`, `VllmClassAdapter`, managed `LlamaCppAdapter` (inproc default; subprocess when binary configured)
+- **Measured routing (U041–U042):** candidate scores + durable `model_route_decisions`; selection ≠ permission
+- **Stream cancel (U025):** `StreamCancelToken` on `chat_stream` + managed token streams
+- **Inference job class (U033):** INTERACTIVE / BACKGROUND / BATCH on requests/decisions
+- **Conformance suite (U035):** `serving_conformance_suite` + `POST /api/evaluation/serving` (batching QoS honestly UNMEASURED)
+- **Migration v26** + flag `LEVIATHAN_FEATURE_MODEL_SERVING`
+- **API:** serving workers/reconcile, measured resolve, route decisions
+- **Tests:** `test_wave3_model_serving.py`
+- **Version:** `0.67.0-wave3-serving`
+
+### EXTERNAL-FIRST review
+- One Model Control Plane; adapters only in `model_runtime` / `models/providers`
+- `native/` remains stub — not a second serving plane
+- Missing binary → UNAVAILABLE; dead worker → DEAD; never fake READY
+
+### Explicitly NOT claimed
+- Continuous batching / KV-cache scheduler under real GPU load
+- Production vLLM/llama-server binary packaging
+- Learned router / ensembles / LoRA-aware routing completion
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-23 — Wave 2 Evaluation as Release Authority — PASS
+
+### Objective
+Make evaluation the empirical release authority: versioned cases/reports, judgment kinds, explicit measurement states (UNMEASURED ≠ PASS), durable scorecards, sealed regression corpus, and release/promotion gates that require relevant recorded evals — extending `evaluation/` + `release/`, not a second platform.
+
+### Added / changed
+- **Types (U337–U338):** `MeasurementState`, `JudgmentKind`, versioned `EvalCase`/`EvalReport`, `Scorecard`, `RegressionCase`
+- **Store:** durable `eval_reports` / `eval_case_results` / `eval_regression_corpus` via `EvaluationStore`
+- **Platform:** `EvaluationPlatform` orchestrates harness → persist → scorecard → `promotion_gate` / `has_relevant_eval`
+- **Harness:** suite_id/version, component scope, judgment/measurement enrichment, regression suite
+- **Release:** `evaluation_relevance_gate`; release runner includes evaluation relevance check
+- **Migration v25** + flag `LEVIATHAN_FEATURE_EVAL_PLATFORM` (default ON)
+- **API:** `/api/evaluation/{foundation,neuro,regression,reports,scorecard,regressions,platform,promotion}`
+- **Tests:** `test_wave2_evaluation.py`
+- **Version:** `0.66.0-wave2-evaluation`
+
+### EXTERNAL-FIRST review
+- One empirical owner (`evaluation/`); release consumes relevance — no parallel eval stack
+- UNMEASURED never promotes; scorecards make missing measurement visible
+- Central SQLite only (migration v25); no private eval DB
+
+### Explicitly NOT claimed
+- LLM-as-judge production fleet / human annotation UI
+- Statistical power analysis dashboards
+- Production certification from scorecard PASS alone
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-23 — Wave 1 Cognitive Runtime + Agents (restart-safe / executable) — PASS
+
+### Objective
+Make the Cognitive Runtime restart-safe and executable: full hydrate/resume, live Cognition → ExecutionGateway invocation, structured agent planner, DAG multi-agent execution, shared blackboard, and agent budgets — without a second orchestration stack.
+
+### Added / changed
+- **Cognition hydrate/resume (U122):** reconstruct TaskModel, plan, beliefs, working memory, decision, observations, actions, budgets from SQLite; `hydrate()` + `resume(hydrate=True)`
+- **INVOKE_CAPABILITY (U123):** real `CapabilityRequest` through ExecutionGateway with `trace_id` + idempotency key; observation ingest; idempotent replay on resume
+- **Structured plans (U125):** PlanStep `completion_criteria` + `resource_estimate`; ActionSelector can emit INVOKE after capability shortlist
+- **Agents (U142–U146):** `StructuredAgentPlanner` replaces keyword `plan()`; `MultiAgentCoordinator.run_dag` with dependencies/parallel/joins/cycle+deadlock detection; `AgentBlackboard`
+- **Tests:** `test_wave1_cognition_agents.py`
+- **Version:** `0.65.0-wave1-cognition`
+
+### EXTERNAL-FIRST review
+- Cognition/Agents remain control/strategy — all effects via ExecutionGateway / JobRuntime
+- DAG uses shared AgentRuntime workers; no private agent queues/DBs
+- Idempotent capability keys prevent duplicate effects after kill/resume
+
+### Explicitly NOT claimed
+- Full CognitiveRun authority/approval rehydration UI
+- Default-on replacement of legacy chat orchestration
+- Distributed remote agent fleet
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-22 — Wave 0 Durable Kernel / Architecture Guardrails — PASS
+
+### Objective
+Freeze canonical Run/Job/Event ownership, encode the ownership matrix in tests, separate BehaviorProfile vs AuthorityProfile, and add correlation + Frontier Capability Manifest foundations — without rebuilding Leviathan or proliferating registries/databases.
+
+### Added / changed
+- **Run:** versioned `EventEnvelope`, transition metadata (attempt/reason/cancellation/retryable/recovery), `trace_id` on runs/events
+- **Jobs:** durable leases/heartbeats/expiry, idempotency keys, `ResourceBudgetEnvelope`, worker protocol negotiation (`WORKER_VERSION_MISMATCH`)
+- **Execution:** `FrontierCapabilityManifest` from live `CapabilityCatalog` (UNMEASURED ≠ PASS)
+- **Approvals:** `AuthorityProfile` (technical scopes; not content policy)
+- **Settings:** `BehaviorProfile` (SYSTEM_PROMPT; not capability grant)
+- **Common:** `CorrelationIds` + encoded `CANONICAL_OWNERSHIP` / singleton-class owners
+- **Migration v24:** job lease/idempotency columns + `behavior_profiles` / `authority_profiles` tables
+- **Flag:** `LEVIATHAN_FEATURE_DURABLE_KERNEL` (advanced takeover paths; contracts always present)
+- **API:** `GET /api/architecture/ownership`, `GET /api/architecture/capability-manifest`
+- **Tests:** `test_architecture_wave0.py` (ownership + singleton conformance exit gate)
+- **Version:** `0.64.0-wave0-kernel`
+
+### EXTERNAL-FIRST review
+- Wave 0 is control-plane/contracts only — no new parallel worker infrastructure
+- Leases prepare JobRuntime for external workers without a second fleet manager
+- No second CapabilityCatalog / ExecutionGateway / ModelControlPlane / truth DB
+
+### Explicitly NOT claimed
+- Full cognitive hydration/resume (Wave 1)
+- Outbox/inbox delivery (U007) beyond effect ledger columns
+- Production remote worker transport
+- UI worker-status pages consuming the manifest end-to-end
+
+### Status
+**PASS**
+
+---
+
+## 2026-09-22 — Settings Control Plane — PASS
+
+### Objective
+Replace the decorative Settings UI with a real Settings Control Plane: typed catalog, SQLite overrides, validation/feature hierarchy, hot vs restart-required apply, secret redaction, and one `/settings` page with in-page categories.
+
+### Added / changed
+- **Module:** `Data/modules/settings/` — catalog, store, validation, service, bindings
+- **Migration v20:** `settings_overrides`
+- **API:** `/api/settings*`
+- **Frontend:** single Settings page; category nav no longer routes to placeholder pages; legacy `/settings/*` redirects
+- **Config:** `ResearchIntegrationSettings` (HF token, web search, corpus root, training fixture); boot merges DB overrides via `load_settings()`
+- **Docs:** `Data/docs/settings_control_plane.md`
+- **Version:** `0.62.0-settings`
+- **Tests:** `test_settings_control_plane.py`
+
+### Non-duplication
+- Models / MCP servers / training jobs / trading strategies remain on domain pages
+- Empty categories (Algemeen, Benchmarks, Mediacenter, Console, Logs) stay honest when no global knobs exist
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-22 — Phase 55 Cognitive Runtime (contracts + shadow + loop) — PASS
 
 ### Objective

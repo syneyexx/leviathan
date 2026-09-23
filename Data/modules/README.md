@@ -8,15 +8,17 @@ Long-lived / stateful domain systems for LEVIATHAN.
 |---|---|
 | `reasoning/` | `ReasoningEngine`, `ReasoningPlan` (legacy classifier) |
 | `cognition/` | **Cognitive Runtime** — TaskModel, BeliefState, WorkingMemory, Perception, MetaController, loop, VerifiedExperience |
+| `settings/` | **Settings Control Plane** — operator catalog, SQLite overrides, hot/restart apply |
 | `context/` | `ContextBuilder`, `ContextPack` |
-| `model_runtime/` | `OpenAICompatibleLLM`, `LLMUnavailable` |
-| `run/` | `RunStore`, Run lifecycle + events |
+| `model_runtime/` | OpenAICompatibleLLM + ServingSupervisor / managed local adapters |
+| `models/` | Model Control Plane (registry, measured router, managed vLLM/llama.cpp providers) |
+| `run/` | `RunStore`, Run lifecycle + versioned `EventEnvelope` |
 | `artifacts/` | `ArtifactStore`, content hash provenance |
 | `knowledge/` | Knowledge V2 documents/chunks/hybrid retrieval |
 | `function_runtime/` | FunctionRegistry + lazy ON_DEMAND runtime |
-| `execution/` | CapabilityCatalog + ExecutionGateway |
-| `approvals/` | PolicyEngine + ApprovalStore + ApprovalService |
-| `jobs/` | JobStore + JobRuntime + ResourceManager |
+| `execution/` | CapabilityCatalog + ExecutionGateway + FrontierCapabilityManifest |
+| `approvals/` | PolicyEngine + ApprovalStore + ApprovalService + AuthorityProfile |
+| `jobs/` | JobStore + JobRuntime + ResourceManager + leases/budgets |
 | `observations/` | ToolObservation + durable effect ledger |
 | `evidence/` | EvidenceStore + EvidenceService |
 | `memory/` | MemoryStore (controlled; not Knowledge) |
@@ -29,13 +31,15 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `module_manager/` | Universal Module Manager — single `ILeviathanModule` loader (+ optional subprocess) |
 | `plugins/` | PluginRegistry (declarative → catalog; not a second loader) |
 | `mcp/` | Universal MCP Bridge (one bridge / many sessions; Tools provider) |
-| `evaluation/` | EvaluationHarness (+ neuro ablations) |
+| `model_runtime/` | OpenAICompatibleLLM + ServingSupervisor / managed local adapters |
+| `models/` | Model Control Plane (registry, measured router, managed vLLM/llama.cpp providers) |
+| `evaluation/` | EvaluationHarness + EvaluationPlatform (+ neuro ablations, scorecards, regression corpus, serving conformance) |
 | `isolation/` | IsolationGuard |
 | `training/` | TrainingRegistry stub + TrainingRecipeRegistry |
 | `browser/` | BrowserAutomationStub |
 | `media/` | MediaAutomationStub |
 | `voice/` | VoiceRuntimeStub |
-| `release/` | ReleaseGateRunner |
+| `release/` | ReleaseGateRunner + evaluation relevance |
 | `security/` | SecurityAuditor (posture, not pentest) |
 | `native/` | NativeRuntimeStub |
 | `trading/` | TradingStub (real broker refused) |
@@ -44,6 +48,8 @@ Long-lived / stateful domain systems for LEVIATHAN.
 | `metrics/` | MetricsCollector (in-process) |
 | `chaos/` | ChaosInjector (default OFF) |
 | `master/` | MasterGateRunner (phases 0–45 summary) |
+| `common/` | Shared helpers + CorrelationIds + ownership matrix |
+| `settings/` | Settings Control Plane + BehaviorProfile |
 
 Backend shims under `Data/backend/reasoning.py` and `Data/backend/llm.py` re-export for compatibility.
 
