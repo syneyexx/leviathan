@@ -105,7 +105,7 @@ from Data.modules.neuro import (
     build_residual_runtime,
 )
 from Data.modules.plugins import PluginRegistry, PluginStatus
-from Data.modules.evaluation import EvaluationHarness
+from Data.modules.evaluation import EvaluationHarness, EvaluationPlatform, EvaluationStore
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
 from Data.modules.training import (
     PreferenceBridge,
@@ -123,7 +123,7 @@ from Data.backend.routes.research import build_research_router
 from Data.modules.browser import BrowserAction, BrowserAutomationStub
 from Data.modules.media import MediaAction, MediaAutomationStub
 from Data.modules.voice import VoiceAction, VoiceRuntimeStub
-from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner
+from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner, evaluation_relevance_gate
 from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_mcp, unregister_module_mcp
 from Data.backend.routes.mcp import build_mcp_router
 from Data.backend.routes.cognition import build_cognition_router
@@ -322,6 +322,12 @@ evaluation_harness = EvaluationHarness(
     evidence=evidence_store,
     verification=verification_engine,
 )
+evaluation_store = EvaluationStore(settings.database_path)
+evaluation_platform = EvaluationPlatform(
+    harness=evaluation_harness,
+    store=evaluation_store,
+    enabled=settings.features.eval_platform,
+)
 isolation_guard = IsolationGuard(settings)
 training_registry = TrainingRegistry()
 training_recipes = TrainingRecipeRegistry(
@@ -451,6 +457,30 @@ def _gate_module_manager_subprocess() -> GateCheck:
     )
 
 
+def _gate_evaluation_relevance() -> GateCheck:
+    """Wave 2: release authority requires a relevant recorded foundation eval."""
+    if not settings.features.eval_platform:
+        return GateCheck(
+            gate_id="evaluation_relevance",
+            name="Relevant evaluation recorded",
+            severity=GateSeverity.INFO,
+            passed=True,
+            detail="eval_platform flag OFF — gate informational",
+        )
+    relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
+    # Soft gate: recorded foundation eval required; FAIL blocks; UNMEASURED does not
+    # block readiness (honest) but cannot promote (require_pass path elsewhere).
+    if not relevance.get("recorded"):
+        # Auto-record foundation once so fresh installs are measurable, not silent.
+        evaluation_platform.run_foundation(persist=True)
+        relevance = evaluation_platform.has_relevant_eval(suite_id="foundation", require_pass=False)
+    return evaluation_relevance_gate(
+        relevance,
+        severity=GateSeverity.BLOCK if relevance.get("measurement") == "FAIL" else GateSeverity.WARN,
+        require_pass=False,
+    )
+
+
 release_gates = ReleaseGateRunner(
     checks=[
         _gate_catalog_builtins,
@@ -459,6 +489,7 @@ release_gates = ReleaseGateRunner(
         _gate_frontend,
         _gate_neuro_residual_posture,
         _gate_module_manager_subprocess,
+        _gate_evaluation_relevance,
     ]
 )
 security_auditor = SecurityAuditor(
@@ -575,19 +606,24 @@ def _master_security_check() -> MasterGateCheck:
 
 
 def _master_evaluation_check() -> MasterGateCheck:
-    report = evaluation_harness.run_suite(
-        "foundation",
-        evaluation_harness.default_foundation_suite(),
-    )
+    if settings.features.eval_platform:
+        report = evaluation_platform.run_foundation(persist=True)
+    else:
+        report = evaluation_harness.run_suite(
+            "foundation",
+            evaluation_harness.default_foundation_suite(),
+            suite_id="foundation",
+        )
     outcomes = {item.outcome.value for item in report.results}
-    if "FAILED" in outcomes or "ERROR" in outcomes:
+    measurements = {item.resolved_measurement().value for item in report.results}
+    if "FAILED" in outcomes or "ERROR" in outcomes or "FAIL" in measurements:
         return MasterGateCheck(
             check_id="evaluation_foundation",
             name="Foundation evaluation",
             status=MasterGateStatus.BLOCKED,
             detail="foundation suite has FAILED/ERROR",
         )
-    if "UNMEASURED" in outcomes:
+    if "UNMEASURED" in outcomes or "UNMEASURED" in measurements:
         return MasterGateCheck(
             check_id="evaluation_foundation",
             name="Foundation evaluation",
@@ -952,7 +988,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.65.0-wave1-cognition", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.66.0-wave2-evaluation", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -3363,10 +3399,14 @@ def invoke_plugin(plugin_id: str, payload: PluginInvokeRequest) -> dict:
 
 @app.post("/api/evaluation/foundation")
 def run_foundation_evaluation() -> dict:
-    report = evaluation_harness.run_suite(
-        "foundation",
-        evaluation_harness.default_foundation_suite(),
-    )
+    if settings.features.eval_platform:
+        report = evaluation_platform.run_foundation(persist=True)
+    else:
+        report = evaluation_harness.run_suite(
+            "foundation",
+            evaluation_harness.default_foundation_suite(),
+            suite_id="foundation",
+        )
     return {"report": report.public_dict()}
 
 
@@ -3380,8 +3420,59 @@ def run_neuro_evaluation() -> dict:
             memory_tiers_enabled=settings.features.neuro_memory_tiers,
             critic_enabled=settings.features.neuro_process_critic,
         ),
+        suite_id="neuro_ablation",
     )
+    if settings.features.eval_platform:
+        report = evaluation_store.save_report(report)
     return {"report": report.public_dict()}
+
+
+@app.post("/api/evaluation/regression")
+def run_regression_evaluation() -> dict:
+    report = evaluation_platform.run_regression_corpus(persist=True)
+    return {"report": report.public_dict()}
+
+
+@app.get("/api/evaluation/reports")
+def list_evaluation_reports(limit: int = 50) -> dict:
+    return {
+        "reports": evaluation_platform.list_reports(limit=limit),
+        "truth": {"unmeasured_is_not_passed": True},
+    }
+
+
+@app.get("/api/evaluation/reports/{report_id}")
+def get_evaluation_report(report_id: str) -> dict:
+    report = evaluation_platform.get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="evaluation report not found")
+    return {"report": report}
+
+
+@app.get("/api/evaluation/scorecard")
+def get_evaluation_scorecard() -> dict:
+    scorecard = evaluation_platform.build_system_scorecard()
+    return {"scorecard": scorecard.public_dict()}
+
+
+@app.get("/api/evaluation/regressions")
+def list_evaluation_regressions(limit: int = 100) -> dict:
+    return {
+        "regressions": evaluation_platform.list_regressions(limit=limit),
+        "truth": {"incidents_become_regression_cases": True},
+    }
+
+
+@app.get("/api/evaluation/platform")
+def get_evaluation_platform() -> dict:
+    return {"platform": evaluation_platform.public_dict()}
+
+
+@app.get("/api/evaluation/promotion")
+def get_evaluation_promotion(component: str | None = None, suite_id: str = "foundation") -> dict:
+    return {
+        "promotion": evaluation_platform.promotion_gate(component=component, suite_id=suite_id)
+    }
 
 
 class IsolationEvaluateRequest(BaseModel):

@@ -6,6 +6,37 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 2 Evaluation as Release Authority — PASS
+
+### Objective
+Make evaluation the empirical release authority: versioned cases/reports, judgment kinds, explicit measurement states (UNMEASURED ≠ PASS), durable scorecards, sealed regression corpus, and release/promotion gates that require relevant recorded evals — extending `evaluation/` + `release/`, not a second platform.
+
+### Added / changed
+- **Types (U337–U338):** `MeasurementState`, `JudgmentKind`, versioned `EvalCase`/`EvalReport`, `Scorecard`, `RegressionCase`
+- **Store:** durable `eval_reports` / `eval_case_results` / `eval_regression_corpus` via `EvaluationStore`
+- **Platform:** `EvaluationPlatform` orchestrates harness → persist → scorecard → `promotion_gate` / `has_relevant_eval`
+- **Harness:** suite_id/version, component scope, judgment/measurement enrichment, regression suite
+- **Release:** `evaluation_relevance_gate`; release runner includes evaluation relevance check
+- **Migration v25** + flag `LEVIATHAN_FEATURE_EVAL_PLATFORM` (default ON)
+- **API:** `/api/evaluation/{foundation,neuro,regression,reports,scorecard,regressions,platform,promotion}`
+- **Tests:** `test_wave2_evaluation.py`
+- **Version:** `0.66.0-wave2-evaluation`
+
+### EXTERNAL-FIRST review
+- One empirical owner (`evaluation/`); release consumes relevance — no parallel eval stack
+- UNMEASURED never promotes; scorecards make missing measurement visible
+- Central SQLite only (migration v25); no private eval DB
+
+### Explicitly NOT claimed
+- LLM-as-judge production fleet / human annotation UI
+- Statistical power analysis dashboards
+- Production certification from scorecard PASS alone
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 1 Cognitive Runtime + Agents (restart-safe / executable) — PASS
 
 ### Objective

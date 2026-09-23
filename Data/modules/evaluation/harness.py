@@ -6,7 +6,15 @@ from typing import Any, Protocol
 from Data.modules.evidence.types import EvidenceStatus
 from Data.modules.verification import VerificationEngine, VerificationOutcome
 
-from .types import EvalCase, EvalCaseResult, EvalOutcome, EvalReport
+from .types import (
+    EvalCase,
+    EvalCaseResult,
+    EvalOutcome,
+    EvalReport,
+    JudgmentKind,
+    MeasurementState,
+    outcome_to_measurement,
+)
 
 
 class CatalogLike(Protocol):
@@ -18,7 +26,7 @@ class EvidenceLike(Protocol):
 
 
 class EvaluationHarness:
-    """Small honest evaluation runner. UNMEASURED ≠ PASSED."""
+    """Honest evaluation runner. UNMEASURED ≠ PASSED (Wave 2 vocabulary)."""
 
     def __init__(
         self,
@@ -26,12 +34,25 @@ class EvaluationHarness:
         catalog: CatalogLike | None = None,
         evidence: EvidenceLike | None = None,
         verification: VerificationEngine | None = None,
+        model_revision: str | None = None,
+        runtime_revision: str | None = None,
     ) -> None:
         self.catalog = catalog
         self.evidence = evidence
         self.verification = verification
+        self.model_revision = model_revision
+        self.runtime_revision = runtime_revision
 
-    def run_suite(self, name: str, cases: list[EvalCase] | tuple[EvalCase, ...]) -> EvalReport:
+    def run_suite(
+        self,
+        name: str,
+        cases: list[EvalCase] | tuple[EvalCase, ...],
+        *,
+        suite_id: str | None = None,
+        suite_version: str = "1",
+        system_level: bool = False,
+        artifact_refs: tuple[str, ...] = (),
+    ) -> EvalReport:
         results: list[EvalCaseResult] = []
         for case in cases:
             results.append(self._run_case(case))
@@ -42,11 +63,21 @@ class EvaluationHarness:
             "error": sum(1 for r in results if r.outcome == EvalOutcome.ERROR),
             "total": len(results),
         }
+        components = tuple(
+            sorted({r.component for r in results if r.component})
+        )
+        resolved_suite = suite_id or (
+            cases[0].suite_id if cases and cases[0].suite_id else str(uuid.uuid4())
+        )
         return EvalReport(
-            suite_id=str(uuid.uuid4()),
+            suite_id=resolved_suite,
             name=name,
             results=tuple(results),
             summary=summary,
+            suite_version=suite_version,
+            component_scope=components,
+            system_level=system_level or any(c.system_level for c in cases),
+            artifact_refs=artifact_refs,
         )
 
     def default_foundation_suite(self) -> list[EvalCase]:
@@ -57,6 +88,12 @@ class EvaluationHarness:
                 description="Catalog must expose file.read",
                 check="capability_exists",
                 params={"capability_id": "file.read"},
+                version="2",
+                suite_id="foundation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="execution",
+                system_level=True,
+                tags=("foundation", "capabilities"),
             ),
             EvalCase(
                 case_id="cap-knowledge",
@@ -64,6 +101,12 @@ class EvaluationHarness:
                 description="Catalog must expose knowledge.search",
                 check="capability_exists",
                 params={"capability_id": "knowledge.search"},
+                version="2",
+                suite_id="foundation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="knowledge",
+                system_level=True,
+                tags=("foundation", "capabilities"),
             ),
             EvalCase(
                 case_id="embedding-quality",
@@ -71,6 +114,44 @@ class EvaluationHarness:
                 description="No embedding quality gate without measured provider",
                 check="always_unmeasured",
                 params={"reason": "NullEmbeddingProvider — quality unmeasured"},
+                version="2",
+                suite_id="foundation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="knowledge",
+                system_level=True,
+                tags=("foundation", "honesty"),
+            ),
+        ]
+
+    def default_regression_suite(self) -> list[EvalCase]:
+        """Sealed regression cases when store corpus is empty (U325)."""
+        return [
+            EvalCase(
+                case_id="reg-unmeasured-invariant",
+                name="UNMEASURED ≠ PASS",
+                description="Regression: missing measurement stays UNMEASURED",
+                check="always_unmeasured",
+                params={"reason": "sealed regression — unmeasured quality gate"},
+                version="1",
+                suite_id="regression",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="evaluation",
+                system_level=True,
+                sealed=True,
+                tags=("regression", "honesty"),
+            ),
+            EvalCase(
+                case_id="reg-file-read-exists",
+                name="file.read registered",
+                description="Regression: catalog must expose file.read",
+                check="capability_exists",
+                params={"capability_id": "file.read"},
+                version="1",
+                suite_id="regression",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="execution",
+                sealed=True,
+                tags=("regression", "capabilities"),
             ),
         ]
 
@@ -90,6 +171,11 @@ class EvaluationHarness:
                 description="Residual-capable runtime present",
                 check="neuro_residual",
                 params={"supported": residual_supported},
+                version="1",
+                suite_id="neuro_ablation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="neuro",
+                tags=("neuro", "ablation"),
             ),
             EvalCase(
                 case_id="neuro-ablate-cortex",
@@ -97,6 +183,11 @@ class EvaluationHarness:
                 description="Cortex engagement flag state (informational)",
                 check="neuro_flag",
                 params={"enabled": cortex_enabled, "name": "cortex"},
+                version="1",
+                suite_id="neuro_ablation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="neuro",
+                tags=("neuro", "ablation"),
             ),
             EvalCase(
                 case_id="neuro-ablate-memory-tiers",
@@ -104,6 +195,11 @@ class EvaluationHarness:
                 description="Memory tiers flag state (informational)",
                 check="neuro_flag",
                 params={"enabled": memory_tiers_enabled, "name": "memory_tiers"},
+                version="1",
+                suite_id="neuro_ablation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="neuro",
+                tags=("neuro", "ablation"),
             ),
             EvalCase(
                 case_id="neuro-ablate-critic",
@@ -111,6 +207,11 @@ class EvaluationHarness:
                 description="Process critic flag state (informational)",
                 check="neuro_flag",
                 params={"enabled": critic_enabled, "name": "process_critic"},
+                version="1",
+                suite_id="neuro_ablation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="neuro",
+                tags=("neuro", "ablation"),
             ),
             EvalCase(
                 case_id="neuro-contrastive-embeddings",
@@ -118,63 +219,240 @@ class EvaluationHarness:
                 description="Contrastive vector retrieval requires measured embeddings",
                 check="always_unmeasured",
                 params={"reason": "Contrastive vector head unmeasured without EmbeddingProvider"},
+                version="1",
+                suite_id="neuro_ablation",
+                judgment_kind=JudgmentKind.DETERMINISTIC,
+                component="neuro",
+                tags=("neuro", "honesty"),
             ),
         ]
+
+    def _enrich(self, case: EvalCase, result: EvalCaseResult) -> EvalCaseResult:
+        measurement = result.measurement or outcome_to_measurement(result.outcome)
+        return EvalCaseResult(
+            case_id=result.case_id,
+            outcome=result.outcome,
+            detail=result.detail,
+            judgment_kind=result.judgment_kind or case.judgment_kind,
+            measurement=measurement,
+            artifact_refs=result.artifact_refs,
+            evidence_refs=result.evidence_refs,
+            model_revision=result.model_revision or self.model_revision,
+            runtime_revision=result.runtime_revision or self.runtime_revision,
+            sample_size=result.sample_size,
+            effect_size=result.effect_size,
+            confidence_interval=result.confidence_interval,
+            paired_with=result.paired_with,
+            component=result.component or case.component,
+        )
 
     def _run_case(self, case: EvalCase) -> EvalCaseResult:
         try:
             if case.check == "capability_exists":
                 cap_id = str(case.params.get("capability_id") or "")
                 if self.catalog is None:
-                    return EvalCaseResult(case.case_id, EvalOutcome.UNMEASURED, "no catalog")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.UNMEASURED,
+                            "no catalog",
+                            judgment_kind=case.judgment_kind,
+                            measurement=MeasurementState.UNMEASURED,
+                        ),
+                    )
                 if cap_id in self.catalog:
-                    return EvalCaseResult(case.case_id, EvalOutcome.PASSED, f"found {cap_id}")
-                return EvalCaseResult(case.case_id, EvalOutcome.FAILED, f"missing {cap_id}")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.PASSED,
+                            f"found {cap_id}",
+                            judgment_kind=case.judgment_kind,
+                            measurement=MeasurementState.PASS,
+                        ),
+                    )
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.FAILED,
+                        f"missing {cap_id}",
+                        judgment_kind=case.judgment_kind,
+                        measurement=MeasurementState.FAIL,
+                    ),
+                )
             if case.check == "evidence_verified":
                 if self.evidence is None:
-                    return EvalCaseResult(case.case_id, EvalOutcome.UNMEASURED, "no evidence store")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.UNMEASURED,
+                            "no evidence store",
+                            judgment_kind=JudgmentKind.RETRIEVAL_EVIDENCE,
+                            measurement=MeasurementState.UNMEASURED,
+                        ),
+                    )
                 evidence_id = str(case.params.get("evidence_id") or "")
                 record = self.evidence.get(evidence_id)
                 if record is None:
-                    return EvalCaseResult(case.case_id, EvalOutcome.UNMEASURED, "evidence missing")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.UNMEASURED,
+                            "evidence missing",
+                            judgment_kind=JudgmentKind.RETRIEVAL_EVIDENCE,
+                            measurement=MeasurementState.UNMEASURED,
+                        ),
+                    )
                 if record.status == EvidenceStatus.VERIFIED:
-                    return EvalCaseResult(case.case_id, EvalOutcome.PASSED, "verified")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.PASSED,
+                            "verified",
+                            judgment_kind=JudgmentKind.RETRIEVAL_EVIDENCE,
+                            measurement=MeasurementState.PASS,
+                            evidence_refs=(evidence_id,),
+                        ),
+                    )
                 if record.status == EvidenceStatus.FAILED:
-                    return EvalCaseResult(case.case_id, EvalOutcome.FAILED, "evidence failed")
-                return EvalCaseResult(case.case_id, EvalOutcome.UNMEASURED, record.status.value)
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.FAILED,
+                            "evidence failed",
+                            judgment_kind=JudgmentKind.RETRIEVAL_EVIDENCE,
+                            measurement=MeasurementState.FAIL,
+                            evidence_refs=(evidence_id,),
+                        ),
+                    )
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.UNMEASURED,
+                        record.status.value,
+                        judgment_kind=JudgmentKind.RETRIEVAL_EVIDENCE,
+                        measurement=MeasurementState.UNMEASURED,
+                        evidence_refs=(evidence_id,),
+                    ),
+                )
             if case.check == "verification_report":
                 if self.verification is None:
-                    return EvalCaseResult(case.case_id, EvalOutcome.UNMEASURED, "no verification engine")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.UNMEASURED,
+                            "no verification engine",
+                            judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                            measurement=MeasurementState.UNMEASURED,
+                        ),
+                    )
                 # Empty requirements → UNMEASURED by design
                 report = self.verification.verify([])
                 if report.outcome == VerificationOutcome.PASSED:
-                    return EvalCaseResult(case.case_id, EvalOutcome.PASSED, "passed")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.PASSED,
+                            "passed",
+                            judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                            measurement=MeasurementState.PASS,
+                        ),
+                    )
                 if report.outcome == VerificationOutcome.FAILED:
-                    return EvalCaseResult(case.case_id, EvalOutcome.FAILED, "failed")
-                return EvalCaseResult(case.case_id, EvalOutcome.UNMEASURED, "unmeasured")
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.FAILED,
+                            "failed",
+                            judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                            measurement=MeasurementState.FAIL,
+                        ),
+                    )
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.UNMEASURED,
+                        "unmeasured",
+                        judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                        measurement=MeasurementState.UNMEASURED,
+                    ),
+                )
             if case.check == "neuro_residual":
                 supported = bool(case.params.get("supported"))
                 if not supported:
-                    return EvalCaseResult(
-                        case.case_id,
-                        EvalOutcome.UNMEASURED,
-                        "residual runtime unsupported — ablation UNMEASURED not PASSED",
+                    return self._enrich(
+                        case,
+                        EvalCaseResult(
+                            case.case_id,
+                            EvalOutcome.UNMEASURED,
+                            "residual runtime unsupported — ablation UNMEASURED not PASSED",
+                            judgment_kind=case.judgment_kind,
+                            measurement=MeasurementState.UNMEASURED,
+                        ),
                     )
-                return EvalCaseResult(case.case_id, EvalOutcome.PASSED, "residual runtime supports hooks")
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.PASSED,
+                        "residual runtime supports hooks",
+                        judgment_kind=case.judgment_kind,
+                        measurement=MeasurementState.PASS,
+                    ),
+                )
             if case.check == "neuro_flag":
                 enabled = bool(case.params.get("enabled"))
                 name = str(case.params.get("name") or "flag")
-                return EvalCaseResult(
-                    case.case_id,
-                    EvalOutcome.PASSED,
-                    f"{name}={'ON' if enabled else 'OFF'} (posture recorded)",
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.PASSED,
+                        f"{name}={'ON' if enabled else 'OFF'} (posture recorded)",
+                        judgment_kind=case.judgment_kind,
+                        measurement=MeasurementState.PASS,
+                    ),
                 )
             if case.check == "always_unmeasured":
-                return EvalCaseResult(
-                    case.case_id,
-                    EvalOutcome.UNMEASURED,
-                    str(case.params.get("reason") or "unmeasured"),
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        EvalOutcome.UNMEASURED,
+                        str(case.params.get("reason") or "unmeasured"),
+                        judgment_kind=case.judgment_kind,
+                        measurement=MeasurementState.UNMEASURED,
+                    ),
                 )
-            return EvalCaseResult(case.case_id, EvalOutcome.ERROR, f"unknown check: {case.check}")
+            return self._enrich(
+                case,
+                EvalCaseResult(
+                    case.case_id,
+                    EvalOutcome.ERROR,
+                    f"unknown check: {case.check}",
+                    judgment_kind=case.judgment_kind,
+                    measurement=MeasurementState.FAIL,
+                ),
+            )
         except Exception as exc:  # noqa: BLE001
-            return EvalCaseResult(case.case_id, EvalOutcome.ERROR, str(exc))
+            return self._enrich(
+                case,
+                EvalCaseResult(
+                    case.case_id,
+                    EvalOutcome.ERROR,
+                    str(exc),
+                    judgment_kind=case.judgment_kind,
+                    measurement=MeasurementState.FAIL,
+                ),
+            )
