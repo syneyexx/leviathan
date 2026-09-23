@@ -2,6 +2,13 @@
 
 from .budgets import budget_for_depth, list_presets
 from .evidence import EvidenceLedger
+from .graph import (
+    ClaimEvidenceGraph,
+    ClaimEvidenceGraphBuilder,
+    ReproducibilityBundle,
+    ReproducibilityBundleExporter,
+    citation_entailment_check,
+)
 from .local_retrieval import LocalResearchRetriever, build_default_local_retriever
 from .planner import build_plan
 from .reports import ReportBuilder
@@ -30,6 +37,8 @@ from .types import (
 from .web import HttpWebProvider, UnconfiguredWebProvider, build_web_provider
 
 __all__ = [
+    "ClaimEvidenceGraph",
+    "ClaimEvidenceGraphBuilder",
     "ClaimStatus",
     "CitationResolution",
     "CoverageSummary",
@@ -37,6 +46,8 @@ __all__ = [
     "HttpWebProvider",
     "LocalResearchRetriever",
     "ReportBuilder",
+    "ReproducibilityBundle",
+    "ReproducibilityBundleExporter",
     "ResearchBudget",
     "ResearchClaim",
     "ResearchConflict",
@@ -60,6 +71,7 @@ __all__ = [
     "build_default_local_retriever",
     "build_plan",
     "build_web_provider",
+    "citation_entailment_check",
     "list_presets",
     "validate_url_for_fetch",
 ]

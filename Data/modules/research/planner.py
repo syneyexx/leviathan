@@ -130,6 +130,17 @@ def build_plan(
             f"workers={budget.research_workers}; "
             f"max_sources={budget.max_sources}."
         ),
+        stopping_criteria=[
+            "All planned subquestions answered or explicitly unresolved",
+            f"At least {max(1, budget.max_sources // 2)} sources ingested or blocked honestly",
+            "Contradictions preserved rather than dropped",
+        ],
+        evidence_coverage_targets={
+            "min_sources": max(1, budget.max_sources // 2),
+            "min_supported_claims": 1,
+            "require_citation_resolution": True,
+            "prefer_primary_sources": True,
+        },
     )
 
 
@@ -150,9 +161,12 @@ def apply_plan_edits(plan: ResearchPlan, edits: dict) -> ResearchPlan:
         "preferred_source_types",
         "local_scopes",
         "exclusion_criteria",
+        "stopping_criteria",
     ):
         if key in edits and edits[key] is not None:
             data[key] = list(edits[key])
+    if "evidence_coverage_targets" in edits and isinstance(edits["evidence_coverage_targets"], dict):
+        data["evidence_coverage_targets"] = dict(edits["evidence_coverage_targets"])
     if "rounds" in edits and edits["rounds"] is not None:
         data["rounds"] = int(edits["rounds"])
     if "budget" in edits and isinstance(edits["budget"], dict):

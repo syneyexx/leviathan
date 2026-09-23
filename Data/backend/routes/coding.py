@@ -144,4 +144,94 @@ def build_coding_router(service: CodingControlPlane) -> APIRouter:
         except CodingError as exc:
             raise_coding_error(exc)
 
+    @router.get("/api/coding/semantic-map")
+    def semantic_map(
+        workspace_root: str | None = None,
+        session_id: str | None = None,
+    ) -> dict:
+        try:
+            return {"map": service.semantic_map(workspace_root=workspace_root, session_id=session_id)}
+        except CodingError as exc:
+            raise_coding_error(exc)
+
+    class ChangePlanRequest(BaseModel):
+        model_config = ConfigDict(populate_by_name=True)
+        goal: str
+        changes: list[dict[str, Any]]
+        invariants: list[str] | None = None
+        expected_tests: list[str] | None = Field(
+            default=None, validation_alias=AliasChoices("expected_tests", "expectedTests")
+        )
+        risk: str | None = None
+
+    @router.post("/api/coding/change-plan")
+    def create_change_plan(payload: ChangePlanRequest) -> dict:
+        try:
+            return {
+                "plan": service.build_change_plan(
+                    goal=payload.goal,
+                    changes=payload.changes,
+                    invariants=payload.invariants,
+                    expected_tests=payload.expected_tests,
+                    risk=payload.risk,
+                )
+            }
+        except CodingError as exc:
+            raise_coding_error(exc)
+
+    class ApplyPlanRequest(BaseModel):
+        model_config = ConfigDict(populate_by_name=True)
+        plan: dict[str, Any]
+        workspaceRoot: str | None = Field(
+            default=None, validation_alias=AliasChoices("workspaceRoot", "workspace_root")
+        )
+        sessionId: str | None = Field(
+            default=None, validation_alias=AliasChoices("sessionId", "session_id")
+        )
+
+    @router.post("/api/coding/change-plan/apply")
+    def apply_change_plan(payload: ApplyPlanRequest) -> dict:
+        try:
+            return service.apply_change_plan_transactional(
+                payload.plan,
+                workspace_root=payload.workspaceRoot,
+                session_id=payload.sessionId,
+            )
+        except CodingError as exc:
+            raise_coding_error(exc)
+
+    @router.post("/api/coding/verification/plan")
+    def verification_plan(payload: ApplyPlanRequest) -> dict:
+        try:
+            return {
+                "verification": service.adaptive_verification(
+                    workspace_root=payload.workspaceRoot,
+                    session_id=payload.sessionId,
+                    plan_payload=payload.plan,
+                )
+            }
+        except CodingError as exc:
+            raise_coding_error(exc)
+
+    class ReviewRequest(BaseModel):
+        model_config = ConfigDict(populate_by_name=True)
+        plan: dict[str, Any] | None = None
+        diffs: dict[str, str] | None = None
+        test_evidence: list[str] | None = Field(
+            default=None, validation_alias=AliasChoices("test_evidence", "testEvidence")
+        )
+
+    @router.post("/api/coding/review")
+    def review_diff(payload: ReviewRequest) -> dict:
+        try:
+            return {
+                "review": service.review_diff(
+                    plan_payload=payload.plan,
+                    diffs=payload.diffs,
+                    test_evidence=payload.test_evidence,
+                )
+            }
+        except CodingError as exc:
+            raise_coding_error(exc)
+
     return router

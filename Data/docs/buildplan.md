@@ -6,6 +6,34 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-23 — Wave 6 Coding + Research Frontier — PASS
+
+### Objective
+Bring coding and research to frontier engineering quality (U201–U240 foundations): repository semantic map, structured capability calls, transactional patches, adaptive verification, claim–evidence graphs, citation entailment gates, and reproducibility bundles — extending `coding/` + `research/` (no second agent/research stacks).
+
+### Added / changed
+- **Coding:** SemanticMapBuilder (incremental), JSON+XML capability parser (U201), ChangePlan + WorkspaceTransaction rollback (U204–U205), adaptive verification (U207–U208), diff review + multi-agent DAG roles (U210–U211)
+- **Research:** plan stopping/coverage targets (U222), ClaimEvidenceGraph + entailment gate (U227–U228), ReproducibilityBundleExporter (U230)
+- **API:** `/api/coding/semantic-map|change-plan|verification/plan|review`; `/api/research/{id}/claim-graph|reproducibility-bundle`
+- **Migration v29** + `LEVIATHAN_FEATURE_CODING_RESEARCH`
+- **Tests:** `test_wave6_coding_research.py`
+- **Version:** `0.70.0-wave6-coding-research`
+
+### EXTERNAL-FIRST review
+- Coding remains domain control plane; effects via ExecutionGateway
+- Research remains domain owner; shared Knowledge/Evidence/Jobs
+- No new third-party dependencies
+
+### Explicitly NOT claimed
+- Full LSP productization / GitHub PR automation fleet
+- Production Playwright research browsing
+- Learned SWE-bench leaderboard certification
+
+### Status
+**PASS**
+
+---
+
 ## 2026-09-23 — Wave 5 Capability World Interface — PASS
 
 ### Objective

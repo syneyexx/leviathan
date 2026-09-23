@@ -248,6 +248,7 @@ class ParsedCapability:
     capability_id: str
     arguments: dict[str, Any]
     raw: str = ""
+    source: str = "xml"  # xml | json
 
 
 @dataclass

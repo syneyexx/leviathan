@@ -2058,6 +2058,64 @@ def _m28_capability_world(conn: sqlite3.Connection) -> None:
     )
 
 
+
+def _m29_coding_research_frontier(conn: sqlite3.Connection) -> None:
+    """Wave 6: coding semantic map cache + research claim graph / bundles."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_semantic_map_cache (
+            workspace_root TEXT PRIMARY KEY,
+            generated_at TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coding_change_plans (
+            plan_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            goal TEXT NOT NULL,
+            risk TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_claim_edges (
+            edge_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            claim_id TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            relation TEXT NOT NULL,
+            uncertainty TEXT NOT NULL,
+            entailment_score REAL,
+            entailment_passed INTEGER,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_claim_edges_project "
+        "ON research_claim_edges(project_id, claim_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_reproducibility_bundles (
+            bundle_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            manifest_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2087,6 +2145,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=26, name="model_serving", apply=_m26_model_serving),
     Migration(version=27, name="context_memory_scope", apply=_m27_context_memory_scope),
     Migration(version=28, name="capability_world", apply=_m28_capability_world),
+    Migration(version=29, name="coding_research_frontier", apply=_m29_coding_research_frontier),
 )
 
 
