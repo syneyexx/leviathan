@@ -84,12 +84,7 @@ export function BrainPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.brainGraph({
-        limit: 250,
-        q: q.trim() || undefined,
-        types: typeFilter || undefined,
-        root,
-      });
+      const data = await api.brainGraph({ limit: 250, q: q.trim() || undefined, types: typeFilter || undefined, root });
       setNodes(data.nodes);
       setEdges(data.edges);
       setStats(data.stats as Record<string, unknown>);
@@ -110,9 +105,7 @@ export function BrainPage() {
     }
   }, [q, typeFilter]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   const typeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -171,20 +164,64 @@ export function BrainPage() {
   const allTypesActive = typeOptions.length > 0 && typeOptions.every((type) => activeTypes.has(type));
   const toggleAllTypes = () => setActiveTypes(allTypesActive ? new Set() : new Set(typeOptions));
   const isGraph = view === "Graph";
-
   const selectedMetaEntries = selected ? Object.entries(selected.meta ?? {}).filter(([, value]) => value != null).slice(0, 10) : [];
   const status = selected && typeof selected.meta?.status === "string" ? selected.meta.status : selected && selected.meta?.available === false ? "Unavailable" : "Active";
   const domains = selected ? [prettyType(selected.type.split(".")[0]), typeof selected.meta?.scope === "string" ? selected.meta.scope : null, typeof selected.meta?.provider_kind === "string" ? selected.meta.provider_kind : null].filter((value): value is string => Boolean(value)).slice(0, 3) : [];
 
+  const nodeDetails = (
+    <aside className="lv-panel lv-panel-premium lv-node-details lv-gv-details">
+      <div className="lv-node-details-head"><h2>Node Details</h2><button type="button" className="lv-gv-close" onClick={() => setSelectedId(null)} aria-label="Close node details">×</button></div>
+      {selected ? (
+        <>
+          <div className="lv-gv-detail-identity">
+            <div className="lv-gv-detail-emblem" style={{ color: colorForType(selected.type) }}>L</div>
+            <div><h3 className="lv-node-title">{selected.label}</h3><div className="lv-toolbar"><span className="lv-tag gold">{prettyType(selected.type)}</span><span className="lv-tag">Live</span></div></div>
+          </div>
+          <p className="lv-node-desc">{typeof selected.meta?.description === "string" ? selected.meta.description : "Live projection node from LEVIATHAN's authoritative Knowledge, Evidence, Research, Dataset, Memory, Tool and Runtime stores."}</p>
+          <div className="lv-gv-detail-tabs">
+            {(["Overview", "Relations", "Content", "Metrics"] as DetailTab[]).map((tab) => <button key={tab} type="button" className={detailTab === tab ? "is-active" : ""} onClick={() => setDetailTab(tab)}>{tab}{tab === "Relations" ? ` (${connectionCount})` : ""}</button>)}
+          </div>
+
+          {detailTab === "Overview" ? (
+            <div className="lv-gv-detail-body">
+              <div className="lv-gv-meta-list">
+                <div><span>Type</span><strong>{prettyType(selected.type)}</strong></div>
+                <div><span>Created</span><strong>{displayDate(selected.created_at)}</strong></div>
+                <div><span>Last Updated</span><strong>{typeof selected.meta?.updated_at === "string" ? displayDate(selected.meta.updated_at) : "Live projection"}</strong></div>
+                <div><span>Connections</span><strong>{connectionCount.toLocaleString()}</strong></div>
+              </div>
+              <div className="lv-gv-relevance"><div><span>Graph Relevance</span><strong>{relevance}%</strong></div><div className="lv-gv-progress"><i style={{ width: `${relevance}%` }} /></div></div>
+              <div className="lv-gv-detail-section"><span>Domains</span><div className="lv-gv-domain-tags">{domains.map((domain) => <i key={domain}>{domain}</i>)}</div></div>
+              <div className="lv-gv-status"><span>Status</span><strong className={status.toLowerCase().includes("unavailable") ? "is-bad" : "is-good"}><i />{status}</strong></div>
+            </div>
+          ) : null}
+
+          {detailTab === "Relations" ? (
+            <ul className="lv-gv-relations">{selectedEdges.length ? selectedEdges.map((edge) => { const otherId = edge.source === selected.id ? edge.target : edge.source; const other = nodeMap.get(otherId); return <li key={edge.id}><button type="button" onClick={() => other && setSelectedId(other.id)}><span>{edge.relation}</span><strong>{other?.label ?? otherId}</strong></button></li>; }) : <li className="lv-br-muted">No relationships in the current bounded projection.</li>}</ul>
+          ) : null}
+
+          {detailTab === "Content" ? (
+            <div className="lv-gv-content-list">{selectedMetaEntries.length ? selectedMetaEntries.map(([key, value]) => <div key={key}><span>{key}</span><code>{typeof value === "object" ? JSON.stringify(value) : String(value)}</code></div>) : <p className="lv-br-muted">No additional source metadata exposed by this projection.</p>}</div>
+          ) : null}
+
+          {detailTab === "Metrics" ? (
+            <div className="lv-gv-metric-grid"><div><strong>{connectionCount}</strong><span>Connections</span></div><div><strong>{relevance}%</strong><span>Relative Degree</span></div><div><strong>{selectedEdges.filter((edge) => edge.source === selected.id).length}</strong><span>Outgoing</span></div><div><strong>{selectedEdges.filter((edge) => edge.target === selected.id).length}</strong><span>Incoming</span></div></div>
+          ) : null}
+
+          <div className="lv-detail-actions lv-gv-detail-actions">
+            <Link className="lv-btn" to={`/chat?brain_node=${encodeURIComponent(selected.id)}`}>◉ Open in Chat</Link>
+            <button className="lv-btn" type="button" onClick={() => void load(selected.id)}>⟳ Expand Node</button>
+            {deepLink(selected) ? <Link className="lv-btn" to={deepLink(selected)!}>＋ Open Source</Link> : <button className="lv-btn" type="button" disabled>＋ No Source Link</button>}
+            <button className="lv-btn" type="button" onClick={() => setView("Tree")}>◇ Open in Tree</button>
+          </div>
+        </>
+      ) : <p className="lv-node-desc">{loading ? "Loading…" : "Select a node in the graph to inspect it."}</p>}
+    </aside>
+  );
+
   return (
-    <AppShell
-      activeMode="explore"
-      modeLabel="Brain Mode"
-      searchPlaceholder="Search nodes, concepts, memories, datasets..."
-      layout={isGraph ? "standard" : "wide"}
-      pageClass={isGraph ? "lv-app--brain lv-app--brain-fidelity" : "lv-app--brain-views lv-app--brain-fidelity"}
-    >
-      <main className={`lv-main${isGraph ? "" : " lv-br-main"}`}>
+    <AppShell activeMode="explore" modeLabel="Brain Mode" searchPlaceholder="Search nodes, concepts, memories, datasets..." layout="wide" pageClass="lv-app--brain-views lv-app--brain-fidelity">
+      <main className={`lv-main lv-br-main${isGraph ? " lv-gv-main" : ""}`}>
         {isGraph ? (
           <section className="lv-page-hero lv-gv-hero">
             <div className="lv-hero-media"><img src={media.architectureBg} alt="" width={1400} height={380} /></div>
@@ -196,24 +233,20 @@ export function BrainPage() {
             </div>
             <div className="lv-hero-rail" aria-hidden="true"><span>Graph</span><span>Memory</span><span>Reason</span><span>Link</span></div>
           </section>
-        ) : (
-          <BrainHeader stats={headerStats} quote={view === "Analytics" ? "“Knowledge compounds. Intelligence emerges.”" : "“Everything is connected.”"} />
-        )}
+        ) : <BrainHeader stats={headerStats} quote={view === "Analytics" ? "“Knowledge compounds. Intelligence emerges.”" : "“Everything is connected.”"} />}
 
         <BrainViewTabs
           view={view}
           onChange={setView}
-          trailing={
-            <>
-              <input className="lv-br-input lv-gv-top-filter" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Filter graph…" aria-label="Filter graph" />
-              <select className="lv-br-select" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} aria-label="Type filter">
-                <option value="">All types</option>
-                {typeOptions.map((type) => <option key={type} value={type}>{prettyType(type)} ({typeCounts[type]})</option>)}
-              </select>
-              <button className="lv-br-btn" type="button" onClick={() => void load()}>Refresh</button>
-              <button className="lv-br-btn is-gold" type="button" onClick={() => toast("Brain is a read projection — add knowledge through its authoritative source.")}>+ Add Node</button>
-            </>
-          }
+          trailing={<>
+            <input className="lv-br-input lv-gv-top-filter" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Filter graph…" aria-label="Filter graph" />
+            <select className="lv-br-select" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} aria-label="Type filter">
+              <option value="">All types</option>
+              {typeOptions.map((type) => <option key={type} value={type}>{prettyType(type)} ({typeCounts[type]})</option>)}
+            </select>
+            <button className="lv-br-btn" type="button" onClick={() => void load()}>Refresh</button>
+            <button className="lv-br-btn is-gold" type="button" onClick={() => toast("Brain is a read projection — add knowledge through its authoritative source.")}>+ Add Node</button>
+          </>}
         />
 
         {error ? <div role="alert" className="lv-panel lv-gv-error">{error}</div> : null}
@@ -222,134 +255,40 @@ export function BrainPage() {
         {view === "Clusters" ? <BrainClustersView nodes={nodes} edges={edges} onToast={toast} /> : null}
         {view === "Analytics" ? <BrainAnalyticsView nodes={nodes} edges={edges} stats={stats} onToast={toast} /> : null}
 
-        {isGraph ? (
-          <>
-            <div className="lv-brain-layout lv-gv-layout">
-              <aside className="lv-panel lv-brain-filters lv-gv-filters">
-                <div className="lv-section-label">Filter Nodes</div>
-                <label className="lv-gv-filter-search">
-                  <span aria-hidden="true">⌕</span>
-                  <input value={nodeSearch} onChange={(event) => setNodeSearch(event.target.value)} placeholder="Search nodes..." />
-                </label>
-                <div className="lv-gv-type-list">
-                  <button className={`lv-gv-type-row${allTypesActive ? " is-active" : ""}`} type="button" onClick={toggleAllTypes}>
-                    <span className="lv-gv-check">{allTypesActive ? "✓" : ""}</span><span>All Types</span><em>{formatCount(nodes.length)}</em>
-                  </button>
-                  {typeOptions.map((type) => (
-                    <button key={type} className={`lv-gv-type-row${activeTypes.has(type) ? " is-active" : ""}`} type="button" onClick={() => toggleType(type)}>
-                      <span className="lv-gv-check" style={{ color: colorForType(type), borderColor: colorForType(type) }}>{activeTypes.has(type) ? "•" : ""}</span>
-                      <span>{prettyType(type)}</span><em>{formatCount(typeCounts[type])}</em>
-                    </button>
-                  ))}
-                </div>
-                <div className="lv-gv-filter-section">
-                  <div className="lv-section-label">Relationship Filter</div>
-                  <select className="lv-br-select" value={relationFilter} onChange={(event) => setRelationFilter(event.target.value)}>
-                    <option value="">All Relations</option>
-                    {relationOptions.map((relation) => <option key={relation} value={relation}>{relation}</option>)}
-                  </select>
-                </div>
-                <div className="lv-gv-filter-section lv-gv-toggle-list">
-                  <ToggleRow label="Show Labels" value={showLabels} onChange={() => setShowLabels((value) => !value)} />
-                  <ToggleRow label="Show Clusters" value={showClusters} onChange={() => setShowClusters((value) => !value)} />
-                  <ToggleRow label="Show Depth" value={showDepth} onChange={() => setShowDepth((value) => !value)} />
-                  <ToggleRow label="Physics Layout" value={physicsLayout} onChange={() => setPhysicsLayout((value) => !value)} />
-                </div>
-                <div className="lv-gv-filter-foot">{loading ? "Loading projection…" : `${visibleNodes.length} visible · ${visibleEdges.length} links`}</div>
-              </aside>
-
-              <div className="lv-brain-workspace lv-gv-workspace">
-                <BrainGraphCanvas
-                  nodes={visibleNodes}
-                  edges={visibleEdges}
-                  selectedId={selected?.id ?? null}
-                  onSelect={(id) => { setSelectedId(id); setDetailTab("Overview"); }}
-                  showLabels={showLabels}
-                  showClusters={showClusters}
-                  showDepth={showDepth}
-                  physicsLayout={physicsLayout}
-                />
-
-                <div className="lv-brain-bottom lv-gv-bottom">
-                  <article className="lv-panel lv-card">
-                    <div className="lv-section-label">Selected Nodes (1)</div>
-                    <p className="lv-node-desc">{selected ? `${selected.label} · ${prettyType(selected.type)}` : "Click a node to view details or select multiple nodes."}</p>
-                  </article>
-                  <article className="lv-panel lv-card">
-                    <div className="lv-section-label">Quick Actions</div>
-                    <div className="lv-quick-actions">
-                      <button className="lv-quick-action" type="button" onClick={() => toast("Brain is read-only; create nodes through Knowledge, Research or Datasets.")}>＋ Add Node</button>
-                      <button className="lv-quick-action" type="button" onClick={() => setView("Clusters")}>Create Cluster</button>
-                      <button className="lv-quick-action" type="button" onClick={() => selected && setShowDepth(true)}>⌕ Find Related</button>
-                      <button className="lv-quick-action" type="button" onClick={() => setView("Analytics")}>▥ Analyze Graph</button>
-                    </div>
-                  </article>
-                  <article className="lv-panel lv-card">
-                    <div className="lv-section-label">Graph Statistics</div>
-                    <div className="lv-stat-strip">
-                      {headerStats.slice(0, 4).map((item) => <div key={item.label} className="lv-stat-card"><strong>{item.value}</strong><span>{item.label}</span></div>)}
-                    </div>
-                  </article>
-                </div>
+        {isGraph ? <>
+          <div className="lv-brain-layout lv-gv-layout">
+            <aside className="lv-panel lv-brain-filters lv-gv-filters">
+              <div className="lv-section-label">Filter Nodes</div>
+              <label className="lv-gv-filter-search"><span aria-hidden="true">⌕</span><input value={nodeSearch} onChange={(event) => setNodeSearch(event.target.value)} placeholder="Search nodes..." /></label>
+              <div className="lv-gv-type-list">
+                <button className={`lv-gv-type-row${allTypesActive ? " is-active" : ""}`} type="button" onClick={toggleAllTypes}><span className="lv-gv-check">{allTypesActive ? "✓" : ""}</span><span>All Types</span><em>{formatCount(nodes.length)}</em></button>
+                {typeOptions.map((type) => <button key={type} className={`lv-gv-type-row${activeTypes.has(type) ? " is-active" : ""}`} type="button" onClick={() => toggleType(type)}><span className="lv-gv-check" style={{ color: colorForType(type), borderColor: colorForType(type) }}>{activeTypes.has(type) ? "•" : ""}</span><span>{prettyType(type)}</span><em>{formatCount(typeCounts[type])}</em></button>)}
               </div>
+              <div className="lv-gv-filter-section"><div className="lv-section-label">Relationship Filter</div><select className="lv-br-select" value={relationFilter} onChange={(event) => setRelationFilter(event.target.value)}><option value="">All Relations</option>{relationOptions.map((relation) => <option key={relation} value={relation}>{relation}</option>)}</select></div>
+              <div className="lv-gv-filter-section lv-gv-toggle-list">
+                <ToggleRow label="Show Labels" value={showLabels} onChange={() => setShowLabels((value) => !value)} />
+                <ToggleRow label="Show Clusters" value={showClusters} onChange={() => setShowClusters((value) => !value)} />
+                <ToggleRow label="Show Depth" value={showDepth} onChange={() => setShowDepth((value) => !value)} />
+                <ToggleRow label="Physics Layout" value={physicsLayout} onChange={() => setPhysicsLayout((value) => !value)} />
+              </div>
+              <div className="lv-gv-filter-foot">{loading ? "Loading projection…" : `${visibleNodes.length} visible · ${visibleEdges.length} links`}</div>
+            </aside>
+
+            <div className="lv-brain-workspace lv-gv-workspace">
+              <BrainGraphCanvas nodes={visibleNodes} edges={visibleEdges} selectedId={selected?.id ?? null} onSelect={(id) => { setSelectedId(id); setDetailTab("Overview"); }} showLabels={showLabels} showClusters={showClusters} showDepth={showDepth} physicsLayout={physicsLayout} />
             </div>
-            <p className="lv-footer-quote">“A greater mind is a more connected mind.” — LEVIATHAN</p>
-          </>
-        ) : null}
+
+            {nodeDetails}
+          </div>
+
+          <div className="lv-brain-bottom lv-gv-bottom">
+            <article className="lv-panel lv-card"><div className="lv-section-label">Selected Nodes (1)</div><p className="lv-node-desc">{selected ? `${selected.label} · ${prettyType(selected.type)}` : "Click a node to view details or select multiple nodes."}</p></article>
+            <article className="lv-panel lv-card"><div className="lv-section-label">Quick Actions</div><div className="lv-quick-actions"><button className="lv-quick-action" type="button" onClick={() => toast("Brain is read-only; create nodes through Knowledge, Research or Datasets.")}>＋ Add Node</button><button className="lv-quick-action" type="button" onClick={() => setView("Clusters")}>Create Cluster</button><button className="lv-quick-action" type="button" onClick={() => selected && setShowDepth(true)}>⌕ Find Related</button><button className="lv-quick-action" type="button" onClick={() => setView("Analytics")}>▥ Analyze Graph</button></div></article>
+            <article className="lv-panel lv-card"><div className="lv-section-label">Graph Statistics</div><div className="lv-stat-strip">{headerStats.slice(0, 4).map((item) => <div key={item.label} className="lv-stat-card"><strong>{item.value}</strong><span>{item.label}</span></div>)}</div></article>
+          </div>
+          <p className="lv-footer-quote">“A greater mind is a more connected mind.” — LEVIATHAN</p>
+        </> : null}
       </main>
-
-      {isGraph ? (
-        <aside className="lv-right lv-gv-right">
-          <article className="lv-panel lv-panel-premium lv-node-details lv-gv-details">
-            <div className="lv-node-details-head"><h2>Node Details</h2><button type="button" className="lv-gv-close" onClick={() => setSelectedId(null)} aria-label="Close node details">×</button></div>
-            {selected ? (
-              <>
-                <div className="lv-gv-detail-identity">
-                  <div className="lv-gv-detail-emblem" style={{ color: colorForType(selected.type) }}>L</div>
-                  <div><h3 className="lv-node-title">{selected.label}</h3><div className="lv-toolbar"><span className="lv-tag gold">{prettyType(selected.type)}</span><span className="lv-tag">Live</span></div></div>
-                </div>
-                <p className="lv-node-desc">{typeof selected.meta?.description === "string" ? selected.meta.description : "Live projection node from LEVIATHAN's authoritative Knowledge, Evidence, Research, Dataset, Memory, Tool and Runtime stores."}</p>
-                <div className="lv-gv-detail-tabs">
-                  {(["Overview", "Relations", "Content", "Metrics"] as DetailTab[]).map((tab) => <button key={tab} type="button" className={detailTab === tab ? "is-active" : ""} onClick={() => setDetailTab(tab)}>{tab}{tab === "Relations" ? ` (${connectionCount})` : ""}</button>)}
-                </div>
-
-                {detailTab === "Overview" ? (
-                  <div className="lv-gv-detail-body">
-                    <div className="lv-gv-meta-list">
-                      <div><span>Type</span><strong>{prettyType(selected.type)}</strong></div>
-                      <div><span>Created</span><strong>{displayDate(selected.created_at)}</strong></div>
-                      <div><span>Last Updated</span><strong>{typeof selected.meta?.updated_at === "string" ? displayDate(selected.meta.updated_at) : "Live projection"}</strong></div>
-                      <div><span>Connections</span><strong>{connectionCount.toLocaleString()}</strong></div>
-                    </div>
-                    <div className="lv-gv-relevance"><div><span>Graph Relevance</span><strong>{relevance}%</strong></div><div className="lv-gv-progress"><i style={{ width: `${relevance}%` }} /></div></div>
-                    <div className="lv-gv-detail-section"><span>Domains</span><div className="lv-gv-domain-tags">{domains.map((domain) => <i key={domain}>{domain}</i>)}</div></div>
-                    <div className="lv-gv-status"><span>Status</span><strong className={status.toLowerCase().includes("unavailable") ? "is-bad" : "is-good"}><i />{status}</strong></div>
-                  </div>
-                ) : null}
-
-                {detailTab === "Relations" ? (
-                  <ul className="lv-gv-relations">{selectedEdges.length ? selectedEdges.map((edge) => { const otherId = edge.source === selected.id ? edge.target : edge.source; const other = nodeMap.get(otherId); return <li key={edge.id}><button type="button" onClick={() => other && setSelectedId(other.id)}><span>{edge.relation}</span><strong>{other?.label ?? otherId}</strong></button></li>; }) : <li className="lv-br-muted">No relationships in the current bounded projection.</li>}</ul>
-                ) : null}
-
-                {detailTab === "Content" ? (
-                  <div className="lv-gv-content-list">{selectedMetaEntries.length ? selectedMetaEntries.map(([key, value]) => <div key={key}><span>{key}</span><code>{typeof value === "object" ? JSON.stringify(value) : String(value)}</code></div>) : <p className="lv-br-muted">No additional source metadata exposed by this projection.</p>}</div>
-                ) : null}
-
-                {detailTab === "Metrics" ? (
-                  <div className="lv-gv-metric-grid"><div><strong>{connectionCount}</strong><span>Connections</span></div><div><strong>{relevance}%</strong><span>Relative Degree</span></div><div><strong>{selectedEdges.filter((edge) => edge.source === selected.id).length}</strong><span>Outgoing</span></div><div><strong>{selectedEdges.filter((edge) => edge.target === selected.id).length}</strong><span>Incoming</span></div></div>
-                ) : null}
-
-                <div className="lv-detail-actions lv-gv-detail-actions">
-                  <Link className="lv-btn" to={`/chat?brain_node=${encodeURIComponent(selected.id)}`}>◉ Open in Chat</Link>
-                  <button className="lv-btn" type="button" onClick={() => void load(selected.id)}>⟳ Expand Node</button>
-                  {deepLink(selected) ? <Link className="lv-btn" to={deepLink(selected)!}>＋ Open Source</Link> : <button className="lv-btn" type="button" disabled>＋ No Source Link</button>}
-                  <button className="lv-btn" type="button" onClick={() => setView("Tree")}>◇ Open in Tree</button>
-                </div>
-              </>
-            ) : <p className="lv-node-desc">{loading ? "Loading…" : "Select a node in the graph to inspect it."}</p>}
-          </article>
-        </aside>
-      ) : null}
     </AppShell>
   );
 }
