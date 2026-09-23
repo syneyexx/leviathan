@@ -982,6 +982,7 @@ brain_facade = BrainQueryFacade(
     evidence_list=lambda: evidence_store.list(limit=200),
     research_list=lambda: research_service.list_projects(limit=100),
     dataset_list=lambda: dataset_service.list_datasets(limit=100),
+    memory_list=lambda: memory_store.list(limit=200),
     module_list=lambda: module_manager.list(),
     capability_list=lambda: capability_catalog.list(),
     mcp_servers=lambda: mcp_bridge.list_servers() if settings.features.mcp_enabled else [],

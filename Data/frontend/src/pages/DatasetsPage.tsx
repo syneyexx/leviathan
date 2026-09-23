@@ -3,12 +3,6 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import {
-  DH_DEMO_FILTER_COUNTS,
-  DH_DEMO_HEALTH,
-  DH_DEMO_OVERVIEW,
-  DH_DEMO_PIPELINE,
-  DH_DEMO_ROWS,
-  DH_DEMO_STORAGE,
   DH_FILTER_PILLS,
   DH_PAGE_COPY,
   DH_TYPE_OPTIONS,
@@ -280,17 +274,14 @@ export function DatasetsPage() {
   const [hfFiles, setHfFiles] = useState<HfDatasetFile[]>([]);
   const [hfFilename, setHfFilename] = useState("");
 
-  const usingDemo = !loading && !error && datasets.length === 0;
-
   const liveRows = useMemo(
     () => datasets.map((ds) => recordToRow(ds, jobs)),
     [datasets, jobs],
   );
 
-  const baseRows: DhRow[] = usingDemo ? DH_DEMO_ROWS : liveRows;
+  const baseRows: DhRow[] = liveRows;
 
   const filterCounts = useMemo(() => {
-    if (usingDemo) return DH_DEMO_FILTER_COUNTS;
     const counts: Record<DhFilterId, number> = {
       all: baseRows.length,
       local: 0,
@@ -307,7 +298,7 @@ export function DatasetsPage() {
       if (row.status === "processing" || row.status === "validating") counts.processing += 1;
     }
     return counts;
-  }, [baseRows, usingDemo]);
+  }, [baseRows]);
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -331,7 +322,6 @@ export function DatasetsPage() {
   }, [baseRows, filter, query, typeFilter, updatedFilter]);
 
   const overviewStats = useMemo(() => {
-    if (usingDemo) return [...DH_DEMO_OVERVIEW];
     const local = liveRows.filter((r) => r.sourceKind === "local").length;
     const offline = liveRows.filter((r) => r.status === "offline").length;
     const activeJobs = jobs.filter((j) => {
@@ -344,10 +334,9 @@ export function DatasetsPage() {
       { id: "offline", label: "Offline Ready", value: String(offline), icon: "offline" },
       { id: "sync", label: "Active Sync Jobs", value: String(activeJobs), icon: "sync" },
     ];
-  }, [usingDemo, liveRows, jobs]);
+  }, [liveRows, jobs]);
 
   const storage = useMemo(() => {
-    if (usingDemo) return DH_DEMO_STORAGE;
     const totalBytes = liveRows.reduce((sum, r) => sum + (r.byteSize ?? 0), 0);
     const usedGb = totalBytes / 1024 ** 3;
     const localBytes = liveRows
@@ -373,7 +362,7 @@ export function DatasetsPage() {
         { id: "other", label: "Other", gb: Number((other / 1024 ** 3).toFixed(1)), color: "#6b7280" },
       ],
     };
-  }, [usingDemo, liveRows]);
+  }, [liveRows]);
 
   const storageDonut = useMemo(
     () => donutSegments(storage.segments.map((s) => ({ value: Math.max(s.gb, 0.01), color: s.color }))),
@@ -381,7 +370,6 @@ export function DatasetsPage() {
   );
 
   const pipelineItems = useMemo(() => {
-    if (usingDemo) return DH_DEMO_PIPELINE;
     const active = jobs
       .filter((j) => {
         const s = j.status.toLowerCase();
@@ -419,12 +407,9 @@ export function DatasetsPage() {
         icon: j.jobType.toLowerCase().includes("index") ? "brain" : "pulse",
       };
     });
-  }, [usingDemo, jobs, datasets]);
+  }, [jobs, datasets]);
 
   const healthItems = useMemo(() => {
-    if (usingDemo) {
-      return DH_DEMO_HEALTH;
-    }
     const total = liveRows.length || 1;
     const ready = liveRows.filter((r) => r.status === "ready").length;
     const indexed = liveRows.filter((r) => r.embeddings.kind === "indexed").length;
@@ -465,7 +450,7 @@ export function DatasetsPage() {
         tone: "orange" as const,
       },
     ];
-  }, [usingDemo, liveRows]);
+  }, [liveRows]);
 
   const loadDatasets = useCallback(async () => {
     setLoading(true);
@@ -633,11 +618,6 @@ export function DatasetsPage() {
   }
 
   async function onDelete(id: string) {
-    if (usingDemo || id.startsWith("demo-")) {
-      toast("Demo placeholder — connect or create a live dataset to delete");
-      setMenuFor(null);
-      return;
-    }
     if (!window.confirm("Delete this dataset?")) return;
     await withBusy(async () => {
       await api.deleteDataset(id);
@@ -647,11 +627,6 @@ export function DatasetsPage() {
   }
 
   async function onIndex(id: string) {
-    if (usingDemo || id.startsWith("demo-")) {
-      toast("Demo placeholder — indexing requires a live dataset");
-      setMenuFor(null);
-      return;
-    }
     await withBusy(async () => {
       const detail = await api.getDataset(id);
       const version =
@@ -675,7 +650,7 @@ export function DatasetsPage() {
       layout="wide"
       systemItems={[
         "DATASETS",
-        usingDemo ? "DEMO" : loading ? "LOADING" : error ? "ERROR" : "LIVE",
+        loading ? "LOADING" : error ? "ERROR" : "LIVE",
         `${filterCounts.all}`,
       ]}
     >
@@ -817,10 +792,10 @@ export function DatasetsPage() {
           </div>
         ) : null}
 
-        {usingDemo ? (
-          <div className="lv-dh-banner is-demo" role="status">
-            <strong>Demo placeholders</strong>
-            <span>No live datasets yet — showing interactive screenshot-matching rows. Create or import to go live.</span>
+        {!loading && !error && datasets.length === 0 ? (
+          <div className="lv-dh-banner" role="status">
+            <strong>No datasets yet</strong>
+            <span>Create, upload, or import a dataset to populate this inventory.</span>
           </div>
         ) : null}
 

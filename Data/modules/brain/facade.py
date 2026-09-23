@@ -53,6 +53,7 @@ class BrainQueryFacade:
         evidence_list: Callable[[], list[Any]] | None = None,
         research_list: Callable[[], list[Any]] | None = None,
         dataset_list: Callable[[], list[Any]] | None = None,
+        memory_list: Callable[[], list[Any]] | None = None,
         module_list: Callable[[], list[Any]] | None = None,
         capability_list: Callable[[], list[Any]] | None = None,
         mcp_servers: Callable[[], list[Any]] | None = None,
@@ -66,6 +67,7 @@ class BrainQueryFacade:
         self.evidence_list = evidence_list
         self.research_list = research_list
         self.dataset_list = dataset_list
+        self.memory_list = memory_list
         self.module_list = module_list
         self.capability_list = capability_list
         self.mcp_servers = mcp_servers
@@ -174,6 +176,64 @@ class BrainQueryFacade:
                         meta={"status": d.get("status")},
                     )
                 )
+
+        # Controlled memory (Geheugen) — projection only
+        if self.memory_list:
+            for mem in self.memory_list()[:limit_n]:
+                m = mem.public_dict() if hasattr(mem, "public_dict") else dict(mem)
+                mid = m.get("memory_id")
+                if not mid:
+                    continue
+                nid = f"memory:{mid}"
+                label = str(m.get("content") or mid)[:80]
+                add_node(
+                    BrainNode(
+                        id=nid,
+                        type="memory",
+                        label=label,
+                        created_at=m.get("created_at") or m.get("updated_at"),
+                        meta={
+                            "kind": m.get("kind"),
+                            "status": m.get("status"),
+                            "scope": m.get("scope"),
+                            "trust": m.get("trust"),
+                        },
+                    )
+                )
+                if m.get("conversation_id"):
+                    cid = f"conversation:{m['conversation_id']}"
+                    add_node(
+                        BrainNode(
+                            id=cid,
+                            type="conversation",
+                            label=str(m["conversation_id"])[:40],
+                        )
+                    )
+                    add_edge(
+                        BrainEdge(
+                            id=f"{nid}->conversation",
+                            source=nid,
+                            target=cid,
+                            relation="from_conversation",
+                        )
+                    )
+                if m.get("project_id"):
+                    pid = f"project-scope:{m['project_id']}"
+                    add_node(
+                        BrainNode(
+                            id=pid,
+                            type="project",
+                            label=str(m["project_id"])[:40],
+                        )
+                    )
+                    add_edge(
+                        BrainEdge(
+                            id=f"{nid}->project",
+                            source=nid,
+                            target=pid,
+                            relation="scoped_to",
+                        )
+                    )
 
         # Modules + capabilities
         if self.module_list:

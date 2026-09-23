@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Link } from "react-router-dom";
 import { mediaPageHeroes } from "../assets/mediaPagesAssets";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import {
   RD_CONTEXT_CHIPS,
-  RD_DEMO_EVIDENCE,
-  RD_DEMO_INSIGHTS,
-  RD_DEMO_TIMELINE,
-  RD_DEMO_WEB,
   RD_HERO,
   RD_IDLE_TIMELINE,
   RD_INPUT_TABS,
@@ -82,8 +79,8 @@ function projectProgress(project: ResearchProject | null): number {
   return 10;
 }
 
-function timelineFromProject(project: ResearchProject | null, live: boolean): RdTimelineStep[] {
-  if (!project) return live ? RD_DEMO_TIMELINE : RD_IDLE_TIMELINE;
+function timelineFromProject(project: ResearchProject | null, _live: boolean): RdTimelineStep[] {
+  if (!project) return RD_IDLE_TIMELINE;
   const status = project.status;
   const sources = project.source_count;
   const evidence = project.evidence_count;
@@ -339,6 +336,7 @@ export function ResearchPage() {
   const [fileCount, setFileCount] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
+  const [scopeEditing, setScopeEditing] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -351,32 +349,28 @@ export function ResearchPage() {
   const isLive = !!(project && ACTIVE.has(project.status));
   const progress = projectProgress(project);
   const timeline = useMemo(
-    () => timelineFromProject(project, !hasLiveProject),
+    () => timelineFromProject(project, hasLiveProject),
     [project, hasLiveProject],
   );
 
   const evidenceRows = useMemo(() => {
     if (sources.length > 0) return mapSourcesToEvidence(sources);
-    return hasLiveProject ? [] : RD_DEMO_EVIDENCE;
-  }, [sources, hasLiveProject]);
+    return [] as RdEvidenceItem[];
+  }, [sources]);
 
   const webRows = useMemo(() => {
     if (sources.length > 0) return mapSourcesToWeb(sources, evidence);
-    return hasLiveProject ? [] : RD_DEMO_WEB;
-  }, [sources, evidence, hasLiveProject]);
+    return [] as RdWebResult[];
+  }, [sources, evidence]);
 
   const insightRows = useMemo(() => {
     if (claims.length > 0) return mapClaimsToInsights(claims);
-    return hasLiveProject ? [] : RD_DEMO_INSIGHTS;
-  }, [claims, hasLiveProject]);
+    return [] as RdInsight[];
+  }, [claims]);
 
   const showGenerating = isLive || (!!project && project.status === "synthesizing");
   const evidenceCountLabel =
-    sources.length > 0
-      ? `${sources.length} sources`
-      : hasLiveProject
-        ? "0 sources"
-        : "fixture preview";
+    sources.length > 0 ? `${sources.length} sources` : hasLiveProject ? "0 sources" : "no project yet";
 
   const refreshArtifacts = useCallback(async (projectId: string) => {
     const [src, ev, cl] = await Promise.all([
@@ -456,11 +450,40 @@ export function ResearchPage() {
     toast(`${t.label} selected`);
   }
 
-  function onFilesSelected(files: FileList | null) {
+  async function onFilesSelected(files: FileList | null) {
     if (!files?.length) return;
-    setFileCount((n) => n + files.length);
-    setContext((c) => ({ ...c, files: true }));
-    toast(`${files.length} file(s) staged for ingestion`);
+    const list = Array.from(files);
+    setBusy(true);
+    let ok = 0;
+    const supported = /\.(txt|md|markdown|rst|csv|json|log)$/i;
+    try {
+      for (const file of list) {
+        if (!supported.test(file.name)) {
+          toast(`Unsupported for research ingest: ${file.name} (use .txt/.md/.csv/.json)`);
+          continue;
+        }
+        if (file.size > 100 * 1024 * 1024) {
+          toast(`${file.name} exceeds 100MB`);
+          continue;
+        }
+        const content = await file.text();
+        await api.createKnowledgeDocument({
+          title: file.name.replace(/\.[^.]+$/, "") || file.name,
+          content,
+          source: `research-upload:${file.name}`,
+        });
+        ok += 1;
+      }
+      if (ok > 0) {
+        setFileCount((n) => n + ok);
+        setContext((c) => ({ ...c, files: true }));
+        toast(`${ok} file(s) ingested into Knowledge (local research scope)`);
+      }
+    } catch (err) {
+      toast(errMsg(err, "File ingest failed"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function onDrop(e: DragEvent) {
@@ -701,7 +724,7 @@ export function ResearchPage() {
               <Icon name="upload" />
               <div>
                 <strong>Drop files here or click to upload</strong>
-                <small>PDF, DOCX, CSV, TXT, MD, Images (max 100MB)</small>
+                <small>TXT, MD, CSV, JSON, LOG (max 100MB) → Knowledge ingest</small>
               </div>
               {fileCount > 0 ? <small>{fileCount} file(s) staged</small> : null}
             </div>
@@ -746,12 +769,14 @@ export function ResearchPage() {
                 Active Research
               </h2>
               <div className="lv-rd-panel-meta">
-                {isLive || !hasLiveProject ? (
+                {isLive ? (
                   <span className="lv-rd-badge is-live">Live</span>
                 ) : project ? (
                   <span className="lv-rd-badge is-count">{project.status}</span>
-                ) : null}
-                <span className="lv-rd-progress-pct">{hasLiveProject ? progress : 12}%</span>
+                ) : (
+                  <span className="lv-rd-badge is-count">idle</span>
+                )}
+                <span className="lv-rd-progress-pct">{hasLiveProject ? progress : 0}%</span>
               </div>
             </div>
             <ol className="lv-rd-timeline">
@@ -776,41 +801,63 @@ export function ResearchPage() {
                 <Icon name="target" />
                 Research Scope
               </h2>
-              <button type="button" className="lv-rd-edit" onClick={() => toast("Scope editor coming soon")}>
-                Edit
+              <button type="button" className="lv-rd-edit" onClick={() => setScopeEditing((v) => !v)}>
+                {scopeEditing ? "Done" : "Edit"}
               </button>
             </div>
             <div className="lv-rd-scope-grid">
-              <div className="lv-rd-scope-card">
+              <button
+                type="button"
+                className="lv-rd-scope-card"
+                disabled={!scopeEditing}
+                onClick={() => scopeEditing && toggleContext("web")}
+              >
                 <Icon name="globe" />
                 <strong>Web Search</strong>
                 <span className={context.web ? "is-on" : undefined}>{context.web ? "Enabled" : "Disabled"}</span>
-              </div>
-              <div className="lv-rd-scope-card">
+              </button>
+              <button
+                type="button"
+                className="lv-rd-scope-card"
+                disabled={!scopeEditing}
+                onClick={() => {
+                  if (!scopeEditing) return;
+                  if (!context.files) fileInputRef.current?.click();
+                  else toggleContext("files");
+                }}
+              >
                 <Icon name="file" />
                 <strong>Your Files</strong>
                 <span>
                   {fileCount > 0
-                    ? `${fileCount} files`
-                    : !hasLiveProject
-                      ? "2 files"
-                      : context.files
-                        ? "Enabled"
-                        : "None"}
+                    ? `${fileCount} ingested`
+                    : context.files
+                      ? "Enabled"
+                      : "None"}
                 </span>
-              </div>
-              <div className="lv-rd-scope-card">
+              </button>
+              <button
+                type="button"
+                className="lv-rd-scope-card"
+                disabled={!scopeEditing}
+                onClick={() => scopeEditing && toggleContext("datasets")}
+              >
                 <Icon name="database" />
                 <strong>Datasets</strong>
                 <span className={context.datasets ? "is-on" : undefined}>
                   {context.datasets ? "Connected" : "Not connected"}
                 </span>
-              </div>
-              <div className="lv-rd-scope-card">
+              </button>
+              <button
+                type="button"
+                className="lv-rd-scope-card"
+                disabled={!scopeEditing}
+                onClick={() => scopeEditing && toggleContext("code")}
+              >
                 <Icon name="code" />
                 <strong>Code Analysis</strong>
                 <span className={context.code ? "is-on" : undefined}>{context.code ? "Enabled" : "Disabled"}</span>
-              </div>
+              </button>
             </div>
           </article>
         </section>
@@ -821,9 +868,9 @@ export function ResearchPage() {
               <h2 className="lv-rd-panel-title">Collected Evidence</h2>
               <div className="lv-rd-panel-meta">
                 <span className="lv-rd-badge is-count">{evidenceCountLabel}</span>
-                <button type="button" className="lv-rd-link" onClick={() => toast("Opening evidence vault…")}>
+                <Link className="lv-rd-link" to="/evidence">
                   View all →
-                </button>
+                </Link>
               </div>
             </div>
             {evidenceRows.length === 0 ? (
@@ -862,7 +909,14 @@ export function ResearchPage() {
               <h2 className="lv-rd-panel-title">Web Results</h2>
               <div className="lv-rd-panel-meta">
                 <span>Top results</span>
-                <button type="button" className="lv-rd-link" onClick={() => toast("Showing all web results…")}>
+                <button
+                  type="button"
+                  className="lv-rd-link"
+                  onClick={() => {
+                    const el = document.querySelector(".lv-rd-web-list");
+                    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                  }}
+                >
                   View all →
                 </button>
               </div>
@@ -895,7 +949,7 @@ export function ResearchPage() {
             </div>
             <div className="lv-rd-insights-head">
               <h3>Key Findings</h3>
-              {showGenerating || (!hasLiveProject && !project) ? (
+              {showGenerating ? (
                 <span className="lv-rd-generating">
                   <span className="lv-rd-spinner" />
                   Generating...
