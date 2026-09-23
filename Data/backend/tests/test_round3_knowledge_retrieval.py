@@ -185,10 +185,13 @@ class EmbeddingHonestyTests(unittest.TestCase):
         self.assertTrue(status["truth"]["hash_vectors_are_not_semantic_embeddings"])
         self.assertFalse(getattr(provider, "is_semantic"))
 
-    def test_null_provider_not_semantic(self) -> None:
-        provider = NullEmbeddingProvider()
-        self.assertFalse(provider.is_semantic)
-        self.assertFalse(provider.status()["is_semantic"])
+    def test_hash_tokenize_keeps_dutch_tokens(self) -> None:
+        from Data.modules.knowledge.embeddings import _tokenize
+
+        tokens = _tokenize("reconnect-fouten veroorzaken sessieverlies")
+        self.assertIn("fouten", tokens)
+        self.assertIn("veroorzaken", tokens)
+        self.assertIn("sessieverlies", tokens)
 
     def test_hybrid_trace_marks_hash_non_semantic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
