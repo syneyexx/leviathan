@@ -136,6 +136,18 @@ class KnowledgeStore:
             "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks(document_id, chunk_index)"
         )
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_content_hash "
+            "ON knowledge_documents(content_hash)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_content_hash "
+            "ON knowledge_chunks(content_hash)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_updated "
+            "ON knowledge_documents(updated_at)"
+        )
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS knowledge_ingest_files (
                 path TEXT PRIMARY KEY,
@@ -684,6 +696,7 @@ class KnowledgeStore:
                            c.source_type, c.provenance_json,
                            d.title, d.source, d.content AS document_content,
                            d.created_at, d.updated_at, d.original_path, d.content_hash AS document_hash,
+                           d.source_mtime, d.trust_metadata_json,
                            d.status, bm25(knowledge_chunk_fts) AS rank
                     FROM knowledge_chunk_fts
                     JOIN knowledge_chunks c ON c.chunk_id = knowledge_chunk_fts.chunk_id
@@ -696,7 +709,7 @@ class KnowledgeStore:
                     """,
                     (fts_query, status.value, source, source, limit),
                 ).fetchall()
-                return [dict(row) for row in rows]
+                return [self._enrich_search_row(dict(row)) for row in rows]
             except sqlite3.OperationalError:
                 pattern = "%" + "%".join(tokens[:4]) + "%"
                 rows = conn.execute(
@@ -707,6 +720,7 @@ class KnowledgeStore:
                            c.source_type, c.provenance_json,
                            d.title, d.source, d.content AS document_content,
                            d.created_at, d.updated_at, d.original_path, d.content_hash AS document_hash,
+                           d.source_mtime, d.trust_metadata_json,
                            d.status, 0.0 AS rank
                     FROM knowledge_chunks c
                     JOIN knowledge_documents d ON d.id = c.document_id
@@ -718,7 +732,7 @@ class KnowledgeStore:
                     """,
                     (status.value, source, source, pattern, pattern, limit),
                 ).fetchall()
-                return [dict(row) for row in rows]
+                return [self._enrich_search_row(dict(row)) for row in rows]
 
     def get_chunk_embedding(self, chunk_id: str) -> list[float] | None:
         with self.connect() as conn:
@@ -749,6 +763,7 @@ class KnowledgeStore:
                        c.start_offset, c.end_offset, c.confidence, c.uncertainty_notes,
                        c.source_type, c.provenance_json,
                        d.title, d.source, d.updated_at, d.original_path,
+                       d.source_mtime, d.trust_metadata_json,
                        d.content_hash AS document_hash, e.embedding
                 FROM knowledge_chunk_embeddings e
                 JOIN knowledge_chunks c ON c.chunk_id = e.chunk_id
@@ -763,12 +778,25 @@ class KnowledgeStore:
         for row in rows:
             vec = _unpack_embedding(row["embedding"])
             score = cosine_similarity(query_vector, vec)
-            item = dict(row)
+            item = self._enrich_search_row(dict(row))
             item.pop("embedding", None)
             item["dense_score"] = score
             scored.append(item)
         scored.sort(key=lambda item: item["dense_score"], reverse=True)
         return scored[:limit]
+
+    @staticmethod
+    def _enrich_search_row(row: dict[str, Any]) -> dict[str, Any]:
+        """Parse trust metadata for provenance / source-validity filters."""
+        raw = row.get("trust_metadata_json")
+        if raw and "trust_metadata" not in row:
+            try:
+                row["trust_metadata"] = json.loads(raw or "{}")
+            except Exception:  # noqa: BLE001
+                row["trust_metadata"] = {}
+        elif "trust_metadata" not in row:
+            row["trust_metadata"] = {}
+        return row
 
     def add_relation_atom(
         self,
