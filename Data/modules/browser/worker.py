@@ -25,6 +25,10 @@ class BrowserAction(str, Enum):
     SCROLL = "SCROLL"
     WAIT = "WAIT"
     KEYPRESS = "KEYPRESS"
+    FORM_FILL = "FORM_FILL"
+    DOWNLOAD = "DOWNLOAD"
+    UPLOAD = "UPLOAD"
+    VERIFY_STATE = "VERIFY_STATE"
 
 
 class BrowserJobStatus(str, Enum):
@@ -33,11 +37,14 @@ class BrowserJobStatus(str, Enum):
     REJECTED = "REJECTED"
     FAILED = "FAILED"
     UNSUPPORTED = "UNSUPPORTED"
+    # Action applied but resulting state not yet verified (Round 7 honesty).
+    APPLIED_UNVERIFIED = "APPLIED_UNVERIFIED"
 
 
 class BrowserBackendKind(str, Enum):
     FIXTURE = "fixture"
-    PLAYWRIGHT = "playwright"  # reserved — not required for Wave 5 CI
+    LOCAL_DOM = "local_dom"
+    PLAYWRIGHT = "playwright"  # optional — UNAVAILABLE when dependency missing
 
 
 def _utc_now() -> str:
@@ -72,6 +79,8 @@ class BrowserSession:
             "truth": {
                 "page_text_is_untrusted_context": True,
                 "session_isolated_per_run": True,
+                "in_memory_only": True,
+                "browser_sessions_table_not_authoritative": True,
             },
         }
 
@@ -286,8 +295,22 @@ class BrowserWorker:
         *,
         backend: BrowserBackend | None = None,
         artifact_store: ArtifactWriter | None = None,
+        backend_kind: str | BrowserBackendKind | None = None,
+        allow_network: bool = False,
+        allow_uploads: bool = True,
     ) -> None:
-        self.backend = backend or FixtureBrowserBackend()
+        if backend is not None:
+            self.backend = backend
+        elif backend_kind is not None:
+            self.backend = resolve_browser_backend(
+                backend_kind,
+                allow_network=allow_network,
+                allow_uploads=allow_uploads,
+            )
+        else:
+            # Explicit Fixture default for unit tests / CI without pages on disk.
+            # Production (main.py) must pass backend_kind="local_dom" — fixture is test-only.
+            self.backend = FixtureBrowserBackend()
         self.artifact_store = artifact_store
         self._sessions: dict[str, BrowserSession] = {}
 
@@ -318,36 +341,73 @@ class BrowserWorker:
             session = BrowserSession(session_id=str(uuid.uuid4()), run_id=run_id)
             self._sessions[session.session_id] = session
 
+        kind = getattr(self.backend, "kind", BrowserBackendKind.FIXTURE)
         try:
             session, observation, meta = self.backend.apply(session, action=action, arguments=args)
+        except PermissionError as exc:
+            return {
+                "status": BrowserJobStatus.REJECTED.value,
+                "error": str(exc),
+                "session_id": session.session_id,
+                "action": action.value,
+                "backend": kind.value if hasattr(kind, "value") else str(kind),
+                "truth": {
+                    "no_fabricated_browser_results": True,
+                    "requires_capability_gateway": True,
+                    "side_effects_under_authorization": True,
+                    "fixture_is_not_chromium": kind == BrowserBackendKind.FIXTURE,
+                },
+            }
         except ValueError as exc:
             return {
                 "status": BrowserJobStatus.REJECTED.value,
                 "error": str(exc),
                 "session_id": session.session_id,
                 "action": action.value,
-                "backend": getattr(self.backend, "kind", BrowserBackendKind.FIXTURE).value,
+                "backend": kind.value if hasattr(kind, "value") else str(kind),
                 "truth": {
                     "no_fabricated_browser_results": True,
                     "requires_capability_gateway": True,
-                    "fixture_is_not_chromium": True,
+                    "fixture_is_not_chromium": kind == BrowserBackendKind.FIXTURE,
                 },
             }
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "unavailable", False) or "not installed" in str(exc).lower():
+                return {
+                    "status": BrowserJobStatus.UNSUPPORTED.value,
+                    "error": str(exc),
+                    "session_id": session.session_id,
+                    "action": action.value,
+                    "backend": kind.value if hasattr(kind, "value") else str(kind),
+                    "truth": {
+                        "unavailable_is_not_ready": True,
+                        "fixture_is_not_chromium": False,
+                    },
+                }
+            raise
 
         artifact_id = None
         if action == BrowserAction.SCREENSHOT and self.artifact_store is not None:
-            svg = str(meta.get("screenshot_svg") or "")
+            payload = str(meta.get("screenshot_html") or meta.get("screenshot_svg") or "")
+            producer = (
+                "browser.fixture"
+                if kind == BrowserBackendKind.FIXTURE
+                else f"browser.{kind.value if hasattr(kind, 'value') else kind}"
+            )
             record = self.artifact_store.create_from_bytes(
-                data=svg.encode("utf-8"),
+                data=payload.encode("utf-8"),
                 artifact_type="browser_screenshot",
-                producer="browser.fixture",
-                filename=f"browser-{session.session_id[:8]}.svg",
+                producer=producer,
+                filename=f"browser-{session.session_id[:8]}.html"
+                if meta.get("screenshot_html")
+                else f"browser-{session.session_id[:8]}.svg",
                 run_id=run_id,
                 metadata={
                     "session_id": session.session_id,
                     "url": session.url,
                     "backend": meta.get("backend"),
                     "request_id": request_id,
+                    "screenshot_kind": meta.get("screenshot_kind"),
                 },
             )
             artifact_id = getattr(record, "artifact_id", None) or (
@@ -359,12 +419,27 @@ class BrowserWorker:
                 dom_text=observation.dom_text,
                 accessibility_tree=observation.accessibility_tree,
                 screenshot_artifact_id=str(artifact_id) if artifact_id else None,
-                mode="vision",
+                mode=observation.mode,
             )
 
         self._sessions[session.session_id] = session
+        # Round 7: mutating actions that require VERIFY_STATE stay APPLIED_UNVERIFIED
+        # until verification passes. Click success ≠ task completion.
+        needs_verify = bool(meta.get("requires_verify_state"))
+        verified_ok = meta.get("verification_passed")
+        if action == BrowserAction.VERIFY_STATE:
+            status = (
+                BrowserJobStatus.COMPLETED.value
+                if verified_ok
+                else BrowserJobStatus.FAILED.value
+            )
+        elif needs_verify:
+            status = BrowserJobStatus.APPLIED_UNVERIFIED.value
+        else:
+            status = BrowserJobStatus.COMPLETED.value
+
         return {
-            "status": BrowserJobStatus.COMPLETED.value,
+            "status": status,
             "action": action.value,
             "session_id": session.session_id,
             "url": session.url,
@@ -373,12 +448,20 @@ class BrowserWorker:
             "artifact_refs": [artifact_id] if artifact_id else [],
             "backend": meta.get("backend"),
             "detail": f"Browser {action.value} via {meta.get('backend')} backend",
-            "metadata": {k: v for k, v in meta.items() if k != "screenshot_svg"},
+            "metadata": {
+                k: v
+                for k, v in meta.items()
+                if k not in {"screenshot_svg", "screenshot_html"}
+            },
             "truth": {
                 "no_fabricated_browser_results": True,
                 "requires_capability_gateway": True,
-                "fixture_is_not_chromium": True,
+                "fixture_is_not_chromium": kind == BrowserBackendKind.FIXTURE,
                 "page_text_is_untrusted_context": True,
+                "click_is_not_task_completion": True,
+                "side_effects_under_authorization": True,
+                "state_verification_required_for_completion": needs_verify
+                or action == BrowserAction.VERIFY_STATE,
             },
         }
 
@@ -407,6 +490,35 @@ class BrowserWorker:
             observation=obs,
             metadata=dict(result.get("metadata") or {}),
         )
+
+
+def resolve_browser_backend(
+    kind: str | BrowserBackendKind | None = None,
+    *,
+    allow_network: bool = False,
+    allow_uploads: bool = True,
+) -> BrowserBackend:
+    """Select browser backend. Fixture is test-only; default real path is local_dom."""
+    import os
+
+    raw = kind or os.environ.get("LEVIATHAN_BROWSER_BACKEND") or "local_dom"
+    if isinstance(raw, BrowserBackendKind):
+        chosen = raw
+    else:
+        try:
+            chosen = BrowserBackendKind(str(raw).lower())
+        except ValueError:
+            chosen = BrowserBackendKind.LOCAL_DOM
+
+    if chosen == BrowserBackendKind.FIXTURE:
+        return FixtureBrowserBackend()
+    if chosen == BrowserBackendKind.PLAYWRIGHT:
+        from .playwright_backend import PlaywrightBrowserBackend
+
+        return PlaywrightBrowserBackend(allow_uploads=allow_uploads)
+    from .dom_backend import LocalDomBrowserBackend
+
+    return LocalDomBrowserBackend(allow_network=allow_network, allow_uploads=allow_uploads)
 
 
 # Honest unavailable stub retained for feature-off / release gates.

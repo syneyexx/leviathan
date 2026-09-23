@@ -401,7 +401,7 @@ market_sim_service = MarketSimControlPlane.from_settings(
     observability_emit=observability.emit,
 )
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
-browser_worker = BrowserWorker(artifact_store=artifacts)
+browser_worker = BrowserWorker(artifact_store=artifacts, backend_kind="local_dom")
 browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
 if settings.features.capability_world:
     execution_gateway.browser_executor = browser_worker
@@ -4116,6 +4116,10 @@ class BrowserRequest(BaseModel):
     session_id: str | None = None
     selector: str | None = None
     text: str | None = None
+    path: str | None = None
+    fields: dict | None = None
+    predicates: list | None = None
+    contains_text: str | None = None
     approval_id: str | None = None
     run_id: str | None = None
     trace_id: str | None = None
@@ -4128,6 +4132,13 @@ _BROWSER_ACTION_TO_CAPABILITY = {
     "SCREENSHOT": "browser.screenshot",
     "CLICK": "browser.click",
     "TYPE": "browser.type",
+    "FORM_FILL": "browser.form_fill",
+    "DOWNLOAD": "browser.download",
+    "UPLOAD": "browser.upload",
+    "VERIFY_STATE": "browser.verify_state",
+    "SCROLL": "browser.scroll",
+    "WAIT": "browser.wait",
+    "KEYPRESS": "browser.keypress",
 }
 
 
@@ -4159,6 +4170,14 @@ def browser_request(payload: BrowserRequest) -> dict:
         arguments["selector"] = payload.selector
     if payload.text is not None:
         arguments["text"] = payload.text
+    if payload.path is not None:
+        arguments["path"] = payload.path
+    if payload.fields is not None:
+        arguments["fields"] = payload.fields
+    if payload.predicates is not None:
+        arguments["predicates"] = payload.predicates
+    if payload.contains_text is not None:
+        arguments["contains_text"] = payload.contains_text
 
     if payload.via_job:
         job = job_runtime.enqueue(
