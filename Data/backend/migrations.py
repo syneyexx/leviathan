@@ -2116,6 +2116,66 @@ def _m29_coding_research_frontier(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m30_multimodal_realtime(conn: sqlite3.Connection) -> None:
+    """Wave 7: multimodal session persistence + voice session markers."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS multimodal_sessions (
+            session_id TEXT PRIMARY KEY,
+            conversation_id TEXT,
+            run_id TEXT,
+            project_id TEXT,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_multimodal_sessions_run "
+        "ON multimodal_sessions(run_id, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS multimodal_messages (
+            message_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            sync_id TEXT,
+            parts_json TEXT NOT NULL,
+            run_id TEXT,
+            conversation_id TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_multimodal_messages_session "
+        "ON multimodal_messages(session_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS voice_realtime_sessions (
+            session_id TEXT PRIMARY KEY,
+            conversation_id TEXT,
+            run_id TEXT,
+            sync_id TEXT,
+            persona_json TEXT NOT NULL DEFAULT '{}',
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_voice_realtime_sessions_run "
+        "ON voice_realtime_sessions(run_id, updated_at)"
+    )
+
+
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2146,6 +2206,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=27, name="context_memory_scope", apply=_m27_context_memory_scope),
     Migration(version=28, name="capability_world", apply=_m28_capability_world),
     Migration(version=29, name="coding_research_frontier", apply=_m29_coding_research_frontier),
+    Migration(version=30, name="multimodal_realtime", apply=_m30_multimodal_realtime),
 )
 
 

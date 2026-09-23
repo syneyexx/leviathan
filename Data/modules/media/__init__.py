@@ -1,5 +1,23 @@
-"""Media automation stub — no fabricated media output."""
+"""Media automation — fixture MediaService + honest stub (Wave 7)."""
 
-from .stub import MediaAction, MediaAutomationStub, MediaJob, MediaJobStatus
+from .service import (
+    CrossModalHit,
+    CrossModalIndex,
+    MediaAction,
+    MediaAutomationStub,
+    MediaJob,
+    MediaJobStatus,
+    MediaService,
+    VideoIngestResult,
+)
 
-__all__ = ["MediaAction", "MediaAutomationStub", "MediaJob", "MediaJobStatus"]
+__all__ = [
+    "CrossModalHit",
+    "CrossModalIndex",
+    "MediaAction",
+    "MediaAutomationStub",
+    "MediaJob",
+    "MediaJobStatus",
+    "MediaService",
+    "VideoIngestResult",
+]

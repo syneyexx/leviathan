@@ -67,7 +67,6 @@ from Data.backend.routes.models import build_models_router
 from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
-from Data.modules.context import ContextBuilder
 from Data.modules.run import EventType, RunState, RunStore
 from Data.modules.verification import (
     VerificationEngine,
@@ -122,8 +121,15 @@ from Data.backend.routes.datasets import build_datasets_router
 from Data.backend.routes.training import build_training_router
 from Data.backend.routes.research import build_research_router
 from Data.modules.browser import BrowserAction, BrowserAutomationStub, BrowserWorker
-from Data.modules.media import MediaAction, MediaAutomationStub
-from Data.modules.voice import VoiceAction, VoiceRuntimeStub
+from Data.modules.media import MediaAction, MediaAutomationStub, MediaService
+from Data.modules.voice import RealtimeVoiceService, VoiceAction, VoiceRuntimeStub
+from Data.modules.context import (
+    ContextBuilder,
+    MultimodalPart,
+    MultimodalSessionRegistry,
+    PartKind,
+    new_sync_id,
+)
 from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner, evaluation_relevance_gate
 from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_mcp, unregister_module_mcp
 from Data.backend.routes.mcp import build_mcp_router
@@ -376,8 +382,14 @@ browser_worker = BrowserWorker(artifact_store=artifacts)
 browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
 if settings.features.capability_world:
     execution_gateway.browser_executor = browser_worker
+media_service = MediaService(artifact_store=artifacts)
 media_stub = MediaAutomationStub()
+voice_service = RealtimeVoiceService()
 voice_stub = VoiceRuntimeStub()
+multimodal_sessions = MultimodalSessionRegistry()
+if settings.features.multimodal_realtime:
+    execution_gateway.media_executor = media_service
+    execution_gateway.voice_executor = voice_service
 
 
 def _gate_catalog_builtins() -> GateCheck:
@@ -397,6 +409,13 @@ def _gate_catalog_builtins() -> GateCheck:
         "browser.navigate",
         "browser.extract_text",
         "browser.screenshot",
+        "media.probe",
+        "media.image_generate",
+        "media.video_ingest",
+        "voice.start_session",
+        "voice.transcribe",
+        "voice.synthesize",
+        "voice.barge_in",
     }
     missing = sorted(required - {item.id for item in capability_catalog.list()})
     return GateCheck(
@@ -1001,7 +1020,7 @@ async def lifespan(_: FastAPI):
         function_runtime.shutdown()
 
 
-app = FastAPI(title="Leviathan", version="0.70.0-wave6-coding-research", lifespan=lifespan)
+app = FastAPI(title="Leviathan", version="0.71.0-wave7-multimodal", lifespan=lifespan)
 app.include_router(build_models_router(model_plane))
 app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
@@ -3833,37 +3852,360 @@ def issue_secret_lease(payload: SecretLeaseRequest) -> dict:
 class MediaRequest(BaseModel):
     action: str = Field(min_length=1, max_length=40)
     path: str | None = None
+    prompt: str | None = None
+    instruction: str | None = None
+    source_artifact_id: str | None = None
+    query: str | None = None
+    duration_ms: float | None = None
+    artifact_id: str | None = None
+    width: int | None = None
+    height: int | None = None
+    tile: int | None = None
+    limit: int | None = Field(default=None, ge=1, le=50)
+    modality: str | None = None
+    sync_id: str | None = None
+    approval_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    via_job: bool = False
+
+
+_MEDIA_ACTION_TO_CAPABILITY = {
+    "PROBE": "media.probe",
+    "THUMBNAIL": "media.thumbnail",
+    "IMAGE_GENERATE": "media.image_generate",
+    "IMAGE_EDIT": "media.image_edit",
+    "VIDEO_INGEST": "media.video_ingest",
+    "VISION_INSPECT": "media.vision_inspect",
+    "CROSS_MODAL_SEARCH": "media.cross_modal_search",
+}
 
 
 @app.post("/api/media/request")
 def media_request(payload: MediaRequest) -> dict:
+    """Media actions go through ExecutionGateway when multimodal_realtime is on."""
     try:
         action = MediaAction(payload.action.upper())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid media action: {payload.action}") from exc
-    job = media_stub.request(action=action, path=payload.path)
-    status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
-    if status != 200:
-        raise HTTPException(status_code=status, detail=job.public_dict())
-    return {"job": job.public_dict()}
+
+    if not settings.features.multimodal_realtime:
+        job = media_stub.request(action=action, path=payload.path)
+        status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
+        if status != 200:
+            raise HTTPException(status_code=status, detail=job.public_dict())
+        return {"job": job.public_dict(), "truth": {"multimodal_realtime_disabled": True}}
+
+    capability_id = _MEDIA_ACTION_TO_CAPABILITY.get(action.value)
+    if capability_id is None:
+        raise HTTPException(status_code=422, detail=f"No capability mapping for action {action.value}")
+
+    arguments: dict = {}
+    for key in (
+        "path",
+        "prompt",
+        "instruction",
+        "source_artifact_id",
+        "query",
+        "duration_ms",
+        "artifact_id",
+        "width",
+        "height",
+        "tile",
+        "limit",
+        "modality",
+        "sync_id",
+    ):
+        value = getattr(payload, key)
+        if value is not None:
+            arguments[key] = value
+
+    if payload.via_job:
+        job = job_runtime.enqueue(
+            capability_id=capability_id,
+            arguments=arguments,
+            run_id=payload.run_id,
+            approval_id=payload.approval_id,
+            requested_by="api.media",
+            trace_id=payload.trace_id,
+            metadata={"media_action": action.value},
+        )
+        processed = job_runtime.process_next()
+        final = job_runtime.get(job.job_id) or processed or job
+        return {
+            "job": final.public_dict(),
+            "capability_id": capability_id,
+            "truth": {
+                "requires_capability_gateway": True,
+                "no_private_media_bypass": True,
+                "routed_via_job": True,
+                "fixture_is_not_ffmpeg": True,
+            },
+        }
+
+    result = execution_gateway.execute(
+        CapabilityRequest(
+            capability_id=capability_id,
+            arguments=arguments,
+            approval_id=payload.approval_id,
+            run_id=payload.run_id,
+            requested_by="api.media",
+            trace_id=payload.trace_id,
+        )
+    )
+    observability.emit(
+        "media",
+        "request",
+        payload={
+            "capability_id": capability_id,
+            "status": result.status.value,
+            "request_id": result.request_id,
+            "run_id": payload.run_id,
+        },
+        level="info" if result.status.value == "COMPLETED" else "warn",
+    )
+    status_code = 200
+    if result.status == CapabilityStatus.REJECTED:
+        reason = (result.telemetry or {}).get("reason")
+        status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+    elif result.status == CapabilityStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {
+        "result": result.public_dict(),
+        "capability_id": capability_id,
+        "truth": {
+            "requires_capability_gateway": True,
+            "no_private_media_bypass": True,
+            "fixture_is_not_ffmpeg": True,
+        },
+    }
 
 
 class VoiceRequest(BaseModel):
     action: str = Field(min_length=1, max_length=40)
     text: str | None = None
+    session_id: str | None = None
+    audio_ref: str | None = None
+    path: str | None = None
+    hint: str | None = None
+    conversation_id: str | None = None
+    sync_id: str | None = None
+    persona: dict | None = None
+    approval_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+
+
+_VOICE_ACTION_TO_CAPABILITY = {
+    "START_SESSION": "voice.start_session",
+    "TRANSCRIBE": "voice.transcribe",
+    "STREAM_ASR": "voice.transcribe",
+    "SYNTHESIZE": "voice.synthesize",
+    "STREAM_TTS": "voice.synthesize",
+    "BARGE_IN": "voice.barge_in",
+}
 
 
 @app.post("/api/voice/request")
 def voice_request(payload: VoiceRequest) -> dict:
+    """Voice actions go through ExecutionGateway when multimodal_realtime is on."""
     try:
         action = VoiceAction(payload.action.upper())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid voice action: {payload.action}") from exc
-    job = voice_stub.request(action=action, text=payload.text)
-    status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
-    if status != 200:
-        raise HTTPException(status_code=status, detail=job.public_dict())
-    return {"job": job.public_dict()}
+
+    if not settings.features.multimodal_realtime:
+        job = voice_stub.request(action=action, text=payload.text)
+        status = 501 if job.status.value == "UNSUPPORTED" else (422 if job.status.value == "REJECTED" else 200)
+        if status != 200:
+            raise HTTPException(status_code=status, detail=job.public_dict())
+        return {"job": job.public_dict(), "truth": {"multimodal_realtime_disabled": True}}
+
+    capability_id = _VOICE_ACTION_TO_CAPABILITY.get(action.value)
+    if capability_id is None:
+        raise HTTPException(status_code=422, detail=f"No capability mapping for action {action.value}")
+
+    arguments: dict = {}
+    for key in ("text", "session_id", "audio_ref", "path", "hint", "conversation_id", "sync_id", "persona"):
+        value = getattr(payload, key)
+        if value is not None:
+            arguments[key] = value
+    if payload.run_id is not None:
+        arguments["run_id"] = payload.run_id
+
+    result = execution_gateway.execute(
+        CapabilityRequest(
+            capability_id=capability_id,
+            arguments=arguments,
+            approval_id=payload.approval_id,
+            run_id=payload.run_id,
+            requested_by="api.voice",
+            trace_id=payload.trace_id,
+        )
+    )
+    observability.emit(
+        "voice",
+        "request",
+        payload={
+            "capability_id": capability_id,
+            "status": result.status.value,
+            "request_id": result.request_id,
+            "run_id": payload.run_id,
+        },
+        level="info" if result.status.value == "COMPLETED" else "warn",
+    )
+    status_code = 200
+    if result.status == CapabilityStatus.REJECTED:
+        reason = (result.telemetry or {}).get("reason")
+        status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+    elif result.status == CapabilityStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {
+        "result": result.public_dict(),
+        "capability_id": capability_id,
+        "truth": {
+            "requires_capability_gateway": True,
+            "no_parallel_voice_memory": True,
+            "fixture_is_not_whisper_or_tts": True,
+        },
+    }
+
+
+class MultimodalSessionCreate(BaseModel):
+    conversation_id: str | None = None
+    run_id: str | None = None
+    project_id: str | None = None
+
+
+class MultimodalPartIn(BaseModel):
+    kind: str = Field(min_length=1, max_length=40)
+    text: str | None = None
+    mime_type: str | None = None
+    artifact_id: str | None = None
+    uri: str | None = None
+    width: int | None = None
+    height: int | None = None
+    duration_ms: float | None = None
+    region: dict | None = None
+    timespan: dict | None = None
+    provenance: dict | None = None
+    scope: str = "conversation"
+
+
+class MultimodalAppendRequest(BaseModel):
+    role: str = Field(min_length=1, max_length=40)
+    parts: list[MultimodalPartIn] = Field(min_length=1)
+    sync_id: str | None = None
+
+
+def _part_from_payload(item: MultimodalPartIn) -> MultimodalPart:
+    kind = item.kind.lower()
+    if kind == PartKind.TEXT.value:
+        return MultimodalPart.text_part(item.text or "", scope=item.scope)
+    if kind in {PartKind.IMAGE.value, PartKind.REGION.value}:
+        return MultimodalPart.image_part(
+            mime_type=item.mime_type or "image/png",
+            artifact_id=item.artifact_id,
+            uri=item.uri,
+            width=item.width,
+            height=item.height,
+            region=item.region,
+            provenance=item.provenance,
+            scope=item.scope,
+        )
+    if kind in {PartKind.AUDIO.value, PartKind.TIMESPAN.value}:
+        return MultimodalPart.audio_part(
+            mime_type=item.mime_type or "audio/wav",
+            artifact_id=item.artifact_id,
+            duration_ms=item.duration_ms,
+            timespan=item.timespan,
+            text=item.text,
+            provenance=item.provenance,
+            scope=item.scope,
+        )
+    try:
+        part_kind = PartKind(kind)
+    except ValueError:
+        part_kind = PartKind.FILE
+    return MultimodalPart(
+        part_id=f"part_{new_sync_id().replace('sync_', '')[:10]}",
+        kind=part_kind,
+        mime_type=item.mime_type or "application/octet-stream",
+        text=item.text,
+        artifact_id=item.artifact_id,
+        uri=item.uri,
+        width=item.width,
+        height=item.height,
+        duration_ms=item.duration_ms,
+        region=item.region,
+        timespan=item.timespan,
+        provenance=dict(item.provenance or {}),
+        scope=item.scope,
+    )
+
+
+@app.post("/api/multimodal/sessions")
+def create_multimodal_session(payload: MultimodalSessionCreate) -> dict:
+    if not settings.features.multimodal_realtime:
+        raise HTTPException(status_code=501, detail={"reason": "LEVIATHAN_FEATURE_MULTIMODAL_REALTIME=false"})
+    session = multimodal_sessions.create(
+        conversation_id=payload.conversation_id,
+        run_id=payload.run_id,
+        project_id=payload.project_id,
+    )
+    return {"session": session.public_dict()}
+
+
+@app.get("/api/multimodal/sessions/{session_id}")
+def get_multimodal_session(session_id: str) -> dict:
+    session = multimodal_sessions.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="multimodal session not found")
+    return {"session": session.public_dict()}
+
+
+@app.post("/api/multimodal/sessions/{session_id}/messages")
+def append_multimodal_message(session_id: str, payload: MultimodalAppendRequest) -> dict:
+    if not settings.features.multimodal_realtime:
+        raise HTTPException(status_code=501, detail={"reason": "LEVIATHAN_FEATURE_MULTIMODAL_REALTIME=false"})
+    try:
+        session = multimodal_sessions.require(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    parts = [_part_from_payload(p) for p in payload.parts]
+    message = session.append(payload.role, parts, sync_id=payload.sync_id)
+    return {"message": message.public_dict(), "session": session.public_dict()}
+
+
+@app.post("/api/multimodal/sessions/{session_id}/context")
+def multimodal_session_context(session_id: str) -> dict:
+    """Compile ContextPack from fused multimodal history (exit-gate surface)."""
+    session = multimodal_sessions.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="multimodal session not found")
+    history = session.history_for_context()
+    plan = reasoner.analyze(
+        history[-1]["content"] if history else "multimodal",
+        has_knowledge=False,
+    )
+    pack = ContextBuilder(
+        token_budget=settings.context.token_budget,
+        max_knowledge_chars=settings.context.max_knowledge_chars,
+        max_history_messages=settings.resources.max_history_messages,
+        reserve_response_tokens=settings.context.reserve_response_tokens,
+    ).build(history=history, knowledge=[], plan=plan)
+    return {
+        "session_id": session_id,
+        "pack": pack.public_dict(),
+        "truth": {
+            "single_context_run_history": True,
+            "same_conversation_project_context_model": True,
+        },
+    }
 
 
 @app.get("/api/release/gates")

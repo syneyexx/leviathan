@@ -89,6 +89,32 @@ class BrowserExecutor(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class MediaExecutor(Protocol):
+    """Media domain worker — invoked only after gateway authorization."""
+
+    def execute(
+        self,
+        *,
+        action: Any,
+        arguments: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
+
+class VoiceExecutor(Protocol):
+    """Voice domain worker — invoked only after gateway authorization."""
+
+    def execute(
+        self,
+        *,
+        action: Any,
+        arguments: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
+
 class ModuleExecutor(Protocol):
     """Optional MODULE provider_kind adapter."""
 
@@ -134,6 +160,8 @@ class ExecutionGateway:
     observation_store: ObservationRecorder | None = None
     mcp_executor: McpExecutor | None = None
     browser_executor: BrowserExecutor | None = None
+    media_executor: MediaExecutor | None = None
+    voice_executor: VoiceExecutor | None = None
     module_executor: ModuleExecutor | None = None
     receipt_store: CapabilityReceiptStore | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
@@ -348,6 +376,10 @@ class ExecutionGateway:
             return self._dispatch_mcp(definition, request)
         if kind == CapabilityProviderKind.BROWSER:
             return self._dispatch_browser(definition, request)
+        if kind == CapabilityProviderKind.MEDIA:
+            return self._dispatch_media(definition, request)
+        if kind == CapabilityProviderKind.VOICE:
+            return self._dispatch_voice(definition, request)
         if kind == CapabilityProviderKind.MODULE:
             return self._dispatch_module(definition, request)
         raise GatewayRejection(
@@ -381,6 +413,62 @@ class ExecutionGateway:
             )
         if status == "FAILED":
             raise RuntimeError(str(result.get("error") or result.get("detail") or "Browser failed"))
+        return result
+
+    def _dispatch_media(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> dict[str, Any]:
+        if self.media_executor is None:
+            raise RuntimeError("Media executor not configured on ExecutionGateway")
+        result = self.media_executor.execute(
+            action=definition.provider_ref,
+            arguments=dict(request.arguments),
+            run_id=request.run_id,
+            request_id=request.request_id,
+        )
+        status = str(result.get("status") or "").upper()
+        if status == "REJECTED":
+            raise GatewayRejection(
+                str(result.get("error") or result.get("detail") or "Media rejected"),
+                reason="media_rejected",
+            )
+        if status == "UNSUPPORTED":
+            raise GatewayRejection(
+                str(result.get("detail") or "Media action unsupported"),
+                reason="media_unsupported",
+            )
+        if status == "FAILED":
+            raise RuntimeError(str(result.get("error") or result.get("detail") or "Media failed"))
+        return result
+
+    def _dispatch_voice(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> dict[str, Any]:
+        if self.voice_executor is None:
+            raise RuntimeError("Voice executor not configured on ExecutionGateway")
+        result = self.voice_executor.execute(
+            action=definition.provider_ref,
+            arguments=dict(request.arguments),
+            run_id=request.run_id,
+            request_id=request.request_id,
+        )
+        status = str(result.get("status") or "").upper()
+        if status == "REJECTED":
+            raise GatewayRejection(
+                str(result.get("error") or result.get("detail") or "Voice rejected"),
+                reason="voice_rejected",
+            )
+        if status in {"UNSUPPORTED", "CANCELLED"}:
+            # CANCELLED is an honest barge-in outcome — surface as rejected for policy
+            # but preserve payload for callers that inspect output via public_dict paths.
+            if status == "CANCELLED":
+                return result
+            raise GatewayRejection(
+                str(result.get("detail") or "Voice action unsupported"),
+                reason="voice_unsupported",
+            )
+        if status == "FAILED":
+            raise RuntimeError(str(result.get("error") or result.get("detail") or "Voice failed"))
         return result
 
     def _dispatch_module(
