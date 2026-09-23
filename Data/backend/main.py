@@ -837,6 +837,7 @@ settings_plane = SettingsControlPlane(settings)
 cognition_store = CognitionStore(settings.database_path)
 cognition_delegation = DelegationService()
 cognition_model_caller = build_control_plane_model_caller(model_plane, llm)
+research_service.set_model_caller(cognition_model_caller)
 cognition_runtime = CognitiveRuntime(
     enabled=settings.features.cognition_enabled,
     shadow=settings.features.cognition_shadow,
