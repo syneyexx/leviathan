@@ -55,7 +55,8 @@ def probe_training_capabilities() -> TrainingCapabilities:
     if can_lora and not can_qlora:
         notes.append("QLoRA unavailable — bitsandbytes not installed.")
     notes.append(
-        "DPO: micro end-to-end objective (dpo_micro) is operational for preference pairs; "
+        "DPO: micro end-to-end objective (dpo_micro / pref_dpo_v1 recipe) is operational for "
+        "preference pairs. Durable job method=dpo is blocked (does not silently run LoRA). "
         "HF/GPU production DPO is not claimed."
     )
     notes.append(

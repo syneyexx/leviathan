@@ -130,6 +130,33 @@ class DpoObjectiveTests(unittest.TestCase):
         joined = " ".join(caps.notes).lower()
         self.assertIn("micro", joined)
         self.assertIn("not claimed", joined)
+        self.assertIn("blocked", joined)
+
+    def test_durable_method_dpo_refused(self) -> None:
+        from Data.modules.training.preflight import run_preflight
+        from Data.modules.training.worker.trainer_loop import run_training_loop
+
+        cfg = TrainingConfig(
+            name="dpo-job",
+            method="dpo",
+            base_model_ref="org/model",
+            dataset_path="/tmp/does-not-matter.jsonl",
+        )
+        result = run_preflight(cfg)
+        self.assertEqual(result.verdict.value, "BLOCKED")
+        self.assertTrue(any(i.code == "dpo_not_durable_lora" for i in result.issues))
+        with self.assertRaises(RuntimeError) as ctx:
+            run_training_loop(
+                job_id="j1",
+                store=None,  # type: ignore[arg-type]
+                config=cfg,
+                output_dir=__import__("pathlib").Path("/tmp"),
+                events=__import__("unittest.mock").mock.Mock(),
+                cancel_check=lambda: False,
+            )
+        msg = str(ctx.exception)
+        self.assertIn("dpo_micro", msg.lower())
+        self.assertIn("LoRA", msg)
 
 
 class SyntheticAndQualityTests(unittest.TestCase):
