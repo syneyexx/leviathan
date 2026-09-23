@@ -1,4 +1,13 @@
-"""FastAPI routes for the Datasets subsystem."""
+"""FastAPI routes for the Datasets subsystem.
+
+Routing invariant
+-----------------
+Static / fixed-segment paths under ``/api/datasets/...`` (jobs, mixtures,
+offline, versions/{version_id}, inspect, import, huggingface, …) MUST be
+registered before generic ``/api/datasets/{dataset_id}`` catch-alls.
+Otherwise FastAPI binds e.g. ``GET /api/datasets/jobs`` as
+``dataset_id="jobs"`` and returns a dataset-not-found 404.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +28,20 @@ def _raise(exc: DatasetError) -> None:
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB per request; larger corpora use local/HF paths
 ALLOWED_UPLOAD_SUFFIXES = {".jsonl", ".ndjson", ".json", ".csv", ".tsv", ".txt", ".md", ".markdown", ".parquet"}
+
+# Reserved first path segments that must never be captured by {dataset_id}.
+DATASETS_STATIC_SEGMENTS = frozenset(
+    {
+        "jobs",
+        "mixtures",
+        "offline",
+        "versions",
+        "inspect",
+        "import",
+        "huggingface",
+        "upload",
+    }
+)
 
 
 class CreateDatasetBody(BaseModel):
@@ -78,6 +101,9 @@ class IndexBody(BaseModel):
 class OfflineBrainIndexBody(BaseModel):
     datasetId: str
     versionId: str
+    scope: str = "dataset"
+    maxRecords: int | None = None
+    sourceFingerprint: str | None = None
 
 
 class MixtureCreateBody(BaseModel):
@@ -116,33 +142,6 @@ class OfflinePreflightBody(BaseModel):
     offlineOnly: bool = True
 
 
-class MixtureCreateBody(BaseModel):
-    name: str
-    components: list[dict[str, Any]] = Field(default_factory=list)
-    metadata: dict[str, Any] | None = None
-
-
-class ShardIngestBody(BaseModel):
-    sources: list[str] = Field(default_factory=list)
-    interruptAfter: int | None = None
-    resumeFromJobId: str | None = None
-
-
-class ContaminationScanBody(BaseModel):
-    sealedCases: list[dict[str, Any]] = Field(default_factory=list)
-    threshold: float = 0.35
-
-
-class AnnotationEnqueueBody(BaseModel):
-    recordId: str
-    labelType: str = "preference"
-    versionId: str | None = None
-
-
-class PackingSimBody(BaseModel):
-    maxSeqLength: int = 512
-
-
 class HfListBody(BaseModel):
     repositoryId: str
     revision: str = "main"
@@ -150,8 +149,12 @@ class HfListBody(BaseModel):
 
 
 def build_datasets_router(service: DatasetService) -> APIRouter:
+    """Build the datasets router with static routes before ``{dataset_id}``."""
     router = APIRouter(tags=["datasets"])
 
+    # ------------------------------------------------------------------
+    # Collection + upload (no path params)
+    # ------------------------------------------------------------------
     @router.get("/api/datasets")
     def list_datasets(limit: int = 100) -> dict:
         items = service.list_datasets(limit=limit)
@@ -189,8 +192,6 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
                 },
             )
         upload_root = ensure_dir(service.corpus.datasets_raw / "_uploads")
-        dest = upload_root / f"{Path(filename).stem}-{Path(filename).suffix}"
-        # Unique dest
         from uuid import uuid4
 
         dest = upload_root / f"{uuid4().hex}_{filename}"
@@ -231,50 +232,9 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             raise
         return {"job": service.public_job(job), "bytes": total, "filename": filename}
 
-    @router.get("/api/datasets/{dataset_id}")
-    def get_dataset(dataset_id: str) -> dict:
-        try:
-            ds = service.get_dataset(dataset_id)
-        except DatasetError as exc:
-            _raise(exc)
-        return {
-            "dataset": ds.public_dict(),
-            "versions": [v.public_dict() for v in service.list_versions(dataset_id)],
-            "files": [f.public_dict() for f in service.store.list_files(dataset_id)],
-            "indexes": [i.public_dict() for i in service.store.list_indexes(dataset_id)],
-        }
-
-    @router.delete("/api/datasets/{dataset_id}")
-    def delete_dataset(dataset_id: str) -> dict:
-        try:
-            service.get_dataset(dataset_id)
-        except DatasetError as exc:
-            _raise(exc)
-        # Block deletion when durable training jobs reference any version.
-        versions = service.list_versions(dataset_id)
-        blockers: list[str] = []
-        try:
-            from Data.modules.training.store import TrainingStore
-
-            tstore = TrainingStore(service.store.db_path)
-            for ver in versions:
-                refs = tstore.list_jobs_referencing_dataset_version(ver.version_id)
-                for job in refs:
-                    blockers.append(f"{job.job_id} → {ver.version_id}")
-        except Exception:  # noqa: BLE001 — if training tables absent, allow delete
-            blockers = []
-        if blockers:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "DATASET_IN_USE",
-                    "message": "Dataset has dependent training jobs; refuse silent delete",
-                    "references": blockers[:20],
-                },
-            )
-        ok = service.store.delete_dataset(dataset_id)
-        return {"deleted": ok, "datasetId": dataset_id}
-
+    # ------------------------------------------------------------------
+    # STATIC routes — must precede /api/datasets/{dataset_id}
+    # ------------------------------------------------------------------
     @router.post("/api/datasets/inspect")
     def inspect_path(body: InspectPathBody) -> dict:
         try:
@@ -317,7 +277,6 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             _raise(exc)
             raise
         payload = service.public_job(job)
-        # Ensure request body token never echoed
         return {"job": payload}
 
     @router.post("/api/datasets/huggingface/list")
@@ -329,20 +288,10 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         except DatasetError as exc:
             _raise(exc)
             raise
-        # Redact any accidental secrets in file metadata strings
         safe = []
         for item in files:
             safe.append({k: redact_secrets(str(v)) if isinstance(v, str) else v for k, v in item.items()})
         return {"files": safe}
-
-    @router.get("/api/datasets/{dataset_id}/versions")
-    def list_versions(dataset_id: str) -> dict:
-        try:
-            versions = service.list_versions(dataset_id)
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"versions": [v.public_dict() for v in versions]}
 
     @router.get("/api/datasets/versions/{version_id}")
     def get_version(version_id: str) -> dict:
@@ -371,93 +320,13 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             raise
         return {"pii": report}
 
-    @router.post("/api/datasets/{dataset_id}/materialize")
-    def materialize(dataset_id: str) -> dict:
+    @router.post("/api/datasets/versions/{version_id}/packing-sim")
+    def packing_sim(version_id: str, body: PackingSimBody) -> dict:
         try:
-            job = service.enqueue_materialize(dataset_id)
+            return {"simulation": service.packing_simulation(version_id, max_seq_length=body.maxSeqLength)}
         except DatasetError as exc:
             _raise(exc)
             raise
-        return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/validate")
-    def validate(dataset_id: str, version_id: str) -> dict:
-        try:
-            job = service.enqueue_validate(dataset_id, version_id)
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/dedupe")
-    def dedupe(dataset_id: str, version_id: str) -> dict:
-        try:
-            job = service.enqueue_dedupe(dataset_id, version_id)
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/transform")
-    def transform(dataset_id: str, version_id: str, body: TransformBody) -> dict:
-        try:
-            job = service.enqueue_transform(dataset_id, version_id, body.transforms)
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/split")
-    def split(dataset_id: str, version_id: str, body: SplitBody) -> dict:
-        try:
-            job = service.enqueue_split(
-                dataset_id,
-                version_id,
-                seed=body.seed,
-                train_ratio=body.trainRatio,
-                val_ratio=body.valRatio,
-                test_ratio=body.testRatio,
-            )
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/tokenize-stats")
-    def tokenize_stats(dataset_id: str, version_id: str) -> dict:
-        try:
-            job = service.enqueue_tokenize_stats(dataset_id, version_id)
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/export")
-    def export_version(dataset_id: str, version_id: str, body: ExportBody | None = None) -> dict:
-        body = body or ExportBody()
-        try:
-            job = service.enqueue_export(dataset_id, version_id, split=body.split)
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/index")
-    def index_version(dataset_id: str, version_id: str, body: IndexBody | None = None) -> dict:
-        body = body or IndexBody()
-        try:
-            job = service.enqueue_index(
-                dataset_id,
-                version_id,
-                scope=body.scope,
-                max_records=body.maxRecords,
-                offline_only=body.offlineOnly,
-                source_fingerprint=body.sourceFingerprint,
-            )
-        except DatasetError as exc:
-            _raise(exc)
-            raise
-        return {"job": service.public_job(job)}
 
     @router.get("/api/datasets/offline/discover")
     def offline_discover(maxFiles: int = 500) -> dict:
@@ -554,6 +423,157 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             _raise(exc)
             raise
 
+    # ------------------------------------------------------------------
+    # GENERIC dataset_id routes (after all static segments)
+    # ------------------------------------------------------------------
+    @router.get("/api/datasets/{dataset_id}")
+    def get_dataset(dataset_id: str) -> dict:
+        if dataset_id in DATASETS_STATIC_SEGMENTS:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "route_not_found",
+                    "message": f"/{dataset_id} is a reserved datasets path; no handler matched",
+                },
+            )
+        try:
+            ds = service.get_dataset(dataset_id)
+        except DatasetError as exc:
+            _raise(exc)
+        return {
+            "dataset": ds.public_dict(),
+            "versions": [v.public_dict() for v in service.list_versions(dataset_id)],
+            "files": [f.public_dict() for f in service.store.list_files(dataset_id)],
+            "indexes": [i.public_dict() for i in service.store.list_indexes(dataset_id)],
+        }
+
+    @router.delete("/api/datasets/{dataset_id}")
+    def delete_dataset(dataset_id: str) -> dict:
+        try:
+            service.get_dataset(dataset_id)
+        except DatasetError as exc:
+            _raise(exc)
+        versions = service.list_versions(dataset_id)
+        blockers: list[str] = []
+        try:
+            from Data.modules.training.store import TrainingStore
+
+            tstore = TrainingStore(service.store.db_path)
+            for ver in versions:
+                refs = tstore.list_jobs_referencing_dataset_version(ver.version_id)
+                for job in refs:
+                    blockers.append(f"{job.job_id} → {ver.version_id}")
+        except Exception:  # noqa: BLE001 — if training tables absent, allow delete
+            blockers = []
+        if blockers:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "DATASET_IN_USE",
+                    "message": "Dataset has dependent training jobs; refuse silent delete",
+                    "references": blockers[:20],
+                },
+            )
+        ok = service.store.delete_dataset(dataset_id)
+        return {"deleted": ok, "datasetId": dataset_id}
+
+    @router.get("/api/datasets/{dataset_id}/versions")
+    def list_versions(dataset_id: str) -> dict:
+        try:
+            versions = service.list_versions(dataset_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"versions": [v.public_dict() for v in versions]}
+
+    @router.post("/api/datasets/{dataset_id}/materialize")
+    def materialize(dataset_id: str) -> dict:
+        try:
+            job = service.enqueue_materialize(dataset_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/validate")
+    def validate(dataset_id: str, version_id: str) -> dict:
+        try:
+            job = service.enqueue_validate(dataset_id, version_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/dedupe")
+    def dedupe(dataset_id: str, version_id: str) -> dict:
+        try:
+            job = service.enqueue_dedupe(dataset_id, version_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/transform")
+    def transform(dataset_id: str, version_id: str, body: TransformBody) -> dict:
+        try:
+            job = service.enqueue_transform(dataset_id, version_id, body.transforms)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/split")
+    def split(dataset_id: str, version_id: str, body: SplitBody) -> dict:
+        try:
+            job = service.enqueue_split(
+                dataset_id,
+                version_id,
+                seed=body.seed,
+                train_ratio=body.trainRatio,
+                val_ratio=body.valRatio,
+                test_ratio=body.testRatio,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/tokenize-stats")
+    def tokenize_stats(dataset_id: str, version_id: str) -> dict:
+        try:
+            job = service.enqueue_tokenize_stats(dataset_id, version_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/export")
+    def export_version(dataset_id: str, version_id: str, body: ExportBody | None = None) -> dict:
+        body = body or ExportBody()
+        try:
+            job = service.enqueue_export(dataset_id, version_id, split=body.split)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
+    @router.post("/api/datasets/{dataset_id}/versions/{version_id}/index")
+    def index_version(dataset_id: str, version_id: str, body: IndexBody | None = None) -> dict:
+        body = body or IndexBody()
+        try:
+            job = service.enqueue_index(
+                dataset_id,
+                version_id,
+                scope=body.scope,
+                max_records=body.maxRecords,
+                offline_only=body.offlineOnly,
+                source_fingerprint=body.sourceFingerprint,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
+
     @router.post("/api/datasets/{dataset_id}/shard-ingest")
     def shard_ingest(dataset_id: str, body: ShardIngestBody) -> dict:
         try:
@@ -581,14 +601,6 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             _raise(exc)
             raise
         return {"job": service.public_job(job)}
-
-    @router.post("/api/datasets/versions/{version_id}/packing-sim")
-    def packing_sim(version_id: str, body: PackingSimBody) -> dict:
-        try:
-            return {"simulation": service.packing_simulation(version_id, max_seq_length=body.maxSeqLength)}
-        except DatasetError as exc:
-            _raise(exc)
-            raise
 
     @router.post("/api/datasets/{dataset_id}/annotations")
     def enqueue_annotation(dataset_id: str, body: AnnotationEnqueueBody) -> dict:

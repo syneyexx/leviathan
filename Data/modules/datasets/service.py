@@ -567,7 +567,9 @@ class DatasetService:
             "rawVersionId": raw_version.version_id,
         }
         if job.config.get("materialize", True):
+            self.store.update_job(job.job_id, phase="materializing", progress=0.92)
             mat = self._materialize_dataset(job.dataset_id, raw_path=dest, fmt=detection.format)
+            self.store.update_job(job.job_id, phase="validating", progress=0.97)
             result["materialized"] = mat
         if self.runner.is_cancel_requested(job.job_id):
             raise DatasetError("cancelled", code="cancelled", http_status=409)
@@ -748,7 +750,14 @@ class DatasetService:
             "mode": "file",
         }
         if job.config.get("materialize", True):
+            self.store.update_job(
+                job.job_id,
+                phase="materializing",
+                progress=0.92,
+                checkpoint={"file": downloaded.checkpoint.to_dict()},
+            )
             mat = self._materialize_dataset(job.dataset_id, raw_path=downloaded.path, fmt=detection.format)
+            self.store.update_job(job.job_id, phase="validating", progress=0.97)
             result["materialized"] = mat
         return result
 
@@ -1412,4 +1421,122 @@ class DatasetService:
         data["config"] = cfg
         if data.get("logPath"):
             data["logPath"] = redact_secrets(str(data["logPath"]))
+        checkpoint = dict(data.get("checkpoint") or {})
+        for key, value in list(checkpoint.items()):
+            if isinstance(value, str):
+                checkpoint[key] = redact_secrets(value)
+            elif "token" in key.lower() or "secret" in key.lower() or "authorization" in key.lower():
+                checkpoint[key] = "[REDACTED]"
+        data["checkpoint"] = checkpoint
+        # Derived download summary for the activity console (view aid, not a second store).
+        data["download"] = self._public_download_summary(job.job_type.value, cfg, checkpoint)
         return data
+
+    @staticmethod
+    def _public_download_summary(
+        job_type: str,
+        config: dict[str, Any],
+        checkpoint: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        file_cp = checkpoint.get("file") if isinstance(checkpoint.get("file"), dict) else {}
+        manifest = (
+            checkpoint.get("manifestSummary")
+            if isinstance(checkpoint.get("manifestSummary"), dict)
+            else {}
+        )
+        has_progress = any(
+            k in checkpoint or k in file_cp or k in manifest
+            for k in (
+                "bytesDownloaded",
+                "bytesTotal",
+                "totalBytes",
+                "filesTotal",
+                "filesCompleted",
+                "filename",
+                "relativePath",
+                "repositoryId",
+            )
+        )
+        if not has_progress and job_type != DatasetJobType.IMPORT_HF.value:
+            return None
+        if job_type != DatasetJobType.IMPORT_HF.value and not has_progress:
+            return None
+
+        def _int(value: Any) -> int | None:
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        bytes_downloaded_i = _int(
+            checkpoint.get("bytesDownloaded")
+            if checkpoint.get("bytesDownloaded") is not None
+            else file_cp.get("bytesDownloaded")
+            if file_cp.get("bytesDownloaded") is not None
+            else manifest.get("bytesDownloaded")
+        )
+        total_bytes_i = _int(
+            checkpoint.get("bytesTotal")
+            if checkpoint.get("bytesTotal") is not None
+            else checkpoint.get("totalBytes")
+            if checkpoint.get("totalBytes") is not None
+            else file_cp.get("totalBytes")
+            if file_cp.get("totalBytes") is not None
+            else manifest.get("bytesTotal")
+        )
+        files_total_i = _int(
+            checkpoint.get("filesTotal")
+            if checkpoint.get("filesTotal") is not None
+            else manifest.get("filesTotal")
+        )
+        files_completed_i = _int(
+            checkpoint.get("filesCompleted")
+            if checkpoint.get("filesCompleted") is not None
+            else manifest.get("filesCompleted")
+        )
+        filename = (
+            checkpoint.get("filename")
+            or checkpoint.get("relativePath")
+            or file_cp.get("filename")
+            or config.get("filename")
+        )
+        if files_total_i is None and filename:
+            files_total_i = 1
+            if (
+                bytes_downloaded_i is not None
+                and total_bytes_i is not None
+                and total_bytes_i > 0
+            ):
+                files_completed_i = 1 if bytes_downloaded_i >= total_bytes_i else 0
+            else:
+                files_completed_i = None
+
+        return {
+            "repositoryId": checkpoint.get("repositoryId")
+            or file_cp.get("repositoryId")
+            or config.get("repositoryId"),
+            "revision": checkpoint.get("revision")
+            or file_cp.get("revision")
+            or config.get("revision"),
+            "filename": filename,
+            "bytesDownloaded": bytes_downloaded_i,
+            "bytesTotal": total_bytes_i,
+            "filesTotal": files_total_i,
+            "filesCompleted": files_completed_i,
+            "attempts": checkpoint.get("attempts")
+            if checkpoint.get("attempts") is not None
+            else file_cp.get("attempts"),
+            "lastHttpStatus": checkpoint.get("lastHttpStatus")
+            if checkpoint.get("lastHttpStatus") is not None
+            else checkpoint.get("lastStatus")
+            if checkpoint.get("lastStatus") is not None
+            else file_cp.get("lastStatus"),
+            "rateLimitEvents": checkpoint.get("rateLimitEvents")
+            if checkpoint.get("rateLimitEvents") is not None
+            else file_cp.get("rateLimitEvents"),
+            "etag": checkpoint.get("etag") if checkpoint.get("etag") is not None else file_cp.get("etag"),
+            "bytesPerSecond": _int(checkpoint.get("bytesPerSecond")),
+            "etaSeconds": _int(checkpoint.get("etaSeconds")),
+        }
