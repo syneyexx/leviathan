@@ -107,6 +107,57 @@
   min-width: 0;
 }
 
+/* Cluster reference controls are real controls, not decorative chrome. */
+.lv-app--brain-fidelity .lv-bc-map-controls span {
+  min-width: 38px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-left: 1px solid rgba(224,179,75,.18);
+  color: rgba(221,211,186,.62);
+  font-size: 7.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-app--brain-fidelity .lv-bc-map-controls button:disabled,
+.lv-app--brain-fidelity .lv-bc-wide-action:disabled {
+  cursor: default;
+  opacity: .4;
+}
+
+.lv-app--brain-fidelity .lv-bc-section li > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(232,225,208,.7);
+}
+
+.lv-app--brain-fidelity .lv-bc-related-row {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  color: inherit;
+  text-align: left;
+}
+
+.lv-app--brain-fidelity .lv-bc-related li > .lv-bc-related-row > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lv-app--brain-fidelity .lv-bc-related li > .lv-bc-related-row > div:first-child span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lv-app--brain-fidelity .lv-bc-related-row:hover {
+  color: #efd078;
+}
+
 @media (min-width: 1500px) {
   .lv-app--brain-fidelity .lv-gv-layout {
     grid-template-columns: 214px minmax(620px, 1fr) 304px !important;
