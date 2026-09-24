@@ -1281,7 +1281,7 @@ class DatasetService:
         kernel = self._kernel_for_domain(job_id)
         if kernel is not None and self.jobs is not None:
             try:
-                from Data.modules.jobs.states import JobState, TERMINAL_JOB_STATES
+                from Data.modules.jobs.states import TERMINAL_JOB_STATES
 
                 if kernel.state not in TERMINAL_JOB_STATES:
                     self.jobs.cancel(kernel.job_id, reason="dataset domain cancel")

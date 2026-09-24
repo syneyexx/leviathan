@@ -69,9 +69,9 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="dataset",
         entrypoint="Data.modules.workers.entrypoints.dataset",
         default_count=1,
-        job_kinds=("dataset.",),
+        job_kinds=("dataset.process", "dataset."),
         resource_classes=("IO_HEAVY", "CPU_HEAVY", "MEMORY_HEAVY"),
-        description="Dataset download/profile/index/export",
+        description="Dataset download/profile/index/export — kernel claim owner when externalized",
     ),
     "research": PoolDefinition(
         pool_id="research",
