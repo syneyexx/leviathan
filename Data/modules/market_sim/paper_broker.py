@@ -1,4 +1,8 @@
-"""Paper broker adapters — local ledger + optional Alpaca paper (never live money)."""
+"""Paper broker adapters — local ledger + Alpaca paper via provider_io workers.
+
+Alpaca remote HTTP never executes inside the Control Plane process. When
+provider_io workers are unavailable, calls raise PROVIDER_EXECUTION_UNAVAILABLE.
+"""
 
 from __future__ import annotations
 
@@ -218,15 +222,14 @@ class LocalPaperBroker(PaperBroker):
 
 
 class AlpacaPaperBroker(PaperBroker):
-    """Alpaca paper trading — only when paper credentials are configured.
+    """Alpaca paper trading via provider_io — never live money, never Control Plane HTTP.
 
     Live (real-money) Alpaca endpoints are never used here.
     """
 
     broker_id = "alpaca_paper"
-    PAPER_BASE = "https://paper-api.alpaca.markets"
 
-    def __init__(self) -> None:
+    def __init__(self, job_runtime: Any | None = None) -> None:
         self.key_id = os.environ.get("LEVIATHAN_ALPACA_PAPER_KEY_ID", "").strip()
         self.secret = os.environ.get("LEVIATHAN_ALPACA_PAPER_SECRET", "").strip()
         if not self.key_id or not self.secret:
@@ -235,14 +238,59 @@ class AlpacaPaperBroker(PaperBroker):
                 "Set LEVIATHAN_ALPACA_PAPER_KEY_ID and LEVIATHAN_ALPACA_PAPER_SECRET",
                 http_status=503,
             )
+        self.job_runtime = job_runtime
         self._orders: dict[str, PaperOrder] = {}
 
-    def _headers(self) -> dict[str, str]:
-        return {
-            "APCA-API-KEY-ID": self.key_id,
-            "APCA-API-SECRET-KEY": self.secret,
-            "Content-Type": "application/json",
-        }
+    def bind_job_runtime(self, job_runtime: Any | None) -> None:
+        self.job_runtime = job_runtime
+
+    def _require_provider_io(self) -> Any:
+        from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
+        from Data.modules.provider_io.facade import ProviderExecutionClient
+        from Data.modules.provider_io.readiness import provider_io_workers_ready
+
+        if self.job_runtime is None:
+            raise MarketSimError(
+                ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                "Alpaca paper requires provider_io job runtime; Control Plane will not call Alpaca.",
+                http_status=503,
+            )
+        db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+        if not provider_io_workers_ready(db_path):
+            raise MarketSimError(
+                ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                "provider_io workers unavailable; refusing Alpaca Control Plane fallback",
+                http_status=503,
+            )
+        return ProviderExecutionClient(self.job_runtime)
+
+    def _exec(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
+
+        client = self._require_provider_io()
+        try:
+            result = client.submit_and_wait(
+                provider="alpaca_paper",
+                capability="alpaca.paper",
+                payload={"action": action, **payload},
+                credential_ref="alpaca_paper",
+                latency_class="interactive",
+                requested_by="alpaca_paper_broker",
+                deadline_seconds=30.0,
+            )
+        except ProviderError as exc:
+            if exc.code == ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE:
+                raise MarketSimError(exc.code.value, str(exc), http_status=503) from exc
+            raise MarketSimError(
+                exc.code.value,
+                str(exc),
+                http_status=503 if exc.retryable else 502,
+            ) from exc
+        if result.status != "succeeded" or not isinstance(result.structured, dict):
+            err = (result.error or {}).get("message") or "alpaca provider_io failed"
+            code = (result.error or {}).get("code") or "PROVIDER_UNAVAILABLE"
+            raise MarketSimError(str(code), str(err), http_status=502)
+        return dict(result.structured)
 
     def place(
         self,
@@ -254,9 +302,7 @@ class AlpacaPaperBroker(PaperBroker):
         price_hint: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> PaperOrder:
-        import json
-        import urllib.request
-
+        del price_hint  # market orders — price hint unused
         for existing in self._orders.values():
             if existing.client_order_id == client_order_id:
                 return existing
@@ -272,31 +318,26 @@ class AlpacaPaperBroker(PaperBroker):
             updated_at=now,
             metadata=dict(metadata or {}),
         )
-        body = json.dumps(
-            {
-                "symbol": symbol.upper(),
-                "qty": str(qty),
-                "side": side.lower(),
-                "type": "market",
-                "time_in_force": "day",
-                "client_order_id": client_order_id,
-            }
-        ).encode()
-        req = urllib.request.Request(
-            f"{self.PAPER_BASE}/v2/orders",
-            data=body,
-            headers=self._headers(),
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-                data = json.loads(resp.read().decode())
+            data = self._exec(
+                "place",
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": qty,
+                    "client_order_id": client_order_id,
+                },
+            )
             order.broker_order_id = str(data.get("id") or "")
             order.status = str(data.get("status") or "submitted")
             if data.get("filled_avg_price"):
                 order.fill_price = float(data["filled_avg_price"])
                 order.status = "filled"
-        except Exception as exc:  # noqa: BLE001
+            order.metadata["executed_via"] = "provider_io"
+            order.metadata["worker_pid"] = None
+        except MarketSimError as exc:
+            if exc.code == "PROVIDER_EXECUTION_UNAVAILABLE":
+                raise
             order.status = "rejected"
             order.reject_reason = f"alpaca_paper error: {exc}"
         order.updated_at = utc_now()
@@ -304,60 +345,47 @@ class AlpacaPaperBroker(PaperBroker):
         return order
 
     def reconcile(self, order: PaperOrder) -> PaperOrder:
-        import json
-        import urllib.request
-
         if not order.broker_order_id:
             order.status = "unknown"
             order.reject_reason = "missing broker id — no blind resubmit"
             return order
-        req = urllib.request.Request(
-            f"{self.PAPER_BASE}/v2/orders/{order.broker_order_id}",
-            headers=self._headers(),
-            method="GET",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-                data = json.loads(resp.read().decode())
+            data = self._exec("reconcile", {"broker_order_id": order.broker_order_id})
             order.status = str(data.get("status") or order.status)
             if data.get("filled_avg_price"):
                 order.fill_price = float(data["filled_avg_price"])
             order.updated_at = utc_now()
-        except Exception as exc:  # noqa: BLE001
+            order.metadata["executed_via"] = "provider_io"
+        except MarketSimError as exc:
+            if exc.code == "PROVIDER_EXECUTION_UNAVAILABLE":
+                raise
             order.status = "unknown"
             order.reject_reason = f"reconcile failed: {exc}"
         return order
 
     def account(self) -> dict[str, Any]:
-        import json
-        import urllib.request
-
-        req = urllib.request.Request(
-            f"{self.PAPER_BASE}/v2/account",
-            headers=self._headers(),
-            method="GET",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-                data = json.loads(resp.read().decode())
-            return {
-                "broker_id": self.broker_id,
-                "equity": data.get("equity"),
-                "cash": data.get("cash"),
-                "status": data.get("status"),
-                "truth": {"paper_only": True, "alpaca_paper": True, "not_live_money": True},
-            }
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "broker_id": self.broker_id,
-                "error": str(exc),
-                "truth": {"paper_only": True},
-            }
+        data = self._exec("account", {})
+        return {
+            "broker_id": self.broker_id,
+            "equity": data.get("equity"),
+            "cash": data.get("cash"),
+            "status": data.get("status"),
+            "truth": {
+                "paper_only": True,
+                "alpaca_paper": True,
+                "not_live_money": True,
+                "executed_via": "provider_io",
+            },
+        }
 
 
-def build_paper_broker(broker_id: str = "local_paper") -> PaperBroker:
+def build_paper_broker(
+    broker_id: str = "local_paper",
+    *,
+    job_runtime: Any | None = None,
+) -> PaperBroker:
     if broker_id == "alpaca_paper":
-        return AlpacaPaperBroker()
+        return AlpacaPaperBroker(job_runtime=job_runtime)
     if broker_id == "local_paper":
         return LocalPaperBroker()
     raise MarketSimError("PAPER_BROKER_UNKNOWN", broker_id, http_status=404)

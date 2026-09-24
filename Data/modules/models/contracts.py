@@ -463,6 +463,13 @@ class DownloadJob:
     model_id: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
+        progress_percent = None
+        if (
+            self.bytes_downloaded is not None
+            and self.total_bytes is not None
+            and self.total_bytes > 0
+        ):
+            progress_percent = round(100.0 * self.bytes_downloaded / self.total_bytes, 2)
         return {
             "id": self.download_id,
             "state": self.state.value,
@@ -472,6 +479,7 @@ class DownloadJob:
             "destination": self.destination,
             "bytesDownloaded": self.bytes_downloaded,
             "totalBytes": self.total_bytes,
+            "progressPercent": progress_percent,
             "speedBps": self.speed_bps,
             "etaSeconds": self.eta_seconds,
             "error": self.error,

@@ -166,6 +166,9 @@ class PoolRoutingTests(unittest.TestCase):
         self.assertEqual(pool_for_capability("provider.chat.stream"), "provider_io")
         self.assertEqual(pool_for_capability("provider.market.fetch"), "provider_io")
         self.assertEqual(pool_for_capability("provider.hf.list"), "provider_io")
+        self.assertEqual(pool_for_capability("provider.alpaca.paper"), "provider_io")
+        self.assertEqual(pool_for_capability("model_download.start"), "model_download")
+        self.assertEqual(pool_for_capability("mcp.call"), "mcp_execution")
 
     def test_domain_jobs_not_stolen_by_provider_prefix(self) -> None:
         self.assertEqual(pool_for_capability("research.advance"), "research")
@@ -176,17 +179,25 @@ class PoolRoutingTests(unittest.TestCase):
 
     def test_catalog_contains_provider_io(self) -> None:
         self.assertIn("provider_io", POOL_CATALOG)
+        self.assertIn("model_download", POOL_CATALOG)
+        self.assertIn("mcp_execution", POOL_CATALOG)
         defn = POOL_CATALOG["provider_io"]
         self.assertEqual(defn.default_count, 2)
         self.assertIn("NETWORK_BOUND", defn.resource_classes)
         self.assertTrue(defn.entrypoint.endswith("provider_io"))
+        self.assertEqual(POOL_CATALOG["model_download"].default_count, 1)
 
     def test_external_capabilities_include_provider(self) -> None:
         self.assertIn("provider.http", EXTERNAL_WORKER_CAPABILITIES)
         self.assertIn("provider.chat.complete", EXTERNAL_WORKER_CAPABILITIES)
+        self.assertIn("provider.alpaca.paper", EXTERNAL_WORKER_CAPABILITIES)
+        self.assertIn("model_download.start", EXTERNAL_WORKER_CAPABILITIES)
+        self.assertIn("mcp.call", EXTERNAL_WORKER_CAPABILITIES)
         catalog = build_default_catalog()
         self.assertIsNotNone(catalog.get("provider.http"))
         self.assertIsNotNone(catalog.get("provider.chat.stream"))
+        self.assertIsNotNone(catalog.get("model_download.start"))
+        self.assertIsNotNone(catalog.get("mcp.call"))
 
 
 class PolicyTests(unittest.TestCase):

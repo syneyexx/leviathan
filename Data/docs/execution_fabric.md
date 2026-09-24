@@ -81,17 +81,33 @@ Pool workers must not import `Data.backend.main` (architecture tests enforce thi
 ### Provider I/O (`provider_io`)
 
 Outbound external API / SaaS work (remote OpenAI-compatible chat, bounded HTTP,
-market OHLCV fetch, HF dataset *listing*) runs in the `provider_io` pool under the
-same WorkerSupervisor. Default count: 2 (`LEVIATHAN_WORKERS_POOL_PROVIDER_IO_COUNT`).
+market OHLCV fetch, Alpaca paper trading, HF dataset *listing*) runs in the
+`provider_io` pool under the same WorkerSupervisor. Default count: 2
+(`LEVIATHAN_WORKERS_POOL_PROVIDER_IO_COUNT`).
 
 - Control Plane submits durable jobs via `Data.modules.provider_io.facade.ProviderExecutionClient`
 - Workers own process-local HTTP clients, retries, circuits, and stream events
 - Secrets use `credential_ref` / ephemeral file refs — never raw keys in job JSON
 - Streaming deltas: `GET /api/jobs/{id}/provider-stream` (bounded SQLite event channel)
 - Bulk HF dataset downloads remain in the **dataset** worker (not provider_io)
+- Bulk model downloads remain in the **model_download** worker (not provider_io)
 - Local model residency remains Model Control Plane (not provider_io)
+- When provider_io workers are unavailable, production paths raise
+  `PROVIDER_EXECUTION_UNAVAILABLE` — they do **not** fall back to Control Plane HTTP
 
 Provider health ≠ worker health. An open circuit for one SaaS must not restart workers.
+
+### Model download (`model_download`)
+
+Heavy Hugging Face / Ollama model acquisition runs in the `model_download` pool
+(default count: 1). Control Plane validates and enqueues; workers own transfer,
+resume (`.part` + Range), verification, progress, and cancellation.
+
+### MCP execution (`mcp_execution`)
+
+Long `tools/call` execution prefers the `mcp_execution` pool when API runners
+are externalized. Connect / handshake / `tools/list` / health remain Control
+Plane control traffic on `McpBridge`.
 
 ## Knowledge commit
 

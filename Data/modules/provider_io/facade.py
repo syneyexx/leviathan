@@ -90,6 +90,7 @@ class ProviderExecutionClient:
             "provider.chat.complete",
             "provider.chat.stream",
             "provider.market.fetch",
+            "provider.alpaca.paper",
             "provider.hf.list",
         }
         if cap_id not in known:

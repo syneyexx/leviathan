@@ -702,19 +702,32 @@ class MarketSimControlPlane:
         limit: int = 500,
     ) -> dict[str, Any]:
         self._require_enabled()
-        use_provider_io = False
-        if self._runners_externalized() and self.job_runtime is not None:
-            try:
-                from Data.modules.provider_io.readiness import provider_io_workers_ready
+        # Production: never fall back to Control Plane HTTP when workers are the
+        # execution owner. Explicit PROVIDER_EXECUTION_UNAVAILABLE instead.
+        from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
+        from Data.modules.provider_io.facade import ProviderExecutionClient
+        from Data.modules.provider_io.readiness import provider_io_workers_ready
 
-                db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
-                use_provider_io = provider_io_workers_ready(db_path)
-            except Exception:  # noqa: BLE001
-                use_provider_io = False
-        if use_provider_io:
-            from Data.modules.provider_io.errors import ProviderError
-            from Data.modules.provider_io.facade import ProviderExecutionClient
-
+        if not self._runners_externalized():
+            # Explicit non-production / legacy in-process mode only.
+            result = self.providers.import_to_csv(
+                provider_id, symbol, timeframe, self.data.markets_root, limit=limit
+            )
+            executed_via = "control_plane_legacy_inline"
+        else:
+            if self.job_runtime is None:
+                raise MarketSimError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                    "job_runtime not bound; refusing Control Plane market fetch fallback",
+                    http_status=503,
+                )
+            db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+            if not provider_io_workers_ready(db_path):
+                raise MarketSimError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                    "provider_io workers unavailable; refusing Control Plane market fetch fallback",
+                    http_status=503,
+                )
             client = ProviderExecutionClient(self.job_runtime)
             try:
                 exec_result = client.submit_and_wait(
@@ -743,10 +756,7 @@ class MarketSimControlPlane:
                 code = (exec_result.error or {}).get("code") or "PROVIDER_UNAVAILABLE"
                 raise MarketSimError(str(code), str(err), http_status=502)
             result = dict(exec_result.structured)
-        else:
-            result = self.providers.import_to_csv(
-                provider_id, symbol, timeframe, self.data.markets_root, limit=limit
-            )
+            executed_via = "provider_io"
         source = self.data.register_file(
             result["relative_path"],
             symbol=result["symbol"],
@@ -761,7 +771,7 @@ class MarketSimControlPlane:
             "kind": "ohlcv",
             "family": infer_family(symbol).value,
             "not_orderbook": True,
-            "executed_via": "provider_io" if use_provider_io else "control_plane",
+            "executed_via": executed_via,
         }
         source.updated_at = utc_now()
         self.store.upsert_source(source)
@@ -774,7 +784,13 @@ class MarketSimControlPlane:
 
     def _paper_broker(self, broker_id: str = "local_paper") -> Any:
         if broker_id not in self._paper_brokers:
-            self._paper_brokers[broker_id] = build_paper_broker(broker_id)
+            self._paper_brokers[broker_id] = build_paper_broker(
+                broker_id, job_runtime=self.job_runtime
+            )
+        else:
+            broker = self._paper_brokers[broker_id]
+            if hasattr(broker, "bind_job_runtime"):
+                broker.bind_job_runtime(self.job_runtime)
         return self._paper_brokers[broker_id]
 
     def start_paper_session(
