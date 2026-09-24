@@ -119,7 +119,7 @@ NEURO_RECIPES: tuple[TrainingRecipe, ...] = (
         objective="synthetic_reasoning",
         loss="NLL+grounding",
         formulation="Generate (question, grounded steps, citations); discard samples failing Verification",
-        data_sources=("D:/ModelData", "knowledge_v2"),
+        data_sources=("ModelData", "knowledge_v2"),
         requires_verification=True,
         freezes_base_model=True,
     ),

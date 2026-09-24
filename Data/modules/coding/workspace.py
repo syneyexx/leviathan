@@ -73,7 +73,7 @@ def resolve_root(
     env = os.getenv("LEVIATHAN_CODING_WORKSPACE")
     if env and env.strip():
         return _as_operator_path(env.strip(), project_root=project_root)
-    return _as_operator_path("D:/leviathan/codingworkspace", project_root=project_root)
+    return _as_operator_path("codingworkspace", project_root=project_root)
 
 
 def _as_operator_path(text: str, *, project_root: Path | None = None) -> Path:
