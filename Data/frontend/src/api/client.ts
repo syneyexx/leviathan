@@ -355,10 +355,13 @@ export const api = {
     options: ChatOptions,
     handlers: {
       onMeta?: (data: Record<string, unknown>) => void;
-      onToken?: (text: string, model?: string) => void;
+      onToken?: (text: string, model?: string, meta?: { sequence?: number; kind?: string }) => void;
+      onSnapshot?: (text: string, model?: string, meta?: { sequence?: number; kind?: string }) => void;
       onDone?: (data: ChatResponse) => void;
       onError?: (detail: string) => void;
+      onCancelled?: (data: Record<string, unknown>) => void;
     },
+    fetchInit?: { signal?: AbortSignal },
   ): Promise<ChatResponse> {
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -373,6 +376,7 @@ export const api = {
         ...(options.modelId ? { model_id: options.modelId } : {}),
         ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
       }),
+      signal: fetchInit?.signal,
     });
 
     const contentType = (response.headers.get("content-type") || "").toLowerCase();
@@ -402,9 +406,13 @@ export const api = {
     let buffer = "";
     let donePayload: ChatResponse | null = null;
     let eventName = "message";
+    const seenSequences = new Set<string>();
+    let finalized = false;
 
     const flushBlock = (block: string) => {
-      const lines = block.split("\n");
+      // Normalize CRLF → LF so Windows-framed SSE parses correctly.
+      const normalized = block.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const lines = normalized.split("\n");
       let dataLines: string[] = [];
       for (const line of lines) {
         if (line.startsWith("event:")) {
@@ -420,15 +428,36 @@ export const api = {
       } catch {
         return;
       }
+      const seq = typeof parsed.sequence === "number" ? parsed.sequence : undefined;
+      const dedupeKey = seq !== undefined ? `${eventName}:${seq}` : undefined;
+      if (dedupeKey) {
+        if (seenSequences.has(dedupeKey)) {
+          eventName = "message";
+          return;
+        }
+        seenSequences.add(dedupeKey);
+      }
+      const text = typeof parsed.text === "string" ? parsed.text : "";
+      const model = typeof parsed.model === "string" ? parsed.model : undefined;
+      const kind = typeof parsed.kind === "string" ? parsed.kind : eventName;
       if (eventName === "meta") {
         handlers.onMeta?.(parsed);
-      } else if (eventName === "token") {
-        const text = typeof parsed.text === "string" ? parsed.text : "";
-        const model = typeof parsed.model === "string" ? parsed.model : undefined;
-        if (text) handlers.onToken?.(text, model);
+      } else if (eventName === "token" || eventName === "delta") {
+        // Prefer delta events; ignore duplicate token mirrors with same sequence.
+        if (text) handlers.onToken?.(text, model, { sequence: seq, kind });
+      } else if (eventName === "snapshot" || eventName === "replace") {
+        if (text) handlers.onSnapshot?.(text, model, { sequence: seq, kind: eventName });
       } else if (eventName === "done") {
+        if (finalized) {
+          eventName = "message";
+          return;
+        }
+        finalized = true;
         donePayload = parsed as unknown as ChatResponse;
         handlers.onDone?.(donePayload);
+      } else if (eventName === "cancelled") {
+        handlers.onCancelled?.(parsed);
+        throw new ApiError(499, typeof parsed.reason === "string" ? parsed.reason : "cancelled");
       } else if (eventName === "error") {
         const detail =
           typeof parsed.detail === "string" ? parsed.detail : "stream error";
@@ -442,12 +471,15 @@ export const api = {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      let sep = buffer.indexOf("\n\n");
+      // Accept both LF and CRLF event separators.
+      let sep = buffer.search(/\r?\n\r?\n/);
       while (sep >= 0) {
         const block = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
+        const match = buffer.slice(sep).match(/^\r?\n\r?\n/);
+        const skip = match ? match[0].length : 2;
+        buffer = buffer.slice(sep + skip);
         flushBlock(block);
-        sep = buffer.indexOf("\n\n");
+        sep = buffer.search(/\r?\n\r?\n/);
       }
     }
     if (buffer.trim()) {
@@ -2096,6 +2128,16 @@ export const api = {
     return request("/api/settings/behavior-profile/system-prompt", {
       method: "PUT",
       body: JSON.stringify({ system_prompt: systemPrompt }),
+    });
+  },
+
+  patchBehaviorProfile(values: Record<string, unknown>): Promise<{
+    profile: Record<string, unknown>;
+    effective: Record<string, unknown>;
+  }> {
+    return request("/api/settings/behavior-profile", {
+      method: "PATCH",
+      body: JSON.stringify({ values }),
     });
   },
 

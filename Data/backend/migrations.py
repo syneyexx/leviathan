@@ -3050,6 +3050,15 @@ def _m39_execution_fabric_hardening(conn: sqlite3.Connection) -> None:
         _add_column("supervisor_leases", name, ddl)
 
 
+def _m40_behavior_settings_json(conn: sqlite3.Connection) -> None:
+    """Extended BehaviorProfile settings blob (identity/language/retrieval/generation)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(behavior_profiles)").fetchall()}
+    if "settings_json" not in cols:
+        conn.execute(
+            "ALTER TABLE behavior_profiles ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'"
+        )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3094,6 +3103,7 @@ MIGRATIONS: Sequence[Migration] = (
         name="execution_fabric_hardening",
         apply=_m39_execution_fabric_hardening,
     ),
+    Migration(version=40, name="behavior_settings_json", apply=_m40_behavior_settings_json),
 )
 
 

@@ -407,11 +407,15 @@ export function ChatPage() {
 
   async function sendMessage() {
     const text = composer.trim();
-    if (!text || busy) return;
+    if (!text || busy || busyRef.current) return;
+    busyRef.current = true;
 
     let activeId = conversationId;
     if (!activeId) {
-      if (creatingRef.current) return;
+      if (creatingRef.current) {
+        busyRef.current = false;
+        return;
+      }
       setCreating(true);
       creatingRef.current = true;
       try {
@@ -425,6 +429,7 @@ export function ChatPage() {
         toast(`Could not create chat: ${error instanceof Error ? error.message : "unknown error"}`);
         creatingRef.current = false;
         setCreating(false);
+        busyRef.current = false;
         return;
       } finally {
         creatingRef.current = false;
@@ -440,8 +445,10 @@ export function ChatPage() {
     ]);
     setBusy(true);
     setLastTurn((prev) => ({ ...prev, streaming: "streaming" }));
+    const abort = new AbortController();
 
     try {
+      let doneOnce = false;
       const data = await api.chatStream(
         text,
         {
@@ -463,20 +470,41 @@ export function ChatPage() {
               return copy;
             });
           },
+          onSnapshot: (snapshotText) => {
+            setMessages((current) => {
+              const copy = [...current];
+              const last = copy[copy.length - 1];
+              if (last?.pending && last.role === "assistant") {
+                copy[copy.length - 1] = {
+                  ...last,
+                  content: snapshotText,
+                };
+              }
+              return copy;
+            });
+          },
+          onDone: () => {
+            doneOnce = true;
+          },
         },
+        { signal: abort.signal },
       );
       setConversationId(data.conversation_id);
       syncUrl(data.conversation_id);
       setMessages((current) => {
         const withoutPending = current.filter((item) => !item.pending);
-        return [
-          ...withoutPending,
-          {
-            role: "assistant",
-            content: data.assistant_message.content,
-            created_at: data.assistant_message.created_at,
-          },
-        ];
+        // Reconcile once: replace pending with canonical persisted assistant turn.
+        if (doneOnce || data.assistant_message) {
+          return [
+            ...withoutPending,
+            {
+              role: "assistant",
+              content: data.assistant_message.content,
+              created_at: data.assistant_message.created_at,
+            },
+          ];
+        }
+        return withoutPending;
       });
       const degraded = Boolean(data.truth?.streaming_degraded);
       const cog = data.cognition && typeof data.cognition === "object" ? data.cognition : null;
@@ -527,6 +555,7 @@ export function ChatPage() {
         await refreshConversations(null);
       }
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }

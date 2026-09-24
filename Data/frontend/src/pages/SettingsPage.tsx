@@ -107,6 +107,27 @@ export function SettingsPage() {
   const [systemPromptDefault, setSystemPromptDefault] = useState("");
   const [systemPromptBusy, setSystemPromptBusy] = useState(false);
   const [systemPromptHash, setSystemPromptHash] = useState<string | null>(null);
+  const [behaviorDraft, setBehaviorDraft] = useState({
+    assistant_display_name: "",
+    identity_description: "",
+    language_mode: "auto_follow_user",
+    language_fallback: "en",
+    reasoning_mode_default: "standard",
+    tool_use_style: "balanced",
+    retrieval_mode: "auto",
+    retrieval_top_k: 8,
+    retrieval_relevance_threshold: 0.35,
+    retrieval_deep_recall: true,
+    retrieval_debug_provenance: false,
+    memory_enabled: true,
+    memory_top_k: 5,
+    temperature: "" as string | number,
+    top_p: "" as string | number,
+    max_output_tokens: "" as string | number,
+    stream_enabled: true,
+    workers_profile_enabled: true,
+    workers_autostart: false,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -143,6 +164,32 @@ export function SettingsPage() {
         setSystemPrompt(String(profile.system_prompt ?? ""));
         setSystemPromptDefault(String(profile.default_system_prompt ?? ""));
         setSystemPromptHash(typeof profile.hash === "string" ? profile.hash : null);
+        const retrieval = (profile.retrieval || {}) as Record<string, unknown>;
+        const memory = (profile.memory || {}) as Record<string, unknown>;
+        const generation = (profile.generation || {}) as Record<string, unknown>;
+        const workers = (profile.workers || {}) as Record<string, unknown>;
+        setBehaviorDraft({
+          assistant_display_name: String(profile.assistant_display_name ?? ""),
+          identity_description: String(profile.identity_description ?? ""),
+          language_mode: String(profile.language_mode ?? "auto_follow_user"),
+          language_fallback: String(profile.language_fallback ?? "en"),
+          reasoning_mode_default: String(profile.reasoning_mode_default ?? "standard"),
+          tool_use_style: String(profile.tool_use_style ?? "balanced"),
+          retrieval_mode: String(retrieval.mode ?? "auto"),
+          retrieval_top_k: Number(retrieval.top_k ?? 8),
+          retrieval_relevance_threshold: Number(retrieval.relevance_threshold ?? 0.35),
+          retrieval_deep_recall: Boolean(retrieval.deep_recall ?? true),
+          retrieval_debug_provenance: Boolean(retrieval.debug_provenance ?? false),
+          memory_enabled: Boolean(memory.enabled ?? true),
+          memory_top_k: Number(memory.top_k ?? 5),
+          temperature: generation.temperature == null ? "" : Number(generation.temperature),
+          top_p: generation.top_p == null ? "" : Number(generation.top_p),
+          max_output_tokens:
+            generation.max_output_tokens == null ? "" : Number(generation.max_output_tokens),
+          stream_enabled: Boolean(generation.stream_enabled ?? true),
+          workers_profile_enabled: Boolean(workers.profile_enabled ?? true),
+          workers_autostart: Boolean(workers.autostart ?? false),
+        });
       } catch {
         /* behavior profile optional during partial boots */
       }
@@ -381,11 +428,160 @@ export function SettingsPage() {
 
             {activeId === "llm_gedrag" ? (
               <article className="lv-panel lv-settings-card span-2">
-                <div className="lv-section-label">System Prompt (BehaviorProfile)</div>
+                <div className="lv-section-label">Assistant / Behavior</div>
                 <p className="lv-muted">
-                  Operator-editable LEVIATHAN behavioral identity. This is behavior, not authority — it cannot
-                  bypass ExecutionGateway, approvals, or workspace confinement.
+                  Operator-editable identity, language, generation, Brain retrieval, memory, and worker
+                  knobs. Behavior is not authority — it cannot bypass ExecutionGateway, approvals, or
+                  workspace confinement. Behavior-only changes apply on the next chat turn without restart.
                 </p>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: "0.75rem",
+                    marginTop: "0.75rem",
+                  }}
+                >
+                  <label>
+                    Assistant name
+                    <input
+                      className="lv-input"
+                      value={behaviorDraft.assistant_display_name}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, assistant_display_name: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Language mode
+                    <select
+                      className="lv-input"
+                      value={behaviorDraft.language_mode}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, language_mode: e.target.value }))
+                      }
+                    >
+                      <option value="auto_follow_user">Auto-follow user</option>
+                      <option value="explicit">Explicit language</option>
+                      <option value="custom">Custom policy</option>
+                    </select>
+                  </label>
+                  <label>
+                    Fallback language
+                    <input
+                      className="lv-input"
+                      value={behaviorDraft.language_fallback}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, language_fallback: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Reasoning default
+                    <input
+                      className="lv-input"
+                      value={behaviorDraft.reasoning_mode_default}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, reasoning_mode_default: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Tool style
+                    <input
+                      className="lv-input"
+                      value={behaviorDraft.tool_use_style}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, tool_use_style: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Retrieval mode
+                    <select
+                      className="lv-input"
+                      value={behaviorDraft.retrieval_mode}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, retrieval_mode: e.target.value }))
+                      }
+                    >
+                      <option value="auto">auto</option>
+                      <option value="forced_on">forced_on</option>
+                      <option value="forced_off">forced_off</option>
+                    </select>
+                  </label>
+                  <label>
+                    Retrieval top_k
+                    <input
+                      className="lv-input"
+                      type="number"
+                      value={behaviorDraft.retrieval_top_k}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({
+                          ...d,
+                          retrieval_top_k: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Relevance threshold
+                    <input
+                      className="lv-input"
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      max={1}
+                      value={behaviorDraft.retrieval_relevance_threshold}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({
+                          ...d,
+                          retrieval_relevance_threshold: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Temperature
+                    <input
+                      className="lv-input"
+                      type="number"
+                      step="0.01"
+                      value={behaviorDraft.temperature}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, temperature: e.target.value }))
+                      }
+                      placeholder="provider default"
+                    />
+                  </label>
+                  <label>
+                    Max output tokens
+                    <input
+                      className="lv-input"
+                      type="number"
+                      value={behaviorDraft.max_output_tokens}
+                      onChange={(e) =>
+                        setBehaviorDraft((d) => ({ ...d, max_output_tokens: e.target.value }))
+                      }
+                      placeholder="provider default"
+                    />
+                  </label>
+                </div>
+                <label style={{ display: "block", marginTop: "0.75rem" }}>
+                  Identity description
+                  <textarea
+                    className="lv-input"
+                    rows={2}
+                    value={behaviorDraft.identity_description}
+                    onChange={(e) =>
+                      setBehaviorDraft((d) => ({ ...d, identity_description: e.target.value }))
+                    }
+                    style={{ width: "100%", font: "inherit" }}
+                  />
+                </label>
+                <div className="lv-section-label" style={{ marginTop: "1rem" }}>
+                  System Prompt
+                </div>
                 <textarea
                   className="lv-input"
                   rows={6}
@@ -403,21 +599,49 @@ export function SettingsPage() {
                       void (async () => {
                         setSystemPromptBusy(true);
                         try {
-                          const res = await api.putBehaviorSystemPrompt(systemPrompt);
+                          const values: Record<string, unknown> = {
+                            system_prompt: systemPrompt,
+                            assistant_display_name: behaviorDraft.assistant_display_name,
+                            identity_description: behaviorDraft.identity_description,
+                            language_mode: behaviorDraft.language_mode,
+                            language_fallback: behaviorDraft.language_fallback,
+                            reasoning_mode_default: behaviorDraft.reasoning_mode_default,
+                            tool_use_style: behaviorDraft.tool_use_style,
+                            retrieval_mode: behaviorDraft.retrieval_mode,
+                            retrieval_top_k: behaviorDraft.retrieval_top_k,
+                            retrieval_relevance_threshold: behaviorDraft.retrieval_relevance_threshold,
+                            retrieval_deep_recall: behaviorDraft.retrieval_deep_recall,
+                            retrieval_debug_provenance: behaviorDraft.retrieval_debug_provenance,
+                            memory_enabled: behaviorDraft.memory_enabled,
+                            memory_top_k: behaviorDraft.memory_top_k,
+                            stream_enabled: behaviorDraft.stream_enabled,
+                            workers_profile_enabled: behaviorDraft.workers_profile_enabled,
+                            workers_autostart: behaviorDraft.workers_autostart,
+                          };
+                          if (behaviorDraft.temperature !== "") {
+                            values.temperature = Number(behaviorDraft.temperature);
+                          }
+                          if (behaviorDraft.top_p !== "") {
+                            values.top_p = Number(behaviorDraft.top_p);
+                          }
+                          if (behaviorDraft.max_output_tokens !== "") {
+                            values.max_output_tokens = Number(behaviorDraft.max_output_tokens);
+                          }
+                          const res = await api.patchBehaviorProfile(values);
                           const effective = res.effective || res.profile || {};
                           setSystemPrompt(String(effective.system_prompt ?? systemPrompt));
                           setSystemPromptHash(typeof effective.hash === "string" ? effective.hash : null);
-                          toast("System prompt saved");
-                          setStatusLine("BehaviorProfile system prompt updated");
+                          toast("Behavior settings saved");
+                          setStatusLine("BehaviorProfile updated (live for next turn)");
                         } catch (error) {
-                          toast(error instanceof ApiError ? error.message : "Failed to save system prompt");
+                          toast(error instanceof ApiError ? error.message : "Failed to save behavior");
                         } finally {
                           setSystemPromptBusy(false);
                         }
                       })();
                     }}
                   >
-                    Save system prompt
+                    Save behavior settings
                   </button>
                   <button
                     type="button"
@@ -431,9 +655,10 @@ export function SettingsPage() {
                           const effective = res.effective || res.profile || {};
                           setSystemPrompt(String(effective.system_prompt ?? systemPromptDefault));
                           setSystemPromptHash(typeof effective.hash === "string" ? effective.hash : null);
-                          toast("System prompt reset to default");
+                          toast("Behavior reset to canonical seed");
+                          await load();
                         } catch (error) {
-                          toast(error instanceof ApiError ? error.message : "Failed to reset system prompt");
+                          toast(error instanceof ApiError ? error.message : "Failed to reset behavior");
                         } finally {
                           setSystemPromptBusy(false);
                         }
@@ -444,7 +669,7 @@ export function SettingsPage() {
                   </button>
                 </div>
                 <p className="lv-muted" style={{ marginTop: "0.5rem" }}>
-                  Effective hash: {systemPromptHash ?? "—"}
+                  Effective hash: {systemPromptHash ?? "—"} · applies live (no restart)
                 </p>
               </article>
             ) : null}

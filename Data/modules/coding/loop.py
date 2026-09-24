@@ -575,15 +575,17 @@ class CodingLoop:
     def _behavior_prompt(self) -> str:
         if self.behavior_store is not None:
             try:
-                return self.behavior_store.get_effective().system_prompt
+                return self.behavior_store.get_effective().composed_system_prompt()
             except Exception:  # noqa: BLE001
                 pass
         try:
-            from Data.modules.settings.behavior import DEFAULT_BEHAVIOR_PROFILE
+            from Data.modules.settings.seed import SEED_SYSTEM_PROMPT
 
-            return DEFAULT_BEHAVIOR_PROFILE.system_prompt
+            return SEED_SYSTEM_PROMPT
         except Exception:  # noqa: BLE001
-            return "You are LEVIATHAN, a local AI control-plane assistant."
+            from Data.modules.settings.seed import SEED_ASSISTANT_DISPLAY_NAME
+
+            return f"You are {SEED_ASSISTANT_DISPLAY_NAME}."
 
     def _gather_brain_context(self, session: CodingSession) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
         meta = dict(session.metadata or {})
