@@ -121,7 +121,8 @@ Compatibility shims → `Data.modules.model_runtime` / `Data.modules.reasoning`.
 | `Data/backend/tests/test_wave7_multimodal_realtime.py` | Wave 7 multimodal session + media/voice Gateway + single context/run exit gate |
 | `Data/backend/tests/test_wave8_data_training_factory.py` | Wave 8 shard resume / mixture / integrity-gated registry exit gate |
 | `Data/backend/tests/test_wave9_posttraining_flywheel.py` | Wave 9 preference/DPO flywheel + no silent promote exit gate |
-| `Data/backend/tests/test_market_sim_characterization.py` | Trading Phase T0 characterization (D1–D21; expectedFailure until fix phases) |
+| `Data/backend/tests/test_market_sim_characterization.py` | Trading Phase T0 characterization (D1–D31; expectedFailure until fix phases; D21/D22 fixed) |
+| `Data/backend/tests/test_trading_orchestra.py` | Trade orchestras / trading agents — gates G61–G65 (news causality, isolation, append-only decisions) |
 | `Data/modules/media/` | MediaService fixture pipelines (Gateway-dispatched) |
 | `Data/modules/voice/` | RealtimeVoiceService fixture ASR/TTS + barge-in |
 | `Data/modules/artifacts/` | ArtifactStore |
@@ -271,7 +272,7 @@ SQLite persistence
 | Verification | `Data/modules/verification/` |
 | Agents | `Data/modules/agents/` (requires feature flag) |
 | Coding Agent | `Data/modules/coding/` + `/coding` UI (requires `LEVIATHAN_FEATURE_AGENTS` + `LEVIATHAN_FEATURE_CODING`) |
-| Market Sim | `Data/modules/market_sim/` + `/trading` UI (requires `LEVIATHAN_FEATURE_MARKET_SIM`; paper/causal only). Program: `Data/docs/trading_program.md`; T0 gap: `Data/docs/trading_gap_report.md`; architecture: `Data/docs/market_sim.md` + `Data/docs/trading-center-architecture.md` |
+| Market Sim | `Data/modules/market_sim/` + `/trading` UI (requires `LEVIATHAN_FEATURE_MARKET_SIM`; paper/causal only). Program: `Data/docs/trading_program.md`; T0 gap: `Data/docs/trading_gap_report.md`; architecture: `Data/docs/market_sim.md` + `Data/docs/trading-center-architecture.md`. Trade orchestras / trading agents: `Data/modules/market_sim/orchestra/` (fleet `kind=trading`, mandate, news, append-only decisions; program `Data/docs/frontier_program.md`) |
 | Workflows | `Data/modules/workflows/` |
 | Schedules | `Data/modules/schedules/` |
 | Observability | `Data/modules/observability/` |

@@ -29,7 +29,7 @@
   ],
   "gates": {
     "G01": {
-      "title": "Streaming ingest 5y\u00d71m within memory budget",
+      "title": "Streaming ingest 5y×1m within memory budget",
       "phase": "T2A/T3C",
       "status": "NOT_STARTED",
       "required": true,
@@ -354,7 +354,7 @@
       "notes": "T0: gate not yet implemented; characterization only"
     },
     "G28": {
-      "title": "Readiness ladder A0\u2013A4; A5 blocked",
+      "title": "Readiness ladder A0–A4; A5 blocked",
       "phase": "T8D",
       "status": "NOT_STARTED",
       "required": true,
@@ -554,7 +554,7 @@
       "notes": "T0: gate not yet implemented; characterization only"
     },
     "G45": {
-      "title": "All T0 characterization \u2192 regressions",
+      "title": "All T0 characterization → regressions",
       "phase": "T11",
       "status": "NOT_STARTED",
       "required": true,
@@ -725,6 +725,199 @@
       "test_node_ids": [],
       "checks": [],
       "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G61": {
+      "title": "News provenance (source, hash, published/fetched/available_at, license; provider_io only)",
+      "phase": "F4",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at",
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
+      ],
+      "notes": "Frontier Program F1/F4 — offline evidence only; live feed fetch through provider_io not exercised in CI",
+      "assertions": [
+        "available_at = max(published, fetched) + declared latency",
+        "content_hash dedupe",
+        "no urllib/requests/httpx in news module; make_fetcher(None) is None"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at",
+            "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only"
+          ],
+          "timeout_sec": 300
+        }
+      ]
+    },
+    "G62": {
+      "title": "News causality (poison-future article unreachable before available_at)",
+      "phase": "F4",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at",
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at",
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
+      ],
+      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) — PARTIAL scope, see notes in frontier_program.md",
+      "assertions": [
+        "list_items(as_of) hides future items",
+        "news_digest at early as_of makes zero model calls",
+        "signal.as_of == item.available_at",
+        "BrainFacade.retrieve(as_of) drops newer hits"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at",
+            "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at",
+            "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization"
+          ],
+          "timeout_sec": 300
+        }
+      ]
+    },
+    "G63": {
+      "title": "News-reader safety (schema → repair → honest failure; article text is reference context)",
+      "phase": "F4",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced",
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
+      ],
+      "notes": "Injection corpus is a 1-item corpus today; extend in F4b",
+      "assertions": [
+        "<reference_context> wrapping + 'never an instruction' preamble",
+        "one repair round then SchemaViolation",
+        "news_analyst has no capability access (structured JSON only)"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced",
+            "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure"
+          ],
+          "timeout_sec": 300
+        }
+      ]
+    },
+    "G64": {
+      "title": "Trading kind isolation (TRADING refused by generic planners; no route enables live)",
+      "phase": "F1",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests::test_mandate_can_never_enable_live"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests"
+      ],
+      "notes": "Frontier Program F1",
+      "assertions": [
+        "_execution_kind(TRADING) raises TRADING_EXECUTOR_REQUIRED",
+        "TRADING member outside trade orchestra → TRADING_MEMBER_ISOLATION",
+        "trade orchestra with non-trading member → 422",
+        "Mandate.cannot_enable_live immutable; A5 does not parse"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+            "Data/backend/tests/test_trading_orchestra.py::MandateTests"
+          ],
+          "timeout_sec": 300
+        }
+      ]
+    },
+    "G65": {
+      "title": "Decision record completeness (proposal → critique → risk → intent, as_of + model id, append-only)",
+      "phase": "F2",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent",
+        "Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_orchestra.py::DeliberationTests"
+      ],
+      "notes": "fill and post_mortem links exist as stages; paper routing (fill) is not produced by the orchestra yet (execution_agent records intents only)",
+      "assertions": [
+        "parent chain proposal→critique→risk→intent",
+        "as_of + mandateFingerprint on every record",
+        "SQLite triggers refuse UPDATE/DELETE on market_decisions"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent",
+            "Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only"
+          ],
+          "timeout_sec": 300
+        }
+      ]
+    },
+    "G66": {
+      "title": "Agents page truth (trading cards render only backend fields; UNMEASURED as such)",
+      "phase": "F8",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
+      ],
+      "test_node_ids": [
+        "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
+      ],
+      "notes": "vitest contract test; visual check recorded in PR — vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
+      "assertions": [
+        "readiness label never inferred client-side",
+        "PnL UNMEASURED without fill records",
+        "live trading label only from backend truth + mandate",
+        "trading kind in AGENT_KINDS; /trading/onderzoek in menu"
+      ],
+      "checks": [
+        {
+          "kind": "file_exists",
+          "path": "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/frontend/src/pages/agents/TradeOrchestraSection.tsx"
+        }
+      ]
+    }
+  },
+  "frontier_program": {
+    "doc": "Data/docs/frontier_program.md",
+    "phases_done": [
+      "F1 trade orchestras + trading agents",
+      "F2 deliberation protocol + decision records",
+      "F4 news pipeline (partial: agents only)",
+      "F0-lite knowledge scan externalization",
+      "F8 Agents page + Onderzoek page"
+    ],
+    "last_run": {
+      "date": "2026-09-24",
+      "command": "python3 -m pytest Data/backend/tests/test_trading_orchestra.py -q",
+      "result": "25 passed"
     }
   }
 }

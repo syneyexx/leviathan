@@ -1,6 +1,17 @@
-# LEVIATHAN FRONTIER PROGRAM — A to Z (proposal, awaiting operator approval)
+# LEVIATHAN FRONTIER PROGRAM — A to Z
 
-> Status: **PROPOSAL — no feature code.** Written after reading `Data/backend/main.py`,
+> Status: **APPROVED 2026-09-24 — building.** Delivered on branch `cursor/frontier-program-plan-1e6d`:
+> F1 (trade orchestras + trading agents on the fleet, isolation G64), F2 (deliberation protocol,
+> deterministic risk authority, append-only decision records G65, migration 43), F4 partial (news
+> pipeline via provider_io with causal `available_at`, `BrainFacade.retrieve(as_of)`, G61–G63),
+> F0-lite (`knowledge.ingest_scan` externalized for `/api/knowledge/ingest/scan` + `/api/neuro/absorb`;
+> `market_sim.news.poll` on the market_sim pool), F8 (Agents page section 9 + `/trading/onderzoek`, G66).
+> Evidence: `Data/backend/tests/test_trading_orchestra.py` (25 passed),
+> `python3 scripts/verify_trading_100.py --run-tests` (G61–G66 PASS). Still open: F3 kernel v2 / sealed
+> evaluation (readiness stays `UNMEASURED`), F5 strategy learning loop, F6 research campaigns, F7 paper
+> fills from orchestra intents, remaining F0 routes (`agents/execute`, `agents/multi`, `neuro/soak` — see §1).
+>
+> Originally written as a proposal after reading `Data/backend/main.py`,
 > `Data/modules/workers/*`, `Data/modules/market_sim/*`, `Data/modules/agents/*`,
 > `Data/docs/leviathan_system.md`, `execution_fabric.md`, `background-workers.md`,
 > `trading_program.md` (v4), `trading_gap_report.md`, `trading_program_state.md`,

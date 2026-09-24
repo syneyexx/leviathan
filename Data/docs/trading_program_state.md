@@ -78,6 +78,17 @@ Never mark `PASS` without evidence actually run.
 | G59 | NOT_STARTED | — | Typed contracts |
 | G60 | NOT_STARTED | — | Migration posture |
 
+## Frontier Program gates (G61–G66, see `frontier_program.md`)
+
+| Gate | Status | Evidence | Notes |
+|---|---|---|---|
+| G61 | PASS | `test_trading_orchestra.py::NewsPipelineTests` | News provenance; fetch via provider_io only |
+| G62 | PASS | `NewsPipelineTests` + `D22BrainAsOfCharacterization` | Poison-future item invisible; `BrainFacade.retrieve(as_of)`; news reachability limited to trade agents (MarketView not wired) |
+| G63 | PASS | `NewsPipelineTests` | Schema → 1 repair → honest failure; article text is `<reference_context>`; 1-item injection corpus |
+| G64 | PASS | `FleetIsolationTests`, `MandateTests` | `kind=trading` refused by generic planners; isolation both ways; no live level exists |
+| G65 | PASS | `DeliberationTests`, `MigrationAndSchemaTests` | proposal→critique→risk→intent chain, append-only triggers; no fills produced yet |
+| G66 | PASS | `tradingOrchestraContracts.test.ts` | Client renders backend truth only (UNMEASURED, paper, BLOCKED) |
+
 **Live integrations (never PASS offline):** live LLM trading calls, live market feed, live broker — track as `NOT_TESTED_IN_CI` when exercised outside CI.
 
 ---
@@ -136,3 +147,22 @@ See gap report for full evidence. Summary: **28 CONFIRMED, 2 PARTIAL (D19, D26),
 | `pytest …/test_migrations.py -q` | 0 | tracks live head (D21 fixed on main) |
 | `python3 scripts/verify_trading_100.py` | 1 | 60× NOT_STARTED; anti-shortcut ok |
 | Frontend `npm run typecheck` / `npm test` / `lint` / `build` | 0 | typecheck OK; 131 vitest passed; lint warnings only (pre-existing, non-trading); build OK |
+
+### 2026-09-24 — Frontier Program F1/F2/F4(partial)/F0-lite/F8 (branch `cursor/frontier-program-plan-1e6d`)
+
+- Built per `frontier_program.md` after operator approval ("voeg het toe, sloop niks; trading los van chat").
+- **Fleet:** `AgentDefinitionKind.TRADING`; pluggable kind executor (`register_kind_executor`); trade orchestra =
+  `kind=orchestrator role=trade_orchestra`; isolation both ways (G64). Generic/coding/research planners refuse TRADING.
+- **Orchestra package** `Data/modules/market_sim/orchestra/`: `Mandate` (A0–A4, `cannotEnableLive` immutable,
+  loosening approval-gated via `market_sim.mandate.loosen`), `DecisionRecord` (append-only, migration **43**),
+  news feeds/items/signals with causal `available_at`, role executors (signal/news/critic/risk/execution/post-mortem),
+  `TradingModelAdapter` → Model Control Plane (`consumer="trading"`), Tier-0 fallback when the model is unavailable.
+- **Workers:** `market_sim.news.poll` (market_sim pool; fetch via provider_io `provider.http`); `knowledge.ingest_scan`
+  externalized to `knowledge_prepare` for `/api/knowledge/ingest/scan` + `/api/neuro/absorb` (F0-lite).
+- **Brain:** `BrainFacade.retrieve(as_of=...)` (D22 fixed).
+- **API:** `/api/market-sim/orchestras*`, `/api/market-sim/news/*`, `/api/market-sim/decisions`.
+- **Frontend:** Agents page section 9 (orkesten, mandaat, autonomie, gereedheid, leden, beslissingen), `/trading/onderzoek`.
+- Command: `python3 -m pytest Data/backend/tests/test_trading_orchestra.py -q` → **25 passed**.
+- Command: `python3 scripts/verify_trading_100.py --run-tests` → G61–G66 **PASS** (60× NOT_STARTED unchanged; exit 1 by design).
+- Not done (honest): F3 kernel v2 / sealed evaluation (readiness stays UNMEASURED), F5 strategy learning loop,
+  F6 research campaigns, paper fills from orchestra intents (execution_agent records intents only), news → MarketView.
