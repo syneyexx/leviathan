@@ -156,8 +156,6 @@ class DatasetJobRunner:
         return self._run_domain_job(job)
 
     def _execute_linked_domain(self, kernel_job: JobRecord, domain_id: str) -> DatasetJob | None:
-        from Data.modules.jobs.states import JobState
-
         assert self.jobs is not None
         domain = self.store.get_job(domain_id)
         if domain is None:
