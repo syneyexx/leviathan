@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Iterator
@@ -39,6 +40,25 @@ MESSAGES_KEYS = ("messages", "conversations", "dialogue")
 
 # Large JSON arrays above this size use streaming ijson.
 _LARGE_JSON_BYTES = 8 * 1024 * 1024
+
+# Python's default csv field limit is 128 KiB. HF prompt CSVs routinely exceed it.
+
+
+def _ensure_csv_field_size_limit() -> None:
+    """Raise the process-wide csv field size limit for large dataset fields.
+
+    On some Windows builds ``sys.maxsize`` overflows the C long used by
+    ``csv.field_size_limit``; fall back until a value is accepted.
+    """
+    limit = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(limit)
+            return
+        except OverflowError:
+            limit = int(limit / 10)
+            if limit < 128 * 1024:
+                return
 
 
 def _pick(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -359,6 +379,7 @@ def iter_canonical_from_path(
 
     if resolved in {DetectedFormat.CSV, DetectedFormat.TSV}:
         delimiter = "\t" if resolved == DetectedFormat.TSV else ","
+        _ensure_csv_field_size_limit()
         with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
             reader = csv.DictReader(handle, delimiter=delimiter)
             for idx, row in enumerate(reader):

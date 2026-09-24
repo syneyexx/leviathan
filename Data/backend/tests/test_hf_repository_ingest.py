@@ -361,6 +361,47 @@ class ParquetMaterializeTests(unittest.TestCase):
         self.assertEqual(len(lines), 5)
 
 
+class LargeCsvFieldMaterializeTests(unittest.TestCase):
+    """HF prompts.csv often has fields above Python's default 128 KiB csv limit."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_materialize_csv_field_above_default_limit(self) -> None:
+        # Python's default csv.field_size_limit is 131072; use a fixed oversize
+        # so the test stays meaningful even if another test already raised it.
+        oversized = "x" * (131072 + 4096)
+        path = self.root / "prompts.csv"
+        path.write_text(
+            "id,prompt\n"
+            f'1,"{oversized}"\n'
+            '2,"short"\n',
+            encoding="utf-8",
+        )
+        dest = self.root / "canonical.jsonl"
+        outcome = materialize_from_sources(
+            [
+                {
+                    "path": str(path),
+                    "format": "csv",
+                    "split": "train",
+                    "relativePath": "prompts.csv",
+                    "provenance": {"repositoryId": "org/prompts", "relativePath": "prompts.csv"},
+                }
+            ],
+            dest,
+        )
+        self.assertEqual(outcome["rowCount"], 2)
+        lines = dest.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(len(lines), 2)
+        first = json.loads(lines[0])
+        self.assertEqual(len(first.get("text") or ""), len(oversized))
+
+
 class StreamingMaterializeTests(unittest.TestCase):
     def test_does_not_list_entire_iterator(self) -> None:
         """Architectural: materialize consumes an iterator incrementally."""
