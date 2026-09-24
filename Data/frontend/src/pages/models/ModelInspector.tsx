@@ -35,6 +35,7 @@ export function ModelInspector({
   capabilities,
   provider,
   preflight,
+  lastBenchmark,
   tab,
   onTab,
   onSaveProfile,
@@ -51,6 +52,7 @@ export function ModelInspector({
   capabilities: VerifiedCapability[];
   provider: ModelProvider | null;
   preflight: Record<string, unknown> | null;
+  lastBenchmark?: Record<string, unknown> | null;
   tab: Tab;
   onTab: (t: Tab) => void;
   onSaveProfile: (p: ModelProfile, activate: boolean) => Promise<void>;
@@ -360,14 +362,56 @@ export function ModelInspector({
       ) : null}
 
       {tab === "benchmarks" ? (
-        <div className="lv-row-actions">
-          <button className="lv-btn lv-btn-gold" type="button" disabled={busy} onClick={onBenchmark}>
-            Run Quick Benchmark
-          </button>
-          <Link className="lv-btn" to="/training">
-            Open Benchmarks / Training
-          </Link>
+        <div>
+          <div className="lv-row-actions">
+            <button className="lv-btn lv-btn-gold" type="button" disabled={busy} onClick={onBenchmark}>
+              Run Quick Benchmark
+            </button>
+            <Link className="lv-btn" to="/training">
+              Open Benchmarks / Training
+            </Link>
+          </div>
           <p className="lv-muted">Raw metrics only — no automatic “best model” ranking.</p>
+          {lastBenchmark ? (
+            <div className="lv-meta-grid" style={{ marginTop: "0.75rem" }}>
+              <div className="lv-meta-item">
+                <span>Request latency</span>
+                <strong>
+                  {lastBenchmark.requestLatencyMs == null
+                    ? "—"
+                    : `${Math.round(Number(lastBenchmark.requestLatencyMs))} ms`}
+                </strong>
+              </div>
+              <div className="lv-meta-item">
+                <span>TTFT</span>
+                <strong>
+                  {lastBenchmark.ttftMs == null ? "—" : `${Math.round(Number(lastBenchmark.ttftMs))} ms`}
+                </strong>
+              </div>
+              <div className="lv-meta-item">
+                <span>Tokens/sec</span>
+                <strong>
+                  {lastBenchmark.tokensPerSecond == null ? "—" : String(lastBenchmark.tokensPerSecond)}
+                </strong>
+              </div>
+              <div className="lv-meta-item">
+                <span>Total tokens</span>
+                <strong>
+                  {lastBenchmark.totalTokens == null ? "—" : String(lastBenchmark.totalTokens)}
+                </strong>
+              </div>
+              <div className="lv-meta-item">
+                <span>Measured at</span>
+                <strong>{dash(lastBenchmark.measuredAt as string)}</strong>
+              </div>
+              <div className="lv-meta-item">
+                <span>Error</span>
+                <strong>{dash(lastBenchmark.error as string)}</strong>
+              </div>
+            </div>
+          ) : (
+            <p className="lv-muted">No benchmark has been run for this selection in this session.</p>
+          )}
         </div>
       ) : null}
 

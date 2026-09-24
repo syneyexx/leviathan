@@ -15,6 +15,7 @@ from .multi import DagCycleError, DagNode, MultiAgentCoordinator, MultiAgentResu
 from .planner import StructuredAgentPlan, StructuredAgentPlanner
 from .runtime import AgentRuntime
 from .store import AgentFleetStore
+from .system_inventory import SystemInventory, SystemInventoryEntry, classify_fleet_agent
 from .types import AgentKind, AgentResult, AgentStep, AgentStepKind
 
 __all__ = [
@@ -41,4 +42,7 @@ __all__ = [
     "OrchestratorConfig",
     "StructuredAgentPlan",
     "StructuredAgentPlanner",
+    "SystemInventory",
+    "SystemInventoryEntry",
+    "classify_fleet_agent",
 ]

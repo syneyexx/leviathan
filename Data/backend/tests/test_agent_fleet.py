@@ -259,6 +259,68 @@ class AgentFleetTests(unittest.TestCase):
         self.assertEqual(mission.result["plan"]["strategy"], "parallel_bounded")
         self.assertEqual(len(mission.result["plan"]["members"]), 2)
 
+    def test_system_agents_have_origin_and_entity_type(self) -> None:
+        agents = self.fleet.list_agents()
+        by_key = {
+            str((a.metadata or {}).get("systemKey") or ""): a
+            for a in agents
+            if (a.metadata or {}).get("systemKey")
+        }
+        self.assertIn("research", by_key)
+        self.assertIn("planner", by_key)
+        research = by_key["research"].public_dict()
+        planner = by_key["planner"].public_dict()
+        self.assertEqual(research["origin"], "system")
+        self.assertEqual(research["entityType"], "agent")
+        self.assertEqual(research["systemKey"], "research")
+        self.assertFalse(research["mutable"])
+        self.assertEqual(planner["origin"], "system")
+        self.assertEqual(planner["entityType"], "orchestrator")
+
+    def test_user_agent_is_user_origin(self) -> None:
+        created = self.fleet.create_agent(
+            {"name": "Custom Scout", "kind": "research", "metadata": {"systemKey": "hack"}}
+        )
+        payload = created.public_dict()
+        self.assertEqual(payload["origin"], "user")
+        self.assertIsNone(payload["systemKey"])
+        self.assertTrue(payload["mutable"])
+        self.assertNotIn("systemKey", created.metadata or {})
+
+    def test_system_agent_cannot_be_archived_or_renamed(self) -> None:
+        planner = next(
+            a for a in self.fleet.list_agents() if (a.metadata or {}).get("systemKey") == "planner"
+        )
+        with self.assertRaises(Exception) as ctx:
+            self.fleet.archive_agent(planner.agent_id)
+        self.assertIn("SYSTEM_AGENT_PROTECTED", str(ctx.exception.code))
+        with self.assertRaises(Exception) as ctx2:
+            self.fleet.update_agent(planner.agent_id, {"name": "Not Planner"})
+        self.assertIn("SYSTEM_AGENT_PROTECTED", str(ctx2.exception.code))
+        # Allowed operational update
+        updated = self.fleet.update_agent(planner.agent_id, {"description": "Updated desc"})
+        self.assertEqual(updated.description, "Updated desc")
+        self.assertEqual((updated.metadata or {}).get("systemKey"), "planner")
+
+    def test_system_inventory_roster_is_deterministic(self) -> None:
+        first = self.fleet.list_roster()
+        second = self.fleet.list_roster()
+        self.assertEqual(
+            [e["id"] for e in first["entries"]],
+            [e["id"] for e in second["entries"]],
+        )
+        arch = [e for e in first["system"] if e["entityType"] == "architecture"]
+        orch = [e for e in first["system"] if e["entityType"] == "orchestrator"]
+        self.assertGreaterEqual(len(arch), 1)
+        self.assertGreaterEqual(len(orch), 1)
+        self.assertTrue(all(e["origin"] == "system" for e in first["system"]))
+        self.assertTrue(all(e["mutable"] is False for e in first["system"]))
+        ids = [e["id"] for e in first["entries"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        summary = first["summary"]
+        self.assertGreaterEqual(summary["system"], 1)
+        self.assertIn("architecture", summary)
+
 
 class AnalyticsServiceTests(unittest.TestCase):
     def setUp(self) -> None:

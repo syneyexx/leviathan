@@ -75,11 +75,47 @@ def build_agents_router(fleet: AgentFleetService) -> APIRouter:
     def list_agents(
         includeArchived: bool = False,
         kind: str | None = None,
+        includeSystem: bool = True,
     ) -> dict:
+        """List fleet agents. When includeSystem=true (default), also attach system inventory."""
         agents = fleet.list_agents(include_archived=includeArchived, kind=kind)
-        return {
+        payload: dict[str, Any] = {
             "agents": [a.public_dict() for a in agents],
             "summary": fleet.fleet_summary(),
+        }
+        if includeSystem:
+            payload["system"] = fleet.list_system_inventory()
+            payload["truth"] = {
+                "system_origin_from_backend": True,
+                "architecture_not_persisted_as_agent_definitions": True,
+            }
+        return payload
+
+    @router.get("/api/agents/roster")
+    def agents_roster(
+        includeArchived: bool = False,
+        includeArchitecture: bool = True,
+        origin: str | None = None,
+        entityType: str | None = None,
+    ) -> dict:
+        """Unified USER + SYSTEM roster (agents, orchestrators, architecture)."""
+        return fleet.list_roster(
+            include_archived=includeArchived,
+            include_architecture=includeArchitecture,
+            origin=origin,
+            entity_type=entityType,
+        )
+
+    @router.get("/api/agents/system")
+    def list_system_components() -> dict:
+        """Read-only SYSTEM architecture / orchestrator inventory."""
+        return {
+            "system": fleet.list_system_inventory(),
+            "summary": fleet.fleet_summary(),
+            "truth": {
+                "not_agent_definitions": True,
+                "status_from_runtime_probe": True,
+            },
         }
 
     @router.get("/api/agents/summary")

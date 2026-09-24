@@ -326,6 +326,44 @@ def test_startup_reconciliation_marks_offline(plane: ModelControlPlane) -> None:
         assert model.loaded in {False, None, 0} or model.loaded is False
 
 
+def test_provider_update_enable_and_redaction(plane: ModelControlPlane) -> None:
+    created = plane.create_provider(
+        {
+            "name": "Local OpenAI",
+            "type": "openai_compatible",
+            "endpoint": "http://127.0.0.1:9999/v1",
+            "apiKey": "secret-key-value",
+            "enabled": True,
+        }
+    )
+    public = created.public_dict()
+    assert public["apiKeyConfigured"] is True
+    assert "apiKey" not in public
+    assert "secret-key-value" not in str(public)
+
+    updated = plane.update_provider(created.provider_id, {"enabled": False, "name": "Local OpenAI Off"})
+    assert updated.enabled is False
+    assert updated.name == "Local OpenAI Off"
+    assert updated.public_dict()["apiKeyConfigured"] is True
+
+    cleared = plane.update_provider(created.provider_id, {"apiKey": ""})
+    assert cleared.public_dict()["apiKeyConfigured"] is False
+
+
+def test_router_persistence(plane: ModelControlPlane) -> None:
+    plane.router.save_config(
+        {
+            "fallbackOrder": ["lm_studio:demo"],
+            "roleModelOverrides": {"coding": "lm_studio:demo"},
+            "cloudFallbackAllowed": False,
+            "streaming": True,
+        }
+    )
+    cfg = plane.router.get_config()
+    assert cfg.fallback_order == ["lm_studio:demo"]
+    assert cfg.role_overrides.get("coding") == "lm_studio:demo"
+
+
 def test_download_blocked_without_outbound(plane: ModelControlPlane) -> None:
     async def _run() -> None:
         with pytest.raises(ModelControlError) as exc:

@@ -471,6 +471,14 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     def list_providers() -> dict:
         return {"providers": [p.public_dict() for p in plane.list_providers()]}
 
+    @router.get("/api/model-providers/{provider_id}")
+    def get_provider(provider_id: str) -> dict:
+        try:
+            provider = plane.get_provider(provider_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"provider": provider.public_dict()}
+
     @router.post("/api/model-providers")
     def create_provider(payload: ProviderCreate) -> dict:
         try:
@@ -504,5 +512,13 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
         except ModelControlError as exc:
             raise_model_error(exc)
         return result
+
+    @router.get("/api/model-downloads/{download_id}")
+    def get_download(download_id: str) -> dict:
+        try:
+            job = plane.downloads.get_job(download_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"download": job.public_dict()}
 
     return router

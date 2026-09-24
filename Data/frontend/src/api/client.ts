@@ -5,6 +5,7 @@ import type {
   AgentFleetSummary,
   AgentMission,
   AgentMissionLaunchPayload,
+  AgentRosterEntry,
   AnalyticsAgentsResponse,
   AnalyticsDatasetsResponse,
   AnalyticsOverview,
@@ -55,6 +56,7 @@ import type {
   RouterConfig,
   SecurityAuditReport,
   SoakReport,
+  SystemArchitectureEntry,
   TrainingCapabilities,
   TrainingCheckpoint,
   TrainingJob,
@@ -900,6 +902,45 @@ export const api = {
     return request(`/api/model-downloads/${encodeURIComponent(downloadId)}/cancel`, {
       method: "POST",
     });
+  },
+
+  getModelDownload(downloadId: string): Promise<{ download: DownloadJob }> {
+    return request(`/api/model-downloads/${encodeURIComponent(downloadId)}`);
+  },
+
+  getModelProvider(providerId: string): Promise<{ provider: ModelProvider }> {
+    return request(`/api/model-providers/${encodeURIComponent(providerId)}`);
+  },
+
+  listServingWorkers(): Promise<{ workers: Record<string, unknown>[]; truth?: Record<string, boolean> }> {
+    return request("/api/models/serving/workers");
+  },
+
+  reconcileServingWorkers(): Promise<{
+    changed: Record<string, unknown>[];
+    workers: Record<string, unknown>[];
+    truth?: Record<string, boolean>;
+  }> {
+    return request("/api/models/serving/reconcile", { method: "POST" });
+  },
+
+  listModelAudit(limit = 50): Promise<{
+    events: Array<{
+      id: number | string;
+      createdAt: string;
+      actor: string;
+      action: string;
+      detail: unknown;
+    }>;
+  }> {
+    return request(`/api/models/audit?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  listRouteDecisions(limit = 50): Promise<{
+    decisions: Record<string, unknown>[];
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/models/router/decisions?limit=${encodeURIComponent(String(limit))}`);
   },
 
   /* ---------- Datasets ---------- */
@@ -1934,12 +1975,48 @@ export const api = {
   listAgents(opts?: {
     includeArchived?: boolean;
     kind?: string;
-  }): Promise<{ agents: AgentDefinition[]; summary: AgentFleetSummary }> {
+    includeSystem?: boolean;
+  }): Promise<{
+    agents: AgentDefinition[];
+    summary: AgentFleetSummary;
+    system?: SystemArchitectureEntry[];
+    truth?: Record<string, boolean>;
+  }> {
     const params = new URLSearchParams();
     if (opts?.includeArchived) params.set("includeArchived", "true");
     if (opts?.kind) params.set("kind", opts.kind);
+    if (opts?.includeSystem === false) params.set("includeSystem", "false");
     const q = params.toString();
     return request(`/api/agents${q ? `?${q}` : ""}`);
+  },
+
+  listAgentRoster(opts?: {
+    includeArchived?: boolean;
+    includeArchitecture?: boolean;
+    origin?: string;
+    entityType?: string;
+  }): Promise<{
+    entries: AgentRosterEntry[];
+    agents: AgentDefinition[];
+    system: SystemArchitectureEntry[];
+    summary: AgentFleetSummary;
+    truth?: Record<string, boolean>;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.includeArchived) params.set("includeArchived", "true");
+    if (opts?.includeArchitecture === false) params.set("includeArchitecture", "false");
+    if (opts?.origin) params.set("origin", opts.origin);
+    if (opts?.entityType) params.set("entityType", opts.entityType);
+    const q = params.toString();
+    return request(`/api/agents/roster${q ? `?${q}` : ""}`);
+  },
+
+  listSystemAgents(): Promise<{
+    system: SystemArchitectureEntry[];
+    summary: AgentFleetSummary;
+    truth?: Record<string, boolean>;
+  }> {
+    return request("/api/agents/system");
   },
 
   getAgentFleetSummary(): Promise<{ summary: AgentFleetSummary }> {

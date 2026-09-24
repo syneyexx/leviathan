@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
 import { AppShell } from "../../layouts/AppShell";
@@ -22,6 +22,7 @@ import { ModelGatewayPanel } from "./ModelGatewayPanel";
 import { ModelRouterPanel } from "./ModelRouterPanel";
 import { ModelImportDialog } from "./ModelImportDialog";
 import { ModelDownloadManager } from "./ModelDownloadManager";
+import { ModelServingPanel, type ServingWorker } from "./ModelServingPanel";
 
 export type { FilterKey, SortKey } from "./types";
 
@@ -40,16 +41,18 @@ export function ModelsPage() {
   const [gateway, setGateway] = useState<GatewaySnapshot | null>(null);
   const [router, setRouter] = useState<RouterConfig | null>(null);
   const [downloads, setDownloads] = useState<DownloadJob[]>([]);
+  const [workers, setWorkers] = useState<ServingWorker[]>([]);
   const [telemetry, setTelemetry] = useState<Record<string, unknown> | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [profile, setProfile] = useState<ModelProfile | null>(null);
   const [capabilities, setCapabilities] = useState<VerifiedCapability[]>([]);
   const [preflight, setPreflight] = useState<Record<string, unknown> | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | null>(null);
+  const [lastBenchmark, setLastBenchmark] = useState<Record<string, unknown> | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [sort, setSort] = useState<SortKey>("name");
-  const [busy, setBusy] = useState(false);
+  const [opBusy, setOpBusy] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<
     | "overview"
@@ -61,6 +64,8 @@ export function ModelsPage() {
     | "diagnostics"
     | "test"
   >("overview");
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
 
   const selected = useMemo(
     () => models.find((m) => m.id === selectedId) ?? null,
@@ -72,26 +77,31 @@ export function ModelsPage() {
     return Array.from(types);
   }, [providers]);
 
+  const busy = opBusy != null;
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [list, providersRes, gatewayRes, routerRes, downloadsRes, statusRes] = await Promise.all([
-        api.listModels(),
-        api.listModelProviders(),
-        api.getGateway(),
-        api.getRouter(),
-        api.listModelDownloads(),
-        api.modelsStatus(),
-      ]);
+      const [list, providersRes, gatewayRes, routerRes, downloadsRes, statusRes, workersRes] =
+        await Promise.all([
+          api.listModels(),
+          api.listModelProviders(),
+          api.getGateway(),
+          api.getRouter(),
+          api.listModelDownloads(),
+          api.modelsStatus(),
+          api.listServingWorkers().catch(() => ({ workers: [] as Record<string, unknown>[] })),
+        ]);
       setModels(list.models);
-      setStatus(list.status);
+      setStatus(statusRes.status ?? list.status);
       setProviders(providersRes.providers);
       setGateway(gatewayRes.gateway);
       setRouter(routerRes.router);
       setDownloads(downloadsRes.downloads);
+      setWorkers(workersRes.workers as ServingWorker[]);
       setTelemetry(statusRes.telemetry);
-      if (!selectedId && list.models.length > 0) {
+      if (!selectedIdRef.current && list.models.length > 0) {
         const active = list.models.find((m) => m.active) ?? list.models[0];
         setSelectedId(active.id);
       }
@@ -100,11 +110,35 @@ export function ModelsPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => {
     void loadAll();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- initial load only
+  }, [loadAll]);
+
+  useEffect(() => {
+    const active = downloads.some((d) =>
+      ["QUEUED", "DOWNLOADING", "PAUSED", "VERIFYING"].includes(d.state),
+    );
+    if (!active) return;
+    const id = window.setInterval(() => {
+      void (async () => {
+        try {
+          const res = await api.listModelDownloads();
+          setDownloads(res.downloads);
+          const completed = res.downloads.some((d) => d.state === "COMPLETED");
+          if (completed) {
+            const list = await api.listModels();
+            setModels(list.models);
+            setStatus(list.status);
+          }
+        } catch {
+          /* keep last known download state */
+        }
+      })();
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [downloads]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -112,6 +146,7 @@ export function ModelsPage() {
       setCapabilities([]);
       setPreflight(null);
       setSelectedProvider(null);
+      setLastBenchmark(null);
       return;
     }
     let cancelled = false;
@@ -194,125 +229,134 @@ export function ModelsPage() {
     return rows;
   }, [models, query, filter, sort, providerFilters, providers]);
 
-  async function onRefresh() {
-    setBusy(true);
+  async function withOp(name: string, fn: () => Promise<void>) {
+    if (opBusy) return;
+    setOpBusy(name);
     try {
-      const result = await api.refreshModels();
-      setModels(result.models);
-      setStatus(result.status);
-      toast("Discovery refresh complete");
-      const providersRes = await api.listModelProviders();
-      setProviders(providersRes.providers);
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Refresh failed");
+      await fn();
     } finally {
-      setBusy(false);
+      setOpBusy(null);
     }
   }
 
+  async function onRefresh() {
+    await withOp("refresh", async () => {
+      try {
+        const result = await api.refreshModels();
+        setModels(result.models);
+        setStatus(result.status);
+        toast("Discovery refresh complete");
+        const [providersRes, gatewayRes, workersRes] = await Promise.all([
+          api.listModelProviders(),
+          api.getGateway(),
+          api.listServingWorkers().catch(() => ({ workers: [] as Record<string, unknown>[] })),
+        ]);
+        setProviders(providersRes.providers);
+        setGateway(gatewayRes.gateway);
+        setWorkers(workersRes.workers as ServingWorker[]);
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Refresh failed");
+      }
+    });
+  }
+
   async function onActivate(modelId: string) {
-    setBusy(true);
-    try {
-      const result = await api.activateModel(modelId);
-      toast(`Activated ${result.model.displayName}`);
-      await loadAll();
-      setSelectedId(modelId);
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Activation failed");
-    } finally {
-      setBusy(false);
-    }
+    await withOp("activate", async () => {
+      try {
+        const result = await api.activateModel(modelId);
+        toast(`Activated ${result.model.displayName}`);
+        await loadAll();
+        setSelectedId(modelId);
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Activation failed");
+      }
+    });
   }
 
   async function onSaveProfile(next: ModelProfile, activate: boolean) {
     if (!selectedId) return;
-    setBusy(true);
-    try {
-      const result = await api.saveModelProfile(selectedId, {
-        temperature: next.temperature,
-        topP: next.topP,
-        topK: next.topK,
-        maxTokens: next.maxTokens,
-        repeatPenalty: next.repeatPenalty,
-        seed: next.seed,
-        systemPrompt: next.systemPrompt,
-        activate,
-      });
-      setProfile(result.profile);
-      toast(activate ? "Profile saved & activated" : "Profile saved");
-      await loadAll();
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Save failed");
-      throw err;
-    } finally {
-      setBusy(false);
-    }
+    await withOp("profile", async () => {
+      try {
+        const result = await api.saveModelProfile(selectedId, {
+          temperature: next.temperature,
+          topP: next.topP,
+          topK: next.topK,
+          maxTokens: next.maxTokens,
+          repeatPenalty: next.repeatPenalty,
+          seed: next.seed,
+          systemPrompt: next.systemPrompt,
+          activate,
+        });
+        setProfile(result.profile);
+        toast(activate ? "Profile saved & activated" : "Profile saved");
+        await loadAll();
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Save failed");
+        throw err;
+      }
+    });
   }
 
   async function onLoad(modelId: string) {
-    setBusy(true);
-    try {
-      await api.loadModel(modelId);
-      toast("Load requested");
-      await loadAll();
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Load failed");
-    } finally {
-      setBusy(false);
-    }
+    await withOp("load", async () => {
+      try {
+        await api.loadModel(modelId);
+        toast("Load completed");
+        await loadAll();
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Load failed");
+      }
+    });
   }
 
   async function onUnload(modelId: string) {
-    setBusy(true);
-    try {
-      await api.unloadModel(modelId);
-      toast("Unload requested");
-      await loadAll();
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Unload failed");
-    } finally {
-      setBusy(false);
-    }
+    await withOp("unload", async () => {
+      try {
+        await api.unloadModel(modelId);
+        toast("Unload completed");
+        await loadAll();
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Unload failed");
+      }
+    });
   }
 
   async function onDelete(modelId: string) {
     if (!window.confirm(`Remove model ${modelId} from the registry?`)) return;
-    setBusy(true);
-    try {
-      await api.deleteModel(modelId);
-      toast("Model removed");
-      setSelectedId(null);
-      await loadAll();
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Remove failed");
-    } finally {
-      setBusy(false);
-    }
+    await withOp("delete", async () => {
+      try {
+        await api.deleteModel(modelId);
+        toast("Model removed");
+        setSelectedId(null);
+        await loadAll();
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Remove failed");
+      }
+    });
   }
 
   async function onProbe(modelId: string) {
-    setBusy(true);
-    try {
-      const result = await api.probeModel(modelId);
-      setCapabilities(result.results);
-      toast("Capability probe complete");
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Probe failed");
-    } finally {
-      setBusy(false);
-    }
+    await withOp("probe", async () => {
+      try {
+        const result = await api.probeModel(modelId);
+        setCapabilities(result.results);
+        toast("Capability probe complete");
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Probe failed");
+      }
+    });
   }
 
   async function onBenchmark(modelId: string) {
-    setBusy(true);
-    try {
-      const result = await api.benchmarkModel(modelId);
-      toast(`Benchmark latency: ${dash(result.benchmark.requestLatencyMs as number)} ms`);
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Benchmark failed");
-    } finally {
-      setBusy(false);
-    }
+    await withOp("benchmark", async () => {
+      try {
+        const result = await api.benchmarkModel(modelId);
+        setLastBenchmark(result.benchmark);
+        toast(`Benchmark latency: ${dash(result.benchmark.requestLatencyMs as number)} ms`);
+      } catch (err) {
+        toast(err instanceof ApiError ? err.message : "Benchmark failed");
+      }
+    });
   }
 
   const offlineProviders = status?.offlineProviders ?? [];
@@ -332,7 +376,7 @@ export function ModelsPage() {
           </div>
           <div className="lv-models-header-actions">
             <button className="lv-btn" type="button" disabled={busy || loading} onClick={() => void onRefresh()}>
-              Refresh
+              {opBusy === "refresh" ? "Refreshing…" : "Refresh"}
             </button>
             <button className="lv-btn" type="button" onClick={() => setShowImport(true)}>
               Import / Download
@@ -417,6 +461,7 @@ export function ModelsPage() {
             capabilities={capabilities}
             provider={selectedProvider}
             preflight={preflight}
+            lastBenchmark={lastBenchmark}
             tab={inspectorTab}
             onTab={setInspectorTab}
             onSaveProfile={onSaveProfile}
@@ -445,6 +490,15 @@ export function ModelsPage() {
           ) : null}
         </div>
 
+        <ModelServingPanel
+          workers={workers}
+          busy={busy}
+          onRefresh={async () => {
+            const res = await api.listServingWorkers();
+            setWorkers(res.workers as ServingWorker[]);
+          }}
+        />
+
         <ProviderManager
           providers={providers}
           onChanged={async () => {
@@ -454,6 +508,7 @@ export function ModelsPage() {
 
         <ModelDownloadManager
           downloads={downloads}
+          busy={busy}
           onRefresh={async () => {
             const res = await api.listModelDownloads();
             setDownloads(res.downloads);

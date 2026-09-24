@@ -15,6 +15,7 @@ import type {
   DatasetRecord,
   KnowledgeDocument,
   ModelDescriptor,
+  SystemArchitectureEntry,
 } from "../types/api";
 import {
   AGENT_KINDS,
@@ -24,7 +25,9 @@ import {
   ORCH_FAILURE_STRATEGIES,
   ORCH_STRATEGIES,
   activeMissionsForAgent,
+  agentEntityType,
   agentIconKind,
+  agentOrigin,
   assignedCapabilityCards,
   canLaunchAgent,
   childMissionsOf,
@@ -37,6 +40,8 @@ import {
   filterMissions,
   filterRoster,
   healthLabel,
+  isArchitectureEntry,
+  isSystemProtected,
   layoutNetworkNodes,
   missionTabCount,
   networkEdgesFromAgents,
@@ -598,6 +603,7 @@ export function AgentsPage() {
   });
 
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
+  const [systemEntries, setSystemEntries] = useState<SystemArchitectureEntry[]>([]);
   const [summary, setSummary] = useState<AgentFleetSummary | null>(null);
   const [missions, setMissions] = useState<AgentMission[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
@@ -613,6 +619,8 @@ export function AgentsPage() {
   const [roleFilter, setRoleFilter] = useState("All Roles");
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [kindFilter, setKindFilter] = useState("All Kinds");
+  const [originFilter, setOriginFilter] = useState("ALL");
+  const [entityTypeFilter, setEntityTypeFilter] = useState("ALL TYPES");
   const [showArchived, setShowArchived] = useState(false);
   const [missionTab, setMissionTab] = useState<MissionTab>("All Tasks");
   const [commTab, setCommTab] = useState("Agent Network");
@@ -653,7 +661,59 @@ export function AgentsPage() {
     () => Object.fromEntries(agents.map((a) => [a.agentId, a])),
     [agents],
   );
-  const selectedAgent = agentById[selectedAgentId];
+
+  const architectureAsAgents = useMemo((): AgentDefinition[] => {
+    return systemEntries.map((arch) => ({
+      agentId: arch.id,
+      id: arch.id,
+      name: arch.name,
+      kind: arch.entityType === "orchestrator" ? "orchestrator" : "specialist",
+      description: arch.description || "",
+      role: arch.runtimeKind || arch.entityType,
+      enabled: arch.enabled !== false,
+      archived: false,
+      capabilities: arch.capabilities || [],
+      knowledgeSources: [],
+      memoryPolicy: "default",
+      datasetAccess: "none",
+      approvalMode: "inherit",
+      autonomy: 0,
+      maxConcurrency: 0,
+      maxRetries: 0,
+      tags: [arch.entityType, arch.systemKey],
+      version: 1,
+      health: (["unknown", "idle", "busy", "disabled", "error", "archived"].includes(arch.status)
+        ? arch.status
+        : "unknown") as AgentDefinition["health"],
+      healthReason:
+        typeof arch.metadata?.detail === "string"
+          ? arch.metadata.detail
+          : arch.status === "unknown"
+            ? "status unknown"
+            : null,
+      createdAt: "",
+      updatedAt: "",
+      origin: "system",
+      entityType: arch.entityType,
+      systemKey: arch.systemKey,
+      mutable: false,
+      executable: arch.executable === true,
+      metadata: {
+        ...(arch.metadata || {}),
+        sourceModule: arch.sourceModule,
+        relationships: arch.relationships,
+        runtimeKind: arch.runtimeKind,
+      },
+    }));
+  }, [systemEntries]);
+
+  const rosterUniverse = useMemo(
+    () => [...agents, ...architectureAsAgents],
+    [agents, architectureAsAgents],
+  );
+
+  const selectedAgent =
+    agentById[selectedAgentId] ?? architectureAsAgents.find((a) => a.agentId === selectedAgentId);
 
   const loadAll = useCallback(async () => {
     if (inflight.current) return;
@@ -661,9 +721,9 @@ export function AgentsPage() {
     const gen = ++loadGen.current;
     setLoadError(null);
     try {
-      const [fleet, missionRes, eventRes, caps, modelRes, knowledgeRes, datasetRes, learningRes] =
+      const [roster, missionRes, eventRes, caps, modelRes, knowledgeRes, datasetRes, learningRes] =
         await Promise.all([
-          api.listAgents({ includeArchived: true }),
+          api.listAgentRoster({ includeArchived: true, includeArchitecture: true }),
           api.listAgentMissions({ limit: 200 }),
           api.listAgentEvents({ limit: 120 }),
           api.listCapabilities({ limit: 500 }).catch(() => ({
@@ -677,8 +737,9 @@ export function AgentsPage() {
           api.getDatasetLearningStatus().catch(() => null),
         ]);
       if (gen !== loadGen.current) return;
-      setAgents(fleet.agents);
-      setSummary(fleet.summary);
+      setAgents(roster.agents);
+      setSystemEntries(roster.system || []);
+      setSummary(roster.summary);
       setMissions(missionRes.missions);
       setEvents(eventRes.events);
       setCapabilities(caps.capabilities ?? []);
@@ -687,12 +748,12 @@ export function AgentsPage() {
       setDatasets(datasetRes.datasets ?? []);
       setDatasetLearning(learningRes);
       setEventsLive(true);
-      if (!selectedAgentIdRef.current && fleet.agents.length > 0) {
+      if (!selectedAgentIdRef.current && roster.agents.length > 0) {
         const preferred =
-          fleet.agents.find((a) => !a.archived && a.kind === "coding") ??
-          fleet.agents.find((a) => !a.archived && a.enabled) ??
-          fleet.agents.find((a) => !a.archived) ??
-          fleet.agents[0];
+          roster.agents.find((a) => !a.archived && a.kind === "coding") ??
+          roster.agents.find((a) => !a.archived && a.enabled) ??
+          roster.agents.find((a) => !a.archived) ??
+          roster.agents[0];
         setSelectedAgentId(preferred.agentId);
       }
     } catch (err) {
@@ -732,19 +793,30 @@ export function AgentsPage() {
     };
   }, [selectedMissionId, toast, missions]);
 
-  const roleOptions = useMemo(() => deriveRoleOptions(agents), [agents]);
-  const statusOptions = useMemo(() => deriveStatusOptions(agents), [agents]);
+  const roleOptions = useMemo(() => deriveRoleOptions(rosterUniverse), [rosterUniverse]);
+  const statusOptions = useMemo(() => deriveStatusOptions(rosterUniverse), [rosterUniverse]);
 
   const roster = useMemo(
     () =>
-      filterRoster(agents, {
+      filterRoster(rosterUniverse, {
         query,
         roleFilter,
         statusFilter,
         kindFilter,
         showArchived,
+        originFilter,
+        entityTypeFilter,
       }),
-    [agents, query, roleFilter, statusFilter, kindFilter, showArchived],
+    [
+      rosterUniverse,
+      query,
+      roleFilter,
+      statusFilter,
+      kindFilter,
+      showArchived,
+      originFilter,
+      entityTypeFilter,
+    ],
   );
 
   const filteredMissions = useMemo(
@@ -761,7 +833,22 @@ export function AgentsPage() {
     [events, logFilter, logScopeAgent, logScopeMission, selectedAgentId, selectedMissionId],
   );
 
-  const networkEdges = useMemo(() => networkEdgesFromAgents(agents), [agents]);
+  const networkEdges = useMemo(() => {
+    const fleetEdges = networkEdgesFromAgents(agents);
+    const archEdges: Array<{ from: string; to: string; active: boolean }> = [];
+    for (const entry of systemEntries) {
+      for (const rel of entry.relationships || []) {
+        archEdges.push({
+          from: entry.id,
+          to: rel.targetId,
+          active: entry.status === "ready" || entry.status === "busy",
+        });
+      }
+    }
+    return [...fleetEdges, ...archEdges];
+  }, [agents, systemEntries]);
+
+  const networkAgents = useMemo(() => rosterUniverse, [rosterUniverse]);
 
   const selectedCaps = useMemo(
     () => assignedCapabilityCards(selectedAgent, capabilities),
@@ -870,6 +957,10 @@ export function AgentsPage() {
   }
 
   function openEdit(agent: AgentDefinition) {
+    if (isArchitectureEntry(agent)) {
+      toast("Architecture components are read-only");
+      return;
+    }
     setEditorMode("edit");
     setDraft(draftFromAgent(agent));
     setInspectorEdit(true);
@@ -942,7 +1033,11 @@ export function AgentsPage() {
   }
 
   async function onClone() {
-    if (!selectedAgentId) return;
+    if (!selectedAgentId || !selectedAgent) return;
+    if (isArchitectureEntry(selectedAgent)) {
+      toast("Architecture components cannot be cloned into the fleet");
+      return;
+    }
     await withBusy(async () => {
       const cloned = await api.cloneAgent(selectedAgentId);
       setSelectedAgentId(cloned.agent.agentId);
@@ -951,6 +1046,10 @@ export function AgentsPage() {
 
   async function onArchive() {
     if (!selectedAgent) return;
+    if (isSystemProtected(selectedAgent) || isArchitectureEntry(selectedAgent)) {
+      toast("SYSTEM components cannot be archived");
+      return;
+    }
     if (
       !window.confirm(
         `Archive “${selectedAgent.name}”? Referenced orchestrator members will be rejected by the backend.`,
@@ -1070,6 +1169,25 @@ export function AgentsPage() {
                 <option value="__archived_only__">Archived only</option>
               </select>
               <select
+                value={originFilter}
+                onChange={(e) => setOriginFilter(e.target.value)}
+                aria-label="Filter by origin"
+              >
+                <option value="ALL">ALL</option>
+                <option value="SYSTEM">SYSTEM</option>
+                <option value="USER">USER</option>
+              </select>
+              <select
+                value={entityTypeFilter}
+                onChange={(e) => setEntityTypeFilter(e.target.value)}
+                aria-label="Filter by entity type"
+              >
+                <option value="ALL TYPES">ALL TYPES</option>
+                <option value="AGENTS">AGENTS</option>
+                <option value="ORCHESTRATORS">ORCHESTRATORS</option>
+                <option value="ARCHITECTURE">ARCHITECTURE</option>
+              </select>
+              <select
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value)}
                 aria-label="Filter by role"
@@ -1113,6 +1231,8 @@ export function AgentsPage() {
                 roster.map((agent) => {
                   const label = healthLabel(agent);
                   const orch = agent.orchestrator;
+                  const origin = agentOrigin(agent);
+                  const entity = agentEntityType(agent);
                   return (
                     <article
                       key={agent.agentId}
@@ -1140,15 +1260,24 @@ export function AgentsPage() {
                           {label}
                         </span>
                       </div>
+                      <div className="lv-ag-origin-row">
+                        <span className={`lv-ag-badge is-${origin}`}>{origin.toUpperCase()}</span>
+                        <span className={`lv-ag-badge is-type-${entity}`}>{entity.toUpperCase()}</span>
+                      </div>
                       <div className="lv-ag-agent-model">
-                        {agent.modelRef || "model: inherit / unset"}
+                        {isArchitectureEntry(agent)
+                          ? agent.systemKey
+                            ? `systemKey: ${agent.systemKey}`
+                            : "architecture descriptor"
+                          : agent.modelRef || "model: inherit / unset"}
                       </div>
                       <div className="lv-ag-tags">
                         <span>{agent.kind}</span>
-                        {agent.kind === "orchestrator" ? (
+                        {entity === "orchestrator" ? (
                           <span className="is-orch">orchestrator</span>
                         ) : null}
-                        <span>v{agent.version}</span>
+                        {agent.systemKey ? <span>key:{agent.systemKey}</span> : null}
+                        {!isArchitectureEntry(agent) ? <span>v{agent.version}</span> : null}
                         {orch ? (
                           <span>
                             {orch.memberAgentIds.length} members · {orch.strategy}
@@ -1184,9 +1313,12 @@ export function AgentsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {agents.filter((a) => showArchived || !a.archived).map((agent) => {
+                    {rosterUniverse.filter((a) => showArchived || !a.archived).map((agent) => {
                       const label = healthLabel(agent);
-                      const active = activeMissionsForAgent(missions, agent.agentId).length;
+                      const active = isArchitectureEntry(agent)
+                        ? 0
+                        : activeMissionsForAgent(missions, agent.agentId).length;
+                      const origin = agentOrigin(agent);
                       return (
                         <tr
                           key={agent.agentId}
@@ -1201,6 +1333,9 @@ export function AgentsPage() {
                                 </svg>
                               </span>
                               {agent.name}
+                              <span className={`lv-ag-badge is-inline is-${origin}`}>
+                                {origin.toUpperCase()}
+                              </span>
                             </span>
                           </td>
                           <td>
@@ -1209,8 +1344,10 @@ export function AgentsPage() {
                               {label}
                             </span>
                           </td>
-                          <td title={agent.modelRef || undefined}>{agent.modelRef || "—"}</td>
-                          <td>{agent.kind}</td>
+                          <td title={agent.modelRef || undefined}>
+                            {isArchitectureEntry(agent) ? "—" : agent.modelRef || "—"}
+                          </td>
+                          <td>{agentEntityType(agent)}</td>
                           <td>{active}</td>
                           <td>{agent.lastRunAt ? formatElapsed(agent.lastRunAt) : "—"}</td>
                         </tr>
@@ -1231,39 +1368,69 @@ export function AgentsPage() {
                     <div>
                       <strong>{selectedAgent.name}</strong>
                       <span className="lv-ag-tags">
+                        <span className={`lv-ag-badge is-${agentOrigin(selectedAgent)}`}>
+                          {agentOrigin(selectedAgent).toUpperCase()}
+                        </span>
+                        <span className={`lv-ag-badge is-type-${agentEntityType(selectedAgent)}`}>
+                          {agentEntityType(selectedAgent).toUpperCase()}
+                        </span>
                         <span>{selectedAgent.kind}</span>
                         <span>{selectedAgent.role || "no role"}</span>
-                        <span>approval: {selectedAgent.approvalMode}</span>
+                        {selectedAgent.systemKey ? <span>key:{selectedAgent.systemKey}</span> : null}
+                        {!isArchitectureEntry(selectedAgent) ? (
+                          <span>approval: {selectedAgent.approvalMode}</span>
+                        ) : null}
                       </span>
                     </div>
                     <div className="lv-ag-orch-actions">
-                      <button
-                        type="button"
-                        className="lv-ag-btn-teal"
-                        disabled={busy || selectedAgent.archived}
-                        onClick={() => openEdit(selectedAgent)}
-                      >
-                        Edit
-                      </button>
-                      <button type="button" className="lv-ag-btn-teal" disabled={busy} onClick={() => void onClone()}>
-                        Clone
-                      </button>
-                      <button
-                        type="button"
-                        className="lv-ag-btn-teal"
-                        disabled={busy || selectedAgent.archived}
-                        onClick={() => void onToggleSelected()}
-                      >
-                        {selectedAgent.enabled ? "Disable" : "Enable"}
-                      </button>
-                      <button
-                        type="button"
-                        className="lv-ag-btn-stop"
-                        disabled={busy || selectedAgent.archived}
-                        onClick={() => void onArchive()}
-                      >
-                        Archive
-                      </button>
+                      {!isArchitectureEntry(selectedAgent) ? (
+                        <>
+                          <button
+                            type="button"
+                            className="lv-ag-btn-teal"
+                            disabled={busy || selectedAgent.archived}
+                            onClick={() => openEdit(selectedAgent)}
+                            title={
+                              isSystemProtected(selectedAgent)
+                                ? "SYSTEM identity fields are protected server-side"
+                                : undefined
+                            }
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="lv-ag-btn-teal"
+                            disabled={busy}
+                            onClick={() => void onClone()}
+                          >
+                            Clone
+                          </button>
+                          <button
+                            type="button"
+                            className="lv-ag-btn-teal"
+                            disabled={busy || selectedAgent.archived}
+                            onClick={() => void onToggleSelected()}
+                          >
+                            {selectedAgent.enabled ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            type="button"
+                            className="lv-ag-btn-stop"
+                            disabled={busy || selectedAgent.archived || isSystemProtected(selectedAgent)}
+                            onClick={() => void onArchive()}
+                            title={
+                              isSystemProtected(selectedAgent)
+                                ? "SYSTEM agents cannot be archived"
+                                : undefined
+                            }
+                          >
+                            Archive
+                          </button>
+                        </>
+                      ) : (
+                        <span className="lv-ag-field-hint">Architecture entries are read-only.</span>
+                      )}
                     </div>
                   </div>
 
@@ -1272,8 +1439,35 @@ export function AgentsPage() {
                       <h4>Identity</h4>
                       <p>{selectedAgent.description || "No description."}</p>
                       <p className="lv-ag-field-hint">
-                        ID: {selectedAgent.agentId} · v{selectedAgent.version}
+                        ID: {selectedAgent.agentId}
+                        {!isArchitectureEntry(selectedAgent) ? ` · v${selectedAgent.version}` : null}
+                        {selectedAgent.systemKey ? ` · systemKey=${selectedAgent.systemKey}` : null}
                       </p>
+                      {isArchitectureEntry(selectedAgent) &&
+                      Array.isArray(selectedAgent.metadata?.relationships) ? (
+                        <div style={{ marginTop: "0.5rem" }}>
+                          <h4>Relationships</h4>
+                          <ul className="lv-ag-kv">
+                            {(
+                              selectedAgent.metadata?.relationships as Array<{
+                                relation: string;
+                                targetId: string;
+                                targetSystemKey?: string;
+                              }>
+                            ).map((rel) => (
+                              <li key={`${rel.relation}-${rel.targetId}`}>
+                                <span>{rel.relation}</span>
+                                <em>{rel.targetSystemKey || rel.targetId}</em>
+                              </li>
+                            ))}
+                          </ul>
+                          {typeof selectedAgent.metadata?.sourceModule === "string" ? (
+                            <p className="lv-ag-field-hint">
+                              module: {selectedAgent.metadata.sourceModule}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     <div>
                       <h4>Runtime</h4>
@@ -1708,7 +1902,7 @@ export function AgentsPage() {
             {commTab === "Agent Network" ? (
               <>
                 <AgentNetwork
-                  agents={agents.filter((a) => !a.archived)}
+                  agents={networkAgents.filter((a) => !a.archived)}
                   edges={networkEdges}
                   selectedId={selectedAgentId}
                   onSelect={setSelectedAgentId}
