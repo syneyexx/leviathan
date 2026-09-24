@@ -2715,6 +2715,140 @@ def _m37_execution_fabric(conn: sqlite3.Connection) -> None:
         """
     )
 
+
+def _m38_tasks_tables(conn: sqlite3.Connection) -> None:
+    """Tasks Mission Control planning tables (board metadata; not an execution runtime)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tasks (
+            task_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            board_column TEXT NOT NULL,
+            blocked INTEGER NOT NULL DEFAULT 0,
+            blocked_reason TEXT,
+            blocked_reason_code TEXT,
+            priority TEXT NOT NULL,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            project TEXT,
+            assignee_type TEXT NOT NULL DEFAULT 'none',
+            assignee_id TEXT,
+            assignee_name TEXT,
+            due_at TEXT,
+            planned_start_at TEXT,
+            completed_at TEXT,
+            progress REAL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT,
+            source_type TEXT NOT NULL DEFAULT 'manual',
+            source_ref TEXT,
+            execution_binding TEXT NOT NULL DEFAULT 'manual',
+            job_id TEXT,
+            workflow_id TEXT,
+            mission_id TEXT,
+            run_id TEXT,
+            approval_id TEXT,
+            schedule_id TEXT,
+            capability_id TEXT,
+            capability_arguments_json TEXT NOT NULL DEFAULT '{}',
+            mission_request TEXT,
+            execution_state TEXT,
+            execution_error TEXT,
+            execution_phase TEXT,
+            execution_attempt INTEGER,
+            execution_progress REAL,
+            execution_started_at TEXT,
+            execution_finished_at TEXT,
+            board_order INTEGER NOT NULL DEFAULT 0,
+            created_by TEXT NOT NULL DEFAULT 'operator',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_subtasks (
+            subtask_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            completed_at TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_notes (
+            note_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            body TEXT NOT NULL,
+            author_type TEXT NOT NULL DEFAULT 'operator',
+            author_id TEXT,
+            author_name TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+            dependency_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            depends_on_task_id TEXT NOT NULL,
+            soft INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(task_id, depends_on_task_id),
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE,
+            FOREIGN KEY (depends_on_task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_events (
+            event_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            actor_type TEXT NOT NULL DEFAULT 'system',
+            actor_id TEXT,
+            source_type TEXT,
+            source_ref TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_tasks_board ON tasks(board_column)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived_at)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_at)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_job ON tasks(job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_workflow ON tasks(workflow_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_mission ON tasks(mission_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project)",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(source_type, source_ref)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_source_unique "
+        "ON tasks(source_type, source_ref) WHERE source_ref IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_task_subtasks_task ON task_subtasks(task_id, sort_order)",
+        "CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes(task_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_task_deps_depends ON task_dependencies(depends_on_task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_task_events_created ON task_events(created_at)",
+    ):
+        conn.execute(ddl)
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2753,6 +2887,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=35, name="source_ingestion", apply=_m35_source_ingestion),
     Migration(version=36, name="model_runtime_residency", apply=_m36_model_runtime_residency),
     Migration(version=37, name="execution_fabric", apply=_m37_execution_fabric),
+    Migration(version=38, name="tasks_tables", apply=_m38_tasks_tables),
 )
 
 

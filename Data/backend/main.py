@@ -149,6 +149,8 @@ from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner, eva
 from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_mcp, unregister_module_mcp
 from Data.backend.routes.mcp import build_mcp_router
 from Data.backend.routes.cognition import build_cognition_router
+from Data.backend.routes.tasks import build_tasks_router
+from Data.modules.tasks import TaskService, TaskStore
 from Data.modules.mcp.errors import McpError
 from Data.modules.cognition import (
     CognitionStore,
@@ -934,6 +936,18 @@ register_specialist_handlers(
     research_service=research_service,
 )
 
+task_store = TaskStore(settings.database_path)
+task_service = TaskService(
+    task_store,
+    job_runtime=job_runtime,
+    workflow_runtime=workflow_runtime,
+    agent_fleet=agent_fleet,
+    approval_service=approval_service,
+    schedule_store=schedule_store,
+    execution_gateway=execution_gateway,
+    model_caller=cognition_model_caller,
+)
+
 # ---- One Brain composition (after stores exist) ----------------------------
 
 
@@ -1389,6 +1403,7 @@ async def lifespan(_: FastAPI):
     verification_reports.initialize()
     workflow_store.initialize()
     schedule_store.initialize()
+    task_service.initialize()
     try:
         cognition_store.reconcile_interrupted()
     except Exception as exc:  # noqa: BLE001
@@ -1597,6 +1612,7 @@ app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_cognition_router(cognition_runtime))
+app.include_router(build_tasks_router(task_service))
 app.include_router(build_settings_router(settings_plane))
 app.include_router(build_behavior_router(behavior_store))
 
