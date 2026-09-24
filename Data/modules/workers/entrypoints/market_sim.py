@@ -11,9 +11,9 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.states import JobState
 
     try:
-        from Data.modules.market_sim.service import MarketSimService
+        from Data.modules.market_sim.service import MarketSimControlPlane
 
-        service = MarketSimService.from_settings(ctx["settings"])
+        service = MarketSimControlPlane.from_settings(ctx["settings"])
         advanced = False
         if hasattr(service, "worker") and hasattr(service.worker, "process_next"):
             advanced = bool(service.worker.process_next())
