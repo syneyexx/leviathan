@@ -75,11 +75,10 @@ class FabricCapabilityCatalogTests(unittest.TestCase):
 
 class LifespanExternalizeGuards(unittest.TestCase):
     def test_lifespan_skips_domain_runners_when_externalize(self) -> None:
-        """Prefer behavioral check of the lifespan branching helper/source."""
+        """Source contract: externalize branch must not call heavy starters."""
         text = BACKEND_MAIN.read_text(encoding="utf-8")
-        self.assertIn("LEVIATHAN_WORKERS_EXTERNALIZE_API", text + str(WORKERS_ROOT))
-        # Source-level contract: externalize branch must not call heavy starters.
-        # Locate the lifespan block around externalize.
+        settings_text = (WORKERS_ROOT / "settings.py").read_text(encoding="utf-8")
+        self.assertIn("LEVIATHAN_WORKERS_EXTERNALIZE_API", settings_text)
         marker = "externalize = bool(worker_settings.enabled and worker_settings.externalize_api_runners)"
         self.assertIn(marker, text)
         idx = text.index(marker)
