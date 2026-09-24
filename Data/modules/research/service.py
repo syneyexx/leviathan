@@ -240,7 +240,24 @@ class ResearchService:
         self.model_caller = caller
 
     def start_background(self, *, poll_seconds: float = 0.5) -> None:
-        """Background dispatcher for queued research runs."""
+        """Background dispatcher for queued research runs.
+
+        When workers are externalized, enqueue durable ``research.advance`` jobs
+        instead of spawning API-owned dispatcher/project threads.
+        """
+        import os
+
+        externalize = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "1").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if externalize and self.job_runtime is not None:
+            # Do not start source-ingestion or research threads in-process.
+            self.enqueue_queued_projects()
+            return
+
         if self.source_ingestion is not None:
             try:
                 self.source_ingestion.start_background()
@@ -262,10 +279,53 @@ class ResearchService:
         )
         self._dispatcher_thread.start()
 
+    def enqueue_advance(self, project_id: str, *, action: str = "advance") -> Any:
+        """Enqueue a durable research job for external research workers."""
+        if self.job_runtime is None:
+            raise RuntimeError("job_runtime not bound")
+        idem = f"research:{action}:{project_id}"
+        return self.job_runtime.enqueue(
+            capability_id="research.advance",
+            arguments={"project_id": project_id, "action": action},
+            requested_by="research_service",
+            idempotency_key=idem,
+            domain="research",
+            domain_entity_type="research_project",
+            domain_entity_id=project_id,
+            worker_pool="research",
+            latency_class="interactive",
+        )
+
+    def enqueue_queued_projects(self) -> list[str]:
+        """Enqueue advance jobs for all QUEUED projects (idempotent)."""
+        job_ids: list[str] = []
+        if self.job_runtime is None:
+            return job_ids
+        for project in self.store.list_projects(limit=100):
+            if project.status != ResearchStatus.QUEUED:
+                continue
+            try:
+                job = self.enqueue_advance(project.project_id)
+                job_ids.append(job.job_id)
+            except Exception:  # noqa: BLE001
+                continue
+        return job_ids
+
     def stop_background(self) -> None:
         self._dispatcher_stop.set()
 
     def _dispatch_queued(self) -> None:
+        import os
+
+        externalize = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if self.job_runtime is not None and externalize:
+            self.enqueue_queued_projects()
+            return
         for project in self.store.list_projects(limit=100):
             if project.status != ResearchStatus.QUEUED:
                 continue

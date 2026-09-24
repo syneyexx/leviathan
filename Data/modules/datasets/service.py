@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from Data.modules.common.atomic import ensure_dir
 from Data.modules.common.corpus import CorpusLayout, build_corpus_layout
@@ -15,6 +15,10 @@ from Data.modules.common.secrets import redact_secrets
 from Data.modules.knowledge import KnowledgeStore
 
 from Data.backend.config import Settings, load_settings
+
+if TYPE_CHECKING:
+    from Data.modules.jobs.runtime import JobRuntime
+    from Data.modules.jobs.types import JobRecord
 
 from .annotation import AnnotationQueue
 from .canonicalize import canonical_schema_dict
@@ -37,7 +41,7 @@ from .huggingface import (
 )
 from .importers import copy_immutable_raw, inspect_local_file, reject_traversal_components, resolve_import_path
 from .indexing import index_version_file
-from .jobs import DatasetJobRunner
+from .jobs import DatasetJobRunner, enqueue_kernel_for_domain_job, kernel_idempotency_key
 from .materialize import (
     load_materialized_jsonl,
     materialize_from_raw,
@@ -62,6 +66,7 @@ from .store import DatasetStore, utc_now
 from .tokenize_stats import compute_token_stats
 from .transforms import apply_transforms
 from .types import (
+    CAPABILITY_PROCESS,
     DatasetError,
     DatasetJob,
     DatasetJobStatus,
@@ -120,18 +125,24 @@ class DatasetService:
         knowledge: KnowledgeStore | None = None,
         settings: Settings | None = None,
         allowed_import_roots: list[Path] | None = None,
+        job_runtime: JobRuntime | None = None,
     ) -> None:
         self.store = store
         self.corpus = corpus
         self.settings = settings or load_settings()
         self.knowledge = knowledge
+        self.jobs = job_runtime
         self.allowed_import_roots = allowed_import_roots or [
             self.corpus.root,
             Path(self.settings.knowledge.data_root),
         ]
         self._hf_tokens: dict[str, str | None] = {}
         self.annotation_queue = AnnotationQueue()
-        self.runner = DatasetJobRunner(store, self._build_handlers())
+        self.runner = DatasetJobRunner(
+            store,
+            self._build_handlers(),
+            job_runtime=job_runtime,
+        )
         # Hot-bindable; defaults from research_integration settings.
         self.datasets_auto_index_ready_to_knowledge = bool(
             getattr(
@@ -160,6 +171,7 @@ class DatasetService:
         *,
         db_path: Path | None = None,
         knowledge: KnowledgeStore | None = None,
+        job_runtime: JobRuntime | None = None,
     ) -> "DatasetService":
         settings = settings or load_settings()
         path = db_path or Path(settings.database_path)
@@ -169,7 +181,33 @@ class DatasetService:
         if knowledge is None:
             knowledge = KnowledgeStore(path, data_root=Path(settings.knowledge.data_root))
             knowledge.initialize()
-        return cls(store, corpus=corpus, knowledge=knowledge, settings=settings)
+        return cls(
+            store,
+            corpus=corpus,
+            knowledge=knowledge,
+            settings=settings,
+            job_runtime=job_runtime,
+        )
+
+    def bind_job_runtime(self, job_runtime: JobRuntime | None) -> None:
+        """Wire (or clear) the Job Kernel after construction — used by API boot."""
+        self.jobs = job_runtime
+        self.runner.jobs = job_runtime
+
+    def _queue_domain_job(self, **kwargs: Any) -> DatasetJob:
+        """Create domain dataset_jobs row and enqueue linked kernel job when available."""
+        job = self.store.create_job(**kwargs)
+        if job.status == DatasetJobStatus.QUEUED and self.jobs is not None:
+            enqueue_kernel_for_domain_job(self.jobs, job)
+        return job
+
+    def _kernel_for_domain(self, domain_job_id: str) -> JobRecord | None:
+        if self.jobs is None:
+            return None
+        try:
+            return self.jobs.store.get_by_idempotency_key(kernel_idempotency_key(domain_job_id))
+        except Exception:  # noqa: BLE001
+            return None
 
     def _build_handlers(self) -> dict[str, Any]:
         return {
@@ -1239,10 +1277,29 @@ class DatasetService:
 
     def cancel_job(self, job_id: str) -> DatasetJob:
         self.get_job(job_id)
-        return self.store.request_cancel(job_id)
+        cancelled = self.store.request_cancel(job_id)
+        kernel = self._kernel_for_domain(job_id)
+        if kernel is not None and self.jobs is not None:
+            try:
+                from Data.modules.jobs.states import JobState, TERMINAL_JOB_STATES
+
+                if kernel.state not in TERMINAL_JOB_STATES:
+                    self.jobs.cancel(kernel.job_id, reason="dataset domain cancel")
+            except Exception:  # noqa: BLE001
+                pass
+        return cancelled
 
     def process_jobs(self, *, max_jobs: int = 50) -> list[DatasetJob]:
         return self.runner.drain(max_jobs=max_jobs)
+
+    def process_kernel_job(self, kernel_job_id: str) -> DatasetJob | None:
+        """Execute a specific kernel job already claimed by a pool worker."""
+        if self.jobs is None:
+            return None
+        kernel = self.jobs.store.get(kernel_job_id)
+        if kernel is None:
+            return None
+        return self.runner.process_kernel_job(kernel)
 
     def reconcile(self) -> list[DatasetJob]:
         updated = self.runner.reconcile_interrupted()

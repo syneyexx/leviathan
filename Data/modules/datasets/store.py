@@ -599,27 +599,44 @@ class DatasetStore:
             ).fetchone()
             if row is None:
                 return None
-            now = utc_now()
-            conn.execute(
-                """
-                UPDATE dataset_jobs
-                SET status = ?, started_at = ?, updated_at = ?, worker_pid = ?
-                WHERE job_id = ? AND status = ?
-                """,
-                (
-                    DatasetJobStatus.RUNNING.value,
-                    now,
-                    now,
-                    None,
-                    row["job_id"],
-                    DatasetJobStatus.QUEUED.value,
-                ),
-            )
-            if conn.execute("SELECT changes()").fetchone()[0] == 0:
-                return None
+            return self._claim_row(conn, row["job_id"])
+
+    def claim_queued_job(self, job_id: str) -> DatasetJob | None:
+        """CAS a specific QUEUED domain job to RUNNING (kernel-linked claim path)."""
+        with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM dataset_jobs WHERE job_id = ?", (row["job_id"],)
+                """
+                SELECT * FROM dataset_jobs
+                WHERE job_id = ? AND status = ? AND cancel_requested = 0
+                """,
+                (job_id, DatasetJobStatus.QUEUED.value),
             ).fetchone()
+            if row is None:
+                return None
+            return self._claim_row(conn, job_id)
+
+    def _claim_row(self, conn: sqlite3.Connection, job_id: str) -> DatasetJob | None:
+        now = utc_now()
+        conn.execute(
+            """
+            UPDATE dataset_jobs
+            SET status = ?, started_at = ?, updated_at = ?, worker_pid = ?
+            WHERE job_id = ? AND status = ?
+            """,
+            (
+                DatasetJobStatus.RUNNING.value,
+                now,
+                now,
+                None,
+                job_id,
+                DatasetJobStatus.QUEUED.value,
+            ),
+        )
+        if conn.execute("SELECT changes()").fetchone()[0] == 0:
+            return None
+        row = conn.execute(
+            "SELECT * FROM dataset_jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
         return self._job_from_row(row) if row else None
 
     def list_running_jobs(self) -> list[DatasetJob]:

@@ -286,6 +286,35 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
             ram_expectation_mb=32,
         )
     )
+    registry.register(
+        FunctionDefinition(
+            id="numeric_compute",
+            name="Numeric Compute",
+            version="1.0.0",
+            description="Deterministic Tier-0 math/statistics (CAGR, mean, correlation, …).",
+            entrypoint="Data.functions.numeric_compute:run",
+            input_schema={
+                "type": "object",
+                "required": ["operation"],
+                "properties": {
+                    "operation": {"type": "string"},
+                    "arguments": {"type": "object"},
+                    "start": {"type": "number"},
+                    "end": {"type": "number"},
+                    "periods": {"type": "number"},
+                    "values": {"type": "array"},
+                    "xs": {"type": "array"},
+                    "ys": {"type": "array"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=False,
+            timeout_seconds=10.0,
+            ram_expectation_mb=16,
+        )
+    )
     return registry
 
 

@@ -954,4 +954,136 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
+    catalog.register(
+        CapabilityDefinition(
+            id="research.advance",
+            name="Advance Research Project",
+            description="Durable research orchestration step executed by research workers.",
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="research.worker",
+            input_schema={
+                "type": "object",
+                "required": ["project_id"],
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "action": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("research.write",),
+            metadata={
+                "tags": ["research", "durable"],
+                "domains": ["research"],
+                "worker_kind": "research",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="knowledge.commit",
+            name="Commit Knowledge Artifact",
+            description="Single serialized canonical knowledge commit lane.",
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="knowledge.pipeline.committer",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "artifact": {"type": "object"},
+                    "idempotency_key": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("knowledge.write",),
+            metadata={
+                "tags": ["knowledge", "commit"],
+                "domains": ["knowledge"],
+                "worker_kind": "knowledge_commit",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="maintenance.reconcile",
+            name="Maintenance Reconcile",
+            description="Recover expired leases, stale workers, and reservations.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="workers.maintenance",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={"type": "object"},
+            required_permissions=("jobs.maintain",),
+            metadata={
+                "tags": ["maintenance"],
+                "domains": ["jobs"],
+                "worker_kind": "maintenance",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="compute.numeric",
+            name="Numeric Compute",
+            description="Deterministic Tier-0 math/statistics (never the main LLM).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="numeric_compute",
+            input_schema={
+                "type": "object",
+                "required": ["operation"],
+                "properties": {
+                    "operation": {"type": "string"},
+                    "arguments": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=(),
+            metadata={
+                "tags": ["compute", "tier0", "deterministic"],
+                "domains": ["compute"],
+                "worker_kind": "general",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="workflow.advance",
+            name="Advance Workflow",
+            description="Durable workflow continuation step.",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="workflows.worker",
+            input_schema={
+                "type": "object",
+                "required": ["workflow_id"],
+                "properties": {"workflow_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("workflows.execute",),
+            metadata={
+                "tags": ["workflow", "durable"],
+                "domains": ["workflows"],
+                "worker_kind": "workflow",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="schedule.tick",
+            name="Schedule Tick",
+            description="Evaluate due schedules and enqueue targets (never execute inline).",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="schedules.worker",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={"type": "object"},
+            required_permissions=("schedules.fire",),
+            metadata={
+                "tags": ["schedule"],
+                "domains": ["schedules"],
+                "worker_kind": "scheduler",
+            },
+        )
+    )
     return catalog

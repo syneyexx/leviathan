@@ -1,5 +1,6 @@
-"""Compute offload package — tier policy and economy metrics."""
+"""Compute offload package — tier policy, economy metrics, numeric engine."""
 
+from .numeric import ComputeResult, NumericComputeEngine
 from .tiers import (
     TIER0_OPERATIONS,
     ComputeTier,
@@ -10,8 +11,10 @@ from .tiers import (
 
 __all__ = [
     "TIER0_OPERATIONS",
+    "ComputeResult",
     "ComputeTier",
     "EscalationDecision",
     "EscalationPolicy",
+    "NumericComputeEngine",
     "TierMetrics",
 ]
