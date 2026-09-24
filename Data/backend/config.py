@@ -470,6 +470,24 @@ class ContextSettings:
 
 
 @dataclass(frozen=True)
+class InferenceSettings:
+    """Inference-efficiency plane knobs (Task C). Catalog paths: inference.*."""
+
+    tokenizer_mode: str = "auto"
+    context_safety_margin: float = 0.03
+    caches_enabled: bool = True
+    semantic_cache_enabled: bool = False
+    semantic_cache_threshold: float = 0.92
+    exact_result_cache_enabled: bool = False
+    token_cache_max_entries: int = 4096
+    context_cache_max_entries: int = 256
+    prefix_cache_mode: str = "auto"
+    continuous_batching_mode: str = "auto"
+    speculative_decoding_mode: str = "auto"
+    observability_enabled: bool = True
+
+
+@dataclass(frozen=True)
 class NetworkSettings:
     allow_outbound: bool
 
@@ -539,6 +557,7 @@ class Settings:
     workers: WorkersSettings
     resources: ResourceLimits
     context: ContextSettings
+    inference: InferenceSettings
     network: NetworkSettings
     artifacts: ArtifactSettings
     backup: BackupSettings
@@ -1224,6 +1243,38 @@ class Settings:
                 history_fraction=_env_float(
                     "LEVIATHAN_CONTEXT_HISTORY_FRACTION", 0.25, minimum=0.0, maximum=1.0
                 ),
+            ),
+            inference=InferenceSettings(
+                tokenizer_mode=(
+                    _env_raw("LEVIATHAN_TOKENIZER_MODE", "auto") or "auto"
+                ).strip().lower(),
+                context_safety_margin=_env_float(
+                    "LEVIATHAN_CONTEXT_SAFETY_MARGIN", 0.03, minimum=0.0, maximum=0.25
+                ),
+                caches_enabled=_env_bool("LEVIATHAN_INFERENCE_CACHES_ENABLED", True),
+                semantic_cache_enabled=_env_bool("LEVIATHAN_SEMANTIC_CACHE_ENABLED", False),
+                semantic_cache_threshold=_env_float(
+                    "LEVIATHAN_SEMANTIC_CACHE_THRESHOLD", 0.92, minimum=0.5, maximum=0.999
+                ),
+                exact_result_cache_enabled=_env_bool(
+                    "LEVIATHAN_EXACT_RESULT_CACHE_ENABLED", False
+                ),
+                token_cache_max_entries=_env_int(
+                    "LEVIATHAN_TOKEN_CACHE_MAX_ENTRIES", 4096, minimum=64, maximum=100_000
+                ),
+                context_cache_max_entries=_env_int(
+                    "LEVIATHAN_CONTEXT_CACHE_MAX_ENTRIES", 256, minimum=16, maximum=10_000
+                ),
+                prefix_cache_mode=(
+                    _env_raw("LEVIATHAN_PREFIX_CACHE_MODE", "auto") or "auto"
+                ).strip().lower(),
+                continuous_batching_mode=(
+                    _env_raw("LEVIATHAN_CONTINUOUS_BATCHING_MODE", "auto") or "auto"
+                ).strip().lower(),
+                speculative_decoding_mode=(
+                    _env_raw("LEVIATHAN_SPECULATIVE_DECODING_MODE", "auto") or "auto"
+                ).strip().lower(),
+                observability_enabled=_env_bool("LEVIATHAN_INFERENCE_OBSERVABILITY", True),
             ),
             network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", False)),
             artifacts=ArtifactSettings(root=artifacts_root),
