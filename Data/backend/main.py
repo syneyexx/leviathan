@@ -2062,89 +2062,119 @@ async def chat(payload: ChatRequest, request: Request):
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     else:
         if plan.use_knowledge:
+            # All successful retrieval strategies must converge here:
+            # RETRIEVAL_STARTED → (deep|staged|hybrid) → RETRIEVAL_COMPLETED → EXECUTING
             runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
-            if plan.use_deep_recall and economy.allow_deep_recall:
-                deep_recall_result = deep_recall_service.recall(
-                    DeepRecallRequest(
-                        current_question=message,
-                        maximum_context_budget=economy.deep_recall_budget,
-                        hydrate_limit=live_settings().knowledge_top_k,
-                        required_precision="high" if plan.complexity == "high" else "normal",
+            retrieval_source = "staged_or_hybrid"
+            try:
+                if plan.use_deep_recall and economy.allow_deep_recall:
+                    deep_recall_result = deep_recall_service.recall(
+                        DeepRecallRequest(
+                            current_question=message,
+                            maximum_context_budget=economy.deep_recall_budget,
+                            hydrate_limit=live_settings().knowledge_top_k,
+                            required_precision="high" if plan.complexity == "high" else "normal",
+                        )
                     )
-                )
-                atlas_hits = list(deep_recall_result.atlas_matches)
-                contradictions = list(deep_recall_result.contradictions_found)
-                knowledge_hits = [
-                    {
-                        "id": detail.get("document_id") or detail.get("ref"),
-                        "title": detail.get("title") or "evidence",
-                        "content": detail.get("content") or "",
-                        "source": "deep_recall",
-                        "chunk_id": detail.get("chunk_id") or detail.get("ref"),
-                        "content_hash": detail.get("content_hash"),
-                        "layer": "evidence",
-                    }
-                    for detail in deep_recall_result.exact_details
-                ]
-                observability.emit(
-                    "knowledge",
-                    "deep_recall",
-                    payload={
-                        "context_cost": deep_recall_result.context_cost,
-                        "stopped_reason": deep_recall_result.stopped_reason,
-                        "evidence_count": len(knowledge_hits),
-                    },
-                )
-        else:
-            if plan.use_atlas and settings.features.rag_v3:
-                atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
-            use_reranker = resolve_use_reranker(
-                live_settings().knowledge.rerank_policy,
-                reranker_available=bool(
-                    retriever.reranker is not None and retriever.reranker.available()
-                ),
-                embedding_is_semantic=retriever._embedding_is_semantic(),  # noqa: SLF001
-            )
-            staged = staged_retriever.search(
-                message,
-                limit=live_settings().knowledge_top_k,
-                use_deep_recall=False,
-                rerank_policy=live_settings().knowledge.rerank_policy,
-            )
-            # Prefer staged hits; fall back to direct hybrid with policy-aware rerank.
-            if staged.hits:
-                knowledge_hits = [hit.as_context_document() for hit in staged.hits]
-            else:
-                hits = retriever.search(
-                    RetrievalQuery(
-                        text=message,
+                    atlas_hits = list(deep_recall_result.atlas_matches)
+                    contradictions = list(deep_recall_result.contradictions_found)
+                    knowledge_hits = [
+                        {
+                            "id": detail.get("document_id") or detail.get("ref"),
+                            "title": detail.get("title") or "evidence",
+                            "content": detail.get("content") or "",
+                            "source": "deep_recall",
+                            "chunk_id": detail.get("chunk_id") or detail.get("ref"),
+                            "content_hash": detail.get("content_hash"),
+                            "layer": "evidence",
+                        }
+                        for detail in deep_recall_result.exact_details
+                    ]
+                    retrieval_source = "deep_recall"
+                    observability.emit(
+                        "knowledge",
+                        "deep_recall",
+                        payload={
+                            "context_cost": deep_recall_result.context_cost,
+                            "stopped_reason": deep_recall_result.stopped_reason,
+                            "evidence_count": len(knowledge_hits),
+                        },
+                    )
+                else:
+                    if plan.use_atlas and settings.features.rag_v3:
+                        atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
+                    use_reranker = resolve_use_reranker(
+                        live_settings().knowledge.rerank_policy,
+                        reranker_available=bool(
+                            retriever.reranker is not None and retriever.reranker.available()
+                        ),
+                        embedding_is_semantic=retriever._embedding_is_semantic(),  # noqa: SLF001
+                    )
+                    staged = staged_retriever.search(
+                        message,
                         limit=live_settings().knowledge_top_k,
-                        use_reranker=use_reranker,
+                        use_deep_recall=False,
+                        rerank_policy=live_settings().knowledge.rerank_policy,
                     )
-                )
-                knowledge_hits = [hit.as_context_document() for hit in hits]
-            if staged.negative_reasons:
-                observability.emit(
-                    "knowledge",
-                    "staged_retrieval.negative",
-                    payload={
-                        "reasons": list(staged.negative_reasons),
-                        "coverage": staged.coverage,
-                        "early_exit": staged.early_exit,
+                    # Prefer staged hits; fall back to direct hybrid with policy-aware rerank.
+                    if staged.hits:
+                        knowledge_hits = [hit.as_context_document() for hit in staged.hits]
+                        retrieval_source = "staged"
+                    else:
+                        hits = retriever.search(
+                            RetrievalQuery(
+                                text=message,
+                                limit=live_settings().knowledge_top_k,
+                                use_reranker=use_reranker,
+                            )
+                        )
+                        knowledge_hits = [hit.as_context_document() for hit in hits]
+                        retrieval_source = "hybrid"
+                    if staged.negative_reasons:
+                        observability.emit(
+                            "knowledge",
+                            "staged_retrieval.negative",
+                            payload={
+                                "reasons": list(staged.negative_reasons),
+                                "coverage": staged.coverage,
+                                "early_exit": staged.early_exit,
+                            },
+                        )
+                    if settings.features.why_library:
+                        why_hits = [item.as_context_item() for item in why_library.search(message, limit=3)]
+
+                # COMMON RETRIEVAL SUCCESS FINALIZATION — single lifecycle authority.
+                # Do not duplicate EXECUTING transitions inside strategy branches.
+                runs.append_event(
+                    run.run_id,
+                    EventType.RETRIEVAL_COMPLETED,
+                    {
+                        "count": len(knowledge_hits),
+                        "atlas_count": len(atlas_hits),
+                        "deep_recall": bool(deep_recall_result and deep_recall_result.available),
+                        "source": retrieval_source,
                     },
                 )
-            if settings.features.why_library:
-                why_hits = [item.as_context_item() for item in why_library.search(message, limit=3)]
-            runs.append_event(
-                run.run_id,
-                EventType.RETRIEVAL_COMPLETED,
-                {
-                    "count": len(knowledge_hits),
-                    "atlas_count": len(atlas_hits),
-                    "deep_recall": bool(deep_recall_result and deep_recall_result.available),
-                },
-            )
-            runs.transition(run.run_id, RunState.EXECUTING)
+                runs.transition(run.run_id, RunState.EXECUTING)
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001 — retrieval failure must not fake COMPLETED
+                observability.emit(
+                    "knowledge",
+                    "retrieval_failed",
+                    payload={
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "source": retrieval_source,
+                        "deep_recall_selected": bool(
+                            plan.use_deep_recall and economy.allow_deep_recall
+                        ),
+                    },
+                )
+                runs.transition(run.run_id, RunState.FAILED, error=str(exc))
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Retrieval failed: {exc}",
+                ) from exc
 
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
