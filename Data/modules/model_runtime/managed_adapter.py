@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from typing import Any, AsyncIterator
 
 from Data.modules.model_runtime.latency import LatencyTimer
 from Data.modules.model_runtime.serving import (
     ServingSupervisor,
+    ServingWorker,
     StreamCancelToken,
     WorkerState,
     get_serving_supervisor,
@@ -38,9 +40,9 @@ from Data.modules.models.errors import (
 class ManagedLocalServingAdapter:
     """Adapter boundary for managed local serving backends.
 
-    When ``mode='inproc'`` (default for tests / no binary), load/unload/stream
-    are simulated honestly in-process. When ``mode='subprocess'``, a configured
-    command is supervised; missing binary → UNAVAILABLE, never fake READY.
+    When ``mode='inproc'`` AND ``allow_inproc_fixture=True`` (tests only),
+    load/unload/stream are simulated honestly in-process.
+    Production without a binary → UNAVAILABLE, never fake READY.
     """
 
     def __init__(
@@ -54,14 +56,25 @@ class ManagedLocalServingAdapter:
         mode: str = "inproc",
         command: list[str] | None = None,
         supervisor: ServingSupervisor | None = None,
+        allow_inproc_fixture: bool = False,
     ) -> None:
         self.provider_id = provider_id
         self.backend_kind = backend_kind
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key or ""
         self.timeout_seconds = timeout_seconds
-        self.mode = mode if mode in {"inproc", "subprocess"} else "inproc"
         self.command = list(command or [])
+        self.allow_inproc_fixture = bool(allow_inproc_fixture)
+        # Prefer subprocess when a command is configured; otherwise inproc only if allowed.
+        if self.command:
+            self.mode = "subprocess"
+        elif mode == "inproc" and self.allow_inproc_fixture:
+            self.mode = "inproc"
+        elif mode == "subprocess":
+            self.mode = "subprocess"
+        else:
+            # No command and fixture not allowed → subprocess with empty command → UNAVAILABLE
+            self.mode = "subprocess"
         self.supervisor = supervisor or get_serving_supervisor()
         self._model_to_worker: dict[str, str] = {}
         self._capabilities = RuntimeCapabilities(
@@ -162,6 +175,17 @@ class ManagedLocalServingAdapter:
                 }
 
         if self.mode == "inproc":
+            if not self.allow_inproc_fixture:
+                raise ModelControlError(
+                    code=CAPABILITY_NOT_SUPPORTED,
+                    message=(
+                        "inproc fixture is not allowed in production; "
+                        "configure a managed serving binary or enable allow_inproc_fixture for tests"
+                    ),
+                    provider_id=self.provider_id,
+                    model_id=model_id,
+                    http_status=409,
+                )
             worker = self.supervisor.start_inproc(
                 provider_id=self.provider_id,
                 model_id=model_id,

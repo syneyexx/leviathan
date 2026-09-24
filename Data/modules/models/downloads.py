@@ -204,53 +204,111 @@ class DownloadManager:
                     response = await client.get(tree_url)
                     response.raise_for_status()
                     tree = response.json()
-                candidates = [
+                paths = [
                     item["path"]
                     for item in tree
-                    if isinstance(item, dict)
-                    and str(item.get("path", "")).lower().endswith((".gguf", ".safetensors"))
+                    if isinstance(item, dict) and isinstance(item.get("path"), str)
                 ]
-                if not candidates:
+                gguf = [p for p in paths if p.lower().endswith(".gguf")]
+                safetensors = [p for p in paths if p.lower().endswith(".safetensors")]
+                if gguf:
+                    # GGUF: a single selected file may be sufficient.
+                    filename = sorted(gguf)[0]
+                    files_to_fetch = [filename]
+                elif safetensors:
+                    # Transformers: download complete required snapshot, not just first shard.
+                    files_to_fetch = list(safetensors)
+                    for required in (
+                        "config.json",
+                        "tokenizer.json",
+                        "tokenizer_config.json",
+                        "vocab.json",
+                        "merges.txt",
+                        "special_tokens_map.json",
+                        "model.safetensors.index.json",
+                    ):
+                        if required in paths and required not in files_to_fetch:
+                            files_to_fetch.append(required)
+                    # Prefer directory-style destination for multi-file snapshots.
+                    filename = None
+                else:
                     raise ModelControlError(
                         code=MODEL_DOWNLOAD_FAILED,
                         message="No .gguf or .safetensors files found in repository",
                         http_status=404,
                     )
-                filename = candidates[0]
+            else:
+                files_to_fetch = [filename]
 
-            safe_name = Path(filename).name
-            if safe_name != filename.replace("\\", "/").split("/")[-1] or ".." in filename:
-                raise ModelControlError(code=UNSAFE_PATH, message="Unsafe filename", http_status=400)
-            dest = Path(job.destination or self.download_root) / safe_name
-            dest = self._ensure_under_root(dest)
-            url = (
-                f"https://huggingface.co/{job.repository_id}/resolve/{job.revision}/{filename}"
-            )
+            dest_dir = Path(job.destination or self.download_root)
+            dest_dir = self._ensure_under_root(dest_dir)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+
             sha = hashlib.sha256()
             downloaded = 0
             total = None
             started = utc_now()
+            primary_path: Path | None = None
+
             async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
-                    total_header = response.headers.get("content-length")
-                    if total_header and total_header.isdigit():
-                        total = int(total_header)
-                        job.total_bytes = total
-                    with dest.open("wb") as handle:
-                        async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                            if cancel.is_set():
-                                raise ModelControlError(
-                                    code=DOWNLOAD_CANCELLED,
-                                    message="Download cancelled",
-                                    http_status=409,
-                                )
-                            handle.write(chunk)
-                            sha.update(chunk)
-                            downloaded += len(chunk)
-                            job.bytes_downloaded = downloaded
-                            job.state = DownloadState.DOWNLOADING
-                            self._persist(job)
+                for rel_path in files_to_fetch:
+                    if cancel.is_set():
+                        raise ModelControlError(
+                            code=DOWNLOAD_CANCELLED,
+                            message="Download cancelled",
+                            http_status=409,
+                        )
+                    # Prevent path traversal in HF relative paths
+                    clean = rel_path.replace("\\", "/").lstrip("/")
+                    if ".." in clean.split("/"):
+                        raise ModelControlError(code=UNSAFE_PATH, message="Unsafe filename", http_status=400)
+                    target = dest_dir / clean
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    url = (
+                        f"https://huggingface.co/{job.repository_id}/resolve/{job.revision}/{clean}"
+                    )
+                    async with client.stream("GET", url) as response:
+                        response.raise_for_status()
+                        total_header = response.headers.get("content-length")
+                        if total_header and total_header.isdigit():
+                            total = (total or 0) + int(total_header)
+                            job.total_bytes = total
+                        with target.open("wb") as handle:
+                            async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                                if cancel.is_set():
+                                    raise ModelControlError(
+                                        code=DOWNLOAD_CANCELLED,
+                                        message="Download cancelled",
+                                        http_status=409,
+                                    )
+                                handle.write(chunk)
+                                sha.update(chunk)
+                                downloaded += len(chunk)
+                                job.bytes_downloaded = downloaded
+                                job.state = DownloadState.DOWNLOADING
+                                self._persist(job)
+                    if primary_path is None:
+                        primary_path = target
+                    if clean.lower().endswith((".gguf", ".safetensors")) and (
+                        primary_path is None or primary_path.suffix.lower() == ".json"
+                    ):
+                        primary_path = target
+
+            if primary_path is None:
+                raise ModelControlError(
+                    code=MODEL_DOWNLOAD_FAILED,
+                    message="Download produced no model files",
+                    http_status=500,
+                )
+
+            # Multi-file transformers snapshot → register directory path
+            is_multi = len(files_to_fetch) > 1
+            local_path = str(dest_dir if is_multi else primary_path)
+            fmt = None
+            if primary_path.suffix.lower() == ".gguf":
+                fmt = "gguf"
+            elif any(p.lower().endswith(".safetensors") for p in files_to_fetch):
+                fmt = "safetensors"
 
             job.state = DownloadState.VERIFYING
             self._persist(job)
@@ -262,18 +320,17 @@ class DownloadManager:
             self._persist(job)
 
             # Register imported model metadata (file on disk; not auto-loaded).
-            model_id = f"imported:{safe_name}"
+            display = Path(job.repository_id).name if job.repository_id else primary_path.name
+            model_id = f"imported:{display}"
             descriptor = ModelDescriptor(
                 id=model_id,
-                display_name=safe_name,
+                display_name=display,
                 provider_id="local_import",
                 runtime_id="file",
                 source=ModelSource.DOWNLOADED,
-                format="gguf" if safe_name.lower().endswith(".gguf") else (
-                    "safetensors" if safe_name.lower().endswith(".safetensors") else None
-                ),
+                format=fmt,
                 disk_size_bytes=downloaded,
-                local_path=str(dest),
+                local_path=local_path,
                 capabilities=ModelCapabilities(
                     chat=CapabilityState.UNKNOWN,
                 ),
@@ -284,6 +341,8 @@ class DownloadManager:
                     "repositoryId": job.repository_id,
                     "revision": job.revision,
                     "downloadedAt": started,
+                    "files": files_to_fetch,
+                    "snapshotComplete": is_multi or fmt == "gguf",
                 },
             )
             self.registry.store.upsert_model(

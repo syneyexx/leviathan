@@ -37,7 +37,7 @@ class ManagedServingAdapterTests(unittest.IsolatedAsyncioTestCase):
         adapter = ManagedLocalServingAdapter(
             provider_id="vllm-test",
             backend_kind="vllm_class",
-            mode="inproc",
+            mode="inproc", allow_inproc_fixture=True,
             supervisor=self.supervisor,
         )
         loaded = await adapter.load("local-model-a")
@@ -76,7 +76,7 @@ class ManagedServingAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_killed_worker_reconcile_marks_dead(self) -> None:
         adapter = ManagedLocalServingAdapter(
             provider_id="vllm-dead",
-            mode="inproc",
+            mode="inproc", allow_inproc_fixture=True,
             supervisor=self.supervisor,
         )
         result = await adapter.load("m1")

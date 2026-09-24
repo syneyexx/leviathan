@@ -36,9 +36,13 @@ import type {
   ModelInferenceTestResult,
   ModelProfile,
   ModelProvider,
+  ModelResidency,
+  ModelRuntimeBinding,
   ModelsStatus,
   NeuroAssessmentResponse,
   NeuroResidualStatus,
+  ResidencyPolicy,
+  ResourceEstimate,
   PreflightResult,
   ReleaseGateReport,
   ResearchClaim,
@@ -761,8 +765,30 @@ export const api = {
     capabilities: VerifiedCapability[];
     provider: ModelProvider | null;
     preflight: Record<string, unknown>;
+    runtimeBinding?: ModelRuntimeBinding | null;
+    residency?: ModelResidency | null;
+    residencyPolicy?: ResidencyPolicy | null;
+    resourceEstimate?: ResourceEstimate | null;
   }> {
     return request(`/api/models/${encodeURIComponent(modelId)}`);
+  },
+
+  getModelResidency(modelId: string): Promise<{
+    residency: ModelResidency;
+    policy: ResidencyPolicy;
+    runtimeBinding: ModelRuntimeBinding;
+  }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/residency`);
+  },
+
+  saveResidencyPolicy(
+    modelId: string,
+    policy: Partial<ResidencyPolicy>,
+  ): Promise<{ policy: ResidencyPolicy }> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/residency-policy`, {
+      method: "PUT",
+      body: JSON.stringify(policy),
+    });
   },
 
   getModelProfile(modelId: string): Promise<{ profile: ModelProfile }> {

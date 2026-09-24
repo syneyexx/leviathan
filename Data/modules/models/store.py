@@ -647,3 +647,207 @@ class ModelStore:
             item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
             out.append(item)
         return out
+
+    # --- Runtime bindings / residency policies (migration 36) ---
+
+    def upsert_runtime_binding(self, record: dict[str, Any]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_runtime_bindings (
+                    model_id TEXT PRIMARY KEY,
+                    runtime_kind TEXT NOT NULL,
+                    runtime_provider_id TEXT,
+                    backend_model_id TEXT,
+                    local_path TEXT,
+                    managed INTEGER NOT NULL DEFAULT 0,
+                    servability_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+                    servability_reason TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO model_runtime_bindings(
+                    model_id, runtime_kind, runtime_provider_id, backend_model_id,
+                    local_path, managed, servability_state, servability_reason,
+                    metadata_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(model_id) DO UPDATE SET
+                    runtime_kind=excluded.runtime_kind,
+                    runtime_provider_id=excluded.runtime_provider_id,
+                    backend_model_id=excluded.backend_model_id,
+                    local_path=excluded.local_path,
+                    managed=excluded.managed,
+                    servability_state=excluded.servability_state,
+                    servability_reason=excluded.servability_reason,
+                    metadata_json=excluded.metadata_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["model_id"],
+                    record.get("runtime_kind") or "unknown",
+                    record.get("runtime_provider_id"),
+                    record.get("backend_model_id"),
+                    record.get("local_path"),
+                    1 if record.get("managed") else 0,
+                    record.get("servability_state") or "UNKNOWN",
+                    record.get("servability_reason"),
+                    json.dumps(record.get("metadata") or {}),
+                    now,
+                ),
+            )
+
+    def get_runtime_binding(self, model_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_runtime_bindings (
+                    model_id TEXT PRIMARY KEY,
+                    runtime_kind TEXT NOT NULL,
+                    runtime_provider_id TEXT,
+                    backend_model_id TEXT,
+                    local_path TEXT,
+                    managed INTEGER NOT NULL DEFAULT 0,
+                    servability_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+                    servability_reason TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            row = conn.execute(
+                "SELECT * FROM model_runtime_bindings WHERE model_id = ?",
+                (model_id,),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["managed"] = bool(item.get("managed"))
+        item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+        return item
+
+    def list_runtime_bindings(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_runtime_bindings (
+                    model_id TEXT PRIMARY KEY,
+                    runtime_kind TEXT NOT NULL,
+                    runtime_provider_id TEXT,
+                    backend_model_id TEXT,
+                    local_path TEXT,
+                    managed INTEGER NOT NULL DEFAULT 0,
+                    servability_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+                    servability_reason TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            rows = conn.execute(
+                "SELECT * FROM model_runtime_bindings ORDER BY model_id COLLATE NOCASE"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["managed"] = bool(item.get("managed"))
+            item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+            out.append(item)
+        return out
+
+    def upsert_residency_policy(self, record: dict[str, Any]) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_residency_policies (
+                    model_id TEXT PRIMARY KEY,
+                    policy TEXT NOT NULL DEFAULT 'IDLE_UNLOAD',
+                    idle_unload_seconds REAL NOT NULL DEFAULT 300,
+                    full_unload_seconds REAL,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    load_options_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO model_residency_policies(
+                    model_id, policy, idle_unload_seconds, full_unload_seconds,
+                    pinned, load_options_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(model_id) DO UPDATE SET
+                    policy=excluded.policy,
+                    idle_unload_seconds=excluded.idle_unload_seconds,
+                    full_unload_seconds=excluded.full_unload_seconds,
+                    pinned=excluded.pinned,
+                    load_options_json=excluded.load_options_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["model_id"],
+                    record.get("policy") or "IDLE_UNLOAD",
+                    float(record.get("idle_unload_seconds") or 300.0),
+                    record.get("full_unload_seconds"),
+                    1 if record.get("pinned") else 0,
+                    json.dumps(record.get("load_options") or {}),
+                    now,
+                ),
+            )
+
+    def get_residency_policy(self, model_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_residency_policies (
+                    model_id TEXT PRIMARY KEY,
+                    policy TEXT NOT NULL DEFAULT 'IDLE_UNLOAD',
+                    idle_unload_seconds REAL NOT NULL DEFAULT 300,
+                    full_unload_seconds REAL,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    load_options_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            row = conn.execute(
+                "SELECT * FROM model_residency_policies WHERE model_id = ?",
+                (model_id,),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["pinned"] = bool(item.get("pinned"))
+        item["load_options"] = json.loads(item.pop("load_options_json") or "{}")
+        return item
+
+    def list_residency_policies(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_residency_policies (
+                    model_id TEXT PRIMARY KEY,
+                    policy TEXT NOT NULL DEFAULT 'IDLE_UNLOAD',
+                    idle_unload_seconds REAL NOT NULL DEFAULT 300,
+                    full_unload_seconds REAL,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    load_options_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            rows = conn.execute(
+                "SELECT * FROM model_residency_policies ORDER BY model_id COLLATE NOCASE"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["pinned"] = bool(item.get("pinned"))
+            item["load_options"] = json.loads(item.pop("load_options_json") or "{}")
+            out.append(item)
+        return out
