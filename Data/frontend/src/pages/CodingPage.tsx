@@ -90,7 +90,15 @@ function resolvePending(detail: CodingSessionDetail): { approvalId: string; capa
   };
 }
 
-const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "UNVERIFIED", "CANCELLED", "DISABLED"]);
+const TERMINAL_STATUSES = new Set([
+  "COMPLETED",
+  "FAILED",
+  "UNVERIFIED",
+  "PARTIAL",
+  "RESOURCE_EXHAUSTED",
+  "CANCELLED",
+  "DISABLED",
+]);
 
 export function CodingPage() {
   const toast = useAppToast();
@@ -546,8 +554,20 @@ export function CodingPage() {
                 </dd>
                 <dt>Current Phase</dt>
                 <dd>
-                  {steps.length
-                    ? `${steps[steps.length - 1]?.kind ?? "—"}${steps[steps.length - 1]?.capability_id ? ` · ${steps[steps.length - 1]?.capability_id}` : ""}`
+                  {selected?.phase
+                    ? String(selected.phase).replace(/_/g, " ")
+                    : steps.length
+                      ? `${steps[steps.length - 1]?.kind ?? "—"}${steps[steps.length - 1]?.capability_id ? ` · ${steps[steps.length - 1]?.capability_id}` : ""}`
+                      : "—"}
+                </dd>
+                <dt>Task Type</dt>
+                <dd>{selected?.task_type ? String(selected.task_type).replace(/_/g, " ") : selected?.mission ?? "—"}</dd>
+                <dt>Coding Role</dt>
+                <dd>{selected?.coding_role ?? "—"}</dd>
+                <dt>Brain Context</dt>
+                <dd>
+                  {selected?.brain_context
+                    ? `${String((selected.brain_context as { status?: string }).status ?? "—")} · k=${String((selected.brain_context as { knowledgeHits?: number }).knowledgeHits ?? 0)}`
                     : "—"}
                 </dd>
                 <dt>Health</dt>

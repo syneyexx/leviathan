@@ -127,7 +127,20 @@ CANONICAL_OWNERSHIP: tuple[OwnershipRule, ...] = (
     OwnershipRule(
         concern="coding",
         owner_module="coding",
-        rule="Domain semantics; shares infrastructure",
+        rule="Domain semantics / CodingCognitiveStrategy; shares One Brain infrastructure",
+        forbidden_duplicates=("coding_memory.db", "private_coding_rag", "private_coding_gateway"),
+    ),
+    OwnershipRule(
+        concern="one_brain_access_fabric",
+        owner_module="brain",
+        rule="Brain is shared access/contracts/projection facade — not canonical storage or a second CognitiveRuntime",
+        forbidden_duplicates=("BrainV2", "second_knowledge_store", "second_memory_store"),
+    ),
+    OwnershipRule(
+        concern="domain_cognitive_strategy",
+        owner_module="cognition",
+        rule="DomainCognitiveStrategy specializes reasoning under one CognitiveRuntime",
+        forbidden_duplicates=("CognitionV2", "CodingAgentV2", "second_cognitive_runtime"),
     ),
     OwnershipRule(
         concern="browser",
@@ -182,6 +195,8 @@ SINGLETON_CLASS_OWNERS: dict[str, str] = {
     "EvidenceService": "evidence",
     "VerificationEngine": "verification",
     "McpBridge": "mcp",
+    "BrainAccessFacade": "brain",
+    "StrategyRegistry": "cognition",
 }
 
 # Private worker/agent DBs are forbidden as permanent paths.
@@ -194,6 +209,7 @@ FORBIDDEN_PRIVATE_DB_FILENAMES: frozenset[str] = frozenset(
         "agents.db",
         "browser.db",
         "coding.db",
+        "coding_memory.db",
         "media.db",
         "voice.db",
     }

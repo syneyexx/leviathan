@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field
 from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, PROJECT_ROOT, settings
 from .database import Database
 from .migrations import MigrationRunner
-from Data.backend.routes.settings import build_settings_router
+from Data.backend.routes.settings import build_behavior_router, build_settings_router
 from Data.modules.settings import DEFAULT_BEHAVIOR_PROFILE, SettingsControlPlane
+from Data.modules.settings.behavior_store import BehaviorProfileStore
 from Data.modules.settings.bindings import bind_default_consumers
 from Data.modules.common import ownership_public_dict
 from Data.modules.agents import (
@@ -98,7 +99,7 @@ from Data.modules.metrics import MetricsCollector, TimeSeriesStore
 from Data.backend.routes.observability import build_observability_router
 from Data.backend.routes.system import build_system_telemetry_router
 from Data.backend.routes.brain import build_brain_router
-from Data.modules.brain import BrainQueryFacade
+from Data.modules.brain import BrainAccessFacade, BrainQueryFacade
 from Data.modules.neuro import (
     ContrastiveRetrievalHead,
     CortexPlanner,
@@ -158,8 +159,10 @@ from Data.modules.cognition import (
     PerceptionService,
     CapabilityBroker,
 )
+from Data.modules.cognition.domain_strategy import StrategyRegistry
 from Data.modules.cognition.model_adapter import build_control_plane_model_caller
 from Data.modules.cognition.specialists import register_specialist_handlers
+from Data.modules.coding.cognition import CodingCognitiveStrategy
 from Data.modules.intelligence import (
     IntelligenceHealthService,
     KnowledgeAssimilationService,
@@ -475,6 +478,7 @@ def _gate_catalog_builtins() -> GateCheck:
         "file.patch",
         "file.delete",
         "coding.run_tests",
+        "coding.advance",
         "git.status",
         "git.diff",
         "browser.navigate",
@@ -876,6 +880,8 @@ reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 model_plane = ModelControlPlane(settings, observability=observability)
 settings_plane = SettingsControlPlane(settings)
+behavior_store = BehaviorProfileStore(settings.database_path)
+behavior_store.ensure_schema()
 
 cognition_store = CognitionStore(settings.database_path)
 cognition_delegation = DelegationService()
@@ -918,6 +924,71 @@ register_specialist_handlers(
     cognition_delegation,
     coding_service=coding_service,
     research_service=research_service,
+)
+
+# ---- One Brain composition (after stores exist) ----------------------------
+
+
+def _knowledge_search(query: str, limit: int = 6):
+    try:
+        if staged_retriever is not None and hasattr(staged_retriever, "retrieve"):
+            return staged_retriever.retrieve(query, limit=limit)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        if hasattr(knowledge, "search"):
+            return knowledge.search(query, limit=limit)
+    except Exception:  # noqa: BLE001
+        return []
+    return []
+
+
+def _memory_search(query: str, limit: int = 4):
+    try:
+        return memory_store.search(query, limit=limit)
+    except TypeError:
+        try:
+            return memory_store.search(query)
+        except Exception:  # noqa: BLE001
+            return []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _experience_search(query: str, domain: str | None = None, limit: int = 3):
+    try:
+        if hasattr(cognition_experience_store, "search"):
+            return cognition_experience_store.search(query, domain=domain, limit=limit)
+        if hasattr(cognition_experience_store, "list_hints"):
+            return cognition_experience_store.list_hints(limit=limit)
+        if hasattr(cognition_experience_store, "procedural_hints"):
+            return cognition_experience_store.procedural_hints(query=query, limit=limit)
+    except Exception:  # noqa: BLE001
+        return []
+    return []
+
+
+brain_access = BrainAccessFacade(
+    knowledge_search=_knowledge_search,
+    memory_search=_memory_search,
+    evidence_list=lambda limit=8: evidence_store.list(limit=limit),
+    experience_search=_experience_search,
+    capability_list=lambda: capability_catalog.list(),
+    run_lookup=lambda run_id: run_store.get(run_id) if run_id else None,
+)
+
+domain_strategy_registry = StrategyRegistry()
+domain_strategy_registry.register(CodingCognitiveStrategy())
+
+from Data.modules.coding.llm_adapter import CodingLLMAdapter
+
+coding_service.bind_intelligence(
+    llm=CodingLLMAdapter(llm),
+    context_builder=llm.context_builder,
+    brain_access=brain_access,
+    behavior_store=behavior_store,
+    job_runtime=job_runtime,
+    reasoning=reasoner,
 )
 
 
@@ -1107,6 +1178,14 @@ intelligence_health = IntelligenceHealthService(
     cortex=cortex_runtime,
     experience_store=getattr(cognition_runtime, "experience_store", None),
     reasoning_policy=reasoning_policy,
+    brain_access=brain_access,
+    context_builder=getattr(llm, "context_builder", None),
+    model_control_plane=model_plane,
+    capability_catalog=capability_catalog,
+    execution_gateway=execution_gateway,
+    evidence_service=evidence_service,
+    domain_strategy_registry=domain_strategy_registry,
+    behavior_store=behavior_store,
 )
 
 
@@ -1484,6 +1563,7 @@ app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_settings_router(settings_plane))
+app.include_router(build_behavior_router(behavior_store))
 
 
 @app.middleware("http")
@@ -2279,6 +2359,7 @@ async def chat(payload: ChatRequest, request: Request):
             atlas=atlas_hits or None,
             why=why_hits or None,
             contradictions=contradictions or None,
+            behavior_profile_prompt=behavior_store.get_effective().system_prompt,
         )
         if routed is not None and profile is not None:
             llm_kwargs.update(

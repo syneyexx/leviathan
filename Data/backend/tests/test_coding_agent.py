@@ -436,7 +436,15 @@ class CodingAgentTests(unittest.TestCase):
             if last.status != SessionStatus.RUNNING:
                 break
         assert last is not None
-        self.assertIn(last.status, {SessionStatus.COMPLETED, SessionStatus.UNVERIFIED})
+        self.assertIn(
+            last.status,
+            {
+                SessionStatus.COMPLETED,
+                SessionStatus.UNVERIFIED,
+                SessionStatus.PARTIAL,
+                SessionStatus.RESOURCE_EXHAUSTED,
+            },
+        )
 
     def test_08_verification_without_evidence_unmeasured(self) -> None:
         evidence = EvidenceStore(self.db_path)

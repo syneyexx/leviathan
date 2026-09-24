@@ -113,3 +113,46 @@ def build_settings_router(plane: SettingsControlPlane) -> APIRouter:
         }
 
     return router
+
+
+def build_behavior_router(behavior_store: Any) -> APIRouter:
+    """BehaviorProfile system-prompt routes — behavior is not authority."""
+
+    router = APIRouter(tags=["settings", "behavior"])
+
+    class BehaviorPromptPatch(BaseModel):
+        system_prompt: str = Field(..., min_length=1, max_length=200_000)
+
+    @router.get("/api/settings/behavior-profile")
+    def get_behavior_profile() -> dict:
+        return {
+            "profile": behavior_store.public_effective(include_prompt=True),
+            "truth": {
+                "behavior_is_not_authority": True,
+                "system_prompt_is_not_capability_grant": True,
+                "does_not_bypass_execution_gateway": True,
+                "does_not_bypass_approvals": True,
+            },
+        }
+
+    @router.put("/api/settings/behavior-profile/system-prompt")
+    def put_system_prompt(payload: BehaviorPromptPatch) -> dict:
+        profile = behavior_store.update_system_prompt(payload.system_prompt)
+        return {
+            "profile": profile.public_dict(include_prompt=True),
+            "effective": behavior_store.public_effective(include_prompt=True),
+            "truth": {
+                "behavior_is_not_authority": True,
+                "permissions_unchanged": True,
+            },
+        }
+
+    @router.post("/api/settings/behavior-profile/reset")
+    def reset_behavior_profile() -> dict:
+        profile = behavior_store.reset_to_default()
+        return {
+            "profile": profile.public_dict(include_prompt=True),
+            "effective": behavior_store.public_effective(include_prompt=True),
+        }
+
+    return router

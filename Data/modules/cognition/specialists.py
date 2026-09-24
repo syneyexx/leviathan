@@ -15,17 +15,33 @@ def build_coding_handler(coding_service: Any) -> Callable[[DelegateRequest], Del
         if prior:
             try:
                 session = coding_service.get_session(str(prior))
+                child_status = getattr(
+                    getattr(session, "status", None), "value", str(getattr(session, "status", "RUNNING"))
+                )
+                # Reuse is not completion unless the child is already terminal-success.
+                if child_status == "COMPLETED":
+                    status = "COMPLETED"
+                elif child_status in {"FAILED", "CANCELLED", "DISABLED"}:
+                    status = child_status
+                elif child_status in {"UNVERIFIED", "PARTIAL", "RESOURCE_EXHAUSTED"}:
+                    status = child_status
+                elif child_status == "WAITING_APPROVAL":
+                    status = "WAITING_APPROVAL"
+                else:
+                    status = "RUNNING"
                 return DelegateResult(
                     delegation_id=request.delegation_id,
-                    status="COMPLETED",
-                    summary=f"reused coding session {session.session_id}",
+                    status=status,
+                    summary=f"reused coding session {session.session_id} ({child_status})",
                     artifact_refs=[f"coding_session:{session.session_id}"],
                     evidence_refs=[],
                     resource_use={"reused": True},
                     metadata={
                         "session_id": session.session_id,
+                        "child_status": child_status,
                         "idempotent": True,
                         "side_effect_duplicated": False,
+                        "started_is_not_completed": True,
                     },
                 )
             except Exception:  # noqa: BLE001
@@ -56,6 +72,8 @@ def build_coding_handler(coding_service: Any) -> Callable[[DelegateRequest], Del
                 artifact_refs=[f"coding_session:{session.session_id}"],
                 metadata={"session_id": session.session_id},
             )
+        # Start a non-blocking turn so the specialist is actually scheduled.
+        # ACCEPTED/RUNNING — never COMPLETED merely because work was started.
         try:
             coding_service.start_turn(session.session_id, message=request.goal)
         except Exception as exc:  # noqa: BLE001
@@ -66,20 +84,22 @@ def build_coding_handler(coding_service: Any) -> Callable[[DelegateRequest], Del
                 artifact_refs=[f"coding_session:{session.session_id}"],
                 unresolved_issues=["coding_turn_start_failed"],
                 error=str(exc),
-                metadata={"session_id": session.session_id},
+                metadata={"session_id": session.session_id, "started_is_not_completed": True},
             )
         return DelegateResult(
             delegation_id=request.delegation_id,
-            status="COMPLETED",
-            summary=f"coding session {session.session_id} started under parent authority",
+            status="ACCEPTED",
+            summary=f"coding session {session.session_id} accepted and scheduled under parent authority",
             artifact_refs=[f"coding_session:{session.session_id}"],
             evidence_refs=[],
             resource_use={"sessions_created": 1},
             metadata={
                 "session_id": session.session_id,
+                "child_status": "RUNNING",
                 "authority_ceiling": request.authority_ceiling,
                 "parent_trace_id": request.parent_trace_id,
                 "side_effect_duplicated": False,
+                "started_is_not_completed": True,
             },
         )
 

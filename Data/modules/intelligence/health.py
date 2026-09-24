@@ -57,6 +57,14 @@ class IntelligenceHealthService:
         cortex: Any | None = None,
         experience_store: Any | None = None,
         reasoning_policy: ReasoningPolicy | None = None,
+        brain_access: Any | None = None,
+        context_builder: Any | None = None,
+        model_control_plane: Any | None = None,
+        capability_catalog: Any | None = None,
+        execution_gateway: Any | None = None,
+        evidence_service: Any | None = None,
+        domain_strategy_registry: Any | None = None,
+        behavior_store: Any | None = None,
     ) -> None:
         self.settings = settings
         self.settings_plane = settings_plane
@@ -75,6 +83,14 @@ class IntelligenceHealthService:
         self.cortex = cortex
         self.experience_store = experience_store
         self.reasoning_policy = reasoning_policy
+        self.brain_access = brain_access
+        self.context_builder = context_builder
+        self.model_control_plane = model_control_plane
+        self.capability_catalog = capability_catalog
+        self.execution_gateway = execution_gateway
+        self.evidence_service = evidence_service
+        self.domain_strategy_registry = domain_strategy_registry
+        self.behavior_store = behavior_store
 
     def _settings_obj(self) -> Any | None:
         if self.settings is not None:
@@ -331,14 +347,70 @@ class IntelligenceHealthService:
         payload = dict(sections)
         payload["stack_summary"] = self._stack_summary(sections)
         payload["consumer_truth"] = [r.public_dict() for r in reports]
+        payload["oneBrain"] = self._one_brain_posture()
         payload["truth"] = {
             "desired_is_not_effective": True,
             "flag_on_is_not_capability": True,
             "unavailable_is_not_success": True,
             "no_fake_active_when_degraded": True,
             "consumer_truth_lists_critical_toggles": True,
+            "one_brain_reflects_live_components": True,
         }
         return payload
+
+    def _one_brain_posture(self) -> dict[str, Any]:
+        """Live One-Brain architecture posture — no hardcoded green lights."""
+        strategies: list[str] = []
+        if self.domain_strategy_registry is not None and hasattr(self.domain_strategy_registry, "domains"):
+            try:
+                strategies = list(self.domain_strategy_registry.domains())
+            except Exception:  # noqa: BLE001
+                strategies = []
+        components = {
+            "contextCompiler": self.context_builder is not None,
+            "cognitiveRuntime": self.cognition_runtime is not None,
+            "modelControlPlane": self.model_control_plane is not None,
+            "capabilityCatalog": self.capability_catalog is not None,
+            "executionGateway": self.execution_gateway is not None,
+            "knowledge": self.knowledge is not None or self.retriever is not None,
+            "memory": self.memory_store is not None,
+            "evidence": self.evidence_service is not None or self.verification_engine is not None,
+            "verification": self.verification_engine is not None,
+            "brainAccess": self.brain_access is not None,
+            "behaviorProfile": self.behavior_store is not None,
+        }
+        ready = all(
+            components[k]
+            for k in (
+                "contextCompiler",
+                "cognitiveRuntime",
+                "modelControlPlane",
+                "capabilityCatalog",
+                "executionGateway",
+                "knowledge",
+                "memory",
+            )
+        )
+        return {
+            "ready": ready,
+            "contextCompiler": components["contextCompiler"],
+            "cognitiveRuntime": components["cognitiveRuntime"],
+            "modelControlPlane": components["modelControlPlane"],
+            "capabilityCatalog": components["capabilityCatalog"],
+            "executionGateway": components["executionGateway"],
+            "knowledge": components["knowledge"],
+            "memory": components["memory"],
+            "evidence": components["evidence"],
+            "verification": components["verification"],
+            "brainAccess": components["brainAccess"],
+            "behaviorProfile": components["behaviorProfile"],
+            "activeDomainStrategies": strategies,
+            "truth": {
+                "brain_is_access_facade": True,
+                "not_canonical_storage": True,
+                "no_hardcoded_green_lights": True,
+            },
+        }
 
     def public_dict(self) -> dict[str, Any]:
         return self.build()

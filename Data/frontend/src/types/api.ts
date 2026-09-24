@@ -1325,6 +1325,8 @@ export type CodingSessionStatus =
   | "COMPLETED"
   | "FAILED"
   | "UNVERIFIED"
+  | "PARTIAL"
+  | "RESOURCE_EXHAUSTED"
   | "CANCELLED"
   | "DISABLED";
 
@@ -1362,6 +1364,14 @@ export type CodingSession = {
   } | null;
   feature_truth?: Record<string, unknown> | null;
   round_count?: number;
+  phase?: string | null;
+  task_type?: string | null;
+  coding_role?: string | null;
+  plan?: Record<string, unknown> | null;
+  brain_context?: Record<string, unknown> | null;
+  acceptance?: Record<string, unknown> | null;
+  hypotheses?: Array<Record<string, unknown>> | null;
+  truth?: Record<string, unknown> | null;
 };
 
 export type CodingStep = {

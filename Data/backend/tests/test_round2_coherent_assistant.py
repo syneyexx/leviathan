@@ -173,7 +173,7 @@ class SpecialistDelegationTests(unittest.TestCase):
 
         req = DS.build_request(goal="fix reconnect", agent_kind="coding")
         result = delegation.delegate(req)
-        self.assertEqual(result.status, "COMPLETED")
+        self.assertEqual(result.status, "ACCEPTED")
         self.assertTrue(any(r.startswith("coding_session:") for r in result.artifact_refs))
 
         req2 = DS.build_request(goal="onderzoek bronnen", agent_kind="research")

@@ -157,27 +157,45 @@ class ContextBuilder:
         used = 0
         constraints_retained = False
 
-        if mode == "coding" and constraints:
-            system_core = constraints
-        elif mode == "coding":
-            from Data.modules.coding.prompts import CODING_SYSTEM_PROMPT
+        # Canonical identity: BehaviorProfile (or its default) owns LEVIATHAN behavior.
+        # Domain overlays (e.g. coding) specialize — they do not replace identity.
+        identity_prompt = (behavior_profile_prompt or "").strip()
+        if not identity_prompt:
+            try:
+                from Data.modules.settings.behavior import DEFAULT_BEHAVIOR_PROFILE
 
-            system_core = CODING_SYSTEM_PROMPT
-        else:
+                identity_prompt = DEFAULT_BEHAVIOR_PROFILE.system_prompt.strip()
+            except Exception:  # noqa: BLE001
+                identity_prompt = (
+                    "You are LEVIATHAN, a local AI control-plane assistant. "
+                    "Be precise, truthful about uncertainty, and respect technical capability boundaries."
+                )
+
+        runtime_contract = (
+            "Do not claim that an action, tool call, lookup, file change, or external verification happened "
+            "unless the runtime actually provided evidence for it. "
+            "Follow the selected response plan without exposing hidden chain-of-thought. "
+            f"Intent={plan.intent}; complexity={plan.complexity}; plan={','.join(plan.steps)}."
+        )
+
+        if mode == "coding":
+            from Data.modules.coding.prompts import CODING_COGNITIVE_OVERLAY
+
+            overlay = (constraints or CODING_COGNITIVE_OVERLAY).strip()
             system_core = (
-                "You are Leviathan, a precise local AI assistant. Give direct, useful answers. "
-                "Do not claim that an action, tool call, lookup, file change, or external verification happened "
-                "unless the runtime actually provided evidence for it. "
-                "The runtime has already selected a lightweight response plan; follow it without exposing hidden chain-of-thought. "
-                f"Intent={plan.intent}; complexity={plan.complexity}; plan={','.join(plan.steps)}."
+                f"{identity_prompt}\n\n"
+                f"{runtime_contract}\n\n"
+                f"## Coding Cognitive Overlay\n{overlay}"
             )
-            if behavior_profile_prompt and behavior_profile_prompt.strip():
-                # BehaviorProfile injects only via compiler (U063) — not capability authority.
-                system_core = behavior_profile_prompt.strip() + "\n\n" + system_core
             if reasoning_mode:
-                system_core = f"Reasoning mode={reasoning_mode}.\n\n" + system_core
+                system_core = f"Reasoning mode={reasoning_mode}.\n\n{system_core}"
+        else:
+            system_core = f"{identity_prompt}\n\n{runtime_contract}"
+            if reasoning_mode:
+                system_core = f"Reasoning mode={reasoning_mode}.\n\n{system_core}"
 
         # Pinned constraints as their own non-droppable section (exit gate).
+        # Coding overlay is already folded into system_core; avoid double-injecting it here.
         if constraints and constraints.strip() and mode != "coding":
             constraint_text = constraints.strip()
             constraint_tokens = estimate_tokens(constraint_text)
