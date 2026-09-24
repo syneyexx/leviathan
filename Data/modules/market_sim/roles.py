@@ -12,7 +12,7 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
     {
         "key": "market_analyst",
         "name": "Market Analyst",
-        "kind": "specialist",
+        "kind": "trading",
         "role": "market_analyst",
         "tags": ["trading", "market_sim"],
         "description": "Analyzes causal market state; proposes regime hypotheses.",
@@ -24,7 +24,7 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
     {
         "key": "strategy_researcher",
         "name": "Strategy Researcher",
-        "kind": "research",
+        "kind": "trading",
         "role": "strategy_researcher",
         "tags": ["trading", "market_sim"],
         "description": "Designs/selects DSL strategy versions within validated schema.",
@@ -36,7 +36,7 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
     {
         "key": "critic",
         "name": "Strategy Critic",
-        "kind": "specialist",
+        "kind": "trading",
         "role": "critic",
         "tags": ["trading", "market_sim"],
         "description": "Counter-arguments and falsification pressure on proposals.",
@@ -48,7 +48,7 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
     {
         "key": "risk_agent",
         "name": "Risk Officer",
-        "kind": "specialist",
+        "kind": "trading",
         "role": "risk_agent",
         "tags": ["trading", "market_sim", "risk"],
         "description": "Hard veto on orders; cannot be bypassed by model output.",
@@ -60,7 +60,7 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
     {
         "key": "portfolio_manager",
         "name": "Portfolio Manager",
-        "kind": "specialist",
+        "kind": "trading",
         "role": "portfolio_manager",
         "tags": ["trading", "market_sim"],
         "description": "Manages shared portfolio when game mode is collaborative.",
@@ -72,7 +72,7 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
     {
         "key": "evaluator",
         "name": "Independent Evaluator",
-        "kind": "specialist",
+        "kind": "trading",
         "role": "evaluator",
         "tags": ["trading", "market_sim", "evaluation"],
         "description": "Out-of-sample evaluation; does not trade during design window.",
@@ -84,7 +84,7 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
     {
         "key": "trading_orchestrator",
         "name": "Trading Orchestrator",
-        "kind": "orchestrator",
+        "kind": "trading",
         "role": "trading_orchestrator",
         "tags": ["trading", "market_sim", "orchestrator"],
         "description": "Owns research task status, deadlines, iteration caps, stop criteria.",
@@ -98,6 +98,54 @@ TRADING_ROLE_SPECS: list[dict[str, Any]] = [
         },
         "output_contract": ["task_status", "stop_decision", "assignment"],
         "budget": {"max_iterations": 8, "max_model_calls": 12, "max_tokens": 8000},
+    },
+    {
+        "key": "signal_analyst",
+        "name": "Signal Analyst",
+        "kind": "trading",
+        "role": "signal_analyst",
+        "tags": ["trading", "market_sim"],
+        "description": "Turns causal price features (as_of-bounded) into a stance proposal; never orders.",
+        "capabilities": ["market_sim.observe", "market_sim.propose"],
+        "authority": {"may_propose": True, "may_order": False, "may_veto": False},
+        "output_contract": ["instrument", "direction", "confidence", "horizon", "rationale"],
+        "budget": {"max_model_calls": 6, "max_tokens": 4000},
+    },
+    {
+        "key": "news_analyst",
+        "name": "News Analyst",
+        "kind": "trading",
+        "role": "news_analyst",
+        "tags": ["trading", "market_sim", "news"],
+        "description": "Reads news items visible at as_of and extracts schema-validated event signals (data, not authority).",
+        "capabilities": ["market_sim.news.read", "market_sim.propose"],
+        "authority": {"may_propose": True, "may_order": False, "may_veto": False},
+        "output_contract": ["instruments", "eventType", "direction", "magnitude", "confidence", "horizon"],
+        "budget": {"max_model_calls": 12, "max_tokens": 8000},
+    },
+    {
+        "key": "execution_agent",
+        "name": "Execution Agent",
+        "kind": "trading",
+        "role": "execution_agent",
+        "tags": ["trading", "market_sim", "paper"],
+        "description": "Records paper order intents for risk-approved decisions. Live trading is blocked by construction.",
+        "capabilities": ["market_sim.paper.intent"],
+        "authority": {"may_propose": False, "may_order": True, "may_veto": False, "paper_only": True},
+        "output_contract": ["instrument", "side", "qty", "orderType", "venue"],
+        "budget": {"max_model_calls": 0, "max_tokens": 0},
+    },
+    {
+        "key": "postmortem_agent",
+        "name": "Post-mortem Agent",
+        "kind": "trading",
+        "role": "postmortem_agent",
+        "tags": ["trading", "market_sim", "learning"],
+        "description": "Writes lessons from decision records with evidence links (trust=agent_proposed until verified).",
+        "capabilities": ["market_sim.lesson.write"],
+        "authority": {"may_propose": True, "may_order": False, "may_veto": False},
+        "output_contract": ["claim", "evidenceRefs", "confidence"],
+        "budget": {"max_model_calls": 4, "max_tokens": 6000},
     },
 ]
 
@@ -160,7 +208,16 @@ def ensure_trading_agents_in_fleet(fleet: Any) -> list[dict[str, Any]]:
         return created
     existing = {a.name.lower(): a for a in fleet.list_agents(include_archived=True)}
     for spec in TRADING_ROLE_SPECS:
-        if spec["name"].lower() in existing:
+        found = existing.get(spec["name"].lower())
+        if found is not None:
+            # Older installs registered trading roles as specialist/research; re-type to TRADING
+            # so they fall under the trading executor and the isolation rules.
+            kind_value = getattr(found.kind, "value", found.kind)
+            if str(kind_value) != spec["kind"] and hasattr(fleet, "update_agent"):
+                try:
+                    fleet.update_agent(found.agent_id, {"kind": spec["kind"]})
+                except Exception:  # noqa: BLE001
+                    pass
             continue
         try:
             agent = fleet.create_agent(

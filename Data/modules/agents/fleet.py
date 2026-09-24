@@ -105,6 +105,8 @@ _DEFAULT_SEED: list[dict[str, Any]] = [
 ]
 
 DATASET_LEARNING_SYSTEM_KEY = "dataset_learning"
+# Role string that marks an ORCHESTRATOR definition as a trade orchestra (market_sim owns it).
+TRADE_ORCHESTRA_ROLE = "trade_orchestra"
 
 
 class AgentFleetService:
@@ -123,9 +125,21 @@ class AgentFleetService:
         self.dataset_activity_provider = dataset_activity_provider
         self.system_inventory = system_inventory or SystemInventory()
         self.job_runtime = job_runtime
+        # Domain executors keyed by AgentDefinitionKind (e.g. TRADING → market_sim orchestra).
+        # Missions for a kind with a registered executor never reach the generic runtime.
+        self._kind_executors: dict[AgentDefinitionKind, Any] = {}
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
+
+    def register_kind_executor(self, kind: AgentDefinitionKind | str, executor: Any) -> None:
+        """Register a domain executor: ``executor.execute(mission, agent, fleet=...) -> dict``."""
+        key = kind if isinstance(kind, AgentDefinitionKind) else AgentDefinitionKind(str(kind))
+        self._kind_executors[key] = executor
+
+    def kind_executor(self, kind: AgentDefinitionKind | str) -> Any | None:
+        key = kind if isinstance(kind, AgentDefinitionKind) else AgentDefinitionKind(str(kind))
+        return self._kind_executors.get(key)
 
     @staticmethod
     def _runners_externalized() -> bool:
@@ -473,7 +487,13 @@ class AgentFleetService:
             agent.health_reason = None
         return agent
 
-    def _validate_orchestrator(self, orch: OrchestratorConfig, *, self_id: str | None = None) -> None:
+    def _validate_orchestrator(
+        self,
+        orch: OrchestratorConfig,
+        *,
+        self_id: str | None = None,
+        role: str = "",
+    ) -> None:
         if orch.max_delegation_depth < 1 or orch.max_delegation_depth > 16:
             raise AgentFleetError("INVALID_ORCHESTRATOR", "maxDelegationDepth must be 1..16")
         if orch.parallelism_limit < 1 or orch.parallelism_limit > 32:
@@ -494,6 +514,21 @@ class AgentFleetService:
                 raise AgentFleetError("INVALID_MEMBER", f"Unknown member agent: {member_id}", http_status=422)
             if member.archived:
                 raise AgentFleetError("INVALID_MEMBER", f"Member is archived: {member_id}", http_status=422)
+            # Trading isolation: TRADING members only inside a trade orchestra, and a trade
+            # orchestra holds only TRADING members (no coding/research agents in the loop).
+            is_trade_orchestra = str(role or "") == TRADE_ORCHESTRA_ROLE
+            if member.kind == AgentDefinitionKind.TRADING and not is_trade_orchestra:
+                raise AgentFleetError(
+                    "TRADING_MEMBER_ISOLATION",
+                    f"Trading agent {member_id} may only be a member of a trade orchestra",
+                    http_status=422,
+                )
+            if is_trade_orchestra and member.kind != AgentDefinitionKind.TRADING:
+                raise AgentFleetError(
+                    "TRADING_MEMBER_ISOLATION",
+                    f"Trade orchestra members must be trading agents (got {member.kind.value}: {member_id})",
+                    http_status=422,
+                )
             if member.kind == AgentDefinitionKind.ORCHESTRATOR:
                 # Nested orchestrators count against depth; disallow deep graphs here.
                 nested = member.orchestrator.member_agent_ids if member.orchestrator else []
@@ -525,7 +560,7 @@ class AgentFleetService:
         orch = None
         if kind == AgentDefinitionKind.ORCHESTRATOR:
             orch = OrchestratorConfig.from_dict(payload.get("orchestrator"))
-            self._validate_orchestrator(orch)
+            self._validate_orchestrator(orch, role=str(payload.get("role") or ""))
         # USER CRUD must never invent SYSTEM ownership.
         metadata = dict(payload.get("metadata") or {})
         metadata.pop("systemKey", None)
@@ -647,7 +682,7 @@ class AgentFleetService:
                 updated.orchestrator = OrchestratorConfig.from_dict(orch_payload)
             if updated.orchestrator is None:
                 updated.orchestrator = OrchestratorConfig()
-            self._validate_orchestrator(updated.orchestrator, self_id=updated.agent_id)
+            self._validate_orchestrator(updated.orchestrator, self_id=updated.agent_id, role=updated.role)
         elif "orchestrator" in payload and payload["orchestrator"] is not None:
             raise AgentFleetError("INVALID_ORCHESTRATOR", "orchestrator config only valid for kind=orchestrator")
         updated.version = int(updated.version) + 1
@@ -707,6 +742,14 @@ class AgentFleetService:
             return AgentKind.CODING
         if definition.kind == AgentDefinitionKind.RESEARCH:
             return AgentKind.RESEARCH
+        if definition.kind == AgentDefinitionKind.TRADING:
+            # Trading agents are never planned by the generic/coding/research planners.
+            raise AgentFleetError(
+                "TRADING_EXECUTOR_REQUIRED",
+                "Trading agents execute only through the registered trading executor "
+                "(market_sim orchestra); generic planning is refused.",
+                http_status=409,
+            )
         return AgentKind.GENERIC
 
     def launch_mission(
@@ -720,6 +763,7 @@ class AgentFleetService:
         dry_run: bool = False,
         parent_mission_id: str | None = None,
         depth: int = 0,
+        metadata: dict[str, Any] | None = None,
     ) -> AgentMission:
         text = (request or "").strip()
         if not text:
@@ -755,7 +799,7 @@ class AgentFleetService:
             trace_id=AgentFleetStore.new_id("trace"),
             created_at=now,
             updated_at=now,
-            metadata={"dryRun": dry_run, "depth": depth, "useJobs": use_jobs},
+            metadata={**dict(metadata or {}), "dryRun": dry_run, "depth": depth, "useJobs": use_jobs},
         )
         self.store.create_mission(mission)
         self._emit(
@@ -830,6 +874,14 @@ class AgentFleetService:
                 "members": members,
                 "request": request[:500],
             }
+        executor = self._kind_executors.get(agent.kind)
+        if executor is not None and hasattr(executor, "plan"):
+            return {
+                "kind": agent.kind.value,
+                "executor": getattr(executor, "name", type(executor).__name__),
+                "plan": executor.plan(agent, request),
+                "request": request[:500],
+            }
         steps = self.runtime.plan(request, kind=self._execution_kind(agent))
         return {
             "kind": agent.kind.value,
@@ -856,7 +908,11 @@ class AgentFleetService:
         self.store.update_definition(agent)
 
         try:
-            if agent.kind == AgentDefinitionKind.ORCHESTRATOR:
+            executor = self._domain_executor_for(agent)
+            if executor is not None:
+                # Domain executors (e.g. trade orchestra + trading agents) own their own protocol.
+                result = self._run_kind_executor(executor, mission, agent)
+            elif agent.kind == AgentDefinitionKind.ORCHESTRATOR:
                 result = self._run_orchestrator(mission, agent, depth=depth, use_jobs=use_jobs)
             else:
                 outcome = self.runtime.execute(
@@ -915,6 +971,43 @@ class AgentFleetService:
         )
         return mission
 
+    def _domain_executor_for(self, agent: AgentDefinition) -> Any | None:
+        """Resolve the domain executor that owns this agent (by kind, or by orchestra claim)."""
+        direct = self._kind_executors.get(agent.kind)
+        if direct is not None:
+            return direct
+        if agent.kind == AgentDefinitionKind.ORCHESTRATOR:
+            for executor in self._kind_executors.values():
+                owns = getattr(executor, "owns_orchestrator", None)
+                if callable(owns) and owns(agent):
+                    return executor
+        return None
+
+    def _run_kind_executor(
+        self,
+        executor: Any,
+        mission: AgentMission,
+        agent: AgentDefinition,
+    ) -> dict[str, Any]:
+        outcome = executor.execute(mission, agent, fleet=self)
+        result = dict(outcome or {})
+        status = str(result.get("status") or "COMPLETED").upper()
+        if status in {"FAILED", "UNAVAILABLE", "REFUSED"}:
+            mission.status = MissionStatus.FAILED
+            mission.error = str(result.get("error") or status)
+        elif status == "DISABLED":
+            mission.status = MissionStatus.DISABLED
+            mission.error = str(result.get("error") or status)
+        else:
+            mission.status = MissionStatus.COMPLETED
+            mission.progress = 1.0
+        if result.get("runId"):
+            mission.run_id = str(result["runId"])
+        for job_id in result.get("jobIds") or []:
+            if job_id not in mission.job_ids:
+                mission.job_ids.append(str(job_id))
+        return result
+
     def _run_orchestrator(
         self,
         mission: AgentMission,
@@ -930,7 +1023,7 @@ class AgentFleetService:
                 f"Max delegation depth {orch.max_delegation_depth} exceeded",
                 http_status=422,
             )
-        self._validate_orchestrator(orch, self_id=agent.agent_id)
+        self._validate_orchestrator(orch, self_id=agent.agent_id, role=agent.role)
         if orch.strategy == "parallel_bounded":
             return self._run_orchestrator_parallel(mission, agent, orch, depth=depth, use_jobs=use_jobs)
         return self._run_orchestrator_sequential(mission, agent, orch, depth=depth, use_jobs=use_jobs)
