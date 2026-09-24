@@ -6,12 +6,13 @@ import html
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from Data.modules.common.atomic import atomic_write_text, ensure_dir
 
 from .evidence import EvidenceLedger
 from .store import ResearchStore
-from .types import ClaimStatus, ResearchProject, ResearchReport
+from .types import AnalysisMode, ClaimStatus, ResearchProject, ResearchReport
 
 
 def utc_now() -> str:
@@ -19,10 +20,20 @@ def utc_now() -> str:
 
 
 class ReportBuilder:
-    def __init__(self, store: ResearchStore, reports_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        store: ResearchStore,
+        reports_root: Path | None = None,
+        *,
+        model_caller: Any | None = None,
+    ) -> None:
         self.store = store
         self.reports_root = Path(reports_root) if reports_root else None
         self.ledger = EvidenceLedger(store)
+        self.model_caller = model_caller
+
+    def set_model_caller(self, caller: Any | None) -> None:
+        self.model_caller = caller
 
     def generate(self, project: ResearchProject) -> ResearchReport:
         evidence = self.store.list_evidence(project.project_id)
@@ -109,22 +120,87 @@ class ReportBuilder:
             f"- Allow web: {project.allow_web}",
             f"- Local scopes: {', '.join(project.local_scopes) or '(all knowledge)'}",
             "- Citations resolve only through the evidence ledger to stored source snapshots.",
+            f"- Analysis mode: `{project.analysis_mode.value}`",
         ]
         if project.web_unavailable_reason:
             methodology.append(
                 f"- Web status: unavailable (`{project.web_unavailable_reason}`)"
             )
 
-        body = "\n".join(
+        executive = (
+            f"Research on **{project.topic}** collected {len(sources)} source(s), "
+            f"{len(evidence)} evidence span(s), {len(claims)} claim(s), "
+            f"and {len(conflicts)} conflict record(s)."
+        )
+        model_narrative: str | None = None
+        model_meta: dict[str, Any] = {}
+        if (
+            project.analysis_mode == AnalysisMode.MODEL
+            and self.model_caller is not None
+        ):
+            # Shared Model Control Plane path — research role, background priority.
+            # Narrative may only restate listed findings; citations remain ledger-gated.
+            digest = "\n".join(
+                [
+                    f"Topic: {project.topic}",
+                    "Findings:",
+                    *findings_lines[:40],
+                    "Uncertainty:",
+                    *uncertainty[:20],
+                ]
+            )
+            try:
+                result = self.model_caller(
+                    system_prompt=(
+                        "You are LEVIATHAN Research Cognition summarizing verified findings. "
+                        "Do not invent claims, sources, or citations. "
+                        "Only restate what appears in the provided findings. "
+                        "If evidence is thin, say so."
+                    ),
+                    messages=[{"role": "user", "content": digest}],
+                    role="researcher",
+                    domain="research",
+                    model_role="research",
+                    job_class="BACKGROUND",
+                    run_id=project.project_id,
+                    max_tokens=800,
+                )
+                text = str(
+                    (result or {}).get("text")
+                    or (result or {}).get("content")
+                    or ""
+                ).strip()
+                if text:
+                    model_narrative = text
+                    model_meta = {
+                        "model_id": (result or {}).get("model_id"),
+                        "route": (result or {}).get("route"),
+                        "usage_source": (result or {}).get("usage_source"),
+                    }
+            except Exception as exc:  # noqa: BLE001 — deterministic report remains authoritative
+                model_meta = {"error": str(exc), "fallback": "deterministic_executive_summary"}
+
+        body_parts = [
+            f"# {project.title}",
+            "",
+            "## Executive Summary",
+            executive,
+        ]
+        if model_narrative:
+            body_parts.extend(
+                [
+                    "",
+                    "## Model-assisted narrative (non-authoritative)",
+                    (
+                        "_Produced via shared Model Control Plane with role=`research`. "
+                        "Claims in Findings remain the evidence-backed authority._"
+                    ),
+                    "",
+                    model_narrative,
+                ]
+            )
+        body_parts.extend(
             [
-                f"# {project.title}",
-                "",
-                "## Executive Summary",
-                (
-                    f"Research on **{project.topic}** collected {len(sources)} source(s), "
-                    f"{len(evidence)} evidence span(s), {len(claims)} claim(s), "
-                    f"and {len(conflicts)} conflict record(s)."
-                ),
                 "",
                 "## Research Question",
                 project.topic,
@@ -162,6 +238,7 @@ class ReportBuilder:
                 "",
             ]
         )
+        body = "\n".join(body_parts)
 
         # Ensure no fabricated citation markers survive.
         body = self.ledger.mark_unresolved_in_text(project.project_id, body)
@@ -181,7 +258,12 @@ class ReportBuilder:
             model_profile=dict(project.model_profile),
             generation_trace={
                 "generator": "research.reports.ReportBuilder",
-                "deterministic": True,
+                "deterministic": model_narrative is None,
+                "model_assisted": model_narrative is not None,
+                "analysis_mode": project.analysis_mode.value,
+                "model_control_plane": bool(self.model_caller),
+                "model_role": "research" if model_narrative is not None else None,
+                "model_meta": model_meta,
                 "citation_resolutions": len(resolutions),
                 "unresolved_citations": len(unresolved),
                 "claims": len(claims),

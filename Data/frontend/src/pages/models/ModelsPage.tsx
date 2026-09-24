@@ -9,7 +9,10 @@ import type {
   ModelDescriptor,
   ModelProfile,
   ModelProvider,
+  ModelResidency,
+  ModelRuntimeBinding,
   ModelsStatus,
+  ResidencyPolicy,
   RouterConfig,
   VerifiedCapability,
 } from "../../types/api";
@@ -20,6 +23,7 @@ import { ModelStatusCards } from "./ModelStatusCards";
 import { ProviderManager } from "./ProviderManager";
 import { ModelGatewayPanel } from "./ModelGatewayPanel";
 import { ModelRouterPanel } from "./ModelRouterPanel";
+import { ModelResidencyPanel } from "./ModelResidencyPanel";
 import { ModelImportDialog } from "./ModelImportDialog";
 import { ModelDownloadManager } from "./ModelDownloadManager";
 import { ModelServingPanel, type ServingWorker } from "./ModelServingPanel";
@@ -48,6 +52,9 @@ export function ModelsPage() {
   const [capabilities, setCapabilities] = useState<VerifiedCapability[]>([]);
   const [preflight, setPreflight] = useState<Record<string, unknown> | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | null>(null);
+  const [residency, setResidency] = useState<ModelResidency | null>(null);
+  const [runtimeBinding, setRuntimeBinding] = useState<ModelRuntimeBinding | null>(null);
+  const [residencyPolicy, setResidencyPolicy] = useState<ResidencyPolicy | null>(null);
   const [lastBenchmark, setLastBenchmark] = useState<Record<string, unknown> | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
@@ -147,6 +154,9 @@ export function ModelsPage() {
       setPreflight(null);
       setSelectedProvider(null);
       setLastBenchmark(null);
+      setResidency(null);
+      setRuntimeBinding(null);
+      setResidencyPolicy(null);
       return;
     }
     let cancelled = false;
@@ -158,6 +168,9 @@ export function ModelsPage() {
         setCapabilities(detail.capabilities);
         setPreflight(detail.preflight);
         setSelectedProvider(detail.provider);
+        setResidency(detail.residency ?? null);
+        setRuntimeBinding(detail.runtimeBinding ?? null);
+        setResidencyPolicy(detail.residencyPolicy ?? null);
       } catch (err) {
         if (!cancelled) {
           toast(err instanceof ApiError ? err.message : "Failed to load model detail");
@@ -168,6 +181,30 @@ export function ModelsPage() {
       cancelled = true;
     };
   }, [selectedId, toast]);
+
+  // Moderate polling only during residency transitions (not 100ms forever).
+  useEffect(() => {
+    const transitional = new Set([
+      "STARTING",
+      "LOADING",
+      "DRAINING",
+      "STOPPING",
+    ]);
+    if (!selectedId || !residency || !transitional.has(residency.state)) return;
+    const id = window.setInterval(() => {
+      void (async () => {
+        try {
+          const detail = await api.getModel(selectedId);
+          setResidency(detail.residency ?? null);
+          setRuntimeBinding(detail.runtimeBinding ?? null);
+          setResidencyPolicy(detail.residencyPolicy ?? null);
+        } catch {
+          /* ignore transient poll errors */
+        }
+      })();
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [selectedId, residency?.state]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -477,6 +514,22 @@ export function ModelsPage() {
 
         <div className="lv-models-panels">
           <ModelGatewayPanel gateway={gateway} />
+          {selectedId ? (
+            <ModelResidencyPanel
+              residency={residency}
+              binding={runtimeBinding}
+              policy={residencyPolicy}
+              busy={busy}
+              onSavePolicy={async (next) => {
+                if (!selectedId) return;
+                const saved = await api.saveResidencyPolicy(selectedId, next);
+                setResidencyPolicy(saved.policy);
+                const detail = await api.getModel(selectedId);
+                setResidency(detail.residency ?? null);
+                toast("Residency policy saved");
+              }}
+            />
+          ) : null}
           {router ? (
             <ModelRouterPanel
               router={router}

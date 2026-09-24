@@ -34,6 +34,7 @@ def _managed_adapter(
         timeout_seconds=timeout_seconds,
         mode=mode if command else "inproc",
         command=command,
+        allow_inproc_fixture=True,  # called only when managed path explicitly chooses inproc
     )
 
 

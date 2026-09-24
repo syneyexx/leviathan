@@ -203,6 +203,26 @@ class ModelSettings:
 
 
 @dataclass(frozen=True)
+class ManagedServingSettings:
+    """Managed local model worker / residency configuration."""
+
+    enabled: bool = True
+    allow_inproc_fixture: bool = False  # production must never default to echo/inproc success
+    llama_cpp_executable: str | None = None
+    vllm_executable: str | None = None
+    bind_host: str = "127.0.0.1"
+    port_start: int = 29100
+    port_end: int = 29200
+    worker_startup_timeout_seconds: float = 120.0
+    worker_shutdown_timeout_seconds: float = 15.0
+    default_residency_policy: str = "IDLE_UNLOAD"
+    default_idle_unload_seconds: float = 300.0
+    min_ram_reserve_bytes: int = 1_073_741_824
+    min_vram_reserve_bytes: int = 536_870_912
+    max_managed_resident_models: int = 4
+
+
+@dataclass(frozen=True)
 class KnowledgeSettings:
     top_k: int
     data_root: Path
@@ -497,6 +517,7 @@ class Settings:
     backup: BackupSettings
     chaos: ChaosSettings
     research_integration: ResearchIntegrationSettings
+    managed_serving: ManagedServingSettings
     database_path: Path
 
     # --- Compatibility accessors (Step 1 call sites) ---
@@ -859,6 +880,50 @@ class Settings:
                 model=model,
                 api_key=api_key,
                 timeout_seconds=timeout,
+            ),
+            managed_serving=ManagedServingSettings(
+                enabled=_env_bool("LEVIATHAN_MANAGED_MODEL_SERVING", True),
+                allow_inproc_fixture=_env_bool("LEVIATHAN_ALLOW_INPROC_MODEL_FIXTURE", False),
+                llama_cpp_executable=(
+                    _env_raw("LEVIATHAN_LLAMA_CPP_EXECUTABLE", "") or ""
+                ).strip()
+                or None,
+                vllm_executable=(
+                    _env_raw("LEVIATHAN_VLLM_EXECUTABLE", "") or ""
+                ).strip()
+                or None,
+                bind_host=(
+                    _env_raw("LEVIATHAN_MANAGED_BIND_HOST", "127.0.0.1") or "127.0.0.1"
+                ).strip(),
+                port_start=_env_int("LEVIATHAN_MANAGED_PORT_START", 29100, minimum=1024, maximum=65000),
+                port_end=_env_int("LEVIATHAN_MANAGED_PORT_END", 29200, minimum=1024, maximum=65535),
+                worker_startup_timeout_seconds=_env_float(
+                    "LEVIATHAN_MANAGED_WORKER_STARTUP_TIMEOUT_SECONDS", 120.0, minimum=5.0
+                ),
+                worker_shutdown_timeout_seconds=_env_float(
+                    "LEVIATHAN_MANAGED_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 15.0, minimum=1.0
+                ),
+                default_residency_policy=(
+                    _env_raw("LEVIATHAN_DEFAULT_RESIDENCY_POLICY", "IDLE_UNLOAD") or "IDLE_UNLOAD"
+                ).strip().upper(),
+                default_idle_unload_seconds=_env_float(
+                    "LEVIATHAN_DEFAULT_IDLE_UNLOAD_SECONDS", 300.0, minimum=0.0
+                ),
+                min_ram_reserve_bytes=_env_int(
+                    "LEVIATHAN_MIN_RAM_RESERVE_BYTES",
+                    1_073_741_824,
+                    minimum=0,
+                    maximum=64_000_000_000,
+                ),
+                min_vram_reserve_bytes=_env_int(
+                    "LEVIATHAN_MIN_VRAM_RESERVE_BYTES",
+                    536_870_912,
+                    minimum=0,
+                    maximum=64_000_000_000,
+                ),
+                max_managed_resident_models=_env_int(
+                    "LEVIATHAN_MAX_MANAGED_RESIDENT_MODELS", 4, minimum=1, maximum=64
+                ),
             ),
             knowledge=KnowledgeSettings(
                 top_k=knowledge_top_k,

@@ -297,6 +297,10 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
             raise_model_error(exc)
         return {"download": job.public_dict()}
 
+    @router.get("/api/models/residency")
+    def list_residency() -> dict:
+        return {"residency": [s.public_dict() for s in plane.residency.list_snapshots()]}
+
     @router.get("/api/models/{model_id}")
     def get_model(model_id: str) -> dict:
         try:
@@ -309,6 +313,10 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
             except ModelControlError:
                 provider = None
             preflight = plane.resources.preflight(model).public_dict()
+            binding = plane.get_runtime_binding(model_id).public_dict()
+            residency = plane.residency.snapshot(model_id).public_dict()
+            policy = plane.residency.get_policy(model_id).public_dict()
+            estimate = plane.resources.estimate(model).public_dict()
         except ModelControlError as exc:
             raise_model_error(exc)
         return {
@@ -317,7 +325,41 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
             "capabilities": caps,
             "provider": provider,
             "preflight": preflight,
+            "runtimeBinding": binding,
+            "residency": residency,
+            "residencyPolicy": policy,
+            "resourceEstimate": estimate,
         }
+
+    @router.get("/api/models/{model_id}/residency")
+    def get_residency(model_id: str) -> dict:
+        try:
+            plane.registry.get(model_id)
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {
+            "residency": plane.residency.snapshot(model_id).public_dict(),
+            "policy": plane.residency.get_policy(model_id).public_dict(),
+            "runtimeBinding": plane.get_runtime_binding(model_id).public_dict(),
+        }
+
+    class ResidencyPolicyUpdate(BaseModel):
+        policy: str | None = None
+        idleUnloadSeconds: float | None = None
+        fullUnloadSeconds: float | None = None
+        pinned: bool | None = None
+        loadOptions: dict[str, Any] | None = None
+
+    @router.put("/api/models/{model_id}/residency-policy")
+    def put_residency_policy(model_id: str, payload: ResidencyPolicyUpdate) -> dict:
+        try:
+            plane.registry.get(model_id)
+            policy = plane.residency.set_policy(
+                model_id, payload.model_dump(exclude_none=True)
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
+        return {"policy": policy.public_dict()}
 
     @router.get("/api/models/{model_id}/profile")
     def get_profile(model_id: str) -> dict:
@@ -374,7 +416,7 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
         body = payload.model_dump() if payload else {}
         options = parse_load_options(body)
         try:
-            result = await plane.runtime.load(
+            result = await plane.load_model(
                 model_id, options, confirm_oom=bool(body.get("confirmOom"))
             )
         except ModelControlError as exc:
@@ -384,7 +426,7 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     @router.post("/api/models/{model_id}/unload")
     async def unload_model(model_id: str) -> dict:
         try:
-            result = await plane.runtime.unload(model_id)
+            result = await plane.unload_model(model_id)
         except ModelControlError as exc:
             raise_model_error(exc)
         return result
