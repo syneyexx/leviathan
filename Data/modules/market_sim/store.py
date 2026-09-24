@@ -711,3 +711,255 @@ class MarketSimStore:
                     utc_now(),
                 ),
             )
+
+
+    # --- Paper sessions / experiments / strategy memory (v34) ---
+
+    def upsert_paper_session(self, session: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_paper_sessions(
+                    session_id, status, broker_id, provider_id, symbol, strategy_id,
+                    strategy_version, kill_switch, feed_status, wallet_json, orders_json,
+                    metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    status=excluded.status,
+                    kill_switch=excluded.kill_switch,
+                    feed_status=excluded.feed_status,
+                    wallet_json=excluded.wallet_json,
+                    orders_json=excluded.orders_json,
+                    metadata_json=excluded.metadata_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    session["session_id"],
+                    session["status"],
+                    session["broker_id"],
+                    session["provider_id"],
+                    session["symbol"],
+                    session.get("strategy_id"),
+                    session.get("strategy_version"),
+                    1 if session.get("kill_switch") else 0,
+                    session.get("feed_status", "unknown"),
+                    json.dumps(session.get("wallet") or {}),
+                    json.dumps(session.get("orders") or []),
+                    json.dumps(session.get("metadata") or {}),
+                    session.get("created_at") or utc_now(),
+                    session.get("updated_at") or utc_now(),
+                ),
+            )
+        return session
+
+    def get_paper_session(self, session_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_paper_sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row["session_id"],
+            "status": row["status"],
+            "broker_id": row["broker_id"],
+            "provider_id": row["provider_id"],
+            "symbol": row["symbol"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": row["strategy_version"],
+            "kill_switch": bool(row["kill_switch"]),
+            "feed_status": row["feed_status"],
+            "wallet": _loads(row["wallet_json"], {}),
+            "orders": _loads(row["orders_json"], []),
+            "metadata": _loads(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_paper_sessions(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT session_id FROM market_paper_sessions ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            s = self.get_paper_session(r["session_id"])
+            if s:
+                out.append(s)
+        return out
+
+    def save_experiment(self, trial: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_experiments(
+                    trial_id, strategy_id, strategy_version, hypothesis, proposer_agent_id,
+                    data_hash, fingerprint, status, config_json, split_json, results_json,
+                    acceptance_json, rejection_reason, seed, created_at, finished_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trial_id) DO UPDATE SET
+                    status=excluded.status,
+                    results_json=excluded.results_json,
+                    rejection_reason=excluded.rejection_reason,
+                    finished_at=excluded.finished_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    trial["trial_id"],
+                    trial["strategy_id"],
+                    trial.get("strategy_version"),
+                    trial["hypothesis"],
+                    trial["proposer_agent_id"],
+                    trial["data_hash"],
+                    trial.get("fingerprint", ""),
+                    trial["status"],
+                    json.dumps(trial.get("config") or {}),
+                    json.dumps(trial.get("split") or {}),
+                    json.dumps(trial.get("results") or {}),
+                    json.dumps(trial.get("acceptance_criteria") or {}),
+                    trial.get("rejection_reason") or "",
+                    trial.get("seed", 42),
+                    trial.get("created_at") or utc_now(),
+                    trial.get("finished_at"),
+                    json.dumps(trial.get("metadata") or {}),
+                ),
+            )
+        return trial
+
+    def list_experiments(self, *, strategy_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if strategy_id:
+                rows = conn.execute(
+                    "SELECT * FROM market_experiments WHERE strategy_id=? ORDER BY created_at DESC LIMIT ?",
+                    (strategy_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM market_experiments ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [
+            {
+                "trial_id": r["trial_id"],
+                "strategy_id": r["strategy_id"],
+                "strategy_version": r["strategy_version"],
+                "hypothesis": r["hypothesis"],
+                "proposer_agent_id": r["proposer_agent_id"],
+                "data_hash": r["data_hash"],
+                "fingerprint": r["fingerprint"],
+                "status": r["status"],
+                "config": _loads(r["config_json"], {}),
+                "split": _loads(r["split_json"], {}),
+                "results": _loads(r["results_json"], {}),
+                "acceptance_criteria": _loads(r["acceptance_json"], {}),
+                "rejection_reason": r["rejection_reason"],
+                "seed": r["seed"],
+                "created_at": r["created_at"],
+                "finished_at": r["finished_at"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
+
+    def find_experiment_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT trial_id FROM market_experiments WHERE fingerprint=? LIMIT 1",
+                (fingerprint,),
+            ).fetchone()
+        if not row:
+            return None
+        trials = self.list_experiments(limit=1000)
+        for t in trials:
+            if t["trial_id"] == row["trial_id"]:
+                return t
+        return None
+
+    def save_strategy_memory(self, entry: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_strategy_memories(
+                    memory_id, strategy_id, strategy_version, features_json, applicability_json,
+                    outcome_summary, trial_id, available_at, created_at, rejected, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry["memory_id"],
+                    entry["strategy_id"],
+                    entry["strategy_version"],
+                    json.dumps(entry.get("features") or {}),
+                    json.dumps(entry.get("applicability") or {}),
+                    entry.get("outcome_summary") or "",
+                    entry.get("trial_id"),
+                    entry["available_at"],
+                    entry.get("created_at") or utc_now(),
+                    1 if entry.get("rejected") else 0,
+                    json.dumps(entry.get("metadata") or {}),
+                ),
+            )
+        return entry
+
+    def list_strategy_memories(
+        self, *, strategy_id: str | None = None, as_of_ts: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            sql = "SELECT * FROM market_strategy_memories WHERE 1=1"
+            params: list[Any] = []
+            if strategy_id:
+                sql += " AND strategy_id=?"
+                params.append(strategy_id)
+            if as_of_ts:
+                sql += " AND available_at<=?"
+                params.append(as_of_ts)
+            sql += " ORDER BY available_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "memory_id": r["memory_id"],
+                "strategy_id": r["strategy_id"],
+                "strategy_version": r["strategy_version"],
+                "features": _loads(r["features_json"], {}),
+                "applicability": _loads(r["applicability_json"], {}),
+                "outcome_summary": r["outcome_summary"],
+                "trial_id": r["trial_id"],
+                "available_at": r["available_at"],
+                "created_at": r["created_at"],
+                "rejected": bool(r["rejected"]),
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
+
+    def list_events(self, run_id: str, *, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if kind:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM market_sim_events
+                    WHERE run_id=? AND kind=? ORDER BY created_at ASC LIMIT ?
+                    """,
+                    (run_id, kind, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM market_sim_events
+                    WHERE run_id=? ORDER BY created_at ASC LIMIT ?
+                    """,
+                    (run_id, limit),
+                ).fetchall()
+        return [
+            {
+                "event_id": r["event_id"],
+                "run_id": r["run_id"],
+                "bar_index": r["bar_index"],
+                "kind": r["kind"],
+                "payload": _loads(r["payload_json"], {}),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]

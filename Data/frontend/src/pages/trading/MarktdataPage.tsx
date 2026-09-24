@@ -221,22 +221,22 @@ export function MarktdataPage() {
             </ul>
           </Panel>
 
-          <Panel title="Not claimed">
+          <Panel title="Providers & limits">
             <ul className="lv-tp-src-list">
               <li>
-                <strong>Live tick stream</strong>
-                <span>UNAVAILABLE</span>
-                <span>historical files only</span>
+                <strong>CSV local / Binance public / Stooq</strong>
+                <span>AVAILABLE</span>
+                <span>OHLCV historical + public quotes for paper</span>
               </li>
               <li>
                 <strong>L2 order book</strong>
-                <span>OPTIONAL</span>
-                <span>graceful if missing</span>
+                <span>NOT CLAIMED</span>
+                <span>candles only — no order-book realism</span>
               </li>
               <li>
-                <strong>Vendor feeds</strong>
-                <span>NOT WIRED</span>
-                <span>no fabricated latency</span>
+                <strong>Live broker orders</strong>
+                <span>BLOCKED</span>
+                <span>TradingStub / live guard</span>
               </li>
             </ul>
           </Panel>

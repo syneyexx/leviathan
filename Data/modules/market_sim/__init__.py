@@ -5,6 +5,7 @@ from .causality import CausalityViolation, SimulationClock
 from .data_store import MarketDataStore
 from .deliberation import DeliberationResult, DeliberationRuntime
 from .engine import SimulationEngine
+from .multi_engine import MultiAgentEngine
 from .service import MarketSimControlPlane
 from .store import MarketSimStore
 from .types import (
@@ -29,6 +30,7 @@ __all__ = [
     "MarketSimError",
     "MarketSimStore",
     "MarketSimWorker",
+    "MultiAgentEngine",
     "RunStatus",
     "SimulationClock",
     "SimulationEngine",

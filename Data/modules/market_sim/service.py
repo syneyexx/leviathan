@@ -15,9 +15,23 @@ from .brain_hooks import (
     adapt_knowledge_store,
     adapt_memory_store,
 )
+from .capabilities import build_market_capabilities
 from .data_store import MarketDataStore
 from .deliberation import DeliberationRuntime
 from .engine import SimulationEngine
+from .experiments import (
+    evaluate_acceptance,
+    market_features_from_closes,
+    new_trial,
+    strategy_matches_regime,
+    trial_fingerprint,
+    walk_forward_splits,
+)
+from .instruments import infer_family, spec_for_symbol
+from .multi_engine import MultiAgentEngine
+from .paper_broker import LocalPaperBroker, PaperSession, build_paper_broker, utc_now as paper_utc
+from .providers import default_registry
+from .roles import default_competition_agents, ensure_trading_agents_in_fleet
 from .store import MarketSimStore, utc_now
 from .strategy_eval import strategy_content_hash
 from .types import (
@@ -34,6 +48,7 @@ from .types import (
     TERMINAL_RUN_STATUSES,
 )
 from .worker import MarketSimWorker
+from .trading_live_guard import LiveTradingGuard
 
 
 class MarketSimControlPlane:
@@ -57,11 +72,17 @@ class MarketSimControlPlane:
             store,
             deliberation=DeliberationRuntime(self.brain),
         )
+        self.multi_engine = MultiAgentEngine(store)
+        self.providers = default_registry(data.markets_root)
+        self._paper_brokers: dict[str, Any] = {}
+        self._fleet = None
+        self.live_guard = LiveTradingGuard()
         self.worker = MarketSimWorker(
             store,
             self.engine,
             resolve_bars_path=self._resolve_bars_path,
             resolve_strategy=self._resolve_strategy_payload,
+            multi_engine=self.multi_engine,
         )
 
     @classmethod
@@ -122,17 +143,43 @@ class MarketSimControlPlane:
         health = self.data.health()
         runs = self.store.list_runs(limit=50)
         active = sum(1 for r in runs if r.status in {s.value for s in ACTIVE_RUN_STATUSES})
+        caps = build_market_capabilities(
+            feature_enabled=self.enabled,
+            binance_reachable=False,  # avoid network on every status poll
+            local_paper=True,
+        )
+        # Recompute reachability lightly from last provider status cache if any
+        try:
+            provider_status = self.providers.status_all()
+        except Exception:  # noqa: BLE001
+            provider_status = []
+        binance_ok = any(
+            p.get("provider_id") == "binance_public" and p.get("reachable") for p in provider_status
+        )
+        caps = build_market_capabilities(
+            feature_enabled=self.enabled,
+            binance_reachable=binance_ok,
+            local_paper=True,
+        )
         return {
             "enabled": self.enabled,
             "feature_flag": "LEVIATHAN_FEATURE_MARKET_SIM",
             "health": health,
             "active_runs": active,
             "worker": dict(self.worker.telemetry),
+            "providers": provider_status,
+            "capabilities": caps,
+            "live_trading": self.live_guard.public_status(),
             "truth": {
                 "paper_sim_only": True,
                 "no_real_broker_orders": True,
-                "external_worker_execution": True,
+                "worker_is_daemon_thread_by_default": True,
+                "subprocess_entrypoint": "scripts/market_sim_worker.py",
                 "causality_enforced": True,
+                "next_bar_open_fills": True,
+                "commit_reveal_multi_wallet": True,
+                "ohlcv_not_orderbook": True,
+                "profitable_backtest_is_not_proof": True,
             },
         }
 
@@ -367,6 +414,8 @@ class MarketSimControlPlane:
         agents: list[dict[str, Any]] | None = None,
         deliberation_every_n: int = 5,
         stochastic_slippage: bool = False,
+        game_mode: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
         source = self.data.get_source(source_id)
@@ -422,7 +471,13 @@ class MarketSimControlPlane:
             equity=initial_cash,
             created_at=now,
             updated_at=now,
-            metadata={"stochastic_slippage": stochastic_slippage},
+            metadata={
+                "stochastic_slippage": stochastic_slippage,
+                **(dict(metadata or {})),
+                **({"game_mode": game_mode} if game_mode else {}),
+                "instrument_family": infer_family(source.symbol, metadata=source.metadata).value,
+                "fill_schedule": "next_bar_open",
+            },
         )
         self.store.create_run(run)
         self._emit_event("run.created", {"run_id": run.run_id, "data_hash": run.data_hash})
@@ -538,3 +593,383 @@ class MarketSimControlPlane:
             "exit_rules": ver.exit_rules,
             "brain_dependencies": ver.brain_dependencies,
         }
+
+    def attach_fleet(self, fleet: Any) -> None:
+        self._fleet = fleet
+        if self.enabled and fleet is not None:
+            ensure_trading_agents_in_fleet(fleet)
+
+    # --- Providers / import ---
+
+    def list_providers(self) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.providers.status_all()
+
+    def import_provider_data(
+        self,
+        *,
+        provider_id: str,
+        symbol: str,
+        timeframe: str,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        result = self.providers.import_to_csv(
+            provider_id, symbol, timeframe, self.data.markets_root, limit=limit
+        )
+        source = self.data.register_file(
+            result["relative_path"],
+            symbol=result["symbol"],
+            timeframe=result["timeframe"],
+        )
+        # Enrich metadata
+        source.metadata = {
+            **dict(source.metadata or {}),
+            "provider_id": provider_id,
+            "license_note": result.get("license_note"),
+            "dataset_version": "1",
+            "kind": "ohlcv",
+            "family": infer_family(symbol).value,
+            "not_orderbook": True,
+        }
+        source.updated_at = utc_now()
+        self.store.upsert_source(source)
+        return {"import": result, "source": source.public_dict()}
+
+    def market_capabilities(self) -> dict[str, Any]:
+        return build_market_capabilities(feature_enabled=self.enabled)
+
+    # --- Paper trading ---
+
+    def _paper_broker(self, broker_id: str = "local_paper") -> Any:
+        if broker_id not in self._paper_brokers:
+            self._paper_brokers[broker_id] = build_paper_broker(broker_id)
+        return self._paper_brokers[broker_id]
+
+    def start_paper_session(
+        self,
+        *,
+        symbol: str,
+        strategy_id: str | None = None,
+        strategy_version: int | None = None,
+        broker_id: str = "local_paper",
+        provider_id: str = "binance_public",
+        initial_cash: float = 100_000.0,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        if strategy_id:
+            ver = self.store.get_strategy_version(strategy_id, strategy_version)
+            if ver is None:
+                raise MarketSimError("STRATEGY_VERSION_MISSING", strategy_id, http_status=404)
+            strategy_version = ver.version
+            # Applicability check (honest)
+            features = {"trend": "unknown", "volatility": "unknown", "regime": "unknown"}
+            match = strategy_matches_regime(
+                ver.metadata.get("applicability") or ver.risk_rules.get("applicability") or {},
+                features,
+            )
+        else:
+            match = {"matched": False, "reason": "no strategy bound"}
+
+        broker = self._paper_broker(broker_id)
+        if hasattr(broker, "wallet"):
+            from .accounting import money
+            broker.wallet.cash = money(initial_cash)
+            broker.wallet.peak_equity = money(initial_cash)
+
+        quote = None
+        feed_status = "disconnected"
+        latency = None
+        try:
+            provider = self.providers.get(provider_id)
+            st = provider.status()
+            latency = st.latency_ms
+            feed_status = "live" if st.reachable else "disconnected"
+            quote = provider.fetch_quote(symbol)
+        except Exception as exc:  # noqa: BLE001
+            feed_status = f"error:{exc}"
+
+        now = utc_now()
+        session = {
+            "session_id": str(uuid.uuid4()),
+            "status": "active",
+            "broker_id": broker_id,
+            "provider_id": provider_id,
+            "symbol": symbol.upper(),
+            "strategy_id": strategy_id,
+            "strategy_version": strategy_version,
+            "kill_switch": False,
+            "feed_status": feed_status,
+            "wallet": broker.account().get("wallet") if hasattr(broker, "account") else {},
+            "orders": [],
+            "metadata": {
+                "mode": "live_paper",
+                "regime_match": match,
+                "last_quote": quote,
+                "feed_latency_ms": latency,
+                "truth": {
+                    "not_live_money": True,
+                    "not_historical_backtest": True,
+                    "paper_never_auto_approves_live": True,
+                },
+            },
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.store.upsert_paper_session(session)
+        return session
+
+    def paper_session_state(self, session_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        session = self.store.get_paper_session(session_id)
+        if session is None:
+            raise MarketSimError("PAPER_SESSION_NOT_FOUND", session_id, http_status=404)
+        # Refresh quote
+        try:
+            provider = self.providers.get(session["provider_id"])
+            quote = provider.fetch_quote(session["symbol"])
+            st = provider.status()
+            session["feed_status"] = "live" if st.reachable else "disconnected"
+            session["metadata"] = dict(session.get("metadata") or {})
+            session["metadata"]["last_quote"] = quote
+            session["metadata"]["feed_latency_ms"] = st.latency_ms
+        except Exception as exc:  # noqa: BLE001
+            session["feed_status"] = f"error:{exc}"
+        broker = self._paper_brokers.get(session["broker_id"])
+        if broker is not None:
+            session["wallet"] = broker.account().get("wallet") or broker.account()
+        session["updated_at"] = utc_now()
+        self.store.upsert_paper_session(session)
+        return session
+
+    def paper_place_order(
+        self,
+        session_id: str,
+        *,
+        side: str,
+        qty: float,
+        client_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        session = self.paper_session_state(session_id)
+        if session.get("kill_switch"):
+            raise MarketSimError("KILL_SWITCH", "Paper session kill switch armed", http_status=409)
+        if session.get("status") != "active":
+            raise MarketSimError("SESSION_NOT_ACTIVE", session.get("status") or "")
+        broker = self._paper_broker(session["broker_id"])
+        quote = (session.get("metadata") or {}).get("last_quote") or {}
+        price = quote.get("price")
+        if price is None:
+            # Refuse blind order when feed uncertain
+            raise MarketSimError(
+                "FEED_UNCERTAIN",
+                "No live quote — refusing paper order (no blind resubmit)",
+                http_status=409,
+            )
+        order = broker.place(
+            symbol=session["symbol"],
+            side=side,
+            qty=qty,
+            client_order_id=client_order_id or str(uuid.uuid4()),
+            price_hint=float(price),
+            metadata={
+                "strategy_id": session.get("strategy_id"),
+                "strategy_version": session.get("strategy_version"),
+                "session_id": session_id,
+            },
+        )
+        orders = list(session.get("orders") or [])
+        orders.append(order.public_dict())
+        session["orders"] = orders
+        session["wallet"] = broker.account().get("wallet") or {}
+        session["updated_at"] = utc_now()
+        self.store.upsert_paper_session(session)
+        return {"order": order.public_dict(), "session": session}
+
+    def paper_kill_switch(self, session_id: str, *, armed: bool = True) -> dict[str, Any]:
+        self._require_enabled()
+        session = self.store.get_paper_session(session_id)
+        if session is None:
+            raise MarketSimError("PAPER_SESSION_NOT_FOUND", session_id, http_status=404)
+        session["kill_switch"] = bool(armed)
+        session["updated_at"] = utc_now()
+        self.store.upsert_paper_session(session)
+        return session
+
+    def list_paper_sessions(self) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_paper_sessions()
+
+    # --- Experiments / learning ---
+
+    def propose_experiment(
+        self,
+        *,
+        strategy_id: str,
+        hypothesis: str,
+        proposer_agent_id: str,
+        source_id: str,
+        acceptance_criteria: dict[str, Any] | None = None,
+        seed: int = 42,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        source = self.data.get_source(source_id)
+        from .ohlcv import load_ohlcv
+        bars = load_ohlcv(str(self.data.absolute_path_for(source)))
+        split = walk_forward_splits(source.start_ts or "", source.end_ts or "", bars)
+        trial = new_trial(
+            strategy_id=strategy_id,
+            hypothesis=hypothesis,
+            proposer_agent_id=proposer_agent_id,
+            data_hash=source.content_hash,
+            config=dict(config or {}),
+            split=split,
+            seed=seed,
+            acceptance_criteria=acceptance_criteria,
+            cost_model={"fee_bps": 5.0, "slippage_bps": 2.0},
+            created_at=utc_now(),
+        )
+        fp = trial_fingerprint(trial)
+        existing = self.store.find_experiment_fingerprint(fp)
+        if existing and existing.get("status") == "rejected":
+            raise MarketSimError(
+                "HYPOTHESIS_ALREADY_REJECTED",
+                f"Identical rejected trial {existing['trial_id']}: {existing.get('rejection_reason')}",
+                http_status=409,
+            )
+        payload = trial.public_dict()
+        payload["fingerprint"] = fp
+        self.store.save_experiment(payload)
+        return payload
+
+    def complete_experiment(
+        self,
+        trial_id: str,
+        *,
+        metrics: dict[str, Any],
+        strategy_version: int | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        trials = self.store.list_experiments(limit=500)
+        trial = next((t for t in trials if t["trial_id"] == trial_id), None)
+        if trial is None:
+            raise MarketSimError("TRIAL_NOT_FOUND", trial_id, http_status=404)
+        passed, reason = evaluate_acceptance(metrics, trial.get("acceptance_criteria") or {})
+        trial["results"] = metrics
+        trial["strategy_version"] = strategy_version
+        trial["finished_at"] = utc_now()
+        if passed:
+            trial["status"] = "passed"
+            trial["rejection_reason"] = ""
+        else:
+            trial["status"] = "rejected"
+            trial["rejection_reason"] = reason
+        self.store.save_experiment(trial)
+        # Persist memory (available_at = now — not backdated into past decisions)
+        self.store.save_strategy_memory(
+            {
+                "memory_id": str(uuid.uuid4()),
+                "strategy_id": trial["strategy_id"],
+                "strategy_version": strategy_version or 0,
+                "features": (metrics.get("features") or {}),
+                "applicability": (trial.get("config") or {}).get("applicability") or {},
+                "outcome_summary": reason if not passed else "accepted on holdout",
+                "trial_id": trial_id,
+                "available_at": utc_now(),
+                "created_at": utc_now(),
+                "rejected": not passed,
+            }
+        )
+        return trial
+
+    def list_experiments(self, *, strategy_id: str | None = None) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_experiments(strategy_id=strategy_id)
+
+    # --- Demo runners (equity + crypto) ---
+
+    def run_market_demo(self, *, family: str, bars_limit: int = 120) -> dict[str, Any]:
+        """Reproduceerbare demo: data → agents → commit-reveal → fills → wallets."""
+        self._require_enabled()
+        from pathlib import Path
+        import shutil
+
+        fixtures = Path(__file__).resolve().parents[2] / "backend" / "tests" / "fixtures" / "market_data"
+        if family == "crypto_spot":
+            src_name = "BTCUSDT_1h.csv"
+            symbol = "BTCUSDT"
+            timeframe = "1h"
+        elif family == "equity":
+            src_name = "AAPL_1d.csv"
+            symbol = "AAPL"
+            timeframe = "1D"
+        else:
+            raise MarketSimError("FAMILY_NOT_SUPPORTED", family)
+
+        src = fixtures / src_name
+        if not src.exists():
+            raise MarketSimError("FIXTURE_MISSING", str(src))
+        dest = self.data.markets_root / src_name
+        self.data.markets_root.mkdir(parents=True, exist_ok=True)
+        shutil.copy(src, dest)
+        source = self.data.register_file(src_name, symbol=symbol, timeframe=timeframe)
+        source.metadata = {**(source.metadata or {}), "family": family, "provider_id": "csv_local"}
+        self.store.upsert_source(source)
+
+        strat = self.create_strategy(
+            name=f"demo-{family}-ma",
+            description=f"Demo strategy for {family}",
+            tags=["demo", family],
+            parameters={"fast_ma": 5, "slow_ma": 15, "lookback": 20},
+            entry_rules={"kind": "ma_cross"},
+            exit_rules={"kind": "ma_cross"},
+            risk_rules={"max_position_pct": 25, "applicability": {"trends": ["up", "flat", "down"], "volatilities": ["low", "medium", "high"]}},
+        )
+        agents = default_competition_agents(initial_cash=50_000.0)
+        run = self.create_run(
+            source_id=source.source_id,
+            strategy_id=strat["strategy"]["strategy_id"],
+            seed=7,
+            initial_cash=50_000.0,
+            agents=agents,
+            deliberation_every_n=3,
+            game_mode="individual_competition",
+            metadata={"multi_agent": True, "commit_reveal": True, "demo_family": family},
+        )
+        self.start_run(run["run_id"])
+        # Drain until complete or bar cap
+        for _ in range(max(20, bars_limit // 5 + 5)):
+            if not self.worker.process_next():
+                break
+            fresh = self.store.get_run(run["run_id"])
+            if fresh and fresh.status in TERMINAL_RUN_STATUSES:
+                break
+            if fresh and fresh.bar_index >= bars_limit:
+                fresh.status = RunStatus.COMPLETED.value
+                fresh.finished_at = utc_now()
+                self.store.update_run(fresh)
+                break
+
+        live = self.run_live_state(run["run_id"], message_limit=200, fill_limit=200)
+        events = self.store.list_events(run["run_id"], limit=500)
+        commits = [e for e in events if e["kind"] in {"order_intent", "commit_reveal_round", "fill"}]
+        return {
+            "family": family,
+            "source": source.public_dict(),
+            "strategy": strat,
+            "run": live["run"],
+            "fills": live["fills"],
+            "messages": live["messages"],
+            "wallets": (live["run"].get("metadata") or {}).get("wallets"),
+            "events_sample": commits[-30:],
+            "capabilities": self.market_capabilities(),
+            "truth": {
+                "demo_reproducible": True,
+                "commit_reveal": True,
+                "per_agent_wallets": True,
+                "next_bar_fills": True,
+                "live_trading": False,
+            },
+        }
+

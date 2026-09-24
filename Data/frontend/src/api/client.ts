@@ -1698,6 +1698,8 @@ export const api = {
     initialCash?: number;
     deliberationEveryN?: number;
     agents?: Array<Record<string, unknown>>;
+    gameMode?: string;
+    metadata?: Record<string, unknown>;
   }): Promise<{ run: MarketSimRun }> {
     return request("/api/market-sim/runs", {
       method: "POST",
@@ -1727,6 +1729,76 @@ export const api = {
 
   getMarketSimResults(runId: string): Promise<MarketSimLiveState & { metrics: Record<string, unknown> }> {
     return request(`/api/market-sim/runs/${encodeURIComponent(runId)}/results`);
+  },
+
+  marketSimProviders(): Promise<{ providers: Array<Record<string, unknown>> }> {
+    return request("/api/market-sim/providers");
+  },
+
+  marketSimImportProvider(payload: {
+    providerId: string;
+    symbol: string;
+    timeframe?: string;
+    limit?: number;
+  }): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/providers/import", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  marketSimCapabilities(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/capabilities");
+  },
+
+  listPaperSessions(): Promise<{ sessions: Array<Record<string, unknown>> }> {
+    return request("/api/market-sim/paper/sessions");
+  },
+
+  createPaperSession(payload: {
+    symbol: string;
+    strategyId?: string;
+    strategyVersion?: number;
+    brokerId?: string;
+    providerId?: string;
+    initialCash?: number;
+  }): Promise<{ session: Record<string, unknown> }> {
+    return request("/api/market-sim/paper/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getPaperSession(sessionId: string): Promise<{ session: Record<string, unknown> }> {
+    return request(`/api/market-sim/paper/sessions/${encodeURIComponent(sessionId)}`);
+  },
+
+  placePaperOrder(
+    sessionId: string,
+    payload: { side: string; qty: number; clientOrderId?: string },
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/paper/sessions/${encodeURIComponent(sessionId)}/orders`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  paperKillSwitch(sessionId: string, armed = true): Promise<{ session: Record<string, unknown> }> {
+    return request(
+      `/api/market-sim/paper/sessions/${encodeURIComponent(sessionId)}/kill-switch?armed=${armed ? "true" : "false"}`,
+      { method: "POST" },
+    );
+  },
+
+  marketSimLiveTradingStatus(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/live-trading");
+  },
+
+  runMarketDemo(payload: { family: string; barsLimit?: number }): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/demos/run", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   cognitionHealth(): Promise<{ cognition: CognitionHealth }> {

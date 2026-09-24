@@ -1,4 +1,4 @@
-"""Bar-by-bar simulation engine with strict causality."""
+"""Bar-by-bar simulation engine with strict causality and next-bar fills."""
 
 from __future__ import annotations
 
@@ -6,15 +6,16 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .accounting import money
 from .causality import CausalityViolation, SimulationClock
 from .deliberation import DeliberationRuntime
-from .fill_model import FillModel
+from .execution import NextBarFillModel, OrderIntent, make_intent
 from .metrics import compute_metrics
 from .ohlcv import load_ohlcv
 from .portfolio import Portfolio, RiskEngine, RiskLimits
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
-from .types import FillStatus, OrderSide, RunStatus, SimFill, SimRun
+from .types import FillStatus, OrderSide, RunStatus, SimFill
 
 
 CancelCheck = Callable[[], bool]
@@ -22,23 +23,30 @@ CancelCheck = Callable[[], bool]
 
 @dataclass
 class EngineState:
-    run: SimRun
+    run: SimRun  # noqa: F821 — forward via Any-compatible SimRun
     clock: SimulationClock
     portfolio: Portfolio
     risk: RiskEngine
     fills: list[SimFill] = field(default_factory=list)
+    pending_intents: list[OrderIntent] = field(default_factory=list)
     agreement_samples: list[float] = field(default_factory=list)
     veto_count: int = 0
     deliberation_rounds: int = 0
     benchmark_equity: list[float] = field(default_factory=list)
 
 
-class SimulationEngine:
-    """Discrete event / bar-by-bar engine.
+# Fix annotation
+from .types import SimRun  # noqa: E402
 
-    EXTERNAL-FIRST: heavy stepping is intended to run in MarketSimWorker,
-    not inline on HTTP request threads.
+
+class SimulationEngine:
+    """Discrete bar engine.
+
+    Decision on bar T close → order eligible on bar T+1 open (no same-close fill).
+    EXTERNAL-FIRST: heavy stepping runs in MarketSimWorker.
     """
+
+    FILL_ASSUMPTIONS = NextBarFillModel.ASSUMPTIONS
 
     def __init__(
         self,
@@ -75,7 +83,6 @@ class SimulationEngine:
             )
         )
         run.bar_count = len(bars)
-        # Buy-and-hold benchmark shares
         first_price = bars[0].close
         bh_shares = run.initial_cash / first_price if first_price > 0 else 0.0
         state = EngineState(
@@ -93,7 +100,6 @@ class SimulationEngine:
         return state
 
     def step_once(self, state: EngineState) -> bool:
-        """Advance one bar. Returns False when finished."""
         run = state.run
         bar = state.clock.advance()
         if bar is None:
@@ -102,16 +108,81 @@ class SimulationEngine:
         run.bar_index = state.clock.index
         run.clock_ts = bar.ts
 
-        # Benchmark mark
         bh_shares = getattr(state, "_bh_shares", 0.0)
         state.benchmark_equity.append(bh_shares * bar.close)
 
-        fill_model = FillModel(
+        fill_model = NextBarFillModel(
             fee_bps=run.fee_bps,
             slippage_bps=run.slippage_bps,
-            seed=run.seed + state.clock.index,
-            stochastic=bool((run.metadata or {}).get("stochastic_slippage")),
         )
+
+        # --- Fill intents decided on prior bars (eligible at this open) ---
+        still: list[OrderIntent] = []
+        for intent in state.pending_intents:
+            if state.clock.index < intent.eligible_bar_index:
+                still.append(intent)
+                continue
+            # Bridge Portfolio ↔ temporary sizing
+            decision = state.risk.size_order(
+                portfolio=state.portfolio,
+                price=bar.open,
+                side=intent.side,
+                requested_qty=float(intent.qty) if intent.qty is not None else None,
+                equity=state.portfolio.cash + state.portfolio.position_qty * bar.open,
+            )
+            if not decision.allowed or decision.sized_qty <= 0:
+                intent.status = "rejected"
+                continue
+            # Execute against portfolio using next-bar open
+            from .fill_model import FillModel as LegacyFill
+
+            legacy = LegacyFill(
+                fee_bps=run.fee_bps,
+                slippage_bps=run.slippage_bps,
+                seed=run.seed + state.clock.index,
+                stochastic=False,
+            )
+            before_realized = state.portfolio.realized_pnl
+            fill = legacy.execute(
+                portfolio=state.portfolio,
+                side=intent.side,
+                qty=decision.sized_qty,
+                bar_close=bar.open,  # fill at OPEN, not close
+                bar_volume=bar.volume,
+            )
+            if fill.filled:
+                realized_delta = state.portfolio.realized_pnl - before_realized
+                record = SimFill(
+                    fill_id=str(uuid.uuid4()),
+                    run_id=run.run_id,
+                    bar_index=state.clock.index,
+                    ts=bar.ts,
+                    side=intent.side,
+                    qty=fill.qty,
+                    price=fill.price,
+                    fee=fill.fee,
+                    slippage=fill.slippage,
+                    agent_id=intent.agent_id,
+                    rationale=intent.rationale,
+                    status=FillStatus.FILLED.value,
+                    created_at=utc_now(),
+                )
+                self.store.add_fill(record)
+                state.fills.append(record)
+                self.store.add_event(
+                    run.run_id,
+                    kind="fill",
+                    payload={
+                        **record.public_dict(),
+                        "realized_delta": realized_delta,
+                        "fill_price_source": "next_bar_open",
+                        "decision_bar_index": intent.decision_bar_index,
+                        "observed_execution": False,
+                    },
+                    bar_index=state.clock.index,
+                )
+            intent.status = "filled" if fill.filled else "rejected"
+        state.pending_intents = still
 
         should_deliberate = (
             bool(run.agents)
@@ -171,7 +242,6 @@ class SimulationEngine:
 
         equity = state.portfolio.mark_to_market(bar.close)
         if not state.risk.check_drawdown(state.portfolio, equity):
-            # Flatten on kill-switch
             if state.portfolio.position_qty > 0:
                 side = OrderSide.SELL.value
                 qty = state.portfolio.position_qty
@@ -179,51 +249,29 @@ class SimulationEngine:
             else:
                 side = OrderSide.HOLD.value
 
-        decision = state.risk.size_order(
-            portfolio=state.portfolio,
-            price=bar.close,
-            side=side,
-            requested_qty=qty,
-            equity=equity,
-        )
-        if decision.allowed and decision.sized_qty > 0 and side in {OrderSide.BUY.value, OrderSide.SELL.value}:
-            before_realized = state.portfolio.realized_pnl
-            fill = fill_model.execute(
-                portfolio=state.portfolio,
+        # Queue intent for NEXT bar — do not fill on this bar's close
+        if side in {OrderSide.BUY.value, OrderSide.SELL.value}:
+            intent = make_intent(
+                run_id=run.run_id,
+                agent_id=agent_id or "strategy",
+                wallet_id="shared",
                 side=side,
-                qty=decision.sized_qty,
-                bar_close=bar.close,
-                bar_volume=bar.volume,
+                qty=qty,
+                decision_bar_index=state.clock.index,
+                decision_ts=bar.ts,
+                info_version=f"legacy-{state.clock.index}-{bar.ts}",
+                strategy_id=run.strategy_id,
+                strategy_version=run.strategy_version,
+                rationale=rationale,
+                decision_scope="shared",
             )
-            if fill.filled:
-                realized_delta = state.portfolio.realized_pnl - before_realized
-                record = SimFill(
-                    fill_id=str(uuid.uuid4()),
-                    run_id=run.run_id,
-                    bar_index=state.clock.index,
-                    ts=bar.ts,
-                    side=side,
-                    qty=fill.qty,
-                    price=fill.price,
-                    fee=fill.fee,
-                    slippage=fill.slippage,
-                    agent_id=agent_id,
-                    rationale=rationale,
-                    status=FillStatus.FILLED.value,
-                    created_at=utc_now(),
-                )
-                self.store.add_fill(record)
-                state.fills.append(record)
-                # Persist realized delta in event for metrics
-                self.store.add_event(
-                    run.run_id,
-                    kind="fill",
-                    payload={
-                        **record.public_dict(),
-                        "realized_delta": realized_delta,
-                    },
-                    bar_index=state.clock.index,
-                )
+            state.pending_intents.append(intent)
+            self.store.add_event(
+                run.run_id,
+                kind="order_intent",
+                payload=intent.public_dict(),
+                bar_index=state.clock.index,
+            )
 
         equity = state.portfolio.mark_to_market(bar.close)
         run.cash = state.portfolio.cash
@@ -235,6 +283,9 @@ class SimulationEngine:
             if state.portfolio.position_qty
             else 0.0
         )
+        run.metadata = dict(run.metadata or {})
+        run.metadata["fill_assumptions"] = list(self.FILL_ASSUMPTIONS)
+        run.metadata["pending_intents"] = [i.public_dict() for i in state.pending_intents]
         self.store.add_equity_point(
             run.run_id,
             state.clock.index,
@@ -281,11 +332,7 @@ class SimulationEngine:
     def _finalize_metrics(self, state: EngineState) -> None:
         run = state.run
         equity = list(state.portfolio.equity_curve) or [run.initial_cash]
-        fill_payloads = []
-        for f in state.fills:
-            payload = f.public_dict()
-            fill_payloads.append(payload)
-        # Attach realized deltas from events when available
+        fill_payloads = [f.public_dict() for f in state.fills]
         agreement = (
             sum(state.agreement_samples) / len(state.agreement_samples)
             if state.agreement_samples
@@ -307,5 +354,6 @@ class SimulationEngine:
             agreement_rate=agreement,
             veto_rate=veto_rate,
         )
+        run.metrics["fill_assumptions"] = list(self.FILL_ASSUMPTIONS)
         if state.run.status == RunStatus.COMPLETED.value:
             state.run.finished_at = utc_now()

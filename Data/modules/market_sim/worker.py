@@ -1,8 +1,7 @@
-"""Market simulation worker — execution plane (crash-isolated from HTTP).
+"""Market simulation worker — execution plane.
 
-EXTERNAL-FIRST: heavy bar stepping runs here, not inside request handlers.
-Uses Job Runtime patterns (daemon thread); subprocess entrypoint available for
-true process isolation without a second job/persistence system.
+Honest telemetry: default is an in-process daemon thread. Optional subprocess
+entrypoint: scripts/market_sim_worker.py. Not a distributed lock — soft lease via worker_pid.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ import threading
 from typing import Any, Callable
 
 from .engine import SimulationEngine
+from .multi_engine import MultiAgentEngine
 from .store import MarketSimStore, utc_now
 from .types import RunStatus, TERMINAL_RUN_STATUSES
 
@@ -27,9 +27,11 @@ class MarketSimWorker:
         resolve_bars_path: Callable[[Any], str],
         resolve_strategy: Callable[[Any], dict[str, Any]] | None = None,
         bars_per_slice: int = 50,
+        multi_engine: MultiAgentEngine | None = None,
     ) -> None:
         self.store = store
         self.engine = engine
+        self.multi_engine = multi_engine or MultiAgentEngine(store)
         self.resolve_bars_path = resolve_bars_path
         self.resolve_strategy = resolve_strategy
         self.bars_per_slice = bars_per_slice
@@ -43,7 +45,16 @@ class MarketSimWorker:
             "completed": 0,
             "failed": 0,
             "cancelled": 0,
+            "worker_mode": "daemon_thread",
+            "worker_pid": os.getpid(),
+            "isolated_subprocess": False,
+            "lease_model": "soft_worker_pid",
         }
+
+    def mark_subprocess(self) -> None:
+        self.telemetry["worker_mode"] = "subprocess"
+        self.telemetry["isolated_subprocess"] = True
+        self.telemetry["worker_pid"] = os.getpid()
 
     def start_background(self, *, poll_seconds: float = 0.25) -> None:
         with self._lock:
@@ -76,26 +87,32 @@ class MarketSimWorker:
     def wake(self) -> None:
         self._wake.set()
 
+    def _use_multi(self, run: Any) -> bool:
+        meta = dict(run.metadata or {})
+        if meta.get("engine") == "legacy":
+            return False
+        if meta.get("game_mode") or meta.get("multi_agent") or meta.get("commit_reveal"):
+            return True
+        # Default: multi when ≥2 order-capable agents
+        agents = list(run.agents or [])
+        traders = [
+            a for a in agents
+            if str(a.get("role")) not in {
+                "trading_orchestrator", "orchestrator", "evaluator",
+                "risk_agent", "risk_officer", "critic",
+            }
+        ]
+        return len(traders) >= 2 and bool(meta.get("multi_wallet", False))
+
     def process_next(self) -> bool:
         run = self.store.claim_next_runnable()
         if run is None:
             return False
-        if run.cancel_requested:
-            run.status = RunStatus.CANCELLED.value
-            run.error = "cancelled"
-            run.worker_pid = None
-            run.finished_at = utc_now()
-            self.store.update_run(run)
-            self.telemetry["cancelled"] += 1
-            return True
-
         try:
-            if run.status in {RunStatus.QUEUED.value, RunStatus.STARTING.value}:
+            if run.status == RunStatus.QUEUED.value:
                 run.status = RunStatus.RUNNING.value
                 run.started_at = run.started_at or utc_now()
-                run.worker_pid = os.getpid()
                 self.store.update_run(run)
-                self.store.add_event(run.run_id, kind="run_started", payload={"pid": os.getpid()})
 
             if run.status == RunStatus.PAUSED.value:
                 run.worker_pid = None
@@ -106,10 +123,12 @@ class MarketSimWorker:
             if self.resolve_strategy:
                 strategy = self.resolve_strategy(run) or {}
 
+            use_multi = self._use_multi(run)
+            engine: Any = self.multi_engine if use_multi else self.engine
             state = self._states.get(run.run_id)
             if state is None:
                 bars_path = self.resolve_bars_path(run)
-                state = self.engine.prepare(
+                state = engine.prepare(
                     run,
                     bars_path=bars_path,
                     strategy_params=strategy.get("parameters"),
@@ -119,7 +138,6 @@ class MarketSimWorker:
                 )
                 self._states[run.run_id] = state
 
-            # Refresh cancel / pause from DB
             fresh = self.store.get_run(run.run_id)
             if fresh and fresh.cancel_requested:
                 run.cancel_requested = True
@@ -139,14 +157,14 @@ class MarketSimWorker:
             if run.status == RunStatus.STEPPING.value:
                 state.run.status = RunStatus.STEPPING.value
 
-            self.engine.run_bars(
+            engine.run_bars(
                 state,
                 max_bars=max_bars,
                 cancel_check=cancel_check,
             )
             self.telemetry["slices"] += 1
+            self.telemetry["last_engine"] = "multi" if use_multi else "legacy"
 
-            # Persist updated run from state
             out = state.run
             if out.status in TERMINAL_RUN_STATUSES:
                 out.worker_pid = None
@@ -164,10 +182,10 @@ class MarketSimWorker:
                 out.worker_pid = None
             else:
                 out.status = RunStatus.RUNNING.value
-                out.worker_pid = None  # release claim for next slice
+                out.worker_pid = None
             self.store.update_run(out)
             return True
-        except Exception as exc:  # noqa: BLE001 — worker must not crash Core
+        except Exception as exc:  # noqa: BLE001
             run.status = RunStatus.FAILED.value
             run.error = str(exc)[:2000]
             run.worker_pid = None

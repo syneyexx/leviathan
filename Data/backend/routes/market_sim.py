@@ -67,6 +67,50 @@ class RunCreate(BaseModel):
     agents: list[dict[str, Any]] | None = None
     deliberationEveryN: int = 5
     stochasticSlippage: bool = False
+    gameMode: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ProviderImportRequest(BaseModel):
+    providerId: str
+    symbol: str
+    timeframe: str = "1h"
+    limit: int = Field(500, ge=10, le=1000)
+
+
+class PaperSessionCreate(BaseModel):
+    symbol: str
+    strategyId: str | None = None
+    strategyVersion: int | None = None
+    brokerId: str = "local_paper"
+    providerId: str = "binance_public"
+    initialCash: float = 100_000.0
+
+
+class PaperOrderRequest(BaseModel):
+    side: str
+    qty: float = Field(gt=0)
+    clientOrderId: str | None = None
+
+
+class ExperimentPropose(BaseModel):
+    strategyId: str
+    hypothesis: str
+    proposerAgentId: str
+    sourceId: str
+    seed: int = 42
+    acceptanceCriteria: dict[str, Any] | None = None
+    config: dict[str, Any] | None = None
+
+
+class ExperimentComplete(BaseModel):
+    metrics: dict[str, Any]
+    strategyVersion: int | None = None
+
+
+class DemoRequest(BaseModel):
+    family: str = Field(description="equity | crypto_spot")
+    barsLimit: int = Field(120, ge=30, le=2000)
 
 
 def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
@@ -220,6 +264,8 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                 agents=payload.agents,
                 deliberation_every_n=payload.deliberationEveryN,
                 stochastic_slippage=payload.stochasticSlippage,
+                game_mode=payload.gameMode,
+                metadata=payload.metadata,
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
@@ -279,5 +325,131 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
             return service.run_results(run_id)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
+
+    # --- Providers / capabilities ---
+
+    @router.get("/api/market-sim/providers")
+    def list_providers() -> dict:
+        try:
+            return {"providers": service.list_providers()}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/providers/import")
+    def import_provider(payload: ProviderImportRequest) -> dict:
+        try:
+            return service.import_provider_data(
+                provider_id=payload.providerId,
+                symbol=payload.symbol,
+                timeframe=payload.timeframe,
+                limit=payload.limit,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/capabilities")
+    def capabilities() -> dict:
+        return service.market_capabilities()
+
+    # --- Paper trading ---
+
+    @router.get("/api/market-sim/paper/sessions")
+    def list_paper() -> dict:
+        try:
+            return {"sessions": service.list_paper_sessions()}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/sessions")
+    def create_paper(payload: PaperSessionCreate) -> dict:
+        try:
+            return {
+                "session": service.start_paper_session(
+                    symbol=payload.symbol,
+                    strategy_id=payload.strategyId,
+                    strategy_version=payload.strategyVersion,
+                    broker_id=payload.brokerId,
+                    provider_id=payload.providerId,
+                    initial_cash=payload.initialCash,
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/paper/sessions/{session_id}")
+    def get_paper(session_id: str) -> dict:
+        try:
+            return {"session": service.paper_session_state(session_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/sessions/{session_id}/orders")
+    def paper_order(session_id: str, payload: PaperOrderRequest) -> dict:
+        try:
+            return service.paper_place_order(
+                session_id,
+                side=payload.side,
+                qty=payload.qty,
+                client_order_id=payload.clientOrderId,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/sessions/{session_id}/kill-switch")
+    def paper_kill(session_id: str, armed: bool = True) -> dict:
+        try:
+            return {"session": service.paper_kill_switch(session_id, armed=armed)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    # --- Experiments ---
+
+    @router.get("/api/market-sim/experiments")
+    def list_experiments(strategy_id: str | None = Query(None, alias="strategyId")) -> dict:
+        try:
+            return {"experiments": service.list_experiments(strategy_id=strategy_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/experiments")
+    def propose_experiment(payload: ExperimentPropose) -> dict:
+        try:
+            return {
+                "trial": service.propose_experiment(
+                    strategy_id=payload.strategyId,
+                    hypothesis=payload.hypothesis,
+                    proposer_agent_id=payload.proposerAgentId,
+                    source_id=payload.sourceId,
+                    acceptance_criteria=payload.acceptanceCriteria,
+                    seed=payload.seed,
+                    config=payload.config,
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/experiments/{trial_id}/complete")
+    def complete_experiment(trial_id: str, payload: ExperimentComplete) -> dict:
+        try:
+            return {
+                "trial": service.complete_experiment(
+                    trial_id,
+                    metrics=payload.metrics,
+                    strategy_version=payload.strategyVersion,
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/demos/run")
+    def run_demo(payload: DemoRequest) -> dict:
+        try:
+            return service.run_market_demo(family=payload.family, bars_limit=payload.barsLimit)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/live-trading")
+    def live_trading_status() -> dict:
+        return service.live_guard.public_status()
 
     return router

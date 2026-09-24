@@ -1,100 +1,82 @@
-# Market Simulation (EXTERNAL-FIRST)
+# Market Simulation & Trading Center
 
-Causal, multi-agent, brain-connected paper market simulator for LEVIATHAN research.
-
-Feature flag (default **OFF**):
+Causal, multi-agent market research for LEVIATHAN. Feature flag (default **OFF**):
 
 ```bash
 LEVIATHAN_FEATURE_MARKET_SIM=true
-LEVIATHAN_MARKETS_ROOT=D:/ModelData/markets   # optional; defaults to {LEVIATHAN_DATA_ROOT}/markets
+LEVIATHAN_MARKETS_ROOT=.../markets   # optional
 ```
+
+## One trading domain
+
+```
+verified market data → dataset hash
+  → agents design/select DSL strategy
+  → structured discussion + risk veto
+  → causal backtest (next-bar-open fills)
+  → independent validation / walk-forward
+  → strategy version + evidence (incl. rejects)
+  → live paper (same strategy identity)
+  → compare paper vs backtest
+  → live broker orders: BLOCKED
+```
+
+Shared strategy identity across modes; only datafeed, clock, and order adapter swap.
 
 ## Architecture
 
-```
-LEVIATHAN CORE (control plane)
-  MarketSimControlPlane — config, strategy store, run lifecycle, API
-  MarketSimStore — metadata in central leviathan.db
-        ↓
-MarketSimWorker (execution plane — daemon worker; subprocess-ready)
-  SimulationEngine — bar clock, fills, risk
-  DeliberationRuntime — multi-agent proposals / veto / vote
-  BrainFacade — Neuro / Knowledge / Memory / Evidence (advisory)
-        ↓
-results / fills / messages / equity / metrics → Core DB
-```
+| Plane | Component |
+|---|---|
+| Control | `MarketSimControlPlane` — config, CRUD, paper sessions, experiments, demos |
+| Execution | `MarketSimWorker` (daemon thread by default; `scripts/market_sim_worker.py` for subprocess) |
+| Engines | `SimulationEngine` (legacy shared book) · `MultiAgentEngine` (per-agent wallets + commit-reveal) |
+| Data | Files under markets root; metadata in `leviathan.db` |
+| Providers | `csv_local`, `binance_public` (data-api.binance.vision), `stooq_public` (daily equities) |
+| Paper | `local_paper` ledger; optional `alpaca_paper` when paper secrets present |
+| Live | `TradingStub` + `LiveTradingGuard` — always blocked unless a future verified adapter |
 
-**External-first:** heavy bar stepping never blocks HTTP. The worker is the execution unit.
-No parallel canonical database. No real broker orders.
+## Causality & fills
 
-## Causality (hard rule)
+- `SimulationClock` forbids look-ahead.
+- Decisions on bar **T** become eligible on bar **T+1 open** (no same-close fill after observing that close).
+- Commit-then-reveal: agents seal intents against a frozen `info_version` before the next market event.
+- Brain / strategy memory retrieval is advisory and filtered by `available_at` ≤ decision time.
 
-`SimulationClock` is the only time authority. At bar index `i`, strategies and agents may only
-observe bars `0..i`. Look-ahead raises `CausalityViolation` and increments the run counter.
-Tests assert future reads fail.
+## Multi-agent wallets
 
-## Real market data
+Game modes: `individual_competition`, `shared_portfolio`, `research_tournament`.
+Each trading agent has an isolated Decimal wallet (cash, reserved, positions, fees, tx history).
+Risk veto cannot be overridden by model metadata keys (`bypass_risk`, `approved_by_model`, …).
 
-1. Place OHLCV CSV under `LEVIATHAN_MARKETS_ROOT` (e.g. `BTCUSDT_1h.csv`).
-2. Required columns: `timestamp,open,high,low,close,volume` (aliases accepted).
-3. Open **Marktdata** → Scan / Register. DB stores metadata + content hash only.
-4. Parquet is optional; without `pyarrow` the capability reports `PARQUET_UNAVAILABLE`.
+## Capabilities (adapter-derived)
 
-Fixture for tests: `Data/backend/tests/fixtures/market_data/BTCUSDT_1h.csv`.
+`GET /api/market-sim/capabilities` exposes per-family:
 
-## Strategies
+- `HISTORICAL_SIM_AVAILABLE`
+- `LIVE_PAPER_AVAILABLE`
+- `LIVE_TRADING_AVAILABLE`
 
-Structured DSL only (`ma_cross`, `mean_reversion`) — **no arbitrary code execution**.
-Versioned + content-hashed in `market_strategies` / `market_strategy_versions`.
+Equity and crypto spot historical + paper paths are implemented. Options / futures / forex remain `NOT_IMPLEMENTED`. Live trading is always `BLOCKED`.
 
-## Multi-agent deliberation
+## API (existing `/api/market-sim/*`)
 
-Default roles: trend, mean_reversion, risk_officer.
-Each round: causal state → brain retrieve → proposal → optional veto → vote → risk → fill.
-All messages persisted. Brain miss rate is a first-class metric.
-
-## Brain integration
-
-Agents call Knowledge / Memory / Neuro / Evidence facades with provenance labels.
-Empty retrieval → agents still act; run records brain-miss.
-Neural signals are advisory — never authority. Model output is never evidence.
-
-## API
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/market-sim/status` | Flag + health + worker telemetry |
-| GET/POST | `/api/market-sim/data` / `scan` / `register` | Market files |
-| CRUD | `/api/market-sim/strategies` | Strategy library |
-| POST | `/api/market-sim/runs` + `start/pause/step/stop` | Run control |
-| GET | `/api/market-sim/runs/{id}/live` | Clock, equity, fills, messages |
+Adds: providers, capabilities, paper sessions/orders/kill-switch, experiments, demos, live-trading status.
+Does **not** create a second overlapping trading API.
 
 ## Frontend
 
-- `/trading` — Simulatie control room (live binding)
-- `/trading/strategieen` — strategy library
-- `/trading/marktdata` — file index / validation
+Trading Center pages bind to live APIs (Simulatie, Strategieën, Marktdata, Paper, Portefeuille, Broker honesty page).
+Agents fleet page remains the single agent registry; trading roles tag `trading` / `market_sim`.
 
-## What is implemented vs stub
+## HADES
 
-| Implemented | Still stub / out of scope |
-|---|---|
-| Causal engine, fees/slippage, risk kill-switch | Real broker / live money |
-| Strategy store + versioning | Perfect L2 HFT microstructure without L2 files |
-| Multi-agent deliberation + brain hooks | Guaranteed alpha |
-| Metrics with UNMEASURED honesty | Foundation-model training inside the sim loop |
-| Paper fills only | Live paper-trading bridge |
+Submodule at `Data/HADES` inspected. Concepts adapted (next-bar eligibility, risk override sanitizer, provider honesty, Decimal booking). Full `trading_lab` package not vendored.
 
-## Dependencies
+## Honest limitations
 
-Uses Python standard library + existing LEVIATHAN stack. No new required packages.
-Optional: `pyarrow` for Parquet (undeclared until intentionally adopted).
-
-## Self-review (external execution)
-
-- [x] Heavy execution in worker, not HTTP
-- [x] Central DB only; files on disk
-- [x] Causality enforced + tested
-- [x] Optional feature flag; Core boots without market data
-- [x] No second job/approval/persistence system
-- [x] Trading stub still refuses real broker orders
+- OHLCV ≠ order book.
+- Profitable backtest ≠ profitable live strategy.
+- Deterministic DSL ≠ autonomous LLM strategy creation.
+- Daemon thread ≠ isolated OS process (subprocess entrypoint available).
+- Local paper fills against public quotes are not exchange-matched.
+- Live money trading is not implemented.
