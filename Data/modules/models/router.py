@@ -108,6 +108,18 @@ class ModelRouter:
                 return False
             if request.locality == "local_preferred":
                 pass
+            # Context-fit eligibility (after capability / locality). Cache affinity is NOT here.
+            min_window = request.minimum_context_window
+            if min_window is None and request.required_input_tokens is not None:
+                # Require room for input + optional output reserve.
+                out_need = int(request.required_output_tokens or 0)
+                min_window = int(request.required_input_tokens) + out_need
+            if min_window is not None and model.context_window is not None:
+                try:
+                    if int(model.context_window) < int(min_window):
+                        return False
+                except (TypeError, ValueError):
+                    pass
             return True
 
         def try_model(model_id: str, reason: str) -> RouteDecision | None:

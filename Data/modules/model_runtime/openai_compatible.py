@@ -231,20 +231,36 @@ class OpenAICompatibleLLM:
 
     @staticmethod
     def _extract_usage(data: dict[str, Any]) -> tuple[dict[str, int], str]:
-        """Parse provider usage when present. Never invent token counts."""
+        """Parse provider usage when present. Never invent token counts.
+
+        Cached-token fields are normalized when the provider emits them; omitted
+        fields remain absent (not zero).
+        """
+        from Data.modules.models.efficiency_capabilities import normalize_provider_usage
+
         raw = data.get("usage") if isinstance(data, dict) else None
         if not isinstance(raw, dict):
             return {}, "unavailable"
+        normalized = normalize_provider_usage(raw)
+        if normalized.usage_source == "unavailable":
+            return {}, "unavailable"
         out: dict[str, int] = {}
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"):
-            val = raw.get(key)
-            if isinstance(val, (int, float)) and val >= 0:
-                out[key] = int(val)
-        # Normalize aliases.
-        if "input_tokens" not in out and "prompt_tokens" in out:
-            out["input_tokens"] = out["prompt_tokens"]
-        if "output_tokens" not in out and "completion_tokens" in out:
-            out["output_tokens"] = out["completion_tokens"]
+        if normalized.input_tokens is not None:
+            out["prompt_tokens"] = normalized.input_tokens
+            out["input_tokens"] = normalized.input_tokens
+        if normalized.output_tokens is not None:
+            out["completion_tokens"] = normalized.output_tokens
+            out["output_tokens"] = normalized.output_tokens
+        if normalized.total_tokens is not None:
+            out["total_tokens"] = normalized.total_tokens
+        # Only include cached fields when explicitly reported (null ≠ 0).
+        if normalized.cached_input_tokens is not None:
+            out["cached_tokens"] = normalized.cached_input_tokens
+            out["cached_input_tokens"] = normalized.cached_input_tokens
+        if normalized.cache_creation_tokens is not None:
+            out["cache_creation_tokens"] = normalized.cache_creation_tokens
+        if normalized.cache_read_tokens is not None:
+            out["cache_read_tokens"] = normalized.cache_read_tokens
         if not out:
             return {}, "unavailable"
         return out, "provider"

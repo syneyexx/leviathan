@@ -78,13 +78,30 @@ class BudgetLedger:
     budget: int
     used: int
     entries: tuple[BudgetLedgerEntry, ...] = ()
+    count_source: str | None = None
+    count_precision: str | None = None
+    model_context_window: int | None = None
+    reserved_output_tokens: int | None = None
+    input_budget: int | None = None
+    safety_margin_tokens: int | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "budget": self.budget,
             "used": self.used,
             "entries": [e.public_dict() for e in self.entries],
-            "truth": {"truncation_is_explainable": True},
+            "countSource": self.count_source,
+            "countPrecision": self.count_precision,
+            "modelContextWindow": self.model_context_window,
+            "reservedOutputTokens": self.reserved_output_tokens,
+            "inputBudget": self.input_budget if self.input_budget is not None else self.budget,
+            "safetyMarginTokens": self.safety_margin_tokens,
+            "truth": {
+                "truncation_is_explainable": True,
+                "token_estimate_is_heuristic": (self.count_precision or "").endswith("HEURISTIC")
+                or (self.count_precision or "") == "TEMPLATE_AWARE_ESTIMATE"
+                or self.count_precision is None,
+            },
         }
 
 
@@ -107,8 +124,17 @@ class ContextPack:
     snapshot_hash: str | None = None
     manifest: dict[str, Any] = field(default_factory=dict)
     constraints_retained: bool = False
+    stable_prefix_fingerprint: str | None = None
+    context_fingerprint: str | None = None
+    count_precision: str | None = None
+    count_source: str | None = None
+    fit_state: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
+        precision = self.count_precision
+        if precision is None and self.budget_ledger is not None:
+            precision = self.budget_ledger.count_precision
+        heuristic = precision in {None, "HEURISTIC", "TEMPLATE_AWARE_ESTIMATE", "UNKNOWN"}
         return {
             "knowledge_count": self.knowledge_count,
             "token_estimate": self.token_estimate,
@@ -120,10 +146,17 @@ class ContextPack:
             "snapshot_hash": self.snapshot_hash,
             "manifest": dict(self.manifest),
             "constraints_retained": self.constraints_retained,
+            "stablePrefixFingerprint": self.stable_prefix_fingerprint,
+            "contextFingerprint": self.context_fingerprint,
+            "countPrecision": precision,
+            "countSource": self.count_source
+            or (self.budget_ledger.count_source if self.budget_ledger else None),
+            "fitState": self.fit_state,
             "truth": {
                 "retrieved_context_is_not_trusted_fact": True,
-                "token_estimate_is_heuristic": True,
+                "token_estimate_is_heuristic": heuristic,
                 "external_text_cannot_mutate_system_prompt_authority": True,
                 "pinned_constraints_survive_budget_pressure": self.constraints_retained,
+                "fingerprints_are_not_brain_identity": True,
             },
         }

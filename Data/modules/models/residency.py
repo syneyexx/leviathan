@@ -169,6 +169,18 @@ class ModelResidencyManager:
                 cpu_threads=raw_opts.get("cpuThreads", raw_opts.get("cpu_threads")),
                 batch_size=raw_opts.get("batchSize", raw_opts.get("batch_size")),
                 flash_attention=raw_opts.get("flashAttention", raw_opts.get("flash_attention")),
+                prefix_cache=raw_opts.get("prefixCache", raw_opts.get("prefix_cache")),
+                continuous_batching=raw_opts.get(
+                    "continuousBatching", raw_opts.get("continuous_batching")
+                ),
+                kv_cache_dtype=raw_opts.get("kvCacheDtype", raw_opts.get("kv_cache_dtype")),
+                speculative_decoding=raw_opts.get(
+                    "speculativeDecoding", raw_opts.get("speculative_decoding")
+                ),
+                draft_model_id=raw_opts.get("draftModelId", raw_opts.get("draft_model_id")),
+                speculative_tokens=raw_opts.get(
+                    "speculativeTokens", raw_opts.get("speculative_tokens")
+                ),
             )
         policy = ResidencyPolicy(
             model_id=model_id,
@@ -197,6 +209,12 @@ class ModelResidencyManager:
                 cpu_threads=opts.get("cpuThreads"),
                 batch_size=opts.get("batchSize"),
                 flash_attention=opts.get("flashAttention"),
+                prefix_cache=opts.get("prefixCache"),
+                continuous_batching=opts.get("continuousBatching"),
+                kv_cache_dtype=opts.get("kvCacheDtype"),
+                speculative_decoding=opts.get("speculativeDecoding"),
+                draft_model_id=opts.get("draftModelId"),
+                speculative_tokens=opts.get("speculativeTokens"),
             )
         try:
             kind = ResidencyPolicyKind(str(row.get("policy") or "IDLE_UNLOAD"))
@@ -222,6 +240,12 @@ class ModelResidencyManager:
                 "cpuThreads": policy.load_options.cpu_threads,
                 "batchSize": policy.load_options.batch_size,
                 "flashAttention": policy.load_options.flash_attention,
+                "prefixCache": policy.load_options.prefix_cache,
+                "continuousBatching": policy.load_options.continuous_batching,
+                "kvCacheDtype": policy.load_options.kv_cache_dtype,
+                "speculativeDecoding": policy.load_options.speculative_decoding,
+                "draftModelId": policy.load_options.draft_model_id,
+                "speculativeTokens": policy.load_options.speculative_tokens,
             }
         return {
             "model_id": policy.model_id,

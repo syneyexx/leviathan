@@ -1893,6 +1893,65 @@ export type PerformanceSnapshot = {
     detail?: string;
   }>;
   observability: Record<string, unknown>;
+  inferenceEfficiency?: InferenceEfficiencySnapshot | null;
+  truth?: Record<string, boolean>;
+};
+
+/** Provenance-aware inference efficiency snapshot (never mock zeros as measured). */
+export type EfficiencyCapabilityState = "supported" | "unsupported" | "unknown" | "unverified" | "unmeasured";
+
+export type InferenceEfficiencySnapshot = {
+  metrics?: {
+    tokenization?: { lookups: number; hits: number };
+    contextCompile?: { hits: number; misses: number };
+    retrieval?: { hits: number; misses: number };
+    embedding?: { hits: number; misses: number };
+    rerank?: { hits: number; misses: number };
+    exactResult?: { hits: number; misses: number; bypasses: number };
+    semantic?: { hits: number; misses: number; bypasses: number };
+    prefixReuse?: number;
+    cachedInputTokensProviderReported?: number;
+    contextFitFailures?: number;
+    compactionCount?: number;
+    evictions?: number;
+    invalidations?: number;
+    ttftAvgMs?: number | null;
+    tokenPrecisionShare?: { exact: number; heuristic: number };
+    truth?: Record<string, boolean>;
+  } | null;
+  policy?: {
+    cachesEnabled?: boolean;
+    semanticEnabled?: boolean;
+    exactResultEnabled?: boolean;
+    semanticThreshold?: number;
+  };
+  caches?: Record<
+    string,
+    {
+      name?: string;
+      enabled?: boolean;
+      entries?: number;
+      maxEntries?: number;
+      bytesEstimate?: number;
+      stats?: {
+        lookups?: number;
+        hits?: number;
+        misses?: number;
+        hitRate?: number | null;
+      };
+    }
+  >;
+  runtimeAffinity?: Record<
+    string,
+    {
+      modelId: string;
+      workerId?: string | null;
+      runtimeGeneration: number;
+      prefixCacheState: string;
+      kvCacheState: string;
+      provenance: string;
+    }
+  >;
   truth?: Record<string, boolean>;
 };
 

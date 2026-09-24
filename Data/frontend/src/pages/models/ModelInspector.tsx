@@ -159,6 +159,39 @@ export function ModelInspector({
               ["Endpoint", model.endpoint],
               ["Last Discovered", model.lastDiscoveredAt],
               ["Last Used", model.lastUsedAt],
+              [
+                "Tokenizer",
+                (model.metadata?.tokenizerId as string | undefined) ??
+                  (model.metadata?.tokenizer_id as string | undefined) ??
+                  "Unknown",
+              ],
+              [
+                "Token count precision",
+                (model.metadata?.tokenCountPrecision as string | undefined) ?? "Unknown",
+              ],
+              [
+                "Chat template",
+                (model.metadata?.chatTemplateId as string | undefined) ??
+                  (model.metadata?.chat_template_id as string | undefined) ??
+                  "Unknown",
+              ],
+              [
+                "Prefix cache",
+                (model.metadata?.prefixCache as string | undefined) ?? "Unknown",
+              ],
+              [
+                "KV cache",
+                (model.metadata?.kvCache as string | undefined) ??
+                  "Runtime-owned / Unknown",
+              ],
+              [
+                "Continuous batching",
+                (model.metadata?.continuousBatching as string | undefined) ?? "Unknown",
+              ],
+              [
+                "Speculative decoding",
+                (model.metadata?.speculativeDecoding as string | undefined) ?? "Unknown",
+              ],
             ] as const
           ).map(([label, value]) => (
             <div className="lv-meta-item" key={label}>
@@ -166,6 +199,10 @@ export function ModelInspector({
               <strong title={dash(value)}>{dash(value)}</strong>
             </div>
           ))}
+          <p className="lv-meta-item" style={{ gridColumn: "1 / -1", opacity: 0.75 }}>
+            Inference-efficiency fields stay Unknown until a verified runtime probe or
+            provider report establishes them — never shown as Enabled/0 by default.
+          </p>
         </div>
       ) : null}
 
