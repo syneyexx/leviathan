@@ -335,8 +335,9 @@
 .lv-bc-viz { min-width: 0; padding: 8px !important; }
 .lv-bc-viz .lv-br-panel-head { align-items: baseline; }
 .lv-bc-viz-subtitle { margin-left: auto; color: rgba(221,214,196,.38); font-size: 7px; }
-.lv-bc-ref .lv-bc-map { min-height: 390px; border: 1px solid rgba(224,179,75,.13); border-radius: 5px; background: radial-gradient(circle at 50% 52%, rgba(36,116,163,.08), transparent 36%), radial-gradient(circle at 22% 36%, rgba(34,220,140,.05), transparent 26%), radial-gradient(circle at 78% 35%, rgba(180,74,236,.05), transparent 25%), #03080a; }
-.lv-bc-ref .lv-bc-links { z-index: 1; }
+.lv-bc-ref .lv-bc-map { min-height: 390px; border: 1px solid rgba(224,179,75,.23); border-radius: 5px; background: radial-gradient(ellipse at 50% 54%, rgba(43,93,128,.2), transparent 54%), radial-gradient(ellipse at 22% 42%, rgba(32,177,131,.12), transparent 32%), radial-gradient(ellipse at 77% 31%, rgba(157,74,188,.1), transparent 34%), radial-gradient(ellipse at 62% 75%, rgba(223,145,46,.08), transparent 34%), #030708; box-shadow: inset 0 0 56px rgba(0,0,0,.5); }
+.lv-bc-ref .lv-bc-links { z-index: 1; touch-action: none; cursor: grab; }
+.lv-bc-ref .lv-bc-links:active { cursor: grabbing; }
 .lv-bc-ref .lv-bc-legend { position: absolute; z-index: 3; right: 8px; top: 7px; display: grid; gap: 4px; padding: 6px 8px; border: 1px solid rgba(224,179,75,.22); border-radius: 4px; background: rgba(2,7,9,.82); font-size: 6.8px; }
 .lv-bc-ref .lv-bc-map-label { fill: rgba(244,241,232,.88); font-size: 8px; font-weight: 550; paint-order: stroke; stroke: #020708; stroke-width: 2px; pointer-events: none; }
 .lv-bc-map-controls { position: absolute; z-index: 4; right: 8px; bottom: 7px; display: flex; border: 1px solid rgba(224,179,75,.25); border-radius: 4px; overflow: hidden; background: rgba(2,7,9,.85); }
@@ -345,8 +346,12 @@
 .lv-bc-ref .lv-bc-bottom { margin-top: 0; gap: 7px; }
 .lv-bc-mini-panel { padding: 8px !important; overflow: hidden; }
 .lv-bc-mini-panel .lv-br-panel-title { font-size: 7.8px; }
-.lv-bc-ref .lv-bc-donut-wrap { grid-template-columns: 112px 1fr; gap: 5px; }
-.lv-bc-ref .lv-bc-donut-legend { gap: 3px; font-size: 6.8px; }
+.lv-bc-ref .lv-bc-donut-wrap { width: 100%; min-width: 0; grid-template-columns: minmax(88px, 105px) minmax(0, 1fr); gap: 10px; align-items: center; }
+.lv-bc-ref .lv-bc-donut-wrap > svg { display: block; width: min(100%, 105px); height: auto; }
+.lv-bc-ref .lv-bc-donut-legend { min-width: 0; gap: 5px; font-size: 8px; }
+.lv-bc-ref .lv-bc-donut-legend li { min-width: 0; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 6px; }
+.lv-bc-ref .lv-bc-donut-legend li > span:nth-child(2) { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lv-bc-ref .lv-bc-donut-legend em { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lv-bc-ref .lv-bc-bars { height: 125px; gap: 4px; padding-top: 2px; }
 .lv-bc-ref .lv-bc-bar-col span { font-size: 6px; }
 .lv-bc-detail { padding: 10px !important; }
