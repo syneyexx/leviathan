@@ -40,7 +40,10 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "provider.chat.complete",
         "provider.chat.stream",
         "provider.market.fetch",
+        "provider.alpaca.paper",
         "provider.hf.list",
+        "model_download.start",
+        "mcp.call",
     }
 )
 

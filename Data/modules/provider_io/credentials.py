@@ -22,8 +22,21 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "llm": ("LEVIATHAN_LLM_API_KEY", "OPENAI_API_KEY"),
     "web_search": ("LEVIATHAN_WEB_SEARCH_API_KEY", "WEB_SEARCH_API_KEY"),
     "huggingface": ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "LEVIATHAN_HF_TOKEN"),
-    "alpaca": ("ALPACA_API_KEY", "ALPACA_API_KEY_ID"),
-    "alpaca_secret": ("ALPACA_API_SECRET", "ALPACA_SECRET_KEY"),
+    "alpaca": (
+        "LEVIATHAN_ALPACA_PAPER_KEY_ID",
+        "ALPACA_API_KEY",
+        "ALPACA_API_KEY_ID",
+    ),
+    "alpaca_secret": (
+        "LEVIATHAN_ALPACA_PAPER_SECRET",
+        "ALPACA_API_SECRET",
+        "ALPACA_SECRET_KEY",
+    ),
+    "alpaca_paper": (
+        "LEVIATHAN_ALPACA_PAPER_KEY_ID",
+        "ALPACA_API_KEY",
+        "ALPACA_API_KEY_ID",
+    ),
 }
 
 
@@ -100,6 +113,23 @@ def resolve_credential(credential_ref: str | None) -> ResolvedCredential:
     for env_name in env_keys:
         val = (os.environ.get(env_name) or "").strip()
         if val:
+            # Alpaca paper needs key+secret pair as headers.
+            if ref in {"alpaca", "alpaca_paper"}:
+                secret = (
+                    (os.environ.get("LEVIATHAN_ALPACA_PAPER_SECRET") or "").strip()
+                    or (os.environ.get("ALPACA_API_SECRET") or "").strip()
+                    or (os.environ.get("ALPACA_SECRET_KEY") or "").strip()
+                )
+                return ResolvedCredential(
+                    credential_ref=ref,
+                    api_key=val,
+                    headers={
+                        "APCA-API-KEY-ID": val,
+                        "APCA-API-SECRET-KEY": secret,
+                        "Content-Type": "application/json",
+                    },
+                    extra={"key_id": val, "secret": secret},
+                )
             return ResolvedCredential(credential_ref=ref, api_key=val)
 
     # Generic: LEVIATHAN_PROVIDER_<REF>_API_KEY

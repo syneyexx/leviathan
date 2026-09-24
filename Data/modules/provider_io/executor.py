@@ -7,6 +7,7 @@ import time
 from typing import Any, Callable
 
 from Data.modules.jobs.states import JobState
+from Data.modules.provider_io.adapters.alpaca_paper import AlpacaPaperAdapter
 from Data.modules.provider_io.adapters.generic_http import GenericHttpAdapter
 from Data.modules.provider_io.adapters.huggingface_meta import HuggingFaceMetaAdapter
 from Data.modules.provider_io.adapters.market_data import MarketDataAdapter
@@ -122,6 +123,7 @@ class ProviderIoExecutor:
             "chat.stream": OpenAICompatibleAdapter(),
             "openai_compatible": OpenAICompatibleAdapter(),
             "market.fetch": MarketDataAdapter(),
+            "alpaca.paper": AlpacaPaperAdapter(),
             "hf.list": HuggingFaceMetaAdapter(),
             "huggingface.list": HuggingFaceMetaAdapter(),
         }

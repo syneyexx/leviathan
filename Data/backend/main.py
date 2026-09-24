@@ -380,7 +380,7 @@ mcp_bridge = McpBridge(
     auto_expand_modules=settings.features.mcp_auto_expand_modules,
     allow_outbound=settings.network.allow_outbound,
 )
-mcp_provider = McpProvider(mcp_bridge)
+mcp_provider = McpProvider(mcp_bridge, job_runtime=job_runtime)
 execution_gateway.mcp_executor = mcp_provider
 evaluation_harness = EvaluationHarness(
     catalog=capability_catalog,
@@ -885,6 +885,7 @@ reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 model_plane = ModelControlPlane(settings, observability=observability)
 model_plane.bind_llm(llm)
+model_plane.bind_job_runtime(job_runtime)
 model_plane.set_telemetry_provider(lambda: system_telemetry_sampler.latest_public())
 settings_plane = SettingsControlPlane(settings)
 behavior_store = BehaviorProfileStore(settings.database_path)

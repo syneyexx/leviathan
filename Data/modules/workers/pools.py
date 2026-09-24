@@ -83,14 +83,40 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
             "provider.chat.complete",
             "provider.chat.stream",
             "provider.market.fetch",
+            "provider.alpaca.paper",
             "provider.hf.list",
         ),
         resource_classes=("NETWORK_BOUND", "CPU_LIGHT"),
         description=(
             "External provider / SaaS I/O — remote LLM HTTP, search APIs, "
-            "bounded market/HF metadata fetches (not bulk dataset downloads)"
+            "bounded market/HF metadata fetches, Alpaca paper trading "
+            "(not bulk dataset or model downloads)"
         ),
         max_count=8,
+    ),
+    "model_download": PoolDefinition(
+        pool_id="model_download",
+        entrypoint="Data.modules.workers.entrypoints.model_download",
+        default_count=1,
+        job_kinds=("model_download.", "model_download.start"),
+        resource_classes=("IO_HEAVY", "NETWORK_BOUND", "MEMORY_HEAVY"),
+        description=(
+            "Heavy model artifact downloads (Hugging Face / Ollama pull) — "
+            "not provider_io, not Model Control Plane serving"
+        ),
+        max_count=2,
+    ),
+    "mcp_execution": PoolDefinition(
+        pool_id="mcp_execution",
+        entrypoint="Data.modules.workers.entrypoints.mcp_execution",
+        default_count=1,
+        job_kinds=("mcp.call", "mcp."),
+        resource_classes=("NETWORK_BOUND", "CPU_LIGHT"),
+        description=(
+            "Long MCP tools/call execution — connect/handshake/list remain "
+            "Control Plane control traffic"
+        ),
+        max_count=4,
     ),
     "research": PoolDefinition(
         pool_id="research",
