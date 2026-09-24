@@ -1401,18 +1401,26 @@ async def lifespan(_: FastAPI):
         )
     dataset_service.reconcile()
     from Data.modules.datasets.worker import should_start_inprocess_runner
+    from Data.modules.workers.settings import load_worker_settings
 
-    if should_start_inprocess_runner(settings):
+    worker_settings = load_worker_settings()
+    externalize = bool(worker_settings.enabled and worker_settings.externalize_api_runners)
+
+    if (not externalize) and should_start_inprocess_runner(settings):
         dataset_service.runner.start_background()
     else:
         observability.emit(
             "datasets",
             "jobs.runner.deferred",
             payload={
-                "mode": getattr(
-                    getattr(settings, "research_integration", None),
-                    "dataset_jobs_runner",
-                    "external",
+                "mode": (
+                    "externalized"
+                    if externalize
+                    else getattr(
+                        getattr(settings, "research_integration", None),
+                        "dataset_jobs_runner",
+                        "external",
+                    )
                 )
             },
             level="info",
@@ -1422,10 +1430,20 @@ async def lifespan(_: FastAPI):
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
     research_service.recover()
-    research_service.start_background()
-    coding_service.start_background()
+    if externalize:
+        observability.emit(
+            "workers",
+            "api.runners.externalized",
+            payload={"pools": worker_settings.pool_counts},
+            level="info",
+            message="Heavy domain runners deferred to generic worker supervisor",
+        )
+    else:
+        research_service.start_background()
+        coding_service.start_background()
+        market_sim_service.start_background()
+        job_runtime.start_background_worker()
     mcp_bridge.initialize()
-    market_sim_service.start_background()
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
@@ -1469,7 +1487,7 @@ async def lifespan(_: FastAPI):
             "startup",
             payload={"ready": len(ready), "telemetry": dict(module_manager.telemetry)},
         )
-    job_runtime.start_background_worker()
+    # job_runtime background worker started above only when not externalized
     system_telemetry_sampler.start()
     # Round 6: periodic serving reconcile so crashed workers become DEAD without a manual API call.
     import asyncio
@@ -3358,6 +3376,90 @@ def cancel_job(job_id: str) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"job": job.public_dict()}
+
+
+@app.get("/api/jobs/{job_id}/children")
+def list_job_children(job_id: str) -> dict:
+    parent = job_runtime.get(job_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    children = []
+    if hasattr(job_store, "list_children"):
+        children = [c.public_dict() for c in job_store.list_children(job_id)]
+    return {"job_id": job_id, "children": children}
+
+
+@app.post("/api/jobs/{job_id}/retry")
+def retry_job(job_id: str) -> dict:
+    job = job_runtime.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.state not in {JobState.FAILED, JobState.CANCELLED}:
+        raise HTTPException(status_code=409, detail=f"Cannot retry job in state {job.state.value}")
+    try:
+        if hasattr(job_store, "schedule_retry"):
+            job = job_store.schedule_retry(job_id, delay_seconds=0.0, error="manual_retry")
+        else:
+            job = job_store.transition(job_id, JobState.QUEUED)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"job": job.public_dict()}
+
+
+@app.get("/api/workers")
+def list_workers(
+    pool: Annotated[str | None, Query()] = None,
+) -> dict:
+    from Data.modules.workers.pools import POOL_CATALOG
+    from Data.modules.workers.registry import WorkerRegistry
+    from Data.modules.workers.settings import load_worker_settings
+
+    registry = WorkerRegistry(settings.database_path)
+    registry.initialize()
+    workers = registry.list(pool_id=pool)
+    wsettings = load_worker_settings()
+    return {
+        "workers": [w.public_dict() for w in workers],
+        "pools": [
+            {
+                **defn.public_dict(),
+                "desired": wsettings.desired_count(pid),
+            }
+            for pid, defn in POOL_CATALOG.items()
+        ],
+        "settings": wsettings.public_dict(),
+        "truth": {
+            "stale_row_is_not_live_worker": True,
+            "model_serving_not_listed_here": True,
+        },
+    }
+
+
+@app.get("/api/workers/pools")
+def list_worker_pools() -> dict:
+    from Data.modules.workers.pools import POOL_CATALOG
+    from Data.modules.workers.registry import WorkerRegistry
+    from Data.modules.workers.settings import load_worker_settings
+
+    registry = WorkerRegistry(settings.database_path)
+    registry.initialize()
+    wsettings = load_worker_settings()
+    pools = []
+    for pid, defn in POOL_CATALOG.items():
+        regs = registry.list(pool_id=pid)
+        pools.append(
+            {
+                **defn.public_dict(),
+                "desired": wsettings.desired_count(pid),
+                "instances": len(regs),
+                "ready": sum(1 for r in regs if r.state.value == "READY"),
+                "busy": sum(1 for r in regs if r.state.value == "BUSY"),
+                "draining": sum(1 for r in regs if r.state.value == "DRAINING"),
+                "degraded": sum(1 for r in regs if r.state.value == "DEGRADED"),
+                "workers": [r.public_dict() for r in regs],
+            }
+        )
+    return {"pools": pools}
 
 
 class EvidenceArtifactClaim(BaseModel):
