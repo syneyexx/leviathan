@@ -1,10 +1,16 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { isMainMenuActive, MAIN_MENU } from "../navigation/menu";
-import "../styles/sidebar-reference.css";
-import { BrandMark } from "./BrandMark";
+import { isMainMenuActive, MAIN_MENU, normalizePath } from "../navigation/menu";
+import { TridentMark } from "./BrandMark";
 
 const ICONS: Record<string, ReactNode> = {
+  command: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="2.4" />
+      <path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2" />
+    </>
+  ),
   hades: (
     <>
       <path d="M4 11.5L12 5l8 6.5" />
@@ -62,34 +68,47 @@ type AppSidebarProps = {
   open: boolean;
 };
 
-/** HOOFDMENU — left sidebar top-level sections only. */
+/** HOOFDMENU — left sidebar top-level sections from MAIN_MENU + Command landing. */
 export function AppSidebar({ open }: AppSidebarProps) {
   const location = useLocation();
+  const path = normalizePath(location.pathname);
+  const commandActive = path === "/";
 
   return (
     <aside className={`lv-sidebar${open ? " is-open" : ""}`} id="sidebar">
-      <NavLink to="/" end className={() => "lv-sidebar-command"} style={{ textDecoration: "none" }}>
-        <svg className="lv-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="8" />
-          <circle cx="12" cy="12" r="2.4" />
-          <path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2" />
-        </svg>
-        <span>Command</span>
-      </NavLink>
-
       <div className="lv-sidebar-brand">
         <div className="lv-sidebar-brand-mark" aria-hidden="true">
-          <BrandMark id="sidebar-brand" />
+          <TridentMark id="sidebar-brand" />
         </div>
         <div className="lv-sidebar-brand-copy">
-          <div className="lv-sidebar-brand-title">Leviathan</div>
-          <div className="lv-sidebar-brand-tag">Intelligence</div>
+          <div className="lv-sidebar-brand-title">LEVIATHAN</div>
+          <div className="lv-sidebar-brand-tag">
+            <span>Intelligence</span>
+            <span>Capital</span>
+            <span>Autonomy</span>
+          </div>
         </div>
       </div>
 
       <nav className="lv-nav" aria-label="Hoofdmenu">
+        <NavLink
+          to="/"
+          end
+          className={() => `lv-nav-item${commandActive ? " is-active" : ""}`}
+          style={{ textDecoration: "none" }}
+        >
+          <svg className="lv-icon" viewBox="0 0 24 24" aria-hidden="true">
+            {ICONS.command}
+          </svg>
+          <span>Command</span>
+        </NavLink>
+
         {MAIN_MENU.map((item) => {
-          const active = isMainMenuActive(item, location.pathname);
+          // Command owns the exact `/` landing highlight; Hades stays active on its other routes.
+          const active =
+            item.id === "hades" && commandActive
+              ? false
+              : isMainMenuActive(item, location.pathname);
           return (
             <NavLink
               key={item.id}
@@ -98,26 +117,41 @@ export function AppSidebar({ open }: AppSidebarProps) {
               className={() => `lv-nav-item${active ? " is-active" : ""}`}
               style={{ textDecoration: "none" }}
             >
-              <svg className="lv-icon" viewBox="0 0 24 24">
+              <svg className="lv-icon" viewBox="0 0 24 24" aria-hidden="true">
                 {ICONS[item.id]}
               </svg>
-              {item.label}
+              <span>{item.label}</span>
             </NavLink>
           );
         })}
       </nav>
 
       <div className="lv-sidebar-footer">
-        <img
-          className="lv-sidebar-footer-mark"
-          src="/assets/sidebar-reference.svg"
-          alt="Discipline creates freedom"
-          width={176}
-          height={155}
-          draggable={false}
-          loading="eager"
-          decoding="sync"
-        />
+        <div className="lv-sidebar-footer-art">
+          <img
+            className="lv-sidebar-footer-mark"
+            src="/assets/sidebar-leviathan-art.png"
+            alt=""
+            width={210}
+            height={280}
+            draggable={false}
+            loading="eager"
+            decoding="sync"
+          />
+        </div>
+        <p className="lv-sidebar-motto">
+          A Higher
+          <br />
+          Intelligence
+          <br />
+          For A Richer
+          <br />
+          Humanity.
+        </p>
+        <div className="lv-sidebar-footer-sig" aria-hidden="true">
+          <TridentMark id="sidebar-sig" />
+          <span>LEVIATHAN</span>
+        </div>
       </div>
     </aside>
   );

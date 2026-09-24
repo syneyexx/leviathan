@@ -186,8 +186,8 @@
      LAYOUT (fluid — reference proportions @ 1536×1024)
      ---------------------------------------------------------- */
 
-  --lv-header-height: clamp(70px, 9.2vh, 96px);
-  --lv-sidebar-width: clamp(220px, 16.5vw, 268px);
+  --lv-header-height: clamp(58px, 7.2vh, 72px);
+  --lv-sidebar-width: clamp(232px, 17vw, 268px);
   --lv-right-panel-width: clamp(176px, 15.2vw, 228px);
   --lv-footer-height: clamp(56px, 6.8vh, 68px);
 
