@@ -14,6 +14,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def confidence_band(confidence: float) -> str:
+    c = max(0.0, min(1.0, float(confidence)))
+    if c < 0.35:
+        return "weak"
+    if c < 0.6:
+        return "moderate"
+    if c < 0.85:
+        return "strong"
+    return "very_strong"
+
+
 @dataclass
 class BeliefItem:
     belief_id: str
@@ -27,7 +38,13 @@ class BeliefItem:
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     next_information_needed: str | None = None
+    freshness: str | None = None  # fresh | aging | stale | unknown
+    provenance: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def confidence_band(self) -> str:
+        return confidence_band(self.confidence)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +52,7 @@ class BeliefItem:
             "proposition": self.proposition,
             "category": self.category.value,
             "confidence": self.confidence,
+            "confidence_band": self.confidence_band,
             "support_refs": list(self.support_refs),
             "contradiction_refs": list(self.contradiction_refs),
             "source_type": self.source_type.value,
@@ -42,10 +60,13 @@ class BeliefItem:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "next_information_needed": self.next_information_needed,
+            "freshness": self.freshness,
+            "provenance": dict(self.provenance),
             "metadata": self.metadata,
             "truth": {
                 "neural_association_is_not_exact_fact": True,
                 "model_inference_is_not_evidence": True,
+                "confidence_band_is_not_precise_probability": True,
             },
         }
 
@@ -67,11 +88,18 @@ class BeliefState:
         status: BeliefStatus = BeliefStatus.UNVERIFIED,
         support_refs: list[str] | None = None,
         next_information_needed: str | None = None,
+        freshness: str | None = None,
+        provenance: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> BeliefItem:
         conf = max(0.0, min(1.0, float(confidence)))
         # Exact facts / evidence cannot be silently created from neural associations.
         if source_type == EpistemicType.NEURAL_ASSOCIATION and category == BeliefCategory.FACT:
+            category = BeliefCategory.HYPOTHESIS
+            status = BeliefStatus.INFERRED
+            conf = min(conf, 0.55)
+        # Model speculation must never silently become FACT.
+        if source_type == EpistemicType.MODEL_INFERENCE and category == BeliefCategory.FACT:
             category = BeliefCategory.HYPOTHESIS
             status = BeliefStatus.INFERRED
             conf = min(conf, 0.55)
@@ -84,6 +112,8 @@ class BeliefState:
             source_type=source_type,
             status=status,
             next_information_needed=next_information_needed,
+            freshness=freshness,
+            provenance=dict(provenance or {}),
             metadata=dict(metadata or {}),
         )
         self.items[item.belief_id] = item

@@ -13,6 +13,71 @@ from Data.modules.reasoning import ReasoningEngine, ReasoningPlan
 from .types import RiskClass
 
 
+_FRESHNESS_TERMS = {
+    "current",
+    "latest",
+    "newest",
+    "today",
+    "actueel",
+    "nieuwste",
+    "huidige",
+    "live",
+    "up to date",
+    "up-to-date",
+}
+_RESEARCH_TERMS = {
+    "research",
+    "onderzoek",
+    "analyse",
+    "deep dive",
+    "uitgebreid",
+    "vergelijk",
+    "compare",
+    "versus",
+    " vs ",
+    "zoek uit",
+    "investigate",
+    "evidence",
+    "bewijs",
+    "bronnen",
+    "sources",
+}
+_TOOL_TERMS = {
+    "run",
+    "execute",
+    "invoke",
+    "call tool",
+    "use tool",
+    "browser",
+    "fetch",
+    "shell",
+    "pytest",
+    "npm",
+}
+_CODING_TERMS = {
+    "code",
+    "implement",
+    "refactor",
+    "bug",
+    "fix",
+    "patch",
+    "compile",
+    "test",
+    "functie",
+    "class",
+}
+_PERSONAL_TERMS = {
+    "my ",
+    "mine",
+    "ik ",
+    "mijn ",
+    "remember",
+    "onthoud",
+    "preference",
+    "voorkeur",
+}
+
+
 @dataclass
 class TaskModel:
     """Canonical task understanding for cognitive orchestration."""
@@ -23,22 +88,42 @@ class TaskModel:
     goal: str
     domain: str
     task_type: str
+    intent: str = "general"
     requested_outputs: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
+    hard_constraints: list[str] = field(default_factory=list)
+    preferences: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
+    required_outputs: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
+    time_scope: str | None = None
+    location_scope: str | None = None
     risk_class: RiskClass = RiskClass.LOW
     side_effect_expectations: list[str] = field(default_factory=list)
     required_evidence: list[str] = field(default_factory=list)
     known_facts: list[str] = field(default_factory=list)
     unknowns: list[str] = field(default_factory=list)
     ambiguities: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
+    requires_current_information: bool = False
+    requires_external_information: bool = False
+    requires_personal_context: bool = False
+    requires_files: bool = False
+    requires_tools: bool = False
+    requires_actions: bool = False
+    requires_research: bool = False
+    requires_coding: bool = False
+    candidate_specialists: list[str] = field(default_factory=list)
+    language: str = "auto"
+    output_format: str = "prose"
     time_sensitivity: str = "normal"
     resource_expectation: str = "light"
     privacy_class: str = "standard"
     initial_uncertainty: float = 0.5
     preferred_execution_mode: str = "in_process"
     allowed_delegation: list[str] = field(default_factory=list)
+    research_mode: str = "none"  # none | assisted | deep
     metadata: dict[str, Any] = field(default_factory=dict)
     legacy_plan: ReasoningPlan | None = None
 
@@ -48,29 +133,50 @@ class TaskModel:
             "run_id": self.run_id,
             "raw_request": self.raw_request[:2000],
             "goal": self.goal,
+            "intent": self.intent,
             "domain": self.domain,
             "task_type": self.task_type,
             "requested_outputs": list(self.requested_outputs),
+            "required_outputs": list(self.required_outputs or self.requested_outputs),
             "constraints": list(self.constraints),
+            "hard_constraints": list(self.hard_constraints),
+            "preferences": list(self.preferences),
             "success_criteria": list(self.success_criteria),
+            "entities": list(self.entities),
+            "time_scope": self.time_scope,
+            "location_scope": self.location_scope,
             "risk_class": self.risk_class.value,
             "side_effect_expectations": list(self.side_effect_expectations),
             "required_evidence": list(self.required_evidence),
             "known_facts": list(self.known_facts),
             "unknowns": list(self.unknowns),
             "ambiguities": list(self.ambiguities),
+            "assumptions": list(self.assumptions),
             "dependencies": list(self.dependencies),
+            "requires_current_information": self.requires_current_information,
+            "requires_external_information": self.requires_external_information,
+            "requires_personal_context": self.requires_personal_context,
+            "requires_files": self.requires_files,
+            "requires_tools": self.requires_tools,
+            "requires_actions": self.requires_actions,
+            "requires_research": self.requires_research,
+            "requires_coding": self.requires_coding,
+            "candidate_specialists": list(self.candidate_specialists),
+            "language": self.language,
+            "output_format": self.output_format,
             "time_sensitivity": self.time_sensitivity,
             "resource_expectation": self.resource_expectation,
             "privacy_class": self.privacy_class,
             "initial_uncertainty": self.initial_uncertainty,
             "preferred_execution_mode": self.preferred_execution_mode,
             "allowed_delegation": list(self.allowed_delegation),
+            "research_mode": self.research_mode,
             "metadata": self.metadata,
             "legacy_plan": self.legacy_plan.public_summary() if self.legacy_plan else None,
             "truth": {
                 "task_model_is_not_private_cot": True,
                 "model_claim_is_not_completion": True,
+                "hard_constraints_must_survive_compaction": True,
             },
         }
 
@@ -115,8 +221,8 @@ _AMBIGUITY_MARKERS = {
 class TaskModelBuilder:
     """Build TaskModel from a user request.
 
-    Uses ReasoningEngine as a lightweight classifier for domain/intent
-    compatibility; does not claim authority over tools or completion.
+    Hybrid understanding: deterministic parsing + ReasoningEngine classification.
+    Does not claim authority over tools or completion.
     """
 
     def __init__(self, reasoner: ReasoningEngine | None = None) -> None:
@@ -134,6 +240,7 @@ class TaskModelBuilder:
         metadata: dict[str, Any] | None = None,
     ) -> TaskModel:
         text = (raw_request or "").strip()
+        lowered = text.lower()
         plan = self.reasoner.analyze(
             text,
             has_knowledge,
@@ -155,31 +262,82 @@ class TaskModelBuilder:
         extracted = extract_hard_constraints(text)
         merged_constraints = list(dict.fromkeys([*(constraints or []), *extracted]))
 
+        requires_current = any(t in lowered for t in _FRESHNESS_TERMS)
+        requires_research = domain == "research" or any(t in lowered for t in _RESEARCH_TERMS)
+        requires_tools = any(t in lowered for t in _TOOL_TERMS) or bool(side_effects)
+        requires_coding = domain == "coding" or any(t in lowered for t in _CODING_TERMS)
+        requires_personal = any(t in lowered for t in _PERSONAL_TERMS)
+        requires_files = bool(re.search(r"\.[a-zA-Z0-9]{1,8}\b", text)) or "bestand" in lowered or "file" in lowered
+        requires_external = requires_current or requires_research or "web" in lowered or "internet" in lowered
+
+        research_mode = "none"
+        if requires_research and (plan.complexity == "high" or "diep" in lowered or "deep" in lowered or "uitgebreid" in lowered):
+            research_mode = "deep"
+        elif requires_research or requires_current or (domain in {"knowledge", "question"} and plan.complexity != "low"):
+            research_mode = "assisted"
+
+        if research_mode == "deep" and "research" not in allowed:
+            allowed.append("research")
+        if requires_coding and "coding" not in allowed:
+            allowed.append("coding")
+
+        candidates = list(allowed)
+        entities = self._entities(text)
+        language = self._language(text)
+        assumptions = self._assumptions(text, domain, requires_current)
+        preferences = self._preferences(text, merged_constraints)
+        outputs = self._outputs(domain, task_type, research_mode)
+
+        # Freshness raises uncertainty — stored knowledge may be stale.
+        if requires_current:
+            uncertainty = min(1.0, uncertainty + 0.2)
+            unknowns.append("current external information may be required")
+
         return TaskModel(
             task_id=str(uuid.uuid4()),
             run_id=run_id,
             raw_request=text,
             goal=self._goal(text, domain),
+            intent=domain,
             domain=domain,
             task_type=task_type,
-            requested_outputs=self._outputs(domain, task_type),
+            requested_outputs=outputs,
+            required_outputs=outputs,
             constraints=merged_constraints,
+            hard_constraints=list(extracted),
+            preferences=preferences,
             success_criteria=criteria,
+            entities=entities,
+            time_scope="current" if requires_current else None,
+            location_scope=None,
             risk_class=risk,
             side_effect_expectations=side_effects,
-            required_evidence=self._required_evidence(domain, risk, side_effects),
+            required_evidence=self._required_evidence(domain, risk, side_effects, research_mode),
             known_facts=[],
             unknowns=unknowns,
             ambiguities=ambiguities,
+            assumptions=assumptions,
             dependencies=[],
+            requires_current_information=requires_current,
+            requires_external_information=requires_external,
+            requires_personal_context=requires_personal,
+            requires_files=requires_files,
+            requires_tools=requires_tools,
+            requires_actions=requires_tools or requires_coding,
+            requires_research=requires_research or research_mode != "none",
+            requires_coding=requires_coding,
+            candidate_specialists=candidates,
+            language=language,
+            output_format="structured" if "vergelijk" in lowered or "compare" in lowered else "prose",
             time_sensitivity="urgent" if any(
-                t in text.lower() for t in ("asap", "urgent", "now", "nu meteen")
+                t in lowered for t in ("asap", "urgent", "now", "nu meteen")
             ) else "normal",
             resource_expectation=resource,
-            privacy_class="sensitive" if any(t in text.lower() for t in _HIGH_RISK_TERMS) else "standard",
+            privacy_class="sensitive" if any(t in lowered for t in _HIGH_RISK_TERMS) else "standard",
             initial_uncertainty=uncertainty,
             preferred_execution_mode=preferred,
             allowed_delegation=allowed,
+            research_mode=research_mode,
             metadata={
                 **(metadata or {}),
                 "conversation_id": conversation_id,
@@ -188,6 +346,7 @@ class TaskModelBuilder:
                 "hard_constraints": extracted,
                 "permissions": self._permissions(merged_constraints, side_effects, risk),
                 "uncertainties": unknowns + ambiguities,
+                "freshness_required": requires_current,
             },
             legacy_plan=plan,
         )
@@ -231,7 +390,9 @@ class TaskModelBuilder:
             if any(t in lowered for t in ("implement", "add", "create", "write")):
                 return "coding_implement"
             return "coding_inspect"
-        if plan.intent == "research":
+        if plan.intent == "research" or any(t in lowered for t in ("onderzoek", "research", "vergelijk")):
+            if "vergelijk" in lowered or "compare" in lowered or " vs " in lowered:
+                return "research_comparison"
             return "research_synthesis"
         if plan.intent == "knowledge":
             return "knowledge_query"
@@ -271,11 +432,12 @@ class TaskModelBuilder:
             else:
                 criteria.append("workspace observations recorded")
             return criteria
-        if domain == "research":
+        if domain == "research" or task_type.startswith("research"):
             return [
                 "sources or evidence referenced",
                 "conflicts surfaced when present",
                 "claims not flattened into fake certainty",
+                "hard constraints preserved",
             ]
         if domain == "knowledge":
             return ["answer grounded in retrieved knowledge when available"]
@@ -292,9 +454,15 @@ class TaskModelBuilder:
             effects.append("network_mutation")
         return effects
 
-    def _required_evidence(self, domain: str, risk: RiskClass, side_effects: list[str]) -> list[str]:
+    def _required_evidence(
+        self,
+        domain: str,
+        risk: RiskClass,
+        side_effects: list[str],
+        research_mode: str,
+    ) -> list[str]:
         needed: list[str] = []
-        if domain == "research":
+        if domain == "research" or research_mode != "none":
             needed.append("source_or_evidence_ref")
         if "filesystem_write" in side_effects:
             needed.append("effect_or_patch_receipt")
@@ -308,7 +476,7 @@ class TaskModelBuilder:
         unknowns: list[str] = []
         if domain == "coding" and not re.search(r"\.[a-zA-Z0-9]{1,8}\b", text):
             unknowns.append("target file paths not specified")
-        if domain == "research" and "source" not in text.lower():
+        if domain == "research" and "source" not in text.lower() and "bron" not in text.lower():
             unknowns.append("preferred sources not specified")
         return unknowns
 
@@ -321,6 +489,47 @@ class TaskModelBuilder:
             found.append("underspecified user preference")
         return found
 
+    def _assumptions(self, text: str, domain: str, requires_current: bool) -> list[str]:
+        assumptions: list[str] = []
+        if not requires_current:
+            assumptions.append("stable knowledge may suffice unless contradicted")
+        else:
+            assumptions.append("freshness required — prefer current external sources when permitted")
+        if domain == "research":
+            assumptions.append("evidence must remain linked to sources")
+        return assumptions
+
+    def _preferences(self, text: str, constraints: list[str]) -> list[str]:
+        prefs: list[str] = []
+        lowered = text.lower()
+        if "nederlands" in lowered or "dutch" in lowered:
+            prefs.append("respond in Dutch")
+        if "kort" in lowered or "brief" in lowered or "concise" in lowered:
+            prefs.append("prefer concise answer")
+        for c in constraints:
+            if c.lower().startswith("prefer") or "alleen" in c.lower():
+                prefs.append(c)
+        return prefs
+
+    def _entities(self, text: str) -> list[str]:
+        # Deterministic: quoted terms + capitalized multi-word / CamelCase tokens.
+        entities: list[str] = []
+        for m in re.findall(r"[\"'“”]([^\"'“”]{2,80})[\"'“”]", text):
+            entities.append(m.strip())
+        for m in re.findall(r"\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)*)\b", text):
+            if m.lower() not in {"i", "a"} and m not in entities:
+                entities.append(m)
+        return entities[:16]
+
+    def _language(self, text: str) -> str:
+        dutch = len(re.findall(r"\b(de|het|een|van|voor|met|wat|hoe|waarom|onderzoek|gebruik)\b", text, re.I))
+        english = len(re.findall(r"\b(the|and|what|how|why|research|please|use)\b", text, re.I))
+        if dutch > english and dutch >= 2:
+            return "nl"
+        if english > dutch and english >= 2:
+            return "en"
+        return "auto"
+
     def _allowed_delegation(self, domain: str, risk: RiskClass) -> list[str]:
         allowed: list[str] = []
         if domain == "coding":
@@ -331,11 +540,13 @@ class TaskModelBuilder:
             allowed.append("reviewer")
         return allowed
 
-    def _outputs(self, domain: str, task_type: str) -> list[str]:
+    def _outputs(self, domain: str, task_type: str, research_mode: str) -> list[str]:
         if task_type == "simple_chat":
             return ["text_reply"]
         if domain == "coding":
             return ["diagnosis_or_patch", "test_observation"]
-        if domain == "research":
-            return ["evidence_backed_synthesis"]
+        if domain == "research" or research_mode == "deep":
+            return ["evidence_backed_synthesis", "citations"]
+        if research_mode == "assisted":
+            return ["text_reply", "citations"]
         return ["text_reply"]

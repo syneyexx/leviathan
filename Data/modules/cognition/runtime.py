@@ -55,6 +55,7 @@ from .types import (
     CognitiveRunStatus,
     EpistemicType,
     ReasoningMode,
+    RiskClass,
     TERMINAL_STATUSES,
     validate_transition,
 )
@@ -187,7 +188,7 @@ class CognitiveRuntime:
             self.meta = MetaController()
         self.planner = planner or CognitivePlanner()
         self.broker = broker or CapabilityBroker()
-        self.actions = actions or ActionSelector(self.broker)
+        self.actions = actions or ActionSelector(self.broker, meta=self.meta)
         self.context_builder = context_builder or ContextBuilderV3()
         self.completion_engine = completion or CompletionEngine()
         self.delegation = delegation or DelegationService()
@@ -241,10 +242,26 @@ class CognitiveRuntime:
             trace_id=str(uuid.uuid4()),
         )
         state.working_memory.set_goal(task.goal)
+        # Pin hard constraints so they survive compaction / retrieval / research.
+        hard = list(getattr(task, "hard_constraints", None) or []) or [
+            c for c in task.constraints if c
+        ]
+        if hasattr(state.working_memory, "pin_constraints"):
+            state.working_memory.pin_constraints(hard)
+        else:
+            for c in hard:
+                state.working_memory.upsert("constraint", c, priority=1.0, verified=True)
         for c in task.success_criteria:
             state.working_memory.upsert("criteria", c, priority=0.9, verified=True)
         for u in task.unknowns:
             state.working_memory.upsert("question", u, priority=0.55)
+        for a in getattr(task, "assumptions", None) or []:
+            state.working_memory.upsert(
+                "hypothesis",
+                a,
+                priority=0.4,
+                source_type=EpistemicType.HYPOTHESIS,
+            )
         self._runs[run_id] = state
         self._loops[run_id] = LoopDetector()
         self._persist_create(state)
@@ -593,12 +610,27 @@ class CognitiveRuntime:
         coverage = min(1.0, evidence_items / 5.0)
         contradictions = len(state.beliefs.contradiction_pairs)
         density = min(1.0, contradictions / 3.0)
-        # Prefer explicit depth from submit/settings; ADAPTIVE falls through to heuristics.
         depth = (state.task.metadata or {}).get("user_requested_depth")
         if not depth and self.adaptive_depth:
             policy = getattr(self.meta, "policy", None)
             policy_default = getattr(policy, "default_mode", None) if policy is not None else None
             depth = str(policy_default) if policy_default else "ADAPTIVE"
+        # Recent information gain heuristic from observation novelty.
+        info_gain = None
+        if state.observations:
+            recent = state.observations[-3:]
+            successes = sum(1 for o in recent if o.success)
+            info_gain = successes / max(1, len(recent))
+        tool_failures = sum(
+            1
+            for o in state.observations
+            if o.kind.value in {"TOOL_RESULT", "ERROR", "AGENT_RESULT"} and o.success is False
+        )
+        plan_progress = 0.0
+        if state.plan and state.plan.steps:
+            done = sum(1 for s in state.plan.steps if s.status in {"DONE", "COMPLETED"})
+            plan_progress = done / len(state.plan.steps)
+        previous_mode = state.decision.mode if state.decision else None
         return self.meta.decide(
             state.task,
             uncertainty=state.beliefs.uncertainty() if self.belief_enabled else state.task.initial_uncertainty,
@@ -608,6 +640,11 @@ class CognitiveRuntime:
             working_memory_saturation=state.working_memory.saturation(),
             model_available=self.model_caller is not None,
             user_requested_depth=depth,
+            previous_mode=previous_mode,
+            information_gain_recent=info_gain,
+            plan_progress=plan_progress,
+            tool_failures=tool_failures,
+            repeated_actions=0,
         )
 
     def _budgets_remaining(self, state: CognitiveRunState) -> dict[str, int]:
@@ -672,6 +709,13 @@ class CognitiveRuntime:
                 self._finalize(state, budget_exhausted=True)
                 return state.public_status()
 
+            # Continuous adaptive re-decision (escalation / de-escalation).
+            if self.adaptive_depth and state.usage.iterations > 0:
+                prior = state.decision
+                state.decision = self._meta_decide(state)
+                if prior is None or state.decision.mode != prior.mode or state.decision.escalation:
+                    self._emit(state, "meta_decision", state.decision.public_dict())
+
             state.usage.iterations += 1
             action = self.actions.select(
                 task=state.task,
@@ -688,6 +732,22 @@ class CognitiveRuntime:
 
             loop_info = detector.observe(action)
             if loop_info["loop_detected"]:
+                # Prefer replan before hard fail when budget remains.
+                if remaining.get("replans", 0) > 0 and state.plan is not None:
+                    self._emit(state, "loop_replan", loop_info)
+                    state.plan.stale = True
+                    state.usage.replans += 1
+                    replan_action = CognitiveAction(
+                        kind=CognitiveActionKind.REPLAN,
+                        action_id=str(uuid.uuid4()),
+                        rationale="loop detected — level-3 replan",
+                        arguments={"reason": "loop_detected", "level": 3},
+                    )
+                    state.actions.append(replan_action)
+                    self._execute_action(state, replan_action, history=history)
+                    detector = LoopDetector()
+                    self._loops[state.run_id] = detector
+                    continue
                 raise CognitionLoopDetected(
                     "repeated ineffective action signature",
                     details=loop_info,
@@ -698,8 +758,13 @@ class CognitiveRuntime:
                 state.observations.append(obs)
                 state.working_memory.add_observation(obs.summary, source_type=obs.source_type)
                 self._emit(state, "observation_added", obs.public_dict())
+                # Advance plan step if action referenced one.
+                step_id = (action.arguments or {}).get("step_id")
+                if step_id and state.plan is not None:
+                    for step in state.plan.steps:
+                        if step.step_id == step_id:
+                            step.status = "DONE" if obs.success is not False else "FAILED"
                 if self.belief_enabled and obs.success is False:
-                    # Slightly increase uncertainty via an unknown belief.
                     state.beliefs.add(
                         f"action failed: {action.kind.value}",
                         category=BeliefCategory.UNKNOWN,
@@ -708,6 +773,25 @@ class CognitiveRuntime:
                         status=BeliefStatus.UNVERIFIED,
                         support_refs=[obs.observation_id],
                     )
+                # Research agent results become evidence-linked beliefs / response seed.
+                if (
+                    obs.kind == CognitiveObservationKind.AGENT_RESULT
+                    and obs.success
+                    and obs.payload.get("metadata", {}).get("report_excerpt")
+                ):
+                    excerpt = obs.payload["metadata"]["report_excerpt"]
+                    if not state.response_text:
+                        state.response_text = excerpt
+                    if self.belief_enabled:
+                        state.beliefs.add(
+                            excerpt[:400],
+                            category=BeliefCategory.HYPOTHESIS,
+                            confidence=0.55,
+                            source_type=EpistemicType.EVIDENCE,
+                            status=BeliefStatus.PARTIALLY_SUPPORTED,
+                            support_refs=list(obs.evidence_refs),
+                            provenance={"research_project": obs.payload.get("metadata", {}).get("project_id")},
+                        )
 
             if action.kind in {CognitiveActionKind.COMPLETE, CognitiveActionKind.FAIL, CognitiveActionKind.ASK_USER}:
                 if action.kind == CognitiveActionKind.ASK_USER:
@@ -727,13 +811,18 @@ class CognitiveRuntime:
                 )
                 return state.public_status()
 
-            # Critic pass (lightweight, structured)
-            if (
+            # Critic pass (targeted — DEEP/MAXIMUM, high risk, contradictions)
+            critic_justified = bool(
                 state.decision
                 and remaining.get("critic_passes", 0) > 0
-                and state.decision.value_scores.get("critic", 0) >= 0.4
+                and (
+                    state.decision.value_scores.get("critic", 0) >= 0.4
+                    or state.decision.mode.value in {"DEEP", "MAXIMUM"}
+                    or state.task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL}
+                )
                 and state.usage.iterations >= 2
-            ):
+            )
+            if critic_justified:
                 state.usage.critic_passes += 1
                 critic = self._process_critic(state)
                 self._emit(state, "critic_triggered", critic)
@@ -742,12 +831,11 @@ class CognitiveRuntime:
                         kind=CognitiveActionKind.REPLAN,
                         action_id=str(uuid.uuid4()),
                         rationale="critic recommended replan",
-                        arguments={"reason": critic.get("reason", "critic")},
+                        arguments={"reason": critic.get("reason", "critic"), "level": 2},
                     )
                     state.actions.append(action)
                     self._execute_action(state, action, history=history)
 
-            # Early stop when verification/completion ready
             if state.response_text and state.verification_passed is True:
                 self._finalize(state)
                 return state.public_status()
@@ -886,6 +974,22 @@ class CognitiveRuntime:
             self._transition(state, CognitiveRunStatus.EXECUTING)
             meta = {
                 "conversation_id": (state.task.metadata or {}).get("conversation_id"),
+                "research_mode": action.arguments.get("research_mode")
+                or getattr(state.task, "research_mode", "none"),
+                "allow_web": bool(
+                    action.arguments.get("allow_web")
+                    if "allow_web" in action.arguments
+                    else getattr(state.task, "requires_current_information", False)
+                ),
+                "hard_constraints": list(
+                    action.arguments.get("hard_constraints")
+                    or getattr(state.task, "hard_constraints", None)
+                    or state.task.constraints
+                ),
+                "run_now": bool(
+                    getattr(state.task, "research_mode", "none") in {"assisted", "deep", "maximum"}
+                    or getattr(state.task, "requires_research", False)
+                ),
             }
             # Pass prior IDs if present in working memory for resume.
             for item in state.working_memory.items.values():

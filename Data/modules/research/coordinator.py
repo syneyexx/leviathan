@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from typing import Any, Callable
 
+from .assignments import plan_assignments
+from .citation_audit import audit_report
 from .claims import ClaimAnalyzer
 from .conflicts import ConflictDetector
 from .coverage import build_coverage
 from .evidence import EvidenceLedger
+from .gaps import GapAnalyzer, select_next_queries, should_stop
 from .local_retrieval import LocalResearchRetriever
 from .planner import apply_plan_edits, build_plan
+from .quality_scorecard import build_quality_scorecard
 from .reports import ReportBuilder
+from .source_quality import assess_source, cluster_dependent_sources
 from .sources import SourceIngestor
 from .store import ResearchStore, utc_now
 from .types import (
@@ -293,46 +300,161 @@ class ResearchCoordinator:
         )
 
         try:
-            for round_number in range(start_round, rounds_n + 1):
+            gap_analyzer = GapAnalyzer()
+            waves_without_gain = 0
+            prev_evidence_count = len(self.store.list_evidence(project_id))
+            prev_critical_gaps = None
+            # Hard ceiling: planned rounds, extendable when critical high-EIG gaps remain.
+            hard_ceiling = rounds_n + (2 if deepen else 0)
+            round_number = start_round - 1
+            stop_reason = "budget_exhausted"
+
+            while True:
+                round_number += 1
                 if self._cancelled(project_id):
                     return self._finalize_cancelled(project_id, run, workers)
 
+                budget_exhausted = round_number > hard_ceiling
                 project = self.store.get_project(project_id) or project
+
+                # Pre-wave gap analysis (after wave 1 we already have state).
+                if round_number > start_round or (resume and project.coverage is not None):
+                    interim_coverage = build_coverage(
+                        self.store,
+                        project,
+                        web_status=web_reason or ("ok" if project.allow_web else "not_requested"),
+                        rounds_completed=max(0, round_number - 1),
+                    )
+                    project.coverage = interim_coverage
+                    gaps = gap_analyzer.analyze(self.store, project)
+                    stop, stop_reason = should_stop(
+                        gaps,
+                        interim_coverage,
+                        project.plan,
+                        waves_without_gain=waves_without_gain,
+                        max_waves=hard_ceiling,
+                        budget_exhausted=budget_exhausted,
+                    )
+                    if stop and round_number > start_round:
+                        self.store.add_event(
+                            project_id,
+                            "research_stopping",
+                            f"Dynamic stop: {stop_reason}",
+                            {
+                                "reason": stop_reason,
+                                "round": round_number - 1,
+                                "gaps": [g.public_dict() for g in gaps[:12]],
+                                "waves_without_gain": waves_without_gain,
+                            },
+                        )
+                        break
+                    if budget_exhausted:
+                        # Only continue past hard ceiling when critical high-gain gaps remain.
+                        critical_high = [
+                            g
+                            for g in gaps
+                            if g.severity in {"critical", "high"}
+                            and g.expected_information_gain >= 0.45
+                        ]
+                        if not critical_high or round_number > hard_ceiling + 2:
+                            self.store.add_event(
+                                project_id,
+                                "research_stopping",
+                                "Hard budget exhausted",
+                                {"reason": "budget_exhausted", "round": round_number - 1},
+                            )
+                            break
+                        self.store.add_event(
+                            project_id,
+                            "budget_extension",
+                            "Extending one wave for critical high-value gaps",
+                            {
+                                "critical_gaps": [g.gap_id for g in critical_high[:6]],
+                                "round": round_number,
+                            },
+                        )
+
                 project.current_round = round_number
                 project.phase = ResearchPhase.LOCAL_RETRIEVAL
+                # Progress is phase-bounded — never claim 100% mid-loop.
+                phase_progress = compute_progress(
+                    completed_worker_rounds=sum(w.completed_rounds for w in workers),
+                    total_worker_rounds=max(total_worker_rounds, workers_n * hard_ceiling),
+                    phase=ResearchPhase.LOCAL_RETRIEVAL,
+                )
+                project.progress_pct = min(90.0, phase_progress)
                 self.store.save_project(project)
                 self.store.add_event(
                     project_id,
                     "round_started",
-                    f"Round {round_number}/{rounds_n}",
-                    {"round": round_number, "run_id": run.run_id},
+                    f"Research wave {round_number} (ceiling={hard_ceiling})",
+                    {
+                        "round": round_number,
+                        "run_id": run.run_id,
+                        "hard_ceiling": hard_ceiling,
+                        "gap_driven": True,
+                    },
                 )
 
                 plan = project.plan
                 queries = list(plan.retrieval_queries) if plan else [project.topic]
                 subqs = list(plan.subquestions) if plan else []
 
+                # Specialized assignments from current gaps (bounded by worker count).
+                wave_gaps = gap_analyzer.analyze(self.store, project) if round_number > start_round else []
+                deepen_focus = None
+                if deepen and project.coverage:
+                    unresolved = list(project.coverage.unresolved_questions or [])[:6]
+                    deepen_focus = "; ".join(unresolved) if unresolved else "weak claims conflicts primary"
+                assignments = plan_assignments(
+                    workers,
+                    wave_gaps,
+                    plan,
+                    deepen_focus=deepen_focus,
+                )
+                assignment_by_worker = {a.worker_id: a for a in assignments}
+                for assignment in assignments:
+                    self.store.add_event(
+                        project_id,
+                        "worker_assigned",
+                        f"Worker role={assignment.role}",
+                        assignment.public_dict(),
+                    )
+
                 # Fan-out worker round tasks concurrently.
                 with ThreadPoolExecutor(max_workers=workers_n) as pool:
-                    futures = {
-                        pool.submit(
-                            self._worker_round,
-                            worker,
-                            project_id,
-                            round_number,
-                            rounds_n,
-                            assign_worker_queries(
+                    futures = {}
+                    for worker in workers:
+                        if worker.status in {WorkerStatus.FAILED, WorkerStatus.CANCELLED} and (
+                            worker.completed_rounds >= round_number
+                        ):
+                            continue
+                        assignment = assignment_by_worker.get(worker.worker_id)
+                        if assignment and assignment.query_candidates:
+                            worker_queries = list(assignment.query_candidates)[
+                                : max(1, project.budget.search_queries)
+                            ]
+                        else:
+                            worker_queries = assign_worker_queries(
                                 queries,
                                 worker_index=worker.worker_index - 1,
                                 worker_count=workers_n,
                                 round_number=round_number,
                                 subquestions=subqs,
-                            ),
-                        ): worker
-                        for worker in workers
-                        if worker.status not in {WorkerStatus.FAILED, WorkerStatus.CANCELLED}
-                        or worker.completed_rounds < round_number
-                    }
+                            )
+                        if assignment is not None:
+                            worker.current_task = assignment.role
+                            self.store.upsert_worker(worker)
+                        futures[
+                            pool.submit(
+                                self._worker_round,
+                                worker,
+                                project_id,
+                                round_number,
+                                hard_ceiling,
+                                worker_queries,
+                            )
+                        ] = worker
                     for fut in as_completed(futures):
                         worker = futures[fut]
                         try:
@@ -366,7 +488,22 @@ class ResearchCoordinator:
                 if self._cancelled(project_id):
                     return self._finalize_cancelled(project_id, run, workers)
 
+                # Source quality assessments (contextual, stored on source metadata).
                 project = self.store.get_project(project_id) or project
+                sources = self.store.list_sources(project_id)
+                clusters = cluster_dependent_sources(sources)
+                topic_tokens = [
+                    t.lower()
+                    for t in re.findall(r"[A-Za-zÀ-ÿ0-9]{3,}", project.topic)
+                ]
+                for src in sources:
+                    assessment = assess_source(src, topic_tokens=topic_tokens)
+                    meta = dict(src.metadata or {})
+                    meta["source_assessment"] = assessment.public_dict()
+                    meta["independence_cluster"] = clusters.get(src.source_id)
+                    updated = replace(src, metadata=meta)
+                    self.store.save_source(updated)
+
                 project.phase = ResearchPhase.CLAIM_ANALYSIS
                 self.store.save_project(project)
                 claims = self.claims.analyze_project(project_id)
@@ -378,62 +515,125 @@ class ResearchCoordinator:
                         project_id,
                         "contradiction_detected",
                         conflict.summary,
-                        {"conflict_id": conflict.conflict_id},
+                        {
+                            "conflict_id": conflict.conflict_id,
+                            "conflict_kind": (conflict.analysis or {}).get("conflict_kind"),
+                        },
                     )
 
-                # Immutable plan adaptation for next round.
-                if round_number < rounds_n and project.plan:
+                # Gap-driven query adaptation for next wave.
+                project = self.store.get_project(project_id) or project
+                project.coverage = build_coverage(
+                    self.store,
+                    project,
+                    web_status=web_reason or ("ok" if project.allow_web else "not_requested"),
+                    rounds_completed=round_number,
+                )
+                gaps = gap_analyzer.analyze(self.store, project)
+                self.store.add_event(
+                    project_id,
+                    "gaps_identified",
+                    f"{len(gaps)} research gap(s)",
+                    {
+                        "gaps": [g.public_dict() for g in gaps[:20]],
+                        "round": round_number,
+                    },
+                )
+
+                if project.plan:
                     project.phase = ResearchPhase.QUERY_ADAPTATION
                     self.store.save_project(project)
-                    adapted = list(project.plan.retrieval_queries)
+                    adapted = select_next_queries(
+                        gaps,
+                        list(project.plan.retrieval_queries),
+                        limit=project.budget.search_queries + 4,
+                    )
                     for conflict in conflicts:
                         for q in conflict.unresolved_questions:
                             if q not in adapted:
                                 adapted.append(q)
-                    adapted = adapted[: project.budget.search_queries + 3]
+                    adapted = adapted[: project.budget.search_queries + 4]
+                    # Versioned plan evolution — preserve why adaptation happened.
+                    plan_meta = {
+                        "plan_version": int((project.plan.evidence_coverage_targets or {}).get("plan_version", 1))
+                        + 1,
+                        "adaptation_reason": "gap_driven_wave",
+                        "gap_ids": [g.gap_id for g in gaps[:12]],
+                        "wave": round_number,
+                    }
+                    targets = dict(project.plan.evidence_coverage_targets or {})
+                    targets.update(plan_meta)
                     project.plan = apply_plan_edits(
                         project.plan,
-                        {"retrieval_queries": adapted},
+                        {
+                            "retrieval_queries": adapted,
+                            "evidence_coverage_targets": targets,
+                        },
                     )
                     self.store.save_project(project)
                     self.store.add_event(
                         project_id,
                         "plan_adapted",
-                        f"Adapted queries after round {round_number}",
-                        {"queries": adapted},
+                        f"Gap-driven query adaptation after wave {round_number}",
+                        {"queries": adapted, "plan_version": plan_meta["plan_version"]},
                     )
 
-                # Count completed worker-rounds (one per non-cancelled worker this round).
-                completed_this = sum(
-                    1
-                    for w in workers
-                    if w.completed_rounds >= round_number
-                    and w.status != WorkerStatus.CANCELLED
+                # Information-gain tracking for early stop.
+                evidence_count = len(self.store.list_evidence(project_id))
+                critical_now = sum(1 for g in gaps if g.severity in {"critical", "high"})
+                gained = evidence_count > prev_evidence_count or (
+                    prev_critical_gaps is not None and critical_now < prev_critical_gaps
                 )
-                run.completed_worker_rounds = (round_number - 1) * workers_n + completed_this
-                # Prefer sum of completed_rounds across workers when available.
+                if gained:
+                    waves_without_gain = 0
+                else:
+                    waves_without_gain += 1
+                prev_evidence_count = evidence_count
+                prev_critical_gaps = critical_now
+
                 run.completed_worker_rounds = sum(w.completed_rounds for w in workers)
                 run.progress_pct = compute_progress(
                     completed_worker_rounds=run.completed_worker_rounds,
-                    total_worker_rounds=total_worker_rounds,
+                    total_worker_rounds=max(total_worker_rounds, workers_n * hard_ceiling),
                     phase=ResearchPhase.CLAIM_ANALYSIS,
                 )
                 self.store.save_run(run)
 
                 project = self.store.get_project(project_id) or project
                 project.completed_worker_rounds = run.completed_worker_rounds
-                project.progress_pct = run.progress_pct
+                project.progress_pct = min(90.0, run.progress_pct)
                 project.current_round = round_number
                 self.store.save_project(project)
                 self.store.add_event(
                     project_id,
                     "round_completed",
-                    f"Round {round_number} complete",
+                    f"Wave {round_number} complete",
                     {
                         "round": round_number,
                         "completed_worker_rounds": run.completed_worker_rounds,
+                        "waves_without_gain": waves_without_gain,
+                        "critical_gaps": critical_now,
+                        "evidence_count": evidence_count,
                     },
                 )
+
+                # Post-wave stop check (also covers first wave completion).
+                stop, stop_reason = should_stop(
+                    gaps,
+                    project.coverage,
+                    project.plan,
+                    waves_without_gain=waves_without_gain,
+                    max_waves=hard_ceiling,
+                    budget_exhausted=round_number >= hard_ceiling,
+                )
+                if stop:
+                    self.store.add_event(
+                        project_id,
+                        "research_stopping",
+                        f"Dynamic stop after wave {round_number}: {stop_reason}",
+                        {"reason": stop_reason, "round": round_number},
+                    )
+                    break
 
             workers = self.store.list_workers(project_id, run_id=run.run_id)
             healthy = [w for w in workers if w.status != WorkerStatus.FAILED]
@@ -493,6 +693,90 @@ class ResearchCoordinator:
                 {"report_id": report.report_id, "version": report.version},
             )
 
+            # Citation audit + quality scorecard (deterministic; not truth probability).
+            project = self.store.get_project(project_id) or project
+            try:
+                audit = audit_report(
+                    self.store,
+                    project,
+                    getattr(report, "body_markdown", None) or "",
+                )
+                self.store.add_event(
+                    project_id,
+                    "citation_audit",
+                    f"Citation audit: {len(audit.critical_unsupported)} critical unsupported",
+                    audit.public_dict(),
+                )
+                if audit.critical_unsupported:
+                    # Honest: surface unresolved citation failures in coverage notes.
+                    if project.coverage is not None:
+                        notes = list(project.coverage.notes)
+                        notes.append(
+                            f"{len(audit.critical_unsupported)} critical claim(s) failed citation audit"
+                        )
+                        from .types import CoverageSummary
+
+                        project.coverage = CoverageSummary(
+                            planned_questions=list(project.coverage.planned_questions),
+                            answered_questions=list(project.coverage.answered_questions),
+                            unresolved_questions=list(project.coverage.unresolved_questions),
+                            source_count=project.coverage.source_count,
+                            unique_domains=list(project.coverage.unique_domains),
+                            claims_supported=project.coverage.claims_supported,
+                            claims_with_conflicts=project.coverage.claims_with_conflicts,
+                            claims_unsupported=project.coverage.claims_unsupported,
+                            rounds_completed=project.coverage.rounds_completed,
+                            web_status=project.coverage.web_status,
+                            notes=notes,
+                            critical_gaps_count=getattr(project.coverage, "critical_gaps_count", 0),
+                            independent_support_ratio=getattr(
+                                project.coverage, "independent_support_ratio", None
+                            ),
+                            primary_source_count=getattr(project.coverage, "primary_source_count", 0),
+                        )
+                        self.store.save_project(project)
+            except Exception as exc:  # noqa: BLE001
+                self.store.add_event(
+                    project_id,
+                    "citation_audit_failed",
+                    str(exc),
+                    {"stage": "post_report"},
+                )
+
+            try:
+                scorecard = build_quality_scorecard(self.store, project)
+                self.store.add_event(
+                    project_id,
+                    "quality_scorecard",
+                    "Research quality scorecard recorded",
+                    scorecard.public_dict(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.store.add_event(
+                    project_id,
+                    "quality_scorecard_failed",
+                    str(exc),
+                )
+
+            # Bounded adversarial verification for deep/expert depth when conflicts remain.
+            if project.depth.value in {"deep", "expert"}:
+                remaining_conflicts = self.store.list_conflicts(project_id)
+                if remaining_conflicts:
+                    self.store.add_event(
+                        project_id,
+                        "adversarial_check",
+                        "Adversarial verification: conflicts preserved; no silent winner",
+                        {
+                            "conflict_count": len(remaining_conflicts),
+                            "policy": "preserve_both_attempt_reconciliation",
+                            "questions": [
+                                "Are we relying on one source family?",
+                                "Did we ignore contrary findings?",
+                                "Are numerical claims quoted accurately?",
+                            ],
+                        },
+                    )
+
             project = self.store.get_project(project_id) or project
             project.phase = ResearchPhase.BRAIN_SYNC
             project.progress_pct = 96.0
@@ -523,21 +807,37 @@ class ResearchCoordinator:
                     )
 
             project = self.store.get_project(project_id) or project
+            # Honest completion: still COMPLETED when research finished under stop criteria,
+            # but record unresolved critical gaps rather than claiming perfect coverage.
+            final_gaps = GapAnalyzer().analyze(self.store, project)
+            critical_left = [g for g in final_gaps if g.severity in {"critical", "high"}]
             project.status = ResearchStatus.COMPLETED
             project.phase = ResearchPhase.COMPLETED
             project.progress_pct = 100.0
             project.worker_pid = None
             project.finished_at = utc_now()
             project.cancel_requested = False
-            project.completed_worker_rounds = total_worker_rounds
+            project.completed_worker_rounds = sum(w.completed_rounds for w in workers)
+            if critical_left:
+                self.store.add_event(
+                    project_id,
+                    "unresolved_critical_gaps",
+                    f"{len(critical_left)} critical/high gap(s) remain unresolved",
+                    {"gaps": [g.public_dict() for g in critical_left[:12]]},
+                )
             self.store.save_project(project)
             run.status = ResearchStatus.COMPLETED
             run.phase = ResearchPhase.COMPLETED
             run.progress_pct = 100.0
-            run.completed_worker_rounds = total_worker_rounds
+            run.completed_worker_rounds = project.completed_worker_rounds
             run.finished_at = utc_now()
             self.store.save_run(run)
-            self.store.add_event(project_id, "completed", "Research completed")
+            self.store.add_event(
+                project_id,
+                "completed",
+                f"Research completed ({stop_reason})",
+                {"stop_reason": stop_reason, "critical_gaps_remaining": len(critical_left)},
+            )
             return self.store.get_project(project_id) or project
 
         except ResearchError as exc:

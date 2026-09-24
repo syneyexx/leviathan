@@ -1577,6 +1577,34 @@ export const api = {
     return request(`/api/research/${encodeURIComponent(projectId)}/coverage`);
   },
 
+  getResearchGaps(projectId: string): Promise<{ gaps: Array<Record<string, unknown>> }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/gaps`);
+  },
+
+  getResearchSourceAssessments(
+    projectId: string,
+  ): Promise<{ assessments: Array<Record<string, unknown>> }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/source-assessments`);
+  },
+
+  getResearchCitationAudit(
+    projectId: string,
+  ): Promise<{ audit: Record<string, unknown> }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/citation-audit`);
+  },
+
+  getResearchQuality(
+    projectId: string,
+  ): Promise<{ quality: Record<string, unknown> }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/quality`);
+  },
+
+  getResearchPlanHistory(
+    projectId: string,
+  ): Promise<{ history: Array<Record<string, unknown>> }> {
+    return request(`/api/research/${encodeURIComponent(projectId)}/plan-history`);
+  },
+
   getResearchReport(projectId: string): Promise<{ report: ResearchReport }> {
     return request(`/api/research/${encodeURIComponent(projectId)}/report`);
   },
@@ -1940,6 +1968,14 @@ export const api = {
 
   cognitionEvents(runId: string): Promise<{ run_id: string; events: unknown[] }> {
     return request(`/api/cognition/runs/${encodeURIComponent(runId)}/events`);
+  },
+
+  cognitionTrace(runId: string): Promise<{
+    run_id: string;
+    trace: Record<string, unknown>;
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/cognition/runs/${encodeURIComponent(runId)}/trace`);
   },
 
   cognitionCancel(runId: string): Promise<CognitionRunStatus> {
