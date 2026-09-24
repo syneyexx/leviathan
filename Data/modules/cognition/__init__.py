@@ -10,6 +10,7 @@ from .capability_broker import CapabilityBroker, CapabilityShortlist
 from .completion import CompletionDecision, CompletionEngine, CriterionResult
 from .context_v3 import ContextBuilderV3, ContextV3Result
 from .delegation import DelegateRequest, DelegateResult, DelegationService
+from .domain_strategy import DomainCognitiveStrategy, DomainUnderstandResult, StrategyRegistry
 from .errors import CognitionError, CognitionFeatureDisabled
 from .experience import ExperienceAdmissionPolicy, ExperienceStore, ProceduralMemoryHint, VerifiedExperience
 from .meta_controller import MetaController, MetaDecision
@@ -68,6 +69,8 @@ __all__ = [
     "DelegateRequest",
     "DelegateResult",
     "DelegationService",
+    "DomainCognitiveStrategy",
+    "DomainUnderstandResult",
     "EpistemicType",
     "ExperienceAdmissionPolicy",
     "ExperienceStore",
@@ -84,6 +87,7 @@ __all__ = [
     "RiskClass",
     "SteerClassification",
     "SteerKind",
+    "StrategyRegistry",
     "TaskModel",
     "TaskModelBuilder",
     "VerifiedExperience",

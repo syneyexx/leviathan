@@ -103,6 +103,10 @@ export function SettingsPage() {
   const [statusLine, setStatusLine] = useState<string>("");
   const [intelligenceHealth, setIntelligenceHealth] = useState<Record<string, unknown> | null>(null);
   const [intelligenceHealthError, setIntelligenceHealthError] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [systemPromptDefault, setSystemPromptDefault] = useState("");
+  const [systemPromptBusy, setSystemPromptBusy] = useState(false);
+  const [systemPromptHash, setSystemPromptHash] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,6 +136,15 @@ export function SettingsPage() {
       } else {
         setIntelligenceHealth(null);
         setIntelligenceHealthError(true);
+      }
+      try {
+        const behavior = await api.getBehaviorProfile();
+        const profile = behavior.profile || {};
+        setSystemPrompt(String(profile.system_prompt ?? ""));
+        setSystemPromptDefault(String(profile.default_system_prompt ?? ""));
+        setSystemPromptHash(typeof profile.hash === "string" ? profile.hash : null);
+      } catch {
+        /* behavior profile optional during partial boots */
       }
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Failed to load settings";
@@ -363,6 +376,76 @@ export function SettingsPage() {
                     </div>
                   </div>
                 )}
+              </article>
+            ) : null}
+
+            {activeId === "llm_gedrag" ? (
+              <article className="lv-panel lv-settings-card span-2">
+                <div className="lv-section-label">System Prompt (BehaviorProfile)</div>
+                <p className="lv-muted">
+                  Operator-editable LEVIATHAN behavioral identity. This is behavior, not authority — it cannot
+                  bypass ExecutionGateway, approvals, or workspace confinement.
+                </p>
+                <textarea
+                  className="lv-input"
+                  rows={6}
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  aria-label="System prompt"
+                  style={{ width: "100%", marginTop: "0.75rem", font: "inherit" }}
+                />
+                <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="lv-btn"
+                    disabled={systemPromptBusy || !systemPrompt.trim()}
+                    onClick={() => {
+                      void (async () => {
+                        setSystemPromptBusy(true);
+                        try {
+                          const res = await api.putBehaviorSystemPrompt(systemPrompt);
+                          const effective = res.effective || res.profile || {};
+                          setSystemPrompt(String(effective.system_prompt ?? systemPrompt));
+                          setSystemPromptHash(typeof effective.hash === "string" ? effective.hash : null);
+                          toast("System prompt saved");
+                          setStatusLine("BehaviorProfile system prompt updated");
+                        } catch (error) {
+                          toast(error instanceof ApiError ? error.message : "Failed to save system prompt");
+                        } finally {
+                          setSystemPromptBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Save system prompt
+                  </button>
+                  <button
+                    type="button"
+                    className="lv-btn"
+                    disabled={systemPromptBusy}
+                    onClick={() => {
+                      void (async () => {
+                        setSystemPromptBusy(true);
+                        try {
+                          const res = await api.resetBehaviorProfile();
+                          const effective = res.effective || res.profile || {};
+                          setSystemPrompt(String(effective.system_prompt ?? systemPromptDefault));
+                          setSystemPromptHash(typeof effective.hash === "string" ? effective.hash : null);
+                          toast("System prompt reset to default");
+                        } catch (error) {
+                          toast(error instanceof ApiError ? error.message : "Failed to reset system prompt");
+                        } finally {
+                          setSystemPromptBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Reset to default
+                  </button>
+                </div>
+                <p className="lv-muted" style={{ marginTop: "0.5rem" }}>
+                  Effective hash: {systemPromptHash ?? "—"}
+                </p>
               </article>
             ) : null}
 

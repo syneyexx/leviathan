@@ -41,6 +41,9 @@ class CodingControlPlane:
         verification: Any | None = None,
         agents_enabled: bool = False,
         coding_enabled: bool = False,
+        brain_access: Any | None = None,
+        behavior_store: Any | None = None,
+        job_runtime: Any | None = None,
     ) -> None:
         self.store = store
         self.gateway = gateway
@@ -48,6 +51,9 @@ class CodingControlPlane:
         self.settings = settings
         self.agents_enabled = agents_enabled
         self.coding_enabled = coding_enabled
+        self.brain_access = brain_access
+        self.behavior_store = behavior_store
+        self.job_runtime = job_runtime
         self.loop = loop or CodingLoop(
             store,
             gateway=gateway,
@@ -60,8 +66,37 @@ class CodingControlPlane:
             settings=settings,
             agents_enabled=agents_enabled,
             coding_enabled=coding_enabled,
+            brain_access=brain_access,
+            behavior_store=behavior_store,
         )
-        self.worker = worker or CodingWorker(store, self.loop)
+        self.worker = worker or CodingWorker(store, self.loop, job_runtime=job_runtime)
+
+    def bind_intelligence(
+        self,
+        *,
+        llm: Any | None = None,
+        context_builder: Any | None = None,
+        brain_access: Any | None = None,
+        behavior_store: Any | None = None,
+        job_runtime: Any | None = None,
+        reasoning: Any | None = None,
+    ) -> None:
+        """Wire shared One-Brain / Model / Context authorities after composition."""
+        if llm is not None:
+            self.loop.llm = llm
+        if context_builder is not None:
+            self.loop.context_builder = context_builder
+        if brain_access is not None:
+            self.brain_access = brain_access
+            self.loop.brain_access = brain_access
+        if behavior_store is not None:
+            self.behavior_store = behavior_store
+            self.loop.behavior_store = behavior_store
+        if job_runtime is not None:
+            self.job_runtime = job_runtime
+            self.worker.bind_job_runtime(job_runtime)
+        if reasoning is not None:
+            self.loop.reasoning = reasoning
 
     @classmethod
     def from_settings(
@@ -76,6 +111,9 @@ class CodingControlPlane:
         reasoning: Any | None = None,
         neuro: Any | None = None,
         verification: Any | None = None,
+        brain_access: Any | None = None,
+        behavior_store: Any | None = None,
+        job_runtime: Any | None = None,
     ) -> "CodingControlPlane":
         store = CodingStore(db_path)
         store.initialize()
@@ -91,6 +129,9 @@ class CodingControlPlane:
             verification=verification,
             agents_enabled=bool(settings.features.agents_enabled),
             coding_enabled=bool(settings.features.coding_enabled),
+            brain_access=brain_access,
+            behavior_store=behavior_store,
+            job_runtime=job_runtime,
         )
 
     # --- lifecycle ----------------------------------------------------------
@@ -264,6 +305,19 @@ class CodingControlPlane:
             cancel_requested=False,
             error=None,
         )
+        # Prefer shared JobRuntime substrate when bound; CodingWorker executes leases.
+        if self.job_runtime is not None:
+            try:
+                self.job_runtime.enqueue(
+                    capability_id="coding.advance",
+                    arguments={"session_id": session_id},
+                    run_id=session.run_id,
+                    requested_by="coding",
+                    idempotency_key=f"coding.advance:{session_id}:{session.round_count}:start",
+                    metadata={"session_id": session_id},
+                )
+            except Exception:  # noqa: BLE001
+                pass
         self.worker.wake()
         return session
 

@@ -2004,6 +2004,32 @@ export const api = {
     });
   },
 
+  getBehaviorProfile(): Promise<{
+    profile: Record<string, unknown>;
+    truth?: Record<string, unknown>;
+  }> {
+    return request("/api/settings/behavior-profile");
+  },
+
+  putBehaviorSystemPrompt(systemPrompt: string): Promise<{
+    profile: Record<string, unknown>;
+    effective: Record<string, unknown>;
+  }> {
+    return request("/api/settings/behavior-profile/system-prompt", {
+      method: "PUT",
+      body: JSON.stringify({ system_prompt: systemPrompt }),
+    });
+  },
+
+  resetBehaviorProfile(): Promise<{
+    profile: Record<string, unknown>;
+    effective: Record<string, unknown>;
+  }> {
+    return request("/api/settings/behavior-profile/reset", {
+      method: "POST",
+    });
+  },
+
   brainGraph(opts?: {
     limit?: number;
     q?: string;

@@ -22,6 +22,8 @@ class SessionStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     UNVERIFIED = "UNVERIFIED"
+    PARTIAL = "PARTIAL"
+    RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
     CANCELLED = "CANCELLED"
     DISABLED = "DISABLED"
 
@@ -50,6 +52,8 @@ TERMINAL_STATUSES = frozenset(
         SessionStatus.COMPLETED,
         SessionStatus.FAILED,
         SessionStatus.UNVERIFIED,
+        SessionStatus.PARTIAL,
+        SessionStatus.RESOURCE_EXHAUSTED,
         SessionStatus.CANCELLED,
         SessionStatus.DISABLED,
     }
@@ -119,6 +123,7 @@ class CodingSession:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
+        cognition = dict(self.metadata.get("cognition") or {}) if isinstance(self.metadata, dict) else {}
         return {
             "session_id": self.session_id,
             "created_at": self.created_at,
@@ -140,6 +145,19 @@ class CodingSession:
             "round_count": self.round_count,
             "read_paths": list(self.read_paths),
             "metadata": dict(self.metadata),
+            "phase": cognition.get("phase"),
+            "task_type": cognition.get("task_type"),
+            "coding_role": cognition.get("role"),
+            "plan": cognition.get("plan"),
+            "brain_context": cognition.get("brain_context"),
+            "acceptance": cognition.get("acceptance"),
+            "hypotheses": cognition.get("hypotheses"),
+            "truth": {
+                "one_brain": True,
+                "started_is_not_completed": True,
+                "max_rounds_is_not_success": True,
+                "unavailable_is_not_passed": True,
+            },
         }
 
 

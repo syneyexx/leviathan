@@ -198,6 +198,29 @@ def build_default_catalog() -> CapabilityCatalog:
     )
     catalog.register(
         CapabilityDefinition(
+            id="coding.advance",
+            name="Advance Coding Session",
+            description=(
+                "Advance one Coding Cognition round for a session. "
+                "Owned by JobRuntime substrate; executed by CodingWorker (external-style)."
+            ),
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_advance",
+            input_schema={
+                "type": "object",
+                "required": ["session_id"],
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "approval_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
             id="git.status",
             name="Git Status",
             description="Read git status (honest if no .git).",

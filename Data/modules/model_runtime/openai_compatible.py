@@ -108,7 +108,32 @@ class OpenAICompatibleLLM:
         why: list[dict] | None = None,
         contradictions: list[dict] | str | None = None,
         system_prompt: str | None = None,
+        behavior_profile_prompt: str | None = None,
+        mode: str | None = None,
+        constraints: str | None = None,
     ) -> list[dict[str, str]]:
+        # Canonical identity comes from BehaviorProfile via ContextBuilder.
+        # ``system_prompt`` here is treated as an optional additive constraint /
+        # model-profile overlay — never a second LEVIATHAN identity layer after
+        # the compiler has already produced the pack.
+        identity = (behavior_profile_prompt or "").strip() or None
+        if identity is None:
+            try:
+                from Data.modules.settings.behavior import DEFAULT_BEHAVIOR_PROFILE
+
+                identity = DEFAULT_BEHAVIOR_PROFILE.system_prompt
+            except Exception:  # noqa: BLE001
+                identity = None
+
+        additive = (system_prompt or "").strip()
+        pack_constraints = constraints
+        if additive:
+            # Model-profile / caller overlay is pinned constraint text, not identity.
+            if pack_constraints and pack_constraints.strip():
+                pack_constraints = f"{pack_constraints.strip()}\n\n{additive}"
+            else:
+                pack_constraints = additive
+
         pack = self.context_builder.build(
             history=history,
             knowledge=knowledge,
@@ -120,17 +145,12 @@ class OpenAICompatibleLLM:
             atlas=atlas,
             why=why,
             contradictions=contradictions,  # type: ignore[arg-type]
+            behavior_profile_prompt=identity,
+            mode=mode,
+            constraints=pack_constraints,
         )
-        messages = list(pack.messages)
-        if system_prompt and system_prompt.strip():
-            if messages and messages[0].get("role") == "system":
-                messages[0] = {
-                    "role": "system",
-                    "content": f"{system_prompt.strip()}\n\n{messages[0].get('content', '')}",
-                }
-            else:
-                messages.insert(0, {"role": "system", "content": system_prompt.strip()})
-        return messages
+        # ContextPack is authoritative — do not prepend a competing system identity.
+        return list(pack.messages)
 
     def _completion_payload(
         self,
@@ -245,6 +265,7 @@ class OpenAICompatibleLLM:
         max_tokens: int | None = None,
         top_p: float | None = None,
         system_prompt: str | None = None,
+        behavior_profile_prompt: str | None = None,
         stream: bool = False,
     ) -> tuple[str, str]:
         """Non-streaming chat completion. ``stream=True`` is ignored here — use chat_stream."""
@@ -261,6 +282,7 @@ class OpenAICompatibleLLM:
             why=why,
             contradictions=contradictions,
             system_prompt=system_prompt,
+            behavior_profile_prompt=behavior_profile_prompt,
         )
         result = await self.complete_messages(
             messages,
@@ -293,6 +315,7 @@ class OpenAICompatibleLLM:
         max_tokens: int | None = None,
         top_p: float | None = None,
         system_prompt: str | None = None,
+        behavior_profile_prompt: str | None = None,
         cancel: StreamCancelToken | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Yield ``(delta_text, model_id)`` token chunks from OpenAI-compatible SSE.
@@ -314,6 +337,7 @@ class OpenAICompatibleLLM:
             why=why,
             contradictions=contradictions,
             system_prompt=system_prompt,
+            behavior_profile_prompt=behavior_profile_prompt,
         )
         payload = self._completion_payload(
             model=model,

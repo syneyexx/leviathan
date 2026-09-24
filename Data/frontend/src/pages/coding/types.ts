@@ -52,7 +52,15 @@ export function statusPillClass(status: CodingSessionStatus | null | undefined):
   if (!status) return "is-idle";
   if (status === "RUNNING") return "";
   if (status === "WAITING_APPROVAL") return "is-wait";
-  if (status === "FAILED" || status === "CANCELLED" || status === "DISABLED") return "is-fail";
+  if (
+    status === "FAILED" ||
+    status === "CANCELLED" ||
+    status === "DISABLED" ||
+    status === "RESOURCE_EXHAUSTED" ||
+    status === "PARTIAL"
+  ) {
+    return "is-fail";
+  }
   return "is-idle";
 }
 
@@ -62,6 +70,8 @@ export function statusPillLabel(status: CodingSessionStatus | null | undefined):
   if (status === "WAITING_APPROVAL") return "Awaiting Approval";
   if (status === "COMPLETED") return "Completed";
   if (status === "UNVERIFIED") return "Unverified";
+  if (status === "PARTIAL") return "Partial";
+  if (status === "RESOURCE_EXHAUSTED") return "Resource Exhausted";
   if (status === "FAILED") return "Failed";
   if (status === "CANCELLED") return "Cancelled";
   if (status === "DISABLED") return "Disabled";

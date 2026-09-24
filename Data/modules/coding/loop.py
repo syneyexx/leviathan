@@ -11,9 +11,10 @@ from Data.modules.common.paths import PathEscapeError
 from Data.modules.execution.types import CapabilityRequest, CapabilityStatus, SideEffect
 from Data.modules.function_runtime.types import SideEffect as FRSideEffect
 
+from .cognition import CodingCognitiveStrategy, CodingPhase, CodingTaskType
 from .parser import extract_capabilities, strip_capabilities
 from .planner import build_initial_plan
-from .prompts import CODING_SYSTEM_PROMPT
+from .prompts import CODING_COGNITIVE_OVERLAY, CODING_SYSTEM_PROMPT
 from .store import CodingStore
 from .tools import GATED_CAPS, READ_CAPS, enforce_capability, mark_read
 from .types import (
@@ -84,6 +85,9 @@ class CodingLoop:
         settings: Any | None = None,
         agents_enabled: bool = False,
         coding_enabled: bool = False,
+        brain_access: Any | None = None,
+        behavior_store: Any | None = None,
+        strategy: CodingCognitiveStrategy | None = None,
     ) -> None:
         self.store = store
         self.gateway = gateway
@@ -96,6 +100,9 @@ class CodingLoop:
         self.settings = settings
         self.agents_enabled = agents_enabled
         self.coding_enabled = coding_enabled
+        self.brain_access = brain_access
+        self.behavior_store = behavior_store
+        self.strategy = strategy or CodingCognitiveStrategy()
 
     @property
     def max_rounds(self) -> int:
@@ -136,8 +143,10 @@ class CodingLoop:
         if session.status not in {SessionStatus.RUNNING, SessionStatus.CREATED}:
             return LoopResult(session=session, status=session.status, rounds=session.round_count)
 
+        session = self._ensure_cognition_state(session)
+
         if session.round_count >= self.max_rounds:
-            return self._finish_verify(session, reason="max_rounds")
+            return self._finish_verify(session, reason="max_rounds", budget_exhausted=True)
 
         if self.llm is None:
             session = self.store.update_session(
@@ -356,6 +365,8 @@ class CodingLoop:
                 SessionStatus.COMPLETED,
                 SessionStatus.FAILED,
                 SessionStatus.UNVERIFIED,
+                SessionStatus.PARTIAL,
+                SessionStatus.RESOURCE_EXHAUSTED,
                 SessionStatus.CANCELLED,
                 SessionStatus.DISABLED,
                 SessionStatus.WAITING_APPROVAL,
@@ -370,13 +381,15 @@ class CodingLoop:
                 SessionStatus.COMPLETED,
                 SessionStatus.FAILED,
                 SessionStatus.UNVERIFIED,
+                SessionStatus.PARTIAL,
+                SessionStatus.RESOURCE_EXHAUSTED,
                 SessionStatus.CANCELLED,
                 SessionStatus.DISABLED,
                 SessionStatus.WAITING_APPROVAL,
             }:
                 break
             if last.session.round_count >= limit:
-                last = self._finish_verify(last.session, reason="max_rounds")
+                last = self._finish_verify(last.session, reason="max_rounds", budget_exhausted=True)
                 break
         assert last is not None
         return last
@@ -533,7 +546,109 @@ class CodingLoop:
             "step_id": step.step_id,
         }
 
-    def _finish_verify(self, session: CodingSession, *, reason: str) -> LoopResult:
+    def _ensure_cognition_state(self, session: CodingSession) -> CodingSession:
+        meta = dict(session.metadata or {})
+        cognition = dict(meta.get("cognition") or {})
+        if cognition.get("task_type") and cognition.get("plan"):
+            return session
+        understand = self.strategy.understand(None, text=session.user_goal)
+        plan = self.strategy.plan(None, understand)
+        phase = self.strategy.initial_phase(understand)
+        cognition.update(
+            {
+                "task_type": understand.task_type,
+                "phase": phase.value,
+                "role": "implementer",
+                "acceptance": list(understand.acceptance_criteria),
+                "constraints": list(understand.constraints),
+                "risk": understand.risk,
+                "plan": plan.public_dict(),
+                "hypotheses": [h.public_dict() for h in plan.hypotheses],
+                "strategy": self.strategy.preferred_strategy(understand).value
+                if hasattr(self.strategy.preferred_strategy(understand), "value")
+                else str(self.strategy.preferred_strategy(understand)),
+            }
+        )
+        meta["cognition"] = cognition
+        return self.store.update_session(session.session_id, metadata=meta)
+
+    def _behavior_prompt(self) -> str:
+        if self.behavior_store is not None:
+            try:
+                return self.behavior_store.get_effective().system_prompt
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            from Data.modules.settings.behavior import DEFAULT_BEHAVIOR_PROFILE
+
+            return DEFAULT_BEHAVIOR_PROFILE.system_prompt
+        except Exception:  # noqa: BLE001
+            return "You are LEVIATHAN, a local AI control-plane assistant."
+
+    def _gather_brain_context(self, session: CodingSession) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+        meta = dict(session.metadata or {})
+        cognition = dict(meta.get("cognition") or {})
+        if self.brain_access is None:
+            return [], [], [], {"status": "unavailable", "dropped": ["brain_access_unwired"]}
+        understand = self.strategy.understand(None, text=session.user_goal)
+        overrides = self.strategy.enrich_context_request(None, understand)
+        try:
+            from Data.modules.brain.contracts import BrainContextRequest
+
+            request = BrainContextRequest(
+                goal=session.user_goal,
+                domain="coding",
+                role=str(cognition.get("role") or "implementer"),
+                run_id=session.run_id,
+                conversation_id=session.conversation_id,
+                workspace_root=session.workspace_root,
+                queries=list(overrides.get("queries") or [session.user_goal]),
+                symbols=list(overrides.get("symbols") or []),
+                files=list(overrides.get("files") or []),
+                entities=list(overrides.get("entities") or []),
+                include_evidence=bool(overrides.get("include_evidence", True)),
+                include_experience=bool(overrides.get("include_experience", True)),
+                include_capabilities=False,
+                token_budget=int(overrides.get("token_budget") or 1200),
+                result_limits=dict(overrides.get("result_limits") or {}),
+                task_semantics=dict(overrides.get("task_semantics") or {}),
+            )
+            brain_ctx = self.brain_access.gather(request)
+            summary = {
+                "status": "ok",
+                "knowledgeHits": len(brain_ctx.knowledge),
+                "memoryHits": len(brain_ctx.memory),
+                "evidenceHits": len(brain_ctx.evidence),
+                "experienceHits": len(brain_ctx.experience),
+                "tokenEstimate": brain_ctx.token_estimate,
+                "dropped": list(brain_ctx.dropped),
+                "selectionTrace": dict(brain_ctx.selection_trace),
+                "provenance": [p.public_dict() for p in brain_ctx.provenance[:20]],
+            }
+            cognition["brain_context"] = summary
+            cognition["phase"] = CodingPhase.RETRIEVING_CONTEXT.value
+            meta["cognition"] = cognition
+            self.store.update_session(session.session_id, metadata=meta)
+            return (
+                brain_ctx.knowledge_dicts(),
+                brain_ctx.memory_dicts(),
+                brain_ctx.evidence_dicts(),
+                summary,
+            )
+        except Exception as exc:  # noqa: BLE001
+            summary = {"status": "error", "error": str(exc)}
+            cognition["brain_context"] = summary
+            meta["cognition"] = cognition
+            self.store.update_session(session.session_id, metadata=meta)
+            return [], [], [], summary
+
+    def _finish_verify(
+        self,
+        session: CodingSession,
+        *,
+        reason: str,
+        budget_exhausted: bool = False,
+    ) -> LoopResult:
         steps = self.store.list_steps(session.session_id)
         completed_writes = [
             s
@@ -546,29 +661,51 @@ class CodingLoop:
             for s in steps
             if s.capability_id == "coding.run_tests" and s.status == StepStatus.COMPLETED
         ]
+        read_steps = [
+            s
+            for s in steps
+            if s.capability_id in {"file.read", "workspace.search", "workspace.list"}
+            and s.status == StepStatus.COMPLETED
+        ]
+        search_hits = any(
+            s.capability_id == "workspace.search" and s.status == StepStatus.COMPLETED for s in steps
+        )
 
         # ENFORCE-5: FIX/TEST need a successful coding.run_tests observation.
         if session.mission in {Mission.FIX, Mission.TEST} and not test_steps:
+            status = (
+                SessionStatus.RESOURCE_EXHAUSTED
+                if budget_exhausted
+                else SessionStatus.UNVERIFIED
+            )
             session = self.store.update_session(
                 session.session_id,
-                status=SessionStatus.UNVERIFIED,
+                status=status,
                 error="FIX/TEST requires coding.run_tests observation before COMPLETED",
+                metadata=self._cognition_meta(
+                    session,
+                    phase=CodingPhase.PARTIAL.value if not budget_exhausted else CodingPhase.RESOURCE_EXHAUSTED.value,
+                    acceptance={"status": status.value, "reason": reason, "unmet": ["coding.run_tests"]},
+                ),
             )
             self.store.add_step(
                 session.session_id,
                 kind=StepKind.VERIFY,
                 status=StepStatus.FAILED,
                 error="missing coding.run_tests",
-                output={"reason": reason},
+                output={"reason": reason, "budget_exhausted": budget_exhausted},
             )
             return LoopResult(
                 session=session,
-                status=SessionStatus.UNVERIFIED,
+                status=status,
                 rounds=session.round_count,
                 error=session.error,
             )
 
         verification_payload: dict[str, Any] | None = None
+        verification_passed = False
+        verification_unavailable = self.verification is None and bool(completed_writes)
+
         if self.verification is not None and completed_writes:
             from Data.modules.verification import VerificationEngine
             from Data.modules.verification.types import VerificationRequirement
@@ -594,11 +731,21 @@ class CodingLoop:
                 verification_payload = report.public_dict()
                 outcome = getattr(report.outcome, "value", str(report.outcome))
                 if outcome != "PASSED":
+                    status = (
+                        SessionStatus.RESOURCE_EXHAUSTED
+                        if budget_exhausted
+                        else SessionStatus.UNVERIFIED
+                    )
                     session = self.store.update_session(
                         session.session_id,
-                        status=SessionStatus.UNVERIFIED,
+                        status=status,
                         verification_id=getattr(report, "report_id", None),
                         error=f"Verification {outcome}",
+                        metadata=self._cognition_meta(
+                            session,
+                            phase=CodingPhase.REPAIRING.value,
+                            acceptance={"status": status.value, "verification": outcome, "reason": reason},
+                        ),
                     )
                     self.store.add_step(
                         session.session_id,
@@ -609,60 +756,172 @@ class CodingLoop:
                     )
                     return LoopResult(
                         session=session,
-                        status=SessionStatus.UNVERIFIED,
+                        status=status,
                         rounds=session.round_count,
                         verification=verification_payload,
                         error=session.error,
                     )
-                session = self.store.update_session(
-                    session.session_id,
-                    status=SessionStatus.COMPLETED,
-                    verification_id=getattr(report, "report_id", None),
-                    error=None,
-                )
-                self.store.add_step(
-                    session.session_id,
-                    kind=StepKind.VERIFY,
-                    status=StepStatus.COMPLETED,
-                    output=verification_payload,
-                )
-                return LoopResult(
-                    session=session,
-                    status=SessionStatus.COMPLETED,
-                    rounds=session.round_count,
-                    verification=verification_payload,
-                )
+                verification_passed = True
 
-        # No gated writes → completed if we produced an answer; still honest about verify.
         if completed_writes and self.verification is None:
+            status = (
+                SessionStatus.RESOURCE_EXHAUSTED
+                if budget_exhausted
+                else SessionStatus.UNVERIFIED
+            )
             session = self.store.update_session(
                 session.session_id,
-                status=SessionStatus.UNVERIFIED,
+                status=status,
                 error="Writes occurred but VerificationEngine unavailable (UNMEASURED)",
+                metadata=self._cognition_meta(
+                    session,
+                    phase=CodingPhase.PARTIAL.value,
+                    acceptance={"status": status.value, "reason": reason},
+                ),
             )
             return LoopResult(
                 session=session,
-                status=SessionStatus.UNVERIFIED,
+                status=status,
                 rounds=session.round_count,
                 error=session.error,
             )
 
+        # Acceptance-criteria evaluation via CodingCognitiveStrategy.
+        understand = self.strategy.understand(None, text=session.user_goal)
+        eval_state = {
+            "completed_writes": len(completed_writes),
+            "completed_tests": len(test_steps),
+            "reads": len(read_steps) + len(session.read_paths),
+            "search_hits": search_hits,
+            "cancelled": False,
+            "budget_exhausted": budget_exhausted,
+            "verification_passed": verification_passed,
+            "verification_unavailable": verification_unavailable,
+            "goal_addressed": bool(self.store.list_turns(session.session_id)),
+        }
+        decision = self.strategy.verify(state=eval_state, understand=understand)
+        status_name = str(decision.get("status") or "PARTIAL")
+        # Max rounds must never invent COMPLETED when criteria unmet.
+        if budget_exhausted and status_name == "COMPLETED" and decision.get("unmet"):
+            status_name = "RESOURCE_EXHAUSTED"
+        if budget_exhausted and status_name == "PARTIAL":
+            status_name = "RESOURCE_EXHAUSTED"
+        try:
+            final_status = SessionStatus(status_name)
+        except ValueError:
+            final_status = SessionStatus.PARTIAL if decision.get("unmet") else SessionStatus.COMPLETED
+
+        if final_status == SessionStatus.COMPLETED and verification_passed and completed_writes:
+            session = self.store.update_session(
+                session.session_id,
+                status=SessionStatus.COMPLETED,
+                verification_id=(verification_payload or {}).get("report_id")
+                if isinstance(verification_payload, dict)
+                else session.verification_id,
+                error=None,
+                metadata=self._cognition_meta(
+                    session,
+                    phase=CodingPhase.COMPLETED.value,
+                    acceptance=decision,
+                ),
+            )
+            self.store.add_step(
+                session.session_id,
+                kind=StepKind.VERIFY,
+                status=StepStatus.COMPLETED,
+                output={"reason": reason, "acceptance": decision, "verification": verification_payload},
+            )
+            return LoopResult(
+                session=session,
+                status=SessionStatus.COMPLETED,
+                rounds=session.round_count,
+                verification=verification_payload,
+            )
+
+        if final_status == SessionStatus.COMPLETED and not completed_writes:
+            session = self.store.update_session(
+                session.session_id,
+                status=SessionStatus.COMPLETED,
+                error=None,
+                metadata=self._cognition_meta(
+                    session,
+                    phase=CodingPhase.COMPLETED.value,
+                    acceptance=decision,
+                ),
+            )
+            self.store.add_step(
+                session.session_id,
+                kind=StepKind.RESPOND,
+                status=StepStatus.COMPLETED,
+                output={"reason": reason, "acceptance": decision},
+            )
+            return LoopResult(session=session, status=SessionStatus.COMPLETED, rounds=session.round_count)
+
+        # Honest non-success terminals.
+        phase_map = {
+            SessionStatus.RESOURCE_EXHAUSTED: CodingPhase.RESOURCE_EXHAUSTED.value,
+            SessionStatus.PARTIAL: CodingPhase.PARTIAL.value,
+            SessionStatus.UNVERIFIED: CodingPhase.VERIFYING.value,
+            SessionStatus.FAILED: CodingPhase.FAILED.value,
+        }
+        error = None
+        if final_status == SessionStatus.RESOURCE_EXHAUSTED:
+            error = f"Resource exhausted before acceptance criteria met ({reason})"
+        elif final_status == SessionStatus.PARTIAL:
+            error = f"Partial completion: unmet={decision.get('unmet')}"
+        elif final_status == SessionStatus.UNVERIFIED:
+            error = f"Unverified: unmet={decision.get('unmet')}"
         session = self.store.update_session(
             session.session_id,
-            status=SessionStatus.COMPLETED,
-            error=None,
+            status=final_status,
+            error=error,
+            metadata=self._cognition_meta(
+                session,
+                phase=phase_map.get(final_status, CodingPhase.PARTIAL.value),
+                acceptance=decision,
+            ),
         )
         self.store.add_step(
             session.session_id,
-            kind=StepKind.RESPOND,
-            status=StepStatus.COMPLETED,
-            output={"reason": reason},
+            kind=StepKind.VERIFY,
+            status=StepStatus.FAILED if final_status != SessionStatus.COMPLETED else StepStatus.COMPLETED,
+            output={"reason": reason, "acceptance": decision, "budget_exhausted": budget_exhausted},
+            error=error,
         )
-        return LoopResult(session=session, status=SessionStatus.COMPLETED, rounds=session.round_count)
+        return LoopResult(
+            session=session,
+            status=final_status,
+            rounds=session.round_count,
+            verification=verification_payload,
+            error=error,
+        )
+
+    def _cognition_meta(
+        self,
+        session: CodingSession,
+        *,
+        phase: str | None = None,
+        acceptance: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        meta = dict(session.metadata or {})
+        cognition = dict(meta.get("cognition") or {})
+        if phase:
+            cognition["phase"] = phase
+        if acceptance is not None:
+            cognition["acceptance"] = acceptance
+        meta["cognition"] = cognition
+        return meta
 
     def _build_messages(self, session: CodingSession) -> list[dict[str, str]]:
         history = self.store.list_turns(session.session_id)
-        plan_bullets = build_initial_plan(session.user_goal, session.mission)
+        cognition = dict((session.metadata or {}).get("cognition") or {})
+        plan_dict = cognition.get("plan") if isinstance(cognition.get("plan"), dict) else {}
+        plan_bullets = list(plan_dict.get("publicBullets") or []) or build_initial_plan(
+            session.user_goal, session.mission
+        )
+        knowledge, memory, evidence, brain_summary = self._gather_brain_context(session)
+        behavior_prompt = self._behavior_prompt()
+
         if self.context_builder is not None:
             try:
                 from Data.modules.reasoning import ReasoningPlan
@@ -677,26 +936,59 @@ class CodingLoop:
                 plan = None
             if plan is not None:
                 pack = self.context_builder.build(
-                    history=[{"role": t.role if t.role in {"user", "assistant"} else "user", "content": t.content} for t in history],
-                    knowledge=[],
+                    history=[
+                        {
+                            "role": t.role if t.role in {"user", "assistant"} else "user",
+                            "content": t.content,
+                        }
+                        for t in history
+                    ],
+                    knowledge=knowledge,
+                    memory=memory,
+                    evidence=evidence,
                     plan=plan,
                     mode="coding",
-                    constraints=CODING_SYSTEM_PROMPT,
+                    constraints=CODING_COGNITIVE_OVERLAY,
+                    behavior_profile_prompt=behavior_prompt,
                     token_budget=getattr(getattr(self.settings, "coding", None), "token_budget", None),
                 )
-                return list(pack.messages)
+                # Annotate system content with plan/task type for the model (bounded).
+                messages = list(pack.messages)
+                if messages and messages[0].get("role") == "system":
+                    extra = (
+                        f"\n\nCoding task_type={cognition.get('task_type') or session.mission.value}\n"
+                        f"Phase={cognition.get('phase') or 'INVESTIGATING'}\n"
+                        f"BrainContext={brain_summary.get('status')} "
+                        f"knowledge={brain_summary.get('knowledgeHits', 0)} "
+                        f"memory={brain_summary.get('memoryHits', 0)}\n"
+                        f"Public plan:\n- " + "\n- ".join(plan_bullets)
+                    )
+                    messages[0] = {
+                        "role": "system",
+                        "content": str(messages[0].get("content") or "") + extra,
+                    }
+                return messages
 
+        # Fallback path still includes shared BehaviorProfile identity + coding overlay.
+        system = f"{behavior_prompt}\n\n## Coding Cognitive Overlay\n{CODING_COGNITIVE_OVERLAY}"
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": CODING_SYSTEM_PROMPT},
+            {"role": "system", "content": system},
             {
                 "role": "user",
                 "content": (
                     f"Mission={session.mission.value}\n"
+                    f"TaskType={cognition.get('task_type') or session.mission.value}\n"
                     f"Goal={session.user_goal}\n"
                     f"Plan:\n- " + "\n- ".join(plan_bullets)
                 ),
             },
         ]
+        if knowledge:
+            blob = "\n".join(
+                f"- {item.get('title') or item.get('id')}: {(item.get('content') or item.get('text') or '')[:400]}"
+                for item in knowledge[:4]
+            )
+            messages.append({"role": "user", "content": f"Brain knowledge:\n{blob}"})
         for turn in history:
             role = turn.role if turn.role in {"user", "assistant"} else "user"
             messages.append({"role": role, "content": turn.content_raw or turn.content})
