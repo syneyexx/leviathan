@@ -76,6 +76,13 @@ class DatasetJobStatus(str, Enum):
     INTERRUPTED = "interrupted"
 
 
+# Job Kernel linkage (domain tables retain metadata; kernel owns runnable claim when externalized)
+CAPABILITY_PROCESS = "dataset.process"
+WORKER_POOL = "dataset"
+DOMAIN_ENTITY_TYPE = "dataset_job"
+KERNEL_IDEMPOTENCY_PREFIX = "dataset:process:"
+
+
 class IndexStatus(str, Enum):
     PENDING = "pending"
     INDEXING = "indexing"

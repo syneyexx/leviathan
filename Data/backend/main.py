@@ -278,10 +278,11 @@ agent_fleet = AgentFleetService(
     agent_fleet_store,
     agent_runtime,
     system_inventory=system_inventory,
+    job_runtime=job_runtime,
 )
 analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
-workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
+workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway, job_runtime=job_runtime)
 schedule_store = ScheduleStore(settings.database_path)
 schedule_runner = ScheduleRunner(
     schedule_store,
@@ -411,10 +412,12 @@ flywheel = FlywheelControlPlane(
     evaluation=evaluation_platform if settings.features.eval_platform else None,
 )
 corpus_layout = build_corpus_layout(settings)
-dataset_service = DatasetService.from_settings(settings, knowledge=knowledge)
+dataset_service = DatasetService.from_settings(
+    settings, knowledge=knowledge, job_runtime=job_runtime
+)
 # Bind live Dataset Learning activity into the Agent Fleet (same jobs, no fiction).
 agent_fleet.dataset_activity_provider = lambda: dataset_service.learning_activity(limit=40)
-training_service = TrainingService(settings, corpus=corpus_layout)
+training_service = TrainingService(settings, corpus=corpus_layout, job_runtime=job_runtime)
 research_service = ResearchService.from_settings(
     settings,
     db_path=settings.database_path,
@@ -447,6 +450,8 @@ market_sim_service = MarketSimControlPlane.from_settings(
     neuro=neuro_advisor,
     observability_emit=observability.emit,
 )
+if hasattr(market_sim_service, "bind_job_runtime"):
+    market_sim_service.bind_job_runtime(job_runtime)
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
 browser_worker = BrowserWorker(
     artifact_store=artifacts,
@@ -1288,6 +1293,7 @@ operator_registry = build_default_operator_registry(
         "dataset_service": dataset_service,
         "metrics": metrics,
         "system_telemetry_sampler": system_telemetry_sampler,
+        "database_path": settings.database_path,
         "health_fn": lambda: {
             "ok": True,
             "modules": len(module_manager.list()),
@@ -1403,18 +1409,26 @@ async def lifespan(_: FastAPI):
         )
     dataset_service.reconcile()
     from Data.modules.datasets.worker import should_start_inprocess_runner
+    from Data.modules.workers.settings import load_worker_settings
 
-    if should_start_inprocess_runner(settings):
+    worker_settings = load_worker_settings()
+    externalize = bool(worker_settings.enabled and worker_settings.externalize_api_runners)
+
+    if (not externalize) and should_start_inprocess_runner(settings):
         dataset_service.runner.start_background()
     else:
         observability.emit(
             "datasets",
             "jobs.runner.deferred",
             payload={
-                "mode": getattr(
-                    getattr(settings, "research_integration", None),
-                    "dataset_jobs_runner",
-                    "external",
+                "mode": (
+                    "externalized"
+                    if externalize
+                    else getattr(
+                        getattr(settings, "research_integration", None),
+                        "dataset_jobs_runner",
+                        "external",
+                    )
                 )
             },
             level="info",
@@ -1424,10 +1438,24 @@ async def lifespan(_: FastAPI):
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
     research_service.recover()
-    research_service.start_background()
-    coding_service.start_background()
+    if externalize:
+        # Durable agent missions: enqueue agent.advance; do not own in-process threads.
+        agent_fleet.start_background()
+        observability.emit(
+            "workers",
+            "api.runners.externalized",
+            payload={"pools": worker_settings.pool_counts},
+            level="info",
+            message="Heavy domain runners deferred to generic worker supervisor",
+        )
+    else:
+        research_service.start_background()
+        coding_service.start_background()
+        market_sim_service.start_background()
+        job_runtime.start_background_worker()
+        # Legacy: missions advance synchronously in launch_mission (no agent daemon).
+        agent_fleet.start_background()
     mcp_bridge.initialize()
-    market_sim_service.start_background()
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
             ModuleContext(
@@ -1471,7 +1499,7 @@ async def lifespan(_: FastAPI):
             "startup",
             payload={"ready": len(ready), "telemetry": dict(module_manager.telemetry)},
         )
-    job_runtime.start_background_worker()
+    # job_runtime background worker started above only when not externalized
     system_telemetry_sampler.start()
     # Round 6: periodic serving reconcile so crashed workers become DEAD without a manual API call.
     import asyncio
@@ -3454,6 +3482,90 @@ def cancel_job(job_id: str) -> dict:
     return {"job": job.public_dict()}
 
 
+@app.get("/api/jobs/{job_id}/children")
+def list_job_children(job_id: str) -> dict:
+    parent = job_runtime.get(job_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    children = []
+    if hasattr(job_store, "list_children"):
+        children = [c.public_dict() for c in job_store.list_children(job_id)]
+    return {"job_id": job_id, "children": children}
+
+
+@app.post("/api/jobs/{job_id}/retry")
+def retry_job(job_id: str) -> dict:
+    job = job_runtime.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.state not in {JobState.FAILED, JobState.CANCELLED}:
+        raise HTTPException(status_code=409, detail=f"Cannot retry job in state {job.state.value}")
+    try:
+        if hasattr(job_store, "schedule_retry"):
+            job = job_store.schedule_retry(job_id, delay_seconds=0.0, error="manual_retry")
+        else:
+            job = job_store.transition(job_id, JobState.QUEUED)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"job": job.public_dict()}
+
+
+@app.get("/api/workers")
+def list_workers(
+    pool: Annotated[str | None, Query()] = None,
+) -> dict:
+    from Data.modules.workers.pools import POOL_CATALOG
+    from Data.modules.workers.registry import WorkerRegistry
+    from Data.modules.workers.settings import load_worker_settings
+
+    registry = WorkerRegistry(settings.database_path)
+    registry.initialize()
+    workers = registry.list(pool_id=pool)
+    wsettings = load_worker_settings()
+    return {
+        "workers": [w.public_dict() for w in workers],
+        "pools": [
+            {
+                **defn.public_dict(),
+                "desired": wsettings.desired_count(pid),
+            }
+            for pid, defn in POOL_CATALOG.items()
+        ],
+        "settings": wsettings.public_dict(),
+        "truth": {
+            "stale_row_is_not_live_worker": True,
+            "model_serving_not_listed_here": True,
+        },
+    }
+
+
+@app.get("/api/workers/pools")
+def list_worker_pools() -> dict:
+    from Data.modules.workers.pools import POOL_CATALOG
+    from Data.modules.workers.registry import WorkerRegistry
+    from Data.modules.workers.settings import load_worker_settings
+
+    registry = WorkerRegistry(settings.database_path)
+    registry.initialize()
+    wsettings = load_worker_settings()
+    pools = []
+    for pid, defn in POOL_CATALOG.items():
+        regs = registry.list(pool_id=pid)
+        pools.append(
+            {
+                **defn.public_dict(),
+                "desired": wsettings.desired_count(pid),
+                "instances": len(regs),
+                "ready": sum(1 for r in regs if r.state.value == "READY"),
+                "busy": sum(1 for r in regs if r.state.value == "BUSY"),
+                "draining": sum(1 for r in regs if r.state.value == "DRAINING"),
+                "degraded": sum(1 for r in regs if r.state.value == "DEGRADED"),
+                "workers": [r.public_dict() for r in regs],
+            }
+        )
+    return {"pools": pools}
+
+
 class EvidenceArtifactClaim(BaseModel):
     artifact_id: str = Field(min_length=1, max_length=120)
     claim: str | None = None
@@ -3822,11 +3934,34 @@ def get_workflow(workflow_id: str) -> dict:
 
 @app.post("/api/workflows/{workflow_id}/run")
 def run_workflow(workflow_id: str) -> dict:
+    """Start a workflow. When workers are externalized, enqueue workflow.advance
+    instead of blocking the API on the full step sequence.
+    """
     try:
+        from Data.modules.workers.settings import load_worker_settings
+
+        externalize = bool(load_worker_settings().externalize_api_runners)
+    except Exception:  # noqa: BLE001
+        externalize = False
+    try:
+        if externalize and getattr(workflow_runtime, "job_runtime", None) is not None:
+            job = workflow_runtime.enqueue_advance(workflow_id, requested_by="api")
+            record = workflow_store.get(workflow_id)
+            if record is None:
+                raise KeyError(workflow_id)
+            return {
+                "workflow": record.public_dict(),
+                "job": job.public_dict(),
+                "mode": "enqueued",
+            }
         record = workflow_runtime.run(workflow_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Workflow not found") from exc
-    return {"workflow": record.public_dict()}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"workflow": record.public_dict(), "mode": "foreground"}
 
 
 @app.post("/api/workflows/{workflow_id}/cancel")
@@ -4290,8 +4425,42 @@ def invoke_plugin(plugin_id: str, payload: PluginInvokeRequest) -> dict:
     }
 
 
+def _evaluation_externalize() -> bool:
+    try:
+        from Data.modules.workers.settings import load_worker_settings
+
+        wsettings = load_worker_settings()
+        return bool(wsettings.enabled and wsettings.externalize_api_runners)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _enqueue_evaluation_suite(suite_id: str, *, arguments: dict | None = None) -> dict:
+    import uuid
+
+    try:
+        job = job_runtime.enqueue(
+            capability_id="evaluation.run",
+            arguments={"suite_id": suite_id, "persist": True, **dict(arguments or {})},
+            requested_by="api",
+            domain="evaluation",
+            domain_entity_type="evaluation_suite",
+            domain_entity_id=suite_id,
+            worker_pool="evaluation",
+            resource_class="CPU_HEAVY",
+            latency_class="background",
+            idempotency_key=f"evaluation:run:{suite_id}:{uuid.uuid4().hex[:8]}",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    metrics.incr("evaluations_enqueued")
+    return {"job": job.public_dict(), "queued": True, "suite_id": suite_id}
+
+
 @app.post("/api/evaluation/foundation")
 def run_foundation_evaluation() -> dict:
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("foundation")
     if settings.features.eval_platform:
         report = evaluation_platform.run_foundation(persist=True)
     else:
@@ -4305,6 +4474,8 @@ def run_foundation_evaluation() -> dict:
 
 @app.post("/api/evaluation/neuro")
 def run_neuro_evaluation() -> dict:
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("neuro_ablation")
     report = evaluation_harness.run_suite(
         "neuro_ablation",
         evaluation_harness.neuro_ablation_suite(
@@ -4323,6 +4494,9 @@ def run_neuro_evaluation() -> dict:
 @app.post("/api/evaluation/serving")
 def run_serving_evaluation() -> dict:
     """Wave 3/6 serving conformance — only PASS when live-probed."""
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("serving_conformance")
+
     import asyncio
 
     from Data.modules.model_runtime import ManagedLocalServingAdapter, StreamCancelToken
@@ -4410,6 +4584,8 @@ def run_assistant_benchmark_evaluation() -> dict:
     """Round 5 end-to-end assistant benchmark."""
     if not settings.features.eval_platform:
         raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("assistant_benchmark")
     return evaluation_platform.run_assistant_benchmark(persist=True)
 
 
@@ -4418,6 +4594,8 @@ def run_paired_benchmark_evaluation() -> dict:
     """Round 5 paired BASELINE vs LEVIATHAN evaluation."""
     if not settings.features.eval_platform:
         raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("paired_assistant")
     return evaluation_platform.run_paired_evaluation(persist=True)
 
 
@@ -4426,6 +4604,8 @@ def run_ablation_evaluation() -> dict:
     """Round 5 feature ablations with raw run evidence."""
     if not settings.features.eval_platform:
         raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("ablations")
     return evaluation_platform.run_ablations(persist=True)
 
 
@@ -4462,6 +4642,8 @@ def preview_context(
 
 @app.post("/api/evaluation/regression")
 def run_regression_evaluation() -> dict:
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("regression")
     report = evaluation_platform.run_regression_corpus(persist=True)
     return {"report": report.public_dict()}
 
@@ -5355,6 +5537,24 @@ def list_backups(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
 
 @app.post("/api/backup")
 def create_backup(payload: BackupCreateRequest | None = None) -> dict:
+    from Data.modules.workers.settings import load_worker_settings
+
+    wsettings = load_worker_settings()
+    if wsettings.enabled and wsettings.externalize_api_runners:
+        try:
+            job = job_runtime.enqueue(
+                capability_id="backup.create",
+                arguments={"note": (payload.note if payload else None)},
+                requested_by="api",
+                domain="backup",
+                worker_pool="backup",
+                resource_class="IO_HEAVY",
+                latency_class="maintenance",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        metrics.incr("backups_enqueued")
+        return {"job": job.public_dict(), "queued": True}
     try:
         manifest = backup_service.create(note=(payload.note if payload else None))
     except BackupError as exc:

@@ -2,10 +2,53 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from Data.backend.config import Settings
 from Data.modules.settings.service import SettingsControlPlane
+
+# Settings keys → process env consumed by ``load_worker_settings``.
+_WORKER_ENV_BY_KEY: dict[str, str] = {
+    "workers.enabled": "LEVIATHAN_WORKERS_ENABLED",
+    "workers.supervisor_enabled": "LEVIATHAN_WORKERS_SUPERVISOR_ENABLED",
+    "workers.externalize_api_runners": "LEVIATHAN_WORKERS_EXTERNALIZE_API",
+    "workers.heartbeat_seconds": "LEVIATHAN_WORKERS_HEARTBEAT_SECONDS",
+    "workers.lease_ttl_seconds": "LEVIATHAN_WORKERS_LEASE_TTL_SECONDS",
+    "workers.poll_seconds": "LEVIATHAN_WORKERS_POLL_SECONDS",
+    "workers.shutdown_grace_seconds": "LEVIATHAN_WORKERS_SHUTDOWN_GRACE_SECONDS",
+    "workers.restart.max_attempts": "LEVIATHAN_WORKERS_RESTART_MAX_ATTEMPTS",
+    "workers.restart.window_seconds": "LEVIATHAN_WORKERS_RESTART_WINDOW_SECONDS",
+    "workers.restart.base_backoff": "LEVIATHAN_WORKERS_RESTART_BASE_BACKOFF",
+    "workers.restart.max_backoff": "LEVIATHAN_WORKERS_RESTART_MAX_BACKOFF",
+    "workers.supervisor_lease_ttl_seconds": "LEVIATHAN_WORKERS_SUPERVISOR_LEASE_TTL_SECONDS",
+    "resource.background.ram_headroom": "LEVIATHAN_RESOURCE_BACKGROUND_RAM_HEADROOM",
+    "resource.background.vram_headroom": "LEVIATHAN_RESOURCE_BACKGROUND_VRAM_HEADROOM",
+    "knowledge.commit.concurrency": "LEVIATHAN_WORKERS_POOL_KNOWLEDGE_COMMIT_COUNT",
+}
+
+_WORKER_ATTR_BY_KEY: dict[str, str] = {
+    "workers.enabled": "enabled",
+    "workers.supervisor_enabled": "supervisor_enabled",
+    "workers.externalize_api_runners": "externalize_api_runners",
+    "workers.heartbeat_seconds": "heartbeat_seconds",
+    "workers.lease_ttl_seconds": "lease_ttl_seconds",
+    "workers.poll_seconds": "poll_seconds",
+    "workers.shutdown_grace_seconds": "shutdown_grace_seconds",
+    "workers.restart.max_attempts": "restart_max_attempts",
+    "workers.restart.window_seconds": "restart_window_seconds",
+    "workers.restart.base_backoff": "restart_base_backoff",
+    "workers.restart.max_backoff": "restart_max_backoff",
+    "workers.supervisor_lease_ttl_seconds": "supervisor_lease_ttl_seconds",
+    "resource.background.ram_headroom": "ram_headroom_mb",
+    "resource.background.vram_headroom": "vram_headroom_mb",
+}
+
+
+def _env_str(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def bind_default_consumers(
@@ -37,6 +80,8 @@ def bind_default_consumers(
     cortex_runtime: Any | None = None,
     residual_runtime: Any | None = None,
     reasoning_policy_holder: Any | None = None,
+    worker_settings: Any | None = None,
+    resource_admission: Any | None = None,
 ) -> None:
     """Register apply callbacks that push hot settings into live consumers."""
 
@@ -55,6 +100,40 @@ def bind_default_consumers(
             mgr = getattr(model_plane, "resources", None) or getattr(model_plane, "resource_manager", None)
             if mgr is not None and hasattr(mgr, "max_concurrency"):
                 mgr.max_concurrency = int(value)
+
+        # Execution fabric: sync env so ``load_worker_settings`` / new workers see overrides.
+        # Hot-apply poll + pool counts / headroom onto live holders when present.
+        if key in _WORKER_ENV_BY_KEY:
+            os.environ[_WORKER_ENV_BY_KEY[key]] = _env_str(value)
+
+        if key.startswith("workers.pools.") and key.endswith(".count"):
+            pool_id = key[len("workers.pools.") : -len(".count")]
+            if pool_id:
+                env_key = f"LEVIATHAN_WORKERS_POOL_{pool_id.upper()}_COUNT"
+                os.environ[env_key] = str(int(value))
+                if worker_settings is not None and hasattr(worker_settings, "pool_counts"):
+                    worker_settings.pool_counts[pool_id] = int(value)
+
+        if key == "knowledge.commit.concurrency":
+            os.environ["LEVIATHAN_WORKERS_POOL_KNOWLEDGE_COMMIT_COUNT"] = str(int(value))
+            if worker_settings is not None and hasattr(worker_settings, "pool_counts"):
+                worker_settings.pool_counts["knowledge_commit"] = int(value)
+
+        attr = _WORKER_ATTR_BY_KEY.get(key)
+        if attr and worker_settings is not None and hasattr(worker_settings, attr):
+            current = getattr(worker_settings, attr)
+            if isinstance(current, bool):
+                setattr(worker_settings, attr, bool(value))
+            elif isinstance(current, int) and not isinstance(current, bool):
+                setattr(worker_settings, attr, int(value))
+            else:
+                setattr(worker_settings, attr, float(value))
+
+        if resource_admission is not None:
+            if key == "resource.background.ram_headroom":
+                resource_admission.ram_headroom_mb = float(value)
+            elif key == "resource.background.vram_headroom":
+                resource_admission.vram_headroom_mb = float(value)
 
         if key == "knowledge.top_k":
             pass  # request handlers read plane.effective
@@ -353,8 +432,6 @@ def bind_default_consumers(
 
         if key == "hf_token":
             # Consumed via env-style lookup in huggingface helpers; set process env for workers.
-            import os
-
             token = str(value or "").strip()
             if token:
                 os.environ["LEVIATHAN_HF_TOKEN"] = token
@@ -363,8 +440,6 @@ def bind_default_consumers(
                 os.environ.pop("LEVIATHAN_HF_TOKEN", None)
 
         if key == "training_fixture":
-            import os
-
             os.environ["LEVIATHAN_TRAINING_FIXTURE"] = "1" if value else "0"
 
     plane.register_apply_callback(on_apply)

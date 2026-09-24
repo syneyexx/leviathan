@@ -53,12 +53,24 @@ class TrainingService:
         store: TrainingStore | None = None,
         corpus: CorpusLayout | None = None,
         launcher: TrainingLauncher | None = None,
+        job_runtime: Any | None = None,
     ) -> None:
         self.settings = settings
         self.store = store or TrainingStore(settings.database_path)
         self.corpus = corpus or build_corpus_layout(settings)
         self.launcher = launcher or TrainingLauncher()
+        self.job_runtime = job_runtime
         self._processes: dict[str, Any] = {}
+
+    def _externalize(self) -> bool:
+        import os
+
+        return (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "1").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        } and self.job_runtime is not None
 
     def reconcile(self) -> list[dict]:
         results = reconcile_active_jobs(self.store, processes=self._processes)
@@ -219,6 +231,48 @@ class TrainingService:
         # Clear prior cancel flag on resume/start
         self.store.update_job(job_id, cancel_requested=False, error=None, finished_at=None)
 
+        if self._externalize():
+            # API does not hold trainer Popen — training_control worker owns the process.
+            self.job_runtime.enqueue(
+                capability_id="training.control",
+                arguments={"training_job_id": job_id, "action": "start"},
+                requested_by="training_service",
+                idempotency_key=f"training:control:start:{job_id}",
+                domain="training",
+                domain_entity_type="training_job",
+                domain_entity_id=job_id,
+                worker_pool="training_control",
+                resource_class="GPU_EXCLUSIVE",
+                latency_class="batch",
+            )
+            return self.store.update_job(
+                job_id,
+                status=DurableTrainingStatus.QUEUED,
+                phase="awaiting_worker",
+                log_path=str(log_path),
+                preflight=preflight.public_dict(),
+            )
+
+        return self._spawn_owned(
+            job_id,
+            config=config,
+            output_dir=output_dir,
+            log_path=log_path,
+            events_path=events_path,
+            preflight=preflight.public_dict(),
+        )
+
+    def _spawn_owned(
+        self,
+        job_id: str,
+        *,
+        config: TrainingConfig,
+        output_dir: Path,
+        log_path: Path,
+        events_path: Path,
+        preflight: dict[str, Any],
+    ) -> DurableTrainingJob:
+        """Spawn trainer subprocess — owned by caller process (API legacy or training_control worker)."""
         proc = self.launcher.spawn(
             job_id=job_id,
             db_path=self.store.db_path,
@@ -238,7 +292,27 @@ class TrainingService:
             worker_pid=proc.pid,
             started_at=utc_now(),
             log_path=str(log_path),
-            preflight=preflight.public_dict(),
+            preflight=preflight,
+        )
+
+    def execute_control_start(self, job_id: str) -> DurableTrainingJob:
+        """Worker-side start: perform spawn ownership outside the API process."""
+        job = self.store.get_job(job_id)
+        if job is None:
+            raise TrainingError("Training job not found", http_status=404)
+        config = TrainingConfig.from_dict(job.config)
+        output_dir = Path(job.output_dir or (self.corpus.training_adapters / job_id))
+        ensure_dir(output_dir)
+        log_path = Path(job.log_path or (self.corpus.training_logs / job_id / "worker.log"))
+        events_path = self.corpus.training_logs / job_id / "events.jsonl"
+        ensure_dir(log_path.parent)
+        return self._spawn_owned(
+            job_id,
+            config=config,
+            output_dir=output_dir,
+            log_path=log_path,
+            events_path=events_path,
+            preflight=dict(job.preflight or {}),
         )
 
     def get_job(self, job_id: str) -> DurableTrainingJob | None:

@@ -954,4 +954,298 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
+    catalog.register(
+        CapabilityDefinition(
+            id="compute.numeric",
+            name="Numeric Compute",
+            description="Deterministic Tier-0 math/statistics (never the main LLM).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="numeric_compute",
+            input_schema={
+                "type": "object",
+                "required": ["operation"],
+                "properties": {
+                    "operation": {"type": "string"},
+                    "arguments": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=(),
+            metadata={
+                "tags": ["compute", "tier0", "deterministic"],
+                "domains": ["compute"],
+                "worker_kind": "general",
+            },
+        )
+    )
+    _register_fabric_worker_capabilities(catalog)
     return catalog
+
+
+def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
+    """Durable jobs claimed by generic worker pools (API enqueues; workers execute)."""
+
+    def _ext(
+        *,
+        cap_id: str,
+        name: str,
+        description: str,
+        side_effects: tuple[SideEffect, ...],
+        worker_kind: str,
+        properties: dict | None = None,
+        required_args: list[str] | None = None,
+        tags: list[str] | None = None,
+        domains: list[str] | None = None,
+        permissions: tuple[str, ...] = (),
+        extra_meta: dict | None = None,
+    ) -> None:
+        props = dict(properties or {})
+        meta: dict = {
+            "tags": tags or [worker_kind, cap_id.split(".", 1)[-1]],
+            "domains": domains or [cap_id.split(".", 1)[0]],
+            "worker_kind": worker_kind,
+            "idempotent": True,
+            "cacheable": False,
+        }
+        if extra_meta:
+            meta.update(extra_meta)
+        catalog.register(
+            CapabilityDefinition(
+                id=cap_id,
+                name=name,
+                description=description,
+                side_effects=side_effects,
+                provider_kind=CapabilityProviderKind.EXTERNAL,
+                provider_ref=f"{worker_kind}.worker",
+                input_schema={
+                    "type": "object",
+                    "required": list(required_args or []),
+                    "properties": props,
+                },
+                output_schema={"type": "object"},
+                required_permissions=permissions,
+                metadata=meta,
+            )
+        )
+
+    _project = {
+        "project_id": {"type": "string"},
+        "action": {"type": "string"},
+        "deepen": {"type": "boolean"},
+        "extra_rounds": {"type": "integer"},
+        "resume": {"type": "boolean"},
+    }
+    _ext(
+        cap_id="research.advance",
+        name="Advance Research Project",
+        description="Advance one durable research project step (research worker pool).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="research",
+        required_args=["project_id"],
+        properties=_project,
+        permissions=("process.execute",),
+        tags=["research", "advance", "durable"],
+    )
+    _ext(
+        cap_id="research.plan",
+        name="Plan Research Project",
+        description="Generate or refresh a research plan for a project.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="research",
+        required_args=["project_id"],
+        properties={"project_id": {"type": "string"}, "edits": {"type": "object"}},
+        permissions=("process.execute",),
+        tags=["research", "plan"],
+        extra_meta={"compute_tier_hint": 3},
+    )
+    _ext(
+        cap_id="research.retrieve",
+        name="Retrieve Research Evidence",
+        description="Run a retrieval wave for an active research project.",
+        side_effects=(SideEffect.READ, SideEffect.NETWORK),
+        worker_kind="research",
+        required_args=["project_id"],
+        properties={"project_id": {"type": "string"}, "query": {"type": "string"}},
+        permissions=("knowledge.read",),
+        tags=["research", "retrieve"],
+    )
+    _ext(
+        cap_id="research.synthesize",
+        name="Synthesize Research Findings",
+        description="Synthesize claims/report from gathered evidence (reasoning-tier work).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="research",
+        required_args=["project_id"],
+        properties={"project_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["research", "synthesize"],
+        extra_meta={"requires_reasoning": True, "compute_tier_hint": 3},
+    )
+    _ext(
+        cap_id="research.verify",
+        name="Verify Research Citations",
+        description="Verify citation coverage and claim support for a research project.",
+        side_effects=(SideEffect.READ,),
+        worker_kind="research",
+        required_args=["project_id"],
+        properties={"project_id": {"type": "string"}},
+        permissions=("knowledge.read",),
+        tags=["research", "verify"],
+    )
+    _ext(
+        cap_id="dataset.process",
+        name="Process Dataset Job",
+        description="Execute one durable dataset domain job (dataset worker pool).",
+        side_effects=(SideEffect.WRITE, SideEffect.EXECUTE),
+        worker_kind="dataset",
+        required_args=["dataset_job_id"],
+        properties={
+            "dataset_job_id": {"type": "string"},
+            "job_type": {"type": "string"},
+            "dataset_id": {"type": "string"},
+            "version_id": {"type": "string"},
+        },
+        permissions=("datasets.write",),
+        tags=["datasets", "process", "durable"],
+        domains=["datasets"],
+    )
+    _ext(
+        cap_id="workflow.advance",
+        name="Advance Workflow",
+        description="Continue a durable workflow run by one step.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="workflow",
+        required_args=["workflow_id"],
+        properties={"workflow_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["workflow", "advance"],
+        domains=["workflows"],
+    )
+    _ext(
+        cap_id="schedule.tick",
+        name="Schedule Tick",
+        description="Evaluate due schedules and enqueue targets (enqueue-only; no inline execute).",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="scheduler",
+        properties={"execute": {"type": "boolean"}},
+        permissions=("process.execute",),
+        tags=["schedule", "tick"],
+        domains=["schedules"],
+    )
+    _ext(
+        cap_id="knowledge.prepare",
+        name="Prepare Knowledge Artifact",
+        description="Chunk, embed-prep, and extract entities for a knowledge artifact.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="knowledge_prepare",
+        properties={
+            "artifact_id": {"type": "string"},
+            "document_id": {"type": "string"},
+        },
+        permissions=("knowledge.write",),
+        tags=["knowledge", "prepare"],
+        domains=["knowledge"],
+    )
+    _ext(
+        cap_id="knowledge.commit",
+        name="Commit Knowledge Artifact",
+        description="Serialized canonical knowledge commit lane (single-writer pool).",
+        side_effects=(SideEffect.WRITE,),
+        worker_kind="knowledge_commit",
+        properties={
+            "artifact_id": {"type": "string"},
+            "artifact": {"type": "object"},
+            "idempotency_key": {"type": "string"},
+        },
+        permissions=("knowledge.write",),
+        tags=["knowledge", "commit"],
+        domains=["knowledge"],
+    )
+    _ext(
+        cap_id="embedding.batch",
+        name="Embedding Batch",
+        description="Specialist embedding batch (Tier-1 compute; not main LLM).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="embedding",
+        properties={
+            "texts": {"type": "array"},
+            "model_id": {"type": "string"},
+        },
+        permissions=("process.execute",),
+        tags=["embedding", "batch", "specialist"],
+        domains=["embedding"],
+        extra_meta={"compute_tier_hint": 1},
+    )
+    _ext(
+        cap_id="maintenance.reconcile",
+        name="Maintenance Reconcile",
+        description="Lease recovery, stale cleanup, and reconciliation sweep.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="maintenance",
+        properties={"scope": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["maintenance", "reconcile"],
+        domains=["jobs"],
+    )
+    _ext(
+        cap_id="evaluation.run",
+        name="Run Evaluation",
+        description="Execute an evaluation suite or case batch.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.READ),
+        worker_kind="evaluation",
+        properties={
+            "suite_id": {"type": "string"},
+            "run_id": {"type": "string"},
+        },
+        permissions=("process.execute",),
+        tags=["evaluation", "run"],
+    )
+    _ext(
+        cap_id="training.control",
+        name="Training Control",
+        description="Own trainer subprocess lifecycle (start/stop/status).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="training_control",
+        properties={
+            "job_id": {"type": "string"},
+            "action": {"type": "string"},
+        },
+        permissions=("process.execute",),
+        tags=["training", "control"],
+        domains=["training"],
+    )
+    _ext(
+        cap_id="market_sim.advance",
+        name="Advance Market Simulation",
+        description="Advance one market simulation step.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="market_sim",
+        properties={"simulation_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "advance"],
+    )
+    _ext(
+        cap_id="backup.create",
+        name="Create Backup",
+        description="Create a durable backup snapshot.",
+        side_effects=(SideEffect.WRITE, SideEffect.EXECUTE),
+        worker_kind="backup",
+        properties={"label": {"type": "string"}},
+        permissions=("filesystem.write",),
+        tags=["backup", "create"],
+    )
+    _ext(
+        cap_id="agent.advance",
+        name="Advance Agent Mission",
+        description="Advance one long-running agent mission step.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="agents",
+        properties={
+            "agent_id": {"type": "string"},
+            "mission_id": {"type": "string"},
+        },
+        permissions=("process.execute",),
+        tags=["agent", "advance"],
+        domains=["agents"],
+    )

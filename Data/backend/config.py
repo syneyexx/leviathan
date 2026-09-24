@@ -253,6 +253,8 @@ class KnowledgeSettings:
     atlas_expansion_depth: int = 1
     auto_dedupe: bool = True
     integrity_checks: bool = True
+    # Serialized knowledge.commit lane worker count (pool max is 1).
+    commit_concurrency: int = 1
 
 
 @dataclass(frozen=True)
@@ -422,11 +424,35 @@ class NeuroRuntimeSettings:
 
 
 @dataclass(frozen=True)
+class WorkersSettings:
+    """Generic execution-fabric worker supervisor / pool knobs.
+
+    Flat fields map 1:1 to settings catalog paths (depth-2 control plane).
+    Env names match ``Data.modules.workers.settings.load_worker_settings``.
+    """
+
+    enabled: bool = True
+    supervisor_enabled: bool = True
+    externalize_api_runners: bool = True
+    heartbeat_seconds: float = 5.0
+    lease_ttl_seconds: float = 30.0
+    poll_seconds: float = 0.5
+    shutdown_grace_seconds: float = 30.0
+    restart_max_attempts: int = 5
+    restart_window_seconds: float = 120.0
+    restart_base_backoff: float = 2.0
+    restart_max_backoff: float = 60.0
+    supervisor_lease_ttl_seconds: float = 20.0
+
+
+@dataclass(frozen=True)
 class ResourceLimits:
     max_model_concurrency: int
     max_function_concurrency: int
     max_job_concurrency: int
     max_history_messages: int
+    background_ram_headroom: float = 512.0
+    background_vram_headroom: float = 256.0
 
 
 @dataclass(frozen=True)
@@ -510,6 +536,7 @@ class Settings:
     coding: CodingSettings
     market_sim: MarketSimSettings
     neuro_runtime: NeuroRuntimeSettings
+    workers: WorkersSettings
     resources: ResourceLimits
     context: ContextSettings
     network: NetworkSettings
@@ -979,6 +1006,9 @@ class Settings:
                 ),
                 auto_dedupe=_env_bool("LEVIATHAN_KNOWLEDGE_AUTO_DEDUPE", True),
                 integrity_checks=_env_bool("LEVIATHAN_KNOWLEDGE_INTEGRITY_CHECKS", True),
+                commit_concurrency=_env_int(
+                    "LEVIATHAN_KNOWLEDGE_COMMIT_CONCURRENCY", 1, minimum=1, maximum=1
+                ),
             ),
             reasoning=ReasoningSettings(
                 enabled=_env_bool("LEVIATHAN_REASONING_ENABLED", True),
@@ -1130,6 +1160,42 @@ class Settings:
                 max_function_concurrency=_env_int("LEVIATHAN_MAX_FUNCTION_CONCURRENCY", 2, minimum=1, maximum=64),
                 max_job_concurrency=_env_int("LEVIATHAN_MAX_JOB_CONCURRENCY", 1, minimum=1, maximum=64),
                 max_history_messages=max_history,
+                background_ram_headroom=_env_float(
+                    "LEVIATHAN_RESOURCE_BACKGROUND_RAM_HEADROOM", 512.0, minimum=0.0
+                ),
+                background_vram_headroom=_env_float(
+                    "LEVIATHAN_RESOURCE_BACKGROUND_VRAM_HEADROOM", 256.0, minimum=0.0
+                ),
+            ),
+            workers=WorkersSettings(
+                enabled=_env_bool("LEVIATHAN_WORKERS_ENABLED", True),
+                supervisor_enabled=_env_bool("LEVIATHAN_WORKERS_SUPERVISOR_ENABLED", True),
+                externalize_api_runners=_env_bool("LEVIATHAN_WORKERS_EXTERNALIZE_API", True),
+                heartbeat_seconds=_env_float(
+                    "LEVIATHAN_WORKERS_HEARTBEAT_SECONDS", 5.0, minimum=0.5
+                ),
+                lease_ttl_seconds=_env_float(
+                    "LEVIATHAN_WORKERS_LEASE_TTL_SECONDS", 30.0, minimum=2.0
+                ),
+                poll_seconds=_env_float("LEVIATHAN_WORKERS_POLL_SECONDS", 0.5, minimum=0.05),
+                shutdown_grace_seconds=_env_float(
+                    "LEVIATHAN_WORKERS_SHUTDOWN_GRACE_SECONDS", 30.0, minimum=1.0
+                ),
+                restart_max_attempts=_env_int(
+                    "LEVIATHAN_WORKERS_RESTART_MAX_ATTEMPTS", 5, minimum=1, maximum=100
+                ),
+                restart_window_seconds=_env_float(
+                    "LEVIATHAN_WORKERS_RESTART_WINDOW_SECONDS", 120.0, minimum=1.0
+                ),
+                restart_base_backoff=_env_float(
+                    "LEVIATHAN_WORKERS_RESTART_BASE_BACKOFF", 2.0, minimum=0.1
+                ),
+                restart_max_backoff=_env_float(
+                    "LEVIATHAN_WORKERS_RESTART_MAX_BACKOFF", 60.0, minimum=1.0
+                ),
+                supervisor_lease_ttl_seconds=_env_float(
+                    "LEVIATHAN_WORKERS_SUPERVISOR_LEASE_TTL_SECONDS", 20.0, minimum=2.0
+                ),
             ),
             context=ContextSettings(
                 token_budget=_env_int("LEVIATHAN_CONTEXT_TOKEN_BUDGET", 6000, minimum=512, maximum=200_000),

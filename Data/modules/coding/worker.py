@@ -83,7 +83,11 @@ class CodingWorker:
         job = None
         try:
             if hasattr(store, "claim_next_queued"):
-                job = store.claim_next_queued(capability_ids={"coding.advance"})
+                job = store.claim_next_queued(
+                    worker_id=f"coding-worker-{id(self)}",
+                    capability_ids={"coding.advance"},
+                    worker_pool="coding",
+                )
         except Exception:  # noqa: BLE001
             job = None
         if job is None:

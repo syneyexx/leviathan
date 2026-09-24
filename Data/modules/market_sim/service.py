@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -62,12 +63,14 @@ class MarketSimControlPlane:
         enabled: bool = False,
         brain: BrainFacade | None = None,
         observability_emit: Any | None = None,
+        job_runtime: Any | None = None,
     ) -> None:
         self.store = store
         self.data = data
         self.enabled = enabled
         self.brain = brain or BrainFacade()
         self._emit = observability_emit
+        self.job_runtime = job_runtime
         self.engine = SimulationEngine(
             store,
             deliberation=DeliberationRuntime(self.brain),
@@ -117,9 +120,88 @@ class MarketSimControlPlane:
             observability_emit=observability_emit,
         )
 
+    def bind_job_runtime(self, job_runtime: Any | None) -> None:
+        self.job_runtime = job_runtime
+
+    @staticmethod
+    def _runners_externalized() -> bool:
+        ext = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "").strip().lower()
+        if ext in {"1", "true", "yes", "on"}:
+            return True
+        if ext in {"0", "false", "no", "off"}:
+            return False
+        raw = (os.environ.get("LEVIATHAN_MARKET_SIM_RUNNER") or "").strip().lower()
+        if raw in {"external", "worker", "process"}:
+            return True
+        if raw in {"inprocess", "thread", "api"}:
+            return False
+        try:
+            from Data.modules.workers.settings import load_worker_settings
+
+            return bool(load_worker_settings().externalize_api_runners)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def enqueue_advance(
+        self,
+        simulation_id: str,
+        *,
+        parent_job_id: str | None = None,
+        root_job_id: str | None = None,
+        requested_by: str = "market_sim_service",
+    ) -> Any:
+        """Enqueue durable market_sim.advance for an external worker."""
+        if self.job_runtime is None:
+            raise RuntimeError("job_runtime not bound; cannot enqueue market_sim.advance")
+        run = self.store.get_run(simulation_id)
+        if run is None:
+            raise MarketSimError("RUN_NOT_FOUND", f"Unknown run: {simulation_id}", http_status=404)
+        # Generation: bar cursor + status so continuations are idempotent per slice.
+        gen = f"{run.status}:{getattr(run, 'bar_index', None) or 0}:{run.updated_at or run.created_at}"
+        idem = f"market_sim:advance:{simulation_id}:{gen}"
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.advance",
+            arguments={"simulation_id": simulation_id},
+            requested_by=requested_by,
+            idempotency_key=idem,
+            domain="market_sim",
+            domain_entity_type="market_sim_run",
+            domain_entity_id=simulation_id,
+            worker_pool="market_sim",
+            parent_job_id=parent_job_id,
+            root_job_id=root_job_id or parent_job_id,
+            latency_class="background",
+            metadata={"simulation_id": simulation_id, "generation": gen},
+        )
+
+    def enqueue_queued_runs(self) -> list[str]:
+        """Enqueue advance jobs for QUEUED/RUNNING/STEPPING runs (idempotent)."""
+        job_ids: list[str] = []
+        if self.job_runtime is None:
+            return job_ids
+        for run in self.store.list_runs(limit=100):
+            if run.status not in {
+                RunStatus.QUEUED.value,
+                RunStatus.RUNNING.value,
+                RunStatus.STEPPING.value,
+            }:
+                continue
+            try:
+                job = self.enqueue_advance(run.run_id)
+                job_ids.append(job.job_id)
+            except Exception:  # noqa: BLE001
+                continue
+        return job_ids
+
     def start_background(self) -> None:
-        if self.enabled:
-            self.worker.start_background()
+        """Start in-process daemon, or enqueue durable jobs when externalized."""
+        if not self.enabled:
+            return
+        if self._runners_externalized():
+            if self.job_runtime is not None:
+                self.enqueue_queued_runs()
+            return
+        self.worker.start_background()
 
     def stop_background(self) -> None:
         self.worker.stop_background()
@@ -494,7 +576,10 @@ class MarketSimControlPlane:
         run.cancel_requested = False
         run.error = None
         self.store.update_run(run)
-        self.worker.wake()
+        if self._runners_externalized() and self.job_runtime is not None:
+            self.enqueue_advance(run.run_id, requested_by="market_sim.start_run")
+        else:
+            self.worker.wake()
         return run.public_dict()
 
     def pause_run(self, run_id: str) -> dict[str, Any]:
@@ -513,8 +598,11 @@ class MarketSimControlPlane:
             raise MarketSimError("RUN_TERMINAL", f"Run already {run.status}")
         run.status = RunStatus.STEPPING.value
         self.store.update_run(run)
+        if self._runners_externalized() and self.job_runtime is not None:
+            self.enqueue_advance(run.run_id, requested_by="market_sim.step_run")
+            return self._get_run(run_id).public_dict()
         self.worker.wake()
-        # Synchronously process one slice for responsive UI / tests
+        # Synchronously process one slice for responsive UI / tests (in-process)
         self.worker.process_next()
         return self._get_run(run_id).public_dict()
 

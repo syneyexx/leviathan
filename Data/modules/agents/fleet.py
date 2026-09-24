@@ -115,12 +115,134 @@ class AgentFleetService:
         *,
         dataset_activity_provider: Any | None = None,
         system_inventory: SystemInventory | None = None,
+        job_runtime: Any | None = None,
     ) -> None:
         self.store = store
         self.runtime = runtime
         # Optional callable returning DatasetService.learning_activity()-shaped dict.
         self.dataset_activity_provider = dataset_activity_provider
         self.system_inventory = system_inventory or SystemInventory()
+        self.job_runtime = job_runtime
+
+    def bind_job_runtime(self, job_runtime: Any | None) -> None:
+        self.job_runtime = job_runtime
+
+    @staticmethod
+    def _runners_externalized() -> bool:
+        import os
+
+        ext = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "").strip().lower()
+        if ext in {"1", "true", "yes", "on"}:
+            return True
+        if ext in {"0", "false", "no", "off"}:
+            return False
+        raw = (os.environ.get("LEVIATHAN_AGENTS_RUNNER") or "").strip().lower()
+        if raw in {"external", "worker", "process"}:
+            return True
+        if raw in {"inprocess", "thread", "api"}:
+            return False
+        try:
+            from Data.modules.workers.settings import load_worker_settings
+
+            return bool(load_worker_settings().externalize_api_runners)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def enqueue_advance(
+        self,
+        mission_id: str,
+        *,
+        parent_job_id: str | None = None,
+        root_job_id: str | None = None,
+        requested_by: str = "agent_fleet",
+        generation: str | None = None,
+    ) -> Any:
+        """Enqueue durable ``agent.advance`` for an external agents-pool worker."""
+        if self.job_runtime is None:
+            raise RuntimeError("job_runtime not bound; cannot enqueue agent.advance")
+        mission = self.store.get_mission(mission_id)
+        if mission is None:
+            raise AgentFleetError(
+                "MISSION_NOT_FOUND",
+                f"Mission not found: {mission_id}",
+                http_status=404,
+            )
+        gen = generation or str(mission.created_at)
+        idem = f"agent:advance:{mission_id}:{gen}"
+        return self.job_runtime.enqueue(
+            capability_id="agent.advance",
+            arguments={
+                "mission_id": mission_id,
+                "agent_id": mission.agent_id,
+            },
+            requested_by=requested_by,
+            idempotency_key=idem,
+            domain="agents",
+            domain_entity_type="agent_mission",
+            domain_entity_id=mission_id,
+            worker_pool="agents",
+            parent_job_id=parent_job_id,
+            root_job_id=root_job_id or parent_job_id,
+            latency_class="background",
+            metadata={
+                "mission_id": mission_id,
+                "agent_id": mission.agent_id,
+                "generation": gen,
+            },
+        )
+
+    def enqueue_queued_missions(self) -> list[str]:
+        """Enqueue advance jobs for QUEUED missions (idempotent keys)."""
+        job_ids: list[str] = []
+        if self.job_runtime is None:
+            return job_ids
+        for mission in self.store.list_missions(limit=200):
+            if mission.status != MissionStatus.QUEUED:
+                continue
+            try:
+                job = self.enqueue_advance(mission.mission_id)
+                job_ids.append(job.job_id)
+                if job.job_id not in mission.job_ids:
+                    mission.job_ids = list(mission.job_ids) + [job.job_id]
+                    # Do not bump updated_at — generation is tied to created_at.
+                    self.store.update_mission(mission)
+            except Exception:  # noqa: BLE001
+                continue
+        return job_ids
+
+    def start_background(self) -> None:
+        """When workers are externalized, enqueue durable jobs; else no API daemon.
+
+        Legacy path advances missions synchronously inside :meth:`launch_mission`.
+        """
+        if self._runners_externalized():
+            if self.job_runtime is not None:
+                self.enqueue_queued_missions()
+            return
+        # In-process legacy: no background thread — launch_mission executes inline.
+
+    def advance_mission(self, mission_id: str, *, use_jobs: bool | None = None) -> AgentMission:
+        """Advance one queued mission to completion (agents worker unit of work)."""
+        mission = self.store.get_mission(mission_id)
+        if mission is None:
+            raise AgentFleetError(
+                "MISSION_NOT_FOUND",
+                f"Mission not found: {mission_id}",
+                http_status=404,
+            )
+        if mission.status != MissionStatus.QUEUED:
+            return mission
+        if mission.cancel_requested:
+            mission.status = MissionStatus.CANCELLED
+            mission.finished_at = utc_now()
+            mission.updated_at = mission.finished_at
+            self.store.update_mission(mission)
+            return mission
+        agent = self.get_agent(mission.agent_id)
+        depth = int((mission.metadata or {}).get("depth") or 0)
+        if use_jobs is None:
+            use_jobs = bool((mission.metadata or {}).get("useJobs"))
+        return self._execute_mission(mission, agent, depth=depth, use_jobs=bool(use_jobs))
 
     def initialize(self, *, seed_defaults: bool = True) -> None:
         self.store.initialize()
@@ -633,7 +755,7 @@ class AgentFleetService:
             trace_id=AgentFleetStore.new_id("trace"),
             created_at=now,
             updated_at=now,
-            metadata={"dryRun": dry_run, "depth": depth},
+            metadata={"dryRun": dry_run, "depth": depth, "useJobs": use_jobs},
         )
         self.store.create_mission(mission)
         self._emit(
@@ -657,6 +779,32 @@ class AgentFleetService:
                 category="tasks",
                 message="Dry-run plan completed (no side effects)",
             )
+            return mission
+
+        # Top-level missions: durable enqueue when workers are externalized.
+        # Nested orchestrator children stay inline inside the claiming worker.
+        if (
+            parent_mission_id is None
+            and self._runners_externalized()
+            and self.job_runtime is not None
+        ):
+            try:
+                job = self.enqueue_advance(
+                    mission.mission_id,
+                    requested_by="agent_fleet.launch_mission",
+                )
+                mission.job_ids = [job.job_id]
+                mission.updated_at = utc_now()
+                self.store.update_mission(mission)
+            except Exception as exc:  # noqa: BLE001 — fall back to inline
+                self._emit(
+                    agent_id=agent_id,
+                    mission_id=mission.mission_id,
+                    category="errors",
+                    message=f"Enqueue agent.advance failed; executing inline: {exc}",
+                    level="warn",
+                )
+                return self._execute_mission(mission, agent, depth=depth, use_jobs=use_jobs)
             return mission
 
         return self._execute_mission(mission, agent, depth=depth, use_jobs=use_jobs)
@@ -938,13 +1086,26 @@ class AgentFleetService:
         return mission
 
     def reconcile(self) -> list[str]:
-        """Mark stale active missions interrupted when feature is off or process restarted."""
+        """Mark stale active missions interrupted when feature is off or process restarted.
+
+        When workers are externalized, QUEUED missions are left for the agents pool
+        (re-enqueued via :meth:`enqueue_queued_missions` / :meth:`start_background`).
+        RUNNING/STARTING rows are assumed owned by leased ``agent.advance`` jobs.
+        """
         updated: list[str] = []
+        externalized = self._runners_externalized()
         for mission in self.store.list_missions(limit=500):
             if mission.status.value not in ACTIVE_MISSION_STATUSES:
                 continue
-            # In-process fleet currently executes synchronously; any leftover active
-            # row after restart is orphaned truth.
+            if externalized and mission.status in {
+                MissionStatus.QUEUED,
+                MissionStatus.STARTING,
+                MissionStatus.RUNNING,
+                MissionStatus.CANCELLING,
+            }:
+                continue
+            # In-process fleet executes synchronously; leftover active rows after
+            # restart are orphaned truth.
             mission.status = MissionStatus.INTERRUPTED
             mission.error = mission.error or "Interrupted — no live worker ownership after restart"
             mission.finished_at = utc_now()

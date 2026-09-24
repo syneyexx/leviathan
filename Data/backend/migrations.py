@@ -2572,6 +2572,148 @@ def _m36_model_runtime_residency(conn: sqlite3.Connection) -> None:
         """
     )
 
+def _m37_execution_fabric(conn: sqlite3.Connection) -> None:
+    """Frontier execution fabric: job kernel columns + worker registry tables."""
+
+    def _add_column(table: str, name: str, ddl: str) -> None:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if name not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            capability_id TEXT NOT NULL,
+            arguments_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            run_id TEXT,
+            approval_id TEXT,
+            requested_by TEXT NOT NULL,
+            result_json TEXT,
+            error TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    for name, ddl in (
+        ("domain", "domain TEXT"),
+        ("consumer", "consumer TEXT"),
+        ("correlation_id", "correlation_id TEXT"),
+        ("root_job_id", "root_job_id TEXT"),
+        ("parent_job_id", "parent_job_id TEXT"),
+        ("domain_entity_type", "domain_entity_type TEXT"),
+        ("domain_entity_id", "domain_entity_id TEXT"),
+        ("worker_pool", "worker_pool TEXT"),
+        ("resource_class", "resource_class TEXT"),
+        ("priority", "priority INTEGER NOT NULL DEFAULT 100"),
+        ("queued_at", "queued_at TEXT"),
+        ("claimed_at", "claimed_at TEXT"),
+        ("started_at", "started_at TEXT"),
+        ("finished_at", "finished_at TEXT"),
+        ("max_attempts", "max_attempts INTEGER NOT NULL DEFAULT 3"),
+        ("next_attempt_at", "next_attempt_at TEXT"),
+        ("timeout_seconds", "timeout_seconds REAL"),
+        ("deadline_at", "deadline_at TEXT"),
+        ("cancel_requested_at", "cancel_requested_at TEXT"),
+        ("cancel_reason", "cancel_reason TEXT"),
+        ("progress", "progress REAL"),
+        ("phase", "phase TEXT"),
+        ("message", "message TEXT"),
+        ("resource_request_json", "resource_request_json TEXT NOT NULL DEFAULT '{}'"),
+        ("result_summary_json", "result_summary_json TEXT"),
+        ("artifact_refs_json", "artifact_refs_json TEXT NOT NULL DEFAULT '[]'"),
+        ("error_code", "error_code TEXT"),
+        ("retryable", "retryable INTEGER"),
+    ):
+        _add_column("jobs", name, ddl)
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_runnable ON jobs(state, priority, created_at)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_next_attempt ON jobs(next_attempt_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_parent ON jobs(parent_job_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_worker_pool ON jobs(worker_pool, state)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_pools (
+            pool_id TEXT PRIMARY KEY,
+            display_name TEXT,
+            resource_class TEXT,
+            max_workers INTEGER NOT NULL DEFAULT 1,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_instances (
+            worker_id TEXT PRIMARY KEY,
+            pool_id TEXT NOT NULL,
+            slot INTEGER,
+            pid INTEGER,
+            process_start_identity TEXT,
+            protocol_version INTEGER,
+            implementation_version TEXT,
+            supported_job_kinds_json TEXT,
+            host TEXT,
+            started_at TEXT,
+            last_heartbeat_at TEXT,
+            state TEXT,
+            current_job_id TEXT,
+            supervisor_generation TEXT,
+            restart_count INTEGER DEFAULT 0,
+            degraded_reason TEXT,
+            metadata_json TEXT DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_worker_instances_pool "
+        "ON worker_instances(pool_id, state)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resource_reservations (
+            reservation_id TEXT PRIMARY KEY,
+            job_id TEXT,
+            worker_id TEXT,
+            resource_class TEXT,
+            requested_json TEXT,
+            state TEXT,
+            created_at TEXT,
+            expires_at TEXT,
+            released_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_resource_reservations_job "
+        "ON resource_reservations(job_id, state)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supervisor_leases (
+            lease_id TEXT PRIMARY KEY,
+            holder_id TEXT NOT NULL,
+            holder_pid INTEGER,
+            process_start_identity TEXT,
+            acquired_at TEXT,
+            expires_at TEXT,
+            last_heartbeat_at TEXT
+        )
+        """
+    )
 
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
@@ -2610,6 +2752,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=34, name="trading_center", apply=_m34_trading_center),
     Migration(version=35, name="source_ingestion", apply=_m35_source_ingestion),
     Migration(version=36, name="model_runtime_residency", apply=_m36_model_runtime_residency),
+    Migration(version=37, name="execution_fabric", apply=_m37_execution_fabric),
 )
 
 

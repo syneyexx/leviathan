@@ -108,6 +108,25 @@ class MarketSimWorker:
         run = self.store.claim_next_runnable()
         if run is None:
             return False
+        return self._advance_run(run)
+
+    def process_run(self, run_id: str) -> bool:
+        """Advance one slice for a specific simulation (durable job path)."""
+        run = self.store.get_run(run_id)
+        if run is None:
+            return False
+        if run.status not in {
+            RunStatus.QUEUED.value,
+            RunStatus.RUNNING.value,
+            RunStatus.STEPPING.value,
+        }:
+            return False
+        # Soft-claim: stamp worker_pid so concurrent claimants back off.
+        run.worker_pid = os.getpid()
+        self.store.update_run(run)
+        return self._advance_run(run)
+
+    def _advance_run(self, run: Any) -> bool:
         try:
             if run.status == RunStatus.QUEUED.value:
                 run.status = RunStatus.RUNNING.value

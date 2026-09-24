@@ -278,6 +278,50 @@ def build_default_operator_registry(*, deps: dict[str, Any]) -> OperatorCommandR
             return {"job": result.public_dict() if hasattr(result, "public_dict") else result}
         raise OperatorCommandError("usage: jobs list|cancel <id>")
 
+    def cmd_workers(args: list[str]) -> dict[str, Any]:
+        """List worker pools / instances from the durable registry (not model serving)."""
+        from Data.modules.workers.pools import POOL_CATALOG
+        from Data.modules.workers.registry import WorkerRegistry
+        from Data.modules.workers.settings import load_worker_settings
+
+        db_path = deps.get("database_path")
+        if db_path is None and jobs is not None:
+            db_path = getattr(jobs, "db_path", None) or getattr(jobs, "path", None)
+        if db_path is None:
+            raise OperatorCommandError("worker_registry_unavailable")
+        registry_store = WorkerRegistry(db_path)
+        registry_store.initialize()
+        wsettings = load_worker_settings()
+        pool_filter = args[0] if args and args[0] not in {"list", "pools"} else (
+            args[1] if len(args) > 1 and args[0] == "list" else None
+        )
+        if args and args[0] == "pools":
+            pools = []
+            for pid, defn in POOL_CATALOG.items():
+                regs = registry_store.list(pool_id=pid)
+                pools.append(
+                    {
+                        **defn.public_dict(),
+                        "desired": wsettings.desired_count(pid),
+                        "instances": len(regs),
+                        "ready": sum(1 for r in regs if r.state.value == "READY"),
+                        "busy": sum(1 for r in regs if r.state.value == "BUSY"),
+                    }
+                )
+            return {
+                "pools": pools,
+                "truth": {"model_serving_not_listed_here": True},
+            }
+        workers = registry_store.list(pool_id=pool_filter)
+        return {
+            "workers": [w.public_dict() for w in workers],
+            "settings": wsettings.public_dict(),
+            "truth": {
+                "stale_row_is_not_live_worker": True,
+                "model_serving_not_listed_here": True,
+            },
+        }
+
     def cmd_research(args: list[str]) -> dict[str, Any]:
         if research is None:
             raise OperatorCommandError("research_unavailable")
@@ -326,6 +370,11 @@ def build_default_operator_registry(*, deps: dict[str, Any]) -> OperatorCommandR
     registry.register("capabilities", cmd_capabilities, help_text="capabilities [query]")
     registry.register("workflows", cmd_workflows, help_text="workflows list|run|cancel <id>")
     registry.register("jobs", cmd_jobs, help_text="jobs list|cancel <id>")
+    registry.register(
+        "workers",
+        cmd_workers,
+        help_text="workers [list [pool]|pools] — generic worker registry (not model serving)",
+    )
     registry.register("research", cmd_research, help_text="research list")
     registry.register("datasets", cmd_datasets, help_text="datasets list|jobs")
     registry.register("telemetry", cmd_telemetry, help_text="telemetry snapshot")

@@ -283,6 +283,11 @@ class SourceIngestionService:
                 idempotency_key=f"source_ingestion:process:{source_id}",
                 metadata={"source_id": source_id, "project_id": project_id},
                 latency_class="background",
+                domain="source_ingestion",
+                domain_entity_type="source",
+                domain_entity_id=source_id,
+                worker_pool="source_ingestion",
+                resource_class="IO_HEAVY",
             )
             return job.job_id
         except Exception:  # noqa: BLE001
@@ -394,12 +399,23 @@ class SourceIngestionService:
         from Data.modules.jobs.store import JobStore
 
         store: JobStore = self.jobs.store
-        job = store.claim_next_queued(capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY})
+        worker_id = f"source-ingestion-{uuid.uuid4().hex[:10]}"
+        job = store.claim_next_queued(
+            worker_id=worker_id,
+            lease_ttl_seconds=float(getattr(self.settings, "lease_ttl_seconds", 30.0) or 30.0),
+            capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY},
+            worker_pool="source_ingestion",
+        )
+        if job is None:
+            # Also claim jobs enqueued without worker_pool set (legacy/API)
+            job = store.claim_next_queued(
+                worker_id=worker_id,
+                lease_ttl_seconds=float(getattr(self.settings, "lease_ttl_seconds", 30.0) or 30.0),
+                capability_ids={CAPABILITY_PROCESS, CAPABILITY_BRAIN_RETRY},
+            )
         if job is None:
             return None
-        worker_id = f"source-ingestion-{uuid.uuid4().hex[:10]}"
         try:
-            store.acquire_lease(job.job_id, worker_id=worker_id, ttl_seconds=self.settings.lease_ttl_seconds)
             source_id = str(job.arguments.get("source_id") or "")
             if job.capability_id == CAPABILITY_BRAIN_RETRY:
                 self.pipeline().retry_brain_only(source_id)

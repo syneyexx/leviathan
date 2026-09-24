@@ -8,6 +8,7 @@ from .quality import (
     train_eval_separation,
 )
 from .types import (
+    CAPABILITY_PROCESS,
     CanonicalRecord,
     DatasetError,
     DatasetJob,
@@ -17,12 +18,15 @@ from .types import (
     DatasetStatus,
     DatasetVersion,
     DetectedFormat,
+    DOMAIN_ENTITY_TYPE,
     SourceType,
     VersionKind,
     VersionStatus,
+    WORKER_POOL,
 )
 
 __all__ = [
+    "CAPABILITY_PROCESS",
     "CanonicalRecord",
     "DatasetError",
     "DatasetJob",
@@ -34,11 +38,13 @@ __all__ = [
     "DatasetStore",
     "DatasetVersion",
     "DetectedFormat",
+    "DOMAIN_ENTITY_TYPE",
     "MixtureComponent",
     "MixtureManifest",
     "SourceType",
     "VersionKind",
     "VersionStatus",
+    "WORKER_POOL",
     "build_mixture_manifest",
     "quality_balance_report",
     "semantic_dedupe",
