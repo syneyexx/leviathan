@@ -1493,6 +1493,9 @@ async def lifespan(_: FastAPI):
     if externalize:
         # Durable agent missions: enqueue agent.advance; do not own in-process threads.
         agent_fleet.start_background()
+        # Market sim: enqueue QUEUED/RUNNING advances for the market_sim worker pool
+        # (no in-process daemon when externalized).
+        market_sim_service.start_background()
         observability.emit(
             "workers",
             "api.runners.externalized",

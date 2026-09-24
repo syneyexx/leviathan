@@ -81,9 +81,12 @@ def build_market_capabilities(
     equity_paper = "UNAVAILABLE"
     paper_brokers: list[str] = []
     if feature_enabled and local_paper:
-        crypto_paper = "AVAILABLE" if binance_reachable else "AVAILABLE"  # local sim always; quotes optional
+        # Local paper ledger is always available when the feature is on.
+        # Binance reachability only affects live quote freshness, not paper mode.
+        crypto_paper = "AVAILABLE"
         equity_paper = "AVAILABLE"
         paper_brokers.append("local_paper")
+        _ = binance_reachable  # retained for callers / future quote gating
     if feature_enabled and alpaca_paper:
         equity_paper = "AVAILABLE"
         paper_brokers.append("alpaca_paper")

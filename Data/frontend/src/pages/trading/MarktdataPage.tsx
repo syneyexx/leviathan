@@ -25,7 +25,7 @@ export function MarktdataPage() {
       } else {
         setSources([]);
       }
-      setError(st.enabled ? null : "LEVIATHAN_FEATURE_MARKET_SIM is OFF");
+      setError(st.enabled ? null : "Market sim is OFF (LEVIATHAN_FEATURE_MARKET_SIM). Default is ON for local/dev.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load market data");
     }
