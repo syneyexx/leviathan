@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Windows-friendly entrypoint for the shared dataset job worker.
 
-Uses the same ``dataset_jobs`` table and KnowledgeStore as the API process.
-Set ``LEVIATHAN_DATASET_JOBS_RUNNER=external`` before starting the API so the
-in-process runner does not compete with this worker.
+When ``LEVIATHAN_DATASET_JOBS_RUNNER=external``, this process is the **sole**
+runnable claim owner via Job Kernel ``dataset.process`` (pool ``dataset``).
+Domain ``dataset_jobs`` retain metadata/history. Set the env before starting
+the API so the in-process runner does not compete.
 
   python scripts/dataset_worker.py
   python scripts/dataset_worker.py --once

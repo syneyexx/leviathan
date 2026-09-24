@@ -23,6 +23,7 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "research.retrieve",
         "research.synthesize",
         "research.verify",
+        "dataset.process",
         "workflow.advance",
         "schedule.tick",
         "knowledge.prepare",

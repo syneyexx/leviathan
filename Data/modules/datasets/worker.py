@@ -1,7 +1,20 @@
-"""External dataset job worker — executes the same ``dataset_jobs`` against the same store.
+"""External dataset job worker — Job Kernel claim owner when externalized.
 
-Does **not** introduce a second queue. Use either the in-process runner *or*
-this external worker, never both concurrently.
+Claim ownership (single active loop)
+------------------------------------
+* ``LEVIATHAN_DATASET_JOBS_RUNNER=inprocess`` — API in-process
+  ``DatasetJobRunner`` claims work (domain table when no JobRuntime; kernel
+  leases when JobRuntime is wired).
+* ``LEVIATHAN_DATASET_JOBS_RUNNER=external`` — **this worker** (or the
+  ``dataset`` pool entrypoint) is the **sole** runnable claim owner via Job
+  Kernel capability ``dataset.process`` / ``worker_pool=dataset``. Domain
+  ``dataset_jobs`` retains metadata and execution progress; do **not** also
+  start the API in-process domain claim loop.
+* ``none`` — no automatic runner.
+
+Domain history is never deleted. Kernel jobs link with
+``domain_entity_type=dataset_job``, ``domain_entity_id=<domain job id>``,
+and ``idempotency_key=dataset:process:{domain_job_id}``.
 
 Windows-compatible: plain Python process, no fork required.
 
@@ -83,7 +96,7 @@ def acquire_worker_lock(db_path: Path) -> Path:
                 f"Another dataset job runner holds the lock (pid={existing}, path={lock_path}). "
                 f"Stop it or set {RUNNER_ENV}=none before starting a second executor."
             )
-    # Atomic-ish replace is good enough; claim_next_queued remains the real CAS.
+    # Atomic-ish replace is good enough; kernel/domain claim remains the real CAS.
     from Data.modules.common.atomic import atomic_write_text
 
     atomic_write_text(lock_path, f"{os.getpid()}\n")
@@ -100,6 +113,20 @@ def release_worker_lock(lock_path: Path | None) -> None:
                 lock_path.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+def build_job_runtime(settings: Any):
+    from Data.modules.execution import build_default_catalog
+    from Data.modules.execution.gateway import ExecutionGateway
+    from Data.modules.jobs.resources import ResourceManager
+    from Data.modules.jobs.runtime import JobRuntime
+    from Data.modules.jobs.store import JobStore
+
+    job_store = JobStore(settings.database_path)
+    job_store.initialize()
+    gateway = ExecutionGateway(catalog=build_default_catalog())
+    resources = ResourceManager(settings.resources.max_job_concurrency)
+    return JobRuntime(job_store, gateway, resources)
 
 
 def build_service_from_env():
@@ -120,7 +147,19 @@ def build_service_from_env():
         embedding_provider=provider,
     )
     knowledge.initialize()
-    return DatasetService.from_settings(settings, knowledge=knowledge), settings
+    job_runtime = build_job_runtime(settings)
+    service = DatasetService.from_settings(
+        settings,
+        knowledge=knowledge,
+        job_runtime=job_runtime,
+    )
+    return service, settings
+
+
+def build_runner_from_env():
+    """Pool entrypoint helper — returns DatasetJobRunner with JobRuntime wired."""
+    service, _settings = build_service_from_env()
+    return service.runner
 
 
 def run_worker_loop(
@@ -129,6 +168,7 @@ def run_worker_loop(
     max_jobs: int | None = None,
     once: bool = False,
 ) -> int:
+    """Claim kernel ``dataset.process`` jobs (sole owner under external mode)."""
     service, _settings = build_service_from_env()
     lock_path = acquire_worker_lock(service.store.db_path)
     stop = {"flag": False}
@@ -141,6 +181,11 @@ def run_worker_loop(
         signal.signal(signal.SIGTERM, _stop)
 
     processed = 0
+    print(
+        f"[dataset-worker] start pid={os.getpid()} claim_owner=job_kernel "
+        f"capability=dataset.process pool=dataset",
+        flush=True,
+    )
     try:
         service.reconcile()
         # Sidecar catalog recovery on worker boot (same store as API).
@@ -149,6 +194,7 @@ def run_worker_loop(
         except Exception as exc:  # noqa: BLE001 — never block job loop
             print(f"[dataset-worker] sidecar reconcile skipped: {exc}", file=sys.stderr)
         while not stop["flag"]:
+            # Kernel-owned claim: runner.jobs is set → process_next claims JobStore.
             job = service.runner.process_next()
             if job is None:
                 if once:
@@ -171,7 +217,12 @@ def run_worker_loop(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Leviathan dataset job worker (shared store)")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Leviathan dataset job worker — Job Kernel claim owner when "
+            f"{RUNNER_ENV}=external (domain dataset_jobs retain metadata)."
+        )
+    )
     parser.add_argument("--poll", type=float, default=0.5, help="Idle poll interval seconds")
     parser.add_argument("--max-jobs", type=int, default=None, help="Stop after N jobs")
     parser.add_argument("--once", action="store_true", help="Process at most one job then exit")

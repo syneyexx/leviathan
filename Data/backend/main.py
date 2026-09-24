@@ -411,7 +411,9 @@ flywheel = FlywheelControlPlane(
     evaluation=evaluation_platform if settings.features.eval_platform else None,
 )
 corpus_layout = build_corpus_layout(settings)
-dataset_service = DatasetService.from_settings(settings, knowledge=knowledge)
+dataset_service = DatasetService.from_settings(
+    settings, knowledge=knowledge, job_runtime=job_runtime
+)
 # Bind live Dataset Learning activity into the Agent Fleet (same jobs, no fiction).
 agent_fleet.dataset_activity_provider = lambda: dataset_service.learning_activity(limit=40)
 training_service = TrainingService(settings, corpus=corpus_layout)

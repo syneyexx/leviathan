@@ -301,7 +301,7 @@ class DatasetService:
                 original_filename=Path(path).name,
                 status=DatasetStatus.IMPORTING,
             )
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.IMPORT_LOCAL,
             dataset_id=ds.dataset_id,
             config={"path": path, "materialize": materialize},
@@ -363,7 +363,7 @@ class DatasetService:
         }
         if legacy_file:
             safe_config["filename"] = legacy_file
-        job = self.store.create_job(
+        job = self._queue_domain_job(
             job_type=DatasetJobType.IMPORT_HF,
             dataset_id=ds.dataset_id,
             config=safe_config,
@@ -374,7 +374,7 @@ class DatasetService:
 
     def enqueue_materialize(self, dataset_id: str, *, fmt: str | None = None) -> DatasetJob:
         self.get_dataset(dataset_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.MATERIALIZE,
             dataset_id=dataset_id,
             config={"format": fmt},
@@ -383,7 +383,7 @@ class DatasetService:
     def enqueue_validate(self, dataset_id: str, version_id: str) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.VALIDATE,
             dataset_id=dataset_id,
             version_id=version_id,
@@ -393,7 +393,7 @@ class DatasetService:
     def enqueue_dedupe(self, dataset_id: str, version_id: str) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.DEDUPE,
             dataset_id=dataset_id,
             version_id=version_id,
@@ -408,7 +408,7 @@ class DatasetService:
     ) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.TRANSFORM,
             dataset_id=dataset_id,
             version_id=version_id,
@@ -427,7 +427,7 @@ class DatasetService:
     ) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.SPLIT,
             dataset_id=dataset_id,
             version_id=version_id,
@@ -442,7 +442,7 @@ class DatasetService:
     def enqueue_tokenize_stats(self, dataset_id: str, version_id: str) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.TOKENIZE_STATS,
             dataset_id=dataset_id,
             version_id=version_id,
@@ -458,7 +458,7 @@ class DatasetService:
     ) -> DatasetJob:
         self.get_dataset(dataset_id)
         self.get_version(version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.EXPORT,
             dataset_id=dataset_id,
             version_id=version_id,
@@ -478,7 +478,7 @@ class DatasetService:
     ) -> DatasetJob:
         # Early routing validation — worker re-resolves before indexing.
         resolved = self._resolve_indexable_version(dataset_id, version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.INDEX,
             dataset_id=dataset_id,
             version_id=resolved.version_id,
@@ -1005,7 +1005,7 @@ class DatasetService:
             if sibling is not None:
                 ver = sibling
                 ensure_materialized = False
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.INDEX,
             dataset_id=dataset_id,
             version_id=ver.version_id,
@@ -1231,7 +1231,7 @@ class DatasetService:
                 detected_format=source.detected_format,
                 format_confidence=source.format_confidence,
             )
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.DUPLICATE,
             dataset_id=target.dataset_id,
             version_id=None,
@@ -1712,7 +1712,7 @@ class DatasetService:
             raise DatasetError("Job missing dataset/version", code="incomplete_job")
         cfg = dict(job.config or {})
         cfg["resume"] = bool(resume)
-        new_job = self.store.create_job(
+        new_job = self._queue_domain_job(
             job_type=DatasetJobType.INDEX,
             dataset_id=job.dataset_id,
             version_id=job.version_id,
@@ -3047,7 +3047,7 @@ class DatasetService:
             checkpoint = dict(prior.checkpoint or {})
             if prior.config.get("sources") and not sources:
                 sources = list(prior.config.get("sources") or [])
-        job = self.store.create_job(
+        job = self._queue_domain_job(
             job_type=DatasetJobType.SHARD_INGEST,
             dataset_id=dataset_id,
             config={"sources": sources, "interrupt_after": interrupt_after},
@@ -3065,7 +3065,7 @@ class DatasetService:
         threshold: float = 0.35,
     ) -> DatasetJob:
         self.get_version(version_id)
-        return self.store.create_job(
+        return self._queue_domain_job(
             job_type=DatasetJobType.CONTAMINATION_SCAN,
             dataset_id=dataset_id,
             version_id=version_id,

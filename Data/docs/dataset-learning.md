@@ -31,6 +31,12 @@ A dataset is **geleerd** only when a READY `dataset_indexes` row exists.
 
 Use **either** the API in-process runner **or** an external worker — never both.
 
+**Claim owner when externalized:** Job Kernel capability `dataset.process`
+(`worker_pool=dataset`). Domain `dataset_jobs` keeps metadata and progress;
+`scripts/dataset_worker.py` / the `dataset` pool claims kernel leases and then
+CAS-claims the linked domain row by id. Do not run a second domain
+`claim_next_queued` loop while `LEVIATHAN_DATASET_JOBS_RUNNER=external`.
+
 ```bat
 REM Windows — stop competing in-process runner first
 set LEVIATHAN_DATASET_JOBS_RUNNER=external
@@ -44,7 +50,10 @@ python scripts/dataset_worker.py
 # or: python -m Data.modules.datasets.worker
 ```
 
-The worker executes the same `dataset_jobs` against the same SQLite DB / KnowledgeStore.
+Kernel linkage on enqueue: `domain_entity_type=dataset_job`,
+`domain_entity_id=<domain job id>`,
+`idempotency_key=dataset:process:{domain_job_id}`.
+
 A PID lock file next to the DB refuses a second concurrent executor.
 
 ## Sidecars & recovery
