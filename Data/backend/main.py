@@ -3355,9 +3355,38 @@ def ingest_knowledge_path(payload: KnowledgeIngestPath) -> dict:
     }
 
 
+def _enqueue_ingest_scan(limit: int, *, requested_by: str, extra_metadata: dict | None = None) -> dict:
+    """F0-lite: heavy ModelData scan runs on the knowledge_prepare pool, never inline."""
+    import uuid
+
+    job = job_runtime.enqueue(
+        capability_id="knowledge.ingest_scan",
+        arguments={"limit": limit},
+        requested_by=requested_by,
+        domain="knowledge",
+        domain_entity_type="knowledge_scan",
+        domain_entity_id=str(settings.knowledge.data_root),
+        worker_pool="knowledge_prepare",
+        resource_class="CPU_HEAVY",
+        latency_class="background",
+        idempotency_key=f"knowledge:ingest_scan:{uuid.uuid4().hex[:8]}",
+        metadata={"limit": limit, **dict(extra_metadata or {})},
+    )
+    return {
+        "job": job.public_dict(),
+        "queued": True,
+        "scanned": None,
+        "data_root": str(settings.knowledge.data_root),
+        "documents": [],
+        "truth": {"executed_via": "knowledge_prepare_worker", "result_in_job": True},
+    }
+
+
 @app.post("/api/knowledge/ingest/scan")
 def ingest_knowledge_scan(limit: int = 50) -> dict:
     safe_limit = min(max(limit, 1), 500)
+    if _evaluation_externalize():
+        return _enqueue_ingest_scan(safe_limit, requested_by="api.knowledge.ingest_scan")
     try:
         docs = knowledge.scan_data_root(limit=safe_limit)
     except ValueError as exc:
@@ -4505,6 +4534,13 @@ class NeuroAbsorbRequest(BaseModel):
 @app.post("/api/neuro/absorb")
 def neuro_absorb_scan(payload: NeuroAbsorbRequest) -> dict:
     """Operator-triggered ModelData absorb via Knowledge V2 (not a parallel pipeline)."""
+    if _evaluation_externalize():
+        queued = _enqueue_ingest_scan(
+            payload.limit, requested_by="api.neuro.absorb", extra_metadata={"neuro_absorb": True}
+        )
+        observability.emit("neuro", "absorb.enqueued", payload={"job_id": queued["job"]["job_id"]})
+        metrics.incr("neuro_absorb_scans")
+        return queued
     result = neuro_absorb.scan_once(limit=payload.limit)
     observability.emit("neuro", "absorb", payload={"ingested": result.get("ingested", 0)})
     metrics.incr("neuro_absorb_scans")
