@@ -867,6 +867,52 @@ class ResearchService:
 
         return ClaimEvidenceGraphBuilder(self.store).build(project_id).public_dict()
 
+    def list_gaps(self, project_id: str) -> list[dict[str, Any]]:
+        project = self.get_project(project_id)
+        from .gaps import GapAnalyzer
+
+        return [g.public_dict() for g in GapAnalyzer().analyze(self.store, project)]
+
+    def source_assessments(self, project_id: str) -> list[dict[str, Any]]:
+        project = self.get_project(project_id)
+        from .source_quality import assess_source
+
+        topic_tokens = [t.lower() for t in project.topic.split() if len(t) > 2]
+        out: list[dict[str, Any]] = []
+        for src in self.store.list_sources(project_id):
+            existing = (src.metadata or {}).get("source_assessment")
+            if isinstance(existing, dict):
+                out.append(existing)
+            else:
+                out.append(assess_source(src, topic_tokens=topic_tokens).public_dict())
+        return out
+
+    def citation_audit(self, project_id: str) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        from .citation_audit import audit_report
+
+        report = self.store.get_latest_report(project_id)
+        body = getattr(report, "body_markdown", "") if report is not None else ""
+        return audit_report(self.store, project, body or "").public_dict()
+
+    def quality_scorecard(self, project_id: str) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        from .quality_scorecard import build_quality_scorecard
+
+        report = self.store.get_latest_report(project_id)
+        body = getattr(report, "body_markdown", None) if report is not None else None
+        return build_quality_scorecard(self.store, project, report_markdown=body).public_dict()
+
+    def plan_history(self, project_id: str) -> list[dict[str, Any]]:
+        """Plan evolution events for operator inspection."""
+        self.get_project(project_id)
+        events = self.store.list_events(project_id, limit=500)
+        history: list[dict[str, Any]] = []
+        for ev in events:
+            if ev.event_type in {"plan_generated", "plan_adapted", "deepen_requested"}:
+                history.append(ev.public_dict())
+        return history
+
     def export_reproducibility_bundle(
         self,
         project_id: str,

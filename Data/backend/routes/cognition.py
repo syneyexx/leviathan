@@ -72,6 +72,38 @@ def build_cognition_router(runtime: CognitiveRuntime) -> APIRouter:
             _raise(exc)
             raise
 
+    @router.get("/api/cognition/runs/{run_id}/trace")
+    def cognition_trace(run_id: str) -> dict:
+        """Structured high-level run trace — not private chain-of-thought."""
+        try:
+            status = runtime.status(run_id)
+            events = runtime.events(run_id)
+            return {
+                "run_id": run_id,
+                "trace": {
+                    "task": status.get("task"),
+                    "mode": (status.get("decision") or {}).get("mode"),
+                    "strategy": (status.get("decision") or {}).get("strategy"),
+                    "budgets": (status.get("decision") or {}).get("budgets"),
+                    "plan": status.get("plan"),
+                    "actions": status.get("actions"),
+                    "observations": status.get("observations"),
+                    "beliefs": status.get("beliefs"),
+                    "verification": status.get("verification"),
+                    "completion": status.get("completion"),
+                    "usage": status.get("usage"),
+                    "status": status.get("status"),
+                    "events": events,
+                },
+                "truth": {
+                    "trace_is_not_private_cot": True,
+                    "rationale_is_orchestration_metadata": True,
+                },
+            }
+        except Exception as exc:  # noqa: BLE001
+            _raise(exc)
+            raise
+
     @router.post("/api/cognition/runs/{run_id}/cancel")
     def cognition_cancel(run_id: str) -> dict:
         try:

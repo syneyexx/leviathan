@@ -12,6 +12,7 @@ from .context_v3 import ContextBuilderV3, ContextV3Result
 from .delegation import DelegateRequest, DelegateResult, DelegationService
 from .errors import CognitionError, CognitionFeatureDisabled
 from .experience import ExperienceAdmissionPolicy, ExperienceStore, ProceduralMemoryHint, VerifiedExperience
+from .hypotheses import ConfidenceBand, Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band
 from .meta_controller import MetaController, MetaDecision
 from .model_adapter import build_control_plane_model_caller
 from .perception import PerceptionItem, PerceptionService, PerceptionSnapshot
@@ -62,6 +63,7 @@ __all__ = [
     "CognitiveRuntime",
     "CompletionDecision",
     "CompletionEngine",
+    "ConfidenceBand",
     "ContextBuilderV3",
     "ContextV3Result",
     "CriterionResult",
@@ -72,6 +74,9 @@ __all__ = [
     "ExperienceAdmissionPolicy",
     "ExperienceStore",
     "FailureCategory",
+    "Hypothesis",
+    "HypothesisBoard",
+    "HypothesisStatus",
     "MetaController",
     "MetaDecision",
     "PerceptionItem",
@@ -92,6 +97,7 @@ __all__ = [
     "build_control_plane_model_caller",
     "classify_failure",
     "classify_steer",
+    "confidence_to_band",
     "register_specialist_handlers",
     "should_blind_retry",
 ]

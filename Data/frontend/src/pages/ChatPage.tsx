@@ -33,6 +33,9 @@ type LastTurnMeta = {
   streaming: "idle" | "streaming" | "degraded" | "complete" | "failed";
   reasoning: ReasoningSummary | null;
   knowledgeSources: KnowledgeSource[];
+  cognitionMode: string | null;
+  cognitionStatus: string | null;
+  cognitionPhase: string | null;
 };
 
 const EMPTY_TURN: LastTurnMeta = {
@@ -43,6 +46,9 @@ const EMPTY_TURN: LastTurnMeta = {
   streaming: "idle",
   reasoning: null,
   knowledgeSources: [],
+  cognitionMode: null,
+  cognitionStatus: null,
+  cognitionPhase: null,
 };
 
 function formatTime(value: string | null | undefined): string {
@@ -123,6 +129,8 @@ export function ChatPage() {
     else tags.push("Auto");
     if (lastTurn.intent) tags.push(lastTurn.intent);
     if (lastTurn.complexity) tags.push(lastTurn.complexity);
+    if (lastTurn.cognitionMode) tags.push(`Reasoning ${lastTurn.cognitionMode}`);
+    if (lastTurn.cognitionPhase) tags.push(lastTurn.cognitionPhase);
     tags.push(
       lastTurn.knowledgeCount === 1
         ? "1 knowledge source"
@@ -471,6 +479,13 @@ export function ChatPage() {
         ];
       });
       const degraded = Boolean(data.truth?.streaming_degraded);
+      const cog = data.cognition && typeof data.cognition === "object" ? data.cognition : null;
+      const cogDecision =
+        cog && "decision" in cog && cog.decision && typeof cog.decision === "object"
+          ? (cog.decision as Record<string, unknown>)
+          : null;
+      const cogStatus =
+        cog && "status" in cog && typeof cog.status === "string" ? cog.status : null;
       setLastTurn({
         model: data.model || null,
         intent: data.reasoning?.intent ?? null,
@@ -479,6 +494,13 @@ export function ChatPage() {
         streaming: degraded ? "degraded" : "complete",
         reasoning: data.reasoning ?? null,
         knowledgeSources: data.knowledge_sources ?? [],
+        cognitionMode:
+          cogDecision && typeof cogDecision.mode === "string" ? String(cogDecision.mode) : null,
+        cognitionStatus: cogStatus,
+        cognitionPhase:
+          cogStatus && ["REASONING", "PERCEIVING", "VERIFYING", "EXECUTING"].includes(cogStatus)
+            ? cogStatus.charAt(0) + cogStatus.slice(1).toLowerCase()
+            : null,
       });
       const list = await refreshConversations(data.conversation_id);
       const active = list.find((item) => item.id === data.conversation_id);
@@ -881,6 +903,7 @@ export function ChatPage() {
                   : conversationId
                     ? "Persistent local session"
                     : "No active conversation"}
+                {lastTurn.cognitionMode ? ` · ${lastTurn.cognitionMode}` : ""}
                 {lastTurn.knowledgeCount
                   ? ` · ${lastTurn.knowledgeCount} knowledge source${
                       lastTurn.knowledgeCount === 1 ? "" : "s"
