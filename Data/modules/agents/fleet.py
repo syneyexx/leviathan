@@ -854,6 +854,14 @@ class AgentFleetService:
         return self._execute_mission(mission, agent, depth=depth, use_jobs=use_jobs)
 
     def _plan_payload(self, agent: AgentDefinition, request: str, *, depth: int) -> dict[str, Any]:
+        domain_executor = self._domain_executor_for(agent)
+        if domain_executor is not None and hasattr(domain_executor, "plan"):
+            return {
+                "kind": agent.kind.value,
+                "executor": getattr(domain_executor, "name", type(domain_executor).__name__),
+                "plan": domain_executor.plan(agent, request),
+                "request": request[:500],
+            }
         if agent.kind == AgentDefinitionKind.ORCHESTRATOR and agent.orchestrator:
             members = []
             for mid in agent.orchestrator.member_agent_ids:
@@ -872,14 +880,6 @@ class AgentFleetService:
                 "depth": depth,
                 "maxDepth": agent.orchestrator.max_delegation_depth,
                 "members": members,
-                "request": request[:500],
-            }
-        executor = self._kind_executors.get(agent.kind)
-        if executor is not None and hasattr(executor, "plan"):
-            return {
-                "kind": agent.kind.value,
-                "executor": getattr(executor, "name", type(executor).__name__),
-                "plan": executor.plan(agent, request),
                 "request": request[:500],
             }
         steps = self.runtime.plan(request, kind=self._execution_kind(agent))

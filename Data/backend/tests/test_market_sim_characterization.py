@@ -853,11 +853,13 @@ class D20ProductSurfaceCharacterization(unittest.TestCase):
 
 class D21MigrationHeadCharacterization(unittest.TestCase):
     def test_d21_current_real_head_tracks_migrations(self) -> None:
-        # After Adaptive Model Fabric (#119/#120): head is 42+.
+        # After Frontier Program F1 (trade orchestras): head is 43+.
         # Characterize against live MIGRATIONS rather than a frozen constant.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 42)
-        self.assertEqual(MIGRATIONS[-1].name, "resource_reservations_device_aware")
+        self.assertGreaterEqual(head, 43)
+        by_ver = {m.version: m.name for m in MIGRATIONS}
+        self.assertEqual(by_ver[42], "resource_reservations_device_aware")
+        self.assertEqual(by_ver[43], "trading_orchestra")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 
@@ -885,26 +887,37 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
 
 
 class D22BrainAsOfCharacterization(unittest.TestCase):
-    def test_d22_current_retrieve_has_no_as_of(self) -> None:
-        from Data.modules.market_sim.brain_hooks import BrainFacade
+    # D22 fixed by the Frontier Program (trade orchestras): retrieve() accepts ``as_of``
+    # and drops hits whose timestamp is newer than the decision time.
 
-        sig = inspect.signature(BrainFacade.retrieve)
-        self.assertNotIn("as_of", sig.parameters)
-        self.assertNotIn("available_at", sig.parameters)
-
-    def test_d22_current_retrieve_source_lacks_time_filter(self) -> None:
-        from Data.modules.market_sim import brain_hooks
-
-        src = inspect.getsource(brain_hooks.BrainFacade.retrieve)
-        self.assertNotIn("as_of", src)
-        self.assertNotIn("available_at", src)
-
-    @unittest.expectedFailure  # D22 — fixed in Phase T6B
-    def test_d22_desired_retrieve_accepts_as_of(self) -> None:
+    def test_d22_retrieve_accepts_as_of(self) -> None:
         from Data.modules.market_sim.brain_hooks import BrainFacade
 
         sig = inspect.signature(BrainFacade.retrieve)
         self.assertIn("as_of", sig.parameters)
+
+    def test_d22_retrieve_source_has_time_filter(self) -> None:
+        from Data.modules.market_sim import brain_hooks
+
+        src = inspect.getsource(brain_hooks.BrainFacade.retrieve)
+        self.assertIn("as_of", src)
+
+    def test_d22_as_of_drops_future_hits(self) -> None:
+        from Data.modules.market_sim.brain_hooks import BrainFacade
+
+        class _Mem:
+            def search(self, query: str, *, limit: int = 3) -> list[dict]:
+                return [
+                    {"id": "old", "created_at": "2024-01-01T00:00:00+00:00"},
+                    {"id": "new", "created_at": "2025-01-01T00:00:00+00:00"},
+                ]
+
+        facade = BrainFacade(memory=_Mem())
+        out = facade.retrieve("q", dependencies=["memory"], as_of="2024-06-01T00:00:00+00:00")
+        self.assertEqual([h["id"] for h in out.hits], ["old"])
+        self.assertTrue(any("as_of filter dropped 1" in n for n in out.notes))
+        unfiltered = facade.retrieve("q", dependencies=["memory"])
+        self.assertEqual(len(unfiltered.hits), 2)
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ from Data.backend.routes.agents import build_agents_router
 from Data.backend.routes.analytics import build_analytics_router
 from Data.modules.market_sim import MarketSimControlPlane
 from Data.backend.routes.market_sim import build_market_sim_router
+from Data.backend.routes.trading_orchestra import build_trading_orchestra_router
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
 from Data.modules.execution import (
@@ -1049,6 +1050,23 @@ coding_service.bind_intelligence(
     reasoning=reasoner,
 )
 
+# Trade orchestras / trading agents: trading-only protocol on the existing Agent Fleet.
+# Model calls go through the Model Control Plane (consumer="trading"); news I/O through
+# provider_io; risk decisions stay deterministic (Mandate + RiskGuard). Chat is untouched.
+from Data.modules.market_sim.orchestra import TradingOrchestraService
+from Data.modules.market_sim.orchestra.model_adapter import TradingModelAdapter
+from Data.modules.market_sim.orchestra.store import OrchestraStore
+
+trading_orchestra_service = TradingOrchestraService(
+    store=OrchestraStore(settings.database_path),
+    market_plane=market_sim_service,
+    model=TradingModelAdapter(model_plane, llm),
+    job_runtime=job_runtime,
+    approval_service=approval_service,
+    memory=memory_store,
+    enabled=bool(settings.features.market_sim_enabled),
+)
+
 
 def _wire_system_inventory_status() -> None:
     """Bind truthful status probes to components actually constructed above."""
@@ -1489,6 +1507,19 @@ async def lifespan(_: FastAPI):
     training_service.reconcile()
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
+    # Trading agents/orchestras live on the same fleet (visible on the Agents page);
+    # the trading executor claims kind=trading and role=trade_orchestra missions.
+    trading_orchestra_service.bind_fleet(agent_fleet)
+    try:
+        market_sim_service.attach_fleet(agent_fleet)
+    except Exception as exc:  # noqa: BLE001 — trading roles are optional at boot
+        observability.emit(
+            "market_sim",
+            "trading.roles.ensure_failed",
+            payload={"error": str(exc)[:300]},
+            level="warn",
+            message="Could not ensure trading roles on the Agent Fleet",
+        )
     research_service.recover()
     if externalize:
         # Durable agent missions: enqueue agent.advance; do not own in-process threads.
@@ -1647,6 +1678,7 @@ app.include_router(
 app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
+app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))
 app.include_router(build_settings_router(settings_plane))

@@ -1226,6 +1226,16 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "advance"],
     )
     _ext(
+        cap_id="market_sim.news.poll",
+        name="Poll Market News Feeds",
+        description="Fetch registered news feeds (via provider_io) and store items with a causal available_at.",
+        side_effects=(SideEffect.NETWORK, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={"feed_id": {"type": "string"}},
+        permissions=("network.outbound",),
+        tags=["market_sim", "news", "trading"],
+    )
+    _ext(
         cap_id="backup.create",
         name="Create Backup",
         description="Create a durable backup snapshot.",
