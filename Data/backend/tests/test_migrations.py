@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from Data.backend.migrations import Migration, MigrationError, MigrationRunner
+from Data.backend.migrations import MIGRATIONS, Migration, MigrationError, MigrationRunner
 
 
 class MigrationRunnerTests(unittest.TestCase):
@@ -14,49 +14,14 @@ class MigrationRunnerTests(unittest.TestCase):
             runner = MigrationRunner(path)
             first = runner.apply_all()
             second = runner.apply_all()
-            self.assertEqual(
-                first,
-                [
-                    1,
-                    2,
-                    3,
-                    4,
-                    5,
-                    6,
-                    7,
-                    8,
-                    9,
-                    10,
-                    11,
-                    12,
-                    13,
-                    14,
-                    15,
-                    16,
-                    17,
-                    18,
-                    19,
-                    20,
-                    21,
-                    22,
-                    23,
-                    24,
-                    25,
-                    26,
-                    27,
-                    28,
-                    29,
-                    30,
-                    31,
-                    32,
-                ],
-            )
+            head = MIGRATIONS[-1].version
+            self.assertEqual(first, list(range(1, head + 1)))
             self.assertEqual(second, [])
             conn_version = MigrationRunner(path)
             import sqlite3
 
             with sqlite3.connect(path) as conn:
-                self.assertEqual(conn_version.current_version(conn), 32)
+                self.assertEqual(conn_version.current_version(conn), head)
                 tables = {
                     row[0]
                     for row in conn.execute(
@@ -86,6 +51,8 @@ class MigrationRunnerTests(unittest.TestCase):
                 self.assertIn("model_lineage_edges", tables)
                 self.assertIn("flywheel_challenger_proposals", tables)
                 self.assertIn("flywheel_promotions", tables)
+                self.assertIn("resource_reservations", tables)
+                self.assertIn("inference_efficiency_capabilities", tables)
 
     def test_rejects_non_contiguous_versions(self) -> None:
         with self.assertRaises(MigrationError):

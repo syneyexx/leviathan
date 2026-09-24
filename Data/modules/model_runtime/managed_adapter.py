@@ -12,6 +12,7 @@ import uuid
 from typing import Any, AsyncIterator
 
 from Data.modules.model_runtime.latency import LatencyTimer
+from Data.modules.model_runtime.launch_strategy import BackendLaunchStrategy
 from Data.modules.model_runtime.serving import (
     ServingSupervisor,
     ServingWorker,
@@ -21,12 +22,14 @@ from Data.modules.model_runtime.serving import (
 )
 from Data.modules.models.contracts import (
     CapabilityState,
+    DeploymentPlan,
     LoadOptions,
     ModelCapabilities,
     ModelDescriptor,
     ModelHealthState,
     ModelLifecycleState,
     ModelSource,
+    MultiGpuCapability,
     ProviderHealth,
     RuntimeCapabilities,
 )
@@ -57,6 +60,8 @@ class ManagedLocalServingAdapter:
         command: list[str] | None = None,
         supervisor: ServingSupervisor | None = None,
         allow_inproc_fixture: bool = False,
+        multi_gpu_capability: MultiGpuCapability | str = MultiGpuCapability.UNKNOWN,
+        launch_strategy: BackendLaunchStrategy | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.backend_kind = backend_kind
@@ -65,6 +70,18 @@ class ManagedLocalServingAdapter:
         self.timeout_seconds = timeout_seconds
         self.command = list(command or [])
         self.allow_inproc_fixture = bool(allow_inproc_fixture)
+        if isinstance(multi_gpu_capability, MultiGpuCapability):
+            self.multi_gpu_capability = multi_gpu_capability
+        else:
+            try:
+                self.multi_gpu_capability = MultiGpuCapability(str(multi_gpu_capability))
+            except ValueError:
+                self.multi_gpu_capability = MultiGpuCapability.UNKNOWN
+        self.launch_strategy = launch_strategy or BackendLaunchStrategy(
+            backend_kind=backend_kind,
+            multi_gpu_capability=self.multi_gpu_capability,
+            base_command=self.command,
+        )
         # Prefer subprocess when a command is configured; otherwise inproc only if allowed.
         if self.command:
             self.mode = "subprocess"
@@ -77,6 +94,24 @@ class ManagedLocalServingAdapter:
             self.mode = "subprocess"
         self.supervisor = supervisor or get_serving_supervisor()
         self._model_to_worker: dict[str, str] = {}
+        self._last_launch_meta: dict[str, Any] = {}
+        load_opts: tuple[str, ...] = (
+            "contextLength",
+            "gpuOffloadLayers",
+            "gpuMemoryLimitBytes",
+            "cpuThreads",
+            "batchSize",
+            "flashAttention",
+            "preferredDeviceIds",
+            "pinnedDeviceIds",
+            "excludedDeviceIds",
+            "tensorSplit",
+            "mainGpuOrdinal",
+            "tensorParallelSize",
+            "allowMultiGpu",
+            "allowCpuOffload",
+            "shardingMode",
+        )
         self._capabilities = RuntimeCapabilities(
             discover_models=True,
             import_model=False,
@@ -92,13 +127,7 @@ class ManagedLocalServingAdapter:
             structured_output=False,
             vision=False,
             runtime_metrics=True,
-            load_options=(
-                "contextLength",
-                "gpuOffloadLayers",
-                "gpuMemoryLimitBytes",
-                "cpuThreads",
-                "batchSize",
-            ),
+            load_options=load_opts,
         )
 
     def capabilities(self) -> RuntimeCapabilities:
@@ -162,8 +191,13 @@ class ManagedLocalServingAdapter:
             )
         return out
 
-    async def load(self, model_id: str, options: LoadOptions | None = None) -> dict[str, Any]:
-        _ = options
+    async def load(
+        self,
+        model_id: str,
+        options: LoadOptions | None = None,
+        *,
+        deployment_plan: DeploymentPlan | None = None,
+    ) -> dict[str, Any]:
         existing = self._model_to_worker.get(model_id)
         if existing:
             worker = self.supervisor.get_worker(existing)
@@ -171,8 +205,12 @@ class ManagedLocalServingAdapter:
                 return {
                     "worker": worker.public_dict(),
                     "alreadyLoaded": True,
+                    "launch": self._last_launch_meta.get(model_id),
                     "truth": {"managed_serving": True},
                 }
+
+        plan = deployment_plan
+        opts = options or (plan.load_options if plan else None)
 
         if self.mode == "inproc":
             if not self.allow_inproc_fixture:
@@ -186,6 +224,15 @@ class ManagedLocalServingAdapter:
                     model_id=model_id,
                     http_status=409,
                 )
+            # Record launch intent even for inproc fixtures (tests assert options reach adapter).
+            launch_meta = {
+                "mode": "inproc",
+                "optionsApplied": opts.as_provider_payload(self._capabilities.load_options) if opts else {},
+                "planId": plan.plan_id if plan else None,
+                "devices": [d.public_dict() for d in plan.devices] if plan else [],
+                "multiGpuCapability": self.multi_gpu_capability.value,
+            }
+            self._last_launch_meta[model_id] = launch_meta
             worker = self.supervisor.start_inproc(
                 provider_id=self.provider_id,
                 model_id=model_id,
@@ -194,14 +241,21 @@ class ManagedLocalServingAdapter:
                 backend_kind=self.backend_kind,
             )
         else:
+            strategy = self.launch_strategy
+            strategy.multi_gpu_capability = self.multi_gpu_capability
+            if self.command and not strategy.base_command:
+                strategy.base_command = list(self.command)
+            launch = strategy.build(plan=plan, options=opts, endpoint=self.endpoint)
+            self._last_launch_meta[model_id] = launch.public_dict()
             worker = await asyncio.to_thread(
                 self.supervisor.start_subprocess,
                 provider_id=self.provider_id,
                 model_id=model_id,
                 backend_kind=self.backend_kind,
-                command=self.command,
+                command=list(launch.argv),
                 endpoint=self.endpoint,
                 revision_id=f"{self.backend_kind}:{model_id}",
+                env=dict(launch.env) if launch.env else None,
             )
 
         self._model_to_worker[model_id] = worker.worker_id
@@ -235,7 +289,9 @@ class ManagedLocalServingAdapter:
         return {
             "worker": worker.public_dict(),
             "alreadyLoaded": False,
-            "truth": {"managed_serving": True, "dead_is_not_ready": True},
+            "launch": self._last_launch_meta.get(model_id),
+            "deploymentPlanId": plan.plan_id if plan else None,
+            "truth": {"managed_serving": True, "dead_is_not_ready": True, "loadOptionsApplied": True},
         }
 
     async def unload(self, model_id: str) -> dict[str, Any]:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -891,6 +891,38 @@ model_plane = ModelControlPlane(settings, observability=observability)
 model_plane.bind_llm(llm)
 model_plane.bind_job_runtime(job_runtime)
 model_plane.set_telemetry_provider(lambda: system_telemetry_sampler.latest_public())
+
+# Shared physical reservation truth (model loads + background GPU workers).
+from Data.modules.workers.admission import ResourceAdmission as _ResourceAdmission
+
+_model_resource_admission = _ResourceAdmission(
+    settings.database_path,
+    ram_headroom_mb=float(getattr(getattr(settings, "managed_serving", None), "min_ram_reserve_bytes", 1_073_741_824) or 1_073_741_824) / (1024 * 1024),
+    vram_headroom_mb=float(getattr(getattr(settings, "managed_serving", None), "min_vram_reserve_bytes", 536_870_912) or 536_870_912) / (1024 * 1024),
+    telemetry_reader=lambda: _admission_telemetry_snapshot(system_telemetry_sampler, model_plane),
+    interactive_busy_fn=lambda: bool(model_plane.gateway.snapshot().global_inflight),
+    hardware_reader=model_plane.resources.hardware_snapshot,
+)
+_model_resource_admission.initialize()
+model_plane.bind_resource_admission(_model_resource_admission)
+
+
+def _admission_telemetry_snapshot(sampler: Any, plane: Any) -> dict[str, Any]:
+    """Map canonical hardware/telemetry into ResourceAdmission snapshot fields."""
+    try:
+        public = sampler.latest_public()
+    except Exception:  # noqa: BLE001
+        public = {}
+    mem = public.get("memory") if isinstance(public.get("memory"), dict) else {}
+    ram_bytes = mem.get("availableBytes")
+    hw = plane.resources.hardware_snapshot()
+    largest_free = hw.largest_single_device_free_bytes
+    return {
+        "ram_available_mb": (float(ram_bytes) / (1024 * 1024)) if isinstance(ram_bytes, int) else None,
+        "vram_available_mb": (float(largest_free) / (1024 * 1024)) if isinstance(largest_free, int) else None,
+        "devices": [d.public_dict() for d in hw.devices],
+        "source": "model_plane_hardware",
+    }
 settings_plane = SettingsControlPlane(settings)
 behavior_store = BehaviorProfileStore(settings.database_path)
 behavior_store.ensure_schema()

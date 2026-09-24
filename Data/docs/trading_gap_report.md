@@ -10,10 +10,10 @@
 
 ## Verdict
 
-Defects **D1–D31** re-verified against current `origin/main` (commit `4758738`).  
-**29 CONFIRMED · 2 PARTIAL (D19, D26) · 0 REFUTED · 0 ALREADY_FIXED.**
+Defects **D1–D31** re-verified against current `origin/main` (post-merge head **42**).  
+**28 CONFIRMED · 2 PARTIAL (D19, D26) · 0 REFUTED · 1 ALREADY_FIXED (D21).**
 
-The Market Simulation module remains a capable research prototype (multi-engine, Decimal wallets, commit-reveal, paper brokers, experiments, capability matrix, live guard, reserved `market_sim.advance` job), but **correctness defects D1–D8/D10 must be fixed before new research features are trusted**. Statistical/architecture gaps D11–D31 remain as documented. Migration head drift (**D21**) worsened: real head is **41**, not 34.
+The Market Simulation module remains a capable research prototype (multi-engine, Decimal wallets, commit-reveal, paper brokers, experiments, capability matrix, live guard, reserved `market_sim.advance` job), but **correctness defects D1–D8/D10 must be fixed before new research features are trusted**. Statistical/architecture gaps D11–D31 (except D21) remain as documented. **D21** (stale `test_migrations` head assert) was fixed on `main` via Adaptive Model Fabric — characterization now tracks live `MIGRATIONS[-1]`.
 
 **Characterization suite:** `Data/backend/tests/test_market_sim_characterization.py`  
 **Result (this run):** `74` passed (current-behaviour evidence) + `31` expectedFailure (desired contracts for later phases).
@@ -26,13 +26,12 @@ The Market Simulation module remains a capable research prototype (multi-engine,
 
 | Source | Head |
 |---|---|
-| `Data/backend/migrations.py` `MIGRATIONS[-1]` | **41** (`inference_efficiency`) |
-| Contiguous versions | `1 … 41` |
+| `Data/backend/migrations.py` `MIGRATIONS[-1]` | **42** (`resource_reservations_device_aware`) |
+| Contiguous versions | `1 … 42` |
 | Trading schema | **v16** (`market_sim`) + **v34** (`trading_center`) |
-| `test_migrations.py` expectation | **32** (stale — **FAILS** today) |
-| Prior gap report claim | 34 (now stale) |
+| `test_migrations.py` expectation | tracks `MIGRATIONS[-1].version` (**fixed on main**) |
 
-Next free contiguous migration number: **42**.  
+Next free contiguous migration number: **43**.  
 Extend v16/v34 tables; do not invent a second DB. Phase-owned schema only (Part C.4).
 
 ---
@@ -61,7 +60,7 @@ Extend v16/v34 tables; do not invent a second DB. Phase-owned schema only (Part 
 | **D18** Paper fragile | **CONFIRMED** | Manual orders; no RiskGuard; shared wallet reset | T9A / T9B |
 | **D19** Secrets/network | **PARTIAL** | Alpaca keys still `os.environ`; HTTP via provider_io when bound; Binance/Stooq still raw urllib | T4C / T2D |
 | **D20** Product surface | **CONFIRMED** | No order_type/limit on intent; unrealized stub 0; options/futures/forex NOT_IMPLEMENTED | T3A+ |
-| **D21** Migration drift | **CONFIRMED** | Real head **41**; `test_migrations` asserts **32** | first fix / T4D |
+| **D21** Migration drift | **ALREADY_FIXED** | Main now tracks head dynamically (`test_migrations` uses `MIGRATIONS[-1].version`); real head **42** (`resource_reservations_device_aware`) | — (was T4D) |
 | **D22** Brain as_of | **CONFIRMED** | `BrainFacade.retrieve` has no `as_of` | T6B |
 | **D23** Providers | **CONFIRMED** | Binance cap 1000, no pagination; urllib; CsvLocal first glob | T2D |
 | **D24** Instruments unused | **CONFIRMED** | `InstrumentSpec` unused in fill/risk; unknown→EQUITY | T3B |

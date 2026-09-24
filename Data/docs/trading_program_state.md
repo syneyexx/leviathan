@@ -84,7 +84,7 @@ Never mark `PASS` without evidence actually run.
 
 ## Defect register snapshot (T0)
 
-See gap report for full evidence. Summary: **29 CONFIRMED, 2 PARTIAL (D19, D26), 0 REFUTED, 0 ALREADY_FIXED.**
+See gap report for full evidence. Summary: **28 CONFIRMED, 2 PARTIAL (D19, D26), 0 REFUTED, 1 ALREADY_FIXED (D21).**
 
 ---
 
@@ -100,9 +100,9 @@ See gap report for full evidence. Summary: **29 CONFIRMED, 2 PARTIAL (D19, D26),
 | `Data/docs/trading_frontend_action_matrix.md` | DONE (inventory; G57 NOT_STARTED) |
 | `Data/backend/tests/trading_gates.json` | DONE (G01–G60) |
 | `scripts/verify_trading_100.py` | DONE (skeleton; exits 1 until 100%) |
-| Characterization D1–D31 | DONE (`74 passed / 31 xfailed`) |
+| Characterization D1–D31 | DONE (`77 passed / 30 xfailed` after main merge; D21 fixed) |
 | Ownership / worker / API maps | DONE (in gap report) |
-| Migration head truth | **41** (`inference_efficiency`) |
+| Migration head truth | **42** (`resource_reservations_device_aware`); D21 ALREADY_FIXED on main |
 
 ---
 
@@ -120,12 +120,19 @@ See gap report for full evidence. Summary: **29 CONFIRMED, 2 PARTIAL (D19, D26),
 - Baseline suites: see entries below after runs.
 - **No feature/fix code.** Stop for approval before T1A.
 
+### 2026-09-24 — Merge `origin/main` into T0 branch (conflict resolve)
+
+- Conflict only in `test_market_sim_characterization.py` D21 class (simple).
+- Kept main's dynamic head tracking (head **42** / `resource_reservations_device_aware`) + trading schema provenance checks (v16/v34).
+- D21 marked **ALREADY_FIXED**; characterization now **77 passed / 30 xfailed**.
+- No conflicting intents with Adaptive Model Fabric changes.
+
 ### Baseline suite results (fill after run)
 
 | Command | Exit | Notes |
 |---|---|---|
 | `pytest …/test_market_sim_characterization.py -q` | 0 | 74 passed, 31 xfailed |
 | `pytest …/test_market_sim.py …/test_trading_center.py -q` | 0 | 26 passed |
-| `pytest …/test_migrations.py -q` | 1 | `test_applies_baseline_once` asserts head 32 vs real 41 (D21) |
+| `pytest …/test_migrations.py -q` | 0 | tracks live head (D21 fixed on main) |
 | `python3 scripts/verify_trading_100.py` | 1 | 60× NOT_STARTED; anti-shortcut ok |
 | Frontend `npm run typecheck` / `npm test` / `lint` / `build` | 0 | typecheck OK; 131 vitest passed; lint warnings only (pre-existing, non-trading); build OK |
