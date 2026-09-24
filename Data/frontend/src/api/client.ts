@@ -108,6 +108,22 @@ import type {
   WorkflowCreatePayload,
   ScheduleRecord,
   ScheduleCreatePayload,
+  JobRecord,
+  TaskRecord,
+  TaskSummary,
+  TaskEvent,
+  TaskSubtask,
+  TaskNote,
+  TaskDependency,
+  TaskTimelineItem,
+  TaskWorkloadEntry,
+  TaskAgentActivity,
+  TaskWeekdayCompletions,
+  TaskCreatePayload,
+  TaskPatchPayload,
+  TaskQuickCapturePayload,
+  TaskAutoPlanProposal,
+  TaskListFilters,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -462,8 +478,8 @@ export const api = {
     });
   },
 
-  listJobs(): Promise<{ jobs: unknown[] }> {
-    return request<{ jobs: unknown[] }>("/api/jobs");
+  listJobs(): Promise<{ jobs: JobRecord[] }> {
+    return request<{ jobs: JobRecord[] }>("/api/jobs");
   },
 
   releaseGates(): Promise<{ report: ReleaseGateReport }> {
@@ -2297,5 +2313,223 @@ export const api = {
 
   analyticsTools(rangeKey = "7d"): Promise<{ tools: AnalyticsToolsResponse }> {
     return request(`/api/analytics/tools?rangeKey=${encodeURIComponent(rangeKey)}`);
+  },
+
+  /* ---------- Tasks / Taken ---------- */
+
+  listTasks(filters?: TaskListFilters): Promise<{ tasks: TaskRecord[] }> {
+    const params = new URLSearchParams();
+    if (filters?.search) params.set("search", filters.search);
+    if (filters?.boardColumn) params.set("boardColumn", filters.boardColumn);
+    if (filters?.executionState) params.set("executionState", filters.executionState);
+    if (filters?.priority) params.set("priority", filters.priority);
+    if (filters?.assignee) params.set("assignee", filters.assignee);
+    if (filters?.blocked != null) params.set("blocked", String(filters.blocked));
+    if (filters?.overdue != null) params.set("overdue", String(filters.overdue));
+    if (filters?.dueFrom) params.set("dueFrom", filters.dueFrom);
+    if (filters?.dueTo) params.set("dueTo", filters.dueTo);
+    if (filters?.project) params.set("project", filters.project);
+    if (filters?.archived != null) params.set("archived", String(filters.archived));
+    if (filters?.datePreset) params.set("datePreset", filters.datePreset);
+    if (filters?.timezone) params.set("timezone", filters.timezone);
+    if (filters?.limit != null) params.set("limit", String(filters.limit));
+    if (filters?.offset != null) params.set("offset", String(filters.offset));
+    const q = params.toString();
+    return request<{ tasks: TaskRecord[] }>(`/api/tasks${q ? `?${q}` : ""}`);
+  },
+
+  getTask(taskId: string): Promise<{ task: TaskRecord }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}`);
+  },
+
+  createTask(payload: TaskCreatePayload): Promise<{ task: TaskRecord }> {
+    return request("/api/tasks", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  updateTask(taskId: string, payload: TaskPatchPayload): Promise<{ task: TaskRecord }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  archiveTask(taskId: string): Promise<{ task: TaskRecord }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/archive`, { method: "POST" });
+  },
+
+  duplicateTask(taskId: string): Promise<{ task: TaskRecord }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/duplicate`, { method: "POST" });
+  },
+
+  startTask(taskId: string): Promise<{ task: TaskRecord }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/start`, { method: "POST" });
+  },
+
+  cancelTask(taskId: string): Promise<{ task: TaskRecord }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
+  },
+
+  retryTask(taskId: string): Promise<{ task: TaskRecord }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" });
+  },
+
+  listTaskEvents(
+    taskId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{ events: TaskEvent[] }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const q = params.toString();
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/events${q ? `?${q}` : ""}`);
+  },
+
+  listTaskSubtasks(taskId: string): Promise<{ subtasks: TaskSubtask[] }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/subtasks`);
+  },
+
+  createSubtask(taskId: string, title: string): Promise<{ subtask: TaskSubtask }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/subtasks`, {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    });
+  },
+
+  updateSubtask(
+    taskId: string,
+    subtaskId: string,
+    payload: { title?: string; completed?: boolean; sortOrder?: number },
+  ): Promise<{ subtask: TaskSubtask }> {
+    return request(
+      `/api/tasks/${encodeURIComponent(taskId)}/subtasks/${encodeURIComponent(subtaskId)}`,
+      { method: "PATCH", body: JSON.stringify(payload) },
+    );
+  },
+
+  deleteSubtask(taskId: string, subtaskId: string): Promise<{ ok: boolean }> {
+    return request(
+      `/api/tasks/${encodeURIComponent(taskId)}/subtasks/${encodeURIComponent(subtaskId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  listTaskNotes(taskId: string): Promise<{ notes: TaskNote[] }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/notes`);
+  },
+
+  createTaskNote(
+    taskId: string,
+    payload: { body: string; authorName?: string | null },
+  ): Promise<{ note: TaskNote }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/notes`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updateTaskNote(taskId: string, noteId: string, body: string): Promise<{ note: TaskNote }> {
+    return request(
+      `/api/tasks/${encodeURIComponent(taskId)}/notes/${encodeURIComponent(noteId)}`,
+      { method: "PATCH", body: JSON.stringify({ body }) },
+    );
+  },
+
+  deleteTaskNote(taskId: string, noteId: string): Promise<{ ok: boolean }> {
+    return request(
+      `/api/tasks/${encodeURIComponent(taskId)}/notes/${encodeURIComponent(noteId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  listTaskDependencies(taskId: string): Promise<{ dependencies: TaskDependency[] }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/dependencies`);
+  },
+
+  addTaskDependency(
+    taskId: string,
+    payload: { dependsOnTaskId: string; soft?: boolean },
+  ): Promise<{ dependency: TaskDependency }> {
+    return request(`/api/tasks/${encodeURIComponent(taskId)}/dependencies`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  removeTaskDependency(taskId: string, dependencyId: string): Promise<{ ok: boolean }> {
+    return request(
+      `/api/tasks/${encodeURIComponent(taskId)}/dependencies/${encodeURIComponent(dependencyId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  taskSummary(timezone?: string): Promise<{ summary: TaskSummary }> {
+    const params = new URLSearchParams();
+    if (timezone) params.set("timezone", timezone);
+    const q = params.toString();
+    return request(`/api/tasks/summary${q ? `?${q}` : ""}`);
+  },
+
+  taskActivity(opts?: { limit?: number; offset?: number }): Promise<{ activity: TaskEvent[] }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const q = params.toString();
+    return request(`/api/tasks/activity${q ? `?${q}` : ""}`);
+  },
+
+  taskTimeline(opts?: {
+    view?: string;
+    timezone?: string;
+  }): Promise<{ timeline: TaskTimelineItem[]; view: string }> {
+    const params = new URLSearchParams();
+    if (opts?.view) params.set("view", opts.view);
+    if (opts?.timezone) params.set("timezone", opts.timezone);
+    const q = params.toString();
+    return request(`/api/tasks/timeline${q ? `?${q}` : ""}`);
+  },
+
+  taskWorkload(): Promise<{ workload: TaskWorkloadEntry[] }> {
+    return request("/api/tasks/workload");
+  },
+
+  taskWeekdayCompletions(timezone?: string): Promise<TaskWeekdayCompletions> {
+    const params = new URLSearchParams();
+    if (timezone) params.set("timezone", timezone);
+    const q = params.toString();
+    return request(`/api/tasks/weekday-completions${q ? `?${q}` : ""}`);
+  },
+
+  taskAgentActivity(limit = 20): Promise<{ agents: TaskAgentActivity[] }> {
+    return request(`/api/tasks/agent-activity?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  quickCaptureTask(payload: TaskQuickCapturePayload): Promise<{ task: TaskRecord }> {
+    return request("/api/tasks/quick-capture", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  previewTaskAutoPlan(payload: {
+    brief: string;
+    targetDate?: string | null;
+    project?: string | null;
+    priority?: string | null;
+    allowedAgentIds?: string[];
+  }): Promise<{ proposals: TaskAutoPlanProposal[] }> {
+    return request("/api/tasks/auto-plan/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  commitTaskAutoPlan(payload: {
+    proposals: TaskAutoPlanProposal[];
+    project?: string | null;
+  }): Promise<{ tasks: TaskRecord[] }> {
+    return request("/api/tasks/auto-plan/commit", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 };

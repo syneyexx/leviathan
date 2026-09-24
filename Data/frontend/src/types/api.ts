@@ -2262,3 +2262,265 @@ export type AnalyticsToolsResponse = {
   approvals: { total: number };
   truth?: Record<string, boolean>;
 };
+
+/* ---------- Tasks / Taken ---------- */
+
+export type TaskBoardColumn = "backlog" | "in_progress" | "review" | "done";
+export type TaskPriorityValue = "low" | "medium" | "high";
+export type TaskExecutionBinding = "manual" | "agent_mission" | "capability_job" | "workflow";
+export type TaskAssigneeType = "none" | "human" | "agent" | "system";
+
+export type TaskBlockingDependency = {
+  taskId: string;
+  title: string;
+  boardColumn: TaskBoardColumn | string;
+  executionState?: string | null;
+};
+
+export type TaskRecord = {
+  taskId: string;
+  title: string;
+  description: string;
+  boardColumn: TaskBoardColumn | string;
+  blocked: boolean;
+  blockedReason?: string | null;
+  blockedReasonCode?: string | null;
+  priority: TaskPriorityValue | string;
+  tags: string[];
+  project?: string | null;
+  assigneeType: TaskAssigneeType | string;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  dueAt?: string | null;
+  plannedStartAt?: string | null;
+  completedAt?: string | null;
+  progress?: number | null;
+  displayProgress?: number | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string | null;
+  sourceType?: string;
+  sourceRef?: string | null;
+  executionBinding: TaskExecutionBinding | string;
+  jobId?: string | null;
+  workflowId?: string | null;
+  missionId?: string | null;
+  runId?: string | null;
+  approvalId?: string | null;
+  scheduleId?: string | null;
+  capabilityId?: string | null;
+  capabilityArguments?: Record<string, unknown>;
+  missionRequest?: string | null;
+  executionState?: string | null;
+  executionError?: string | null;
+  executionPhase?: string | null;
+  executionAttempt?: number | null;
+  executionProgress?: number | null;
+  executionStartedAt?: string | null;
+  executionFinishedAt?: string | null;
+  boardOrder?: number;
+  createdBy?: string;
+  metadata?: Record<string, unknown>;
+  subtaskCount?: number;
+  subtaskCompleted?: number;
+  blockingDependencies?: TaskBlockingDependency[];
+};
+
+export type TaskSummary = {
+  active: number;
+  inProgress: number;
+  blocked: number;
+  completedToday: number;
+  overdue: number;
+  agentsAssigned: number;
+  completedPreviousPeriod?: number | null;
+  completedTodayDelta?: string | null;
+  columnCounts: Record<string, number>;
+  timezone: string;
+};
+
+export type TaskEvent = {
+  eventId: string;
+  taskId: string;
+  eventType: string;
+  actorType?: string;
+  actorId?: string | null;
+  sourceType?: string | null;
+  sourceRef?: string | null;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+  taskTitle?: string | null;
+};
+
+export type TaskSubtask = {
+  subtaskId: string;
+  taskId: string;
+  title: string;
+  completed: boolean;
+  completedAt?: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TaskNote = {
+  noteId: string;
+  taskId: string;
+  body: string;
+  authorType?: string;
+  authorId?: string | null;
+  authorName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TaskDependencyTarget = {
+  taskId: string;
+  title: string;
+  boardColumn: TaskBoardColumn | string;
+  executionState?: string | null;
+  blocked?: boolean;
+  completed?: boolean;
+};
+
+export type TaskDependency = {
+  dependencyId: string;
+  taskId: string;
+  dependsOnTaskId: string;
+  soft: boolean;
+  createdAt: string;
+  dependsOn?: TaskDependencyTarget;
+};
+
+export type TaskTimelineItem = {
+  taskId: string;
+  title: string;
+  boardColumn: TaskBoardColumn | string;
+  startAt?: string | null;
+  endAt?: string | null;
+  kind: string;
+  executionState?: string | null;
+  blocked?: boolean;
+};
+
+export type TaskWorkloadEntry = {
+  assigneeId?: string | null;
+  assigneeName: string;
+  assigneeType: string;
+  activeCount: number;
+  inProgressCount: number;
+  blockedCount: number;
+  overdueCount: number;
+  maxConcurrency?: number | null;
+  capacityPct?: number | null;
+};
+
+export type TaskAgentActivity = {
+  agentId: string;
+  name: string;
+  status: string;
+  detail?: string | null;
+  phase?: string | null;
+  progress?: number | null;
+  activeTaskCount: number;
+  activeTaskId?: string | null;
+  lastRunAt?: string | null;
+  missionId?: string | null;
+};
+
+export type TaskWeekdayCompletions = {
+  timezone: string;
+  weekStart: string;
+  bars: number[];
+  weekdays: string[];
+};
+
+export type TaskCreatePayload = {
+  title: string;
+  description?: string;
+  priority?: string;
+  boardColumn?: string;
+  tags?: string[];
+  project?: string | null;
+  assigneeType?: string;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  dueAt?: string | null;
+  plannedStartAt?: string | null;
+  progress?: number | null;
+  executionBinding?: string;
+  capabilityId?: string | null;
+  capabilityArguments?: Record<string, unknown>;
+  missionRequest?: string | null;
+  workflowId?: string | null;
+  scheduleId?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type TaskPatchPayload = {
+  title?: string;
+  description?: string;
+  priority?: string;
+  boardColumn?: string;
+  tags?: string[];
+  project?: string | null;
+  assigneeType?: string;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  dueAt?: string | null;
+  plannedStartAt?: string | null;
+  progress?: number | null;
+  manualBlock?: boolean | null;
+  blockedReason?: string | null;
+};
+
+export type TaskQuickCapturePayload = {
+  title: string;
+  description?: string;
+  priority?: string;
+  dueAt?: string | null;
+  assigneeType?: string;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+};
+
+export type TaskAutoPlanProposal = {
+  title: string;
+  description?: string;
+  priority?: string;
+  suggestedAssigneeId?: string | null;
+  tags?: string[];
+  dueAt?: string | null;
+  dependencies?: number[];
+};
+
+export type TaskListFilters = {
+  search?: string;
+  boardColumn?: string;
+  executionState?: string;
+  priority?: string;
+  assignee?: string;
+  blocked?: boolean;
+  overdue?: boolean;
+  dueFrom?: string;
+  dueTo?: string;
+  project?: string;
+  archived?: boolean;
+  datePreset?: string;
+  timezone?: string;
+  limit?: number;
+  offset?: number;
+};
+
+/** Minimal job shape for listJobs hardening. */
+export type JobRecord = {
+  jobId?: string;
+  id?: string;
+  state?: string;
+  status?: string;
+  capabilityId?: string | null;
+  error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: unknown;
+};
