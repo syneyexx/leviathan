@@ -36,6 +36,11 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "backup.create",
         "maintenance.reconcile",
         "agent.advance",
+        "provider.http",
+        "provider.chat.complete",
+        "provider.chat.stream",
+        "provider.market.fetch",
+        "provider.hf.list",
     }
 )
 
@@ -117,6 +122,14 @@ class JobRuntime:
             if existing is not None:
                 self.telemetry["idempotent_hits"] = int(self.telemetry.get("idempotent_hits", 0)) + 1
                 return existing
+        resolved_pool = worker_pool
+        if not resolved_pool:
+            try:
+                from Data.modules.workers.pools import pool_for_capability
+
+                resolved_pool = pool_for_capability(capability_id)
+            except Exception:  # noqa: BLE001
+                resolved_pool = None
         create_kwargs: dict[str, Any] = {
             "capability_id": capability_id,
             "arguments": arguments,
@@ -135,7 +148,7 @@ class JobRuntime:
             "root_job_id": root_job_id,
             "domain_entity_type": domain_entity_type,
             "domain_entity_id": domain_entity_id,
-            "worker_pool": worker_pool,
+            "worker_pool": resolved_pool,
             "resource_class": resource_class,
             "priority": priority,
             "timeout_seconds": timeout_seconds,

@@ -702,9 +702,51 @@ class MarketSimControlPlane:
         limit: int = 500,
     ) -> dict[str, Any]:
         self._require_enabled()
-        result = self.providers.import_to_csv(
-            provider_id, symbol, timeframe, self.data.markets_root, limit=limit
-        )
+        use_provider_io = False
+        if self._runners_externalized() and self.job_runtime is not None:
+            try:
+                from Data.modules.provider_io.readiness import provider_io_workers_ready
+
+                db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+                use_provider_io = provider_io_workers_ready(db_path)
+            except Exception:  # noqa: BLE001
+                use_provider_io = False
+        if use_provider_io:
+            from Data.modules.provider_io.errors import ProviderError
+            from Data.modules.provider_io.facade import ProviderExecutionClient
+
+            client = ProviderExecutionClient(self.job_runtime)
+            try:
+                exec_result = client.submit_and_wait(
+                    provider=provider_id,
+                    capability="market.fetch",
+                    payload={
+                        "provider_id": provider_id,
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "limit": limit,
+                        "markets_root": str(self.data.markets_root),
+                    },
+                    credential_ref="none",
+                    latency_class="background",
+                    requested_by="market_sim_service",
+                    deadline_seconds=90.0,
+                )
+            except ProviderError as exc:
+                raise MarketSimError(
+                    exc.code.value,
+                    str(exc),
+                    http_status=503 if exc.retryable else 502,
+                ) from exc
+            if exec_result.status != "succeeded" or not isinstance(exec_result.structured, dict):
+                err = (exec_result.error or {}).get("message") or "provider_io market fetch failed"
+                code = (exec_result.error or {}).get("code") or "PROVIDER_UNAVAILABLE"
+                raise MarketSimError(str(code), str(err), http_status=502)
+            result = dict(exec_result.structured)
+        else:
+            result = self.providers.import_to_csv(
+                provider_id, symbol, timeframe, self.data.markets_root, limit=limit
+            )
         source = self.data.register_file(
             result["relative_path"],
             symbol=result["symbol"],
@@ -719,6 +761,7 @@ class MarketSimControlPlane:
             "kind": "ohlcv",
             "family": infer_family(symbol).value,
             "not_orderbook": True,
+            "executed_via": "provider_io" if use_provider_io else "control_plane",
         }
         source.updated_at = utc_now()
         self.store.upsert_source(source)

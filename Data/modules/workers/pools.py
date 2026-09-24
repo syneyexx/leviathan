@@ -73,6 +73,25 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         resource_classes=("IO_HEAVY", "CPU_HEAVY", "MEMORY_HEAVY"),
         description="Dataset download/profile/index/export — kernel claim owner when externalized",
     ),
+    "provider_io": PoolDefinition(
+        pool_id="provider_io",
+        entrypoint="Data.modules.workers.entrypoints.provider_io",
+        default_count=2,
+        job_kinds=(
+            "provider.",
+            "provider.http",
+            "provider.chat.complete",
+            "provider.chat.stream",
+            "provider.market.fetch",
+            "provider.hf.list",
+        ),
+        resource_classes=("NETWORK_BOUND", "CPU_LIGHT"),
+        description=(
+            "External provider / SaaS I/O — remote LLM HTTP, search APIs, "
+            "bounded market/HF metadata fetches (not bulk dataset downloads)"
+        ),
+        max_count=8,
+    ),
     "research": PoolDefinition(
         pool_id="research",
         entrypoint="Data.modules.workers.entrypoints.research",
