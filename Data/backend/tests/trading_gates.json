@@ -1,0 +1,730 @@
+{
+  "schema_version": 1,
+  "program": "Master Program v4",
+  "phase": "T0",
+  "frozen_at": "2026-09-24",
+  "characterization": {
+    "test_module": "Data/backend/tests/test_market_sim_characterization.py",
+    "defects": "D1-D31",
+    "last_run": {
+      "date": "2026-09-24",
+      "result": "74 passed, 31 xfailed",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_characterization.py -q"
+    }
+  },
+  "live_integrations_never_pass_offline": [
+    "live LLM trading role calls",
+    "live market feed",
+    "live broker / real-money path"
+  ],
+  "explicitly_not_claimed": [
+    "profitability or expected returns of any strategy or agent",
+    "gym performance transfers to real markets",
+    "production-grade live execution or any live venue integration",
+    "L5 autonomy",
+    "microstructure realism without L2/L3 data",
+    "options/futures/forex support unless separately built and proven",
+    "tax/legal compliance",
+    "investment advice"
+  ],
+  "gates": {
+    "G01": {
+      "title": "Streaming ingest 5y\u00d71m within memory budget",
+      "phase": "T2A/T3C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D8",
+        "D9"
+      ]
+    },
+    "G02": {
+      "title": "Timestamp parser + quarantine",
+      "phase": "T2B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D9"
+      ]
+    },
+    "G03": {
+      "title": "Quality report persisted",
+      "phase": "T2B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D9"
+      ]
+    },
+    "G04": {
+      "title": "Corporate actions point-in-time",
+      "phase": "T2B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G05": {
+      "title": "Immutable content-addressed datasets",
+      "phase": "T2A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D7"
+      ]
+    },
+    "G06": {
+      "title": "Split manifests TRAIN/VAL/SEALED",
+      "phase": "T2C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G07": {
+      "title": "Providers pagination/backoff/network policy",
+      "phase": "T2D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D23"
+      ]
+    },
+    "G08": {
+      "title": "Kernel v2 golden fills/PnL",
+      "phase": "T3A/T3B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D5"
+      ]
+    },
+    "G09": {
+      "title": "Accounting invariants property-based",
+      "phase": "T3A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G10": {
+      "title": "Instrument rules enforced",
+      "phase": "T3B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D24"
+      ]
+    },
+    "G11": {
+      "title": "Determinism fingerprint/kill-resume/cross-process",
+      "phase": "T3C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D6"
+      ]
+    },
+    "G12": {
+      "title": "Causality MarketView poison-future",
+      "phase": "T1D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D10"
+      ]
+    },
+    "G13": {
+      "title": "Throughput/memory measured; 5y 1m no OOM",
+      "phase": "T3C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D8"
+      ]
+    },
+    "G14": {
+      "title": "Kernel v2 legacy parity report",
+      "phase": "T3C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G15": {
+      "title": "Strategy Spec v2 + feature library",
+      "phase": "T3D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G16": {
+      "title": "Code strategy sandbox escape suite",
+      "phase": "T3E",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": []
+    },
+    "G17": {
+      "title": "Immutable strategy versions + lineage",
+      "phase": "T3D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G18": {
+      "title": "Metrics v2 ledger-derived + bootstrap CIs",
+      "phase": "T5A/T5D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D1",
+        "D2"
+      ]
+    },
+    "G19": {
+      "title": "Global append-only Trial Ledger",
+      "phase": "T5A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D14"
+      ]
+    },
+    "G20": {
+      "title": "WFA/purged CV/CPCV/robustness suite",
+      "phase": "T5B/T5C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D13"
+      ]
+    },
+    "G21": {
+      "title": "Acceptance from run IDs; sealed single-use",
+      "phase": "T5A/T5C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D11",
+        "D12"
+      ]
+    },
+    "G22": {
+      "title": "Strategy Library persist/recall/lessons",
+      "phase": "T6A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D15"
+      ]
+    },
+    "G23": {
+      "title": "Brain/Memory as_of or excluded",
+      "phase": "T6B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D22"
+      ]
+    },
+    "G24": {
+      "title": "Trading role executors on Agent Fleet",
+      "phase": "T7A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D17"
+      ]
+    },
+    "G25": {
+      "title": "ResearchCampaign durable/resumable",
+      "phase": "T7B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G26": {
+      "title": "TradingGym causal reset/step",
+      "phase": "T8A/T8B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G27": {
+      "title": "Agent scorecards + leaderboard penalty",
+      "phase": "T8D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G28": {
+      "title": "Readiness ladder A0\u2013A4; A5 blocked",
+      "phase": "T8D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G29": {
+      "title": "Trajectory export via Datasets/Training",
+      "phase": "T8C/T8D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G30": {
+      "title": "Sim-to-real gap report",
+      "phase": "T8D/T9C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G31": {
+      "title": "Promotion state machine",
+      "phase": "T6C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G32": {
+      "title": "PaperForwardRunner autonomous loop",
+      "phase": "T9A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D18"
+      ]
+    },
+    "G33": {
+      "title": "Reconciliation + drift + watchdog",
+      "phase": "T9C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G34": {
+      "title": "Risk Engine v2 on every order path",
+      "phase": "T9B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D18"
+      ]
+    },
+    "G35": {
+      "title": "BrokerAdapter; LiveBroker UNSUPPORTED",
+      "phase": "T9C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D19",
+        "D20"
+      ]
+    },
+    "G36": {
+      "title": "Hash-chained audit ledger",
+      "phase": "T9D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G37": {
+      "title": "Capabilities via Gateway",
+      "phase": "T4A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D16"
+      ]
+    },
+    "G38": {
+      "title": "JobStore leases; no double-claim",
+      "phase": "T4B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D25",
+        "D26"
+      ]
+    },
+    "G39": {
+      "title": "Persistence hot path + migrations",
+      "phase": "T4D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D8",
+        "D21"
+      ]
+    },
+    "G40": {
+      "title": "Settings + SecretsBroker",
+      "phase": "T4C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D19"
+      ]
+    },
+    "G41": {
+      "title": "Trading Center pages real data",
+      "phase": "T10A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D27"
+      ]
+    },
+    "G42": {
+      "title": "Run configuration UI complete",
+      "phase": "T10A",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D27"
+      ]
+    },
+    "G43": {
+      "title": "verify_trading_100 + CI + docs",
+      "phase": "T11",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G44": {
+      "title": "Completion Report with evidence",
+      "phase": "T11",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G45": {
+      "title": "All T0 characterization \u2192 regressions",
+      "phase": "T11",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D1-D31"
+      ]
+    },
+    "G46": {
+      "title": "False-discovery calibration FDR/power",
+      "phase": "T5D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": []
+    },
+    "G47": {
+      "title": "Windows worker/sandbox/job paths",
+      "phase": "T4B/T11",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G48": {
+      "title": "Security posture live flag off",
+      "phase": "T9D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G49": {
+      "title": "Observability trading category",
+      "phase": "T4D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G50": {
+      "title": "Backup/restore trading tables",
+      "phase": "T4D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G51": {
+      "title": "Interactive-priority isolation",
+      "phase": "T4B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D26"
+      ]
+    },
+    "G52": {
+      "title": "Mutation idempotency",
+      "phase": "T4B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G53": {
+      "title": "Full provenance fingerprint",
+      "phase": "T6C",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G54": {
+      "title": "Disaster recovery temp-target",
+      "phase": "T4D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G55": {
+      "title": "Data provenance/licensing state",
+      "phase": "T2D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G56": {
+      "title": "Unified time semantics",
+      "phase": "T2B",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D9"
+      ]
+    },
+    "G57": {
+      "title": "Frontend action matrix complete",
+      "phase": "T10D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only",
+      "related_defects": [
+        "D27"
+      ]
+    },
+    "G58": {
+      "title": "Operational telemetry truthful",
+      "phase": "T4D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G59": {
+      "title": "Typed frontend contracts",
+      "phase": "T10A/T10D",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    "G60": {
+      "title": "Compatibility/migration posture",
+      "phase": "T11",
+      "status": "NOT_STARTED",
+      "required": true,
+      "evidence": [],
+      "test_node_ids": [],
+      "checks": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    }
+  }
+}

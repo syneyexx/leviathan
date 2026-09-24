@@ -1,21 +1,24 @@
-# LEVIATHAN Trading Gap Report — Phase T0
+# LEVIATHAN Trading Gap Report — Phase T0 (Master Program v4)
 
 **Date:** 2026-09-24  
-**Branch:** `cursor/trading-phase-t0-6512`  
+**Branch:** `cursor/trading-program-t0-7fd3`  
 **Scope:** Recon + characterization only. **No feature/fix code.**  
-**Program:** [`trading_program.md`](./trading_program.md) (v2, source-verified)  
+**Program:** [`trading_program.md`](./trading_program.md) (v4)  
 **Operator note:** Market data is operator-supplied; this phase does not ingest or commit bulk OHLCV.
 
 ---
 
 ## Verdict
 
-All defects **D1–D21 are PRESENT** (re-verified against current `origin/main` source). The Market Simulation module is substantially further along than early docs alone suggested (multi-engine, Decimal wallets, commit-reveal, paper brokers, experiments, capability matrix, live guard), but **correctness defects D1–D8/D10 must be fixed before new research features are trusted**. Statistical/architecture gaps D11–D21 remain as documented.
+Defects **D1–D31** re-verified against current `origin/main` (commit `4758738`).  
+**29 CONFIRMED · 2 PARTIAL (D19, D26) · 0 REFUTED · 0 ALREADY_FIXED.**
+
+The Market Simulation module remains a capable research prototype (multi-engine, Decimal wallets, commit-reveal, paper brokers, experiments, capability matrix, live guard, reserved `market_sim.advance` job), but **correctness defects D1–D8/D10 must be fixed before new research features are trusted**. Statistical/architecture gaps D11–D31 remain as documented. Migration head drift (**D21**) worsened: real head is **41**, not 34.
 
 **Characterization suite:** `Data/backend/tests/test_market_sim_characterization.py`  
-**Result (this run):** `66` tests — `45` pass (current-behaviour evidence) + `21` expectedFailure (desired contracts for T1+).
+**Result (this run):** `74` passed (current-behaviour evidence) + `31` expectedFailure (desired contracts for later phases).
 
-**Stop for approval** before Phase T1.
+**Stop for approval** before Phase T1A.
 
 ---
 
@@ -23,49 +26,106 @@ All defects **D1–D21 are PRESENT** (re-verified against current `origin/main` 
 
 | Source | Head |
 |---|---|
-| `Data/backend/migrations.py` `MIGRATIONS[-1]` | **34** (`trading_center`) |
-| Contiguous versions | `1 … 34` |
+| `Data/backend/migrations.py` `MIGRATIONS[-1]` | **41** (`inference_efficiency`) |
+| Contiguous versions | `1 … 41` |
+| Trading schema | **v16** (`market_sim`) + **v34** (`trading_center`) |
 | `test_migrations.py` expectation | **32** (stale — **FAILS** today) |
+| Prior gap report claim | 34 (now stale) |
 
-Next free contiguous migration number: **35**.
-
-Existing trading-related schema: **v16** (`market_sim`) + **v34** (`trading_center` — paper sessions, experiments, strategy memories, source ALTERs). Extend these; do not invent a second DB.
+Next free contiguous migration number: **42**.  
+Extend v16/v34 tables; do not invent a second DB. Phase-owned schema only (Part C.4).
 
 ---
 
-## Defect register (PRESENT / ABSENT / UNKNOWN)
+## Defect register
 
 | ID | Status | Evidence (short) | Fix phase |
 |---|---|---|---|
-| **D1** Annualization | **PRESENT** | `compute_metrics(..., periods_per_year=252.0)`; both `_finalize_metrics` omit the arg | T1 |
-| **D2** Win rate / PF | **PRESENT** | `SimFill.public_dict()` has no `realized_delta`; metrics stay UNMEASURED | T1 |
-| **D3** orders/day | **PRESENT** | `RiskGuard.orders_today` incremented in multi fill path; never rolled | T1 |
-| **D4** Tiny sizing | **PRESENT** | `qty=None` → ~1% notional via `per_trade_risk_pct` | T1 |
-| **D5** Dual fills / partials | **PRESENT** | `FillModel` vs `NextBarFillModel`; partial → `intent.status="filled"`, remainder dropped | T1 |
-| **D6** Resume / lease | **PRESENT** | Multi `prepare` rewinds clock (`bar_index-1`), rebuilds wallets from initial cash; `worker_pid=1` no TTL; not JobRuntime | T1 / T5 |
-| **D7** Data hash | **PRESENT** | `prepare()` loads path; no sha256 vs `run.data_hash` | T1 |
-| **D8** Hot path | **PRESENT** | New SQLite conn per write; multi reloads equity every slice; `list_equity` truncates; `load_ohlcv` → full `list[Bar]` | T1 / T2 |
-| **D9** Ingest | **PRESENT** | All-or-nothing INVALID; duplicates OK; `YYYYMMDD` → 1970 epoch; µs epoch overflow; no quality report | T2 |
-| **D10** Clock.bars | **PRESENT** | Public `bars` bypasses `observe()`; `assert_no_future` is string `>` | T1 |
-| **D11** Caller metrics | **PRESENT** | `complete_experiment` accepts arbitrary `metrics` → `evaluate_acceptance` | T4 |
-| **D12** Key mismatch | **PRESENT** | Acceptance reads `*_pct` / `trade_count`; `compute_metrics` emits fractions / no trade_count | T4 |
-| **D13** WFA not executed | **PRESENT** | One chronological split stored; no per-window runs; no CPCV/PBO/DSR | T4 |
-| **D14** Trial ledger | **PRESENT** | Fingerprint blocks rejected-only; upsert omits `strategy_version` on UPDATE | T4 |
-| **D15** Memory disconnect | **PRESENT** | `MultiEngineState.memory` empty; `prepare` never calls `list_strategy_memories` | T7 |
-| **D16** Gateway bypass | **PRESENT** | Routes → service directly; role “capabilities” are labels; `crypto_paper = AVAILABLE if … else AVAILABLE` | T5 |
-| **D17** Agents not agents | **PRESENT** | Deliberation = DSL; fleet → `GENERIC`; `reconcile` → `INTERRUPTED` | T8 |
-| **D18** Paper fragile | **PRESENT** | Manual orders only; no RiskGuard; `start_paper_session` resets shared `broker.wallet.cash` | T9 |
-| **D19** Secrets/network | **PRESENT** | Alpaca/env + urllib; LiveTradingGuard env; providers urllib; no SecretsBroker | T5 |
-| **D20** Product surface | **PRESENT** | options/futures/forex `NOT_IMPLEMENTED`; `OrderIntent` lacks order_type/limit; `Portfolio.unrealized_pnl` stub 0; demo copies test fixtures | T3 / later |
-| **D21** Migration drift | **PRESENT** | Real head 34; `test_migrations` asserts 32 (**fails**) | T0 follow-up / first fix PR |
+| **D1** Annualization | **CONFIRMED** | `compute_metrics` default `periods_per_year=252.0`; engines omit arg | T1A |
+| **D2** Win rate / PF | **CONFIRMED** | `SimFill.public_dict()` has no `realized_delta` | T1A |
+| **D3** orders/day | **CONFIRMED** | `RiskGuard.orders_today` never resets | T1B |
+| **D4** Tiny sizing | **CONFIRMED** | `qty=None` → ~1% notional via `per_trade_risk_pct` | T1B |
+| **D5** Dual fills / partials | **CONFIRMED** | `FillModel` vs `NextBarFillModel`; partial → remainder dropped | T1B |
+| **D6** Resume / lease | **CONFIRMED** | Incomplete checkpoints; soft `worker_pid=1` no TTL | T1C |
+| **D7** Data hash | **CONFIRMED** | `prepare()` loads path; no hash compare | T1C |
+| **D8** Hot path | **CONFIRMED** | Per-write SQLite conn; O(n²) equity reload; full `list[Bar]` | T1C / T2A |
+| **D9** Ingest | **CONFIRMED** | All-or-nothing INVALID; YYYYMMDD→1970; no quality report | T2A / T2B |
+| **D10** Clock.bars | **CONFIRMED** | Public `bars`; string `assert_no_future` | T1D |
+| **D11** Caller metrics | **CONFIRMED** | `complete_experiment` accepts arbitrary metrics | T5A |
+| **D12** Key mismatch | **CONFIRMED** | Acceptance reads `*_pct` / `trade_count`; metrics emit fractions | T5A |
+| **D13** WFA not executed | **CONFIRMED** | One chronological split stored; no per-window runs | T5B |
+| **D14** Trial ledger | **CONFIRMED** | Rejected-only fingerprint; upsert drops `strategy_version` | T5A |
+| **D15** Memory disconnect | **CONFIRMED** | Fresh empty `StrategyMemoryIndex` per run | T6A |
+| **D16** Gateway bypass | **CONFIRMED** | Routes → service directly; `crypto_paper` both-branch AVAILABLE | T4A |
+| **D17** Agents not agents | **CONFIRMED** | Deliberation = DSL; fleet → GENERIC; reconcile → INTERRUPTED | T7A |
+| **D18** Paper fragile | **CONFIRMED** | Manual orders; no RiskGuard; shared wallet reset | T9A / T9B |
+| **D19** Secrets/network | **PARTIAL** | Alpaca keys still `os.environ`; HTTP via provider_io when bound; Binance/Stooq still raw urllib | T4C / T2D |
+| **D20** Product surface | **CONFIRMED** | No order_type/limit on intent; unrealized stub 0; options/futures/forex NOT_IMPLEMENTED | T3A+ |
+| **D21** Migration drift | **CONFIRMED** | Real head **41**; `test_migrations` asserts **32** | first fix / T4D |
+| **D22** Brain as_of | **CONFIRMED** | `BrainFacade.retrieve` has no `as_of` | T6B |
+| **D23** Providers | **CONFIRMED** | Binance cap 1000, no pagination; urllib; CsvLocal first glob | T2D |
+| **D24** Instruments unused | **CONFIRMED** | `InstrumentSpec` unused in fill/risk; unknown→EQUITY | T3B |
+| **D25** Double-claim | **CONFIRMED** | SELECT then UPDATE without `BEGIN IMMEDIATE`; dual worker planes | T4B |
+| **D26** JobRuntime | **PARTIAL** | Cap reserved + enqueue path exists when externalized; default still soft daemon | T4B |
+| **D27** UI gaps | **CONFIRMED** | Hard-coded 4-agent create; oldest-N live + `.slice(-40)` | T10A |
+| **D28** Weak tests | **CONFIRMED** | Short determinism window; demo accepts RUNNING; hand metrics | ongoing / T11 |
+| **D29** Per-agent eval | **CONFIRMED** | Leaderboard lacks Sharpe/DD/CI | T1A / T8D |
+| **D30** Commit-reveal | **CONFIRMED** | info_version = last 64 closes; poke `_open`; veto mutates commit | T1D |
+| **D31** Cadence | **CONFIRMED** | Default agents injected; deliberation_every_n side-effect | T1D |
 
-No claim was refuted (ABSENT). No UNKNOWN after recon.
+No claim was REFUTED. No ALREADY_FIXED.
 
-### Notable nuances (not ABSENT)
+### Notable nuances
 
-- **D6 clock:** legacy `SimulationEngine.prepare` sets `bar_index-1` then overwrites to `bar_index` (skips re-process) but still fails to restore `avg_entry` / pending intents / peak equity. Multi-engine off-by-one is clear.
-- **D9 µs epochs:** `_normalize_ts("1704067200000000")` raises `ValueError: year … out of range` after a single `/1000` — mishandled, not silently wrong-dated.
-- **D10:** `assert_no_future` is defined but unused in production call sites; public `bars` remains the real look-ahead hazard for future code strategies.
+- **D19:** Alpaca *HTTP* can go through provider_io workers; credential source and public providers remain defective.
+- **D26:** Durable `market_sim.advance` path exists when workers externalized + `job_runtime` bound; soft-lease default path still present → PARTIAL.
+- **D6 clock:** legacy prepare overwrites index after `bar_index-1` (skips re-process) but still fails to restore `avg_entry` / pending / peak; multi-engine off-by-one remains clear.
+- **D9 µs epochs:** `_normalize_ts` of a 16-digit µs epoch raises `ValueError` after one `/1000` — mishandled, not silently wrong-dated.
+
+---
+
+## Ownership map (sole authorities — Part C.1)
+
+| Concern | Sole authority (current / target) |
+|---|---|
+| Market clock / causality | `SimulationClock` → Kernel v2 |
+| Orders / fills / positions / PnL | engines + accounting → Kernel v2 |
+| Execution-cost truth | fill models → unified Kernel execution model |
+| Trading risk decision | `RiskGuard` → Risk Engine v2 |
+| External side-effect authority | **should be** ExecutionGateway (today: routes bypass) |
+| Long-running work | JobRuntime / JobStore (`market_sim.advance` reserved) |
+| Worker process ownership | Worker Supervisor / Registry (`pool_id=market_sim`) |
+| Trading job pool | existing `market_sim` pool — **no second queue** |
+| Model calls | Model Control Plane |
+| Agent execution | AgentFleet / AgentRuntime / Cognitive Runtime |
+| Secrets | SecretsBroker (today bypassed for Alpaca env) |
+| User/system configuration | Settings Control Plane (`markt_sim`) |
+| Metadata persistence | central SQLite + MigrationRunner |
+| Large series/artifacts | ArtifactStore (not yet wired for equity/trades) |
+| Knowledge/memory | Knowledge V2 / Memory (as_of missing) |
+| Verified trading evidence | trial/validation ledgers (local/incomplete today) |
+| Strategy promotion | not yet — Promotion state machine (T6C) |
+| Frontend HTTP client | `Data/frontend/src/api/client.ts` |
+| Frontend contracts | `Data/frontend/src/types/api.ts` |
+| Navigation/routes | `App.tsx` + `navigation/menu.ts` |
+
+### Worker / job / capability map
+
+| Item | Location | Value |
+|---|---|---|
+| Pool | `workers/pools.py` | `pool_id="market_sim"`, entrypoint `Data.modules.workers.entrypoints.market_sim`, `CPU_HEAVY` |
+| External caps | `jobs/runtime.py` | `market_sim.advance`, `provider.market.fetch`, `provider.alpaca.paper` |
+| Catalog caps | `execution/builtins.py` | same IDs registered for fabric workers |
+| Compat script | `scripts/market_sim_worker.py` | soft daemon via `from_settings` — competing plane today |
+| Gateway mutations | routes | **bypass** — direct `MarketSimControlPlane` calls |
+
+### API route map
+
+All under `/api/market-sim/*` (see `routes/market_sim.py`): status, health, data*, strategies*, runs*, providers*, capabilities, paper/*, experiments*, demos/run, live-trading. Adjacent: `POST /api/trading/order` → TradingStub 501.
+
+### Frontend routes (preserve)
+
+`/trading/simulatie`, `/strategieen`, `/marktdata`, `/portefeuille`, `/paper`, `/broker` — menu owned by `navigation/menu.ts`. Missing v4 pages (Onderzoek, Validatie, Bibliotheek, Training, Risico) wait for backend capability (T10B).
 
 ---
 
@@ -73,102 +133,52 @@ No claim was refuted (ABSENT). No UNKNOWN after recon.
 
 | Need | Reuse | Avoid |
 |---|---|---|
-| Side effects / approvals | `ExecutionGateway` + `CapabilityCatalog` (`execution/`) | Direct route→broker side effects; second catalog |
-| Long work / leases | `JobRuntime` + JobStore leases/heartbeats | Soft `worker_pid` forever-lease; second queue |
-| Secrets | `SecretsBroker.issue` / `resolve_lease` | `os.environ` for Alpaca; secrets in prompts |
-| Agents / missions | `AgentFleetService` + `AgentRuntime` + Cognition DAG | Second fleet/mission store; LLM in per-bar loop |
-| Promotion pattern | `training/promotion.py` + `evaluation/platform.py` gates | Silent strategy “prod” swap |
-| Isolation / sandbox | `isolation/*` + Module Manager honesty | Claiming OS isolation without measured probes |
-| Persistence | Central SQLite via `MigrationRunner` + `ArtifactStore` for series | Second trading DB |
-| Live refusal | `LiveTradingGuard` + `TradingStub` (501) | Third refuse path with different semantics |
-| Multi-agent games | Keep `commit_reveal` + `multi_engine` | Rewriting competition protocol for research kernel |
-| UI | Existing `/trading/*` Dutch pages + `/api/market-sim/*` | Reskin or second Trading API |
-| Data root | Operator markets root / `LEVIATHAN_MARKETS_ROOT` | Committing bulk OHLCV to git |
+| Side effects / approvals | ExecutionGateway + CapabilityCatalog | Direct route→broker; second catalog |
+| Long work / leases | JobRuntime + JobStore | Soft forever-lease; second queue |
+| Secrets | SecretsBroker | `os.environ` for Alpaca in prompts/logs |
+| Agents / missions | AgentFleet + AgentRuntime + Cognition | Second fleet; LLM in per-bar loop |
+| Promotion pattern | `training/promotion.py` + evaluation gates | Silent “prod” swap |
+| Isolation | `isolation/*` + honest effectiveIsolation | Claiming OS isolation without probes |
+| Persistence | MigrationRunner + ArtifactStore | Second trading DB |
+| Live refusal | LiveTradingGuard + TradingStub | Third refuse path |
+| Multi-agent games | Keep commit_reveal + multi_engine | Rewriting competition for research kernel |
+| UI | Existing `/trading/*` + `/api/market-sim/*` | Second Trading shell/API |
+| Data root | `LEVIATHAN_MARKETS_ROOT` | Committing bulk OHLCV to git |
 
 ---
 
 ## Conflict risks
 
-1. **Two “capability” languages** — `build_market_capabilities` status matrix vs Gateway `CapabilityCatalog`. T5 must register real caps without deleting the honesty matrix.
-2. **Two workers** — `MarketSimWorker` daemon vs `JobRuntime`. Dual claim of the same run would corrupt leases; migrate ownership cleanly.
-3. **Two order surfaces** — `/api/trading/order` (stub 501) vs `/api/market-sim/paper/*`. Keep stub as live-refuse only.
-4. **In-sim “agents” vs Fleet agents** — roles in deliberation are DSL participants; Fleet is durable registry. Do not conflate mission state with sim rounds.
-5. **ProviderRegistry vs future NETWORK caps** — public Binance/Stooq urllib bypasses network policy today.
-6. **HADES / editor** — do not import from `Data/HADES` or editor folders (invariant).
+1. Two “capability” languages — status matrix vs Gateway catalog (T4A).
+2. Two workers — soft daemon vs JobRuntime (T4B); dual claim corrupts runs.
+3. Two order surfaces — `/api/trading/order` stub vs paper routes.
+4. In-sim “agents” vs Fleet agents — do not conflate.
+5. Provider urllib vs network policy.
+6. HADES / editor — do not import.
 
 ---
 
-## Frontend surface (recon)
+## Baseline suite honesty (T0)
 
-Pages under `Data/frontend/src/pages/trading/`: Marktdata, Simulatie, Strategieën, Paper, Portefeuille, Broker + `shared.tsx`. Menu: TradingCenter. Styles: `trading.css` / `trading-pages.css`. API via existing client patterns to `/api/market-sim/*`. Broker page is honesty/blocked. **Do not re-skin in T0–T9**; T10 extends tabs only.
-
-`test_trading_center.py` covers next-bar fills, commit-reveal, risk override block, kill-switch, memory as-of causality, capabilities NI, TradingStub refuse, demos, paper idempotency, hand-crafted acceptance — **not** Gateway wiring, metric-key honesty, walk-forward execution, or migration head.
-
----
-
-## Proposed file-level plan (post-approval)
-
-### Phase T1 (correctness) — extend in place
-- `metrics.py` — timeframe→`periods_per_year`; round-trip trade metrics
-- `types.py` / engines — `realized_delta` / trade ledger on fills
-- `risk_guard.py` + `multi_engine.py` — day rollover; sizing models recorded on run
-- Unify on Decimal fill path (`execution.py`); deprecate dual use of `fill_model.py` for new runs (keep selectable until Kernel v2)
-- `engine.py` / `multi_engine.py` / `worker.py` / `store.py` — checkpoint resume, hash check, batched persistence, lease expiry
-- `causality.py` — add bounded `MarketView` (keep `SimulationClock` semantics)
-- Fix **D21** in `test_migrations.py` → expect head **34** (or 35 if T1 ships a migration)
-- Characterization expectedFailures for D1–D8, D10 → remove markers as fixed
-
-### Phase T2 — `ingest/` / data platform (streaming, quality, calendars, splits)
-### Phase T3 — `kernel/` + strategy spec v2 (parity before deprecating legacy)
-### Phase T4 — validation / trial ledger / acceptance from run IDs
-### Phase T5 — Gateway caps, JobRuntime worker, SecretsBroker for Alpaca
-### Phase T6–T11 — as in `trading_program.md`
-
-Suggested first migration (when T1 needs schema): **v35** — run checkpoints, trade ledger table, lease/heartbeat columns on `market_sim_runs` (adapt after T1 design). Prefer ALTER/extend over duplicate table families.
-
----
-
-## Risk register
-
-| Risk | Impact | Mitigation |
+| Suite | Result | Notes |
 |---|---|---|
-| Fixing metrics changes historical run numbers | Confusion / false “regressions” | Version metrics; record `periods_per_year` + kernel/metrics version on run |
-| Unifying fill models changes equity curves | Breaks golden comparisons | Keep `engine: legacy` selectable until Kernel v2 parity (program §T1/T3) |
-| JobRuntime migration orphans in-flight runs | Stuck runs | Lease expiry reclaim + one-shot reconcile tool |
-| Sealed holdout discipline not yet enforced | Future overfitting | Do not expand experiment acceptance until T4 |
-| Large 1m crypto files | OOM on `list[Bar]` | No full-list hot path after T2; operator data stays out of git |
-| Enabling live accidentally | Capital risk | Keep LiveTradingGuard + TradingStub; `TRADING_LIVE` default false forever in this program |
-| LLM treated as evidence | False discoveries | Numeric claims only from run/evidence IDs (T4/T8) |
+| `test_market_sim_characterization.py` | **74 passed, 31 xfailed** | T0 deliverable |
+| `test_market_sim.py` | run in baseline | — |
+| `test_trading_center.py` | run in baseline | uses hand-typed metrics (D11/D28) |
+| `test_migrations.py` | **expected FAIL** (asserts head 32 vs 41) | D21 evidence |
+| Full `Data/backend/tests` | recorded in state log | pre-existing failures allowed if unrelated |
+| Frontend typecheck/lint/test/build | recorded in state log | — |
+| `scripts/verify_trading_100.py` | exits **1** (gates NOT_STARTED) | expected until 100% |
 
 ---
 
-## Characterization test map
+## Performance budget freeze
 
-File: `Data/backend/tests/test_market_sim_characterization.py`
-
-| Pattern | Meaning |
-|---|---|
-| `test_dN_current_*` | Documents broken/current behaviour — **passes now** |
-| `test_dN_desired_*` + `@expectedFailure` | Desired contract — **xfail until fixing phase** |
-
-**This run:** `Ran 66 tests in ~1.3s — OK (expected failures=21)`.
-
-Also confirmed separately: `test_migrations.MigrationRunnerTests` **FAILS** on head expectation 32 vs real 34 (D21 evidence).
+- [`trading_reference_hardware.json`](./trading_reference_hardware.json) — Linux Cloud Agent VM (Windows target documented).
+- [`trading_performance_budget.json`](./trading_performance_budget.json) — hard memory/OOM + complexity invariants; throughput reportable.
 
 ---
 
-## Explicitly NOT claimed (T0)
+## Explicitly NOT claimed (unchanged)
 
-- No correctness fixes applied  
-- No new features, flags, routes, or migrations  
-- No profitability of any strategy  
-- No live trading path  
-- No bulk market data supplied or committed (operator-owned)  
-- Full backend/frontend suites not re-run end-to-end in T0 beyond characterization + migration probe  
-- Live LLM / live feed / live broker **NOT TESTED**
-
----
-
-## Approval gate
-
-Please approve **Phase T1 — Correctness Fix Wave (D1–D8, D10, D19-part, D21 test alignment)** before any feature work. Recommended first commit in T1: turn D21 green by aligning `test_migrations.py` to head 34, then failing→fix loops per defect with characterization markers removed as they pass.
+Profitability; gym→real transfer; production live execution; L5 autonomy; microstructure without L2/L3; options/futures/forex unless proven; tax/legal; investment advice.
