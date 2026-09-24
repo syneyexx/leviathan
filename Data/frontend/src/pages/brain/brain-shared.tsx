@@ -215,10 +215,14 @@ export function Heatmap({
   grid,
   rowLabels,
   colLabels,
+  labelWidth = 48,
+  compact = false,
 }: {
   grid: readonly (readonly number[])[];
   rowLabels?: readonly string[];
   colLabels?: readonly string[];
+  labelWidth?: number;
+  compact?: boolean;
 }) {
   const colorFor = (v: number) => {
     if (v > 0.85) return "#F0C875";
@@ -228,9 +232,9 @@ export function Heatmap({
     return "#1a2740";
   };
   return (
-    <div className="lv-br-heatmap">
+    <div className={`lv-br-heatmap${compact ? " is-compact" : ""}`}>
       {colLabels ? (
-        <div className="lv-br-heatmap-cols" style={{ gridTemplateColumns: `48px repeat(${colLabels.length}, 1fr)` }}>
+        <div className="lv-br-heatmap-cols" style={{ gridTemplateColumns: `${labelWidth}px repeat(${colLabels.length}, minmax(0, 1fr))` }}>
           <span />
           {colLabels.map((c) => (
             <span key={c}>{c}</span>
@@ -238,7 +242,7 @@ export function Heatmap({
         </div>
       ) : null}
       {grid.map((row, ri) => (
-        <div key={ri} className="lv-br-heatmap-row" style={{ gridTemplateColumns: `48px repeat(${row.length}, 1fr)` }}>
+        <div key={ri} className="lv-br-heatmap-row" style={{ gridTemplateColumns: `${labelWidth}px repeat(${row.length}, minmax(0, 1fr))` }}>
           <span className="lv-br-heatmap-ylab">{rowLabels?.[ri] ?? ""}</span>
           {row.map((v, ci) => (
             <span key={ci} className="lv-br-heatmap-cell" style={{ background: colorFor(v) }} title={v.toFixed(2)} />
