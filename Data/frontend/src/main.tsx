@@ -21,6 +21,8 @@ import "./styles/agents.css";
 import "./styles/media-instagram.css";
 import "./styles/media-facebook.css";
 import "./styles/brain-pages.css";
+import "./styles/brain-fidelity.css";
+import "./styles/brain-fidelity-layout.css";
 import "./styles/pixel-pages.css";
 import "./styles/plugin-runtime-pages.css";
 import "./styles/onderzoek-kennis.css";
