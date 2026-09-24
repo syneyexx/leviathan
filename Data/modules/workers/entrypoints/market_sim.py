@@ -9,20 +9,49 @@ from Data.modules.workers.entrypoints._cli import main_for_pool
 
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.states import JobState
+    from Data.modules.market_sim.types import RunStatus, TERMINAL_RUN_STATUSES
 
+    args = dict(getattr(job, "arguments", None) or {})
+    simulation_id = str(args.get("simulation_id") or args.get("run_id") or "")
     try:
         from Data.modules.market_sim.service import MarketSimControlPlane
 
-        service = MarketSimControlPlane.from_settings(ctx["settings"])
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+
         advanced = False
-        if hasattr(service, "worker") and hasattr(service.worker, "process_next"):
-            advanced = bool(service.worker.process_next())
-        ctx["job_store"].transition(
-            job.job_id,
-            JobState.COMPLETED,
-            result={"advanced": advanced},
-        )
-        return {"advanced": advanced}
+        if simulation_id and hasattr(plane.worker, "process_run"):
+            advanced = bool(plane.worker.process_run(simulation_id))
+        elif hasattr(plane.worker, "process_next"):
+            advanced = bool(plane.worker.process_next())
+
+        result: dict[str, Any] = {
+            "advanced": advanced,
+            "simulation_id": simulation_id or None,
+        }
+        # One slice per job; enqueue continuation while still active.
+        if simulation_id:
+            run = plane.store.get_run(simulation_id)
+            if run is not None:
+                result["run_status"] = run.status
+                if run.status not in TERMINAL_RUN_STATUSES and run.status in {
+                    RunStatus.QUEUED.value,
+                    RunStatus.RUNNING.value,
+                    RunStatus.STEPPING.value,
+                }:
+                    try:
+                        nxt = plane.enqueue_advance(
+                            simulation_id,
+                            parent_job_id=job.job_id,
+                            requested_by="market_sim_worker",
+                        )
+                        result["continuation_job_id"] = nxt.job_id
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        return result
     except Exception as exc:  # noqa: BLE001
         ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
         return {"error": str(exc)}

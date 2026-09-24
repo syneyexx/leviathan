@@ -281,7 +281,7 @@ agent_fleet = AgentFleetService(
 )
 analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
-workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
+workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway, job_runtime=job_runtime)
 schedule_store = ScheduleStore(settings.database_path)
 schedule_runner = ScheduleRunner(
     schedule_store,
@@ -449,6 +449,8 @@ market_sim_service = MarketSimControlPlane.from_settings(
     neuro=neuro_advisor,
     observability_emit=observability.emit,
 )
+if hasattr(market_sim_service, "bind_job_runtime"):
+    market_sim_service.bind_job_runtime(job_runtime)
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
 browser_worker = BrowserWorker(
     artifact_store=artifacts,
@@ -3832,11 +3834,34 @@ def get_workflow(workflow_id: str) -> dict:
 
 @app.post("/api/workflows/{workflow_id}/run")
 def run_workflow(workflow_id: str) -> dict:
+    """Start a workflow. When workers are externalized, enqueue workflow.advance
+    instead of blocking the API on the full step sequence.
+    """
     try:
+        from Data.modules.workers.settings import load_worker_settings
+
+        externalize = bool(load_worker_settings().externalize_api_runners)
+    except Exception:  # noqa: BLE001
+        externalize = False
+    try:
+        if externalize and getattr(workflow_runtime, "job_runtime", None) is not None:
+            job = workflow_runtime.enqueue_advance(workflow_id, requested_by="api")
+            record = workflow_store.get(workflow_id)
+            if record is None:
+                raise KeyError(workflow_id)
+            return {
+                "workflow": record.public_dict(),
+                "job": job.public_dict(),
+                "mode": "enqueued",
+            }
         record = workflow_runtime.run(workflow_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Workflow not found") from exc
-    return {"workflow": record.public_dict()}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"workflow": record.public_dict(), "mode": "foreground"}
 
 
 @app.post("/api/workflows/{workflow_id}/cancel")
@@ -4300,8 +4325,34 @@ def invoke_plugin(plugin_id: str, payload: PluginInvokeRequest) -> dict:
     }
 
 
+def _evaluation_externalize() -> bool:
+    try:
+        from Data.modules.workers.settings import load_worker_settings
+
+        return bool(load_worker_settings().externalize_api_runners)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _enqueue_evaluation_suite(suite_id: str, *, arguments: dict | None = None) -> dict:
+    job = job_runtime.enqueue(
+        capability_id="evaluation.run",
+        arguments={"suite_id": suite_id, "persist": True, **dict(arguments or {})},
+        requested_by="api",
+        domain="evaluation",
+        domain_entity_type="evaluation_suite",
+        domain_entity_id=suite_id,
+        worker_pool="evaluation",
+        latency_class="background",
+        idempotency_key=f"evaluation:run:{suite_id}:{__import__('uuid').uuid4().hex[:8]}",
+    )
+    return {"job": job.public_dict(), "queued": True, "suite_id": suite_id}
+
+
 @app.post("/api/evaluation/foundation")
 def run_foundation_evaluation() -> dict:
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("foundation")
     if settings.features.eval_platform:
         report = evaluation_platform.run_foundation(persist=True)
     else:
@@ -4315,6 +4366,8 @@ def run_foundation_evaluation() -> dict:
 
 @app.post("/api/evaluation/neuro")
 def run_neuro_evaluation() -> dict:
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("neuro_ablation")
     report = evaluation_harness.run_suite(
         "neuro_ablation",
         evaluation_harness.neuro_ablation_suite(
