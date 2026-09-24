@@ -1,0 +1,388 @@
+{
+  "generated_at": "2026-09-24T21:28:18+00:00",
+  "phase": "T0",
+  "program": "Master Program v4",
+  "all_required_pass": false,
+  "counts": {
+    "NOT_STARTED": 60
+  },
+  "gates": [
+    {
+      "id": "G01",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G02",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G03",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G04",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G05",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G06",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G07",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G08",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G09",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G10",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G11",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G12",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G13",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G14",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G15",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G16",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G17",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G18",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G19",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G20",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G21",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G22",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G23",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G24",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G25",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G26",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G27",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G28",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G29",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G30",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G31",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G32",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G33",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G34",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G35",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G36",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G37",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G38",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G39",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G40",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G41",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G42",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G43",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G44",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G45",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G46",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G47",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G48",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G49",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G50",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G51",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G52",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G53",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G54",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G55",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G56",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G57",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G58",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G59",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    },
+    {
+      "id": "G60",
+      "status": "NOT_STARTED",
+      "evidence": [],
+      "notes": "T0: gate not yet implemented; characterization only"
+    }
+  ],
+  "anti_shortcut": {
+    "ok": true,
+    "finding_count": 0,
+    "findings": [],
+    "truncated": false
+  },
+  "explicitly_not_claimed": [
+    "profitability or expected returns of any strategy or agent",
+    "gym performance transfers to real markets",
+    "production-grade live execution or any live venue integration",
+    "L5 autonomy",
+    "microstructure realism without L2/L3 data",
+    "options/futures/forex support unless separately built and proven",
+    "tax/legal compliance",
+    "investment advice"
+  ],
+  "state_file": "Data/docs/trading_program_state.md"
+}

@@ -6,7 +6,39 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
-## 2026-09-24 — Trading Research Factory Phase T0 (Gap Report) — PASS (recon only)
+## 2026-09-24 — Trading Center Master Program v4 — Phase T0 (recon) — AWAITING APPROVAL
+
+### Objective
+Execute **T0 only** of Master Program v4: characterization for D1–D31, state/gap reports, ownership maps, frozen performance budgets, gate manifest G01–G60, verifier skeleton. **No feature/fix code.**
+
+### Added / changed
+- **Program:** `Data/docs/trading_program.md` — Master Program v4 (supersedes v2)
+- **State:** `Data/docs/trading_program_state.md` — gate table + session log
+- **Gap report:** `Data/docs/trading_gap_report.md` — D1–D31; migration head **41**
+- **Budgets:** `trading_reference_hardware.json`, `trading_performance_budget.json` (frozen)
+- **Action matrix:** `trading_frontend_action_matrix.md` (inventory; G57 NOT_STARTED)
+- **Gates:** `Data/backend/tests/trading_gates.json` (G01–G60 all NOT_STARTED)
+- **Verifier:** `scripts/verify_trading_100.py` (exits 1 until all required gates PASS)
+- **Tests:** `test_market_sim_characterization.py` extended to D31 — **74 passed / 31 xfailed**
+- **No feature code, no migrations, no flag changes**
+
+### Baseline honesty
+- `test_market_sim.py` + `test_trading_center.py`: **26 passed**
+- `test_migrations.py`: **FAIL** (asserts head 32 vs real **41**) — D21
+- `verify_trading_100.py`: exit **1**, 60× NOT_STARTED (expected)
+- Frontend typecheck/test/lint/build: **green** (131 vitest; lint warnings pre-existing non-trading)
+
+### Explicitly NOT claimed
+- Any correctness fix (T1A+)
+- Gate PASS for G01–G60
+- Profitability, live execution, gym→real transfer
+
+### Status
+**Stop for approval** before T1A (Metrics/accounting truth).
+
+---
+
+## 2026-09-24 — Trading Research Factory Phase T0 (Gap Report) — PASS (recon only) [superseded by v4]
 
 ### Objective
 Source-verify Market Sim defects D1–D21, write characterization tests, and produce an approval-gated gap report before any correctness fixes or feature work (`trading_program.md` Phase T0).
