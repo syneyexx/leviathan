@@ -78,6 +78,21 @@ Canonical scheduler: `Data/modules/jobs`.
 See `Data/modules/workers/pools.py`. Counts via `LEVIATHAN_WORKERS_POOL_<NAME>_COUNT`.
 Pool workers must not import `Data.backend.main` (architecture tests enforce this).
 
+### Provider I/O (`provider_io`)
+
+Outbound external API / SaaS work (remote OpenAI-compatible chat, bounded HTTP,
+market OHLCV fetch, HF dataset *listing*) runs in the `provider_io` pool under the
+same WorkerSupervisor. Default count: 2 (`LEVIATHAN_WORKERS_POOL_PROVIDER_IO_COUNT`).
+
+- Control Plane submits durable jobs via `Data.modules.provider_io.facade.ProviderExecutionClient`
+- Workers own process-local HTTP clients, retries, circuits, and stream events
+- Secrets use `credential_ref` / ephemeral file refs — never raw keys in job JSON
+- Streaming deltas: `GET /api/jobs/{id}/provider-stream` (bounded SQLite event channel)
+- Bulk HF dataset downloads remain in the **dataset** worker (not provider_io)
+- Local model residency remains Model Control Plane (not provider_io)
+
+Provider health ≠ worker health. An open circuit for one SaaS must not restart workers.
+
 ## Knowledge commit
 
 Single serialized commit lane: `knowledge.commit` pool → `KnowledgeCommitter`.

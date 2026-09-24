@@ -1,8 +1,8 @@
 """Generic worker supervisor — process pools for durable job execution.
 
 Model-serving workers remain owned by the Model Control Plane / ServingSupervisor.
-This package owns research, dataset, ingestion, coding, evaluation, and other
-background execution pools only.
+This package owns research, dataset, ingestion, coding, evaluation, provider_io,
+and other background execution pools only.
 """
 
 from .admission import ResourceAdmission, ResourceClass

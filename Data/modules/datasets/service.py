@@ -2989,6 +2989,57 @@ class DatasetService:
             raise
 
     def list_hf_files(self, repository_id: str, *, revision: str = "main", token: str | None = None) -> list[dict[str, Any]]:
+        # Prefer provider_io when workers are live so Control Plane does not own Hub I/O.
+        use_provider_io = False
+        try:
+            from Data.modules.provider_io.readiness import provider_io_workers_ready
+            from Data.modules.workers.settings import load_worker_settings
+
+            wsettings = load_worker_settings()
+            db_path = getattr(getattr(self.jobs, "store", None), "path", None) if self.jobs else None
+            use_provider_io = bool(
+                wsettings.enabled
+                and wsettings.externalize_api_runners
+                and self.jobs is not None
+                and provider_io_workers_ready(db_path)
+            )
+        except Exception:  # noqa: BLE001
+            use_provider_io = False
+
+        if use_provider_io:
+            from Data.modules.provider_io.credentials import store_ephemeral_token
+            from Data.modules.provider_io.errors import ProviderError
+            from Data.modules.provider_io.facade import ProviderExecutionClient
+
+            credential_ref = "huggingface"
+            if token:
+                credential_ref = store_ephemeral_token(token, prefix="hf")
+            client = ProviderExecutionClient(self.jobs)
+            try:
+                result = client.submit_and_wait(
+                    provider="huggingface",
+                    capability="hf.list",
+                    payload={
+                        "repository_id": repository_id,
+                        "revision": revision,
+                    },
+                    credential_ref=credential_ref,
+                    latency_class="interactive",
+                    requested_by="dataset_service",
+                    deadline_seconds=60.0,
+                )
+            except ProviderError as exc:
+                from Data.modules.datasets.types import DatasetError
+
+                raise DatasetError(str(exc), code=exc.code.value) from exc
+            if result.status != "succeeded" or not isinstance(result.structured, dict):
+                from Data.modules.datasets.types import DatasetError
+
+                err = (result.error or {}).get("message") or "HF list failed"
+                raise DatasetError(str(err), code=(result.error or {}).get("code") or "PROVIDER_UNAVAILABLE")
+            files = result.structured.get("files") or []
+            return list(files) if isinstance(files, list) else []
+
         return list_hf_dataset_files(repository_id, revision=revision, token=token)
 
     # --- Wave 8 industrial data factory ---

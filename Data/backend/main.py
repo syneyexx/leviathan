@@ -3563,7 +3563,54 @@ def list_worker_pools() -> dict:
                 "workers": [r.public_dict() for r in regs],
             }
         )
-    return {"pools": pools}
+    # Provider health is separate from worker process health.
+    provider_status: dict = {
+        "note": "provider_health_is_not_worker_health",
+        "providers": {},
+    }
+    try:
+        from Data.modules.provider_io.policy import ProviderPolicyRegistry
+
+        # Control plane does not hold live worker circuits; expose config truth only.
+        provider_status["settings"] = ProviderPolicyRegistry().public_status()["settings"]
+    except Exception:  # noqa: BLE001
+        provider_status["settings"] = {"available": False}
+    try:
+        queued = [
+            j
+            for j in job_runtime.list(state=JobState.QUEUED, limit=500)
+            if getattr(j, "worker_pool", None) == "provider_io"
+        ]
+        provider_status["queue_depth"] = len(queued)
+    except Exception:  # noqa: BLE001
+        provider_status["queue_depth"] = None
+    return {"pools": pools, "provider_io": provider_status}
+
+
+@app.get("/api/jobs/{job_id}/provider-stream")
+def provider_job_stream(
+    job_id: str,
+    after: Annotated[int, Query()] = 0,
+    limit: Annotated[int, Query()] = 100,
+) -> dict:
+    """Poll ordered provider_io stream events (deltas) for a job."""
+    job = job_runtime.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    from Data.modules.provider_io.stream_store import ProviderStreamStore
+
+    store = ProviderStreamStore(settings.database_path)
+    store.initialize()
+    events = store.read_after(job_id, after, limit=limit)
+    return {
+        "job_id": job_id,
+        "job_state": job.state.value,
+        "events": [e.public_dict() for e in events],
+        "truth": {
+            "live_transport_is_not_durable_final_result": True,
+            "provider_health_is_not_worker_health": True,
+        },
+    }
 
 
 class EvidenceArtifactClaim(BaseModel):
