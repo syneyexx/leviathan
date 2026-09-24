@@ -65,6 +65,8 @@ class FabricCapabilityCatalogTests(unittest.TestCase):
         "market_sim.advance",
         "backup.create",
         "agent.advance",
+        "dataset.process",
+        "compute.numeric",
     )
 
     def test_fabric_capabilities_registered(self) -> None:
@@ -156,6 +158,13 @@ class WorkerImportGuards(unittest.TestCase):
                 or stripped.startswith("import Data.backend.main"),
                 msg=f"bootstrap imports backend.main: {stripped}",
             )
+
+    def test_all_pool_entrypoints_avoid_backend_main(self) -> None:
+        entrypoints = WORKERS_ROOT / "entrypoints"
+        for path in sorted(entrypoints.glob("*.py")):
+            if path.name.startswith("_"):
+                continue
+            _forbids_backend_main(path)
 
 
 class ScheduleRunnerGuards(unittest.TestCase):
