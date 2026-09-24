@@ -547,6 +547,10 @@ export const api = {
     return request(`/api/performance/series?${params.toString()}`);
   },
 
+  brainAtlasConfidence(limit = 100): Promise<{ available: boolean; records: Array<{ atlas_id: string; confidence: number; last_revised_at?: string }> }> {
+    return request(`/api/knowledge/atlas?limit=${Math.max(1, Math.min(100, limit))}`);
+  },
+
   listModules(): Promise<ModuleSnapshot> {
     return request<ModuleSnapshot>("/api/modules");
   },
