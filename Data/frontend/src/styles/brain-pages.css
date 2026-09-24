@@ -160,11 +160,10 @@
 }
 
 .lv-br-tab-icon {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  border: 1px solid currentColor;
-  opacity: 0.85;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  opacity: 0.9;
 }
 
 .lv-br-tools {
