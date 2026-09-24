@@ -98,6 +98,7 @@ import type {
   EventsListResponse,
   OperatorCommandResult,
   PerformanceSnapshot,
+  InferenceEfficiencySnapshot,
   ModuleSnapshot,
   KnowledgeDocument,
   KnowledgeChunk,
@@ -590,6 +591,34 @@ export const api = {
 
   performanceSnapshot(): Promise<PerformanceSnapshot> {
     return request<PerformanceSnapshot>("/api/performance/snapshot");
+  },
+
+  inferenceEfficiency(): Promise<InferenceEfficiencySnapshot> {
+    return request<InferenceEfficiencySnapshot>("/api/inference/efficiency");
+  },
+
+  clearInferenceCaches(payload?: {
+    cacheType?: string;
+    projectScope?: string;
+  }): Promise<{ cleared: Record<string, number>; truth?: Record<string, boolean> }> {
+    return request("/api/inference/efficiency/cache/clear", {
+      method: "POST",
+      body: JSON.stringify({
+        cacheType: payload?.cacheType ?? null,
+        projectScope: payload?.projectScope ?? null,
+      }),
+    });
+  },
+
+  tokenizationStatus(modelId?: string): Promise<{
+    mode: string;
+    boundTokenizerId?: string | null;
+    cache: Record<string, unknown>;
+    modelId?: string | null;
+    truth?: Record<string, boolean>;
+  }> {
+    const q = modelId ? `?model_id=${encodeURIComponent(modelId)}` : "";
+    return request(`/api/inference/tokenization/status${q}`);
   },
 
   performanceSeries(

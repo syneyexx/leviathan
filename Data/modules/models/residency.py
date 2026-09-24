@@ -190,6 +190,37 @@ class ModelResidencyManager:
                 cpu_threads=raw_opts.get("cpuThreads", raw_opts.get("cpu_threads")),
                 batch_size=raw_opts.get("batchSize", raw_opts.get("batch_size")),
                 flash_attention=raw_opts.get("flashAttention", raw_opts.get("flash_attention")),
+                preferred_device_ids=tuple(raw_opts["preferredDeviceIds"])
+                if isinstance(raw_opts.get("preferredDeviceIds"), list)
+                else raw_opts.get("preferred_device_ids"),
+                pinned_device_ids=tuple(raw_opts["pinnedDeviceIds"])
+                if isinstance(raw_opts.get("pinnedDeviceIds"), list)
+                else raw_opts.get("pinned_device_ids"),
+                excluded_device_ids=tuple(raw_opts["excludedDeviceIds"])
+                if isinstance(raw_opts.get("excludedDeviceIds"), list)
+                else raw_opts.get("excluded_device_ids"),
+                tensor_split=tuple(raw_opts["tensorSplit"])
+                if isinstance(raw_opts.get("tensorSplit"), list)
+                else raw_opts.get("tensor_split"),
+                main_gpu_ordinal=raw_opts.get("mainGpuOrdinal", raw_opts.get("main_gpu_ordinal")),
+                tensor_parallel_size=raw_opts.get(
+                    "tensorParallelSize", raw_opts.get("tensor_parallel_size")
+                ),
+                allow_multi_gpu=raw_opts.get("allowMultiGpu", raw_opts.get("allow_multi_gpu")),
+                allow_cpu_offload=raw_opts.get("allowCpuOffload", raw_opts.get("allow_cpu_offload")),
+                sharding_mode=raw_opts.get("shardingMode", raw_opts.get("sharding_mode")),
+                prefix_cache=raw_opts.get("prefixCache", raw_opts.get("prefix_cache")),
+                continuous_batching=raw_opts.get(
+                    "continuousBatching", raw_opts.get("continuous_batching")
+                ),
+                kv_cache_dtype=raw_opts.get("kvCacheDtype", raw_opts.get("kv_cache_dtype")),
+                speculative_decoding=raw_opts.get(
+                    "speculativeDecoding", raw_opts.get("speculative_decoding")
+                ),
+                draft_model_id=raw_opts.get("draftModelId", raw_opts.get("draft_model_id")),
+                speculative_tokens=raw_opts.get(
+                    "speculativeTokens", raw_opts.get("speculative_tokens")
+                ),
             )
         policy = ResidencyPolicy(
             model_id=model_id,
@@ -218,6 +249,29 @@ class ModelResidencyManager:
                 cpu_threads=opts.get("cpuThreads"),
                 batch_size=opts.get("batchSize"),
                 flash_attention=opts.get("flashAttention"),
+                preferred_device_ids=tuple(opts["preferredDeviceIds"])
+                if isinstance(opts.get("preferredDeviceIds"), list)
+                else opts.get("preferred_device_ids"),
+                pinned_device_ids=tuple(opts["pinnedDeviceIds"])
+                if isinstance(opts.get("pinnedDeviceIds"), list)
+                else opts.get("pinned_device_ids"),
+                excluded_device_ids=tuple(opts["excludedDeviceIds"])
+                if isinstance(opts.get("excludedDeviceIds"), list)
+                else opts.get("excluded_device_ids"),
+                tensor_split=tuple(opts["tensorSplit"])
+                if isinstance(opts.get("tensorSplit"), list)
+                else opts.get("tensor_split"),
+                main_gpu_ordinal=opts.get("mainGpuOrdinal"),
+                tensor_parallel_size=opts.get("tensorParallelSize"),
+                allow_multi_gpu=opts.get("allowMultiGpu"),
+                allow_cpu_offload=opts.get("allowCpuOffload"),
+                sharding_mode=opts.get("shardingMode"),
+                prefix_cache=opts.get("prefixCache"),
+                continuous_batching=opts.get("continuousBatching"),
+                kv_cache_dtype=opts.get("kvCacheDtype"),
+                speculative_decoding=opts.get("speculativeDecoding"),
+                draft_model_id=opts.get("draftModelId"),
+                speculative_tokens=opts.get("speculativeTokens"),
             )
         try:
             kind = ResidencyPolicyKind(str(row.get("policy") or "IDLE_UNLOAD"))
@@ -236,14 +290,31 @@ class ModelResidencyManager:
     def _policy_to_row(self, policy: ResidencyPolicy) -> dict[str, Any]:
         opts = {}
         if policy.load_options is not None:
+            lo = policy.load_options
             opts = {
-                "contextLength": policy.load_options.context_length,
-                "gpuOffloadLayers": policy.load_options.gpu_offload_layers,
-                "gpuMemoryLimitBytes": policy.load_options.gpu_memory_limit_bytes,
-                "cpuThreads": policy.load_options.cpu_threads,
-                "batchSize": policy.load_options.batch_size,
-                "flashAttention": policy.load_options.flash_attention,
+                "contextLength": lo.context_length,
+                "gpuOffloadLayers": lo.gpu_offload_layers,
+                "gpuMemoryLimitBytes": lo.gpu_memory_limit_bytes,
+                "cpuThreads": lo.cpu_threads,
+                "batchSize": lo.batch_size,
+                "flashAttention": lo.flash_attention,
+                "preferredDeviceIds": list(lo.preferred_device_ids) if lo.preferred_device_ids else None,
+                "pinnedDeviceIds": list(lo.pinned_device_ids) if lo.pinned_device_ids else None,
+                "excludedDeviceIds": list(lo.excluded_device_ids) if lo.excluded_device_ids else None,
+                "tensorSplit": list(lo.tensor_split) if lo.tensor_split else None,
+                "mainGpuOrdinal": lo.main_gpu_ordinal,
+                "tensorParallelSize": lo.tensor_parallel_size,
+                "allowMultiGpu": lo.allow_multi_gpu,
+                "allowCpuOffload": lo.allow_cpu_offload,
+                "shardingMode": lo.sharding_mode,
+                "prefixCache": lo.prefix_cache,
+                "continuousBatching": lo.continuous_batching,
+                "kvCacheDtype": lo.kv_cache_dtype,
+                "speculativeDecoding": lo.speculative_decoding,
+                "draftModelId": lo.draft_model_id,
+                "speculativeTokens": lo.speculative_tokens,
             }
+            opts = {k: v for k, v in opts.items() if v is not None}
         return {
             "model_id": policy.model_id,
             "policy": policy.policy.value,

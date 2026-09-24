@@ -998,7 +998,15 @@ class ModelControlPlane:
         )
 
     async def unload_model(self, model_id: str) -> dict[str, Any]:
-        return await self.residency.manual_unload(model_id)
+        result = await self.residency.manual_unload(model_id)
+        # Invalidate live runtime prefix/KV affinity — tokenizer caches may remain.
+        try:
+            from Data.modules.context.efficiency import get_efficiency_plane
+
+            get_efficiency_plane().on_worker_unloaded(model_id)
+        except Exception:  # noqa: BLE001
+            pass
+        return result
 
     def resolve_measured(
         self,
@@ -1205,4 +1213,10 @@ def parse_load_options(payload: dict[str, Any] | None) -> LoadOptions | None:
         allow_multi_gpu=payload.get("allowMultiGpu"),
         allow_cpu_offload=payload.get("allowCpuOffload"),
         sharding_mode=payload.get("shardingMode"),
+        prefix_cache=payload.get("prefixCache"),
+        continuous_batching=payload.get("continuousBatching"),
+        kv_cache_dtype=payload.get("kvCacheDtype"),
+        speculative_decoding=payload.get("speculativeDecoding"),
+        draft_model_id=payload.get("draftModelId"),
+        speculative_tokens=payload.get("speculativeTokens"),
     )

@@ -851,23 +851,23 @@ class D20ProductSurfaceCharacterization(unittest.TestCase):
 
 
 class D21MigrationHeadCharacterization(unittest.TestCase):
-    def test_d21_current_real_head_is_34(self) -> None:
-        self.assertEqual(MIGRATIONS[-1].version, 34)
-        self.assertEqual(MIGRATIONS[-1].name, "trading_center")
+    def test_d21_current_real_head_tracks_migrations(self) -> None:
+        head = MIGRATIONS[-1].version
+        self.assertGreaterEqual(head, 42)
+        self.assertEqual(MIGRATIONS[-1].name, "resource_reservations_device_aware")
         versions = [m.version for m in MIGRATIONS]
-        self.assertEqual(versions, list(range(1, 35)))
+        self.assertEqual(versions, list(range(1, head + 1)))
 
-    def test_d21_current_test_migrations_asserts_32(self) -> None:
+    def test_d21_current_test_migrations_tracks_head(self) -> None:
         path = Path(__file__).resolve().parent / "test_migrations.py"
         text = path.read_text(encoding="utf-8")
-        self.assertIn("current_version(conn), 32)", text)
+        self.assertIn("current_version(conn), head)", text)
 
-    @unittest.expectedFailure  # D21 — align test_migrations with real head
     def test_d21_desired_migration_test_matches_real_head(self) -> None:
         path = Path(__file__).resolve().parent / "test_migrations.py"
         text = path.read_text(encoding="utf-8")
-        head = MIGRATIONS[-1].version
-        self.assertIn(f"current_version(conn), {head})", text)
+        self.assertIn("head = MIGRATIONS[-1].version", text)
+        self.assertIn("current_version(conn), head)", text)
 
 
 if __name__ == "__main__":

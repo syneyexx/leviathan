@@ -249,6 +249,101 @@ export function PerformancePage() {
           ))}
         </section>
 
+        <Panel title="Inference Efficiency" className="lv-pr-panel">
+          {(() => {
+            const eff = snap?.inferenceEfficiency;
+            const m = eff?.metrics;
+            if (!eff || m == null) {
+              return (
+                <p className="lv-pr-kpi-sub">
+                  Unmeasured — no inference-efficiency samples yet. Unknown stays unknown (not 0%).
+                </p>
+              );
+            }
+            const tokLookups = m.tokenization?.lookups ?? null;
+            const tokHits = m.tokenization?.hits ?? null;
+            const tokRate =
+              tokLookups != null && tokLookups > 0 && tokHits != null
+                ? `${Math.round((tokHits / tokLookups) * 100)}%`
+                : "—";
+            const ctxHits = m.contextCompile?.hits ?? null;
+            const ctxMiss = m.contextCompile?.misses ?? null;
+            const ctxTotal =
+              ctxHits != null && ctxMiss != null ? ctxHits + ctxMiss : null;
+            const ctxRate =
+              ctxTotal != null && ctxTotal > 0 && ctxHits != null
+                ? `${Math.round((ctxHits / ctxTotal) * 100)}%`
+                : "—";
+            const exactShare = m.tokenPrecisionShare?.exact ?? null;
+            const heurShare = m.tokenPrecisionShare?.heuristic ?? null;
+            const cachedIn = m.cachedInputTokensProviderReported;
+            const ttft = m.ttftAvgMs;
+            return (
+              <div className="lv-pr-kpi-grid" aria-label="Inference efficiency">
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Token cache hit rate</div>
+                  <div className="lv-pr-kpi-value">{tokRate}</div>
+                  <div className="lv-pr-kpi-foot">
+                    <span className="lv-pr-kpi-sub">
+                      {tokLookups == null ? "Unmeasured" : `${tokHits}/${tokLookups} lookups`}
+                    </span>
+                  </div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Context compile reuse</div>
+                  <div className="lv-pr-kpi-value">{ctxRate}</div>
+                  <div className="lv-pr-kpi-foot">
+                    <span className="lv-pr-kpi-sub">
+                      {ctxTotal == null ? "Unmeasured" : `${ctxHits} hits / ${ctxMiss} misses`}
+                    </span>
+                  </div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Exact vs heuristic counts</div>
+                  <div className="lv-pr-kpi-value">
+                    {exactShare == null && heurShare == null
+                      ? "—"
+                      : `${exactShare ?? 0} / ${heurShare ?? 0}`}
+                  </div>
+                  <div className="lv-pr-kpi-foot">
+                    <span className="lv-pr-kpi-sub">exact / heuristic</span>
+                  </div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Provider cached input tokens</div>
+                  <div className="lv-pr-kpi-value">
+                    {cachedIn == null ? "—" : String(cachedIn)}
+                  </div>
+                  <div className="lv-pr-kpi-foot">
+                    <span className="lv-pr-kpi-sub">
+                      {cachedIn == null ? "Not reported" : "PROVIDER_REPORTED"}
+                    </span>
+                  </div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">TTFT avg</div>
+                  <div className="lv-pr-kpi-value">{ttft == null ? "—" : formatMs(ttft)}</div>
+                  <div className="lv-pr-kpi-foot">
+                    <span className="lv-pr-kpi-sub">
+                      {ttft == null ? "Unmeasured" : "MEASURED"}
+                    </span>
+                  </div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Context fit failures</div>
+                  <div className="lv-pr-kpi-value">{String(m.contextFitFailures ?? 0)}</div>
+                  <div className="lv-pr-kpi-foot">
+                    <span className="lv-pr-kpi-sub">
+                      caches {eff.policy?.cachesEnabled === false ? "OFF" : "ON"}
+                      {eff.policy?.semanticEnabled ? " · semantic ON" : " · semantic OFF"}
+                    </span>
+                  </div>
+                </article>
+              </div>
+            );
+          })()}
+        </Panel>
+
         <div className="lv-pr-grid">
           <Panel title="Component health" className="lv-pr-panel">
             <div className="lv-pr-filters">

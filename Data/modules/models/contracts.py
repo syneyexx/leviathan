@@ -277,6 +277,13 @@ class LoadOptions:
     allow_multi_gpu: bool | None = None
     allow_cpu_offload: bool | None = None
     sharding_mode: str | None = None  # NONE | TENSOR_SPLIT | TENSOR_PARALLEL | PIPELINE_PARALLEL
+    # Inference-efficiency options — only applied when runtime capability allows.
+    prefix_cache: bool | None = None
+    continuous_batching: bool | None = None
+    kv_cache_dtype: str | None = None
+    speculative_decoding: bool | None = None
+    draft_model_id: str | None = None
+    speculative_tokens: int | None = None
 
     def as_provider_payload(self, allowed: tuple[str, ...] | list[str]) -> dict[str, Any]:
         mapping = {
@@ -295,6 +302,12 @@ class LoadOptions:
             "allowMultiGpu": self.allow_multi_gpu,
             "allowCpuOffload": self.allow_cpu_offload,
             "shardingMode": self.sharding_mode,
+            "prefixCache": self.prefix_cache,
+            "continuousBatching": self.continuous_batching,
+            "kvCacheDtype": self.kv_cache_dtype,
+            "speculativeDecoding": self.speculative_decoding,
+            "draftModelId": self.draft_model_id,
+            "speculativeTokens": self.speculative_tokens,
         }
         return {k: v for k, v in mapping.items() if k in allowed and v is not None}
 
@@ -413,6 +426,14 @@ class ModelRequest:
     explicit_model_id: str | None = None
     agent_model_id: str | None = None
     job_class: str = "INTERACTIVE"  # INTERACTIVE | BACKGROUND | BATCH (U033)
+    # Inference-efficiency routing hints (never override correctness/capability).
+    required_input_tokens: int | None = None
+    required_output_tokens: int | None = None
+    minimum_context_window: int | None = None
+    context_count_precision: str | None = None
+    stable_prefix_fingerprint: str | None = None
+    cache_affinity_hint: str | None = None
+    latency_class: str | None = None  # interactive | background | batch
 
 
 @dataclass

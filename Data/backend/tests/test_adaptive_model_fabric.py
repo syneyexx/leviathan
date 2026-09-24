@@ -507,14 +507,14 @@ class OrdinalSwapPinTests(unittest.TestCase):
 
 
 class MigrationDeviceColumnsTests(unittest.TestCase):
-    def test_migration_41_adds_columns(self) -> None:
+    def test_migration_42_adds_device_columns(self) -> None:
         from Data.backend.migrations import MigrationRunner
 
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "m.db"
             runner = MigrationRunner(db)
             applied = runner.apply_all()
-            self.assertIn(41, applied)
+            self.assertIn(42, applied)
             import sqlite3
 
             conn = sqlite3.connect(db)

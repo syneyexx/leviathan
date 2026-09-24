@@ -99,6 +99,7 @@ from Data.modules.observability import (
 from Data.modules.metrics import MetricsCollector, TimeSeriesStore
 from Data.backend.routes.observability import build_observability_router
 from Data.backend.routes.system import build_system_telemetry_router
+from Data.backend.routes.efficiency import build_efficiency_router
 from Data.backend.routes.brain import build_brain_router
 from Data.modules.brain import BrainAccessFacade, BrainQueryFacade
 from Data.modules.neuro import (
@@ -1650,6 +1651,7 @@ app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))
 app.include_router(build_settings_router(settings_plane))
 app.include_router(build_behavior_router(behavior_store))
+app.include_router(build_efficiency_router())
 
 
 @app.middleware("http")
