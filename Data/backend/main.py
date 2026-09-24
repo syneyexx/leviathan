@@ -3679,6 +3679,7 @@ def list_workers(
     pool: Annotated[str | None, Query()] = None,
 ) -> dict:
     from Data.modules.workers.pools import POOL_CATALOG
+    from Data.modules.workers.protocol import SupervisorHealth
     from Data.modules.workers.registry import WorkerRegistry
     from Data.modules.workers.settings import load_worker_settings
 
@@ -3686,6 +3687,8 @@ def list_workers(
     registry.initialize()
     workers = registry.list(pool_id=pool)
     wsettings = load_worker_settings()
+    lease = registry.get_supervisor_lease() or {}
+    health = lease.get("health_state") or SupervisorHealth.UNAVAILABLE.value
     return {
         "workers": [w.public_dict() for w in workers],
         "pools": [
@@ -3696,6 +3699,19 @@ def list_workers(
             for pid, defn in POOL_CATALOG.items()
         ],
         "settings": wsettings.public_dict(),
+        "supervisor": {
+            "health": health,
+            "holder_id": lease.get("holder_id"),
+            "holder_pid": lease.get("holder_pid"),
+            "expires_at": lease.get("expires_at"),
+            "last_heartbeat_at": lease.get("last_heartbeat_at"),
+            "last_tick_at": lease.get("last_tick_at"),
+            "last_successful_tick_at": lease.get("last_successful_tick_at"),
+            "consecutive_tick_failures": lease.get("consecutive_tick_failures") or 0,
+            "last_tick_error": lease.get("last_tick_error"),
+            "restart_count": lease.get("restart_count") or 0,
+            "degraded_reason": lease.get("degraded_reason"),
+        },
         "truth": {
             "stale_row_is_not_live_worker": True,
             "model_serving_not_listed_here": True,

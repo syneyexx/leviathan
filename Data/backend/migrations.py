@@ -2849,7 +2849,208 @@ def _m38_tasks_tables(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
 
 
-def _m39_behavior_settings_json(conn: sqlite3.Connection) -> None:
+def _m39_execution_fabric_hardening(conn: sqlite3.Connection) -> None:
+    """Additive hardening for worker control-plane tables (legacy-safe).
+
+    Does not rewrite migration 37. Inspects PRAGMA table_info, adds missing
+    columns, normalizes only clearly known legacy worker states, preserves
+    historical rows, and ensures WAL + indexes.
+    """
+
+    def _add_column(table: str, name: str, ddl: str) -> None:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if name not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+    # Prefer WAL centrally (tolerate already-WAL databases).
+    conn.execute("PRAGMA journal_mode = WAL")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_instances (
+            worker_id TEXT PRIMARY KEY,
+            pool_id TEXT NOT NULL,
+            slot INTEGER,
+            pid INTEGER,
+            process_start_identity TEXT,
+            protocol_version INTEGER,
+            implementation_version TEXT,
+            supported_job_kinds_json TEXT,
+            host TEXT,
+            started_at TEXT,
+            last_heartbeat_at TEXT,
+            state TEXT,
+            current_job_id TEXT,
+            supervisor_generation TEXT,
+            restart_count INTEGER DEFAULT 0,
+            degraded_reason TEXT,
+            metadata_json TEXT DEFAULT '{}'
+        )
+        """
+    )
+    for name, ddl in (
+        ("slot", "slot INTEGER NOT NULL DEFAULT 0"),
+        ("pid", "pid INTEGER"),
+        ("process_start_identity", "process_start_identity TEXT"),
+        ("protocol_version", "protocol_version INTEGER NOT NULL DEFAULT 1"),
+        ("implementation_version", "implementation_version TEXT NOT NULL DEFAULT '1'"),
+        ("supported_job_kinds_json", "supported_job_kinds_json TEXT NOT NULL DEFAULT '[]'"),
+        ("host", "host TEXT NOT NULL DEFAULT 'localhost'"),
+        ("started_at", "started_at TEXT"),
+        ("last_heartbeat_at", "last_heartbeat_at TEXT"),
+        ("state", "state TEXT"),
+        ("current_job_id", "current_job_id TEXT"),
+        ("supervisor_generation", "supervisor_generation TEXT"),
+        ("restart_count", "restart_count INTEGER NOT NULL DEFAULT 0"),
+        ("degraded_reason", "degraded_reason TEXT"),
+        ("metadata_json", "metadata_json TEXT NOT NULL DEFAULT '{}'"),
+    ):
+        _add_column("worker_instances", name, ddl)
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_worker_instances_pool "
+        "ON worker_instances(pool_id, state)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_worker_instances_state "
+        "ON worker_instances(state, last_heartbeat_at)"
+    )
+
+    # Normalize only clearly known legacy lowercase / colloquial states.
+    # Never invent READY for unknown values — map to STALE + reason.
+    known_legacy = {
+        "running": "STALE",
+        "pending": "STALE",
+        "active": "STALE",
+        "idle": "STALE",
+        "dead": "CRASHED",
+        "stopped": "STOPPED",
+        "starting": "STARTING",
+        "ready": "READY",
+        "busy": "BUSY",
+        "draining": "DRAINING",
+        "stale": "STALE",
+        "crashed": "CRASHED",
+        "degraded": "DEGRADED",
+        "incompatible": "INCOMPATIBLE",
+    }
+    rows = conn.execute(
+        "SELECT worker_id, state, degraded_reason, metadata_json FROM worker_instances"
+    ).fetchall()
+    for row in rows:
+        worker_id, state, degraded_reason, metadata_json = row[0], row[1], row[2], row[3]
+        if state is None:
+            conn.execute(
+                "UPDATE worker_instances SET state = ?, degraded_reason = ? WHERE worker_id = ?",
+                ("STALE", degraded_reason or "null_persisted_state", worker_id),
+            )
+            continue
+        state_s = str(state)
+        if state_s in {
+            "STARTING",
+            "READY",
+            "BUSY",
+            "DRAINING",
+            "STOPPED",
+            "STALE",
+            "CRASHED",
+            "DEGRADED",
+            "INCOMPATIBLE",
+        }:
+            continue
+        mapped = known_legacy.get(state_s.lower())
+        if mapped is None:
+            mapped = "INCOMPATIBLE"
+            reason = "invalid_persisted_state"
+        else:
+            reason = degraded_reason or f"normalized_legacy_state:{state_s}"
+        # Preserve raw state in metadata when possible.
+        meta = metadata_json or "{}"
+        try:
+            import json as _json
+
+            parsed = _json.loads(meta) if meta else {}
+            if not isinstance(parsed, dict):
+                parsed = {"_raw_metadata_json": meta}
+            parsed.setdefault("raw_persisted_state", state_s)
+            meta_out = _json.dumps(parsed)
+        except Exception:  # noqa: BLE001
+            meta_out = meta
+        conn.execute(
+            """
+            UPDATE worker_instances
+            SET state = ?, degraded_reason = ?, metadata_json = ?
+            WHERE worker_id = ?
+            """,
+            (mapped, reason, meta_out, worker_id),
+        )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resource_reservations (
+            reservation_id TEXT PRIMARY KEY,
+            job_id TEXT,
+            worker_id TEXT,
+            resource_class TEXT,
+            requested_json TEXT,
+            state TEXT,
+            created_at TEXT,
+            expires_at TEXT,
+            released_at TEXT
+        )
+        """
+    )
+    for name, ddl in (
+        ("job_id", "job_id TEXT"),
+        ("worker_id", "worker_id TEXT"),
+        ("resource_class", "resource_class TEXT"),
+        ("requested_json", "requested_json TEXT NOT NULL DEFAULT '{}'"),
+        ("state", "state TEXT"),
+        ("created_at", "created_at TEXT"),
+        ("expires_at", "expires_at TEXT"),
+        ("released_at", "released_at TEXT"),
+    ):
+        _add_column("resource_reservations", name, ddl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_resource_reservations_job "
+        "ON resource_reservations(job_id, state)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_resource_reservations_state "
+        "ON resource_reservations(state, resource_class)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supervisor_leases (
+            lease_id TEXT PRIMARY KEY,
+            holder_id TEXT NOT NULL,
+            holder_pid INTEGER,
+            process_start_identity TEXT,
+            acquired_at TEXT,
+            expires_at TEXT,
+            last_heartbeat_at TEXT
+        )
+        """
+    )
+    for name, ddl in (
+        ("holder_pid", "holder_pid INTEGER"),
+        ("process_start_identity", "process_start_identity TEXT"),
+        ("acquired_at", "acquired_at TEXT"),
+        ("expires_at", "expires_at TEXT"),
+        ("last_heartbeat_at", "last_heartbeat_at TEXT"),
+        ("health_state", "health_state TEXT"),
+        ("last_tick_at", "last_tick_at TEXT"),
+        ("last_successful_tick_at", "last_successful_tick_at TEXT"),
+        ("consecutive_tick_failures", "consecutive_tick_failures INTEGER NOT NULL DEFAULT 0"),
+        ("last_tick_error", "last_tick_error TEXT"),
+        ("restart_count", "restart_count INTEGER NOT NULL DEFAULT 0"),
+        ("degraded_reason", "degraded_reason TEXT"),
+    ):
+        _add_column("supervisor_leases", name, ddl)
+
+
+def _m40_behavior_settings_json(conn: sqlite3.Connection) -> None:
     """Extended BehaviorProfile settings blob (identity/language/retrieval/generation)."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(behavior_profiles)").fetchall()}
     if "settings_json" not in cols:
@@ -2897,7 +3098,12 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=36, name="model_runtime_residency", apply=_m36_model_runtime_residency),
     Migration(version=37, name="execution_fabric", apply=_m37_execution_fabric),
     Migration(version=38, name="tasks_tables", apply=_m38_tasks_tables),
-    Migration(version=39, name="behavior_settings_json", apply=_m39_behavior_settings_json),
+    Migration(
+        version=39,
+        name="execution_fabric_hardening",
+        apply=_m39_execution_fabric_hardening,
+    ),
+    Migration(version=40, name="behavior_settings_json", apply=_m40_behavior_settings_json),
 )
 
 
