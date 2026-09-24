@@ -355,6 +355,7 @@
 .lv-bc-ref .lv-bc-map { min-height: 390px; border: 1px solid rgba(224,179,75,.23); border-radius: 5px; background: radial-gradient(ellipse at 50% 54%, rgba(43,93,128,.2), transparent 54%), radial-gradient(ellipse at 22% 42%, rgba(32,177,131,.12), transparent 32%), radial-gradient(ellipse at 77% 31%, rgba(157,74,188,.1), transparent 34%), radial-gradient(ellipse at 62% 75%, rgba(223,145,46,.08), transparent 34%), #030708; box-shadow: inset 0 0 56px rgba(0,0,0,.5); }
 .lv-bc-ref .lv-bc-links { z-index: 1; touch-action: none; cursor: grab; }
 .lv-bc-ref .lv-bc-links:active { cursor: grabbing; }
+.lv-bc-ref .lv-bc-type-icon { width: 15px; height: 15px; flex: 0 0 15px; overflow: visible; filter: drop-shadow(0 0 3px currentColor); }
 .lv-bc-ref .lv-bc-legend { position: absolute; z-index: 3; right: 8px; top: 7px; display: grid; gap: 4px; padding: 6px 8px; border: 1px solid rgba(224,179,75,.22); border-radius: 4px; background: rgba(2,7,9,.82); font-size: 6.8px; }
 .lv-bc-ref .lv-bc-map-label { fill: rgba(244,241,232,.88); font-size: 8px; font-weight: 550; paint-order: stroke; stroke: #020708; stroke-width: 2px; pointer-events: none; }
 .lv-bc-map-controls { position: absolute; z-index: 4; right: 8px; bottom: 7px; display: flex; border: 1px solid rgba(224,179,75,.25); border-radius: 4px; overflow: hidden; background: rgba(2,7,9,.85); }
