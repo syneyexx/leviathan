@@ -453,6 +453,13 @@
 .lv-ba-ref .lv-br-heatmap-cols span,
 .lv-ba-ref .lv-br-heatmap-ylab { font-size: 6px; }
 .lv-ba-ref .lv-br-heatmap-cell { min-height: 11px; }
+.lv-ba-ref .lv-ba-heatmap .lv-br-heatmap.is-compact { width: 100%; max-width: 100%; min-width: 0; gap: 2px; margin-top: 8px; overflow: hidden; }
+.lv-ba-ref .lv-ba-heatmap .is-compact .lv-br-heatmap-row,
+.lv-ba-ref .lv-ba-heatmap .is-compact .lv-br-heatmap-cols { width: 100%; min-width: 0; gap: 2px; }
+.lv-ba-ref .lv-ba-heatmap .is-compact .lv-br-heatmap-cell { min-height: 0; height: 11px; aspect-ratio: auto; border: 1px solid rgba(91,130,160,.08); border-radius: 1px; }
+.lv-ba-ref .lv-ba-heatmap .is-compact .lv-br-heatmap-ylab { font-size: 7px; }
+.lv-ba-ref .lv-ba-heatmap .is-compact .lv-br-heatmap-cols span { font-size: 6px; white-space: nowrap; overflow: visible; }
+.lv-ba-chart-caption { margin-top: 8px; color: rgba(224,212,182,.55); font-size: 7.5px; line-height: 1.4; }
 .lv-ba-ref .lv-ba-footer { min-height: 82px; grid-template-columns: 1.1fr 1.15fr auto; gap: 0; padding: 0; overflow: hidden; border-color: rgba(224,179,75,.36); background: rgba(3,8,9,.98); }
 .lv-ba-ref .lv-ba-footer > section,
 .lv-ba-ref .lv-ba-footer > div { min-height: 82px; padding: 8px 10px; }
