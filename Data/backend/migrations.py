@@ -2386,6 +2386,97 @@ def _m33_research_workers_runs(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m34_trading_center(conn: sqlite3.Connection) -> None:
+    """Trading Center expansion: paper sessions, experiments, strategy memory, provenance."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_data_sources)").fetchall()}
+    source_alter = {
+        "provider_id": "TEXT NOT NULL DEFAULT 'csv_local'",
+        "venue": "TEXT NOT NULL DEFAULT ''",
+        "quote_currency": "TEXT NOT NULL DEFAULT 'USD'",
+        "instrument_family": "TEXT NOT NULL DEFAULT 'equity'",
+        "timezone": "TEXT NOT NULL DEFAULT 'UTC'",
+        "data_license": "TEXT NOT NULL DEFAULT ''",
+        "dataset_version": "TEXT NOT NULL DEFAULT '1'",
+        "quality_json": "TEXT NOT NULL DEFAULT '{}'",
+    }
+    for name, ddl in source_alter.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE market_data_sources ADD COLUMN {name} {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_paper_sessions (
+            session_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            broker_id TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            kill_switch INTEGER NOT NULL DEFAULT 0,
+            feed_status TEXT NOT NULL DEFAULT 'unknown',
+            wallet_json TEXT NOT NULL DEFAULT '{}',
+            orders_json TEXT NOT NULL DEFAULT '[]',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_paper_sessions_status "
+        "ON market_paper_sessions(status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_experiments (
+            trial_id TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER,
+            hypothesis TEXT NOT NULL,
+            proposer_agent_id TEXT NOT NULL,
+            data_hash TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            status TEXT NOT NULL,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            split_json TEXT NOT NULL DEFAULT '{}',
+            results_json TEXT NOT NULL DEFAULT '{}',
+            acceptance_json TEXT NOT NULL DEFAULT '{}',
+            rejection_reason TEXT NOT NULL DEFAULT '',
+            seed INTEGER NOT NULL DEFAULT 42,
+            created_at TEXT NOT NULL,
+            finished_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_experiments_strategy "
+        "ON market_experiments(strategy_id, status, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategy_memories (
+            memory_id TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            features_json TEXT NOT NULL DEFAULT '{}',
+            applicability_json TEXT NOT NULL DEFAULT '{}',
+            outcome_summary TEXT NOT NULL DEFAULT '',
+            trial_id TEXT,
+            available_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            rejected INTEGER NOT NULL DEFAULT 0,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_strategy_memories_asof "
+        "ON market_strategy_memories(strategy_id, available_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2420,6 +2511,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=31, name="data_training_factory", apply=_m31_data_training_factory),
     Migration(version=32, name="posttraining_flywheel", apply=_m32_posttraining_flywheel),
     Migration(version=33, name="research_workers_runs", apply=_m33_research_workers_runs),
+    Migration(version=34, name="trading_center", apply=_m34_trading_center),
 )
 
 

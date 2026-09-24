@@ -1515,8 +1515,11 @@ export type MarketSimStatusResponse = {
     sources_ready: number;
   };
   active_runs: number;
-  worker: Record<string, number>;
-  truth: Record<string, boolean>;
+  worker: Record<string, unknown>;
+  providers?: Array<Record<string, unknown>>;
+  capabilities?: Record<string, unknown>;
+  live_trading?: Record<string, unknown>;
+  truth: Record<string, boolean | string>;
 };
 
 export type MarketDataSource = {
@@ -1592,6 +1595,7 @@ export type MarketSimRun = {
   metrics: Record<string, unknown>;
   error: string | null;
   agents: Array<Record<string, unknown>>;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   truth?: Record<string, boolean>;
