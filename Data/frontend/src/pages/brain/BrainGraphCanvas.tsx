@@ -73,7 +73,7 @@ function buildLayout(nodes: LiveBrainNode[], edges: LiveBrainEdge[], physics: bo
     const nonHubIndex = includesHub ? Math.max(0, groupIndex - 1) : groupIndex;
     const nonHubCount = Math.max(1, groupEntries.length - (actualHub ? 1 : 0));
     const angle = (nonHubIndex / nonHubCount) * Math.PI * 2 - Math.PI / 2;
-    const orbit = 224 + (groupIndex % 2) * 24;
+    const orbit = 258 + (groupIndex % 2) * 20;
     const groupCenter = includesHub
       ? CENTER
       : { x: CENTER.x + Math.cos(angle) * orbit, y: CENTER.y + Math.sin(angle) * orbit * 0.72 };
@@ -84,14 +84,15 @@ function buildLayout(nodes: LiveBrainNode[], edges: LiveBrainEdge[], physics: bo
         return;
       }
       const seed = hashString(node.id);
-      const localAngle = ((seed % 360) / 180) * Math.PI + index * 0.67;
-      const tier = 1 + (index % 4);
-      const localRadius = 28 + tier * 15 + ((seed >>> 8) % 22);
+      // A golden-angle spiral spreads large document collections across the
+      // cluster instead of stacking every fourth node on the same ring.
+      const localAngle = index * 2.399963229728653 + (seed % 29) * 0.014;
+      const localRadius = index === 0 ? 0 : 27 + Math.sqrt(index) * 14;
       positioned.push({
         ...node,
         x: groupCenter.x + Math.cos(localAngle) * localRadius,
-        y: groupCenter.y + Math.sin(localAngle) * localRadius * 0.76,
-        r: index === 0 ? Math.min(24, 13 + Math.sqrt(group.length) * 2.4) : 5.5 + Math.min(5, Math.log2(index + 2)),
+        y: groupCenter.y + Math.sin(localAngle) * localRadius * 0.82,
+        r: index === 0 ? Math.min(24, 13 + Math.sqrt(group.length) * 2.4) : 4.5 + Math.min(3, Math.log2(index + 2) * 0.7),
         color,
         cluster: key,
         core: false,
@@ -99,10 +100,10 @@ function buildLayout(nodes: LiveBrainNode[], edges: LiveBrainEdge[], physics: bo
     });
   });
 
-  if (!physics || positioned.length > 220 || edges.length === 0) return positioned;
+  if (!physics || positioned.length > 500) return positioned;
 
   const byId = new Map(positioned.map((node) => [node.id, node]));
-  for (let iteration = 0; iteration < 22; iteration += 1) {
+  for (let iteration = 0; iteration < 28; iteration += 1) {
     for (const edge of edges) {
       const a = byId.get(edge.source);
       const b = byId.get(edge.target);
@@ -110,8 +111,8 @@ function buildLayout(nodes: LiveBrainNode[], edges: LiveBrainEdge[], physics: bo
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const distance = Math.max(1, Math.hypot(dx, dy));
-      const desired = a.cluster === b.cluster ? 58 : 135;
-      const force = (distance - desired) * 0.012;
+      const desired = a.cluster === b.cluster ? 80 : 165;
+      const force = (distance - desired) * 0.009;
       const fx = (dx / distance) * force;
       const fy = (dy / distance) * force;
       a.x += fx;
@@ -126,6 +127,23 @@ function buildLayout(nodes: LiveBrainNode[], edges: LiveBrainEdge[], physics: bo
       node.x = Math.max(35, Math.min(WIDTH - 35, node.x));
       node.y = Math.max(35, Math.min(HEIGHT - 35, node.y));
     }
+    // Collision separation also works for unconnected nodes. The live graph
+    // can contain hundreds of isolated documents with no edges to repel them.
+    for (let aIndex = 0; aIndex < positioned.length; aIndex += 1) {
+      const a = positioned[aIndex];
+      for (let bIndex = aIndex + 1; bIndex < positioned.length; bIndex += 1) {
+        const b = positioned[bIndex];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy);
+        const minimum = a.r + b.r + (a.core || b.core ? 25 : 13);
+        if (distance >= minimum) continue;
+        const angle = distance < 0.001 ? (hashString(a.id + b.id) % 360) * Math.PI / 180 : Math.atan2(dy, dx);
+        const displacement = (minimum - distance) * 0.45;
+        if (!a.core) { a.x -= Math.cos(angle) * displacement; a.y -= Math.sin(angle) * displacement; }
+        if (!b.core) { b.x += Math.cos(angle) * displacement; b.y += Math.sin(angle) * displacement; }
+      }
+    }
   }
   return positioned;
 }
@@ -135,6 +153,7 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
   const dragRef = useRef<{ id: string; pointerId: number } | null>(null);
   const panRef = useRef<{ pointerId: number; clientX: number; clientY: number; x: number; y: number } | null>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const initial = useMemo(() => buildLayout(nodes, edges, physicsLayout), [nodes, edges, physicsLayout]);
   const [positions, setPositions] = useState<Map<string, Point>>(() => new Map(initial.map((node) => [node.id, { x: node.x, y: node.y }])));
 
@@ -145,6 +164,14 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
   const rendered = useMemo<PositionedNode[]>(() => initial.map((node) => ({ ...node, ...(positions.get(node.id) ?? { x: node.x, y: node.y }) })), [initial, positions]);
   const byId = useMemo(() => new Map(rendered.map((node) => [node.id, node])), [rendered]);
   const hasActualCore = rendered.some((node) => node.core);
+  const hovered = hoveredId ? byId.get(hoveredId) : null;
+  const denseGraph = rendered.length > 45;
+  const stars = useMemo(() => Array.from({ length: 170 }, (_, index) => ({
+    x: hashString(`brain-star-x-${index}`) % WIDTH,
+    y: hashString(`brain-star-y-${index}`) % HEIGHT,
+    radius: index % 13 === 0 ? 1.35 : 0.45,
+    opacity: index % 11 === 0 ? 0.56 : 0.18,
+  })), []);
 
   const connectedToSelected = useMemo(() => {
     const ids = new Set<string>();
@@ -252,8 +279,13 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
           <filter id="lv-gv-glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
           <filter id="lv-gv-soft-glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="8" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
           <radialGradient id="lv-gv-core" cx="50%" cy="45%" r="60%"><stop offset="0%" stopColor="#33250e" /><stop offset="70%" stopColor="#0b0c0b" /><stop offset="100%" stopColor="#040605" /></radialGradient>
+          <radialGradient id="lv-gv-nebula"><stop offset="0%" stopColor="#866135" stopOpacity=".16" /><stop offset="42%" stopColor="#263a45" stopOpacity=".075" /><stop offset="100%" stopColor="#030708" stopOpacity="0" /></radialGradient>
         </defs>
         <rect width={WIDTH} height={HEIGHT} fill="transparent" />
+        <g className="lv-gv-stars" pointerEvents="none">
+          <ellipse cx="510" cy="314" rx="505" ry="340" fill="url(#lv-gv-nebula)" />
+          {stars.map((star, index) => <circle key={index} cx={star.x} cy={star.y} r={star.radius} fill={index % 4 === 0 ? "#dcb977" : "#bad4de"} opacity={star.opacity} />)}
+        </g>
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
           {showClusters ? (
             <g className="lv-gv-scaffold" pointerEvents="none">
@@ -291,20 +323,23 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
 
           {rendered.map((node) => {
             const selected = selectedId === node.id;
+            const hoveredNode = hoveredId === node.id;
             const depthDimmed = showDepth && selectedId != null && !connectedToSelected.has(node.id);
+            const labelVisible = showLabels && (node.core || hoveredNode || (!denseGraph && node.label.length <= 22) || (denseGraph && node.r >= 19 && node.label.length <= 18));
             return (
-              <g key={node.id} className={`lv-gv-node${node.core ? " is-core" : ""}${selected ? " is-selected" : ""}${depthDimmed ? " is-depth-dimmed" : ""}`} transform={`translate(${node.x} ${node.y})`} onPointerDown={(event) => handleNodePointerDown(event, node.id)} onClick={(event) => { event.stopPropagation(); onSelect(node.id); }} style={{ color: node.color }}>
+              <g key={node.id} className={`lv-gv-node${node.core ? " is-core" : ""}${selected ? " is-selected" : ""}${depthDimmed ? " is-depth-dimmed" : ""}`} transform={`translate(${node.x} ${node.y})`} onPointerEnter={() => setHoveredId(node.id)} onPointerLeave={() => setHoveredId((current) => current === node.id ? null : current)} onFocus={() => setHoveredId(node.id)} onBlur={() => setHoveredId((current) => current === node.id ? null : current)} tabIndex={0} role="button" aria-label={`${node.label}, ${prettyType(node.type)}`} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(node.id); } }} onPointerDown={(event) => handleNodePointerDown(event, node.id)} onClick={(event) => { event.stopPropagation(); onSelect(node.id); }} style={{ color: node.color }}>
                 {node.core ? <circle r={node.r + 16} fill="none" stroke={node.color} strokeOpacity=".2" filter="url(#lv-gv-soft-glow)" /> : null}
                 <circle r={selected ? node.r + 3 : node.r} fill={node.core ? "url(#lv-gv-core)" : "rgba(3,8,9,.94)"} stroke="currentColor" strokeWidth={node.core ? 2.2 : selected ? 2 : 1.15} filter={node.core || selected ? "url(#lv-gv-glow)" : undefined} />
                 <circle r={node.core ? 7 : Math.max(2.4, node.r * 0.27)} fill="currentColor" opacity={node.core ? 0.95 : 0.86} />
                 {node.core ? <text y="4" textAnchor="middle" className="lv-gv-core-mark">L</text> : null}
-                {showLabels ? <text y={node.r + 13} textAnchor="middle" className={node.core ? "lv-gv-label is-core" : "lv-gv-label"}>{node.label}</text> : null}
+                {labelVisible && node.label.length <= 22 ? <text y={node.r + 13} textAnchor="middle" className={node.core ? "lv-gv-label is-core" : "lv-gv-label"}>{node.label}</text> : null}
                 <title>{`${node.label} · ${node.type}`}</title>
               </g>
             );
           })}
         </g>
       </svg>
+      {hovered ? <div className="lv-gv-hover-card" role="tooltip" style={{ left: `${((hovered.x * viewport.scale + viewport.x) / WIDTH) * 100}%`, top: `${((hovered.y * viewport.scale + viewport.y) / HEIGHT) * 100}%` }}><strong>{hovered.label}</strong><span>{prettyType(hovered.type)}</span></div> : null}
       <div className="lv-gv-legend" aria-hidden="true">
         {[...new Map(nodes.map((node) => [node.type, colorForType(node.type)])).entries()].slice(0, 10).map(([type, color]) => <span key={type}><i style={{ background: color }} />{prettyType(type)}</span>)}
       </div>

@@ -155,13 +155,11 @@
   border: 1px solid rgba(224,179,75,.35);
   border-radius: 8px;
   background:
-    radial-gradient(circle at 50% 48%, rgba(230,174,50,.055), transparent 11%),
-    radial-gradient(circle at 24% 32%, rgba(25,126,195,.065), transparent 22%),
-    radial-gradient(circle at 73% 30%, rgba(106,43,190,.07), transparent 24%),
-    linear-gradient(rgba(41,72,69,.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(41,72,69,.04) 1px, transparent 1px),
-    #030707;
-  background-size: auto, auto, auto, 18px 18px, 18px 18px, auto;
+    radial-gradient(ellipse at 52% 53%, rgba(191,126,48,.11), transparent 24%),
+    radial-gradient(ellipse at 22% 38%, rgba(21,93,139,.14), transparent 31%),
+    radial-gradient(ellipse at 79% 34%, rgba(94,42,125,.12), transparent 27%),
+    radial-gradient(ellipse at 62% 85%, rgba(36,92,96,.09), transparent 30%),
+    #040708;
   box-shadow: inset 0 0 70px rgba(0,0,0,.52), 0 0 18px rgba(0,0,0,.18);
   touch-action: none;
 }
@@ -183,6 +181,25 @@
 .lv-gv-node.is-selected > circle:nth-last-of-type(2) { filter: drop-shadow(0 0 7px currentColor); }
 .lv-gv-label { fill: rgba(234,232,223,.78); font-family: var(--lv-font-ui); font-size: 8.2px; paint-order: stroke; stroke: rgba(2,5,6,.95); stroke-width: 2.8px; stroke-linejoin: round; pointer-events: none; }
 .lv-gv-label.is-core { fill: #f4d477; font-family: var(--lv-font-display); font-size: 13px; letter-spacing: .09em; }
+.lv-gv-hover-card {
+  position: absolute;
+  z-index: 6;
+  max-width: min(350px, 55%);
+  padding: 9px 12px;
+  border: 1px solid rgba(231,188,103,.65);
+  border-radius: 6px;
+  background: rgba(5,10,13,.96);
+  box-shadow: 0 0 22px rgba(220,159,70,.16), 0 10px 32px rgba(0,0,0,.65);
+  color: #f2e5c8;
+  font: 11px var(--lv-font-ui);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 16px));
+}
+.lv-gv-hover-card strong, .lv-gv-hover-card span { display: block; }
+.lv-gv-hover-card span { margin-top: 3px; color: #d0a960; font-size: 9px; text-transform: uppercase; letter-spacing: .12em; }
+.lv-gv-node:focus-visible { outline: none; filter: drop-shadow(0 0 9px currentColor); }
 .lv-gv-core-mark { fill: #ffe5a1; font-family: var(--lv-font-display); font-size: 10px; font-weight: 700; pointer-events: none; }
 .lv-gv-cluster-halo text { font-size: 7.5px; letter-spacing: .06em; text-transform: uppercase; }
 .lv-gv-controls {
