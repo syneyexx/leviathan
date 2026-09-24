@@ -21,6 +21,7 @@ from .fleet_types import (
 )
 from .runtime import AgentRuntime
 from .store import AgentFleetStore, utc_now
+from .system_inventory import SystemInventory, classify_fleet_agent
 from .types import AgentKind
 
 
@@ -113,11 +114,13 @@ class AgentFleetService:
         runtime: AgentRuntime,
         *,
         dataset_activity_provider: Any | None = None,
+        system_inventory: SystemInventory | None = None,
     ) -> None:
         self.store = store
         self.runtime = runtime
         # Optional callable returning DatasetService.learning_activity()-shaped dict.
         self.dataset_activity_provider = dataset_activity_provider
+        self.system_inventory = system_inventory or SystemInventory()
 
     def initialize(self, *, seed_defaults: bool = True) -> None:
         self.store.initialize()
@@ -375,6 +378,19 @@ class AgentFleetService:
                 if self_id and self_id in nested:
                     raise AgentFleetError("ORCHESTRATOR_CYCLE", "Cycle detected in orchestrator graph")
 
+    def _system_key_of(self, agent: AgentDefinition) -> str | None:
+        key = str((agent.metadata or {}).get("systemKey") or "").strip()
+        return key or None
+
+    def _assert_system_mutable(self, agent: AgentDefinition, *, action: str) -> None:
+        if self._system_key_of(agent):
+            raise AgentFleetError(
+                "SYSTEM_AGENT_PROTECTED",
+                f"Cannot {action} protected SYSTEM agent '{agent.name}' "
+                f"(systemKey={self._system_key_of(agent)})",
+                http_status=403,
+            )
+
     def create_agent(self, payload: dict[str, Any]) -> AgentDefinition:
         name = str(payload.get("name") or "").strip()
         if not name:
@@ -388,6 +404,9 @@ class AgentFleetService:
         if kind == AgentDefinitionKind.ORCHESTRATOR:
             orch = OrchestratorConfig.from_dict(payload.get("orchestrator"))
             self._validate_orchestrator(orch)
+        # USER CRUD must never invent SYSTEM ownership.
+        metadata = dict(payload.get("metadata") or {})
+        metadata.pop("systemKey", None)
         now = utc_now()
         definition = AgentDefinition(
             agent_id=AgentFleetStore.new_id("agent"),
@@ -413,7 +432,7 @@ class AgentFleetService:
             health=AgentHealth.IDLE,
             created_at=now,
             updated_at=now,
-            metadata=dict(payload.get("metadata") or {}),
+            metadata=metadata,
         )
         self.store.create_definition(definition)
         self._emit(agent_id=definition.agent_id, category="agents", message=f"Created agent {definition.name}")
@@ -423,6 +442,31 @@ class AgentFleetService:
         current = self.get_agent(agent_id)
         if current.archived and not payload.get("unarchive"):
             raise AgentFleetError("AGENT_ARCHIVED", "Cannot update archived agent", http_status=409)
+        system_key = self._system_key_of(current)
+        if system_key:
+            # Protected identity fields — never rename, rekind, or strip systemKey.
+            if "name" in payload and payload["name"] is not None:
+                if str(payload["name"]).strip() != current.name:
+                    raise AgentFleetError(
+                        "SYSTEM_AGENT_PROTECTED",
+                        f"Cannot rename SYSTEM agent '{current.name}'",
+                        http_status=403,
+                    )
+            if "kind" in payload and payload["kind"]:
+                if str(payload["kind"]).lower() != current.kind.value:
+                    raise AgentFleetError(
+                        "SYSTEM_AGENT_PROTECTED",
+                        f"Cannot change kind of SYSTEM agent '{current.name}'",
+                        http_status=403,
+                    )
+            if "metadata" in payload and payload["metadata"] is not None:
+                incoming = dict(payload["metadata"] or {})
+                if str(incoming.get("systemKey") or "").strip() != system_key:
+                    raise AgentFleetError(
+                        "SYSTEM_AGENT_PROTECTED",
+                        "Cannot remove or replace systemKey on SYSTEM agents",
+                        http_status=403,
+                    )
         updated = copy.deepcopy(current)
         for field, attr in (
             ("name", "name"),
@@ -468,6 +512,13 @@ class AgentFleetService:
                 updated.kind = AgentDefinitionKind(str(payload["kind"]).lower())
             except ValueError as exc:
                 raise AgentFleetError("INVALID_KIND", f"Unsupported kind: {payload['kind']}") from exc
+        if "metadata" in payload and payload["metadata"] is not None:
+            meta = dict(payload["metadata"] or {})
+            if system_key:
+                meta["systemKey"] = system_key
+            else:
+                meta.pop("systemKey", None)
+            updated.metadata = meta
         if updated.kind == AgentDefinitionKind.ORCHESTRATOR:
             orch_payload = payload.get("orchestrator")
             if orch_payload is not None:
@@ -488,6 +539,11 @@ class AgentFleetService:
         payload = source.public_dict()
         payload["name"] = f"{source.name} (copy)"
         payload.pop("agentId", None)
+        payload.pop("id", None)
+        # Clones are always USER agents — never inherit SYSTEM ownership.
+        meta = dict(payload.get("metadata") or {})
+        meta.pop("systemKey", None)
+        payload["metadata"] = meta
         if source.orchestrator:
             payload["orchestrator"] = source.orchestrator.public_dict()
         return self.create_agent(payload)
@@ -497,6 +553,7 @@ class AgentFleetService:
 
     def archive_agent(self, agent_id: str) -> AgentDefinition:
         agent = self.get_agent(agent_id)
+        self._assert_system_mutable(agent, action="archive")
         active = self.store.count_active_for_agent(agent_id)
         if active:
             raise AgentFleetError(
@@ -907,18 +964,105 @@ class AgentFleetService:
         agents = self.list_agents(include_archived=False)
         missions = self.store.list_missions(limit=200)
         by_health: dict[str, int] = {}
+        system_count = 0
+        user_count = 0
+        agent_type_count = 0
+        orchestrator_count = 0
         for agent in agents:
             by_health[agent.health.value] = by_health.get(agent.health.value, 0) + 1
+            ownership = classify_fleet_agent(agent)
+            if ownership["origin"] == "system":
+                system_count += 1
+            else:
+                user_count += 1
+            if ownership["entityType"] == "orchestrator":
+                orchestrator_count += 1
+            else:
+                agent_type_count += 1
+        architecture_entries = self.system_inventory.list_entries()
+        architecture_count = sum(1 for e in architecture_entries if e.entity_type == "architecture")
+        # Architecture orchestrators (cognitive runtime, research service, …)
+        system_orchestrator_extra = sum(
+            1 for e in architecture_entries if e.entity_type == "orchestrator"
+        )
         active = sum(1 for m in missions if m.status.value in ACTIVE_MISSION_STATUSES)
         return {
             "agentsEnabled": self.runtime.agents_enabled,
             "agentCount": len(agents),
-            "orchestratorCount": sum(1 for a in agents if a.kind == AgentDefinitionKind.ORCHESTRATOR),
+            "orchestratorCount": orchestrator_count,
+            "total": len(agents) + len(architecture_entries),
+            "system": system_count + len(architecture_entries),
+            "user": user_count,
+            "agents": agent_type_count,
+            "orchestrators": orchestrator_count + system_orchestrator_extra,
+            "architecture": architecture_count,
             "health": by_health,
+            "idle": by_health.get("idle", 0),
+            "busy": by_health.get("busy", 0),
+            "disabled": by_health.get("disabled", 0),
+            "error": by_health.get("error", 0),
+            "active": by_health.get("busy", 0),
             "activeMissions": active,
             "recentMissions": len(missions),
             "truth": {
                 "health_from_mission_store": True,
                 "no_fake_fleet_metrics": True,
+                "architecture_not_counted_as_missions": True,
+            },
+        }
+
+    def list_system_inventory(self) -> list[dict[str, Any]]:
+        return [e.public_dict() for e in self.system_inventory.list_entries()]
+
+    def list_roster(
+        self,
+        *,
+        include_archived: bool = False,
+        include_architecture: bool = True,
+        origin: str | None = None,
+        entity_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Unified USER+SYSTEM roster. Architecture entries are descriptors only."""
+        agents = self.list_agents(include_archived=include_archived)
+        entries: list[dict[str, Any]] = []
+        for agent in agents:
+            payload = agent.public_dict()
+            entries.append(payload)
+        if include_architecture:
+            for arch in self.system_inventory.list_entries():
+                entries.append(arch.public_dict())
+        origin_filter = (origin or "").strip().lower() or None
+        type_filter = (entity_type or "").strip().lower() or None
+        if origin_filter in {"system", "user"}:
+            entries = [e for e in entries if str(e.get("origin")) == origin_filter]
+        if type_filter in {"agent", "orchestrator", "architecture"}:
+            entries = [e for e in entries if str(e.get("entityType")) == type_filter]
+        # Deterministic order: SYSTEM first, then entity type, then name.
+        type_rank = {"orchestrator": 0, "agent": 1, "architecture": 2}
+        entries.sort(
+            key=lambda e: (
+                0 if e.get("origin") == "system" else 1,
+                type_rank.get(str(e.get("entityType")), 9),
+                str(e.get("name") or "").lower(),
+                str(e.get("id") or e.get("agentId") or ""),
+            )
+        )
+        # Deduplicate by id (architecture IDs never collide with agent_* ids).
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for entry in entries:
+            eid = str(entry.get("id") or entry.get("agentId") or "")
+            if not eid or eid in seen:
+                continue
+            seen.add(eid)
+            unique.append(entry)
+        return {
+            "entries": unique,
+            "agents": [a.public_dict() for a in agents],
+            "system": self.list_system_inventory() if include_architecture else [],
+            "summary": self.fleet_summary(),
+            "truth": {
+                "architecture_not_persisted_as_agent_definitions": True,
+                "system_origin_from_backend": True,
             },
         }

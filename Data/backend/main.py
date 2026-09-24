@@ -22,6 +22,7 @@ from Data.modules.agents import (
     AgentKind,
     AgentRuntime,
     MultiAgentCoordinator,
+    SystemInventory,
 )
 from Data.modules.analytics import AnalyticsService
 from Data.modules.approvals import (
@@ -269,7 +270,12 @@ agent_runtime = AgentRuntime(
 )
 multi_agents = MultiAgentCoordinator(agent_runtime)
 agent_fleet_store = AgentFleetStore(settings.database_path)
-agent_fleet = AgentFleetService(agent_fleet_store, agent_runtime)
+system_inventory = SystemInventory()
+agent_fleet = AgentFleetService(
+    agent_fleet_store,
+    agent_runtime,
+    system_inventory=system_inventory,
+)
 analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway)
@@ -911,6 +917,176 @@ register_specialist_handlers(
     coding_service=coding_service,
     research_service=research_service,
 )
+
+
+def _wire_system_inventory_status() -> None:
+    """Bind truthful status probes to components actually constructed above."""
+
+    def _flag_status(*, enabled: bool, ready_when_enabled: bool = True, detail: str = "") -> dict:
+        if not enabled:
+            return {"status": "disabled", "enabled": False, "detail": detail or "feature flag off"}
+        if ready_when_enabled:
+            return {"status": "ready", "enabled": True, "detail": detail or None}
+        return {"status": "unknown", "enabled": True, "detail": detail or "enabled but readiness unknown"}
+
+    system_inventory.register_status_provider(
+        "execution_gateway",
+        lambda: {"status": "ready", "enabled": True, "detail": "in-process ExecutionGateway"},
+    )
+    system_inventory.register_status_provider(
+        "agent_runtime",
+        lambda: _flag_status(
+            enabled=bool(agent_runtime.agents_enabled),
+            detail="LEVIATHAN_FEATURE_AGENTS",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "structured_agent_planner",
+        lambda: {
+            "status": "ready" if agent_runtime.agents_enabled else "disabled",
+            "enabled": bool(agent_runtime.agents_enabled),
+            "detail": "owned by AgentRuntime",
+        },
+    )
+    system_inventory.register_status_provider(
+        "agent_fleet_service",
+        lambda: _flag_status(
+            enabled=bool(agent_runtime.agents_enabled),
+            detail="fleet control plane",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "multi_agent_coordinator",
+        lambda: _flag_status(
+            enabled=bool(agent_runtime.agents_enabled),
+            detail="POST /api/agents/multi",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "cognitive_runtime",
+        lambda: _flag_status(
+            enabled=bool(getattr(cognition_runtime, "enabled", False)),
+            detail="cognition_enabled feature flag",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "meta_controller",
+        lambda: _flag_status(
+            enabled=bool(getattr(cognition_runtime, "enabled", False)),
+            detail="inside CognitiveRuntime",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "capability_broker",
+        lambda: _flag_status(
+            enabled=bool(getattr(cognition_runtime, "enabled", False)),
+            detail="inside CognitiveRuntime",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "delegation_service",
+        lambda: _flag_status(
+            enabled=bool(getattr(cognition_runtime, "delegation_enabled", False)),
+            detail="cognition_delegation feature flag",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "research_service",
+        lambda: {
+            "status": "ready",
+            "enabled": True,
+            "detail": "ResearchService constructed at startup",
+        },
+    )
+    system_inventory.register_status_provider(
+        "coding_control_plane",
+        lambda: _flag_status(
+            enabled=bool(settings.features.coding_enabled),
+            detail="coding_enabled feature flag",
+        ),
+    )
+
+    def _residual_status() -> dict:
+        enabled = bool(
+            settings.features.neuro_enabled and settings.features.neuro_residual_orchestrator
+        )
+        if not enabled:
+            return {"status": "disabled", "enabled": False, "detail": "neuro residual orchestrator off"}
+        telemetry = dict(getattr(residual_orchestrator, "telemetry", None) or {})
+        degraded = int(telemetry.get("degraded") or 0)
+        if degraded > 0:
+            return {
+                "status": "degraded",
+                "enabled": True,
+                "detail": f"degraded_count={degraded}",
+                "metadata": {"telemetry": telemetry},
+            }
+        return {
+            "status": "ready",
+            "enabled": True,
+            "detail": "residual orchestrator active",
+            "metadata": {"telemetry": telemetry},
+        }
+
+    system_inventory.register_status_provider("residual_orchestrator", _residual_status)
+    system_inventory.register_status_provider(
+        "cortex_runtime",
+        lambda: _flag_status(
+            enabled=bool(settings.features.neuro_enabled and settings.features.neuro_cortex),
+            detail="neuro_cortex feature flag",
+        ),
+    )
+    system_inventory.register_status_provider(
+        "neuro_advisor",
+        lambda: _flag_status(
+            enabled=bool(settings.features.neuro_enabled),
+            detail="neuro_enabled feature flag",
+        ),
+    )
+
+    def _model_plane_status() -> dict:
+        try:
+            cards = model_plane.status_cards()
+            offline = cards.get("offlineProviders") or []
+            if offline:
+                return {
+                    "status": "degraded",
+                    "enabled": True,
+                    "detail": f"{len(offline)} provider(s) offline",
+                    "metadata": {"activeModel": cards.get("activeModel")},
+                }
+            return {
+                "status": "ready",
+                "enabled": True,
+                "detail": "model control plane",
+                "metadata": {"activeModel": cards.get("activeModel")},
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "enabled": True, "detail": str(exc)}
+
+    system_inventory.register_status_provider("model_control_plane", _model_plane_status)
+
+    def _master_gates_status() -> dict:
+        try:
+            report = master_gates.run()
+            overall = str(getattr(getattr(report, "status", None), "value", getattr(report, "status", "")) or "").lower()
+            status_value = "ready"
+            if "block" in overall:
+                status_value = "degraded"
+            elif "degrad" in overall:
+                status_value = "degraded"
+            return {
+                "status": status_value,
+                "enabled": True,
+                "detail": f"master gates status={overall or 'unknown'}",
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "unknown", "enabled": True, "detail": f"gate probe failed: {exc}"}
+
+    system_inventory.register_status_provider("master_gate_runner", _master_gates_status)
+
+
+_wire_system_inventory_status()
 
 intelligence_health = IntelligenceHealthService(
     settings_plane=settings_plane,

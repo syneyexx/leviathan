@@ -8,11 +8,11 @@ import { CognitionPage } from "./pages/CognitionPage";
 import { CommandPage } from "./pages/CommandPage";
 import {
   DatasetManagementPixelPage,
-  ModelsPixelPage,
   OfflineDatasetsPixelPage,
   TrainingPixelPage,
 } from "./pages/pixel";
 import { DatasetsPage } from "./pages/DatasetsPage";
+import { ModelsPage } from "./pages/ModelsPage";
 import { EvidenceVaultPage } from "./pages/EvidenceVaultPage";
 import { GeheugenPage } from "./pages/GeheugenPage";
 import { KnowledgeLibraryPage } from "./pages/KnowledgeLibraryPage";
@@ -52,7 +52,7 @@ export default function App() {
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/coding" element={<CodingPage />} />
 
-      <Route path="/models" element={<ModelsPixelPage />} />
+      <Route path="/models" element={<ModelsPage />} />
       <Route path="/training" element={<TrainingPixelPage />} />
       <Route path="/dataset-management" element={<DatasetManagementPixelPage />} />
       <Route path="/offline-datasets" element={<OfflineDatasetsPixelPage />} />

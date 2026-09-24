@@ -135,8 +135,12 @@ class AgentDefinition:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
+        from .system_inventory import classify_fleet_agent
+
+        ownership = classify_fleet_agent(self)
         return {
             "agentId": self.agent_id,
+            "id": self.agent_id,
             "name": self.name,
             "kind": self.kind.value,
             "description": self.description,
@@ -160,14 +164,21 @@ class AgentDefinition:
             "orchestrator": self.orchestrator.public_dict() if self.orchestrator else None,
             "health": self.health.value,
             "healthReason": self.health_reason,
+            "status": self.health.value,
             "lastRunAt": self.last_run_at,
             "lastMissionId": self.last_mission_id,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
             "metadata": dict(self.metadata),
+            "origin": ownership["origin"],
+            "entityType": ownership["entityType"],
+            "systemKey": ownership["systemKey"],
+            "mutable": ownership["mutable"],
+            "executable": True,
             "truth": {
                 "definitions_are_control_plane_only": True,
                 "side_effects_via_gateway_only": True,
+                "origin_from_metadata_system_key": True,
             },
         }
 

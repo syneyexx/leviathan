@@ -206,15 +206,43 @@ export type RosterFilters = {
   statusFilter: string;
   kindFilter: string;
   showArchived: boolean;
+  originFilter?: string;
+  entityTypeFilter?: string;
 };
+
+export function agentOrigin(agent: AgentDefinition): "system" | "user" {
+  if (agent.origin === "system" || agent.origin === "user") return agent.origin;
+  const key = String(agent.systemKey || (agent.metadata as { systemKey?: string } | undefined)?.systemKey || "").trim();
+  return key ? "system" : "user";
+}
+
+export function agentEntityType(agent: AgentDefinition): "agent" | "orchestrator" | "architecture" {
+  if (agent.entityType === "agent" || agent.entityType === "orchestrator" || agent.entityType === "architecture") {
+    return agent.entityType;
+  }
+  return String(agent.kind) === "orchestrator" ? "orchestrator" : "agent";
+}
+
+export function isArchitectureEntry(entry: {
+  entityType?: string;
+  agentId?: string;
+}): boolean {
+  return entry.entityType === "architecture" || String(entry.agentId || "").startsWith("system:architecture:");
+}
+
+export function rosterEntryId(entry: {
+  id?: string;
+  agentId?: string;
+}): string {
+  return String(entry.id || entry.agentId || "");
+}
 
 export function filterRoster(agents: AgentDefinition[], filters: RosterFilters): AgentDefinition[] {
   const q = filters.query.trim().toLowerCase();
+  const originFilter = filters.originFilter || "ALL";
+  const entityFilter = filters.entityTypeFilter || "ALL TYPES";
   return agents.filter((agent) => {
     if (!filters.showArchived && agent.archived) return false;
-    if (filters.showArchived && !agent.archived && filters.kindFilter === "__archived_only__") {
-      /* no-op: archived-only handled below */
-    }
     if (filters.kindFilter === "__archived_only__" && !agent.archived) return false;
     if (
       filters.kindFilter &&
@@ -224,8 +252,26 @@ export function filterRoster(agents: AgentDefinition[], filters: RosterFilters):
     ) {
       return false;
     }
+    const origin = agentOrigin(agent);
+    if (originFilter === "SYSTEM" && origin !== "system") return false;
+    if (originFilter === "USER" && origin !== "user") return false;
+    const entity = agentEntityType(agent);
+    if (entityFilter === "AGENTS" && entity !== "agent") return false;
+    if (entityFilter === "ORCHESTRATORS" && entity !== "orchestrator") return false;
+    if (entityFilter === "ARCHITECTURE" && entity !== "architecture") return false;
     if (q) {
-      const hay = `${agent.name} ${agent.role} ${agent.kind} ${agent.tags.join(" ")}`.toLowerCase();
+      const hay = [
+        agent.name,
+        agent.role,
+        agent.kind,
+        agent.description,
+        agent.systemKey || "",
+        agent.tags.join(" "),
+        origin,
+        entity,
+      ]
+        .join(" ")
+        .toLowerCase();
       if (!hay.includes(q)) return false;
     }
     const label = healthLabel(agent);
@@ -413,10 +459,22 @@ export function canLaunchAgent(agent: AgentDefinition | undefined, agentsEnabled
   reason?: string;
 } {
   if (!agent) return { ok: false, reason: "Select an agent first" };
+  if (isArchitectureEntry(agent)) {
+    return { ok: false, reason: "Architecture components are not launchable missions" };
+  }
+  if (agent.executable === false) {
+    return { ok: false, reason: "This SYSTEM component has no execution contract" };
+  }
   if (agent.archived) return { ok: false, reason: "Cannot launch archived agent" };
   if (!agent.enabled) return { ok: false, reason: "Agent is disabled" };
   if (agentsEnabled === false) return { ok: false, reason: "Agents feature flag is OFF" };
   return { ok: true };
+}
+
+export function isSystemProtected(agent: AgentDefinition | undefined): boolean {
+  if (!agent) return false;
+  if (agent.mutable === false) return true;
+  return agentOrigin(agent) === "system";
 }
 
 export function validateEditorDraft(

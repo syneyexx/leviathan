@@ -1911,6 +1911,7 @@ export type OrchestratorConfig = {
 
 export type AgentDefinition = {
   agentId: string;
+  id?: string;
   name: string;
   kind: AgentDefinitionKind | string;
   description: string;
@@ -1934,13 +1935,47 @@ export type AgentDefinition = {
   orchestrator?: OrchestratorConfig | null;
   health: AgentHealth | string;
   healthReason?: string | null;
+  status?: string;
   lastRunAt?: string | null;
   lastMissionId?: string | null;
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, unknown>;
+  origin?: AgentOrigin;
+  entityType?: AgentEntityType;
+  systemKey?: string | null;
+  mutable?: boolean;
+  executable?: boolean;
   truth?: Record<string, boolean>;
 };
+
+export type AgentOrigin = "system" | "user";
+export type AgentEntityType = "agent" | "orchestrator" | "architecture";
+
+export type SystemArchitectureEntry = {
+  id: string;
+  name: string;
+  origin: "system";
+  entityType: "orchestrator" | "architecture";
+  systemKey: string;
+  runtimeKind?: string;
+  description?: string;
+  status: string;
+  enabled?: boolean | null;
+  mutable: false;
+  sourceModule?: string;
+  capabilities?: string[];
+  relationships?: Array<{
+    relation: string;
+    targetId: string;
+    targetSystemKey?: string;
+  }>;
+  metadata?: Record<string, unknown>;
+  executable?: boolean;
+  truth?: Record<string, boolean>;
+};
+
+export type AgentRosterEntry = AgentDefinition | SystemArchitectureEntry;
 
 export type AgentMissionStatus =
   | "queued"
@@ -1991,7 +2026,18 @@ export type AgentFleetSummary = {
   agentsEnabled: boolean;
   agentCount: number;
   orchestratorCount: number;
+  total?: number;
+  system?: number;
+  user?: number;
+  agents?: number;
+  orchestrators?: number;
+  architecture?: number;
   health: Record<string, number>;
+  idle?: number;
+  busy?: number;
+  disabled?: number;
+  error?: number;
+  active?: number;
   activeMissions: number;
   recentMissions: number;
   truth?: Record<string, boolean>;

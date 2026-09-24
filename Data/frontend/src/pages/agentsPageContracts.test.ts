@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDefinition, AgentMission, CapabilityListItem } from "../types/api";
 import {
+  agentEntityType,
+  agentOrigin,
   assignedCapabilityCards,
   canLaunchAgent,
   draftToCreatePayload,
@@ -8,6 +10,8 @@ import {
   filterMissions,
   filterRoster,
   healthLabel,
+  isArchitectureEntry,
+  isSystemProtected,
   layoutNetworkNodes,
   networkEdgesFromAgents,
   validateEditorDraft,
@@ -233,6 +237,79 @@ describe("agents page helpers", () => {
     expect(canLaunchAgent(agent({ agentId: "a", name: "A", archived: true }), true).ok).toBe(false);
     expect(canLaunchAgent(agent({ agentId: "a", name: "A" }), false).reason).toMatch(/feature flag/i);
     expect(canLaunchAgent(agent({ agentId: "a", name: "A" }), true).ok).toBe(true);
+    expect(
+      canLaunchAgent(
+        agent({
+          agentId: "system:architecture:execution_gateway",
+          name: "Execution Gateway",
+          entityType: "architecture",
+          origin: "system",
+          executable: false,
+        }),
+        true,
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("classifies SYSTEM/USER and entity types from backend fields", () => {
+    const systemAgent = agent({
+      agentId: "a1",
+      name: "Research",
+      origin: "system",
+      entityType: "agent",
+      systemKey: "research",
+      mutable: false,
+    });
+    const userAgent = agent({ agentId: "a2", name: "Custom", origin: "user", entityType: "agent" });
+    const planner = agent({
+      agentId: "a3",
+      name: "Planner",
+      kind: "orchestrator",
+      origin: "system",
+      entityType: "orchestrator",
+      systemKey: "planner",
+      mutable: false,
+    });
+    const arch = agent({
+      agentId: "system:architecture:execution_gateway",
+      name: "Execution Gateway",
+      origin: "system",
+      entityType: "architecture",
+      systemKey: "execution_gateway",
+      mutable: false,
+    });
+    expect(agentOrigin(systemAgent)).toBe("system");
+    expect(agentOrigin(userAgent)).toBe("user");
+    expect(agentEntityType(planner)).toBe("orchestrator");
+    expect(agentEntityType(arch)).toBe("architecture");
+    expect(isSystemProtected(systemAgent)).toBe(true);
+    expect(isSystemProtected(userAgent)).toBe(false);
+    expect(isArchitectureEntry(arch)).toBe(true);
+
+    const filteredSystem = filterRoster([systemAgent, userAgent, planner, arch], {
+      query: "",
+      roleFilter: "All Roles",
+      statusFilter: "All Status",
+      kindFilter: "All Kinds",
+      showArchived: false,
+      originFilter: "SYSTEM",
+      entityTypeFilter: "ALL TYPES",
+    });
+    expect(filteredSystem.map((a) => a.agentId).sort()).toEqual(
+      ["a1", "a3", "system:architecture:execution_gateway"].sort(),
+    );
+
+    const filteredArch = filterRoster([systemAgent, userAgent, planner, arch], {
+      query: "",
+      roleFilter: "All Roles",
+      statusFilter: "All Status",
+      kindFilter: "All Kinds",
+      showArchived: false,
+      originFilter: "ALL",
+      entityTypeFilter: "ARCHITECTURE",
+    });
+    expect(filteredArch).toHaveLength(1);
+    expect(filteredArch[0].agentId).toBe("system:architecture:execution_gateway");
   });
 
   it("health labels stay honest for unknown/error/archived", () => {
