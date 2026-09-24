@@ -38,10 +38,15 @@ class GpuDeviceSample:
     vram_free_bytes: int | None
     vram_utilization_pct: float | None
     driver_version: str | None = None
+    uuid: str | None = None
+    pci_bus_id: str | None = None
+    temperature_c: float | None = None
+    power_watts: float | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "index": self.index,
+            "ordinal": self.index,
             "name": self.name,
             "utilizationPct": self.utilization_pct,
             "vramTotalBytes": self.vram_total_bytes,
@@ -49,6 +54,12 @@ class GpuDeviceSample:
             "vramFreeBytes": self.vram_free_bytes,
             "vramUtilizationPct": self.vram_utilization_pct,
             "driverVersion": self.driver_version,
+            "uuid": self.uuid,
+            "pciBusId": self.pci_bus_id,
+            "temperatureC": self.temperature_c,
+            "powerWatts": self.power_watts,
+            "vendor": _vendor_from_name(self.name),
+            "backend": "cuda",
         }
 
 
@@ -126,8 +137,24 @@ class SystemTelemetrySample:
         }
 
 
+def _vendor_from_name(name: str | None) -> str | None:
+    if not name:
+        return None
+    lower = name.lower()
+    if any(k in lower for k in ("nvidia", "geforce", "rtx", "quadro", "tesla", "a100", "h100")):
+        return "nvidia"
+    if any(k in lower for k in ("amd", "radeon", "instinct")):
+        return "amd"
+    if "intel" in lower or "arc" in lower:
+        return "intel"
+    return None
+
+
 def parse_nvidia_smi_csv(stdout: str) -> list[GpuDeviceSample]:
-    """Parse nvidia-smi csv rows. Malformed lines are skipped — never invented."""
+    """Parse nvidia-smi csv rows. Malformed lines are skipped — never invented.
+
+    Supports both legacy 7-column and extended rows with uuid/pci/temp/power.
+    """
     devices: list[GpuDeviceSample] = []
     for line in stdout.splitlines():
         parts = [p.strip() for p in line.split(",")]
@@ -136,13 +163,27 @@ def parse_nvidia_smi_csv(stdout: str) -> list[GpuDeviceSample]:
         try:
             index = int(parts[0])
             name = parts[1]
-            util = _clamp_pct(float(parts[2]))
+            util = _clamp_pct(float(parts[2])) if parts[2] not in {"[N/A]", "N/A", ""} else None
             total = int(float(parts[3]) * 1024 * 1024)
             free = int(float(parts[4]) * 1024 * 1024)
             used = int(float(parts[5]) * 1024 * 1024)
         except ValueError:
             continue
         driver = parts[6] or None
+        uuid = parts[7] if len(parts) > 7 and parts[7] not in {"[N/A]", "N/A", ""} else None
+        pci = parts[8] if len(parts) > 8 and parts[8] not in {"[N/A]", "N/A", ""} else None
+        temp: float | None = None
+        power: float | None = None
+        if len(parts) > 9 and parts[9] not in {"[N/A]", "N/A", ""}:
+            try:
+                temp = float(parts[9])
+            except ValueError:
+                temp = None
+        if len(parts) > 10 and parts[10] not in {"[N/A]", "N/A", ""}:
+            try:
+                power = float(parts[10])
+            except ValueError:
+                power = None
         vram_pct = _clamp_pct((used / total) * 100.0) if total > 0 else None
         devices.append(
             GpuDeviceSample(
@@ -154,6 +195,10 @@ def parse_nvidia_smi_csv(stdout: str) -> list[GpuDeviceSample]:
                 vram_free_bytes=free,
                 vram_utilization_pct=vram_pct,
                 driver_version=driver,
+                uuid=uuid,
+                pci_bus_id=pci,
+                temperature_c=temp,
+                power_watts=power,
             )
         )
     return devices
@@ -171,11 +216,15 @@ def probe_nvidia_smi(
         notes.append("nvidia-smi not found — GPU telemetry unavailable")
         return [], notes
     run = runner or subprocess.run
+    query = (
+        "index,name,utilization.gpu,memory.total,memory.free,memory.used,"
+        "driver_version,uuid,pci.bus_id,temperature.gpu,power.draw"
+    )
     try:
         proc = run(
             [
                 exe,
-                "--query-gpu=index,name,utilization.gpu,memory.total,memory.free,memory.used,driver_version",
+                f"--query-gpu={query}",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -187,8 +236,25 @@ def probe_nvidia_smi(
         notes.append(f"nvidia-smi probe failed: {exc}")
         return [], notes
     if proc.returncode != 0:
-        notes.append("nvidia-smi returned non-zero — GPU telemetry unavailable")
-        return [], notes
+        # Fallback to legacy query without uuid/temp (older drivers).
+        try:
+            proc = run(
+                [
+                    exe,
+                    "--query-gpu=index,name,utilization.gpu,memory.total,memory.free,memory.used,driver_version",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            notes.append(f"nvidia-smi probe failed: {exc}")
+            return [], notes
+        if proc.returncode != 0:
+            notes.append("nvidia-smi returned non-zero — GPU telemetry unavailable")
+            return [], notes
     devices = parse_nvidia_smi_csv(proc.stdout or "")
     if not devices:
         notes.append("nvidia-smi produced no parseable GPU rows")

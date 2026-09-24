@@ -3059,6 +3059,29 @@ def _m40_behavior_settings_json(conn: sqlite3.Connection) -> None:
         )
 
 
+def _m41_resource_reservations_device_aware(conn: sqlite3.Connection) -> None:
+    """Additive device-aware columns on resource_reservations (shared model+worker truth)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(resource_reservations)").fetchall()}
+    for name, ddl in (
+        ("device_stable_id", "TEXT"),
+        ("model_id", "TEXT"),
+        ("owner_type", "TEXT"),
+        ("reserved_vram_bytes", "INTEGER"),
+        ("reserved_ram_bytes", "INTEGER"),
+        ("measured_vram_bytes", "INTEGER"),
+        ("accounting_mode", "TEXT"),
+        ("shared", "INTEGER NOT NULL DEFAULT 1"),
+        ("runtime_generation", "INTEGER"),
+        ("renewed_at", "TEXT"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE resource_reservations ADD COLUMN {name} {ddl}")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_resource_reservations_device "
+        "ON resource_reservations(device_stable_id, state)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3104,6 +3127,11 @@ MIGRATIONS: Sequence[Migration] = (
         apply=_m39_execution_fabric_hardening,
     ),
     Migration(version=40, name="behavior_settings_json", apply=_m40_behavior_settings_json),
+    Migration(
+        version=41,
+        name="resource_reservations_device_aware",
+        apply=_m41_resource_reservations_device_aware,
+    ),
 )
 
 

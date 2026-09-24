@@ -64,7 +64,43 @@ class LoadRequest(BaseModel):
     cpuThreads: int | None = None
     batchSize: int | None = None
     flashAttention: bool | None = None
+    preferredDeviceIds: list[str] | None = None
+    pinnedDeviceIds: list[str] | None = None
+    excludedDeviceIds: list[str] | None = None
+    tensorSplit: list[float] | None = None
+    mainGpuOrdinal: int | None = None
+    tensorParallelSize: int | None = None
+    allowMultiGpu: bool | None = None
+    allowCpuOffload: bool | None = None
+    shardingMode: str | None = None
     confirmOom: bool = False
+    vramOverrideBytes: int | None = None
+    multiGpuCapability: str | None = None
+
+
+class PlacementPreflightRequest(BaseModel):
+    contextLength: int | None = None
+    gpuOffloadLayers: int | None = None
+    preferredDeviceIds: list[str] | None = None
+    pinnedDeviceIds: list[str] | None = None
+    excludedDeviceIds: list[str] | None = None
+    tensorSplit: list[float] | None = None
+    allowMultiGpu: bool | None = None
+    allowCpuOffload: bool | None = None
+    shardingMode: str | None = None
+    vramOverrideBytes: int | None = None
+    multiGpuCapability: str | None = None
+
+
+class DevicePolicyUpdate(BaseModel):
+    disabledDeviceIds: list[str] | None = None
+    headroomVramBytes: int | None = None
+    headroomRamBytes: int | None = None
+    preserveLargeGpu: bool | None = None
+    specialistPacking: bool | None = None
+    multiGpuPolicy: str | None = None  # disabled | verified_only | explicit
+    cpuOffloadPolicy: str | None = None
+    lowRamProtection: bool | None = None
 
 
 class ImportRequest(BaseModel):
@@ -107,6 +143,48 @@ def build_models_router(plane: ModelControlPlane) -> APIRouter:
     @router.get("/api/models/status")
     def models_status() -> dict:
         return {"status": plane.status_cards(), "telemetry": plane.resources.system_telemetry()}
+
+    @router.get("/api/models/hardware")
+    def models_hardware() -> dict:
+        return plane.hardware_inventory()
+
+    @router.get("/api/models/reservations")
+    def models_reservations() -> dict:
+        held: list[dict] = []
+        if plane.residency.resource_admission is not None:
+            try:
+                held = plane.residency.resource_admission.list_held()
+            except Exception:  # noqa: BLE001
+                held = []
+        return {"reservations": held}
+
+    @router.put("/api/models/hardware/policy")
+    def put_hardware_policy(payload: DevicePolicyUpdate) -> dict:
+        policy = {k: v for k, v in payload.model_dump().items() if v is not None}
+        plane.resources.set_device_policy(policy)
+        if payload.headroomVramBytes is not None:
+            plane.resources.min_vram_reserve_bytes = int(payload.headroomVramBytes)
+            plane.resources._planner.default_vram_headroom_bytes = int(payload.headroomVramBytes)
+        if payload.headroomRamBytes is not None:
+            plane.resources.min_ram_reserve_bytes = int(payload.headroomRamBytes)
+            plane.resources._planner.default_ram_headroom_bytes = int(payload.headroomRamBytes)
+        if payload.preserveLargeGpu is not None:
+            plane.resources._planner.preserve_large_gpu = bool(payload.preserveLargeGpu)
+        return {"policy": plane.resources._device_policy, "hardware": plane.resources.hardware_snapshot().public_dict()}
+
+    @router.post("/api/models/{model_id}/placement-preflight")
+    def placement_preflight(model_id: str, payload: PlacementPreflightRequest | None = None) -> dict:
+        body = payload.model_dump() if payload else {}
+        options = parse_load_options(body)
+        try:
+            return plane.placement_preflight(
+                model_id,
+                load_options=options,
+                vram_override=body.get("vramOverrideBytes"),
+                multi_gpu=body.get("multiGpuCapability"),
+            )
+        except ModelControlError as exc:
+            raise_model_error(exc)
 
     @router.get("/api/models")
     def list_models() -> dict:

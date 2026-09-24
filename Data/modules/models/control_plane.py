@@ -152,6 +152,59 @@ class ModelControlPlane:
     def set_telemetry_provider(self, provider: Any) -> None:
         self.resources.set_telemetry_provider(provider)
 
+    def bind_resource_admission(self, admission: Any | None) -> None:
+        """Share ONE physical reservation truth with worker ResourceAdmission."""
+        self.residency.set_resource_admission(admission)
+        if admission is not None and hasattr(admission, "hardware_reader"):
+            admission.hardware_reader = self.resources.hardware_snapshot
+
+    def hardware_inventory(self) -> dict[str, Any]:
+        snap = self.resources.hardware_snapshot()
+        held: list[dict[str, Any]] = []
+        if self.residency.resource_admission is not None:
+            try:
+                held = self.residency.resource_admission.list_held()
+            except Exception:  # noqa: BLE001
+                held = []
+        return {
+            "hardware": snap.public_dict(),
+            "reservations": held,
+            "residency": [s.public_dict() for s in self.residency.list_snapshots()],
+        }
+
+    def placement_preflight(
+        self,
+        model_id: str,
+        *,
+        load_options: LoadOptions | None = None,
+        vram_override: int | None = None,
+        multi_gpu: str | None = None,
+    ) -> dict[str, Any]:
+        model = self.registry.get(model_id)
+        from Data.modules.models.contracts import MultiGpuCapability
+
+        cap = MultiGpuCapability.UNKNOWN
+        if multi_gpu:
+            try:
+                cap = MultiGpuCapability(multi_gpu)
+            except ValueError:
+                cap = MultiGpuCapability.UNKNOWN
+        binding = None
+        try:
+            binding = self.get_runtime_binding(model_id)
+        except Exception:  # noqa: BLE001
+            binding = None
+        runtime_kind = None
+        if binding is not None:
+            runtime_kind = getattr(binding, "runtime_kind", None)
+        return self.resources.placement_preflight(
+            model,
+            load_options=load_options,
+            runtime_kind=runtime_kind,
+            multi_gpu_capability=cap,
+            vram_override=vram_override,
+        )
+
     def bootstrap(self) -> None:
         """Ensure default LM Studio provider exists from settings; do not erase config."""
         existing = self.store.list_providers()
@@ -1121,6 +1174,21 @@ def LMStudioCaps() -> RuntimeCapabilities:
 def parse_load_options(payload: dict[str, Any] | None) -> LoadOptions | None:
     if not payload:
         return None
+
+    def _tuple_ids(value: Any) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            return tuple(str(v) for v in value)
+        return (str(value),)
+
+    def _tuple_floats(value: Any) -> tuple[float, ...] | None:
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            return tuple(float(v) for v in value)
+        return (float(value),)
+
     return LoadOptions(
         context_length=payload.get("contextLength"),
         gpu_offload_layers=payload.get("gpuOffloadLayers"),
@@ -1128,4 +1196,13 @@ def parse_load_options(payload: dict[str, Any] | None) -> LoadOptions | None:
         cpu_threads=payload.get("cpuThreads"),
         batch_size=payload.get("batchSize"),
         flash_attention=payload.get("flashAttention"),
+        preferred_device_ids=_tuple_ids(payload.get("preferredDeviceIds")),
+        pinned_device_ids=_tuple_ids(payload.get("pinnedDeviceIds")),
+        excluded_device_ids=_tuple_ids(payload.get("excludedDeviceIds")),
+        tensor_split=_tuple_floats(payload.get("tensorSplit")),
+        main_gpu_ordinal=payload.get("mainGpuOrdinal"),
+        tensor_parallel_size=payload.get("tensorParallelSize"),
+        allow_multi_gpu=payload.get("allowMultiGpu"),
+        allow_cpu_offload=payload.get("allowCpuOffload"),
+        sharding_mode=payload.get("shardingMode"),
     )
