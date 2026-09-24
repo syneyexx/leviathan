@@ -76,6 +76,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "portefeuille", label: "Portefeuille", to: "/trading/portefeuille" },
       { id: "paper", label: "PAPER trading", to: "/trading/paper" },
       { id: "broker", label: "BROKER trading", to: "/trading/broker" },
+      { id: "onderzoek", label: "Onderzoek", to: "/trading/onderzoek" },
     ],
   },
   {

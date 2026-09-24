@@ -37,6 +37,7 @@ import { McpPage } from "./pages/McpPage";
 import { ConsolePage } from "./pages/ConsolePage";
 import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
 import { MarktdataPage } from "./pages/trading/MarktdataPage";
+import { OnderzoekPage } from "./pages/trading/OnderzoekPage";
 import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
 import { PortefeuillePage } from "./pages/trading/PortefeuillePage";
 import { SimulatiePage } from "./pages/trading/SimulatiePage";
@@ -78,6 +79,7 @@ export default function App() {
       <Route path="/trading/portefeuille" element={<PortefeuillePage />} />
       <Route path="/trading/paper" element={<PaperTradingPage />} />
       <Route path="/trading/broker" element={<BrokerTradingPage />} />
+      <Route path="/trading/onderzoek" element={<OnderzoekPage />} />
 
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />

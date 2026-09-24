@@ -2148,7 +2148,153 @@ export type AgentDefinitionKind =
   | "coding"
   | "research"
   | "orchestrator"
-  | "specialist";
+  | "specialist"
+  | "trading";
+
+// --- Trade orchestras / trading agents (Frontier Program) ---
+
+export type TradingAutonomyLevel = "A0" | "A1" | "A2" | "A3" | "A4";
+
+export type TradingMandate = {
+  universe: string[];
+  paperCapital: number;
+  maxGrossExposurePct: number;
+  maxSymbolExposurePct: number;
+  perTradeRiskPct: number;
+  maxOrdersPerDay: number;
+  maxDrawdownPct: number;
+  allowedOrderTypes: string[];
+  allowedFamilies: string[];
+  autonomyLevel: TradingAutonomyLevel | string;
+  readinessCeiling: TradingAutonomyLevel | string;
+  decisionCadence: string;
+  maxModelCallsPerMission: number;
+  maxTokensPerMission: number;
+  cannotEnableLive: true;
+};
+
+export type TradeOrchestraMember = {
+  agentId: string;
+  name: string;
+  kind: AgentDefinitionKind | string;
+  role: string;
+  canonicalRole: string;
+  enabled: boolean;
+  health: AgentHealth | string;
+};
+
+export type TradeOrchestraDecisionStats = {
+  byStage: Record<string, number>;
+  total: number;
+  riskRejections: number;
+  lastDecisionAt: string | null;
+};
+
+export type TradeOrchestra = {
+  orchestraId: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  archived: boolean;
+  health: AgentHealth | string;
+  role: string;
+  mandate: TradingMandate;
+  mandateFingerprint: string;
+  readiness: { state: "UNMEASURED" | "MEASURED" | string; reason?: string };
+  autonomyLevel: TradingAutonomyLevel | string;
+  decisionStats: TradeOrchestraDecisionStats;
+  lastMissionId: string | null;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  memberAgentIds: string[];
+  members?: TradeOrchestraMember[];
+  truth: Record<string, unknown>;
+};
+
+export type TradeOrchestraSummary = {
+  enabled: boolean;
+  fleetBound: boolean;
+  model: string;
+  modelAvailable: boolean;
+  orchestras: number;
+  feeds: number;
+  feedsEnabled: number;
+  newsItems: number;
+  externalized: boolean;
+  jobRuntimeBound: boolean;
+  truth: Record<string, unknown>;
+};
+
+export type TradingMissionKind = "deliberation_round" | "news_digest" | "post_mortem";
+
+export type TradingDecision = {
+  decisionId: string;
+  orchestraId: string;
+  missionId: string | null;
+  agentId: string;
+  role: string;
+  stage: string;
+  asOf: string;
+  payload: Record<string, unknown>;
+  parentDecisionId: string | null;
+  modelId: string | null;
+  promptArtifactId: string | null;
+  outputArtifactId: string | null;
+  mandateFingerprint: string;
+  createdAt: string;
+};
+
+export type TradingNewsFeed = {
+  feedId: string;
+  name: string;
+  url: string;
+  kind: string;
+  enabled: boolean;
+  declaredLatencySeconds: number;
+  licenseState: string;
+  symbolsHint: string[];
+  lastPolledAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TradingNewsItem = {
+  itemId: string;
+  feedId: string;
+  source: string;
+  url: string;
+  title: string;
+  summary: string;
+  contentHash: string;
+  publishedAt: string | null;
+  fetchedAt: string;
+  availableAt: string;
+  licenseState: string;
+  symbolsHint: string[];
+  knowledgeDocumentId: string | null;
+  truth: Record<string, unknown>;
+};
+
+export type TradingNewsSignal = {
+  signalId: string;
+  itemId: string;
+  agentId: string;
+  missionId: string | null;
+  instruments: string[];
+  eventType: string;
+  direction: string;
+  magnitude: number;
+  confidence: number;
+  horizon: string;
+  rationale: string;
+  asOf: string;
+  modelId: string | null;
+  createdAt: string;
+  truth: Record<string, unknown>;
+};
 
 export type AgentHealth = "unknown" | "idle" | "busy" | "disabled" | "error" | "archived";
 

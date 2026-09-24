@@ -13,6 +13,7 @@ export const AGENT_KINDS = [
   "research",
   "specialist",
   "orchestrator",
+  "trading",
 ] as const;
 
 export const ORCH_STRATEGIES = ["sequential", "parallel_bounded"] as const;
