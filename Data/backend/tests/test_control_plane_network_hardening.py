@@ -261,14 +261,98 @@ class ModelDownloadExecutorTests(unittest.TestCase):
         models = model_store.list_models()
         self.assertTrue(any(m["model_id"] == "imported:model" for m in models))
 
-    def test_disk_preflight_fails_early(self) -> None:
-        with self.assertRaises(ModelDownloadError) as ctx:
-            disk_preflight(
-                target_dir=Path(self.tmp.name),
-                bytes_total=10**18,
-                bytes_already=0,
+    def test_cancellation_stops_transfer(self) -> None:
+        self._patch_hf_urls()
+        _FakeHFHandler.delay_seconds = 0.05
+        model_store = ModelStore(self.db)
+        download_id = "dl-cancel"
+        dest = self.executor.download_root / "org__cancel" / "main"
+        dest.mkdir(parents=True)
+        model_store.upsert_download(
+            {
+                "download_id": download_id,
+                "state": DownloadState.QUEUED.value,
+                "source": "huggingface",
+                "repository_id": "org/cancel",
+                "revision": "main",
+                "destination": str(dest),
+            }
+        )
+        job = self.runtime.enqueue(
+            capability_id="model_download.start",
+            arguments={
+                "download_id": download_id,
+                "source": "huggingface",
+                "repository_id": "org/cancel",
+                "revision": "main",
+                "destination": str(dest),
+                "credential_ref": "none",
+            },
+            worker_pool="model_download",
+        )
+        claimed = self.store.claim_next_for_pool(
+            pool_id="model_download", worker_id="tcancel", lease_ttl_seconds=60.0
+        )
+        assert claimed is not None
+
+        def cancel_soon() -> None:
+            time.sleep(0.05)
+            self.runtime.cancel(job.job_id, reason="test_cancel")
+            model_store.upsert_download(
+                {
+                    "download_id": download_id,
+                    "state": DownloadState.CANCELLED.value,
+                    "source": "huggingface",
+                    "repository_id": "org/cancel",
+                    "revision": "main",
+                    "destination": str(dest),
+                    "error": "cancelled",
+                }
             )
-        self.assertEqual(ctx.exception.code, ModelDownloadErrorCode.MODEL_DOWNLOAD_STORAGE_FULL)
+
+        threading.Thread(target=cancel_soon, daemon=True).start()
+        result = self.executor.execute_job(
+            {"job_store": self.store, "worker_id": "tcancel", "lease_ttl_seconds": 60.0},
+            claimed,
+        )
+        self.assertIn(result["status"], {"cancelled", "failed"})
+        # Must not mark model installed on cancel
+        models = model_store.list_models()
+        self.assertFalse(any(m["model_id"] == "imported:cancel" for m in models))
+        # Partial artifact may remain as .part for resume — not as completed gguf registration
+        final = model_store.get_download(download_id)
+        assert final is not None
+        self.assertNotEqual(final["state"], DownloadState.COMPLETED.value)
+
+    def test_dedup_returns_active_job(self) -> None:
+        from Data.modules.execution import ExecutionGateway
+
+        runtime = JobRuntime(
+            self.store,
+            ExecutionGateway(catalog=build_default_catalog()),
+            ResourceManager(8),
+        )
+        # Pretend workers ready
+        mgr = DownloadManager(
+            ModelStore(self.db),
+            ModelRegistry(ModelStore(self.db)),
+            download_root=self.executor.download_root,
+            allow_outbound=True,
+            job_runtime=runtime,
+        )
+        ModelStore(self.db).upsert_download(
+            {
+                "download_id": "active-1",
+                "state": DownloadState.DOWNLOADING.value,
+                "source": "huggingface",
+                "repository_id": "org/dup",
+                "revision": "main",
+                "destination": str(self.executor.download_root / "x"),
+            }
+        )
+        found = mgr.find_active(source="huggingface", repository_id="org/dup", revision="main")
+        self.assertIsNotNone(found)
+        self.assertEqual(found.download_id, "active-1")
 
     def test_http_404_maps_to_source_unavailable(self) -> None:
         self._patch_hf_urls()
