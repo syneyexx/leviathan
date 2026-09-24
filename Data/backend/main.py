@@ -1290,6 +1290,7 @@ operator_registry = build_default_operator_registry(
         "dataset_service": dataset_service,
         "metrics": metrics,
         "system_telemetry_sampler": system_telemetry_sampler,
+        "database_path": settings.database_path,
         "health_fn": lambda: {
             "ok": True,
             "modules": len(module_manager.list()),
@@ -4329,23 +4330,31 @@ def _evaluation_externalize() -> bool:
     try:
         from Data.modules.workers.settings import load_worker_settings
 
-        return bool(load_worker_settings().externalize_api_runners)
+        wsettings = load_worker_settings()
+        return bool(wsettings.enabled and wsettings.externalize_api_runners)
     except Exception:  # noqa: BLE001
         return False
 
 
 def _enqueue_evaluation_suite(suite_id: str, *, arguments: dict | None = None) -> dict:
-    job = job_runtime.enqueue(
-        capability_id="evaluation.run",
-        arguments={"suite_id": suite_id, "persist": True, **dict(arguments or {})},
-        requested_by="api",
-        domain="evaluation",
-        domain_entity_type="evaluation_suite",
-        domain_entity_id=suite_id,
-        worker_pool="evaluation",
-        latency_class="background",
-        idempotency_key=f"evaluation:run:{suite_id}:{__import__('uuid').uuid4().hex[:8]}",
-    )
+    import uuid
+
+    try:
+        job = job_runtime.enqueue(
+            capability_id="evaluation.run",
+            arguments={"suite_id": suite_id, "persist": True, **dict(arguments or {})},
+            requested_by="api",
+            domain="evaluation",
+            domain_entity_type="evaluation_suite",
+            domain_entity_id=suite_id,
+            worker_pool="evaluation",
+            resource_class="CPU_HEAVY",
+            latency_class="background",
+            idempotency_key=f"evaluation:run:{suite_id}:{uuid.uuid4().hex[:8]}",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    metrics.incr("evaluations_enqueued")
     return {"job": job.public_dict(), "queued": True, "suite_id": suite_id}
 
 
@@ -4386,6 +4395,9 @@ def run_neuro_evaluation() -> dict:
 @app.post("/api/evaluation/serving")
 def run_serving_evaluation() -> dict:
     """Wave 3/6 serving conformance — only PASS when live-probed."""
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("serving_conformance")
+
     import asyncio
 
     from Data.modules.model_runtime import ManagedLocalServingAdapter, StreamCancelToken
@@ -4473,6 +4485,8 @@ def run_assistant_benchmark_evaluation() -> dict:
     """Round 5 end-to-end assistant benchmark."""
     if not settings.features.eval_platform:
         raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("assistant_benchmark")
     return evaluation_platform.run_assistant_benchmark(persist=True)
 
 
@@ -4481,6 +4495,8 @@ def run_paired_benchmark_evaluation() -> dict:
     """Round 5 paired BASELINE vs LEVIATHAN evaluation."""
     if not settings.features.eval_platform:
         raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("paired_assistant")
     return evaluation_platform.run_paired_evaluation(persist=True)
 
 
@@ -4489,6 +4505,8 @@ def run_ablation_evaluation() -> dict:
     """Round 5 feature ablations with raw run evidence."""
     if not settings.features.eval_platform:
         raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("ablations")
     return evaluation_platform.run_ablations(persist=True)
 
 
@@ -4525,6 +4543,8 @@ def preview_context(
 
 @app.post("/api/evaluation/regression")
 def run_regression_evaluation() -> dict:
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("regression")
     report = evaluation_platform.run_regression_corpus(persist=True)
     return {"report": report.public_dict()}
 

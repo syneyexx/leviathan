@@ -318,6 +318,151 @@ class EvaluationPlatform:
             payload["persisted_report_id"] = saved.report_id
         return payload
 
+    def run_named_suite(
+        self,
+        suite_id: str,
+        *,
+        persist: bool = True,
+        neuro_kwargs: dict[str, Any] | None = None,
+        serving_kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Dispatch a known suite by id for workers / Job Kernel.
+
+        Unknown or unavailable suites return measurement=UNMEASURED.
+        Never converts skip / unavailable into PASS.
+        """
+        aliases = {
+            "assistant": "assistant_benchmark",
+            "paired": "paired_assistant",
+            "platform": "foundation",
+            "neuro": "neuro_ablation",
+            "serving": "serving_conformance",
+        }
+        sid = aliases.get(str(suite_id or "").strip(), str(suite_id or "").strip())
+
+        if sid == "foundation":
+            report = self.run_foundation(persist=persist)
+            return self._named_suite_report(sid, report)
+        if sid == "regression":
+            report = self.run_regression_corpus(persist=persist)
+            return self._named_suite_report(sid, report)
+        if sid == "assistant_benchmark":
+            payload = self.run_assistant_benchmark(persist=persist)
+            return self._named_suite_payload(sid, payload)
+        if sid == "paired_assistant":
+            payload = self.run_paired_evaluation(persist=persist)
+            if persist and self.enabled and payload.get("persisted_report_id"):
+                saved = self.store.get_report(str(payload["persisted_report_id"]))
+                if saved:
+                    payload = {**payload, "report": saved}
+            return self._named_suite_payload(sid, payload)
+        if sid == "ablations":
+            payload = self.run_ablations(persist=persist)
+            if persist and self.enabled and payload.get("persisted_report_id"):
+                saved = self.store.get_report(str(payload["persisted_report_id"]))
+                if saved:
+                    payload = {**payload, "report": saved}
+            return self._named_suite_payload(sid, payload)
+        if sid == "neuro_ablation":
+            nk = dict(neuro_kwargs or {})
+            report = self.harness.run_suite(
+                "neuro_ablation",
+                self.harness.neuro_ablation_suite(
+                    residual_supported=bool(nk.get("residual_supported", False)),
+                    cortex_enabled=bool(nk.get("cortex_enabled", False)),
+                    memory_tiers_enabled=bool(nk.get("memory_tiers_enabled", False)),
+                    critic_enabled=bool(nk.get("critic_enabled", False)),
+                    residual_probed=bool(nk.get("residual_probed", False)),
+                ),
+                suite_id="neuro_ablation",
+            )
+            if persist and self.enabled:
+                report = self.store.save_report(report)
+            return self._named_suite_report(sid, report)
+        if sid == "serving_conformance":
+            sk = dict(serving_kwargs or {})
+            # Defaults are honest UNMEASURED when probes are absent.
+            report = self.harness.run_suite(
+                "serving_conformance",
+                self.harness.serving_conformance_suite(
+                    managed_load_ok=bool(sk.get("managed_load_ok", False)),
+                    stream_cancel_ok=bool(sk.get("stream_cancel_ok", False)),
+                    dead_worker_honest=bool(sk.get("dead_worker_honest", True)),
+                    multi_model_route_ok=bool(sk.get("multi_model_route_ok", False)),
+                    measured_route_recorded=bool(sk.get("measured_route_recorded", False)),
+                    managed_load_probed=bool(sk.get("managed_load_probed", False)),
+                    stream_cancel_probed=bool(sk.get("stream_cancel_probed", False)),
+                    dead_worker_probed=bool(sk.get("dead_worker_probed", False)),
+                    multi_route_probed=bool(sk.get("multi_route_probed", False)),
+                    measured_route_probed=bool(sk.get("measured_route_probed", False)),
+                ),
+                suite_id="serving_conformance",
+                system_level=True,
+            )
+            if persist and self.enabled:
+                report = self.store.save_report(report)
+            return self._named_suite_report(sid, report)
+
+        return {
+            "suite_id": sid or "unknown",
+            "measurement": MeasurementState.UNMEASURED.value,
+            "reason": "unknown_or_unavailable_suite",
+            "truth": {
+                "unmeasured_is_not_pass": True,
+                "skipped_unavailable_is_not_success": True,
+            },
+        }
+
+    @staticmethod
+    def _named_suite_report(suite_id: str, report: EvalReport) -> dict[str, Any]:
+        payload = report.public_dict()
+        summary = payload.get("summary") or {}
+        measurement = MeasurementState.PASS.value
+        if int(summary.get("unmeasured") or 0) > 0:
+            measurement = MeasurementState.UNMEASURED.value
+        elif int(summary.get("failed") or 0) > 0 or int(summary.get("error") or 0) > 0:
+            measurement = MeasurementState.FAIL.value
+        elif int(summary.get("passed") or 0) <= 0:
+            measurement = MeasurementState.UNMEASURED.value
+        return {
+            "suite_id": suite_id,
+            "report": payload,
+            "summary": summary,
+            "measurement": measurement,
+            "truth": {
+                "unmeasured_is_not_pass": True,
+                "skipped_unavailable_is_not_success": True,
+            },
+        }
+
+    @staticmethod
+    def _named_suite_payload(suite_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        report = payload.get("report") if isinstance(payload.get("report"), dict) else None
+        summary = (report or {}).get("summary") or {}
+        if report:
+            measurement = MeasurementState.PASS.value
+            if int(summary.get("unmeasured") or 0) > 0:
+                measurement = MeasurementState.UNMEASURED.value
+            elif int(summary.get("failed") or 0) > 0 or int(summary.get("error") or 0) > 0:
+                measurement = MeasurementState.FAIL.value
+            elif int(summary.get("total") or 0) == 0:
+                measurement = MeasurementState.UNMEASURED.value
+        else:
+            # No scored report — never invent PASS from a skip / empty payload.
+            measurement = MeasurementState.UNMEASURED.value
+            if payload.get("regressions"):
+                measurement = MeasurementState.FAIL.value
+        return {
+            "suite_id": suite_id,
+            **payload,
+            "measurement": measurement,
+            "truth": {
+                **dict(payload.get("truth") or {}),
+                "unmeasured_is_not_pass": True,
+                "skipped_unavailable_is_not_success": True,
+            },
+        }
+
     def public_dict(self) -> dict[str, Any]:
         scorecard = self.build_system_scorecard()
         return {
