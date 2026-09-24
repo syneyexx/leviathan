@@ -1,6 +1,14 @@
 import type { ReactNode } from "react";
 import { BRAIN_STATS, BRAIN_VIEWS, type BrainView } from "./brain-mock";
 
+const tabPaths: Record<BrainView, ReactNode> = {
+  Graph: <><circle cx="12" cy="12" r="2" /><circle cx="4" cy="5" r="2" /><circle cx="20" cy="5" r="2" /><circle cx="4" cy="19" r="2" /><circle cx="20" cy="19" r="2" /><path d="m6 6 4.4 4.5m3.2 0L18 6M6 18l4.4-4.5m3.2 0L18 18" /></>,
+  Tree: <><path d="M12 4v15M5 8h14M5 8v5m14-5v5M7 19h10" /><circle cx="5" cy="15" r="2" /><circle cx="19" cy="15" r="2" /></>,
+  Timeline: <><circle cx="12" cy="12" r="9" /><path d="M12 6v6l4 3" /></>,
+  Clusters: <><circle cx="5" cy="7" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="18" r="2" /><path d="m7 8 4 8m5-9-3 9M7 7h9" /></>,
+  Analytics: <><path d="M4 19h16M6 16v-5m6 5V5m6 11V9" /><circle cx="6" cy="9" r="1" /><circle cx="12" cy="3" r="1" /><circle cx="18" cy="7" r="1" /></>,
+};
+
 export function BrainHeader({
   quote,
   stats,
@@ -61,7 +69,7 @@ export function BrainViewTabs({
               onChange(item);
             }}
           >
-            <span className={`lv-br-tab-icon is-${item.toLowerCase()}`} aria-hidden="true" />
+            <svg className="lv-br-tab-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{tabPaths[item]}</svg>
             {item === "Graph" ? "Graph View" : item}
           </button>
         ))}
