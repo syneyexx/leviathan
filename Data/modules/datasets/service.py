@@ -49,6 +49,14 @@ from .mixtures import MixtureComponent, build_mixture_manifest
 from .packing_sim import simulate_packing
 from .pii import scan_records_pii
 from .shards import ShardIngestCheckpoint, build_shard_plan, ingest_shards
+from .sidecar import (
+    SIDECAR_FILENAME,
+    build_sidecar_payload,
+    find_sidecars_under_roots,
+    read_sidecar,
+    write_sidecar,
+    write_tombstone,
+)
 from .splits import deterministic_split
 from .store import DatasetStore, utc_now
 from .tokenize_stats import compute_token_stats
@@ -85,6 +93,22 @@ _INDEX_RESOLUTION_KIND_ORDER: tuple[VersionKind, ...] = (
 )
 
 
+def _elapsed_seconds(started_at: str | None, ended_at: str | None) -> float | None:
+    if not started_at or not ended_at:
+        return None
+    try:
+        from datetime import datetime
+
+        def _parse(value: str) -> datetime:
+            text = value.replace("Z", "+00:00")
+            return datetime.fromisoformat(text)
+
+        delta = _parse(ended_at) - _parse(started_at)
+        return max(0.0, delta.total_seconds())
+    except (TypeError, ValueError):
+        return None
+
+
 class DatasetService:
     """Production dataset control plane (local + HF import through indexing)."""
 
@@ -115,6 +139,18 @@ class DatasetService:
                 "datasets_auto_index_ready_to_knowledge",
                 True,
             )
+        )
+        ri = getattr(self.settings, "research_integration", None)
+        self.index_write_batch_size = max(
+            1,
+            int(getattr(ri, "dataset_index_batch_size", None) or 50),
+        )
+        self.max_relations_per_doc = max(
+            1,
+            int(getattr(ri, "dataset_max_relations_per_doc", None) or 24),
+        )
+        self.extract_relations_on_index = bool(
+            getattr(ri, "dataset_extract_relations", True)
         )
 
     @classmethod
@@ -571,6 +607,10 @@ class DatasetService:
                 )
                 if size is not None:
                     self.store.update_version(ver.version_id, byte_size=size)
+            try:
+                self.write_dataset_sidecar(existing.dataset_id)
+            except Exception:  # noqa: BLE001
+                pass
             return self.get_dataset(existing.dataset_id), False
 
         source_type = SourceType.HUGGINGFACE if hf_repo or kind == "hf_cache" else SourceType.LOCAL
@@ -603,6 +643,10 @@ class DatasetService:
             )
             if size is not None:
                 self.store.update_version(ver.version_id, byte_size=size)
+        try:
+            self.write_dataset_sidecar(ds.dataset_id)
+        except Exception:  # noqa: BLE001
+            pass
         return self.get_dataset(ds.dataset_id), True
 
     def refresh_dataset_library(self, *, max_files: int = 500) -> dict[str, Any]:
@@ -685,18 +729,20 @@ class DatasetService:
         ]
         ds = self.get_dataset(dataset_id)
         source_missing = bool((ds.metadata or {}).get("sourceMissing"))
+        ladder = self.learning_ladder_for_dataset(dataset_id)
         # READY Brain index is authoritative — a queued auto-index must not hide it.
         if ready and not any(
             bool((j.config or {}).get("rebuild")) and j.status == DatasetJobStatus.RUNNING
             for j in active_jobs
         ):
             idx = sorted(ready, key=lambda i: i.updated_at or "", reverse=True)[0]
+            prov = idx.provenance or {}
             return {
                 "brainStatus": "learned",
                 "label": "Geleerd",
                 "indexId": idx.index_id,
                 "chunkCount": idx.chunk_count,
-                "documentCount": (idx.provenance or {}).get("documentCount"),
+                "documentCount": prov.get("documentCount"),
                 "jobId": None,
                 "progress": 1.0,
                 "phase": "ready",
@@ -704,22 +750,34 @@ class DatasetService:
                 "sourceMissing": source_missing,
                 "learned": True,
                 "versionId": idx.version_id,
+                "embeddingMode": prov.get("embeddingMode"),
+                "embeddingsSemantic": prov.get("embeddingsSemantic"),
+                "relationsAccepted": prov.get("relationsAccepted"),
+                "relationsRejected": prov.get("relationsRejected"),
+                "learning": ladder,
             }
         if active_jobs:
             job = active_jobs[0]
             status = "queued" if job.status == DatasetJobStatus.QUEUED else "indexing"
+            checkpoint = dict(job.checkpoint or {})
             return {
                 "brainStatus": status,
                 "label": "In wachtrij" if status == "queued" else "Bezig met leren",
                 "indexId": None,
-                "chunkCount": None,
-                "documentCount": None,
+                "chunkCount": checkpoint.get("chunkCount"),
+                "documentCount": checkpoint.get("indexed"),
                 "jobId": job.job_id,
                 "progress": job.progress,
                 "phase": job.phase,
                 "updatedAt": job.updated_at,
                 "sourceMissing": source_missing,
                 "learned": False,
+                "embeddingMode": checkpoint.get("embeddingMode"),
+                "embeddingsSemantic": checkpoint.get("embeddingsSemantic"),
+                "relationsAccepted": checkpoint.get("relationsAccepted"),
+                "relationsRejected": checkpoint.get("relationsRejected"),
+                "processed": checkpoint.get("processed"),
+                "learning": ladder,
             }
         if indexing:
             idx = indexing[0]
@@ -735,6 +793,7 @@ class DatasetService:
                 "updatedAt": idx.updated_at,
                 "sourceMissing": source_missing,
                 "learned": False,
+                "learning": ladder,
             }
         if failed and not ready:
             idx = sorted(failed, key=lambda i: i.updated_at or "", reverse=True)[0]
@@ -751,6 +810,7 @@ class DatasetService:
                 "sourceMissing": source_missing,
                 "learned": False,
                 "error": (idx.provenance or {}).get("error"),
+                "learning": ladder,
             }
         return {
             "brainStatus": "not_learned",
@@ -764,6 +824,7 @@ class DatasetService:
             "updatedAt": None,
             "sourceMissing": source_missing,
             "learned": False,
+            "learning": ladder,
         }
 
     def brain_library_entry(self, ds: DatasetRecord) -> dict[str, Any]:
@@ -1184,7 +1245,21 @@ class DatasetService:
         return self.runner.drain(max_jobs=max_jobs)
 
     def reconcile(self) -> list[DatasetJob]:
-        return self.runner.reconcile_interrupted()
+        updated = self.runner.reconcile_interrupted()
+        try:
+            self.reconcile_sidecars()
+        except Exception:  # noqa: BLE001 — catalog recovery must not block job reconcile
+            pass
+        # Backfill sidecars for existing catalog rows (idempotent).
+        try:
+            for ds in self.store.list_datasets(limit=200):
+                try:
+                    self.write_dataset_sidecar(ds.dataset_id)
+                except Exception:  # noqa: BLE001
+                    continue
+        except Exception:  # noqa: BLE001
+            pass
+        return updated
 
     # --- Synchronous helpers for tests / API ---
 
@@ -1225,6 +1300,371 @@ class DatasetService:
         exp = ensure_dir(self.corpus.datasets_exports / dataset_id)
         man = ensure_dir(self.corpus.datasets_manifests / dataset_id)
         return {"raw": raw, "materialized": mat, "processed": proc, "exports": exp, "manifests": man}
+
+    def _sidecar_directory_for(self, ds: DatasetRecord) -> Path:
+        """Always place sidecars under corpus ``raw/{dataset_id}`` (never next to sources).
+
+        Keeps recovery files inside the managed corpus so discovery under
+        ``data_root`` cannot treat ``.leviathan-dataset.json`` as a new dataset.
+        """
+        return self._dataset_dirs(ds.dataset_id)["raw"]
+
+    def write_dataset_sidecar(self, dataset_id: str) -> Path | None:
+        """Persist durable identity sidecar for an existing catalog record."""
+        ds = self.get_dataset(dataset_id)
+        versions = self.store.list_versions(dataset_id)
+        preferred = None
+        for ver in versions:
+            if ver.kind == VersionKind.MATERIALIZED and ver.status == VersionStatus.READY:
+                preferred = ver
+                break
+        if preferred is None and versions:
+            preferred = versions[0]
+        directory = self._sidecar_directory_for(ds)
+        payload = build_sidecar_payload(
+            dataset_id=ds.dataset_id,
+            name=ds.name,
+            source_type=ds.source_type.value if ds.source_type else None,
+            content_hash=ds.content_hash,
+            original_uri=ds.original_uri,
+            original_filename=ds.original_filename,
+            raw_path=ds.raw_path,
+            version_id=preferred.version_id if preferred else None,
+            version_label=preferred.version_label if preferred else None,
+            detected_format=ds.detected_format.value if ds.detected_format else None,
+            row_count=ds.row_count,
+            byte_size=ds.byte_size,
+            provenance=ds.provenance,
+            created_at=ds.created_at,
+            updated_at=ds.updated_at,
+        )
+        return write_sidecar(directory, payload)
+
+    def learning_ladder_for_dataset(self, dataset_id: str) -> dict[str, Any]:
+        """Honest capability ladder: disk file ≠ learned knowledge."""
+        ds = self.get_dataset(dataset_id)
+        files = self.store.list_files(dataset_id)
+        versions = self.store.list_versions(dataset_id)
+        indexes = self.store.list_indexes(dataset_id)
+        ready_indexes = [i for i in indexes if i.status == IndexStatus.READY]
+        source_path = Path(ds.raw_path) if ds.raw_path else None
+        files_discovered = bool(
+            (source_path and source_path.exists())
+            or any(Path(f.path).exists() for f in files if f.path)
+            or bool((ds.metadata or {}).get("discovered"))
+        )
+        in_catalog = True
+        indexed = bool(ready_indexes)
+        embeddings_available = False
+        embeddings_semantic = False
+        relations_verified = False
+        brain_searchable = False
+        relation_count = 0
+        if ready_indexes:
+            prov = ready_indexes[0].provenance or {}
+            emb = prov.get("embeddings") if isinstance(prov.get("embeddings"), dict) else {}
+            embeddings_available = bool(
+                prov.get("embeddingsAvailable")
+                or emb.get("available")
+                or (prov.get("embeddingMode") not in {None, "lexical_only"})
+            )
+            embeddings_semantic = bool(prov.get("embeddingsSemantic") or emb.get("is_semantic"))
+            relation_count = int(prov.get("relationsAccepted") or 0)
+            relations_verified = relation_count > 0 or bool(prov.get("relationsVerified"))
+            brain_searchable = indexed and int(prov.get("documentCount") or prov.get("chunkCount") or 0) > 0
+        sidecar_dir = self._sidecar_directory_for(ds)
+        sidecar = read_sidecar(sidecar_dir / SIDECAR_FILENAME)
+        return {
+            "filesDiscovered": files_discovered,
+            "inCatalog": in_catalog,
+            "sidecarPresent": sidecar is not None,
+            "indexed": indexed,
+            "embeddingsAvailable": embeddings_available,
+            "embeddingsSemantic": embeddings_semantic,
+            "relationsVerified": relations_verified,
+            "relationCount": relation_count,
+            "brainSearchable": brain_searchable,
+            "sourceMissing": bool((ds.metadata or {}).get("sourceMissing")),
+            "versionCount": len(versions),
+            "truth": {
+                "file_on_disk_is_not_learned_knowledge": True,
+                "learned_requires_ready_index": True,
+                "non_semantic_fallback_is_not_semantic_embedding": not embeddings_semantic,
+            },
+        }
+
+    def learning_activity(self, *, limit: int = 40) -> dict[str, Any]:
+        """Live Dataset Learning activity for Agents page — real jobs only."""
+        jobs = self.store.list_jobs(limit=max(1, min(int(limit), 200)))
+        index_jobs = [j for j in jobs if j.job_type == DatasetJobType.INDEX]
+        active = [
+            j
+            for j in index_jobs
+            if j.status in {DatasetJobStatus.QUEUED, DatasetJobStatus.RUNNING}
+        ]
+        recent = index_jobs[:limit]
+
+        def _enrich(job: DatasetJob) -> dict[str, Any]:
+            payload = self.public_job(job)
+            ds_name = None
+            ladder = None
+            if job.dataset_id:
+                try:
+                    ds_name = self.get_dataset(job.dataset_id).name
+                    ladder = self.learning_ladder_for_dataset(job.dataset_id)
+                except DatasetError:
+                    ds_name = None
+            checkpoint = dict(job.checkpoint or {})
+            result = dict(job.result or {})
+            payload["datasetName"] = ds_name
+            payload["learning"] = ladder
+            payload["activity"] = {
+                "datasetId": job.dataset_id,
+                "datasetName": ds_name,
+                "jobId": job.job_id,
+                "phase": job.phase,
+                "progress": job.progress,
+                "status": job.status.value,
+                "processed": checkpoint.get("processed") or result.get("processedCount"),
+                "indexed": checkpoint.get("indexed") or result.get("indexedCount"),
+                "chunkCount": checkpoint.get("chunkCount") or result.get("chunkCount"),
+                "relationsAccepted": checkpoint.get("relationsAccepted")
+                or result.get("relationsAccepted"),
+                "relationsRejected": checkpoint.get("relationsRejected")
+                or result.get("relationsRejected"),
+                "embeddingMode": checkpoint.get("embeddingMode") or result.get("embeddingMode"),
+                "embeddingsSemantic": checkpoint.get("embeddingsSemantic")
+                if "embeddingsSemantic" in checkpoint
+                else result.get("embeddingsSemantic"),
+                "lastRecordId": checkpoint.get("lastRecordId") or result.get("lastRecordId"),
+                "updatedAt": job.updated_at,
+                "startedAt": job.started_at,
+                "finishedAt": job.finished_at,
+                "error": payload.get("error"),
+                "blocked": bool(job.cancel_requested)
+                or job.status == DatasetJobStatus.INTERRUPTED
+                or (
+                    isinstance(payload.get("error"), str)
+                    and "blocked" in str(payload.get("error")).lower()
+                ),
+                "elapsedSeconds": _elapsed_seconds(job.started_at, job.finished_at or job.updated_at),
+            }
+            return payload
+
+        return {
+            "agentSystemKey": "dataset_learning",
+            "agentName": "Dataset Learning",
+            "activeCount": len(active),
+            "active": [_enrich(j) for j in active],
+            "recent": [_enrich(j) for j in recent],
+            "truth": {
+                "reflects_real_dataset_jobs": True,
+                "no_fictional_missions_or_success_rates": True,
+            },
+        }
+
+    def reconcile_sidecars(self, *, max_files: int = 2000) -> dict[str, Any]:
+        """Restore catalog rows from validated sidecars under allowed roots only."""
+        from Data.modules.common.paths import normalize_path_key
+
+        roots = [
+            ("datasets_raw", self.corpus.datasets_raw),
+            ("data_root", self._data_root()),
+            ("corpus", self.corpus.root),
+        ]
+        # Restrict to configured allowed roots intersection.
+        allowed = []
+        for root_id, root in roots:
+            try:
+                resolved = root.resolve()
+            except OSError:
+                continue
+            if any(self._path_under_allowed(resolved, allow) for allow in self.allowed_import_roots):
+                allowed.append((root_id, root))
+        found = find_sidecars_under_roots(allowed, max_files=max_files)
+        created = 0
+        updated = 0
+        skipped_tombstone = 0
+        conflicts: list[dict[str, Any]] = []
+        restored_ids: list[str] = []
+
+        for item in found:
+            if item.get("tombstoned"):
+                skipped_tombstone += 1
+                continue
+            sidecar = item.get("sidecar")
+            if not sidecar:
+                conflicts.append(
+                    {
+                        "path": item.get("path"),
+                        "reason": "invalid_or_unreadable_sidecar",
+                    }
+                )
+                continue
+            dataset_id = str(sidecar["datasetId"])
+            name = str(sidecar["name"])
+            existing = self.store.get_dataset(dataset_id)
+            directory = Path(str(item["directory"]))
+            raw_path = sidecar.get("rawPath") or str(directory)
+            # Prefer concrete file if directory only holds sidecar + one data file.
+            if Path(raw_path).is_dir():
+                data_files = [
+                    p
+                    for p in Path(raw_path).iterdir()
+                    if p.is_file() and p.name not in {SIDECAR_FILENAME, ".leviathan-dataset.deleted"}
+                ]
+                if len(data_files) == 1:
+                    raw_path = str(data_files[0])
+
+            if existing is None:
+                # Do not invent missing provenance — only restore what sidecar provides.
+                source_type_raw = sidecar.get("sourceType") or "local"
+                try:
+                    source_type = SourceType(str(source_type_raw))
+                except ValueError:
+                    source_type = SourceType.LOCAL
+                fmt = None
+                if sidecar.get("detectedFormat"):
+                    try:
+                        fmt = DetectedFormat(str(sidecar["detectedFormat"]))
+                    except ValueError:
+                        fmt = None
+                ds = self.store.create_dataset(
+                    name=name,
+                    source_type=source_type,
+                    description="Restored from durable dataset sidecar",
+                    original_filename=sidecar.get("originalFilename"),
+                    original_uri=sidecar.get("originalUri"),
+                    provenance={
+                        **dict(sidecar.get("provenance") or {}),
+                        "restoredFromSidecar": True,
+                        "sidecarPath": item.get("path"),
+                    },
+                    metadata={
+                        "restoredFromSidecar": True,
+                        "pathKey": normalize_path_key(raw_path),
+                        "sourcePath": raw_path,
+                    },
+                    status=DatasetStatus.RAW,
+                    dataset_id=dataset_id,
+                )
+                self.store.update_dataset(
+                    ds.dataset_id,
+                    raw_path=raw_path,
+                    content_hash=sidecar.get("contentHash"),
+                    byte_size=sidecar.get("byteSize"),
+                    row_count=sidecar.get("rowCount"),
+                    detected_format=fmt,
+                )
+                if Path(raw_path).exists():
+                    self.store.create_version(
+                        dataset_id=ds.dataset_id,
+                        version_label=str(sidecar.get("versionLabel") or "raw-restored"),
+                        kind=VersionKind.RAW,
+                        status=VersionStatus.READY,
+                        storage_path=raw_path,
+                        version_id=sidecar.get("versionId"),
+                        schema={"type": "raw", "restoredFromSidecar": True},
+                        metadata={"restoredFromSidecar": True},
+                    )
+                created += 1
+                restored_ids.append(dataset_id)
+                continue
+
+            # Conflict: same id, different name/hash — report, do not invent merge.
+            if existing.name != name:
+                conflicts.append(
+                    {
+                        "datasetId": dataset_id,
+                        "path": item.get("path"),
+                        "reason": "name_conflict",
+                        "catalogName": existing.name,
+                        "sidecarName": name,
+                    }
+                )
+                continue
+            if (
+                sidecar.get("contentHash")
+                and existing.content_hash
+                and sidecar.get("contentHash") != existing.content_hash
+            ):
+                conflicts.append(
+                    {
+                        "datasetId": dataset_id,
+                        "path": item.get("path"),
+                        "reason": "content_hash_conflict",
+                        "catalogHash": existing.content_hash,
+                        "sidecarHash": sidecar.get("contentHash"),
+                    }
+                )
+                continue
+            meta = dict(existing.metadata or {})
+            meta["sidecarPath"] = item.get("path")
+            self.store.update_dataset(existing.dataset_id, metadata=meta)
+            updated += 1
+
+        return {
+            "scanned": len(found),
+            "created": created,
+            "updated": updated,
+            "skippedTombstone": skipped_tombstone,
+            "conflicts": conflicts,
+            "restoredDatasetIds": restored_ids,
+            "truth": {
+                "sidecar_does_not_replace_catalog": True,
+                "tombstones_block_auto_restore": True,
+                "allowed_roots_only": True,
+                "no_invented_names_or_provenance": True,
+            },
+        }
+
+    @staticmethod
+    def _path_under_allowed(path: Path, allowed_root: Path) -> bool:
+        try:
+            path.resolve().relative_to(Path(allowed_root).resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def delete_dataset(self, dataset_id: str, *, write_tombstone_file: bool = True) -> bool:
+        """Delete catalog row and optionally tombstone the corpus folder."""
+        ds = self.get_dataset(dataset_id)
+        if write_tombstone_file:
+            try:
+                write_tombstone(self._sidecar_directory_for(ds), dataset_id=dataset_id, reason="deleted")
+            except OSError:
+                pass
+        return self.store.delete_dataset(dataset_id)
+
+    def retry_index_job(self, job_id: str, *, resume: bool = True) -> DatasetJob:
+        """Re-queue a failed/cancelled/interrupted INDEX job with the same config."""
+        job = self.get_job(job_id)
+        if job.job_type != DatasetJobType.INDEX:
+            raise DatasetError("Only index jobs can be retried via this path", code="not_index_job")
+        if job.status not in {
+            DatasetJobStatus.FAILED,
+            DatasetJobStatus.CANCELLED,
+            DatasetJobStatus.INTERRUPTED,
+        }:
+            raise DatasetError(
+                f"Job status {job.status.value} is not retryable",
+                code="not_retryable",
+                http_status=409,
+            )
+        if not job.dataset_id or not job.version_id:
+            raise DatasetError("Job missing dataset/version", code="incomplete_job")
+        cfg = dict(job.config or {})
+        cfg["resume"] = bool(resume)
+        new_job = self.store.create_job(
+            job_type=DatasetJobType.INDEX,
+            dataset_id=job.dataset_id,
+            version_id=job.version_id,
+            config=cfg,
+        )
+        if resume and job.checkpoint:
+            self.store.update_job(new_job.job_id, checkpoint=dict(job.checkpoint))
+            return self.get_job(new_job.job_id)
+        return new_job
 
     def _handle_import_local(self, job: DatasetJob) -> dict[str, Any]:
         assert job.dataset_id
@@ -1279,6 +1719,11 @@ class DatasetService:
             mat = self._materialize_dataset(job.dataset_id, raw_path=dest, fmt=detection.format)
             self.store.update_job(job.job_id, phase="validating", progress=0.97)
             result["materialized"] = mat
+        try:
+            self.write_dataset_sidecar(job.dataset_id)
+            result["sidecar"] = SIDECAR_FILENAME
+        except Exception as exc:  # noqa: BLE001 — sidecar is recovery aid, not critical path
+            result["sidecarError"] = redact_secrets(str(exc))
         if self.runner.is_cancel_requested(job.job_id):
             raise DatasetError("cancelled", code="cancelled", http_status=409)
         return result
@@ -2342,12 +2787,35 @@ class DatasetService:
             def _progress(info: dict[str, Any]) -> None:
                 processed = int(info.get("processed") or 0)
                 # Soft asymptotic progress while streaming unknown-length corpora.
-                ratio = min(0.92, 0.15 + (processed / (processed + 200)) * 0.75)
+                phase = str(info.get("phase") or "indexing")
+                if phase in {"source_check", "parsing"}:
+                    ratio = 0.08
+                elif phase in {"relations", "verifying"}:
+                    ratio = min(0.94, 0.7 + (processed / (processed + 200)) * 0.2)
+                else:
+                    ratio = min(0.92, 0.15 + (processed / (processed + 200)) * 0.75)
+                checkpoint = {
+                    "processed": processed,
+                    "indexed": info.get("indexed"),
+                    "skippedUnchanged": info.get("skippedUnchanged"),
+                    "chunkCount": info.get("chunkCount"),
+                    "relationsAccepted": info.get("relationsAccepted"),
+                    "relationsRejected": info.get("relationsRejected"),
+                    "lastRecordId": info.get("lastRecordId"),
+                    "embeddingMode": info.get("embeddingMode"),
+                    "embeddingsSemantic": info.get("embeddingsSemantic"),
+                    "phase": phase,
+                }
                 self.store.update_job(
                     job.job_id,
-                    phase=str(info.get("phase") or "indexing"),
+                    phase=phase,
                     progress=ratio,
+                    checkpoint=checkpoint,
                 )
+
+            resume_after = None
+            if bool(job.config.get("resume")) and isinstance(job.checkpoint, dict):
+                resume_after = job.checkpoint.get("lastRecordId")
 
             outcome = index_version_file(
                 self.knowledge,
@@ -2358,11 +2826,21 @@ class DatasetService:
                 max_records=int(max_records) if max_records is not None else None,
                 progress_cb=_progress,
                 cancel_cb=lambda: self.runner.is_cancel_requested(job.job_id),
+                extract_relations=bool(
+                    job.config.get("extractRelations", self.extract_relations_on_index)
+                ),
+                max_relations_per_doc=int(
+                    job.config.get("maxRelationsPerDoc") or self.max_relations_per_doc
+                ),
+                write_batch_size=int(
+                    job.config.get("writeBatchSize") or self.index_write_batch_size
+                ),
+                resume_after_record_id=str(resume_after) if resume_after else None,
             )
             from .offline import build_projection_manifest
             from Data.modules.common.atomic import atomic_write_text
 
-            self.store.update_job(job.job_id, phase="finalizing", progress=0.95)
+            self.store.update_job(job.job_id, phase="publishing", progress=0.96)
             manifest = build_projection_manifest(
                 projection_id=index.index_id,
                 dataset_id=job.dataset_id,
@@ -2376,6 +2854,10 @@ class DatasetService:
             manifest["requestedVersionId"] = requested_version_id
             manifest["resolvedVersionId"] = ver.version_id
             manifest["learnToBrain"] = bool(job.config.get("learnToBrain"))
+            manifest["embeddingMode"] = outcome.get("embeddingMode")
+            manifest["embeddingsSemantic"] = outcome.get("embeddingsSemantic")
+            manifest["relationsAccepted"] = outcome.get("relationsAccepted")
+            manifest["relationsRejected"] = outcome.get("relationsRejected")
             manifest_path = self.corpus.datasets_manifests / f"brain-{index.index_id}.json"
             ensure_dir(manifest_path.parent)
             atomic_write_text(
@@ -2391,11 +2873,21 @@ class DatasetService:
                 "resolvedVersionId": ver.version_id,
                 "learnToBrain": bool(job.config.get("learnToBrain")),
                 "datasetName": self.get_dataset(job.dataset_id).name,
+                "relationsVerified": int(outcome.get("relationsAccepted") or 0) > 0,
             }
+            emb_model = None
+            emb = outcome.get("embeddings") if isinstance(outcome.get("embeddings"), dict) else {}
+            if outcome.get("embeddingsSemantic"):
+                emb_model = emb.get("provider_id") or "semantic"
+            elif outcome.get("embeddingsAvailable"):
+                emb_model = f"non_semantic:{emb.get('provider_id') or 'fallback'}"
+            else:
+                emb_model = "lexical_only"
             self.store.update_index(
                 index.index_id,
                 status=IndexStatus.READY,
                 chunk_count=outcome["chunkCount"],
+                embedding_model=emb_model,
                 provenance=provenance,
             )
             superseded: list[str] = []
@@ -2416,6 +2908,10 @@ class DatasetService:
                             },
                         )
                         superseded.append(old.index_id)
+            try:
+                self.write_dataset_sidecar(job.dataset_id)
+            except Exception:  # noqa: BLE001
+                pass
             self.store.update_job(job.job_id, phase="ready", progress=1.0)
             return {
                 "indexId": index.index_id,

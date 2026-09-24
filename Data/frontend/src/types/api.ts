@@ -616,6 +616,61 @@ export type DatasetJob = {
   finishedAt?: string | null;
   /** Derived download summary from backend public_job (HF imports). */
   download?: DatasetJobDownloadSummary | null;
+  datasetName?: string | null;
+  learning?: DatasetLearningLadder | null;
+  activity?: DatasetLearningJobActivity | null;
+};
+
+export type DatasetLearningLadder = {
+  filesDiscovered?: boolean;
+  inCatalog?: boolean;
+  sidecarPresent?: boolean;
+  indexed?: boolean;
+  embeddingsAvailable?: boolean;
+  embeddingsSemantic?: boolean;
+  relationsVerified?: boolean;
+  relationCount?: number;
+  brainSearchable?: boolean;
+  sourceMissing?: boolean;
+  versionCount?: number;
+  truth?: Record<string, boolean>;
+};
+
+export type DatasetLearningJobActivity = {
+  datasetId?: string | null;
+  datasetName?: string | null;
+  jobId: string;
+  phase?: string | null;
+  progress?: number | null;
+  status: string;
+  processed?: number | null;
+  indexed?: number | null;
+  chunkCount?: number | null;
+  relationsAccepted?: number | null;
+  relationsRejected?: number | null;
+  embeddingMode?: string | null;
+  embeddingsSemantic?: boolean | null;
+  lastRecordId?: string | null;
+  updatedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  error?: string | null;
+  blocked?: boolean;
+  elapsedSeconds?: number | null;
+};
+
+export type DatasetLearningStatus = {
+  agent: AgentDefinition | null;
+  activity: {
+    agentSystemKey?: string;
+    agentName?: string;
+    activeCount: number;
+    active: DatasetJob[];
+    recent: DatasetJob[];
+    truth?: Record<string, boolean>;
+    error?: string;
+  };
+  truth?: Record<string, boolean>;
 };
 
 export type DatasetIndex = {

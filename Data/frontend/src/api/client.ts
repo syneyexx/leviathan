@@ -19,6 +19,7 @@ import type {
   DatasetFile,
   DatasetIndex,
   DatasetJob,
+  DatasetLearningStatus,
   DatasetPreviewRow,
   DatasetRecord,
   DatasetVersion,
@@ -1116,6 +1117,39 @@ export const api = {
     return request(`/api/datasets/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
   },
 
+  retryDatasetJob(jobId: string, resume = true): Promise<{ job: DatasetJob }> {
+    const params = new URLSearchParams({ resume: resume ? "true" : "false" });
+    return request(`/api/datasets/jobs/${encodeURIComponent(jobId)}/retry?${params.toString()}`, {
+      method: "POST",
+    });
+  },
+
+  datasetLearningActivity(limit = 40): Promise<{
+    agentSystemKey?: string;
+    agentName?: string;
+    activeCount: number;
+    active: DatasetJob[];
+    recent: DatasetJob[];
+    truth?: Record<string, boolean>;
+  }> {
+    return request(`/api/datasets/learning/activity?limit=${encodeURIComponent(String(limit))}`);
+  },
+
+  reconcileDatasetSidecars(maxFiles = 2000): Promise<{
+    scanned: number;
+    created: number;
+    updated: number;
+    skippedTombstone: number;
+    conflicts: Array<Record<string, unknown>>;
+    restoredDatasetIds: string[];
+    truth?: Record<string, boolean>;
+  }> {
+    return request(
+      `/api/datasets/sidecars/reconcile?maxFiles=${encodeURIComponent(String(maxFiles))}`,
+      { method: "POST" },
+    );
+  },
+
   processDatasetJobs(maxJobs = 10): Promise<{ processed: DatasetJob[] }> {
     return request(`/api/datasets/jobs/process?maxJobs=${encodeURIComponent(String(maxJobs))}`, {
       method: "POST",
@@ -1838,6 +1872,10 @@ export const api = {
 
   getAgentFleetSummary(): Promise<{ summary: AgentFleetSummary }> {
     return request("/api/agents/summary");
+  },
+
+  getDatasetLearningStatus(): Promise<DatasetLearningStatus> {
+    return request("/api/agents/dataset-learning");
   },
 
   getAgent(agentId: string): Promise<{ agent: AgentDefinition }> {

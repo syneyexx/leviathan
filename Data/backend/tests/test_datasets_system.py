@@ -142,6 +142,7 @@ class PipelineTests(unittest.TestCase):
             knowledge=self.knowledge,
             allowed_import_roots=[self.import_root, self.corpus.root],
         )
+        self.service.datasets_auto_index_ready_to_knowledge = False
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

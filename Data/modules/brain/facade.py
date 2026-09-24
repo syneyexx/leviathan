@@ -60,6 +60,7 @@ class BrainQueryFacade:
         mcp_tools: Callable[[], list[Any]] | None = None,
         workflow_list: Callable[[], list[Any]] | None = None,
         atlas_list: Callable[[], list[Any]] | None = None,
+        relation_list: Callable[[], list[Any]] | None = None,
         max_nodes: int = 250,
         max_edges: int = 500,
     ) -> None:
@@ -74,6 +75,7 @@ class BrainQueryFacade:
         self.mcp_tools = mcp_tools
         self.workflow_list = workflow_list
         self.atlas_list = atlas_list
+        self.relation_list = relation_list
         self.max_nodes = max(10, min(int(max_nodes), 1000))
         self.max_edges = max(10, min(int(max_edges), 2000))
 
@@ -115,15 +117,41 @@ class BrainQueryFacade:
             for doc in self.knowledge_list()[:limit_n]:
                 d = doc.public_dict() if hasattr(doc, "public_dict") else dict(doc)
                 nid = f"knowledge:document:{d.get('id')}"
+                trust = d.get("trust_metadata") if isinstance(d.get("trust_metadata"), dict) else {}
                 add_node(
                     BrainNode(
                         id=nid,
                         type="knowledge.document",
                         label=str(d.get("title") or d.get("id")),
                         created_at=d.get("created_at"),
-                        meta={"status": d.get("status"), "source": d.get("source")},
+                        meta={
+                            "status": d.get("status"),
+                            "source": d.get("source"),
+                            "datasetId": trust.get("datasetId"),
+                            "embeddingsSemantic": trust.get("embeddingsSemantic"),
+                            "embeddingMode": trust.get("embeddingMode"),
+                        },
                     )
                 )
+                ds_id = trust.get("datasetId")
+                if ds_id:
+                    ds_nid = f"dataset:{ds_id}"
+                    add_node(
+                        BrainNode(
+                            id=ds_nid,
+                            type="dataset",
+                            label=str(ds_id)[:48],
+                            meta={"fromKnowledge": True},
+                        )
+                    )
+                    add_edge(
+                        BrainEdge(
+                            id=f"{nid}->dataset",
+                            source=nid,
+                            target=ds_nid,
+                            relation="from_dataset",
+                        )
+                    )
 
         # Evidence
         if self.evidence_list:
@@ -165,17 +193,91 @@ class BrainQueryFacade:
         if self.dataset_list:
             for ds in self.dataset_list()[:limit_n]:
                 d = ds.public_dict() if hasattr(ds, "public_dict") else dict(ds)
-                did = d.get("dataset_id") or d.get("id")
+                did = d.get("dataset_id") or d.get("datasetId") or d.get("id")
                 nid = f"dataset:{did}"
                 add_node(
                     BrainNode(
                         id=nid,
                         type="dataset",
                         label=str(d.get("name") or did),
-                        created_at=d.get("created_at") or d.get("updated_at"),
-                        meta={"status": d.get("status")},
+                        created_at=d.get("created_at") or d.get("createdAt") or d.get("updated_at"),
+                        meta={
+                            "status": d.get("status"),
+                            "brainStatus": d.get("brainStatus") or (d.get("brain") or {}).get("brainStatus"),
+                            "learned": d.get("learned"),
+                        },
                     )
                 )
+
+        # Verified relation atoms (bounded) — clickable to source docs when present
+        if self.relation_list:
+            for atom in self.relation_list()[: min(limit_n, self.max_edges)]:
+                a = atom.public_dict() if hasattr(atom, "public_dict") else dict(atom)
+                subj = str(a.get("subject_ref") or a.get("subjectRef") or "")
+                obj = str(a.get("object_ref") or a.get("objectRef") or "")
+                if not subj or not obj:
+                    continue
+                rel = str(a.get("relation_class") or a.get("relationClass") or "like")
+                conf = a.get("confidence")
+                if conf is not None and float(conf) < 0.55:
+                    continue
+                for ref, typ in ((subj, "relation.entity"), (obj, "relation.entity")):
+                    if ref.startswith("knowledge:document:") or ref.startswith("dataset:"):
+                        # Prefer existing typed nodes; still ensure presence for edge endpoints.
+                        add_node(
+                            BrainNode(
+                                id=ref,
+                                type="knowledge.document" if ref.startswith("knowledge:") else "dataset",
+                                label=ref.split(":")[-1][:80],
+                            )
+                        )
+                    else:
+                        add_node(
+                            BrainNode(
+                                id=ref if ":" in ref else f"entity:{ref}",
+                                type=typ,
+                                label=ref.split(":")[-1][:80],
+                                meta={"confidence": conf},
+                            )
+                        )
+                src = subj if ":" in subj else f"entity:{subj}"
+                tgt = obj if ":" in obj else f"entity:{obj}"
+                # Ensure endpoints use the same ids we added
+                if not subj.startswith(("knowledge:", "dataset:", "entity:", "record:")):
+                    src = f"entity:{subj}"
+                else:
+                    src = subj
+                if not obj.startswith(("knowledge:", "dataset:", "entity:", "record:")):
+                    tgt = f"entity:{obj}"
+                else:
+                    tgt = obj
+                add_edge(
+                    BrainEdge(
+                        id=str(a.get("atom_id") or a.get("atomId") or f"{src}->{tgt}:{rel}"),
+                        source=src,
+                        target=tgt,
+                        relation=rel,
+                    )
+                )
+                doc_id = a.get("document_id") or a.get("documentId")
+                if doc_id:
+                    knid = f"knowledge:document:{doc_id}"
+                    add_node(
+                        BrainNode(
+                            id=knid,
+                            type="knowledge.document",
+                            label=str(doc_id)[:80],
+                            meta={"relationEvidence": True},
+                        )
+                    )
+                    add_edge(
+                        BrainEdge(
+                            id=f"{src}->evidence:{doc_id}",
+                            source=src,
+                            target=knid,
+                            relation="evidenced_by",
+                        )
+                    )
 
         # Controlled memory (Geheugen) — projection only
         if self.memory_list:

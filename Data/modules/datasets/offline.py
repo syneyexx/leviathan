@@ -27,7 +27,16 @@ from .types import DetectedFormat
 # Single authoritative extension set — shared with upload/import.
 ALLOWED_EXTENSIONS = set(SUPPORTED_SUFFIXES)
 
-IGNORE_NAMES = {".git", ".svn", "__pycache__", "node_modules", ".DS_Store", "Thumbs.db"}
+IGNORE_NAMES = {
+    ".git",
+    ".svn",
+    "__pycache__",
+    "node_modules",
+    ".DS_Store",
+    "Thumbs.db",
+    ".leviathan-dataset.json",
+    ".leviathan-dataset.deleted",
+}
 
 # Derived / internal trees under the data root that must not be re-registered
 # as independent source datasets (they are projections of registered ones).
