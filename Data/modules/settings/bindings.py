@@ -432,8 +432,6 @@ def bind_default_consumers(
 
         if key == "hf_token":
             # Consumed via env-style lookup in huggingface helpers; set process env for workers.
-            import os
-
             token = str(value or "").strip()
             if token:
                 os.environ["LEVIATHAN_HF_TOKEN"] = token
@@ -442,8 +440,6 @@ def bind_default_consumers(
                 os.environ.pop("LEVIATHAN_HF_TOKEN", None)
 
         if key == "training_fixture":
-            import os
-
             os.environ["LEVIATHAN_TRAINING_FIXTURE"] = "1" if value else "0"
 
     plane.register_apply_callback(on_apply)
