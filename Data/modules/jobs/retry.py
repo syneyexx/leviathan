@@ -65,7 +65,7 @@ class RetryPolicy:
                 return True
 
         if error is None:
-            return True
+            return False
 
         if isinstance(error, BaseException):
             name = type(error).__name__.upper()
@@ -76,12 +76,16 @@ class RetryPolicy:
 
         non_retry_tokens = (
             "NOT RETRYABLE",
+            "NOT FOUND",
+            "NO SUCH FILE",
+            "DOES NOT EXIST",
             "VALIDATION",
             "PERMISSION",
             "APPROVAL",
             "REJECTED",
             "CANCELLED",
             "UNAUTHORIZED",
+            "INVALID",
         )
         if any(tok in text for tok in non_retry_tokens) or any(tok in name for tok in non_retry_tokens):
             return False
@@ -90,8 +94,8 @@ class RetryPolicy:
         if any(tok in text for tok in retry_tokens) or any(tok in name for tok in retry_tokens):
             return True
 
-        # Default: treat unknown failures as retryable until attempts are exhausted.
-        return True
+        # Unknown failures are not auto-retried; callers may set retryable=True explicitly.
+        return False
 
 
 DEFAULT_RETRY_POLICY = RetryPolicy()
