@@ -386,6 +386,41 @@ def build_research_router(service: ResearchService) -> APIRouter:
         except ResearchError as exc:
             raise_research_error(exc)
 
+    @router.get("/api/research/{project_id}/gaps")
+    def get_gaps(project_id: str) -> dict:
+        try:
+            return {"gaps": service.list_gaps(project_id)}
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.get("/api/research/{project_id}/source-assessments")
+    def get_source_assessments(project_id: str) -> dict:
+        try:
+            return {"assessments": service.source_assessments(project_id)}
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.get("/api/research/{project_id}/citation-audit")
+    def get_citation_audit(project_id: str) -> dict:
+        try:
+            return {"audit": service.citation_audit(project_id)}
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.get("/api/research/{project_id}/quality")
+    def get_quality(project_id: str) -> dict:
+        try:
+            return {"quality": service.quality_scorecard(project_id)}
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.get("/api/research/{project_id}/plan-history")
+    def get_plan_history(project_id: str) -> dict:
+        try:
+            return {"history": service.plan_history(project_id)}
+        except ResearchError as exc:
+            raise_research_error(exc)
+
     @router.post("/api/research/{project_id}/reproducibility-bundle")
     def reproducibility_bundle(project_id: str) -> dict:
         try:

@@ -430,6 +430,7 @@ export function ResearchPage() {
   const [ingestionOffset, setIngestionOffset] = useState(0);
   const [evidence, setEvidence] = useState<ResearchEvidence[]>([]);
   const [claims, setClaims] = useState<ResearchClaim[]>([]);
+  const [gaps, setGaps] = useState<Array<Record<string, unknown>>>([]);
   const [hasLiveProject, setHasLiveProject] = useState(false);
 
   const selectedModel = useMemo(
@@ -500,14 +501,16 @@ export function ResearchPage() {
   }, [query]);
 
   const refreshArtifacts = useCallback(async (projectId: string) => {
-    const [src, ev, cl] = await Promise.all([
+    const [src, ev, cl, gapRes] = await Promise.all([
       api.listResearchSources(projectId).catch(() => ({ sources: [] as ResearchSource[] })),
       api.listResearchEvidence(projectId).catch(() => ({ evidence: [] as ResearchEvidence[] })),
       api.listResearchClaims(projectId).catch(() => ({ claims: [] as ResearchClaim[] })),
+      api.getResearchGaps(projectId).catch(() => ({ gaps: [] as Array<Record<string, unknown>> })),
     ]);
     setSources(src.sources);
     setEvidence(ev.evidence);
     setClaims(cl.claims);
+    setGaps(gapRes.gaps ?? []);
     if (src.sources.length > 0) {
       setContext((c) => ({ ...c, files: true }));
     }
@@ -530,6 +533,7 @@ export function ResearchPage() {
         setSources([]);
         setEvidence([]);
         setClaims([]);
+        setGaps([]);
         return;
       }
       const preferred =
@@ -1642,6 +1646,29 @@ export function ResearchPage() {
                     </li>
                   );
                 })}
+              </ul>
+            )}
+            <div className="lv-rd-insights-head" style={{ marginTop: "1rem" }}>
+              <h3>Open Gaps</h3>
+              <span className="lv-rd-badge">{gaps.length}</span>
+            </div>
+            {gaps.length === 0 ? (
+              <p className="lv-rd-empty-note">No open research gaps recorded yet.</p>
+            ) : (
+              <ul className="lv-rd-insight-list">
+                {gaps.slice(0, 8).map((gap) => (
+                  <li
+                    key={String(gap.gap_id ?? gap.reason)}
+                    className="lv-rd-insight-item"
+                  >
+                    <div className="lv-rd-insight-copy">
+                      <strong>
+                        {String(gap.gap_type ?? "GAP")} · {String(gap.severity ?? "")}
+                      </strong>
+                      <p>{String(gap.reason ?? gap.target_question ?? "")}</p>
+                    </div>
+                  </li>
+                ))}
               </ul>
             )}
           </article>
