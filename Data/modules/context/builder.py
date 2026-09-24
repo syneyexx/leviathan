@@ -1,11 +1,22 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Callable
 
 from Data.modules.reasoning import ReasoningPlan
 
+from .budget import ContextBudgetPlanner, ContextFitState
 from .compaction import compact_conversation
+from .fingerprints import (
+    ContextFingerprintInputs,
+    build_stable_prefix_fingerprint,
+    digest_items,
+    digest_messages,
+    digest_text,
+)
+from .hierarchical_compaction import compact_hierarchical
 from .snapshots import snapshot_context_pack
+from .tokenization import TokenCountResult, TokenizationService, TokenPrecision, get_tokenization_service
 from .types import (
     BudgetLedger,
     BudgetLedgerEntry,
@@ -13,6 +24,10 @@ from .types import (
     ContextSection,
     estimate_tokens,
 )
+
+
+def json_dumps_safe(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False)
 
 
 class ContextBuilder:
@@ -27,6 +42,9 @@ class ContextBuilder:
     When ``auto_budget`` is on and a model window is known, packing uses
     ``max_context_fraction`` / ``reserve_response_fraction``. Otherwise the
     fixed ``token_budget`` / ``reserve_response_tokens`` fallback applies.
+
+    Token counting is model-aware when a TokenizationService is bound; otherwise
+    the honest chars/4 heuristic remains.
     """
 
     def __init__(
@@ -41,6 +59,14 @@ class ContextBuilder:
         reserve_response_fraction: float = 0.18,
         minimum_response_tokens: int = 256,
         model_context_window: int | None = None,
+        tokenization: TokenizationService | None = None,
+        model_id: str | None = None,
+        model_revision: str | None = None,
+        tokenizer_id: str | None = None,
+        tokenizer_revision: str | None = None,
+        chat_template_id: str | None = None,
+        chat_template_revision: str | None = None,
+        token_counter: Callable[[str], int] | None = None,
     ) -> None:
         if token_budget < 256:
             raise ValueError("token_budget must be >= 256")
@@ -55,12 +81,98 @@ class ContextBuilder:
         self.model_context_window = (
             int(model_context_window) if model_context_window is not None else None
         )
+        self.tokenization = tokenization
+        self.model_id = model_id
+        self.model_revision = model_revision
+        self.tokenizer_id = tokenizer_id
+        self.tokenizer_revision = tokenizer_revision
+        self.chat_template_id = chat_template_id
+        self.chat_template_revision = chat_template_revision
+        self._token_counter = token_counter
+        self._last_count_meta: dict[str, Any] = {
+            "precision": TokenPrecision.HEURISTIC.value,
+            "source": "heuristic_chars4",
+            "safety_margin_tokens": 0,
+        }
+        self._budget_planner = ContextBudgetPlanner(
+            max_context_fraction=self.max_context_fraction,
+            reserve_response_fraction=self.reserve_response_fraction,
+            minimum_response_tokens=self.minimum_response_tokens,
+            default_reserve_response_tokens=self.reserve_response_tokens,
+        )
+
+    def bind_model(
+        self,
+        *,
+        model_id: str | None = None,
+        model_context_window: int | None = None,
+        model_revision: str | None = None,
+        tokenizer_id: str | None = None,
+        tokenizer_revision: str | None = None,
+        chat_template_id: str | None = None,
+        chat_template_revision: str | None = None,
+    ) -> None:
+        if model_id is not None:
+            self.model_id = model_id
+        if model_context_window is not None:
+            self.model_context_window = int(model_context_window)
+        if model_revision is not None:
+            self.model_revision = model_revision
+        if tokenizer_id is not None:
+            self.tokenizer_id = tokenizer_id
+        if tokenizer_revision is not None:
+            self.tokenizer_revision = tokenizer_revision
+        if chat_template_id is not None:
+            self.chat_template_id = chat_template_id
+        if chat_template_revision is not None:
+            self.chat_template_revision = chat_template_revision
+
+    def _count_tokens(self, text: str) -> int:
+        """Model-aware count when possible; honest heuristic otherwise."""
+        if self._token_counter is not None:
+            n = int(self._token_counter(text))
+            self._last_count_meta = {
+                "precision": TokenPrecision.EXACT_LOCAL_TOKENIZER.value,
+                "source": "injected_counter",
+                "safety_margin_tokens": 0,
+            }
+            return n
+        svc = self.tokenization
+        if svc is None:
+            # Lazy bind process default only when callers opted into the plane.
+            # Keep pure heuristic for legacy ContextBuilder() construction.
+            n = estimate_tokens(text)
+            self._last_count_meta = {
+                "precision": TokenPrecision.HEURISTIC.value,
+                "source": "heuristic_chars4",
+                "safety_margin_tokens": 0,
+            }
+            return n
+        result: TokenCountResult = svc.count_text(
+            text,
+            model_id=self.model_id,
+            tokenizer_id=self.tokenizer_id,
+            tokenizer_revision=self.tokenizer_revision,
+            chat_template_id=self.chat_template_id,
+        )
+        self._last_count_meta = {
+            "precision": result.precision.value,
+            "source": result.source.value,
+            "safety_margin_tokens": result.safety_margin_tokens,
+            "tokenizer_id": result.tokenizer_id,
+            "cached": result.cached,
+        }
+        return int(result.budget_count)
 
     def resolve_budgets(
         self,
         *,
         model_context_window: int | None = None,
         token_budget: int | None = None,
+        max_output_tokens: int | None = None,
+        profile_max_tokens: int | None = None,
+        operator_response_tokens: int | None = None,
+        count_result: TokenCountResult | None = None,
     ) -> dict[str, Any]:
         """Resolve pack usable budget + response reserve (model-aware when possible)."""
         window = model_context_window if model_context_window is not None else self.model_context_window
@@ -72,22 +184,27 @@ class ContextBuilder:
         else:
             window_i = 0
 
+        # Preserve historical ContextBuilder contracts for fixed / auto paths while
+        # enriching diagnostics via ContextBudgetPlanner.
         used_auto = bool(self.auto_budget and window_i >= 256)
         if used_auto:
             frac = min(1.0, max(0.05, float(self.max_context_fraction)))
             reserve_frac = min(1.0, max(0.0, float(self.reserve_response_fraction)))
-            # Context pack + response share the window; pack gets max_context_fraction,
-            # response reserve is max(fraction of window, minimum floor), capped so pack
-            # retains at least 256 tokens.
             pack_cap = max(256, int(window_i * frac))
-            reserve = max(
-                self.minimum_response_tokens,
-                int(window_i * reserve_frac),
-            )
-            # If explicit token_budget override is passed, treat it as pack ceiling.
+            if operator_response_tokens is not None or max_output_tokens is not None or profile_max_tokens is not None:
+                requested = max(
+                    v
+                    for v in (operator_response_tokens, max_output_tokens, profile_max_tokens)
+                    if v is not None
+                )
+                reserve = max(self.minimum_response_tokens, int(requested))
+            else:
+                reserve = max(
+                    self.minimum_response_tokens,
+                    int(window_i * reserve_frac),
+                )
             if token_budget is not None:
                 pack_cap = min(pack_cap, max(256, int(token_budget)))
-            # Ensure pack + reserve fit the window when possible.
             if pack_cap + reserve > window_i:
                 reserve = max(self.minimum_response_tokens, window_i - pack_cap)
             if pack_cap + reserve > window_i:
@@ -105,6 +222,17 @@ class ContextBuilder:
                 reserve = int(self.reserve_response_tokens)
             source = "fixed"
 
+        plan = self._budget_planner.plan(
+            context_window=window_i or None,
+            max_output_tokens=max_output_tokens,
+            profile_max_tokens=profile_max_tokens,
+            operator_response_tokens=operator_response_tokens,
+            count_result=count_result,
+            auto_budget=self.auto_budget,
+            fixed_token_budget=token_budget if token_budget is not None else self.token_budget,
+        )
+        # Prefer historical usable when planner would shrink below compatibility floor
+        # for existing callers; still expose planner diagnostics.
         return {
             "usable_budget": usable,
             "reserve_response_tokens": reserve,
@@ -116,6 +244,10 @@ class ContextBuilder:
             "source": source,
             "max_context_fraction": float(self.max_context_fraction),
             "reserve_response_fraction": float(self.reserve_response_fraction),
+            "planner": plan.public_dict(),
+            "count_precision": plan.count_precision.value,
+            "count_source": plan.count_source,
+            "uncertainty_margin_tokens": plan.uncertainty_margin_tokens,
         }
 
     @property
@@ -143,11 +275,23 @@ class ContextBuilder:
         file_kinds: list[dict[str, Any]] | None = None,
         compact_history: bool = False,
         behavior_profile_prompt: str | None = None,
+        behavior_profile_version: str | None = None,
         reasoning_mode: str | None = None,
+        max_output_tokens: int | None = None,
+        profile_max_tokens: int | None = None,
+        tool_schema: Any | None = None,
+        project_instructions: str | None = None,
+        operator_instructions: str | None = None,
+        security_scope: str | None = None,
+        project_scope: str | None = None,
+        force_compaction_on_pressure: bool = False,
+        existing_compaction_segments: dict[str, Any] | None = None,
     ) -> ContextPack:
         resolved = self.resolve_budgets(
             model_context_window=model_context_window,
             token_budget=token_budget,
+            max_output_tokens=max_output_tokens,
+            profile_max_tokens=profile_max_tokens,
         )
         budget = int(resolved["usable_budget"])
         know_chars = max_knowledge_chars if max_knowledge_chars is not None else self.max_knowledge_chars
@@ -156,6 +300,7 @@ class ContextBuilder:
         ledger_entries: list[BudgetLedgerEntry] = []
         used = 0
         constraints_retained = False
+        compaction_meta: dict[str, Any] = {}
 
         # Canonical identity: BehaviorProfile (or its default) owns LEVIATHAN behavior.
         # Domain overlays (e.g. coding) specialize — they do not replace identity.
@@ -198,7 +343,7 @@ class ContextBuilder:
         # Coding overlay is already folded into system_core; avoid double-injecting it here.
         if constraints and constraints.strip() and mode != "coding":
             constraint_text = constraints.strip()
-            constraint_tokens = estimate_tokens(constraint_text)
+            constraint_tokens = self._count_tokens(constraint_text)
             # Always include constraints even if over budget — reclaim from later sections.
             constraint_section = ContextSection(
                 name="pinned_constraints",
@@ -227,7 +372,7 @@ class ContextBuilder:
             name="system_core",
             kind="system",
             content=system_core,
-            token_estimate=estimate_tokens(system_core),
+            token_estimate=self._count_tokens(system_core),
             provenance={"source": "context.builder", "mode": mode or "default"},
             pinned=True,
             layer="system_behavior",
@@ -252,7 +397,7 @@ class ContextBuilder:
                     or f"FILE {item.get('path', '?')} kind={item.get('kind', 'unknown')} "
                     f"hash={item.get('hash', '-')}"
                 )
-                tokens = estimate_tokens(text)
+                tokens = self._count_tokens(text)
                 if used + tokens > budget:
                     dropped.append(f"file_kind:{idx}")
                     ledger_entries.append(
@@ -288,7 +433,86 @@ class ContextBuilder:
                 )
 
         working_history = list(history)
-        if compact_history and len(working_history) > 8:
+        # Token-pressure aware compaction: trigger when history alone would dominate budget,
+        # not merely on message count. compact_history=True forces the path.
+        history_pressure_tokens = sum(
+            self._count_tokens(str(item.get("content") or "")) + 4
+            for item in working_history
+            if item.get("role") in {"user", "assistant"} and item.get("content")
+        )
+        should_compact = bool(compact_history) or (
+            force_compaction_on_pressure
+            and len(working_history) > 8
+            and history_pressure_tokens > max(256, int(budget * 0.55))
+        )
+        if should_compact and len(working_history) > 8:
+            existing = None
+            if existing_compaction_segments:
+                from .hierarchical_compaction import CompactionSegment
+
+                existing = {
+                    k: v
+                    for k, v in existing_compaction_segments.items()
+                    if isinstance(v, CompactionSegment)
+                }
+            hier = compact_hierarchical(
+                working_history,
+                existing_segments=existing,
+            )
+            compaction_meta = hier.public_dict()
+            # Prefer hierarchical overlay; fall back to legacy compact_conversation path.
+            overlay = hier.as_history_overlay()
+            # Strip synthetic system constraint messages from history — they become sections.
+            working_history = [m for m in overlay if m.get("role") in {"user", "assistant"}]
+            if hier.hard_constraints and not constraints_retained:
+                joined = "\n".join(hier.hard_constraints)
+                tokens = self._count_tokens(joined)
+                sections.insert(
+                    0,
+                    ContextSection(
+                        name="compacted_constraints",
+                        kind="constraint",
+                        content=joined,
+                        token_estimate=tokens,
+                        provenance={
+                            "source": "hierarchical_compaction",
+                            "reused_segment_ids": list(hier.reused_segment_ids),
+                            "pinned": True,
+                            "hard_constraints": list(hier.hard_constraints),
+                            "dutch_first_class": True,
+                        },
+                        pinned=True,
+                        layer="conversation",
+                    ),
+                )
+                used += tokens
+                constraints_retained = True
+            # Also keep a derived summary section for older content when present.
+            for seg in hier.segments:
+                if seg.kind in {"compacted", "session_summary"}:
+                    text = seg.summary
+                    tokens = self._count_tokens(text)
+                    if used + tokens <= budget:
+                        used += tokens
+                        sections.append(
+                            ContextSection(
+                                name=f"compaction_{seg.segment_id}",
+                                kind="memory",
+                                content=text,
+                                token_estimate=tokens,
+                                provenance={
+                                    "source": "hierarchical_compaction",
+                                    "artifact_hash": seg.artifact_hash,
+                                    "source_hash": seg.source_hash,
+                                    "compactor_version": seg.compactor_version,
+                                    "derived": True,
+                                },
+                                layer="conversation",
+                            )
+                        )
+                    else:
+                        dropped.append(f"compaction:{seg.segment_id}")
+        elif compact_history and len(working_history) > 8:
             compaction = compact_conversation(working_history)
             # Keep recent tail + derived compaction artifact (does not delete originals).
             working_history = working_history[-6:]
@@ -299,13 +523,14 @@ class ContextBuilder:
                     "content": compaction.summary,
                 },
             )
+            compaction_meta = compaction.public_dict()
             if compaction.constraints and not constraints_retained:
                 # Prefer hard constraints first — they remain authoritative after compaction.
                 ordered = list(compaction.hard_constraints) + [
                     c for c in compaction.constraints if c not in compaction.hard_constraints
                 ]
                 joined = "\n".join(ordered)
-                tokens = estimate_tokens(joined)
+                tokens = self._count_tokens(joined)
                 sections.insert(
                     0,
                     ContextSection(
@@ -347,7 +572,7 @@ class ContextBuilder:
                 annotation = ", ".join(f"{k}×{v}" for k, v in sorted(kind_counts.items()))
                 if annotation:
                     content = f"{content}\n[multimodal parts: {annotation}]"
-            tokens = estimate_tokens(content) + 4
+            tokens = self._count_tokens(content) + 4
             if used + tokens > budget:
                 dropped.append(f"history:{item['role']}")
                 ledger_entries.append(
@@ -397,7 +622,7 @@ class ContextBuilder:
                 f"Multimodal session fused {multimodal_part_count} parts into the same "
                 "conversation/run history (no parallel voice memory)."
             )
-            note_tokens = estimate_tokens(note)
+            note_tokens = self._count_tokens(note)
             if used + note_tokens <= budget:
                 used += note_tokens
                 sections.append(
@@ -538,22 +763,100 @@ class ContextBuilder:
                 + "\n\n"
             )
         system_prompt = constraint_prefix + system_core + knowledge_block + extras_block
-        system_tokens = estimate_tokens(system_prompt)
+        system_tokens = self._count_tokens(system_prompt)
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         messages.extend(selected_history)
-        total_tokens = system_tokens + sum(estimate_tokens(m["content"]) + 4 for m in selected_history)
+        total_tokens = system_tokens + sum(self._count_tokens(m["content"]) + 4 for m in selected_history)
 
         # Re-verify constraints still present after assembly (exit gate).
         if constraint_texts:
             constraints_retained = all(text in system_prompt for text in constraint_texts)
 
-        ledger = BudgetLedger(budget=budget, used=used, entries=tuple(ledger_entries))
+        count_meta = dict(self._last_count_meta)
+        ledger = BudgetLedger(
+            budget=budget,
+            used=used,
+            entries=tuple(ledger_entries),
+            count_source=count_meta.get("source"),
+            count_precision=count_meta.get("precision"),
+            model_context_window=resolved.get("model_context_window"),
+            reserved_output_tokens=resolved.get("reserve_response_tokens"),
+            input_budget=budget,
+            safety_margin_tokens=count_meta.get("safety_margin_tokens"),
+        )
+
+        domain_overlay = None
+        if mode == "coding":
+            from Data.modules.coding.prompts import CODING_COGNITIVE_OVERLAY
+
+            domain_overlay = (constraints or CODING_COGNITIVE_OVERLAY).strip()
+        elif constraints and mode != "coding":
+            domain_overlay = None
+
+        stable_fp, _stable_inputs = build_stable_prefix_fingerprint(
+            model_id=self.model_id,
+            model_revision=self.model_revision,
+            tokenizer_id=self.tokenizer_id or count_meta.get("tokenizer_id"),
+            tokenizer_revision=self.tokenizer_revision,
+            chat_template_id=self.chat_template_id,
+            chat_template_revision=self.chat_template_revision,
+            behavior_profile_prompt=identity_prompt,
+            behavior_profile_version=behavior_profile_version,
+            system_core=system_core,
+            constraints="\n".join(constraint_texts) if constraint_texts else None,
+            domain_overlay=domain_overlay,
+            tool_schema=tool_schema,
+            operator_instructions=operator_instructions,
+            project_instructions=project_instructions,
+        )
+        full_fp = ContextFingerprintInputs(
+            stable_prefix_fingerprint=stable_fp,
+            conversation_selection_digest=digest_messages(selected_history),
+            retrieval_result_digest=digest_items(knowledge_texts),
+            memory_selection_digest=digest_items(
+                [s.content for s in sections if s.kind == "memory" and s.included]
+            ),
+            evidence_selection_digest=digest_items(
+                [s.content for s in sections if s.kind == "evidence" and s.included]
+            ),
+            compaction_artifact_digest=digest_text(
+                json_dumps_safe(compaction_meta) if compaction_meta else None
+            ),
+            dynamic_suffix_digest=digest_messages(selected_history[-3:] if selected_history else []),
+            security_scope=security_scope,
+            project_scope=project_scope,
+        ).fingerprint()
+
+        window = resolved.get("model_context_window")
+        fit_state = None
+        if window:
+            plan_fit = self._budget_planner.plan(
+                context_window=window,
+                max_output_tokens=max_output_tokens,
+                profile_max_tokens=profile_max_tokens,
+                auto_budget=self.auto_budget,
+                fixed_token_budget=token_budget if token_budget is not None else self.token_budget,
+            )
+            pinned_tokens = sum(s.token_estimate for s in sections if s.pinned and s.included)
+            fit = self._budget_planner.evaluate_fit(
+                plan_fit,
+                required_input_tokens=total_tokens,
+                pinned_tokens=pinned_tokens,
+                packed_tokens=total_tokens,
+                model_id=self.model_id,
+                after_compaction=bool(compaction_meta),
+            )
+            fit_state = fit.state.value
+
         manifest = {
             "layers_present": sorted({s.layer for s in sections if s.included}),
             "pinned_sections": [s.name for s in sections if s.pinned and s.included],
             "dropped_count": len(dropped),
             "reasoning_mode": reasoning_mode,
+            "stable_prefix_fingerprint": stable_fp,
+            "context_fingerprint": full_fp,
         }
+        estimate_method = count_meta.get("source") or "heuristic_chars4"
         pack = ContextPack(
             system_prompt=system_prompt,
             messages=tuple(messages),
@@ -566,12 +869,14 @@ class ContextBuilder:
                 "plan_intent": plan.intent,
                 "plan_complexity": plan.complexity,
                 "plan_use_deep_recall": getattr(plan, "use_deep_recall", False),
-                "estimate_method": "chars/4",
+                "estimate_method": estimate_method,
+                "count_precision": count_meta.get("precision"),
                 "history_included": len(selected_history),
                 "knowledge_included": len(knowledge_texts),
                 "atlas_included": sum(1 for s in sections if s.kind == "atlas" and s.included),
                 "why_included": sum(1 for s in sections if s.kind == "why" and s.included),
                 "constraints_retained": constraints_retained,
+                "compaction": compaction_meta or None,
                 "budget_resolution": {
                     "source": resolved["source"],
                     "auto_budget_applied": resolved["auto_budget_applied"],
@@ -579,11 +884,17 @@ class ContextBuilder:
                     "reserve_response_tokens": resolved["reserve_response_tokens"],
                     "max_context_fraction": resolved["max_context_fraction"],
                     "reserve_response_fraction": resolved["reserve_response_fraction"],
+                    "planner": resolved.get("planner"),
                 },
             },
             budget_ledger=ledger,
             manifest=manifest,
             constraints_retained=constraints_retained,
+            stable_prefix_fingerprint=stable_fp,
+            context_fingerprint=full_fp,
+            count_precision=count_meta.get("precision"),
+            count_source=estimate_method,
+            fit_state=fit_state,
         )
         snap = snapshot_context_pack(pack)
         return ContextPack(
@@ -599,6 +910,11 @@ class ContextBuilder:
             snapshot_hash=snap.snapshot_hash,
             manifest={**pack.manifest, **snap.manifest},
             constraints_retained=pack.constraints_retained,
+            stable_prefix_fingerprint=pack.stable_prefix_fingerprint,
+            context_fingerprint=pack.context_fingerprint,
+            count_precision=pack.count_precision,
+            count_source=pack.count_source,
+            fit_state=pack.fit_state,
         )
 
     def _pack_knowledge(
@@ -641,7 +957,7 @@ class ContextBuilder:
                 id_bits.append(f"chunk={chunk_id}")
             id_suffix = f" [{' '.join(id_bits)}]" if id_bits else ""
             text = f"SOURCE: {title} ({source}){id_suffix}\n{excerpt}"
-            tokens = estimate_tokens(text)
+            tokens = self._count_tokens(text)
             if used + tokens > budget:
                 dropped.append(f"knowledge:{title}")
                 continue
@@ -703,7 +1019,7 @@ class ContextBuilder:
             if len(raw) > item_max:
                 raw = raw[:item_max] + "…"
                 truncated = True
-            tokens = estimate_tokens(raw)
+            tokens = self._count_tokens(raw)
             if used + tokens > budget:
                 dropped.append(f"{label}:{idx}")
                 continue

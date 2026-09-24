@@ -52,6 +52,7 @@ class InferenceSession:
         temperature: float | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
+        skip_context_fit: bool = False,
     ) -> dict[str, Any]:
         profile = self.target.profile
         effective_max = max_tokens
@@ -59,6 +60,33 @@ class InferenceSession:
             effective_max = profile.max_tokens
         elif profile.max_tokens is not None:
             effective_max = min(int(profile.max_tokens), int(effective_max))
+
+        if not skip_context_fit:
+            try:
+                from Data.modules.context.efficiency import get_efficiency_plane
+                from Data.modules.context.fit import preflight_context_fit, raise_if_unfit
+
+                plane_eff = get_efficiency_plane()
+                decision = preflight_context_fit(
+                    messages=list(messages),
+                    model_id=self.model_id,
+                    context_window=self.context_window,
+                    max_output_tokens=effective_max,
+                    profile_max_tokens=getattr(profile, "max_tokens", None),
+                    explicit_selection=bool(getattr(self.target, "explicit_selection", False)),
+                    tokenization=plane_eff.tokenization,
+                )
+                if decision.state.value in {
+                    "TOO_LARGE_PINNED_CONTEXT",
+                    "TOO_LARGE_FOR_SELECTED_MODEL",
+                }:
+                    plane_eff.metrics.context_fit_failures += 1
+                    raise_if_unfit(decision)
+            except ModelControlError:
+                raise
+            except Exception:  # noqa: BLE001 — never block inference on preflight infra failure
+                pass
+
         result = await self.llm.complete_messages(
             messages,
             model_id=self.backend_model_id,
@@ -68,6 +96,19 @@ class InferenceSession:
             max_tokens=effective_max,
             top_p=profile.top_p if top_p is None else top_p,
         )
+        # Record provider cached tokens when present.
+        try:
+            from Data.modules.context.efficiency import get_efficiency_plane
+
+            usage = result.get("usage") if isinstance(result, dict) else None
+            if isinstance(usage, dict) and "cached_input_tokens" in usage:
+                get_efficiency_plane().metrics.cached_input_tokens_provider += int(
+                    usage["cached_input_tokens"]
+                )
+            elif isinstance(usage, dict) and "cached_tokens" in usage:
+                get_efficiency_plane().metrics.cached_input_tokens_provider += int(usage["cached_tokens"])
+        except Exception:  # noqa: BLE001
+            pass
         await self.plane.residency.touch_lease(self.lease.lease_id, model_id=self.model_id)
         self.plane.registry.touch_used(self.model_id)
         return result

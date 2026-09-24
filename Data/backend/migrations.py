@@ -2849,6 +2849,50 @@ def _m38_tasks_tables(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
 
 
+def _m39_inference_efficiency(conn: sqlite3.Connection) -> None:
+    """Durable inference-efficiency capability probe metadata (not hot cache writes).
+
+    Application token/context caches remain in-process. This table stores bounded
+    probe results and aggregate counters only — never prompt bodies or KV tensors.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inference_efficiency_capabilities (
+            id TEXT PRIMARY KEY,
+            model_id TEXT,
+            provider_id TEXT,
+            runtime_kind TEXT NOT NULL,
+            feature TEXT NOT NULL,
+            state TEXT NOT NULL,
+            backend_version TEXT,
+            detail TEXT,
+            controlled_by TEXT,
+            provenance TEXT NOT NULL DEFAULT 'UNKNOWN',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            probed_at TEXT NOT NULL,
+            UNIQUE(runtime_kind, model_id, feature)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inference_efficiency_aggregates (
+            metric_key TEXT PRIMARY KEY,
+            value_integer INTEGER,
+            value_real REAL,
+            updated_at TEXT NOT NULL,
+            provenance TEXT NOT NULL DEFAULT 'MEASURED'
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_inf_eff_caps_model ON inference_efficiency_capabilities(model_id)",
+        "CREATE INDEX IF NOT EXISTS idx_inf_eff_caps_runtime ON inference_efficiency_capabilities(runtime_kind, feature)",
+        "CREATE INDEX IF NOT EXISTS idx_inf_eff_caps_probed ON inference_efficiency_capabilities(probed_at)",
+    ):
+        conn.execute(ddl)
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2888,6 +2932,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=36, name="model_runtime_residency", apply=_m36_model_runtime_residency),
     Migration(version=37, name="execution_fabric", apply=_m37_execution_fabric),
     Migration(version=38, name="tasks_tables", apply=_m38_tasks_tables),
+    Migration(version=39, name="inference_efficiency", apply=_m39_inference_efficiency),
 )
 
 

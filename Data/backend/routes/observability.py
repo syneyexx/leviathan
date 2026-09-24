@@ -150,6 +150,16 @@ def build_observability_router(
             "workflow": timeseries.percentiles("workflow.run"),
         }
         health = component_health_fn() if callable(component_health_fn) else []
+        inference_efficiency = None
+        try:
+            from Data.modules.context.efficiency import get_efficiency_plane
+
+            inference_efficiency = get_efficiency_plane().snapshot()
+        except Exception:  # noqa: BLE001
+            inference_efficiency = {
+                "metrics": None,
+                "truth": {"unmeasured": True, "unavailable": True},
+            }
         return {
             "system": system,
             "metrics": metrics_snap,
@@ -158,6 +168,7 @@ def build_observability_router(
             "timeseries": timeseries.snapshot(),
             "components": health,
             "observability": observability.snapshot(),
+            "inferenceEfficiency": inference_efficiency,
             "product_truth": {
                 "vocabulary": [
                     "operational",
@@ -175,6 +186,7 @@ def build_observability_router(
                 "no_fabricated_history": True,
                 "import_success_is_not_operational": True,
                 "status_derives_from_evidence": True,
+                "inference_efficiency_is_real_or_unmeasured": True,
             },
         }
 
