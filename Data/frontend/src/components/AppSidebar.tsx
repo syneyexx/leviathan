@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { isMainMenuActive, MAIN_MENU, normalizePath } from "../navigation/menu";
-import { BrandMark } from "./BrandMark";
+import { TridentMark } from "./BrandMark";
 
 const ICONS: Record<string, ReactNode> = {
   command: (
@@ -78,7 +78,7 @@ export function AppSidebar({ open }: AppSidebarProps) {
     <aside className={`lv-sidebar${open ? " is-open" : ""}`} id="sidebar">
       <div className="lv-sidebar-brand">
         <div className="lv-sidebar-brand-mark" aria-hidden="true">
-          <BrandMark id="sidebar-brand" />
+          <TridentMark id="sidebar-brand" />
         </div>
         <div className="lv-sidebar-brand-copy">
           <div className="lv-sidebar-brand-title">LEVIATHAN</div>
@@ -149,7 +149,7 @@ export function AppSidebar({ open }: AppSidebarProps) {
           Humanity.
         </p>
         <div className="lv-sidebar-footer-sig" aria-hidden="true">
-          <BrandMark id="sidebar-sig" />
+          <TridentMark id="sidebar-sig" />
           <span>LEVIATHAN</span>
         </div>
       </div>

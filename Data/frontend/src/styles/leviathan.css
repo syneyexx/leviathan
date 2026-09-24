@@ -245,17 +245,22 @@ img { display: block; max-width: 100%; }
   min-height: 34px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(10, 12, 16, 0.72);
   font-size: 11px;
   letter-spacing: 0.02em;
-  color: var(--lv-text);
+  color: #ffffff;
   white-space: nowrap;
+}
+
+.lv-chip > span:not(.lv-chip-dot) {
+  color: #ffffff;
 }
 
 .lv-chip-icon {
   width: 14px;
   height: 14px;
+  color: #ffffff;
 }
 
 .lv-chip-dot {
@@ -268,7 +273,7 @@ img { display: block; max-width: 100%; }
 
 .lv-chip--ok {
   border-color: rgba(32, 220, 140, 0.45);
-  color: #c8ffe6;
+  color: #ffffff;
 }
 .lv-chip-dot--ok,
 .lv-chip--ok .lv-chip-dot {
@@ -278,7 +283,7 @@ img { display: block; max-width: 100%; }
 
 .lv-chip--warn {
   border-color: rgba(219, 138, 52, 0.5);
-  color: #ffd7a8;
+  color: #ffffff;
 }
 .lv-chip-dot--warn {
   background: var(--lv-warning);
@@ -287,7 +292,7 @@ img { display: block; max-width: 100%; }
 
 .lv-chip--bad {
   border-color: rgba(228, 89, 89, 0.5);
-  color: #ffc4c4;
+  color: #ffffff;
 }
 .lv-chip-dot--bad {
   background: var(--lv-danger);
@@ -296,19 +301,19 @@ img { display: block; max-width: 100%; }
 
 .lv-chip--info {
   border-color: rgba(66, 133, 232, 0.45);
-  color: #cfe0ff;
+  color: #ffffff;
 }
-.lv-chip--info .lv-chip-icon { color: #7eb6ff; }
+.lv-chip--info .lv-chip-icon { color: #ffffff; }
 
 .lv-chip--gold {
   border-color: rgba(214, 169, 87, 0.45);
-  color: var(--lv-gold-pale);
+  color: #ffffff;
 }
-.lv-chip--gold .lv-chip-icon { color: var(--lv-gold); }
+.lv-chip--gold .lv-chip-icon { color: #ffffff; }
 
 .lv-chip--muted {
-  border-color: rgba(255, 255, 255, 0.08);
-  color: var(--lv-text-secondary);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
 }
 
 .lv-header-end {
