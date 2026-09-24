@@ -107,9 +107,9 @@ def _resolve_path(raw: str, *, must_be_absolute_root: bool = False) -> Path:
 def _resolve_data_root(raw: str) -> Path:
     """Resolve bulk-data root.
 
-    Windows-style roots such as ``D:/ModelData`` are preserved even when the
-    control plane runs on POSIX, so configuration remains portable with the
-    master-program default without rewriting the operator path under the repo.
+    Relative paths resolve under PROJECT_ROOT so installs remain relocatable.
+    Absolute Windows drive-letter / UNC roots are preserved when operators set
+    them explicitly (including on POSIX control-plane hosts).
     """
     text = raw.strip()
     if not text:
@@ -819,7 +819,7 @@ class Settings:
         database_path = _resolve_path(db_raw)
 
         # Bulk corpora root. Configurable; default matches master program.
-        data_root_raw = _env_raw("LEVIATHAN_DATA_ROOT", "D:/ModelData") or "D:/ModelData"
+        data_root_raw = _env_raw("LEVIATHAN_DATA_ROOT", "ModelData") or "ModelData"
         data_root = _resolve_data_root(data_root_raw)
 
         knowledge_top_k = _env_int("LEVIATHAN_KNOWLEDGE_TOP_K", 5, minimum=1, maximum=100)
@@ -879,8 +879,8 @@ class Settings:
         embedding_model = (_env_raw("LEVIATHAN_EMBEDDING_MODEL", "") or "").strip() or None
         reranker_model = (_env_raw("LEVIATHAN_RERANKER_MODEL", "") or "").strip() or None
         coding_workspace_raw = (
-            _env_raw("LEVIATHAN_CODING_WORKSPACE", "D:/leviathan/codingworkspace")
-            or "D:/leviathan/codingworkspace"
+            _env_raw("LEVIATHAN_CODING_WORKSPACE", "codingworkspace")
+            or "codingworkspace"
         )
         coding_workspace = _resolve_data_root(coding_workspace_raw)
         markets_root_raw = (

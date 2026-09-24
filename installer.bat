@@ -103,14 +103,19 @@ if not exist "Data\backend\data" mkdir "Data\backend\data"
 if not exist "Data\backend\data\artifacts" mkdir "Data\backend\data\artifacts"
 if not exist "Data\backend\data\backups" mkdir "Data\backend\data\backups"
 
-REM Create ModelData root from .env (LEVIATHAN_DATA_ROOT), default D:\ModelData
-set "MODEL_DATA=D:\ModelData"
+REM Create ModelData root from .env (LEVIATHAN_DATA_ROOT), default <install>\ModelData
+set "MODEL_DATA=ModelData"
 for /f "usebackq eol=# tokens=1,* delims==" %%A in (".env") do (
   if /I "%%~A"=="LEVIATHAN_DATA_ROOT" (
     if not "%%~B"=="" set "MODEL_DATA=%%~B"
   )
 )
 set "MODEL_DATA=%MODEL_DATA:/=\%"
+REM Relative paths resolve against the install directory (this script's cwd).
+set "MODEL_DATA_ABS="
+if "%MODEL_DATA:~1,1%"==":" set "MODEL_DATA_ABS=1"
+if "%MODEL_DATA:~0,2%"=="\\" set "MODEL_DATA_ABS=1"
+if not defined MODEL_DATA_ABS set "MODEL_DATA=%CD%\%MODEL_DATA%"
 if not exist "%MODEL_DATA%" (
   mkdir "%MODEL_DATA%" 2>nul
   if exist "%MODEL_DATA%" (

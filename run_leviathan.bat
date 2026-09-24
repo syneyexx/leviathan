@@ -3,6 +3,8 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 title LEVIATHAN
 
+REM Relocatable: ensure Data.* imports resolve from this install root on any drive.
+set "PYTHONPATH=%~dp0"
 set "PY=.venv\Scripts\python.exe"
 set "LOG=%~dp0leviathan_startup.log"
 
@@ -60,7 +62,7 @@ REM source-ingestion worker in a second window (same DB; do not double inprocess
 findstr /B /C:"LEVIATHAN_SOURCE_INGESTION_RUNNER=external" ".env" >nul 2>&1
 if not errorlevel 1 (
   echo [LEVIATHAN] Starting source ingestion worker ^(external mode^)
-  start "LEVIATHAN Source Ingestion" "%PY%" scripts\source_ingestion_worker.py
+  start "LEVIATHAN Source Ingestion" /D "%~dp0" "%PY%" scripts\source_ingestion_worker.py
 )
 
 "%PY%" leviathan.py

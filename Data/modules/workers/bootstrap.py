@@ -16,7 +16,8 @@ from pathlib import Path
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    # bootstrap.py lives at Data/modules/workers/ → parents[3] is the install root.
+    return Path(__file__).resolve().parents[3]
 
 
 def run_api(*, host: str | None = None, port: int | None = None) -> int:
@@ -85,14 +86,24 @@ def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
     return 0
 
 
-def run_all() -> int:
-    """Spawn API + supervisor as sibling processes (Windows-friendly)."""
-    root = _repo_root()
+def _child_env(root: Path) -> dict[str, str]:
+    """Build a relocatable child env: install root on PYTHONPATH, no stale drive letters required."""
     env = os.environ.copy()
     env.setdefault("LEVIATHAN_WORKERS_EXTERNALIZE_API", "1")
     env.setdefault("LEVIATHAN_DATASET_JOBS_RUNNER", "external")
     env.setdefault("LEVIATHAN_SOURCE_INGESTION_RUNNER", "external")
     env.setdefault("PYTHONUNBUFFERED", "1")
+    root_s = str(root)
+    existing = [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
+    # Prepend install root so -m Data.* resolves even if cwd/PYTHONPATH were stale.
+    env["PYTHONPATH"] = os.pathsep.join([root_s, *[p for p in existing if p != root_s]])
+    return env
+
+
+def run_all() -> int:
+    """Spawn API + supervisor as sibling processes (Windows-friendly)."""
+    root = _repo_root()
+    env = _child_env(root)
 
     api = subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "Data.modules.workers.bootstrap", "api"],

@@ -171,6 +171,32 @@ class WorkerImportGuards(unittest.TestCase):
             _forbids_backend_main(path)
 
 
+class BootstrapRelocatableGuards(unittest.TestCase):
+    def test_repo_root_is_install_root_not_data_dir(self) -> None:
+        from Data.modules.workers import bootstrap as bootstrap_mod
+
+        root = bootstrap_mod._repo_root()
+        self.assertTrue((root / "Data").is_dir(), msg=f"expected Data/ under {root}")
+        self.assertTrue((root / "leviathan.py").is_file(), msg=f"expected leviathan.py under {root}")
+        self.assertNotEqual(root.name, "Data", msg="_repo_root must not resolve to Data/")
+        self.assertEqual(root, WORKERS_ROOT.parents[2])
+
+    def test_child_env_prepends_install_root_on_pythonpath(self) -> None:
+        from Data.modules.workers import bootstrap as bootstrap_mod
+
+        root = bootstrap_mod._repo_root()
+        stale = "/old/stale/leviathan"
+        with mock.patch.dict(
+            os.environ,
+            {"PYTHONPATH": stale},
+            clear=False,
+        ):
+            env = bootstrap_mod._child_env(root)
+        parts = env["PYTHONPATH"].split(os.pathsep)
+        self.assertEqual(parts[0], str(root))
+        self.assertIn(stale, parts)
+
+
 class ScheduleRunnerGuards(unittest.TestCase):
     def test_tick_default_execute_false(self) -> None:
         sig = inspect.signature(ScheduleRunner.tick)

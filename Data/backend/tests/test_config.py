@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from Data.backend.config import ConfigurationError, Settings
+from Data.backend.config import ConfigurationError, PROJECT_ROOT, Settings
 
 
 class SettingsTests(unittest.TestCase):
@@ -25,7 +25,8 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(cfg.features.cognition_shadow)
         self.assertFalse(cfg.features.neuro_soak_long)
         self.assertFalse(cfg.network.allow_outbound)
-        self.assertEqual(cfg.knowledge.data_root, Path("D:/ModelData"))
+        self.assertEqual(cfg.knowledge.data_root, PROJECT_ROOT / "ModelData")
+        self.assertEqual(cfg.coding.workspace, PROJECT_ROOT / "codingworkspace")
         summary = cfg.public_summary()
         self.assertNotIn("api_key", str(summary))
 
