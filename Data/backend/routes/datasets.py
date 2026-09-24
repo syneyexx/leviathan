@@ -38,11 +38,13 @@ DATASETS_STATIC_SEGMENTS = frozenset(
         "offline",
         "library",
         "learned",
+        "learning",
         "versions",
         "inspect",
         "import",
         "huggingface",
         "upload",
+        "sidecars",
     }
 )
 
@@ -208,6 +210,28 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
                 "local_dataset_is_not_learned_knowledge": True,
             },
         }
+
+    @router.get("/api/datasets/learning/activity")
+    def learning_activity(limit: int = 40) -> dict:
+        """Live Dataset Learning activity (real dataset_jobs) for Agents/Dataset UIs."""
+        return service.learning_activity(limit=limit)
+
+    @router.post("/api/datasets/sidecars/reconcile")
+    def reconcile_sidecars(maxFiles: int = 2000) -> dict:
+        try:
+            return service.reconcile_sidecars(max_files=max(1, min(maxFiles, 5000)))
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.post("/api/datasets/jobs/{job_id}/retry")
+    def retry_job(job_id: str, resume: bool = True) -> dict:
+        try:
+            job = service.retry_index_job(job_id, resume=resume)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {"job": service.public_job(job)}
 
     @router.post("/api/datasets/upload")
     async def upload_dataset(
@@ -516,7 +540,7 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
                     "references": blockers[:20],
                 },
             )
-        ok = service.store.delete_dataset(dataset_id)
+        ok = service.delete_dataset(dataset_id)
         return {"deleted": ok, "datasetId": dataset_id}
 
     @router.post("/api/datasets/{dataset_id}/duplicate")

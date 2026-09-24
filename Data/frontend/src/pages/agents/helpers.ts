@@ -188,6 +188,15 @@ export function agentIconKind(agent: AgentDefinition): string {
   if (agent.tags.includes("media") || agent.name.toLowerCase().includes("media")) return "media";
   if (agent.tags.includes("memory") || agent.name.toLowerCase().includes("memory")) return "memory";
   if (agent.tags.includes("review") || agent.name.toLowerCase().includes("critic")) return "critic";
+  if (
+    agent.tags.includes("datasets") ||
+    agent.tags.includes("learning") ||
+    agent.name.toLowerCase().includes("dataset learning") ||
+    String((agent.metadata as { systemKey?: string } | undefined)?.systemKey || "") ===
+      "dataset_learning"
+  ) {
+    return "research";
+  }
   return "execution";
 }
 

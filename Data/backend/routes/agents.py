@@ -86,6 +86,11 @@ def build_agents_router(fleet: AgentFleetService) -> APIRouter:
     def agents_summary() -> dict:
         return {"summary": fleet.fleet_summary()}
 
+    @router.get("/api/agents/dataset-learning")
+    def dataset_learning_status() -> dict:
+        """Dataset Learning system agent + live dataset index job activity."""
+        return fleet.dataset_learning_status()
+
     @router.get("/api/agents/missions")
     def list_missions(
         agentId: str | None = None,

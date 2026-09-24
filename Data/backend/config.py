@@ -456,6 +456,11 @@ class ResearchIntegrationSettings:
     corpus_root: str = ""
     auto_promote_verified_knowledge: bool = True
     datasets_auto_index_ready_to_knowledge: bool = True
+    # Dataset learning / job runner: inprocess | external | none
+    dataset_jobs_runner: str = "inprocess"
+    dataset_index_batch_size: int = 50
+    dataset_max_relations_per_doc: int = 24
+    dataset_extract_relations: bool = True
 
 
 @dataclass(frozen=True)
@@ -732,6 +737,9 @@ class Settings:
                 "datasets_auto_index_ready_to_knowledge": (
                     self.research_integration.datasets_auto_index_ready_to_knowledge
                 ),
+                "dataset_jobs_runner": self.research_integration.dataset_jobs_runner,
+                "dataset_index_batch_size": self.research_integration.dataset_index_batch_size,
+                "dataset_extract_relations": self.research_integration.dataset_extract_relations,
             },
             "database_path": str(self.database_path),
         }
@@ -1104,6 +1112,20 @@ class Settings:
                 ),
                 datasets_auto_index_ready_to_knowledge=_env_bool(
                     "LEVIATHAN_DATASETS_AUTO_INDEX_READY_TO_KNOWLEDGE", True
+                ),
+                dataset_jobs_runner=(
+                    (_env_raw("LEVIATHAN_DATASET_JOBS_RUNNER", "inprocess") or "inprocess")
+                    .strip()
+                    .lower()
+                ),
+                dataset_index_batch_size=_env_int(
+                    "LEVIATHAN_DATASET_INDEX_BATCH_SIZE", 50, minimum=1, maximum=5000
+                ),
+                dataset_max_relations_per_doc=_env_int(
+                    "LEVIATHAN_DATASET_MAX_RELATIONS_PER_DOC", 24, minimum=1, maximum=200
+                ),
+                dataset_extract_relations=_env_bool(
+                    "LEVIATHAN_DATASET_EXTRACT_RELATIONS", True
                 ),
             ),
             database_path=database_path,

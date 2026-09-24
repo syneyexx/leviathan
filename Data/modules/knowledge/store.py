@@ -798,7 +798,17 @@ class KnowledgeStore:
             row["trust_metadata"] = {}
         return row
 
-    def add_relation_atom(
+    def delete_relation_atoms_for_document(self, document_id: str) -> int:
+        """Remove relation atoms tied to one knowledge document (rebuild hygiene)."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            cur = conn.execute(
+                "DELETE FROM directional_relation_atoms WHERE document_id = ?",
+                (document_id,),
+            )
+            return int(cur.rowcount or 0)
+
+    def upsert_relation_atom(
         self,
         *,
         subject_ref: str,
@@ -812,6 +822,7 @@ class KnowledgeStore:
         notes: str = "",
         atom_id: str | None = None,
     ) -> DirectionalRelationAtom:
+        """Insert or replace a relation atom by stable ``atom_id`` (idempotent)."""
         if isinstance(relation_class, str):
             relation_class = RelationClass(relation_class)
         atom = DirectionalRelationAtom(
@@ -836,6 +847,16 @@ class KnowledgeStore:
                     comparison_vector_json, supporting_evidence_refs_json,
                     document_id, chunk_id, confidence, notes, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(atom_id) DO UPDATE SET
+                    subject_ref=excluded.subject_ref,
+                    object_ref=excluded.object_ref,
+                    relation_class=excluded.relation_class,
+                    comparison_vector_json=excluded.comparison_vector_json,
+                    supporting_evidence_refs_json=excluded.supporting_evidence_refs_json,
+                    document_id=excluded.document_id,
+                    chunk_id=excluded.chunk_id,
+                    confidence=excluded.confidence,
+                    notes=excluded.notes
                 """,
                 (
                     atom.atom_id,
@@ -852,6 +873,33 @@ class KnowledgeStore:
                 ),
             )
         return atom
+
+    def add_relation_atom(
+        self,
+        *,
+        subject_ref: str,
+        object_ref: str,
+        relation_class: RelationClass | str,
+        comparison_vector: list[float] | None = None,
+        supporting_evidence_refs: list[str] | tuple[str, ...] | None = None,
+        document_id: str | None = None,
+        chunk_id: str | None = None,
+        confidence: float = 0.5,
+        notes: str = "",
+        atom_id: str | None = None,
+    ) -> DirectionalRelationAtom:
+        return self.upsert_relation_atom(
+            subject_ref=subject_ref,
+            object_ref=object_ref,
+            relation_class=relation_class,
+            comparison_vector=comparison_vector,
+            supporting_evidence_refs=supporting_evidence_refs,
+            document_id=document_id,
+            chunk_id=chunk_id,
+            confidence=confidence,
+            notes=notes,
+            atom_id=atom_id,
+        )
 
     def list_relation_atoms(
         self,

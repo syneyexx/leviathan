@@ -44,6 +44,7 @@ _DEFAULT_SEED: list[dict[str, Any]] = [
         "capabilities": ["knowledge.search"],
         "tags": ["research", "web", "analysis"],
         "model_ref": None,
+        "metadata": {"systemKey": "research"},
     },
     {
         "name": "Coding",
@@ -53,6 +54,7 @@ _DEFAULT_SEED: list[dict[str, Any]] = [
         "capabilities": ["file.read", "file.inspect_csv"],
         "tags": ["code", "tests", "refactor"],
         "model_ref": None,
+        "metadata": {"systemKey": "coding"},
     },
     {
         "name": "Critic",
@@ -62,6 +64,7 @@ _DEFAULT_SEED: list[dict[str, Any]] = [
         "capabilities": ["knowledge.search"],
         "tags": ["review", "qa", "policy"],
         "model_ref": None,
+        "metadata": {"systemKey": "critic"},
     },
     {
         "name": "Planner",
@@ -71,6 +74,7 @@ _DEFAULT_SEED: list[dict[str, Any]] = [
         "capabilities": [],
         "tags": ["plan", "delegate", "roadmap"],
         "model_ref": None,
+        "metadata": {"systemKey": "planner"},
         "orchestrator": {
             "memberAgentIds": [],
             "strategy": "sequential",
@@ -79,18 +83,158 @@ _DEFAULT_SEED: list[dict[str, Any]] = [
             "failureStrategy": "fail_fast",
         },
     },
+    {
+        "name": "Dataset Learning",
+        "kind": "specialist",
+        "role": "Dataset Learning",
+        "description": (
+            "Processes dataset index jobs into the shared KnowledgeStore / Brain. "
+            "Live progress mirrors real dataset_jobs — not fictional missions."
+        ),
+        "capabilities": ["knowledge.search"],
+        "tags": ["datasets", "learning", "indexing", "brain"],
+        "model_ref": None,
+        "dataset_access": "controlled",
+        "metadata": {
+            "systemKey": "dataset_learning",
+            "ownsDatasetIndexJobs": True,
+            "truth": {"status_from_dataset_jobs": True},
+        },
+    },
 ]
+
+DATASET_LEARNING_SYSTEM_KEY = "dataset_learning"
 
 
 class AgentFleetService:
-    def __init__(self, store: AgentFleetStore, runtime: AgentRuntime) -> None:
+    def __init__(
+        self,
+        store: AgentFleetStore,
+        runtime: AgentRuntime,
+        *,
+        dataset_activity_provider: Any | None = None,
+    ) -> None:
         self.store = store
         self.runtime = runtime
+        # Optional callable returning DatasetService.learning_activity()-shaped dict.
+        self.dataset_activity_provider = dataset_activity_provider
 
     def initialize(self, *, seed_defaults: bool = True) -> None:
         self.store.initialize()
         if seed_defaults and not self.store.list_definitions(limit=1):
             self._seed_defaults()
+        # Always ensure system agents exist — including on upgraded databases.
+        if seed_defaults:
+            self.ensure_system_agents()
+
+    def ensure_system_agents(self) -> list[AgentDefinition]:
+        """Idempotently create missing system agents (by metadata.systemKey)."""
+        existing = self.store.list_definitions(include_archived=True, limit=500)
+        by_key: dict[str, AgentDefinition] = {}
+        for agent in existing:
+            key = str((agent.metadata or {}).get("systemKey") or "").strip()
+            if key:
+                by_key[key] = agent
+        # Fallback: match Dataset Learning by stable name for older installs.
+        name_map = {a.name.lower(): a for a in existing}
+        created: list[AgentDefinition] = []
+        for spec in _DEFAULT_SEED:
+            key = str((spec.get("metadata") or {}).get("systemKey") or "").strip()
+            if not key:
+                continue
+            if key in by_key:
+                continue
+            if spec["name"].lower() in name_map:
+                # Attach systemKey to the pre-existing named agent.
+                agent = name_map[spec["name"].lower()]
+                meta = dict(agent.metadata or {})
+                meta.update(dict(spec.get("metadata") or {}))
+                agent.metadata = meta
+                if spec.get("dataset_access") and agent.dataset_access == "none":
+                    agent.dataset_access = str(spec["dataset_access"])
+                agent.updated_at = utc_now()
+                self.store.update_definition(agent)
+                by_key[key] = agent
+                continue
+            kind = AgentDefinitionKind(spec["kind"])
+            orch = None
+            if kind == AgentDefinitionKind.ORCHESTRATOR:
+                orch = OrchestratorConfig.from_dict(spec.get("orchestrator"))
+            now = utc_now()
+            definition = AgentDefinition(
+                agent_id=AgentFleetStore.new_id("agent"),
+                name=str(spec["name"]),
+                kind=kind,
+                description=str(spec.get("description") or ""),
+                role=str(spec.get("role") or ""),
+                enabled=True,
+                capabilities=list(spec.get("capabilities") or []),
+                tags=list(spec.get("tags") or []),
+                model_ref=spec.get("model_ref"),
+                dataset_access=str(spec.get("dataset_access") or "none"),
+                orchestrator=orch,
+                health=AgentHealth.IDLE,
+                metadata=dict(spec.get("metadata") or {}),
+                created_at=now,
+                updated_at=now,
+            )
+            self.store.create_definition(definition)
+            created.append(definition)
+            by_key[key] = definition
+            self._emit(
+                agent_id=definition.agent_id,
+                category="system",
+                message=f"Ensured system agent {definition.name}",
+            )
+        # Keep Planner membership aware of Dataset Learning when present.
+        planner = by_key.get("planner") or next(
+            (a for a in self.store.list_definitions() if a.kind == AgentDefinitionKind.ORCHESTRATOR),
+            None,
+        )
+        learning = by_key.get(DATASET_LEARNING_SYSTEM_KEY)
+        if planner and planner.orchestrator and learning:
+            members = list(planner.orchestrator.member_agent_ids or [])
+            if learning.agent_id not in members:
+                members.append(learning.agent_id)
+                planner.orchestrator.member_agent_ids = members
+                planner.updated_at = utc_now()
+                self.store.update_definition(planner)
+        return created
+
+    def get_system_agent(self, system_key: str) -> AgentDefinition | None:
+        key = str(system_key or "").strip()
+        for agent in self.store.list_definitions(include_archived=True, limit=500):
+            if str((agent.metadata or {}).get("systemKey") or "") == key:
+                return self._refresh_health(agent)
+            if key == DATASET_LEARNING_SYSTEM_KEY and agent.name.lower() == "dataset learning":
+                return self._refresh_health(agent)
+        return None
+
+    def dataset_learning_status(self) -> dict[str, Any]:
+        """Bundle Dataset Learning agent + live dataset job activity."""
+        agent = self.get_system_agent(DATASET_LEARNING_SYSTEM_KEY)
+        activity: dict[str, Any] = {
+            "agentSystemKey": DATASET_LEARNING_SYSTEM_KEY,
+            "agentName": "Dataset Learning",
+            "activeCount": 0,
+            "active": [],
+            "recent": [],
+            "truth": {"reflects_real_dataset_jobs": True},
+        }
+        if callable(self.dataset_activity_provider):
+            try:
+                activity = dict(self.dataset_activity_provider() or activity)
+            except Exception as exc:  # noqa: BLE001
+                activity["error"] = str(exc)
+        payload: dict[str, Any] = {
+            "agent": agent.public_dict() if agent else None,
+            "activity": activity,
+            "truth": {
+                "no_fictional_missions": True,
+                "status_from_dataset_jobs": True,
+            },
+        }
+        return payload
 
     def _seed_defaults(self) -> None:
         created: dict[str, str] = {}
@@ -110,8 +254,10 @@ class AgentFleetService:
                 capabilities=list(spec.get("capabilities") or []),
                 tags=list(spec.get("tags") or []),
                 model_ref=spec.get("model_ref"),
+                dataset_access=str(spec.get("dataset_access") or "none"),
                 orchestrator=orch,
                 health=AgentHealth.IDLE if True else AgentHealth.UNKNOWN,
+                metadata=dict(spec.get("metadata") or {}),
                 created_at=now,
                 updated_at=now,
             )
@@ -130,7 +276,7 @@ class AgentFleetService:
         if planner and planner.orchestrator:
             members = [
                 created[name]
-                for name in ("research", "coding", "critic")
+                for name in ("research", "coding", "critic", "dataset learning")
                 if name in created
             ]
             planner.orchestrator.member_agent_ids = members
@@ -182,6 +328,17 @@ class AgentFleetService:
             agent.health = AgentHealth.DISABLED
             agent.health_reason = "LEVIATHAN_FEATURE_AGENTS is OFF"
             return agent
+        system_key = str((agent.metadata or {}).get("systemKey") or "")
+        if system_key == DATASET_LEARNING_SYSTEM_KEY and callable(self.dataset_activity_provider):
+            try:
+                activity = dict(self.dataset_activity_provider() or {})
+                active_count = int(activity.get("activeCount") or 0)
+                if active_count > 0:
+                    agent.health = AgentHealth.BUSY
+                    agent.health_reason = f"{active_count} active dataset index job(s)"
+                    return agent
+            except Exception:  # noqa: BLE001
+                pass
         active = self.store.count_active_for_agent(agent.agent_id)
         if active > 0:
             agent.health = AgentHealth.BUSY

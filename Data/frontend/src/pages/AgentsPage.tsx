@@ -11,6 +11,7 @@ import type {
   AgentFleetSummary,
   AgentMission,
   CapabilityListItem,
+  DatasetLearningStatus,
   DatasetRecord,
   KnowledgeDocument,
   ModelDescriptor,
@@ -604,6 +605,7 @@ export function AgentsPage() {
   const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [knowledgeDocs, setKnowledgeDocs] = useState<KnowledgeDocument[]>([]);
   const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
+  const [datasetLearning, setDatasetLearning] = useState<DatasetLearningStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [eventsLive, setEventsLive] = useState(true);
@@ -659,7 +661,7 @@ export function AgentsPage() {
     const gen = ++loadGen.current;
     setLoadError(null);
     try {
-      const [fleet, missionRes, eventRes, caps, modelRes, knowledgeRes, datasetRes] =
+      const [fleet, missionRes, eventRes, caps, modelRes, knowledgeRes, datasetRes, learningRes] =
         await Promise.all([
           api.listAgents({ includeArchived: true }),
           api.listAgentMissions({ limit: 200 }),
@@ -672,6 +674,7 @@ export function AgentsPage() {
             documents: [] as KnowledgeDocument[],
           })),
           api.listDatasets(100).catch(() => ({ datasets: [] as DatasetRecord[] })),
+          api.getDatasetLearningStatus().catch(() => null),
         ]);
       if (gen !== loadGen.current) return;
       setAgents(fleet.agents);
@@ -682,6 +685,7 @@ export function AgentsPage() {
       setModels(modelRes.models ?? []);
       setKnowledgeDocs(knowledgeRes.documents ?? []);
       setDatasets(datasetRes.datasets ?? []);
+      setDatasetLearning(learningRes);
       setEventsLive(true);
       if (!selectedAgentIdRef.current && fleet.agents.length > 0) {
         const preferred =
@@ -1928,7 +1932,143 @@ export function AgentsPage() {
                     <strong>{selectedAgent?.datasetAccess ?? "none"}</strong>
                   </p>
                   <p className="lv-ag-field-hint">
-                    Agents store a policy string, not explicit dataset ID assignments.
+                    Dataset Learning mirrors real <code>dataset_jobs</code> — not fictional
+                    missions. Active index jobs:{" "}
+                    {datasetLearning?.activity.activeCount ?? 0}
+                  </p>
+                  {(datasetLearning?.activity.active?.length || 0) > 0 ? (
+                    <ul className="lv-ag-member-list">
+                      {datasetLearning!.activity.active.map((job) => {
+                        const act = job.activity;
+                        const pct =
+                          act?.progress != null
+                            ? `${Math.round(Number(act.progress) * 100)}%`
+                            : "—";
+                        return (
+                          <li key={job.jobId}>
+                            <span>
+                              {act?.datasetName || act?.datasetId || job.datasetId || "dataset"} ·{" "}
+                              {act?.phase || job.phase || "—"} · {pct}
+                              {act?.processed != null ? ` · rows ${act.processed}` : ""}
+                              {act?.chunkCount != null ? ` · chunks ${act.chunkCount}` : ""}
+                              {act?.relationsAccepted != null
+                                ? ` · rel +${act.relationsAccepted}/−${act.relationsRejected ?? 0}`
+                                : ""}
+                              {act?.embeddingMode ? ` · ${act.embeddingMode}` : ""}
+                              {act?.embeddingsSemantic === false
+                                ? " (not semantic)"
+                                : ""}
+                            </span>
+                            <span className="lv-ag-inline-actions">
+                              <button
+                                type="button"
+                                className="lv-ag-btn-stop"
+                                disabled={busy}
+                                onClick={() => {
+                                  void (async () => {
+                                    setBusy(true);
+                                    try {
+                                      await api.cancelDatasetJob(job.jobId);
+                                      toast("Dataset job cancel requested");
+                                      await loadAll();
+                                    } catch (err) {
+                                      toast(errMsg(err, "Cancel failed"));
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  })();
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="lv-ag-empty">No active dataset index jobs.</p>
+                  )}
+                  {(datasetLearning?.activity.recent?.length || 0) > 0 ? (
+                    <>
+                      <p className="lv-ag-field-hint">Recent index jobs</p>
+                      <ul className="lv-ag-member-list">
+                        {datasetLearning!.activity.recent.slice(0, 8).map((job) => {
+                          const act = job.activity;
+                          const terminal = ["failed", "cancelled", "interrupted"].includes(
+                            String(job.status).toLowerCase(),
+                          );
+                          return (
+                            <li key={`recent-${job.jobId}`}>
+                              <span>
+                                {act?.datasetName || job.datasetId || "dataset"} · {job.status}
+                                {act?.phase ? ` · ${act.phase}` : ""}
+                                {act?.error ? ` · ${String(act.error).slice(0, 80)}` : ""}
+                              </span>
+                              <span className="lv-ag-inline-actions">
+                                {terminal ? (
+                                  <button
+                                    type="button"
+                                    className="lv-ag-btn-teal"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      void (async () => {
+                                        setBusy(true);
+                                        try {
+                                          await api.retryDatasetJob(job.jobId, true);
+                                          toast("Dataset job re-queued (resume)");
+                                          await loadAll();
+                                        } catch (err) {
+                                          toast(errMsg(err, "Retry failed"));
+                                        } finally {
+                                          setBusy(false);
+                                        }
+                                      })();
+                                    }}
+                                  >
+                                    Retry
+                                  </button>
+                                ) : null}
+                                {job.datasetId && job.status === "completed" ? (
+                                  <button
+                                    type="button"
+                                    className="lv-ag-btn-teal"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      if (
+                                        !window.confirm(
+                                          "Rebuild replaces existing learned results for this dataset. Continue?",
+                                        )
+                                      ) {
+                                        return;
+                                      }
+                                      void (async () => {
+                                        setBusy(true);
+                                        try {
+                                          await api.learnDataset(String(job.datasetId), {
+                                            rebuild: true,
+                                          });
+                                          toast("Re-index queued");
+                                          await loadAll();
+                                        } catch (err) {
+                                          toast(errMsg(err, "Re-index failed"));
+                                        } finally {
+                                          setBusy(false);
+                                        }
+                                      })();
+                                    }}
+                                  >
+                                    Re-index
+                                  </button>
+                                ) : null}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </>
+                  ) : null}
+                  <p className="lv-ag-field-hint">
                     Fleet datasets available in the system ({datasets.length}):
                   </p>
                   {datasets.length === 0 ? (
@@ -1940,6 +2080,7 @@ export function AgentsPage() {
                           <span>{d.name}</span>
                           <span>
                             {d.status} · {d.sourceType}
+                            {d.brainStatus ? ` · brain:${d.brainStatus}` : ""}
                           </span>
                         </li>
                       ))}

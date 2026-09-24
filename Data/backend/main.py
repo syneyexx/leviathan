@@ -403,6 +403,8 @@ flywheel = FlywheelControlPlane(
 )
 corpus_layout = build_corpus_layout(settings)
 dataset_service = DatasetService.from_settings(settings, knowledge=knowledge)
+# Bind live Dataset Learning activity into the Agent Fleet (same jobs, no fiction).
+agent_fleet.dataset_activity_provider = lambda: dataset_service.learning_activity(limit=40)
 training_service = TrainingService(settings, corpus=corpus_layout)
 research_service = ResearchService.from_settings(
     settings,
@@ -1040,7 +1042,7 @@ brain_facade = BrainQueryFacade(
     knowledge_list=lambda: knowledge.list_documents(limit=200),
     evidence_list=lambda: evidence_store.list(limit=200),
     research_list=lambda: research_service.list_projects(limit=100),
-    dataset_list=lambda: dataset_service.list_datasets(limit=100),
+    dataset_list=lambda: dataset_service.list_library_datasets(limit=100),
     memory_list=lambda: memory_store.list(limit=200),
     module_list=lambda: module_manager.list(),
     capability_list=lambda: capability_catalog.list(),
@@ -1050,6 +1052,7 @@ brain_facade = BrainQueryFacade(
     ),
     workflow_list=lambda: workflow_store.list(limit=100),
     atlas_list=lambda: atlas_store.search("", limit=100) if settings.features.rag_v3 else [],
+    relation_list=lambda: knowledge.list_relation_atoms(limit=200),
     max_nodes=250,
     max_edges=500,
 )
@@ -1140,7 +1143,24 @@ async def lifespan(_: FastAPI):
             level="warning",
         )
     dataset_service.reconcile()
-    dataset_service.runner.start_background()
+    from Data.modules.datasets.worker import should_start_inprocess_runner
+
+    if should_start_inprocess_runner(settings):
+        dataset_service.runner.start_background()
+    else:
+        observability.emit(
+            "datasets",
+            "jobs.runner.deferred",
+            payload={
+                "mode": getattr(
+                    getattr(settings, "research_integration", None),
+                    "dataset_jobs_runner",
+                    "external",
+                )
+            },
+            level="info",
+            message="In-process dataset job runner not started (external/none mode)",
+        )
     training_service.reconcile()
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
