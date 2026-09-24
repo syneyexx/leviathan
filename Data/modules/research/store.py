@@ -255,6 +255,8 @@ class ResearchStore:
                 "completed_worker_rounds": "INTEGER NOT NULL DEFAULT 0",
                 "total_worker_rounds": "INTEGER NOT NULL DEFAULT 0",
                 "connected_datasets_json": "TEXT NOT NULL DEFAULT '[]'",
+                "kernel_job_id": "TEXT",
+                "wait_reason": "TEXT",
             },
         )
         self._ensure_columns(
@@ -396,7 +398,7 @@ class ResearchStore:
                     started_at=?, finished_at=?,
                     execution_mode=?, phase=?, progress_pct=?, analysis_mode=?,
                     active_run_id=?, completed_worker_rounds=?, total_worker_rounds=?,
-                    connected_datasets_json=?
+                    connected_datasets_json=?, kernel_job_id=?, wait_reason=?
                 WHERE project_id=?
                 """,
                 (
@@ -431,10 +433,59 @@ class ResearchStore:
                     project.completed_worker_rounds,
                     project.total_worker_rounds,
                     _json_dumps(project.connected_datasets),
+                    project.kernel_job_id,
+                    project.wait_reason,
                     project.project_id,
                 ),
             )
         return project
+
+    def claim_queued_execution(
+        self,
+        project_id: str,
+        *,
+        worker_pid: int,
+        kernel_job_id: str | None = None,
+    ) -> bool:
+        """Durable CAS: QUEUED → RESEARCHING for worker-owned execution.
+
+        Returns True only for the winner. Prevents duplicate ResearchRun creation
+        when two physical workers race the same project.
+        """
+        now = utc_now()
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            cur = conn.execute(
+                """
+                UPDATE research_projects
+                SET status = ?,
+                    phase = ?,
+                    worker_pid = ?,
+                    kernel_job_id = COALESCE(?, kernel_job_id),
+                    wait_reason = NULL,
+                    progress_pct = CASE
+                        WHEN progress_pct < 5.0 THEN 5.0
+                        ELSE progress_pct
+                    END,
+                    started_at = COALESCE(started_at, ?),
+                    finished_at = NULL,
+                    error = NULL,
+                    updated_at = ?
+                WHERE project_id = ?
+                  AND status = ?
+                """,
+                (
+                    ResearchStatus.RESEARCHING.value,
+                    ResearchPhase.PLANNING.value,
+                    int(worker_pid),
+                    kernel_job_id,
+                    now,
+                    now,
+                    project_id,
+                    ResearchStatus.QUEUED.value,
+                ),
+            )
+            return int(cur.rowcount or 0) > 0
 
     def get_project(self, project_id: str) -> ResearchProject | None:
         with self.connect() as conn:
@@ -555,6 +606,8 @@ class ResearchStore:
                 self._row_get(row, "completed_worker_rounds", 0) or 0
             ),
             total_worker_rounds=int(self._row_get(row, "total_worker_rounds", 0) or 0),
+            kernel_job_id=self._row_get(row, "kernel_job_id"),
+            wait_reason=self._row_get(row, "wait_reason"),
         )
 
     def request_cancel(self, project_id: str) -> ResearchProject:

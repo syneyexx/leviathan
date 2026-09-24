@@ -379,7 +379,129 @@ class ResearchService:
             self._spawn_run(project.project_id, deepen=False, extra_rounds=0, resume=False)
 
     def recover(self) -> list[str]:
-        return self.runner.recover_interrupted()
+        recovered = self.runner.recover_interrupted()
+        recovered.extend(self.reconcile_queued_projects())
+        return list(dict.fromkeys(recovered))
+
+    def reconcile_queued_projects(self) -> list[str]:
+        """Repair stuck QUEUED / falsely-completed kernel job states.
+
+        A. QUEUED + valid QUEUED/RUNNING kernel job → leave for normal claim.
+        B. QUEUED + no kernel job → enqueue idempotently.
+        C. QUEUED + COMPLETED kernel job but no ResearchRun started → re-enqueue.
+        D. RESEARCHING + dead worker handled by recover_interrupted.
+        E. Terminal projects → never restart.
+        """
+        fixed: list[str] = []
+        if self.job_runtime is None:
+            return fixed
+        store = getattr(self.job_runtime, "store", None)
+        if store is None:
+            return fixed
+
+        from Data.modules.jobs.states import JobState
+
+        for project in self.store.list_projects(limit=200):
+            if project.status in TERMINAL_STATUSES:
+                continue
+            if project.status != ResearchStatus.QUEUED:
+                continue
+
+            job = None
+            if project.kernel_job_id and hasattr(store, "get"):
+                try:
+                    job = store.get(project.kernel_job_id)
+                except Exception:  # noqa: BLE001
+                    job = None
+            if job is None and hasattr(store, "list"):
+                try:
+                    from Data.modules.jobs.states import TERMINAL_JOB_STATES
+
+                    candidates = [
+                        j
+                        for j in store.list(limit=200)
+                        if getattr(j, "domain_entity_id", None) == project.project_id
+                        and str(getattr(j, "capability_id", "") or "").startswith("research.")
+                    ]
+                    # Prefer non-terminal, else most recent
+                    active = [
+                        j
+                        for j in candidates
+                        if getattr(j, "state", None) not in TERMINAL_JOB_STATES
+                    ]
+                    job = (active or candidates or [None])[0]
+                except Exception:  # noqa: BLE001
+                    job = None
+
+            run = (
+                self.store.get_run(project.active_run_id)
+                if project.active_run_id
+                else self.store.get_latest_run(project.project_id)
+            )
+            run_started = run is not None and run.started_at is not None
+
+            if job is None:
+                try:
+                    enqueued = self.enqueue_advance(project.project_id)
+                    project.kernel_job_id = getattr(enqueued, "job_id", None)
+                    available, wait_reason = self._research_worker_availability()
+                    project.wait_reason = None if available else wait_reason
+                    self.store.save_project(project)
+                    fixed.append(project.project_id)
+                    self.store.add_event(
+                        project.project_id,
+                        "reconciled",
+                        "Re-enqueued missing research.advance job",
+                        {"job_id": project.kernel_job_id},
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+                continue
+
+            state = getattr(job, "state", None)
+            state_val = state.value if hasattr(state, "value") else str(state or "")
+            if state_val in {JobState.COMPLETED.value, "COMPLETED"} and not run_started:
+                # False success / empty completion — bump generation and re-enqueue.
+                try:
+                    gen = f"reconcile:{utc_now()}"
+                    enqueued = self.enqueue_advance(
+                        project.project_id,
+                        generation=gen,
+                    )
+                    project.kernel_job_id = getattr(enqueued, "job_id", None)
+                    project.wait_reason = None
+                    project.error = None
+                    self.store.save_project(project)
+                    fixed.append(project.project_id)
+                    self.store.add_event(
+                        project.project_id,
+                        "reconciled",
+                        "Kernel job completed without ResearchRun; re-enqueued",
+                        {"job_id": project.kernel_job_id, "prior_job_id": job.job_id},
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+                continue
+
+            if state_val in {JobState.FAILED.value, "FAILED"} and not run_started:
+                project.status = ResearchStatus.FAILED
+                project.phase = ResearchPhase.FAILED
+                project.error = getattr(job, "error", None) or "research.advance job failed"
+                project.finished_at = utc_now()
+                project.wait_reason = None
+                self.store.save_project(project)
+                fixed.append(project.project_id)
+                continue
+
+            # Valid queued/running job — refresh wait_reason from pool health.
+            available, wait_reason = self._research_worker_availability()
+            desired = None if available else wait_reason
+            if project.wait_reason != desired or project.kernel_job_id != job.job_id:
+                project.kernel_job_id = job.job_id
+                project.wait_reason = desired
+                self.store.save_project(project)
+
+        return fixed
 
     def list_budget_presets(self) -> dict[str, dict]:
         return list_presets()
@@ -551,6 +673,15 @@ class ResearchService:
         return self.get_project(project_id)
 
     def run(self, project_id: str, *, background: bool = False) -> ResearchProject:
+        """User/API start path.
+
+        ``background=True`` (API) enqueues durable execution and returns QUEUED.
+        ``background=False`` runs in-process for tests / legacy sync callers.
+
+        QUEUED/RESEARCHING/... remain idempotent here — they must NOT start a
+        competing coordinator. External workers that own a ``research.advance``
+        lease must call :meth:`execute_queued_run` instead.
+        """
         project = self.get_project(project_id)
         if project.status in ACTIVE_STATUSES:
             # Idempotent: return current state rather than starting a competing run.
@@ -561,6 +692,129 @@ class ResearchService:
         project = self.get_project(project_id)
         self._maybe_promote_knowledge(project)
         return self.get_project(project_id)
+
+    def execute_queued_run(
+        self,
+        project_id: str,
+        *,
+        deepen: bool = False,
+        extra_rounds: int = 0,
+        resume: bool = False,
+        job_id: str | None = None,
+        worker_id: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> ResearchProject:
+        """Worker-owned execution after a canonical ``research.advance`` claim.
+
+        Transitions QUEUED → RESEARCHING via durable CAS, then invokes the
+        ResearchCoordinator. Distinct from :meth:`run` / :meth:`enqueue_run`.
+        """
+        import os
+
+        project = self.get_project(project_id)
+        if project.status in {
+            ResearchStatus.RESEARCHING,
+            ResearchStatus.SYNTHESIZING,
+            ResearchStatus.CANCELLING,
+        }:
+            return project
+        if project.status != ResearchStatus.QUEUED:
+            raise ResearchError(
+                "RESEARCH_NOT_QUEUED",
+                (
+                    f"execute_queued_run requires QUEUED status "
+                    f"(got {project.status.value})"
+                ),
+                http_status=409,
+            )
+        if cancel_check is not None and cancel_check():
+            self.store.request_cancel(project_id)
+            return self.cancel(project_id)
+
+        claimed = self.store.claim_queued_execution(
+            project_id,
+            worker_pid=os.getpid(),
+            kernel_job_id=job_id,
+        )
+        if not claimed:
+            # Lost the race — another physical worker owns execution.
+            return self.get_project(project_id)
+
+        self._emit_obs(
+            "research.execution_started",
+            {
+                "project_id": project_id,
+                "job_id": job_id,
+                "worker_id": worker_id,
+                "deepen": bool(deepen),
+                "resume": bool(resume),
+            },
+            level="INFO",
+            research_project_id=project_id,
+            job_id=job_id,
+        )
+        self.store.add_event(
+            project_id,
+            "execution_started",
+            "Worker-owned research execution started",
+            {"job_id": job_id, "worker_id": worker_id},
+        )
+
+        if cancel_check is not None and cancel_check():
+            self.store.request_cancel(project_id)
+            return self.cancel(project_id)
+
+        try:
+            self.runner.run(
+                project_id,
+                deepen=deepen,
+                extra_rounds=extra_rounds,
+                resume=resume,
+            )
+        except Exception as exc:  # noqa: BLE001 — persist + re-raise for job FAILED
+            latest = self.get_project(project_id)
+            if latest.status not in TERMINAL_STATUSES and latest.status != ResearchStatus.CANCELLED:
+                latest.status = ResearchStatus.FAILED
+                latest.phase = ResearchPhase.FAILED
+                latest.error = f"{type(exc).__name__}: {exc}"
+                latest.finished_at = utc_now()
+                latest.progress_pct = min(95.0, float(latest.progress_pct or 0))
+                self.store.save_project(latest)
+                self.store.add_event(project_id, "failed", latest.error or "failed")
+            self._emit_obs(
+                "research.failed",
+                {
+                    "project_id": project_id,
+                    "job_id": job_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                level="ERROR",
+                research_project_id=project_id,
+                job_id=job_id,
+            )
+            raise
+
+        project = self.get_project(project_id)
+        try:
+            self._maybe_promote_knowledge(project)
+        except Exception:  # noqa: BLE001 — promotion never fails the run
+            pass
+        project = self.get_project(project_id)
+        self._emit_obs(
+            "research.completed"
+            if project.status == ResearchStatus.COMPLETED
+            else "research.finished",
+            {
+                "project_id": project_id,
+                "job_id": job_id,
+                "status": project.status.value,
+                "progress_pct": project.progress_pct,
+            },
+            level="INFO",
+            research_project_id=project_id,
+            job_id=job_id,
+        )
+        return project
 
     def enqueue_run(
         self,
@@ -573,24 +827,119 @@ class ResearchService:
         project = self.get_project(project_id)
         if project.status in ACTIVE_STATUSES and not deepen and not resume:
             return project
+        available, wait_reason = self._research_worker_availability()
         project.status = ResearchStatus.QUEUED
         project.phase = ResearchPhase.PLANNING
         project.error = None
         project.cancel_requested = False
         project.finished_at = None
         project.progress_pct = max(1.0, float(project.progress_pct or 0))
+        project.wait_reason = (
+            wait_reason
+            if not available
+            else None
+        )
         self.store.save_project(project)
-        self.store.add_event(project_id, "queued", "Research queued for execution")
+        self.store.add_event(
+            project_id,
+            "queued",
+            wait_reason or "Research queued for execution",
+            {"worker_available": available},
+        )
+        self._emit_obs(
+            "research.requested",
+            {"project_id": project_id, "deepen": deepen, "resume": resume},
+            level="INFO",
+            research_project_id=project_id,
+        )
         if self._runners_externalized() and self.job_runtime is not None:
-            self.enqueue_advance(
+            job = self.enqueue_advance(
                 project_id,
                 deepen=deepen,
                 extra_rounds=extra_rounds,
                 resume=resume,
             )
+            project = self.get_project(project_id)
+            project.kernel_job_id = getattr(job, "job_id", None) or project.kernel_job_id
+            if not available and not project.wait_reason:
+                project.wait_reason = "QUEUED — waiting for research worker"
+            self.store.save_project(project)
+            self._emit_obs(
+                "research.job_enqueued",
+                {
+                    "project_id": project_id,
+                    "job_id": project.kernel_job_id,
+                    "wait_reason": project.wait_reason,
+                },
+                level="INFO",
+                research_project_id=project_id,
+                job_id=project.kernel_job_id,
+            )
         else:
             self._spawn_run(project_id, deepen=deepen, extra_rounds=extra_rounds, resume=resume)
         return self.get_project(project_id)
+
+    def _emit_obs(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        level: str = "INFO",
+        **entity: Any,
+    ) -> None:
+        if self._emit is None:
+            return
+        try:
+            # ObservabilityHub.emit(category, name, *, payload=..., **entity_ids)
+            self._emit(
+                "research",
+                name,
+                payload=payload,
+                level=level,
+                subsystem="research",
+                **{k: v for k, v in entity.items() if v is not None},
+            )
+        except TypeError:
+            try:
+                self._emit(name, payload)
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _research_worker_availability(self) -> tuple[bool, str | None]:
+        """Return (available, wait_reason) for the physical research pool."""
+        try:
+            from Data.modules.workers.protocol import WorkerInstanceState
+            from Data.modules.workers.registry import WorkerRegistry
+            from Data.modules.workers.settings import load_worker_settings
+
+            wsettings = load_worker_settings()
+            count = int((wsettings.pool_counts or {}).get("research", 0) or 0)
+            if not wsettings.enabled:
+                return False, "QUEUED — waiting for research worker (workers disabled)"
+            if count <= 0:
+                return False, "QUEUED — waiting for research worker (pool count 0)"
+            if not self._runners_externalized():
+                return True, None
+            registry = WorkerRegistry(self.store.db_path)
+            registry.initialize()
+            rows = registry.list(pool_id="research")
+            live = [
+                r
+                for r in rows
+                if getattr(r, "state", None)
+                in {
+                    WorkerInstanceState.READY,
+                    WorkerInstanceState.BUSY,
+                }
+            ]
+            if not live:
+                return False, "QUEUED — waiting for research worker"
+            return True, None
+        except Exception:  # noqa: BLE001
+            # If we cannot probe, do not block enqueue — supervisor may still start.
+            return True, None
 
     def _spawn_run(
         self,
@@ -643,6 +992,34 @@ class ResearchService:
             )
         self.store.request_cancel(project_id)
         self.store.add_event(project_id, "cancelled", "Cancel requested")
+        # Mirror cancel onto the kernel job when linked.
+        if project.kernel_job_id and self.job_runtime is not None:
+            try:
+                from Data.modules.jobs.states import JobState
+
+                jstore = getattr(self.job_runtime, "store", None)
+                if jstore is not None:
+                    job = jstore.get(project.kernel_job_id)
+                    if job is not None and job.state not in {
+                        JobState.COMPLETED,
+                        JobState.FAILED,
+                        JobState.CANCELLED,
+                    }:
+                        if hasattr(jstore, "request_cancel"):
+                            jstore.request_cancel(
+                                project.kernel_job_id,
+                                reason="research project cancel",
+                            )
+                        else:
+                            jstore.transition(
+                                project.kernel_job_id,
+                                JobState.CANCEL_REQUESTED
+                                if hasattr(JobState, "CANCEL_REQUESTED")
+                                else JobState.CANCELLED,
+                                error="research project cancel",
+                            )
+            except Exception:  # noqa: BLE001
+                pass
         latest = self.get_project(project_id)
         with self._bg_lock:
             alive = bool(
@@ -663,7 +1040,26 @@ class ResearchService:
                 latest.finished_at = utc_now()
                 latest.error = latest.error or "Cancelled by request"
                 latest.progress_pct = min(95.0, float(latest.progress_pct or 0))
+                latest.wait_reason = None
                 self.store.save_project(latest)
+                # If kernel job still queued, cancel it to avoid COMPLETED mismatch.
+                if latest.kernel_job_id and self.job_runtime is not None:
+                    try:
+                        from Data.modules.jobs.states import JobState
+
+                        jstore = self.job_runtime.store
+                        job = jstore.get(latest.kernel_job_id)
+                        if job is not None and job.state in {
+                            JobState.QUEUED,
+                            JobState.CANCEL_REQUESTED,
+                        }:
+                            jstore.transition(
+                                latest.kernel_job_id,
+                                JobState.CANCELLED,
+                                error="research project cancelled before claim",
+                            )
+                    except Exception:  # noqa: BLE001
+                        pass
         return self.get_project(project_id)
 
     def resume(self, project_id: str, *, background: bool = False) -> ResearchProject:

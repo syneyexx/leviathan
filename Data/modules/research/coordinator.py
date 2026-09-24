@@ -155,12 +155,52 @@ class ResearchCoordinator:
         if project.status in {ResearchStatus.RESEARCHING, ResearchStatus.SYNTHESIZING}:
             from Data.modules.common.process import pid_is_alive
 
-            if project.worker_pid and pid_is_alive(project.worker_pid):
+            # Same-process claim holder (execute_queued_run CAS) may already be
+            # RESEARCHING without an active ResearchRun yet — allow fall-through.
+            same_owner = project.worker_pid is not None and int(project.worker_pid) == int(
+                os.getpid()
+            )
+            if (
+                project.worker_pid
+                and pid_is_alive(project.worker_pid)
+                and not same_owner
+            ):
                 raise ResearchError(
                     "RESEARCH_BUSY",
                     "Project is already researching",
                     http_status=409,
                 )
+            if project.active_run_id and not same_owner:
+                existing = self.store.get_run(project.active_run_id)
+                if (
+                    existing is not None
+                    and existing.finished_at is None
+                    and existing.status
+                    in {
+                        ResearchStatus.RESEARCHING,
+                        ResearchStatus.SYNTHESIZING,
+                        ResearchStatus.QUEUED,
+                    }
+                ):
+                    raise ResearchError(
+                        "RESEARCH_BUSY",
+                        "Project already has an active ResearchRun",
+                        http_status=409,
+                    )
+            if same_owner and project.active_run_id:
+                existing = self.store.get_run(project.active_run_id)
+                if (
+                    existing is not None
+                    and existing.finished_at is None
+                    and existing.status
+                    in {
+                        ResearchStatus.RESEARCHING,
+                        ResearchStatus.SYNTHESIZING,
+                    }
+                ):
+                    # Idempotent re-entry for the owning worker — do not spawn
+                    # a second ResearchRun.
+                    return project
 
         if project.plan is None:
             project.plan = build_plan(project)

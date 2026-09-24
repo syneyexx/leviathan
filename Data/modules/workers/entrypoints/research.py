@@ -3,29 +3,54 @@ from __future__ import annotations
 
 from Data.modules.workers.entrypoints._cli import main_for_pool
 
+
 def _handler(ctx, job):
     from Data.modules.jobs.states import JobState
+
     args = dict(job.arguments or {})
     action = str(args.get("action") or "advance")
     project_id = str(args.get("project_id") or "")
     # Durable research continuation — domain service methods
     try:
         from Data.modules.research.worker import process_research_job
-        result = process_research_job(ctx, job)
-        if result is None:
-            ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result={"action": action, "project_id": project_id})
-        return result or {}
-    except ImportError:
+    except ImportError as exc:
+        # Import/init failure is FAILED — never COMPLETED / deferred_domain.
         ctx["job_store"].transition(
             job.job_id,
-            JobState.COMPLETED,
-            result={"action": action, "project_id": project_id, "deferred_domain": True},
+            JobState.FAILED,
+            error=f"Research handler import failed: {exc}",
+            result={
+                "action": action,
+                "project_id": project_id,
+                "import_error": True,
+            },
         )
-        return {}
+        return {"error": f"ImportError: {exc}"}
+
+    try:
+        result = process_research_job(ctx, job)
+        if result is None:
+            ctx["job_store"].transition(
+                job.job_id,
+                JobState.COMPLETED,
+                result={"action": action, "project_id": project_id},
+            )
+        return result or {}
+    except Exception as exc:  # noqa: BLE001
+        refreshed = ctx["job_store"].get(job.job_id)
+        if refreshed is not None and refreshed.state == JobState.RUNNING:
+            ctx["job_store"].transition(
+                job.job_id,
+                JobState.FAILED,
+                error=f"{type(exc).__name__}: {exc}",
+                result={"action": action, "project_id": project_id},
+            )
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 def main(argv=None):
     return main_for_pool("research", handler=_handler, argv=argv)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

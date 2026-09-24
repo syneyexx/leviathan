@@ -439,9 +439,9 @@ class JobStore:
         are failed instead of claimed.
         """
         now_dt = datetime.now(timezone.utc)
-        now = now_dt.isoformat(timespec="seconds")
+        now = now_dt.isoformat(timespec="milliseconds")
         ttl = max(1.0, float(lease_ttl_seconds))
-        expires = (now_dt + timedelta(seconds=ttl)).isoformat(timespec="seconds")
+        expires = (now_dt + timedelta(seconds=ttl)).isoformat(timespec="milliseconds")
 
         with self.connect() as conn:
             self._ensure_schema(conn)
@@ -892,8 +892,8 @@ class JobStore:
     ) -> WorkerLease:
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=max(1.0, float(ttl_seconds)))
-        now_s = now.isoformat(timespec="seconds")
-        expires_s = expires.isoformat(timespec="seconds")
+        now_s = now.isoformat(timespec="milliseconds")
+        expires_s = expires.isoformat(timespec="milliseconds")
         proto = protocol or WorkerProtocolInfo()
         with self.connect() as conn:
             self._ensure_schema(conn)
@@ -954,8 +954,8 @@ class JobStore:
             if exp_dt is not None and now >= exp_dt:
                 raise ValueError(f"Lease expired at {expires_at}")
             expires = now + timedelta(seconds=max(1.0, float(ttl_seconds)))
-            now_s = now.isoformat(timespec="seconds")
-            expires_s = expires.isoformat(timespec="seconds")
+            now_s = now.isoformat(timespec="milliseconds")
+            expires_s = expires.isoformat(timespec="milliseconds")
             conn.execute(
                 """
                 UPDATE jobs
