@@ -44,6 +44,11 @@
   font-family: var(--lv-font-ui);
 }
 
+/* Fill content column — no right rail on this page */
+.lv-app:has(.lv-tasks-page) .lv-body {
+  grid-template-columns: var(--lv-sidebar-width) minmax(0, 1fr);
+}
+
 .lv-tasks-page {
   /* alias kept for nested selectors / tooling */
 }
@@ -80,14 +85,16 @@
 .lv-tasks-hero::before {
   content: "";
   position: absolute;
-  right: -40px;
-  top: -60px;
-  width: 280px;
-  height: 280px;
+  right: -20px;
+  top: -70px;
+  width: 320px;
+  height: 320px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 38% 42%, rgba(70, 130, 190, 0.2) 0%, rgba(20, 40, 70, 0.35) 38%, rgba(8, 14, 22, 0.8) 62%, transparent 72%);
-  box-shadow: 0 0 40px rgba(40, 100, 160, 0.15);
+    radial-gradient(circle at 36% 40%, rgba(90, 150, 210, 0.28) 0%, rgba(30, 55, 95, 0.42) 34%, rgba(8, 14, 22, 0.85) 58%, transparent 70%);
+  box-shadow:
+    0 0 50px rgba(40, 110, 180, 0.22),
+    inset -20px -10px 40px rgba(20, 60, 110, 0.25);
   pointer-events: none;
 }
 
@@ -123,10 +130,10 @@
 .lv-tasks-hero-title {
   margin: 0;
   font-family: var(--lv-font-display);
-  font-size: 42px;
+  font-size: 40px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  line-height: 0.95;
+  letter-spacing: 0.1em;
+  line-height: 0.92;
   color: var(--tasks-cream);
   text-shadow: 0 0 24px rgba(214, 169, 87, 0.18);
 }
@@ -266,7 +273,7 @@
 
 .lv-tasks-search {
   position: relative;
-  width: 200px;
+  width: 188px;
   flex: 0 0 auto;
 }
 
@@ -390,7 +397,7 @@
 
 .lv-tasks-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.73fr) minmax(280px, 0.27fr);
+  grid-template-columns: minmax(0, 73%) minmax(360px, 27%);
   gap: 8px;
   min-height: 0;
   height: 408px;
@@ -448,7 +455,6 @@
 .lv-tasks-column-count {
   color: var(--tasks-text-muted);
   font-weight: 500;
-  margin-left: 2px;
 }
 
 .lv-tasks-column-add {
@@ -524,7 +530,7 @@
 
 .lv-tasks-card-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   line-height: 1.25;
   color: #f2efe8;
@@ -796,20 +802,24 @@
   display: flex;
   align-items: center;
   gap: 0;
-  padding: 0 10px;
+  padding: 0 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  overflow-x: auto;
+  flex: 0 0 auto;
 }
 
 .lv-tasks-tab {
   position: relative;
   height: 30px;
-  padding: 0 9px;
+  padding: 0 8px;
   border: none;
   background: transparent;
   color: var(--tasks-text-dim);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 550;
   cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .lv-tasks-tab.is-active {
@@ -830,8 +840,8 @@
 .lv-tasks-fields {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 9px;
+  padding: 10px 12px;
   overflow: auto;
   flex: 1;
   min-height: 0;
@@ -839,7 +849,7 @@
 
 .lv-tasks-field {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 92px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
 }
@@ -910,16 +920,17 @@
 
 .lv-tasks-details-foot {
   display: grid;
-  grid-template-columns: 1.15fr 0.75fr 0.75fr 1fr;
+  grid-template-columns: 1.2fr 0.8fr 0.8fr 1.05fr;
   gap: 6px;
   padding: 10px 12px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex: 0 0 auto;
 }
 
 .lv-tasks-details-foot .lv-tasks-btn {
   width: 100%;
-  padding: 0 8px;
-  font-size: 11.5px;
+  padding: 0 6px;
+  font-size: 11px;
 }
 
 .lv-tasks-btn--neutral {
@@ -1146,7 +1157,7 @@
   grid-template-columns: 28px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
-  padding: 7px 0;
+  padding: 6px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
@@ -1223,10 +1234,10 @@
 
 .lv-tasks-feed-row {
   display: grid;
-  grid-template-columns: 52px 14px minmax(0, 1fr);
-  gap: 7px;
+  grid-template-columns: 52px 12px minmax(0, 1fr);
+  gap: 6px;
   align-items: start;
-  padding: 5px 0;
+  padding: 4px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.035);
 }
 
@@ -1410,7 +1421,7 @@
 /* Narrow adaptation — keep desktop first */
 @media (max-width: 1400px) {
   .lv-tasks-workspace {
-    grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.4fr);
+    grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.45fr);
     height: auto;
     min-height: 390px;
   }

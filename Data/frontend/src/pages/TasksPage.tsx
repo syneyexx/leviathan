@@ -737,8 +737,10 @@ export function TasksPage() {
                 <div className="lv-tasks-column-head">
                   <div className={`lv-tasks-column-title lv-tasks-column-title--${column.meta.tone}`}>
                     <ColumnIcon type={column.meta.icon} />
-                    <span>{column.meta.title}</span>
-                    <span className="lv-tasks-column-count">{column.meta.count}</span>
+                    <span>
+                      {column.meta.title}{" "}
+                      <span className="lv-tasks-column-count">({column.meta.count})</span>
+                    </span>
                   </div>
                   <button type="button" className="lv-tasks-column-add" aria-label={`Add to ${column.meta.title}`}>
                     <IconPlus />
