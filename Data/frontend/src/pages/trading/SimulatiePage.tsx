@@ -554,15 +554,15 @@ export function SimulatiePage() {
             <div className="ts-stat-strip">
               <div>
                 <span>Fees</span>
-                <b>{metricValue(metrics, "total_fees")}</b>
+                <b>{metricValue(metrics, "fees_paid")}</b>
               </div>
               <div>
-                <span>Slippage</span>
-                <b>{metricValue(metrics, "total_slippage")}</b>
+                <span>Turnover</span>
+                <b>{metricValue(metrics, "turnover")}</b>
               </div>
               <div>
                 <span>Trades</span>
-                <b>{fills.length || metricValue(metrics, "trade_count")}</b>
+                <b>{fills.length || "—"}</b>
               </div>
             </div>
             <div className="ts-mini-equity">
@@ -681,23 +681,19 @@ export function SimulatiePage() {
             </div>
           </DeskPanel>
 
-          <DeskPanel
-            title="Observability"
-            action={
-              <div className="ts-tabs">
-                {(["activity", "messages", "fills", "wallets", "decisions"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    className={consoleTab === t ? "is-active" : ""}
-                    onClick={() => setConsoleTab(t)}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            }
-          >
+          <DeskPanel title="Observability">
+            <div className="ts-tabs ts-tabs-bar">
+              {(["activity", "messages", "fills", "wallets", "decisions"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={consoleTab === t ? "is-active" : ""}
+                  onClick={() => setConsoleTab(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
             <ul className="ts-log">
               {consoleTab === "activity" &&
                 [...messages, ...fills.map((f) => ({

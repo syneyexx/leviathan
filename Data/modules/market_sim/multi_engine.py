@@ -562,12 +562,37 @@ class MultiAgentEngine:
         veto_rate = (
             state.veto_count / state.deliberation_rounds if state.deliberation_rounds else None
         )
+        # Baseline capital must match the equity curve denomination.
+        # Individual competition: sum of agent starting cash (not run.initial_cash * N).
+        if state.game_mode == GAME_SHARED:
+            initial_for_metrics = float(run.initial_cash)
+        else:
+            configured = 0.0
+            non_traders = {
+                "trading_orchestrator",
+                "evaluator",
+                "risk_agent",
+                "risk_officer",
+                "critic",
+                "orchestrator",
+            }
+            for a in run.agents or []:
+                if str(a.get("role") or "") in non_traders:
+                    continue
+                if (a.get("authority") or {}).get("may_order", True) is False:
+                    continue
+                if a.get("initial_cash") is not None:
+                    configured += float(a["initial_cash"])
+            if configured > 0:
+                initial_for_metrics = configured
+            elif equity_curve:
+                initial_for_metrics = float(equity_curve[0])
+            else:
+                initial_for_metrics = float(run.initial_cash)
         run.metrics = compute_metrics(
             equity=equity_curve,
             fills=[f.public_dict() for f in state.fills],
-            initial_cash=run.initial_cash * max(1, len([w for w in state.book.wallets.values() if w.owner_kind == "agent"]))
-            if state.game_mode != GAME_SHARED
-            else run.initial_cash,
+            initial_cash=initial_for_metrics,
             benchmark_equity=state.benchmark_equity or None,
             causality_violations=run.causality_violations,
             brain_hits=run.brain_hits,

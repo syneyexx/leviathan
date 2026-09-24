@@ -293,10 +293,17 @@
   font-size: 8px;
   margin-top: 2px;
 }
-.lv-app--trading-sim-ref .ts-tabs {
+.lv-app--trading-sim-ref .ts-tabs-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
+  gap: 4px;
+  padding: 6px 8px 2px;
+  border-bottom: 1px solid rgba(214, 169, 87, 0.12);
+}
+.lv-app--trading-sim-ref .ts-tabs-bar button {
+  height: 22px;
+  padding: 0 9px;
+  font-size: 8px;
 }
 .lv-app--trading-sim-ref .ts-tabs button {
   height: 20px;
