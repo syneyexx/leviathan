@@ -16,7 +16,15 @@ from fastapi.testclient import TestClient
 
 from Data.modules.knowledge.deep_recall import DeepRecallResult
 from Data.modules.knowledge.economy import EconomyDecision
-from Data.modules.models.errors import ModelControlError
+from Data.modules.models.contracts import (
+    CapabilityState,
+    ModelCapabilities,
+    ModelDescriptor,
+    ModelLifecycleState,
+    ModelProfile,
+    ModelSource,
+    RouteDecision,
+)
 from Data.modules.reasoning.engine import ReasoningPlan
 from Data.modules.run import EventType, RunState, validate_transition
 from Data.modules.run.states import InvalidRunTransition
@@ -100,18 +108,38 @@ class ChatRunLifecycleTests(unittest.TestCase):
         self._enter(
             mock.patch.object(self.m.knowledge, "list_documents", return_value=[{"id": "k1"}])
         )
+        # Successful control-plane route — avoids settings-external fallback (needs llm_model).
         self._enter(
             mock.patch.object(
                 self.m.model_plane,
                 "resolve_for_chat",
-                side_effect=ModelControlError(
-                    "ROUTER_EXHAUSTED",
-                    "no models",
-                    http_status=503,
-                ),
+                return_value=self._fake_routed(),
             )
         )
-        self._enter(mock.patch.object(self.m.model_plane.gateway, "record_fallback"))
+        self._enter(
+            mock.patch.object(
+                self.m.model_plane.residency,
+                "acquire_lease",
+                new=mock.AsyncMock(return_value=SimpleNamespace(lease_id="lease-test")),
+            )
+        )
+        self._enter(
+            mock.patch.object(
+                self.m.model_plane.residency,
+                "release_lease",
+                new=mock.AsyncMock(),
+            )
+        )
+        self._enter(
+            mock.patch.object(
+                self.m.model_plane.residency,
+                "snapshot",
+                return_value=SimpleNamespace(endpoint=None),
+            )
+        )
+        self._enter(mock.patch.object(self.m.model_plane.gateway, "acquire", return_value="call-test"))
+        self._enter(mock.patch.object(self.m.model_plane.gateway, "release"))
+        self._enter(mock.patch.object(self.m.model_plane.registry, "touch_used"))
         self._enter(
             mock.patch.object(
                 self.m.llm,
@@ -151,6 +179,32 @@ class ChatRunLifecycleTests(unittest.TestCase):
                 ),
             )
         )
+
+    @staticmethod
+    def _fake_routed() -> dict:
+        model = ModelDescriptor(
+            id="test-model",
+            display_name="test-model",
+            provider_id="test-provider",
+            source=ModelSource.API,
+            capabilities=ModelCapabilities(chat=CapabilityState.SUPPORTED),
+            lifecycle_state=ModelLifecycleState.AVAILABLE,
+            context_window=4096,
+            endpoint="http://127.0.0.1:1234/v1",
+            metadata={"provider_model_id": "test-model"},
+        )
+        decision = RouteDecision(model_id=model.id, reason="test_fixture")
+        profile = ModelProfile(model_id=model.id, temperature=0.2, max_tokens=256)
+        return {
+            "decision": decision,
+            "model": model,
+            "profile": profile,
+            "endpoint": model.endpoint,
+            "api_key": "not-needed",
+            "provider_model_id": "test-model",
+            "provider_id": model.provider_id,
+            "resolved": None,  # external / unmanaged path
+        }
 
     def tearDown(self) -> None:
         for p in reversed(self._patches):
