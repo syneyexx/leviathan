@@ -163,6 +163,8 @@ class WorkerImportGuards(unittest.TestCase):
 
     def test_all_pool_entrypoints_avoid_backend_main(self) -> None:
         entrypoints = WORKERS_ROOT / "entrypoints"
+        agents = entrypoints / "agents.py"
+        self.assertTrue(agents.is_file(), msg="agents pool entrypoint missing")
         for path in sorted(entrypoints.glob("*.py")):
             if path.name.startswith("_"):
                 continue
