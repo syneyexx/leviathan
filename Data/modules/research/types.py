@@ -609,6 +609,9 @@ class ResearchProject:
     conflict_count: int = 0
     web_unavailable_reason: str | None = None
     workers: list[dict[str, Any]] = field(default_factory=list)
+    # Kernel job / wait linkage (physical research.advance ownership surface).
+    kernel_job_id: str | None = None
+    wait_reason: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -651,6 +654,8 @@ class ResearchProject:
             "conflict_count": self.conflict_count,
             "web_unavailable_reason": self.web_unavailable_reason,
             "workers": list(self.workers),
+            "kernel_job_id": self.kernel_job_id,
+            "wait_reason": self.wait_reason,
         }
 
 

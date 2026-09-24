@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 import time
 import traceback
 from typing import Any, Callable
@@ -201,6 +202,100 @@ def run_pool_loop(
             time.sleep(poll)
             continue
 
+        # Long-handler heartbeats: keep BOTH worker registry + job lease fresh.
+        hb_stop = threading.Event()
+        lease_lost = threading.Event()
+        cancel_fence = threading.Event()
+        ctx["worker_id"] = worker_id
+        ctx["current_job_id"] = job.job_id
+        ctx["lease_ttl_seconds"] = lease_ttl
+        ctx["lease_lost"] = lease_lost
+        ctx["job_cancel_fence"] = cancel_fence
+
+        def _job_cancel_check() -> bool:
+            if lease_lost.is_set() or cancel_fence.is_set() or stop["flag"]:
+                return True
+            try:
+                refreshed = store.get(job.job_id)
+            except Exception:  # noqa: BLE001
+                return False
+            if refreshed is None:
+                return True
+            state_name = getattr(getattr(refreshed, "state", None), "name", None) or str(
+                getattr(refreshed, "state", "")
+            )
+            if state_name in {"CANCEL_REQUESTED", "CANCELLED"}:
+                return True
+            owner = getattr(refreshed, "lease_owner", None)
+            if owner and owner != worker_id:
+                lease_lost.set()
+                cancel_fence.set()
+                return True
+            return False
+
+        ctx["job_cancel_check"] = _job_cancel_check
+
+        def _heartbeat_while_busy() -> None:
+            # Renew well inside the lease TTL so brief scheduling delays cannot
+            # expire a legitimately owned lease (TTL=30 → ~5s; TTL=1 → ~0.3s).
+            interval = max(0.1, min(float(hb_every), float(lease_ttl) / 3.0))
+
+            def _beat_once() -> bool:
+                if hb_stop.is_set():
+                    return False
+                try:
+                    reg = registry.heartbeat(
+                        worker_id,
+                        state=WorkerInstanceState.BUSY,
+                        current_job_id=job.job_id,
+                    )
+                    if reg is None:
+                        if not hb_stop.is_set():
+                            lease_lost.set()
+                            cancel_fence.set()
+                            print(
+                                f"[{pool_id}-worker] lost worker registry during job={job.job_id}",
+                                flush=True,
+                            )
+                        return False
+                except Exception:  # noqa: BLE001
+                    pass
+                if hb_stop.is_set():
+                    return False
+                try:
+                    if hasattr(store, "heartbeat_lease"):
+                        store.heartbeat_lease(
+                            job.job_id,
+                            worker_id=worker_id,
+                            ttl_seconds=lease_ttl,
+                        )
+                except ValueError as exc:
+                    if not hb_stop.is_set():
+                        lease_lost.set()
+                        cancel_fence.set()
+                        print(
+                            f"[{pool_id}-worker] job lease lost job={job.job_id}: {exc}",
+                            flush=True,
+                        )
+                    return False
+                except Exception:  # noqa: BLE001
+                    pass
+                return True
+
+            # Immediate beat so long handlers never wait a full interval before renewing.
+            if not _beat_once():
+                return
+            while not hb_stop.wait(interval):
+                if not _beat_once():
+                    return
+
+        hb_thread = threading.Thread(
+            target=_heartbeat_while_busy,
+            name=f"{pool_id}-hb-{job.job_id[:8]}",
+            daemon=True,
+        )
+        hb_thread.start()
+
         try:
             # Cooperative cancel observation
             refreshed = store.get(job.job_id)
@@ -210,6 +305,15 @@ def run_pool_loop(
                     JobState.CANCELLED,
                     error=getattr(refreshed, "cancel_reason", None) or "Cancelled by request",
                 )
+            elif lease_lost.is_set():
+                try:
+                    store.transition(
+                        job.job_id,
+                        JobState.FAILED,
+                        error="lease_lost_before_handler",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             else:
                 if handler is not None:
                     result = handler(ctx, job)
@@ -217,6 +321,18 @@ def run_pool_loop(
                     result = _default_gateway_execute(runtime, store, job, worker_id, lease_ttl)
                 if result is not None and refreshed is not None:
                     pass  # handler owns transitions
+                # If lease was lost mid-flight and handler did not fail the job, fence.
+                if lease_lost.is_set():
+                    latest = store.get(job.job_id)
+                    if latest is not None and latest.state == JobState.RUNNING:
+                        try:
+                            store.transition(
+                                job.job_id,
+                                JobState.FAILED,
+                                error="lease_lost_during_handler",
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
         except Exception as exc:  # noqa: BLE001
             err = f"{type(exc).__name__}: {exc}"
             try:
@@ -224,12 +340,18 @@ def run_pool_loop(
             except Exception:  # noqa: BLE001
                 print(traceback.format_exc(), flush=True)
         finally:
+            hb_stop.set()
+            hb_thread.join(timeout=max(1.0, float(hb_every)))
             admission.release(decision.reservation_id)
             try:
                 store.release_lease(job.job_id, worker_id=worker_id)
             except Exception:  # noqa: BLE001
                 pass
             registry.heartbeat(worker_id, state=WorkerInstanceState.READY, clear_job=True)
+            ctx.pop("job_cancel_check", None)
+            ctx.pop("lease_lost", None)
+            ctx.pop("job_cancel_fence", None)
+            ctx.pop("current_job_id", None)
 
         processed += 1
         print(f"[{pool_id}-worker] finished job={job.job_id}", flush=True)
