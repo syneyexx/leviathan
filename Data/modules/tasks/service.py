@@ -636,12 +636,28 @@ class TaskService:
             state = _enum_val(job.state)
             if state not in {"FAILED", "CANCELLED"}:
                 raise TaskError("NOT_RETRIABLE", f"Job state {state} cannot be retried", http_status=409)
-            # Prefer store.schedule_retry via runtime store
-            store = getattr(self.job_runtime, "store", None)
-            if store is None:
-                raise TaskError("JOB_RUNTIME_UNAVAILABLE", "Job store unavailable for retry", http_status=503)
-            job = store.schedule_retry(record.job_id, delay_seconds=0.0, error=job.error, retryable=True)
-            apply_job_projection(record, job)
+            # FAILED/CANCELLED are terminal in JobState — re-enqueue a fresh job rather than
+            # illegal FAILED → RETRY_WAIT. Keep the Tasks binding authoritative.
+            if not record.capability_id:
+                raise TaskError("MISSING_CAPABILITY", "Cannot retry without capability_id", http_status=422)
+            attempt = int(record.execution_attempt or job.attempt_number or 1) + 1
+            new_job = self.job_runtime.enqueue(
+                capability_id=record.capability_id,
+                arguments=dict(record.capability_arguments),
+                requested_by=record.created_by or "tasks",
+                idempotency_key=f"task:retry:{record.task_id}:{attempt}",
+                domain="tasks",
+                domain_entity_type="task",
+                domain_entity_id=record.task_id,
+                metadata={"task_id": record.task_id, "retry_of": record.job_id, "attempt": attempt},
+            )
+            record.job_id = new_job.job_id
+            record.source_ref = new_job.job_id
+            record.execution_attempt = attempt
+            record.blocked = False
+            record.blocked_reason = None
+            record.blocked_reason_code = None
+            apply_job_projection(record, new_job)
             self.store.update_task(record)
             self.store.append_event(
                 task_id=record.task_id,
@@ -649,7 +665,8 @@ class TaskService:
                 actor_type=actor_type,
                 actor_id=actor_id,
                 source_type="job",
-                source_ref=record.job_id,
+                source_ref=new_job.job_id,
+                payload={"jobId": new_job.job_id, "retryOf": job.job_id, "attempt": attempt},
             )
             return self.recompute_blocking(record.task_id)
 

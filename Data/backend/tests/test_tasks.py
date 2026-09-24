@@ -35,7 +35,6 @@ class _FakeGateway:
 class _FakeJobRuntime:
     def __init__(self, store: JobStore) -> None:
         self.store = store
-        self._jobs: dict[str, Any] = {}
 
     def enqueue(self, **kwargs: Any) -> Any:
         record = self.store.create(
@@ -48,13 +47,8 @@ class _FakeJobRuntime:
             domain_entity_id=kwargs.get("domain_entity_id"),
             metadata=kwargs.get("metadata") or {},
         )
-        # mark queued like JobRuntime
-        from Data.modules.jobs.store import utc_now as jnow
-
-        record.state = JobState.QUEUED
-        record.queued_at = jnow()
-        self.store.update(record)
-        self._jobs[record.job_id] = record
+        if record.state == JobState.CREATED:
+            record = self.store.transition(record.job_id, JobState.QUEUED)
         return record
 
     def get(self, job_id: str) -> Any:
@@ -63,10 +57,12 @@ class _FakeJobRuntime:
     def cancel(self, job_id: str, *, reason: str | None = None) -> Any:
         job = self.store.get(job_id)
         assert job is not None
-        job.state = JobState.CANCELLED
-        job.cancel_reason = reason
-        self.store.update(job)
-        return job
+        return self.store.transition(
+            job_id,
+            JobState.CANCELLED,
+            error=reason,
+            metadata_update={"cancel_reason": reason} if reason else None,
+        )
 
     def list(self, **_kwargs: Any) -> list[Any]:
         return self.store.list(limit=100)
@@ -230,13 +226,13 @@ class TaskExecutionBindingTests(unittest.TestCase):
             capability_id="artifact.create_text",
         )
         started = self.service.start(task.task_id)
-        job = self.job_store.get(started.job_id)
-        assert job is not None
-        job.state = JobState.FAILED
-        job.error = "boom"
-        self.job_store.update(job)
+        assert started.job_id is not None
+        self.job_store.transition(started.job_id, JobState.RUNNING)
+        self.job_store.transition(started.job_id, JobState.FAILED, error="boom")
         retried = self.service.retry(task.task_id)
-        self.assertEqual(retried.execution_state, JobState.RETRY_WAIT.value)
+        self.assertIsNotNone(retried.job_id)
+        self.assertNotEqual(retried.job_id, started.job_id)
+        self.assertEqual(retried.execution_state, JobState.QUEUED.value)
 
 
 class TaskSummaryTests(unittest.TestCase):
