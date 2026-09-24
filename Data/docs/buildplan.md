@@ -6,6 +6,31 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-24 — Trading Research Factory Phase T0 (Gap Report) — PASS (recon only)
+
+### Objective
+Source-verify Market Sim defects D1–D21, write characterization tests, and produce an approval-gated gap report before any correctness fixes or feature work (`trading_program.md` Phase T0).
+
+### Added / changed
+- **Program doc:** `Data/docs/trading_program.md` (v2 phased plan T0–T11)
+- **Gap report:** `Data/docs/trading_gap_report.md` — D1–D21 all PRESENT; migration head **34**; reuse/conflict map
+- **Tests:** `Data/backend/tests/test_market_sim_characterization.py` (66 tests: 45 current-behaviour + 21 expectedFailure desired contracts)
+- **No feature code, no migrations, no flag changes**
+
+### EXTERNAL-FIRST review
+- Reuse Gateway / JobRuntime / SecretsBroker / AgentFleet / central SQLite — no parallel stacks proposed
+- LiveTradingGuard + TradingStub remain refuse-by-default
+- Operator supplies market data; no bulk OHLCV committed
+
+### Explicitly NOT claimed
+- Any correctness fix (T1+)
+- Strategy profitability, live execution, or statistical validation features
+- Full suite green beyond characterization (migration test still fails on stale head=32 — documented as D21)
+
+### Status
+**PASS (recon)** — stopped for approval before Phase T1
+
+---
 ## 2026-09-23 — Wave 9 Post-Training Improvement Flywheel — PASS
 
 ### Objective
