@@ -884,6 +884,8 @@ migrations = MigrationRunner(settings.database_path)
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 model_plane = ModelControlPlane(settings, observability=observability)
+model_plane.bind_llm(llm)
+model_plane.set_telemetry_provider(lambda: system_telemetry_sampler.latest_public())
 settings_plane = SettingsControlPlane(settings)
 behavior_store = BehaviorProfileStore(settings.database_path)
 behavior_store.ensure_schema()
@@ -988,7 +990,7 @@ domain_strategy_registry.register(CodingCognitiveStrategy())
 from Data.modules.coding.llm_adapter import CodingLLMAdapter
 
 coding_service.bind_intelligence(
-    llm=CodingLLMAdapter(llm),
+    llm=CodingLLMAdapter(model_plane, llm),
     context_builder=llm.context_builder,
     brain_access=brain_access,
     behavior_store=behavior_store,
@@ -1548,6 +1550,10 @@ async def lifespan(_: FastAPI):
             message="Leviathan backend shutting down",
             source="lifespan",
         )
+        try:
+            await model_plane.residency.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
         observability.shutdown()
         system_telemetry_sampler.stop()
         mcp_bridge.shutdown()
@@ -2084,89 +2090,119 @@ async def chat(payload: ChatRequest, request: Request):
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     else:
         if plan.use_knowledge:
+            # All successful retrieval strategies must converge here:
+            # RETRIEVAL_STARTED → (deep|staged|hybrid) → RETRIEVAL_COMPLETED → EXECUTING
             runs.append_event(run.run_id, EventType.RETRIEVAL_STARTED, {})
-            if plan.use_deep_recall and economy.allow_deep_recall:
-                deep_recall_result = deep_recall_service.recall(
-                    DeepRecallRequest(
-                        current_question=message,
-                        maximum_context_budget=economy.deep_recall_budget,
-                        hydrate_limit=live_settings().knowledge_top_k,
-                        required_precision="high" if plan.complexity == "high" else "normal",
+            retrieval_source = "staged_or_hybrid"
+            try:
+                if plan.use_deep_recall and economy.allow_deep_recall:
+                    deep_recall_result = deep_recall_service.recall(
+                        DeepRecallRequest(
+                            current_question=message,
+                            maximum_context_budget=economy.deep_recall_budget,
+                            hydrate_limit=live_settings().knowledge_top_k,
+                            required_precision="high" if plan.complexity == "high" else "normal",
+                        )
                     )
-                )
-                atlas_hits = list(deep_recall_result.atlas_matches)
-                contradictions = list(deep_recall_result.contradictions_found)
-                knowledge_hits = [
-                    {
-                        "id": detail.get("document_id") or detail.get("ref"),
-                        "title": detail.get("title") or "evidence",
-                        "content": detail.get("content") or "",
-                        "source": "deep_recall",
-                        "chunk_id": detail.get("chunk_id") or detail.get("ref"),
-                        "content_hash": detail.get("content_hash"),
-                        "layer": "evidence",
-                    }
-                    for detail in deep_recall_result.exact_details
-                ]
-                observability.emit(
-                    "knowledge",
-                    "deep_recall",
-                    payload={
-                        "context_cost": deep_recall_result.context_cost,
-                        "stopped_reason": deep_recall_result.stopped_reason,
-                        "evidence_count": len(knowledge_hits),
-                    },
-                )
-        else:
-            if plan.use_atlas and settings.features.rag_v3:
-                atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
-            use_reranker = resolve_use_reranker(
-                live_settings().knowledge.rerank_policy,
-                reranker_available=bool(
-                    retriever.reranker is not None and retriever.reranker.available()
-                ),
-                embedding_is_semantic=retriever._embedding_is_semantic(),  # noqa: SLF001
-            )
-            staged = staged_retriever.search(
-                message,
-                limit=live_settings().knowledge_top_k,
-                use_deep_recall=False,
-                rerank_policy=live_settings().knowledge.rerank_policy,
-            )
-            # Prefer staged hits; fall back to direct hybrid with policy-aware rerank.
-            if staged.hits:
-                knowledge_hits = [hit.as_context_document() for hit in staged.hits]
-            else:
-                hits = retriever.search(
-                    RetrievalQuery(
-                        text=message,
+                    atlas_hits = list(deep_recall_result.atlas_matches)
+                    contradictions = list(deep_recall_result.contradictions_found)
+                    knowledge_hits = [
+                        {
+                            "id": detail.get("document_id") or detail.get("ref"),
+                            "title": detail.get("title") or "evidence",
+                            "content": detail.get("content") or "",
+                            "source": "deep_recall",
+                            "chunk_id": detail.get("chunk_id") or detail.get("ref"),
+                            "content_hash": detail.get("content_hash"),
+                            "layer": "evidence",
+                        }
+                        for detail in deep_recall_result.exact_details
+                    ]
+                    retrieval_source = "deep_recall"
+                    observability.emit(
+                        "knowledge",
+                        "deep_recall",
+                        payload={
+                            "context_cost": deep_recall_result.context_cost,
+                            "stopped_reason": deep_recall_result.stopped_reason,
+                            "evidence_count": len(knowledge_hits),
+                        },
+                    )
+                else:
+                    if plan.use_atlas and settings.features.rag_v3:
+                        atlas_hits = [item.public_dict() for item in atlas_store.search(message, limit=3)]
+                    use_reranker = resolve_use_reranker(
+                        live_settings().knowledge.rerank_policy,
+                        reranker_available=bool(
+                            retriever.reranker is not None and retriever.reranker.available()
+                        ),
+                        embedding_is_semantic=retriever._embedding_is_semantic(),  # noqa: SLF001
+                    )
+                    staged = staged_retriever.search(
+                        message,
                         limit=live_settings().knowledge_top_k,
-                        use_reranker=use_reranker,
+                        use_deep_recall=False,
+                        rerank_policy=live_settings().knowledge.rerank_policy,
                     )
-                )
-                knowledge_hits = [hit.as_context_document() for hit in hits]
-            if staged.negative_reasons:
-                observability.emit(
-                    "knowledge",
-                    "staged_retrieval.negative",
-                    payload={
-                        "reasons": list(staged.negative_reasons),
-                        "coverage": staged.coverage,
-                        "early_exit": staged.early_exit,
+                    # Prefer staged hits; fall back to direct hybrid with policy-aware rerank.
+                    if staged.hits:
+                        knowledge_hits = [hit.as_context_document() for hit in staged.hits]
+                        retrieval_source = "staged"
+                    else:
+                        hits = retriever.search(
+                            RetrievalQuery(
+                                text=message,
+                                limit=live_settings().knowledge_top_k,
+                                use_reranker=use_reranker,
+                            )
+                        )
+                        knowledge_hits = [hit.as_context_document() for hit in hits]
+                        retrieval_source = "hybrid"
+                    if staged.negative_reasons:
+                        observability.emit(
+                            "knowledge",
+                            "staged_retrieval.negative",
+                            payload={
+                                "reasons": list(staged.negative_reasons),
+                                "coverage": staged.coverage,
+                                "early_exit": staged.early_exit,
+                            },
+                        )
+                    if settings.features.why_library:
+                        why_hits = [item.as_context_item() for item in why_library.search(message, limit=3)]
+
+                # COMMON RETRIEVAL SUCCESS FINALIZATION — single lifecycle authority.
+                # Do not duplicate EXECUTING transitions inside strategy branches.
+                runs.append_event(
+                    run.run_id,
+                    EventType.RETRIEVAL_COMPLETED,
+                    {
+                        "count": len(knowledge_hits),
+                        "atlas_count": len(atlas_hits),
+                        "deep_recall": bool(deep_recall_result and deep_recall_result.available),
+                        "source": retrieval_source,
                     },
                 )
-            if settings.features.why_library:
-                why_hits = [item.as_context_item() for item in why_library.search(message, limit=3)]
-            runs.append_event(
-                run.run_id,
-                EventType.RETRIEVAL_COMPLETED,
-                {
-                    "count": len(knowledge_hits),
-                    "atlas_count": len(atlas_hits),
-                    "deep_recall": bool(deep_recall_result and deep_recall_result.available),
-                },
-            )
-            runs.transition(run.run_id, RunState.EXECUTING)
+                runs.transition(run.run_id, RunState.EXECUTING)
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001 — retrieval failure must not fake COMPLETED
+                observability.emit(
+                    "knowledge",
+                    "retrieval_failed",
+                    payload={
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "source": retrieval_source,
+                        "deep_recall_selected": bool(
+                            plan.use_deep_recall and economy.allow_deep_recall
+                        ),
+                    },
+                )
+                runs.transition(run.run_id, RunState.FAILED, error=str(exc))
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Retrieval failed: {exc}",
+                ) from exc
 
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
@@ -2328,6 +2364,7 @@ async def chat(payload: ChatRequest, request: Request):
 
     route_meta: dict | None = None
     call_id: str | None = None
+    residency_lease_id: str | None = None
     provider_id_for_release = "unknown"
     model_id_for_release = "unknown"
     routed: dict | None = None
@@ -2339,12 +2376,35 @@ async def chat(payload: ChatRequest, request: Request):
         try:
             routed = model_plane.resolve_for_chat(
                 explicit_model_id=payload.model_id,
-                preferred_role=payload.preferred_role,
+                preferred_role=payload.preferred_role or "chat",
             )
             decision = routed["decision"]
             profile = routed["profile"]
             provider_id_for_release = routed["provider_id"]
             model_id_for_release = routed["model"].id
+            resolved = routed.get("resolved")
+            binding = resolved.runtime_binding if resolved is not None else None
+            managed = bool(binding.managed) if binding else False
+            lease = await model_plane.residency.acquire_lease(
+                model_id_for_release,
+                consumer="chat",
+                domain="chat",
+                model_role=payload.preferred_role or "chat",
+                run_id=run.run_id,
+                trace_id=None,
+                job_class="INTERACTIVE",
+                explicit_selection=bool(payload.model_id),
+                managed=managed,
+                runtime_kind=binding.runtime_kind if binding else None,
+                ensure_ready=managed,
+                external=not managed,
+                endpoint=routed["endpoint"],
+            )
+            residency_lease_id = lease.lease_id
+            # Prefer managed worker endpoint when residency published one.
+            snap = model_plane.residency.snapshot(model_id_for_release)
+            if snap.endpoint:
+                routed["endpoint"] = snap.endpoint
             call_id = model_plane.gateway.acquire(
                 model_id=model_id_for_release,
                 provider_id=provider_id_for_release,
@@ -2353,6 +2413,8 @@ async def chat(payload: ChatRequest, request: Request):
             route_meta = {
                 "decision": decision.public_dict(),
                 "traceId": call_id,
+                "residencyLeaseId": residency_lease_id,
+                "contextWindow": routed["model"].context_window,
             }
             runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
         except ModelControlError as exc:
@@ -2363,17 +2425,58 @@ async def chat(payload: ChatRequest, request: Request):
                     error=exc.code,
                 )
                 call_id = None
+            if residency_lease_id:
+                await model_plane.residency.release_lease(
+                    residency_lease_id, model_id=model_id_for_release
+                )
+                residency_lease_id = None
             if exc.code in {"ROUTER_EXHAUSTED", "MODEL_NOT_FOUND"} and not payload.model_id:
-                routed = None
-                profile = None
-                route_meta = {
-                    "decision": {
-                        "reason": "legacy_settings_fallback",
-                        "fallbackUsed": True,
-                        "fallbackReason": exc.code,
+                # Soft settings fallback still uses EXTERNAL residency + Gateway —
+                # never silent bypass of the Model Control Plane.
+                try:
+                    routed = model_plane.resolve_settings_external_fallback(
+                        preferred_role=payload.preferred_role or "chat",
+                        router_error_code=exc.code,
+                    )
+                    decision = routed["decision"]
+                    profile = routed["profile"]
+                    provider_id_for_release = routed["provider_id"]
+                    model_id_for_release = routed["model"].id
+                    lease = await model_plane.residency.acquire_lease(
+                        model_id_for_release,
+                        consumer="chat",
+                        domain="chat",
+                        model_role=payload.preferred_role or "chat",
+                        run_id=run.run_id,
+                        trace_id=None,
+                        job_class="INTERACTIVE",
+                        explicit_selection=False,
+                        managed=False,
+                        runtime_kind="openai_compatible",
+                        ensure_ready=False,
+                        external=True,
+                        endpoint=routed["endpoint"],
+                    )
+                    residency_lease_id = lease.lease_id
+                    call_id = model_plane.gateway.acquire(
+                        model_id=model_id_for_release,
+                        provider_id=provider_id_for_release,
+                        timeout_seconds=min(settings.llm_timeout_seconds, 30.0),
+                    )
+                    route_meta = {
+                        "decision": decision.public_dict(),
+                        "traceId": call_id,
+                        "residencyLeaseId": residency_lease_id,
+                        "contextWindow": routed["model"].context_window,
+                        "settingsExternal": True,
                     }
-                }
-                model_plane.gateway.record_fallback(exc.code)
+                    runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
+                except ModelControlError as fallback_exc:
+                    runs.transition(run.run_id, RunState.FAILED, error=str(fallback_exc))
+                    raise HTTPException(
+                        status_code=fallback_exc.http_status,
+                        detail=fallback_exc.public_dict(),
+                    ) from fallback_exc
             else:
                 runs.transition(run.run_id, RunState.FAILED, error=str(exc))
                 raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
@@ -2390,6 +2493,12 @@ async def chat(payload: ChatRequest, request: Request):
             behavior_profile_prompt=behavior_store.get_effective().system_prompt,
         )
         if routed is not None and profile is not None:
+            # Model-aware context window for ContextBuilder when known.
+            if routed["model"].context_window and hasattr(llm, "context_builder"):
+                try:
+                    llm.context_builder.model_context_window = int(routed["model"].context_window)
+                except Exception:  # noqa: BLE001
+                    pass
             llm_kwargs.update(
                 model_id=routed["provider_model_id"],
                 endpoint=routed["endpoint"],
@@ -2431,14 +2540,25 @@ async def chat(payload: ChatRequest, request: Request):
             },
         }
 
-    def _finalize_chat(answer: str, model: str) -> dict:
-        nonlocal call_id
+    async def _release_chat_inference(*, error: str | None = None) -> None:
+        nonlocal call_id, residency_lease_id
         if call_id and routed is not None:
-            model_plane.registry.touch_used(model_id_for_release)
             model_plane.gateway.release(
-                model_id=model_id_for_release, provider_id=provider_id_for_release
+                model_id=model_id_for_release,
+                provider_id=provider_id_for_release,
+                error=error,
             )
             call_id = None
+        if residency_lease_id:
+            await model_plane.residency.release_lease(
+                residency_lease_id, model_id=model_id_for_release
+            )
+            residency_lease_id = None
+
+    async def _finalize_chat(answer: str, model: str) -> dict:
+        if call_id and routed is not None:
+            model_plane.registry.touch_used(model_id_for_release)
+        await _release_chat_inference()
         runs.append_event(
             run.run_id,
             EventType.MODEL_COMPLETED,
@@ -2502,14 +2622,10 @@ async def chat(payload: ChatRequest, request: Request):
 
     if cognition_owns_response:
         # Cognition already performed the authoritative model call via control plane.
-        if call_id and routed is not None:
-            model_plane.gateway.release(
-                model_id=model_id_for_release, provider_id=provider_id_for_release
-            )
-            call_id = None
+        await _release_chat_inference()
         answer = str(cognition_meta.get("response") or "").strip()
         model_name = str(model_id_for_release or "cognition")
-        result = _finalize_chat(answer, model_name)
+        result = await _finalize_chat(answer, model_name)
         result["truth"] = {
             **(result.get("truth") or {}),
             "response_owned_by": "cognition",
@@ -2576,13 +2692,7 @@ async def chat(payload: ChatRequest, request: Request):
                     parts.append(delta)
                     yield sse_encode("token", {"text": delta, "model": model_name})
                 if cancel.cancelled:
-                    if call_id:
-                        model_plane.gateway.release(
-                            model_id=model_id_for_release,
-                            provider_id=provider_id_for_release,
-                            error=None,
-                        )
-                        call_id = None
+                    await _release_chat_inference()
                     try:
                         runs.transition(run.run_id, RunState.CANCELLED, error=cancel.reason)
                     except Exception:  # noqa: BLE001 — some stores use different cancel path
@@ -2594,6 +2704,7 @@ async def chat(payload: ChatRequest, request: Request):
                             "truth": {
                                 "disconnect_cancels_stream": True,
                                 "gateway_capacity_released": True,
+                                "residency_lease_released": True,
                             },
                         },
                     )
@@ -2601,13 +2712,13 @@ async def chat(payload: ChatRequest, request: Request):
                 answer = "".join(parts).strip()
                 if not answer:
                     raise LLMUnavailable("LLM stream produced empty text")
-                done_payload = _finalize_chat(answer, model_name)
+                done_payload = await _finalize_chat(answer, model_name)
                 yield sse_encode("done", done_payload)
             except LLMUnavailable as stream_exc:
                 # Honest degrade: non-stream completion still via real provider path.
                 try:
                     answer, model_name = await llm.chat(**llm_kwargs, stream=False)
-                    done_payload = _finalize_chat(answer, model_name)
+                    done_payload = await _finalize_chat(answer, model_name)
                     done_payload["truth"] = chat_truth(
                         streaming_degraded=True,
                         residual_implemented=residual_runtime.supports_residuals(),
@@ -2625,13 +2736,7 @@ async def chat(payload: ChatRequest, request: Request):
                     yield sse_encode("token", {"text": answer, "model": model_name})
                     yield sse_encode("done", done_payload)
                 except LLMUnavailable as llm_exc:
-                    if call_id:
-                        model_plane.gateway.release(
-                            model_id=model_id_for_release,
-                            provider_id=provider_id_for_release,
-                            error=str(llm_exc),
-                        )
-                        call_id = None
+                    await _release_chat_inference(error=str(llm_exc))
                     runs.transition(run.run_id, RunState.FAILED, error=str(llm_exc))
                     yield sse_encode(
                         "error",
@@ -2641,13 +2746,7 @@ async def chat(payload: ChatRequest, request: Request):
                         },
                     )
             except Exception as exc:  # noqa: BLE001
-                if call_id:
-                    model_plane.gateway.release(
-                        model_id=model_id_for_release,
-                        provider_id=provider_id_for_release,
-                        error=str(exc),
-                    )
-                    call_id = None
+                await _release_chat_inference(error=str(exc))
                 runs.transition(run.run_id, RunState.FAILED, error=str(exc))
                 yield sse_encode(
                     "error",
@@ -2671,16 +2770,11 @@ async def chat(payload: ChatRequest, request: Request):
     try:
         answer, model = await llm.chat(**llm_kwargs, stream=False)
     except LLMUnavailable as exc:
-        if call_id:
-            model_plane.gateway.release(
-                model_id=model_id_for_release,
-                provider_id=provider_id_for_release,
-                error=str(exc),
-            )
+        await _release_chat_inference(error=str(exc))
         runs.transition(run.run_id, RunState.FAILED, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    result = _finalize_chat(answer, model)
+    result = await _finalize_chat(answer, model)
     if wants_sse and not stream_enabled:
         result["truth"] = chat_truth(
             streaming_degraded=True,

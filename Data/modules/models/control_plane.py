@@ -12,29 +12,47 @@ from Data.backend.config import Settings
 from Data.modules.models.benchmarks import BenchmarkService
 from Data.modules.models.capability_probe import CapabilityProbeService
 from Data.modules.models.contracts import (
+    CapabilityState,
     LoadOptions,
+    ModelCapabilities,
+    ModelDescriptor,
     ModelHealthState,
     ModelLifecycleState,
+    ModelProfile,
     ModelRequest,
+    ModelRuntimeBinding,
+    ModelSource,
     ProviderHealth,
     ProviderRecord,
+    ResidencyPolicyKind,
+    ResolvedModelTarget,
+    RouteDecision,
     RuntimeCapabilities,
+    ServabilityState,
 )
 from Data.modules.models.downloads import DownloadManager
 from Data.modules.models.errors import (
     PROVIDER_NOT_FOUND,
+    ROUTER_EXHAUSTED,
     VALIDATION_ERROR,
     ModelControlError,
 )
 from Data.modules.models.gateway import ModelGateway
 from Data.modules.models.import_service import ImportService
+from Data.modules.models.inference_session import open_inference_session
 from Data.modules.models.profiles import ProfileService
 from Data.modules.models.providers import build_adapter
 from Data.modules.models.providers.openai_compatible import normalize_openai_base
 from Data.modules.models.measured_routing import MeasuredRouter
 from Data.modules.models.registry import ModelRegistry
+from Data.modules.models.residency import ModelResidencyManager
 from Data.modules.models.resource_manager import ResourceManager
 from Data.modules.models.router import ModelRouter
+from Data.modules.models.runtime_binding import (
+    binding_from_row,
+    binding_to_row,
+    build_runtime_binding,
+)
 from Data.modules.models.runtime_manager import RuntimeManager
 from Data.modules.models.store import ModelStore, utc_now
 from Data.modules.model_runtime.serving import (
@@ -45,13 +63,14 @@ from Data.modules.observability import ObservabilityHub
 
 
 class ModelControlPlane:
-    """Owns providers, registry, routing, gateway, lifecycle, acquisition."""
+    """Owns providers, registry, routing, gateway, lifecycle, acquisition, residency."""
 
     def __init__(
         self,
         settings: Settings,
         *,
         observability: ObservabilityHub | None = None,
+        telemetry_provider: Any | None = None,
     ) -> None:
         self.settings = settings
         self.observability = observability
@@ -59,7 +78,12 @@ class ModelControlPlane:
         self.registry = ModelRegistry(self.store)
         self.profiles = ProfileService(self.store)
         self.gateway = ModelGateway(global_limit=settings.resources.max_model_concurrency)
-        self.resources = ResourceManager()
+        managed = getattr(settings, "managed_serving", None)
+        self.resources = ResourceManager(
+            telemetry_provider=telemetry_provider,
+            min_ram_reserve_bytes=getattr(managed, "min_ram_reserve_bytes", 1_073_741_824),
+            min_vram_reserve_bytes=getattr(managed, "min_vram_reserve_bytes", 536_870_912),
+        )
         self.router = ModelRouter(
             self.store,
             self.gateway,
@@ -72,6 +96,26 @@ class ModelControlPlane:
             get_adapter=self.get_adapter,
         )
         self.serving = get_serving_supervisor()
+        default_policy = ResidencyPolicyKind.IDLE_UNLOAD
+        if managed is not None:
+            try:
+                default_policy = ResidencyPolicyKind(str(managed.default_residency_policy))
+            except ValueError:
+                default_policy = ResidencyPolicyKind.IDLE_UNLOAD
+        self.residency = ModelResidencyManager(
+            runtime_manager=self.runtime,
+            resource_manager=self.resources,
+            store=self.store,
+            registry=self.registry,
+            serving=self.serving,
+            observability=observability,
+            default_policy=default_policy,
+            default_idle_unload_seconds=float(
+                getattr(managed, "default_idle_unload_seconds", 300.0)
+            ),
+            allow_warm_then_unload=False,
+            max_managed_resident=int(getattr(managed, "max_managed_resident_models", 4)),
+        )
         self.probes = CapabilityProbeService(
             self.store,
             self.registry,
@@ -95,6 +139,14 @@ class ModelControlPlane:
             get_adapter=self.get_adapter,
         )
         self._adapters: dict[str, Any] = {}
+        self._llm: Any | None = None
+
+    def bind_llm(self, llm: Any) -> None:
+        """Attach shared OpenAICompatibleLLM transport for inference sessions."""
+        self._llm = llm
+
+    def set_telemetry_provider(self, provider: Any) -> None:
+        self.resources.set_telemetry_provider(provider)
 
     def bootstrap(self) -> None:
         """Ensure default LM Studio provider exists from settings; do not erase config."""
@@ -132,6 +184,8 @@ class ModelControlPlane:
 
     async def reconcile_startup(self) -> dict[str, Any]:
         self.bootstrap()
+        # Live leases never survive restart.
+        self.residency.clear_live_leases_on_startup()
         self._emit("model.discovery.started", {})
         summary = await self.refresh_all()
         # Never trust persisted loaded=true blindly — rediscovery already reconciled.
@@ -157,8 +211,58 @@ class ModelControlPlane:
                     break
         # Round 6: stale READY rows in SQLite must become DEAD — never resurrect from disk.
         stale = self.reconcile_persisted_serving_workers()
+        bindings = self.reconcile_runtime_bindings()
         self._emit("model.discovery.completed", {"summary": summary, "activeModelId": active})
-        return {"summary": summary, "activeModelId": active, "staleServingWorkers": stale}
+        return {
+            "summary": summary,
+            "activeModelId": active,
+            "staleServingWorkers": stale,
+            "runtimeBindings": bindings,
+        }
+
+    def reconcile_runtime_bindings(self) -> list[dict[str, Any]]:
+        """Recompute runtime bindings without wiping richer registry metadata."""
+        managed = getattr(self.settings, "managed_serving", None)
+        out: list[dict[str, Any]] = []
+        for model in self.registry.list_descriptors():
+            provider = self.store.get_provider(model.provider_id)
+            provider_type = provider["provider_type"] if provider else model.provider_id
+            endpoint = model.endpoint or (provider["endpoint"] if provider else None)
+            binding = build_runtime_binding(
+                model,
+                provider_type=provider_type,
+                provider_endpoint=endpoint,
+                managed_serving_enabled=bool(getattr(managed, "enabled", False)),
+                llama_cpp_executable=getattr(managed, "llama_cpp_executable", None),
+                vllm_executable=getattr(managed, "vllm_executable", None),
+            )
+            # Preserve existing metadata keys that are richer than rebuild.
+            existing = self.store.get_runtime_binding(model.id)
+            if existing and isinstance(existing.get("metadata"), dict):
+                merged = dict(existing["metadata"])
+                merged.update(binding.metadata)
+                binding.metadata = merged
+            self.store.upsert_runtime_binding(binding_to_row(binding))
+            out.append(binding.public_dict())
+        return out
+
+    def get_runtime_binding(self, model_id: str) -> Any:
+        row = self.store.get_runtime_binding(model_id)
+        if row:
+            return binding_from_row(row)
+        model = self.registry.get(model_id)
+        provider = self.store.get_provider(model.provider_id)
+        managed = getattr(self.settings, "managed_serving", None)
+        binding = build_runtime_binding(
+            model,
+            provider_type=provider["provider_type"] if provider else model.provider_id,
+            provider_endpoint=model.endpoint or (provider["endpoint"] if provider else None),
+            managed_serving_enabled=bool(getattr(managed, "enabled", False)),
+            llama_cpp_executable=getattr(managed, "llama_cpp_executable", None),
+            vllm_executable=getattr(managed, "vllm_executable", None),
+        )
+        self.store.upsert_runtime_binding(binding_to_row(binding))
+        return binding
 
     def reconcile_persisted_serving_workers(self) -> list[dict[str, Any]]:
         """On restart: persisted READY/STARTING with dead/missing pid → DEAD (honest)."""
@@ -609,12 +713,144 @@ class ModelControlPlane:
         explicit_model_id: str | None = None,
         preferred_role: str | None = None,
         required_capabilities: list[str] | None = None,
+        agent_model_id: str | None = None,
     ) -> dict[str, Any]:
+        target = self.resolve_target(
+            explicit_model_id=explicit_model_id,
+            preferred_role=preferred_role,
+            required_capabilities=required_capabilities,
+            agent_model_id=agent_model_id,
+        )
+        return self._routed_dict(target)
+
+    def resolve_settings_external_fallback(
+        self,
+        *,
+        preferred_role: str | None = None,
+        router_error_code: str | None = None,
+    ) -> dict[str, Any]:
+        """EXTERNAL settings LLM path when the registry router is exhausted.
+
+        Still goes through residency (EXTERNAL) + Gateway. Never silently
+        bypasses the control plane. Requires configured base URL + model name.
+        """
+        endpoint = (self.settings.llm_base_url or "").strip()
+        backend_model = (self.settings.llm_model or "").strip()
+        if not endpoint or not backend_model:
+            raise ModelControlError(
+                code=ROUTER_EXHAUSTED,
+                message=(
+                    "No eligible registry models and settings LLM is incomplete "
+                    "(LEVIATHAN_LLM_BASE_URL / LEVIATHAN_LLM_MODEL required)"
+                ),
+                retryable=True,
+                http_status=503,
+                details={
+                    "routerError": router_error_code,
+                    "hasEndpoint": bool(endpoint),
+                    "hasModel": bool(backend_model),
+                },
+            )
+        model_id = f"settings:external:{backend_model}"
+        provider_id = "settings_external"
+        descriptor = ModelDescriptor(
+            id=model_id,
+            display_name=backend_model,
+            provider_id=provider_id,
+            source=ModelSource.API,
+            capabilities=ModelCapabilities(
+                chat=CapabilityState.UNVERIFIED,
+                streaming=CapabilityState.UNVERIFIED,
+            ),
+            lifecycle_state=ModelLifecycleState.AVAILABLE,
+            endpoint=endpoint,
+            metadata={
+                "provider_model_id": backend_model,
+                "settingsFallback": True,
+                "routerError": router_error_code,
+            },
+            tags=("settings_fallback", "external"),
+        )
+        binding = ModelRuntimeBinding(
+            model_id=model_id,
+            runtime_kind="openai_compatible",
+            runtime_provider_id=provider_id,
+            backend_model_id=backend_model,
+            managed=False,
+            servability_state=ServabilityState.SERVABLE,
+            servability_reason="Settings OpenAI-compatible endpoint (external lifecycle)",
+            metadata={"settingsFallback": True, "external": True},
+        )
+        decision = RouteDecision(
+            model_id=model_id,
+            reason="legacy_settings_fallback",
+            fallback_used=True,
+            fallback_reason=router_error_code or "ROUTER_EXHAUSTED",
+            candidates_tried=[],
+        )
+        profile = self.profiles.get_or_default(model_id)
+        if not isinstance(profile, ModelProfile):
+            profile = ModelProfile(model_id=model_id)
+        api_key = self.settings.llm_api_key
+        target = ResolvedModelTarget(
+            model=descriptor,
+            route=decision,
+            profile=profile,
+            provider_id=provider_id,
+            runtime_binding=binding,
+            backend_model_id=backend_model,
+            endpoint=endpoint,
+            api_key=api_key,
+            context_window=descriptor.context_window,
+            managed=False,
+            explicit_selection=False,
+            preferred_role=preferred_role or "chat",
+        )
+        self.gateway.record_fallback(router_error_code or "ROUTER_EXHAUSTED")
+        self._emit(
+            "model.router.fallback",
+            {
+                **decision.public_dict(),
+                "settingsExternal": True,
+                "endpoint": endpoint,
+            },
+        )
+        return self._routed_dict(target)
+
+    @staticmethod
+    def _routed_dict(target: ResolvedModelTarget) -> dict[str, Any]:
+        return {
+            "decision": target.route,
+            "model": target.model,
+            "profile": target.profile,
+            "endpoint": target.endpoint,
+            "api_key": target.api_key,
+            "provider_model_id": target.backend_model_id,
+            "provider_id": target.provider_id,
+            "resolved": target,
+        }
+
+    def resolve_target(
+        self,
+        *,
+        explicit_model_id: str | None = None,
+        preferred_role: str | None = None,
+        required_capabilities: list[str] | None = None,
+        agent_model_id: str | None = None,
+        job_class: str = "INTERACTIVE",
+    ) -> ResolvedModelTarget:
+        """Stage A — logical resolution. Does NOT load model weights."""
+        # Normalize role aliases: general → chat
+        role = preferred_role
+        if role in {"general", "General"}:
+            role = "chat"
         decision = self.router.resolve(
             ModelRequest(
                 explicit_model_id=explicit_model_id,
-                preferred_role=preferred_role,
+                preferred_role=role,
+                agent_model_id=agent_model_id,
                 required_capabilities=tuple(required_capabilities or ()),
+                job_class=job_class,
             )
         )
         model = self.registry.get(decision.model_id)
@@ -623,21 +859,89 @@ class ModelControlPlane:
         endpoint = model.endpoint or (provider["endpoint"] if provider else self.settings.llm_base_url)
         api_key = (provider.get("api_key_ciphertext") if provider else None) or self.settings.llm_api_key
         provider_model_id = str(model.metadata.get("provider_model_id") or model.display_name)
-        self._emit(
-            "model.router.selected",
-            decision.public_dict(),
-        )
+        binding = self.get_runtime_binding(model.id)
+        self._emit("model.router.selected", decision.public_dict())
         if decision.fallback_used:
             self._emit("model.router.fallback", decision.public_dict())
-        return {
-            "decision": decision,
-            "model": model,
-            "profile": profile,
-            "endpoint": endpoint,
-            "api_key": api_key,
-            "provider_model_id": provider_model_id,
-            "provider_id": model.provider_id,
-        }
+        return ResolvedModelTarget(
+            model=model,
+            route=decision,
+            profile=profile,
+            provider_id=model.provider_id,
+            runtime_binding=binding,
+            backend_model_id=provider_model_id,
+            endpoint=endpoint,
+            api_key=api_key,
+            context_window=model.context_window,
+            managed=bool(binding.managed) if binding else False,
+            explicit_selection=bool(explicit_model_id),
+            required_capabilities=tuple(required_capabilities or ()),
+            preferred_role=role,
+        )
+
+    def inference_session(
+        self,
+        target: ResolvedModelTarget | None = None,
+        *,
+        llm: Any | None = None,
+        consumer: str = "chat",
+        domain: str | None = None,
+        model_role: str | None = None,
+        run_id: str | None = None,
+        trace_id: str | None = None,
+        job_class: str = "INTERACTIVE",
+        explicit_model_id: str | None = None,
+        preferred_role: str | None = None,
+        required_capabilities: list[str] | None = None,
+        agent_model_id: str | None = None,
+        gateway_timeout_seconds: float | None = None,
+    ):
+        """Stage B — physical inference session context manager."""
+        resolved = target or self.resolve_target(
+            explicit_model_id=explicit_model_id,
+            preferred_role=preferred_role or model_role,
+            required_capabilities=required_capabilities,
+            agent_model_id=agent_model_id,
+            job_class=job_class,
+        )
+        transport = llm if llm is not None else self._llm
+        if transport is None:
+            raise ModelControlError(
+                code=VALIDATION_ERROR,
+                message="ModelControlPlane has no LLM transport bound",
+                http_status=500,
+            )
+        return open_inference_session(
+            self,
+            resolved,
+            llm=transport,
+            consumer=consumer,
+            domain=domain,
+            model_role=model_role or resolved.preferred_role,
+            run_id=run_id,
+            trace_id=trace_id,
+            job_class=job_class,
+            gateway_timeout_seconds=gateway_timeout_seconds,
+        )
+
+    async def load_model(
+        self,
+        model_id: str,
+        options: LoadOptions | None = None,
+        *,
+        confirm_oom: bool = False,
+    ) -> dict[str, Any]:
+        binding = self.get_runtime_binding(model_id)
+        return await self.residency.manual_load(
+            model_id,
+            options=options,
+            managed=bool(binding.managed),
+            runtime_kind=binding.runtime_kind,
+            confirm_oom=confirm_oom,
+        )
+
+    async def unload_model(self, model_id: str) -> dict[str, Any]:
+        return await self.residency.manual_unload(model_id)
 
     def resolve_measured(
         self,

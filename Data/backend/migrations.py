@@ -2540,7 +2540,39 @@ def _m35_source_ingestion(conn: sqlite3.Connection) -> None:
     )
 
 
-def _m36_execution_fabric(conn: sqlite3.Connection) -> None:
+def _m36_model_runtime_residency(conn: sqlite3.Connection) -> None:
+    """Runtime bindings + residency policies (live leases are NOT persisted)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_runtime_bindings (
+            model_id TEXT PRIMARY KEY,
+            runtime_kind TEXT NOT NULL,
+            runtime_provider_id TEXT,
+            backend_model_id TEXT,
+            local_path TEXT,
+            managed INTEGER NOT NULL DEFAULT 0,
+            servability_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+            servability_reason TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_residency_policies (
+            model_id TEXT PRIMARY KEY,
+            policy TEXT NOT NULL DEFAULT 'IDLE_UNLOAD',
+            idle_unload_seconds REAL NOT NULL DEFAULT 300,
+            full_unload_seconds REAL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            load_options_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+def _m37_execution_fabric(conn: sqlite3.Connection) -> None:
     """Frontier execution fabric: job kernel columns + worker registry tables."""
 
     def _add_column(table: str, name: str, ddl: str) -> None:
@@ -2683,7 +2715,6 @@ def _m36_execution_fabric(conn: sqlite3.Connection) -> None:
         """
     )
 
-
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2720,7 +2751,8 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=33, name="research_workers_runs", apply=_m33_research_workers_runs),
     Migration(version=34, name="trading_center", apply=_m34_trading_center),
     Migration(version=35, name="source_ingestion", apply=_m35_source_ingestion),
-    Migration(version=36, name="execution_fabric", apply=_m36_execution_fabric),
+    Migration(version=36, name="model_runtime_residency", apply=_m36_model_runtime_residency),
+    Migration(version=37, name="execution_fabric", apply=_m37_execution_fabric),
 )
 
 

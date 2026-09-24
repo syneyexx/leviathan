@@ -419,6 +419,74 @@ export type RouterConfig = {
   progressEventsEnabled: boolean;
 };
 
+export type ModelRuntimeBinding = {
+  modelId: string;
+  runtimeKind: string;
+  runtimeProviderId?: string | null;
+  backendModelId?: string | null;
+  localPath?: string | null;
+  managed: boolean;
+  servabilityState: string;
+  servabilityReason?: string | null;
+  runtimeCapabilities?: RuntimeCapabilities | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type ResidencyPolicy = {
+  modelId: string;
+  policy: "KEEP_HOT" | "IDLE_UNLOAD" | "WARM_THEN_UNLOAD" | string;
+  idleUnloadSeconds: number;
+  fullUnloadSeconds?: number | null;
+  pinned: boolean;
+  loadOptions?: {
+    contextLength?: number | null;
+    gpuOffloadLayers?: number | null;
+    gpuMemoryLimitBytes?: number | null;
+    cpuThreads?: number | null;
+    batchSize?: number | null;
+    flashAttention?: boolean | null;
+  } | null;
+  updatedAt?: string | null;
+};
+
+export type ResourceEstimate = {
+  ramNeededBytes?: number | null;
+  ramNeededProvenance: string;
+  vramNeededBytes?: number | null;
+  vramNeededProvenance: string;
+  ramAvailableBytes?: number | null;
+  ramAvailableProvenance: string;
+  vramAvailableBytes?: number | null;
+  vramAvailableProvenance: string;
+  headroomRamBytes?: number | null;
+  headroomVramBytes?: number | null;
+  verdict: string;
+  reasons: string[];
+  details?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type ModelResidency = {
+  modelId: string;
+  state: string;
+  placement: string;
+  managed: boolean;
+  workerId?: string | null;
+  pid?: number | null;
+  endpoint?: string | null;
+  activeLeaseCount: number;
+  consumers: string[];
+  policy?: ResidencyPolicy | null;
+  lastUsedAt?: number | null;
+  idleSince?: number | null;
+  nextActionAt?: number | null;
+  runtimeKind?: string | null;
+  loadStartedAt?: number | null;
+  readyAt?: number | null;
+  lastError?: string | null;
+  resourceEstimate?: ResourceEstimate | null;
+};
+
 export type DownloadJob = {
   id: string;
   state: string;

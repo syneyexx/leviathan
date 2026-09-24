@@ -1,7 +1,13 @@
 import { useState } from "react";
 import type { ModelDescriptor, RouterConfig } from "../../types/api";
 
-const ROLE_KEYS = ["coding", "research", "analysis", "fast", "chat"] as const;
+const ROLE_KEYS = [
+  { key: "chat", label: "General" },
+  { key: "coding", label: "Coding" },
+  { key: "research", label: "Research" },
+  { key: "analysis", label: "Analysis" },
+  { key: "fast", label: "Fast" },
+] as const;
 
 export function ModelRouterPanel({
   router,
@@ -36,7 +42,7 @@ export function ModelRouterPanel({
 
   return (
     <article className="lv-panel lv-card">
-      <div className="lv-section-label">Model Router</div>
+      <div className="lv-section-label">Model Assignments</div>
       {error ? <p className="lv-muted">{error}</p> : null}
 
       <label className="lv-models-field">
@@ -59,20 +65,20 @@ export function ModelRouterPanel({
 
       <div className="lv-section-label">Role overrides</div>
       <div className="lv-models-roles">
-        {ROLE_KEYS.map((role) => (
-          <label key={role} className="lv-models-field">
-            {role}
+        {ROLE_KEYS.map(({ key, label }) => (
+          <label key={key} className="lv-models-field">
+            {label}
             <select
               className="lv-select"
-              value={draft.roleModelOverrides[role] ?? ""}
+              value={draft.roleModelOverrides[key] ?? ""}
               onChange={(e) => {
                 const next = { ...draft.roleModelOverrides };
-                if (!e.target.value) delete next[role];
-                else next[role] = e.target.value;
+                if (!e.target.value) delete next[key];
+                else next[key] = e.target.value;
                 setDraft({ ...draft, roleModelOverrides: next });
               }}
             >
-              <option value="">— none —</option>
+              <option value="">Default / Auto</option>
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.displayName}

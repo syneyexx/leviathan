@@ -495,3 +495,271 @@ class PreflightResult:
             "estimated": self.estimated,
             "details": dict(self.details),
         }
+
+
+# --- Residency / runtime binding (One-Brain model runtime) ---
+
+
+class ResidencyState(str, Enum):
+    """Detailed physical residency — maps onto ModelLifecycleState where needed."""
+
+    UNLOADED = "UNLOADED"
+    STARTING = "STARTING"
+    LOADING = "LOADING"
+    READY = "READY"
+    ACTIVE = "ACTIVE"
+    IDLE = "IDLE"
+    DRAINING = "DRAINING"
+    STOPPING = "STOPPING"
+    ERROR = "ERROR"
+    EXTERNAL = "EXTERNAL"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class PhysicalPlacement(str, Enum):
+    """Where weights actually live. UNKNOWN unless placement is known."""
+
+    GPU = "GPU"
+    CPU = "CPU"
+    HYBRID = "HYBRID"
+    EXTERNAL = "EXTERNAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class ResidencyPolicyKind(str, Enum):
+    KEEP_HOT = "KEEP_HOT"
+    IDLE_UNLOAD = "IDLE_UNLOAD"
+    WARM_THEN_UNLOAD = "WARM_THEN_UNLOAD"  # only when backend truly supports demotion
+
+
+class ServabilityState(str, Enum):
+    SERVABLE = "SERVABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+    UNKNOWN = "UNKNOWN"
+
+
+class ResourceProvenance(str, Enum):
+    MEASURED = "MEASURED"
+    ESTIMATED = "ESTIMATED"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class ModelRuntimeBinding:
+    """How a registry model is served — distinct from acquisition source."""
+
+    model_id: str
+    runtime_kind: str  # llama_cpp | vllm_class | lm_studio | ollama | openai_compatible | unknown
+    runtime_provider_id: str | None = None
+    backend_model_id: str | None = None
+    local_path: str | None = None
+    managed: bool = False
+    servability_state: ServabilityState = ServabilityState.UNKNOWN
+    servability_reason: str | None = None
+    runtime_capabilities: RuntimeCapabilities | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "modelId": self.model_id,
+            "runtimeKind": self.runtime_kind,
+            "runtimeProviderId": self.runtime_provider_id,
+            "backendModelId": self.backend_model_id,
+            "localPath": self.local_path,
+            "managed": self.managed,
+            "servabilityState": self.servability_state.value,
+            "servabilityReason": self.servability_reason,
+            "runtimeCapabilities": (
+                self.runtime_capabilities.public_dict() if self.runtime_capabilities else None
+            ),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass
+class ResidencyPolicy:
+    """Per-model residency policy — distinct from ModelProfile."""
+
+    model_id: str
+    policy: ResidencyPolicyKind = ResidencyPolicyKind.IDLE_UNLOAD
+    idle_unload_seconds: float = 300.0
+    full_unload_seconds: float | None = None
+    pinned: bool = False
+    load_options: LoadOptions | None = None
+    updated_at: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        opts = None
+        if self.load_options is not None:
+            opts = {
+                "contextLength": self.load_options.context_length,
+                "gpuOffloadLayers": self.load_options.gpu_offload_layers,
+                "gpuMemoryLimitBytes": self.load_options.gpu_memory_limit_bytes,
+                "cpuThreads": self.load_options.cpu_threads,
+                "batchSize": self.load_options.batch_size,
+                "flashAttention": self.load_options.flash_attention,
+            }
+        return {
+            "modelId": self.model_id,
+            "policy": self.policy.value,
+            "idleUnloadSeconds": self.idle_unload_seconds,
+            "fullUnloadSeconds": self.full_unload_seconds,
+            "pinned": self.pinned,
+            "loadOptions": opts,
+            "updatedAt": self.updated_at,
+        }
+
+
+@dataclass
+class ResidencyLease:
+    """Live in-memory lease — never restored from SQLite after restart."""
+
+    lease_id: str
+    model_id: str
+    consumer: str
+    domain: str | None = None
+    model_role: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    job_class: str = "INTERACTIVE"
+    explicit_selection: bool = False
+    acquired_at: float = 0.0
+    last_activity_at: float = 0.0
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "leaseId": self.lease_id,
+            "modelId": self.model_id,
+            "consumer": self.consumer,
+            "domain": self.domain,
+            "modelRole": self.model_role,
+            "runId": self.run_id,
+            "traceId": self.trace_id,
+            "jobClass": self.job_class,
+            "explicitSelection": self.explicit_selection,
+            "acquiredAt": self.acquired_at,
+            "lastActivityAt": self.last_activity_at,
+        }
+
+
+@dataclass
+class ResourceEstimate:
+    """Honest resource estimate with provenance — never fabricates zeros."""
+
+    ram_needed_bytes: int | None = None
+    ram_needed_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    vram_needed_bytes: int | None = None
+    vram_needed_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    ram_available_bytes: int | None = None
+    ram_available_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    vram_available_bytes: int | None = None
+    vram_available_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    headroom_ram_bytes: int | None = None
+    headroom_vram_bytes: int | None = None
+    verdict: PreflightVerdict = PreflightVerdict.UNKNOWN
+    reasons: tuple[str, ...] = ()
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "ramNeededBytes": self.ram_needed_bytes,
+            "ramNeededProvenance": self.ram_needed_provenance.value,
+            "vramNeededBytes": self.vram_needed_bytes,
+            "vramNeededProvenance": self.vram_needed_provenance.value,
+            "ramAvailableBytes": self.ram_available_bytes,
+            "ramAvailableProvenance": self.ram_available_provenance.value,
+            "vramAvailableBytes": self.vram_available_bytes,
+            "vramAvailableProvenance": self.vram_available_provenance.value,
+            "headroomRamBytes": self.headroom_ram_bytes,
+            "headroomVramBytes": self.headroom_vram_bytes,
+            "verdict": self.verdict.value,
+            "reasons": list(self.reasons),
+            "details": dict(self.details),
+            "truth": {
+                "unknown_is_not_zero": True,
+                "estimates_are_not_exact": True,
+            },
+        }
+
+
+@dataclass
+class ModelResidencySnapshot:
+    model_id: str
+    state: ResidencyState
+    placement: PhysicalPlacement = PhysicalPlacement.UNKNOWN
+    managed: bool = False
+    worker_id: str | None = None
+    pid: int | None = None
+    endpoint: str | None = None
+    active_lease_count: int = 0
+    consumers: tuple[str, ...] = ()
+    policy: ResidencyPolicy | None = None
+    last_used_at: float | None = None
+    idle_since: float | None = None
+    next_action_at: float | None = None
+    runtime_kind: str | None = None
+    load_started_at: float | None = None
+    ready_at: float | None = None
+    last_error: str | None = None
+    resource_estimate: ResourceEstimate | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "modelId": self.model_id,
+            "state": self.state.value,
+            "placement": self.placement.value,
+            "managed": self.managed,
+            "workerId": self.worker_id,
+            "pid": self.pid,
+            "endpoint": self.endpoint,
+            "activeLeaseCount": self.active_lease_count,
+            "consumers": list(self.consumers),
+            "policy": self.policy.public_dict() if self.policy else None,
+            "lastUsedAt": self.last_used_at,
+            "idleSince": self.idle_since,
+            "nextActionAt": self.next_action_at,
+            "runtimeKind": self.runtime_kind,
+            "loadStartedAt": self.load_started_at,
+            "readyAt": self.ready_at,
+            "lastError": self.last_error,
+            "resourceEstimate": (
+                self.resource_estimate.public_dict() if self.resource_estimate else None
+            ),
+        }
+
+
+@dataclass
+class ResolvedModelTarget:
+    """Stage-A logical resolution — does not load weights."""
+
+    model: ModelDescriptor
+    route: RouteDecision
+    profile: ModelProfile
+    provider_id: str
+    runtime_binding: ModelRuntimeBinding | None
+    backend_model_id: str
+    endpoint: str
+    api_key: str | None
+    context_window: int | None
+    managed: bool
+    explicit_selection: bool
+    required_capabilities: tuple[str, ...] = ()
+    preferred_role: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model.public_dict(),
+            "route": self.route.public_dict(),
+            "profile": self.profile.public_dict(),
+            "providerId": self.provider_id,
+            "runtimeBinding": (
+                self.runtime_binding.public_dict() if self.runtime_binding else None
+            ),
+            "backendModelId": self.backend_model_id,
+            "endpoint": self.endpoint,
+            "contextWindow": self.context_window,
+            "managed": self.managed,
+            "explicitSelection": self.explicit_selection,
+            "requiredCapabilities": list(self.required_capabilities),
+            "preferredRole": self.preferred_role,
+        }

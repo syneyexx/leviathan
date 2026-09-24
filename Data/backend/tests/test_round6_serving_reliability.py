@@ -130,7 +130,7 @@ class ServingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         adapter = ManagedLocalServingAdapter(
             provider_id="r6",
             backend_kind="vllm_class",
-            mode="inproc",
+            mode="inproc", allow_inproc_fixture=True,
             supervisor=self.supervisor,
         )
         # load

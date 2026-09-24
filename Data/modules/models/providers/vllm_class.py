@@ -40,6 +40,7 @@ class VllmClassAdapter:
             timeout_seconds=timeout_seconds,
             mode=mode if command else "inproc",
             command=command,
+            allow_inproc_fixture=(mode == "inproc" and not command),
         )
 
     def capabilities(self) -> RuntimeCapabilities:
