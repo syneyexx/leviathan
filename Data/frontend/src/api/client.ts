@@ -1957,6 +1957,43 @@ export const api = {
     return request(`/api/market-sim/strategies/${encodeURIComponent(strategyId)}`);
   },
 
+  versionMarketStrategy(
+    strategyId: string,
+    payload: {
+      name?: string;
+      description?: string;
+      tags?: string[];
+      parameters?: Record<string, unknown>;
+      entryRules?: Record<string, unknown>;
+      exitRules?: Record<string, unknown>;
+      riskRules?: Record<string, unknown>;
+      requiredTimeframes?: string[];
+      brainDependencies?: string[];
+      changelog?: string;
+    },
+  ): Promise<{ strategy: MarketStrategy; version: MarketStrategyVersion }> {
+    return request(`/api/market-sim/strategies/${encodeURIComponent(strategyId)}/versions`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  forkMarketStrategy(
+    strategyId: string,
+    payload?: { name?: string },
+  ): Promise<{ strategy: MarketStrategy; version: MarketStrategyVersion }> {
+    return request(`/api/market-sim/strategies/${encodeURIComponent(strategyId)}/fork`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
+
+  archiveMarketStrategy(strategyId: string): Promise<{ strategy: MarketStrategy }> {
+    return request(`/api/market-sim/strategies/${encodeURIComponent(strategyId)}/archive`, {
+      method: "POST",
+    });
+  },
+
   listMarketSimRuns(limit = 50): Promise<{ runs: MarketSimRun[] }> {
     return request(`/api/market-sim/runs?limit=${encodeURIComponent(String(limit))}`);
   },

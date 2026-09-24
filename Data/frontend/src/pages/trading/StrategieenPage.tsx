@@ -66,7 +66,7 @@ export function StrategieenPage() {
   async function saveStrategy() {
     setBusy(true);
     try {
-      const created = await api.createMarketStrategy({
+      const payload = {
         name,
         description,
         tags: [kind, "paper"],
@@ -79,15 +79,35 @@ export function StrategieenPage() {
         exitRules: { kind },
         brainDependencies: ["knowledge", "memory", "neuro"],
         requiredTimeframes: ["1h"],
-      });
-      setSelected(created.strategy.strategy_id);
-      toast("Strategy saved");
+      };
+      if (selected) {
+        const updated = await api.versionMarketStrategy(selected, {
+          ...payload,
+          changelog: `Updated ${kind} parameters`,
+        });
+        setSelected(updated.strategy.strategy_id);
+        toast(`Strategy v${updated.version.version} saved`);
+      } else {
+        const created = await api.createMarketStrategy(payload);
+        setSelected(created.strategy.strategy_id);
+        toast("Strategy created");
+      }
       await refresh();
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Create failed");
+      toast(err instanceof ApiError ? err.message : "Save failed");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function createNewStrategy() {
+    setSelected(null);
+    setName("New strategy");
+    setDescription("");
+    setKind("ma_cross");
+    setFastMa(10);
+    setSlowMa(30);
+    setVersions([]);
   }
 
   const activeCount = strategies.filter((s) => s.status === "ACTIVE").length;
@@ -180,14 +200,19 @@ export function StrategieenPage() {
           <Panel
             title="Strategy Builder"
             action={
-              <button
-                type="button"
-                className="lv-tp-btn lv-tp-btn--accent"
-                disabled={busy}
-                onClick={() => void saveStrategy()}
-              >
-                Save Strategy
-              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button type="button" className="lv-tp-btn" disabled={busy} onClick={() => createNewStrategy()}>
+                  New
+                </button>
+                <button
+                  type="button"
+                  className="lv-tp-btn lv-tp-btn--accent"
+                  disabled={busy}
+                  onClick={() => void saveStrategy()}
+                >
+                  {selected ? "Save Version" : "Create Strategy"}
+                </button>
+              </div>
             }
           >
             <div className="lv-tp-tabs" style={{ marginBottom: 8 }}>

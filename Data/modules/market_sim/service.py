@@ -80,11 +80,14 @@ class MarketSimControlPlane:
         self._paper_brokers: dict[str, Any] = {}
         self._fleet = None
         self.live_guard = LiveTradingGuard()
+        self._bars_per_slice = 50
+        self.default_initial_cash = 100_000.0
         self.worker = MarketSimWorker(
             store,
             self.engine,
             resolve_bars_path=self._resolve_bars_path,
             resolve_strategy=self._resolve_strategy_payload,
+            bars_per_slice=self._bars_per_slice,
             multi_engine=self.multi_engine,
         )
 
@@ -112,13 +115,30 @@ class MarketSimControlPlane:
             neuro=neuro,
         )
         enabled = bool(settings.features.market_sim_enabled)
-        return cls(
+        plane = cls(
             store,
             data,
             enabled=enabled,
             brain=brain,
             observability_emit=observability_emit,
         )
+        ms = getattr(settings, "market_sim", None)
+        bars = int(getattr(ms, "bars_per_slice", 50) or 50)
+        cash = float(getattr(ms, "default_initial_cash", 100_000.0) or 100_000.0)
+        plane.bars_per_slice = bars
+        plane.default_initial_cash = cash
+        plane.worker.bars_per_slice = bars
+        return plane
+
+    @property
+    def bars_per_slice(self) -> int:
+        return int(getattr(self, "_bars_per_slice", 50) or 50)
+
+    @bars_per_slice.setter
+    def bars_per_slice(self, value: int) -> None:
+        self._bars_per_slice = max(1, int(value))
+        if hasattr(self, "worker") and self.worker is not None:
+            self.worker.bars_per_slice = self._bars_per_slice
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
@@ -225,24 +245,21 @@ class MarketSimControlPlane:
         health = self.data.health()
         runs = self.store.list_runs(limit=50)
         active = sum(1 for r in runs if r.status in {s.value for s in ACTIVE_RUN_STATUSES})
+        # Avoid network probes on every status poll.
         caps = build_market_capabilities(
             feature_enabled=self.enabled,
-            binance_reachable=False,  # avoid network on every status poll
+            binance_reachable=False,
             local_paper=True,
         )
-        # Recompute reachability lightly from last provider status cache if any
-        try:
-            provider_status = self.providers.status_all()
-        except Exception:  # noqa: BLE001
-            provider_status = []
-        binance_ok = any(
-            p.get("provider_id") == "binance_public" and p.get("reachable") for p in provider_status
-        )
-        caps = build_market_capabilities(
-            feature_enabled=self.enabled,
-            binance_reachable=binance_ok,
-            local_paper=True,
-        )
+        provider_status = [
+            {
+                "provider_id": pid,
+                "reachable": None,
+                "detail": "probe_deferred",
+                "license_note": getattr(p, "license_note", ""),
+            }
+            for pid, p in getattr(self.providers, "providers", {}).items()
+        ]
         return {
             "enabled": self.enabled,
             "feature_flag": "LEVIATHAN_FEATURE_MARKET_SIM",
@@ -269,9 +286,52 @@ class MarketSimControlPlane:
 
     def scan_market_data(self) -> list[dict[str, Any]]:
         self._require_enabled()
+        self.ensure_seed_fixtures()
         sources = self.data.scan(register=True)
         self._emit_event("market_data.scan", {"count": len(sources)})
         return [s.public_dict() for s in sources]
+
+    def ensure_seed_fixtures(self) -> list[dict[str, Any]]:
+        """Copy built-in OHLCV fixtures into markets_root when the tree is empty.
+
+        Idempotent: if any CSV already exists under markets_root, no-op.
+        Does not create runs — only seeds disk files for scan/register.
+        """
+        self._require_enabled()
+        import shutil
+
+        root = self.data.ensure_root()
+        existing = [
+            p
+            for p in root.rglob("*")
+            if p.is_file() and p.suffix.lower() in {".csv", ".txt", ".parquet"} and not p.name.startswith(".")
+        ]
+        if existing:
+            return []
+        fixtures = Path(__file__).resolve().parents[2] / "backend" / "tests" / "fixtures" / "market_data"
+        seeded: list[dict[str, Any]] = []
+        if not fixtures.is_dir():
+            return seeded
+        for name, symbol, timeframe in (
+            ("BTCUSDT_1h.csv", "BTCUSDT", "1h"),
+            ("AAPL_1d.csv", "AAPL", "1D"),
+        ):
+            src = fixtures / name
+            if not src.exists():
+                continue
+            dest = root / name
+            shutil.copy(src, dest)
+            source = self.data.register_file(name, symbol=symbol, timeframe=timeframe)
+            source.metadata = {
+                **(source.metadata or {}),
+                "provider_id": "csv_local",
+                "seeded": True,
+            }
+            self.store.upsert_source(source)
+            seeded.append(source.public_dict())
+        if seeded:
+            self._emit_event("market_data.seeded", {"count": len(seeded)})
+        return seeded
 
     def list_market_data(self, *, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
         self._require_enabled()

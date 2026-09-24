@@ -867,7 +867,9 @@ class Settings:
         mcp_auto_expand = (
             _env_bool("LEVIATHAN_FEATURE_MCP_AUTO_EXPAND_MODULES", True) if mcp_enabled else False
         )
-        market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", False)
+        # Default ON for local/dev so TradingCenter Market Sim opens usable.
+        # Explicit LEVIATHAN_FEATURE_MARKET_SIM=false still disables.
+        market_sim_enabled = _env_bool("LEVIATHAN_FEATURE_MARKET_SIM", True)
         rag_v3 = _env_bool("LEVIATHAN_FEATURE_RAG_V3", True)
         deep_recall = _env_bool("LEVIATHAN_FEATURE_DEEP_RECALL", True)
         why_library = _env_bool("LEVIATHAN_FEATURE_WHY_LIBRARY", True)

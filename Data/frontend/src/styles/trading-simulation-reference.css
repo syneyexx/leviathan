@@ -1,40 +1,389 @@
 .lv-app--trading-sim-ref .lv-main.ts-main{padding:8px 10px 52px;gap:6px;overflow:visible}.ts-main{--ts-gold:#d6a957;--ts-gold2:#f0c875;--ts-cyan:#19cbd6;--ts-green:#00e5b0;--ts-red:#ff5353;--ts-bg:#020807;--ts-panel:rgba(2,10,9,.92);--ts-line:rgba(214,169,87,.42);color:#d7dde0;font-size:10px}.ts-main *{box-sizing:border-box}.ts-main button,.ts-main select{font:inherit;color:#dce3e4}.ts-hero{position:relative;height:108px;border:1px solid rgba(214,169,87,.55);border-radius:9px;overflow:hidden;background:#020706;box-shadow:inset 0 0 24px rgba(214,169,87,.05),0 0 13px rgba(214,169,87,.08)}.ts-hero>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 58%;filter:saturate(.72) brightness(.53) contrast(1.18)}.ts-hero-overlay{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,5,5,.97) 0%,rgba(0,6,7,.8) 33%,rgba(0,8,10,.34) 63%,rgba(0,4,4,.75) 100%),radial-gradient(circle at 65% 42%,rgba(7,131,152,.2),transparent 28%)}.ts-hero-copy{position:absolute;left:18px;top:11px;z-index:2}.ts-hero h1{margin:0;color:#f3efe6;font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:29px;line-height:1;letter-spacing:.19em;text-shadow:0 0 10px rgba(240,200,117,.22)}.ts-hero-kicker{margin-top:9px;color:#e0b45f;font-size:9px;letter-spacing:.27em;font-weight:700}.ts-hero-copy p{margin:5px 0 0;font-family:Georgia,"Times New Roman",serif;font-style:italic;font-size:12px;letter-spacing:.12em;color:#e6e7e3}.ts-hero-kpis{position:absolute;right:12px;bottom:8px;display:flex;height:44px;border:1px solid rgba(214,169,87,.45);border-radius:7px;background:rgba(1,7,7,.86);overflow:hidden;z-index:2;box-shadow:0 0 14px rgba(214,169,87,.07)}.ts-kpi{min-width:104px;padding:5px 9px 4px;display:flex;align-items:center;gap:7px;border-right:1px solid rgba(214,169,87,.22)}.ts-kpi:last-child{border-right:0;min-width:121px}.ts-kpi-icon{width:22px;height:22px;color:#e8c46f;flex:none}.ts-kpi-icon svg{width:100%;height:100%}.ts-kpi strong{display:block;color:#eff4f3;font-size:10px;font-weight:500;line-height:1.05;white-space:nowrap}.ts-kpi span span,.ts-kpi div>span{display:block;color:#63d9e5;font-size:7px;margin-top:3px;white-space:nowrap}.ts-controls{height:44px;display:flex;align-items:center;gap:6px;padding:5px 7px;border:1px solid rgba(214,169,87,.56);border-radius:8px;background:linear-gradient(180deg,rgba(8,17,15,.98),rgba(1,7,7,.98));box-shadow:inset 0 0 20px rgba(214,169,87,.035)}.ts-controls button,.ts-controls select{height:30px;border:1px solid rgba(214,169,87,.35);border-radius:5px;background:#07100f;padding:0 10px;cursor:pointer}.ts-controls button:hover,.ts-controls select:hover{border-color:rgba(240,200,117,.7)}.ts-controls button span{margin-left:5px}.ts-run-btn{min-width:132px;border-color:#12dcc0!important;background:linear-gradient(180deg,#0b9a8b,#087166)!important;color:white!important;box-shadow:0 0 14px rgba(0,229,176,.25),inset 0 0 0 1px rgba(255,255,255,.12)}.ts-run-btn.is-running{background:linear-gradient(180deg,#117c71,#07594f)!important}.ts-control-divider{width:1px;height:24px;background:rgba(214,169,87,.25);margin:0 3px}.ts-controls label{color:#c7cdcb;white-space:nowrap}.ts-speed-row{display:flex;gap:3px}.ts-speed-row button{height:27px;padding:0 8px}.ts-speed-row .is-active{color:#fff3d5;border-color:#e4b95f;background:rgba(173,118,32,.26);box-shadow:inset 0 0 9px rgba(214,169,87,.15)}.ts-controls select{height:28px;padding-right:23px;min-width:94px}.ts-icon-btn{margin-left:auto;width:34px;padding:0!important}.ts-save-btn{border-color:#e0b458!important;background:linear-gradient(180deg,rgba(173,116,28,.5),rgba(68,40,7,.35))!important;color:#fff3d2!important}.ts-top-grid{display:grid;grid-template-columns:minmax(0,2.33fr) .73fr .86fr;gap:6px;height:335px}.ts-panel{min-width:0;min-height:0;border:1px solid rgba(214,169,87,.5);border-radius:8px;background:linear-gradient(180deg,rgba(3,12,11,.97),rgba(1,8,8,.98));overflow:hidden;box-shadow:inset 0 0 24px rgba(214,169,87,.025)}.ts-panel-head{height:25px;padding:0 9px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(214,169,87,.25);font-family:Georgia,"Times New Roman",serif;font-size:9px;font-weight:700;letter-spacing:.18em;color:#dfb45f;text-transform:uppercase}.ts-panel-head button,.ts-panel-head select{height:20px;padding:0 7px;border:1px solid rgba(214,169,87,.35);border-radius:4px;background:#07100f;color:#d8dddd}.ts-panel-body{height:calc(100% - 25px);min-height:0}.ts-chart-panel .ts-panel-body{display:flex;flex-direction:column}.ts-chart-toolbar{height:25px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid rgba(90,161,165,.16);font-size:8px;white-space:nowrap}.ts-chart-toolbar>strong{font-size:10px;color:#e9eeee}.ts-chart-toolbar .ohlc{color:#6a9699}.ts-chart-toolbar .ohlc b{color:#14c9be;font-weight:500}.ts-chart-toolbar .gain{color:#00dfa9;font-weight:600}.ts-chart-spacer{flex:1}.ts-chart-toolbar button{height:20px;border:1px solid rgba(214,169,87,.32);border-radius:4px;background:#07100f;padding:0 7px}.ts-chart-toolbar .dot.ai{width:6px;height:6px;border-radius:50%;background:#00e5b0;box-shadow:0 0 5px #00e5b0}.ts-chart-toolbar .diamond{width:6px;height:6px;background:#13e7c9;transform:rotate(45deg)}.ts-chart-toolbar .tri{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:7px solid #ff5361}.ts-toggle{display:flex;align-items:center;gap:5px}.ts-toggle i{width:23px;height:11px;border-radius:8px;background:#14c7dc;position:relative}.ts-toggle i:after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;right:2px;top:1.5px;background:white}.ts-chart-wrap{position:relative;flex:1;min-height:0;padding-right:45px}.ts-price-svg{width:100%;height:100%;display:block}.ts-grid-line{stroke:rgba(78,122,125,.13);stroke-width:1}.ts-equity-line{fill:none;stroke:#21aef7;stroke-width:1.35;filter:drop-shadow(0 0 2px rgba(33,174,247,.35))}.ts-candle line{stroke-width:1.2}.ts-candle rect{stroke-width:.6}.ts-candle.up line,.ts-candle.up rect{stroke:#00e5b0;fill:#00cda0}.ts-candle.down line,.ts-candle.down rect{stroke:#ff535e;fill:#dc3d47}.ts-signal text{font-size:11px;font-family:Arial,sans-serif;font-weight:700;text-anchor:middle}.ts-signal.buy{fill:#00e5b0}.ts-signal.sell{fill:#ff5361}.ts-volume.up{fill:rgba(0,190,144,.35)}.ts-volume.down{fill:rgba(221,61,72,.33)}.ts-rsi-divider{stroke:rgba(214,169,87,.15)}.ts-rsi-line{fill:none;stroke:#8d54e8;stroke-width:1.7}.ts-price-axis{position:absolute;top:3px;right:2px;bottom:68px;width:43px;display:flex;flex-direction:column;justify-content:space-between;color:#8ba0a5;font-size:7px;text-align:right}.ts-price-axis .current{background:#10d6b5;color:#00120e;padding:2px 2px;border-radius:2px;font-weight:700}.ts-time-axis{position:absolute;left:16px;right:48px;bottom:48px;display:flex;justify-content:space-between;color:#72898e;font-size:6.5px}.ts-chart-footer{height:30px;border-top:1px solid rgba(214,169,87,.17);display:flex;align-items:center;gap:8px;padding:0 8px;color:#849296;font-size:7px}.ts-range{display:flex;gap:2px}.ts-range button{border:0;background:transparent;color:#c8cece;padding:2px 5px}.ts-scrub{height:4px;border-radius:3px;background:#132b30;flex:1;max-width:400px;overflow:hidden}.ts-scrub i{display:block;height:100%;background:#11bad9;border-radius:3px}.ts-chart-footer .auto{color:#00bff0}.ts-portfolio-top{display:grid;grid-template-columns:1fr 1fr;padding:8px 9px 7px;border-bottom:1px solid rgba(214,169,87,.19)}.ts-portfolio-top>div:first-child{border-right:1px solid rgba(214,169,87,.2);padding-right:8px}.ts-portfolio-top>div:last-child{padding-left:8px}.ts-portfolio-top span{display:block;color:#b6c1c1;font-size:8px}.ts-portfolio-top strong{display:block;font-size:20px;font-weight:400;color:#f1f4ef;line-height:1.1;margin:4px 0}.ts-portfolio-top b{color:#00e5b0;font-size:10px}.ts-stat-strip{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1px solid rgba(214,169,87,.15)}.ts-stat-strip div{padding:6px 7px;border-right:1px solid rgba(214,169,87,.14)}.ts-stat-strip div:last-child{border-right:0}.ts-stat-strip span{display:block;font-size:7px;color:#a2b0b2}.ts-stat-strip b{display:block;margin-top:2px;color:#e6ebea;font-size:10px;font-weight:500}.good{color:#00e5b0!important}.bad{color:#ff535e!important}.warn{color:#e4ac3e!important}.muted{color:#829092!important}.ts-mini-tabs{display:flex;gap:3px;padding:7px 7px 2px}.ts-mini-tabs button{height:21px;flex:1;border:1px solid rgba(214,169,87,.27);border-radius:4px;background:#06100f;font-size:7px}.ts-mini-tabs .active{border-color:#c89739;background:rgba(123,77,15,.22);color:#f2d496}.ts-mini-equity{width:100%;height:66px;padding:0 8px 4px}.ts-right-stack{display:grid;grid-template-rows:130px 199px;gap:6px;min-width:0}.ts-positions table{width:100%;border-collapse:collapse;font-size:7px}.ts-positions th{color:#7f969b;font-weight:500;text-align:left;padding:6px 5px;border-bottom:1px solid rgba(214,169,87,.13)}.ts-positions td{padding:6px 5px;border-bottom:1px solid rgba(214,169,87,.09);color:#d2d8d8}.side{padding:2px 4px;border-radius:3px;font-size:6.5px;font-weight:700}.side.long{background:rgba(0,229,176,.16);color:#00e5b0}.side.short{background:rgba(255,83,83,.17);color:#ff6767}.ts-viewall{color:#e7d5a7!important}.ts-market-price{display:flex;align-items:baseline;gap:7px;padding:6px 8px 4px}.ts-market-price strong{font-size:19px;color:#edf2ee;font-weight:400}.ts-market-price b{font-size:9px;color:#00e5b0}.ts-market-meta{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:0 8px 5px;color:#8fa0a2;font-size:6.5px}.ts-market-meta div{display:grid;grid-template-columns:1fr auto;gap:2px 4px}.ts-market-meta b{color:#dce2e1;font-weight:500}.ts-book{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:0 8px}.ts-book h4{margin:0 0 3px;padding:2px 3px;border-top:1px solid rgba(214,169,87,.17);border-bottom:1px solid rgba(214,169,87,.14);font-size:7px;font-weight:600}.ts-book h4 span{float:right;color:#7e9092;font-weight:400}.ts-book>div:first-child h4{color:#00e5b0}.ts-book>div:last-child h4{color:#ff5c60}.ts-book .bid,.ts-book .ask{position:relative;display:flex;justify-content:space-between;padding:1.5px 3px;font-size:7px;overflow:hidden}.ts-book .bid:before,.ts-book .ask:before{content:"";position:absolute;inset:0 auto 0 0;width:var(--w);z-index:0}.ts-book .bid:before{background:rgba(0,229,176,.13)}.ts-book .ask:before{background:rgba(255,83,83,.13)}.ts-book .bid span,.ts-book .bid b,.ts-book .ask span,.ts-book .ask b{position:relative;z-index:1}.ts-book .bid span{color:#00e5b0}.ts-book .ask span{color:#ff6265}.ts-book b{color:#cdd3d2;font-weight:400}.ts-mid-grid{display:grid;grid-template-columns:1.06fr 1.08fr 1.04fr .9fr;gap:6px;height:212px}.ts-upload-row{display:grid;grid-template-columns:1fr 1.35fr;gap:6px;padding:8px 8px 5px}.ts-upload{height:34px;border:1px solid #d7a13c;border-radius:5px;background:linear-gradient(180deg,rgba(176,119,29,.5),rgba(83,50,9,.33));display:flex;align-items:center;justify-content:center;color:#f1ddb0;font-weight:600;cursor:pointer}.ts-drop{height:34px;border:1px dashed rgba(44,199,218,.55);border-radius:5px;display:flex;align-items:center;justify-content:center;gap:7px;color:#7ec8d1}.ts-drop span{font-size:7px}.ts-drop small{display:block;color:#697f83;margin-top:2px}.ts-ingestion h4,.ts-learning h4{margin:1px 8px 3px;color:#c9d0ce;font-size:8px}.ts-list-head,.ts-import-row{display:grid;grid-template-columns:1.55fr .9fr .55fr .8fr;align-items:center;position:relative}.ts-list-head{padding:3px 8px;color:#708488;font-size:6.5px;border-top:1px solid rgba(214,169,87,.1);border-bottom:1px solid rgba(214,169,87,.1)}.ts-import-row{padding:4px 8px;font-size:7px;border-bottom:1px solid rgba(214,169,87,.08)}.ts-import-row>span:first-child{color:#ced6d5}.ts-progress{position:absolute;left:8px;right:34%;bottom:0;height:2px;background:linear-gradient(90deg,#10c4d8 67%,transparent 67%)}.ts-agent-head{display:grid;grid-template-columns:1.45fr 1.15fr .8fr 1.1fr .48fr .5fr;padding:5px 7px 4px 27px;color:#70878b;font-size:6px;border-bottom:1px solid rgba(214,169,87,.12)}.ts-agent-row{display:grid;grid-template-columns:24px 1.45fr 1.15fr .8fr 1.1fr .48fr .5fr;align-items:center;padding:4.5px 7px;border-bottom:1px solid rgba(214,169,87,.08);font-size:6.6px}.ts-agent-row b{font-size:7.2px;color:#e1e6e4}.agent-icon{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid currentColor}.agent-icon.strategy{color:#00c8a7}.agent-icon.risk{color:#ff5361}.agent-icon.exec{color:#a86ef6}.agent-icon.macro{color:#e2ad45}.agent-icon.learn{color:#4ca5ff}.ts-thinking .ts-panel-head select{width:100px;text-transform:none;letter-spacing:0}.ts-thoughts{padding:3px 8px}.ts-thought{display:grid;grid-template-columns:31px 22px 1fr;gap:4px;padding:4px 0;border-bottom:1px solid rgba(214,169,87,.08)}.ts-thought time{font-size:6.5px;color:#7a8e92;padding-top:3px}.thought-icon{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid currentColor}.thought-icon.analysis{color:#30a9ff}.thought-icon.pattern{color:#f1a831}.thought-icon.hypothesis{color:#00c9a5}.thought-icon.action{color:#3fe0c3}.thought-icon.risk{color:#2fb6ee}.ts-thought b{display:block;color:#2fbbeb;font-size:7px}.ts-thought p{margin:1px 0 0;font-size:6.5px;line-height:1.25;color:#b7c2c2}.ts-learning-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:6px 7px 4px}.ts-learning-tabs button{height:22px;border:1px solid rgba(214,169,87,.28);border-radius:4px;background:#07100f;font-size:6.5px}.ts-learning-tabs .active{border-color:#d9a942;color:#f1dca7;background:rgba(130,84,15,.21)}.ts-current-strategy{display:grid;grid-template-columns:auto 1fr auto;gap:5px;align-items:center;padding:4px 8px;border-top:1px solid rgba(214,169,87,.1);border-bottom:1px solid rgba(214,169,87,.1);font-size:6.5px}.ts-current-strategy span{color:#7e9093}.ts-current-strategy b{color:#e1e6e5}.ts-current-strategy em{font-style:normal;color:#e4b24d;border:1px solid rgba(214,169,87,.35);padding:2px 4px;border-radius:3px}.ts-learning-metrics{display:grid;grid-template-columns:repeat(3,1fr);padding:5px 7px}.ts-learning-metrics div{padding:2px 4px}.ts-learning-metrics span{display:block;color:#789094;font-size:6px}.ts-learning-metrics b{display:block;margin-top:2px;font-size:8px;color:#dbe1df}.ts-explore{display:grid;grid-template-columns:auto 25px 1fr auto 25px 1fr;gap:4px;align-items:center;padding:0 8px 4px;font-size:6px}.ts-explore i{height:7px;background:#0d262c;border-radius:2px;overflow:hidden}.ts-explore i u{display:block;height:100%;background:#1aa5e8}.ts-explore i.gold u{background:#d8a23c}.ts-discoveries{list-style:none;padding:0 8px;margin:0;font-size:6.2px;color:#aab6b6}.ts-discoveries li{margin:2px 0}.ts-discoveries li:before{content:"▪";color:#00dfa9;margin-right:5px}.ts-discoveries time{display:inline-block;width:29px;color:#718488}.ts-bottom-grid{display:grid;grid-template-columns:1.42fr 1.06fr .9fr;gap:6px;height:130px}.ts-console-tabs{display:flex;gap:4px;padding:5px 8px 3px}.ts-console-tabs button{height:19px;border:1px solid rgba(214,169,87,.22);border-radius:4px;background:#06100f;padding:0 7px;color:#7f9296;font-size:6.5px}.ts-console-tabs .active{color:#e8d8ae;border-color:#b8842c;background:rgba(116,74,15,.22)}.ts-log{font-family:"Consolas","SFMono-Regular",monospace;padding:1px 8px;font-size:6.4px;line-height:1.55}.ts-log div{display:grid;grid-template-columns:47px 63px 1fr}.ts-log time{color:#6b858a}.ts-log b{font-weight:600}.log-execution{color:#00e5b0}.log-risk{color:#f5a631}.log-strategy{color:#ae79ff}.log-learning{color:#23cae8}.log-market{color:#36c6e8}.log-macro{color:#e9b358}.ts-scenario-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:7px 7px 4px}.ts-scenario-grid button{height:62px;position:relative;border:1px solid rgba(214,169,87,.25);border-radius:5px;background:#06100f;padding:5px 4px 4px 27px;text-align:left}.ts-scenario-grid button.active{border-color:#dcad4c;background:rgba(110,72,14,.23);box-shadow:inset 0 0 10px rgba(214,169,87,.08)}.scenario-orb{position:absolute;left:5px;top:8px;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid #00d7b8;color:#00d7b8}.ts-scenario-grid b{display:block;color:#dedfda;font-size:7px}.ts-scenario-grid small,.ts-scenario-grid em{display:block;font-size:5.7px;line-height:1.25;color:#71878b;font-style:normal}.ts-scenario-grid em{color:#d1a44d;margin-top:2px}.ts-custom{margin-left:7px;height:21px;border:1px solid rgba(214,169,87,.45);border-radius:4px;background:rgba(100,63,10,.17);color:#e3c47d;padding:0 9px}.ts-bench-head,.ts-bench-row{display:grid;grid-template-columns:.85fr .72fr .72fr .9fr;align-items:center;padding:0 8px}.ts-bench-head{height:21px;color:#72878a;font-size:6px;border-bottom:1px solid rgba(214,169,87,.1)}.ts-bench-row{height:18px;font-size:6.6px;position:relative}.ts-bench-row>i{grid-column:4;grid-row:1;height:8px;background:#0c2729;border-radius:2px;overflow:hidden}.ts-bench-row>i u{display:block;height:100%;background:#29dec2}.ts-bench-row>span:nth-child(1),.ts-bench-row>b:nth-child(2),.ts-bench-row>span:nth-child(3),.ts-bench-row>b:nth-child(4){z-index:1}.ts-bench-row>i{margin-left:55px}.ts-bench-row>b:nth-child(4){position:absolute;left:73%;}.ts-panel select{background:#06100f;border:1px solid rgba(214,169,87,.3);color:#dfe4e2;border-radius:3px}@media (max-width:1400px){.ts-hero h1{font-size:24px}.ts-hero-kpis{transform:scale(.9);transform-origin:right bottom}.ts-top-grid{grid-template-columns:minmax(0,2.05fr) .72fr .82fr}.ts-mid-grid{grid-template-columns:1fr 1fr 1fr .9fr}.ts-main{font-size:9px}}
 
-/* Live-bound simulation desk (API-driven) */
-.lv-app--trading-sim-ref .ts-banner{padding:8px 12px;margin:6px 0;border:1px solid rgba(214,169,87,.45);border-radius:6px;background:rgba(80,40,10,.35);color:#f0d9a8}
-.lv-app--trading-sim-ref .ts-banner.is-bad{border-color:rgba(255,83,83,.5);background:rgba(80,10,10,.4);color:#ffb4b4}
-.lv-app--trading-sim-ref .ts-kpi-row{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
-.lv-app--trading-sim-ref .ts-kpi-row .ts-kpi{min-width:120px;flex:1;padding:8px;border:1px solid rgba(214,169,87,.35);border-radius:7px;background:rgba(2,10,9,.9);display:flex;gap:8px;align-items:center}
-.lv-app--trading-sim-ref .ts-kpi-row .ts-kpi svg{width:18px;height:18px;color:#e8c46f}
-.lv-app--trading-sim-ref .ts-kpi-row .ts-kpi strong{display:block;font-size:12px;color:#eef3f2}
-.lv-app--trading-sim-ref .ts-kpi-row .ts-kpi span{display:block;font-size:8px;color:#63d9e5;margin-top:2px}
-.lv-app--trading-sim-ref .ts-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end;padding:8px;border:1px solid rgba(214,169,87,.45);border-radius:8px;background:rgba(1,8,8,.95);margin-bottom:8px}
-.lv-app--trading-sim-ref .ts-toolbar label{display:flex;flex-direction:column;gap:3px;color:#aab;font-size:9px}
-.lv-app--trading-sim-ref .ts-toolbar select,.lv-app--trading-sim-ref .ts-toolbar button{height:30px;border:1px solid rgba(214,169,87,.4);border-radius:5px;background:#07100f;color:#e8eceb;padding:0 10px;cursor:pointer}
-.lv-app--trading-sim-ref .ts-toolbar button:disabled{opacity:.45;cursor:not-allowed}
-.lv-app--trading-sim-ref .ts-link{color:#e0b45f;align-self:center;font-size:10px}
-.lv-app--trading-sim-ref .ts-grid{display:grid;grid-template-columns:2fr 1fr 1.4fr;gap:8px}
-.lv-app--trading-sim-ref .ts-span-2{grid-column:span 1}
-.lv-app--trading-sim-ref .ts-chart{width:100%;height:220px;background:rgba(0,0,0,.25)}
-.lv-app--trading-sim-ref .ts-assumptions{margin:8px;padding-left:16px;color:#8fa;font-size:9px}
-.lv-app--trading-sim-ref .ts-list{list-style:none;margin:0;padding:4px}
-.lv-app--trading-sim-ref .ts-list button{width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid rgba(214,169,87,.12);color:#d7dde0;padding:8px;cursor:pointer}
-.lv-app--trading-sim-ref .ts-list button.is-active{background:rgba(214,169,87,.12)}
-.lv-app--trading-sim-ref .ts-list button span{display:block;color:#7a9094;font-size:8px;margin-top:2px}
-.lv-app--trading-sim-ref .ts-tabs{display:flex;gap:4px}
-.lv-app--trading-sim-ref .ts-tabs button{height:20px;padding:0 7px;border:1px solid rgba(214,169,87,.3);border-radius:4px;background:#07100f;color:#9aa}
-.lv-app--trading-sim-ref .ts-tabs button.is-active{color:#f2d496;border-color:#c89739}
-.lv-app--trading-sim-ref .ts-log{list-style:none;margin:0;padding:6px 8px;max-height:280px;overflow:auto;font-family:ui-monospace,monospace;font-size:9px}
-.lv-app--trading-sim-ref .ts-log li{padding:3px 0;border-bottom:1px solid rgba(214,169,87,.08)}
-.lv-app--trading-sim-ref .ts-log span{color:#6b858a;margin-right:6px}
-.lv-app--trading-sim-ref .ts-muted{color:#7a9094;padding:8px}
-.lv-app--trading-sim-ref .ts-footnote{margin-top:10px;color:#7a9094;font-size:9px}
-.lv-app--trading-sim-ref .ts-kicker{color:#e0b45f;letter-spacing:.2em;font-size:9px;font-weight:700}
-.lv-app--trading-sim-ref .ts-hero{display:flex;align-items:flex-end;padding:16px;background-size:cover;background-position:center;min-height:120px}
-.lv-app--trading-sim-ref .ts-hero-copy{background:rgba(0,0,0,.55);padding:12px 16px;border-radius:8px;max-width:640px}
-.lv-app--trading-sim-ref .ts-hero-copy h1{margin:4px 0;font-family:Georgia,serif;letter-spacing:.12em;font-weight:400;color:#f3efe6}
-.lv-app--trading-sim-ref .ts-hero-copy p{margin:4px 0 0;color:#cfd6d4;font-size:11px;line-height:1.4}
-@media (max-width:1100px){.lv-app--trading-sim-ref .ts-grid{grid-template-columns:1fr}}
+/* Live-bound simulation desk (API-driven) — denser premium layout */
+.lv-app--trading-sim-ref .lv-main.ts-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 28px;
+  min-height: 0;
+  background:
+    radial-gradient(ellipse at 70% 0%, rgba(20, 80, 70, 0.18), transparent 45%),
+    linear-gradient(180deg, #020807 0%, #010504 100%);
+}
+.lv-app--trading-sim-ref .ts-hero-live {
+  position: relative;
+  min-height: 128px;
+  height: auto;
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+.lv-app--trading-sim-ref .ts-hero-live > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 40%;
+  filter: saturate(0.75) brightness(0.45) contrast(1.15);
+}
+.lv-app--trading-sim-ref .ts-hero-live .ts-hero-copy {
+  position: relative;
+  z-index: 2;
+  left: auto;
+  top: auto;
+  padding: 16px 18px 10px;
+  max-width: 720px;
+  background: transparent;
+}
+.lv-app--trading-sim-ref .ts-hero-live h1 {
+  margin: 2px 0 0;
+  font-size: clamp(22px, 2.4vw, 30px);
+  letter-spacing: 0.16em;
+}
+.lv-app--trading-sim-ref .ts-hero-badges {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 14px 12px;
+}
+.lv-app--trading-sim-ref .ts-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 169, 87, 0.35);
+  background: rgba(1, 8, 8, 0.82);
+  color: #d7dde0;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+.lv-app--trading-sim-ref .ts-badge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6a7a7c;
+}
+.lv-app--trading-sim-ref .ts-badge.is-ok i {
+  background: #00e5b0;
+  box-shadow: 0 0 6px #00e5b0;
+}
+.lv-app--trading-sim-ref .ts-badge.is-warn i {
+  background: #e4ac3e;
+}
+.lv-app--trading-sim-ref .ts-badge.is-off i {
+  background: #ff5353;
+}
+.lv-app--trading-sim-ref .ts-banner {
+  padding: 8px 12px;
+  margin: 0;
+  border: 1px solid rgba(214, 169, 87, 0.45);
+  border-radius: 6px;
+  background: rgba(80, 40, 10, 0.35);
+  color: #f0d9a8;
+}
+.lv-app--trading-sim-ref .ts-banner.is-bad {
+  border-color: rgba(255, 83, 83, 0.5);
+  background: rgba(80, 10, 10, 0.4);
+  color: #ffb4b4;
+}
+.lv-app--trading-sim-ref .ts-controls-live {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 44px;
+  gap: 8px;
+}
+.lv-app--trading-sim-ref .ts-controls-live label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 8px;
+  color: #9aa;
+}
+.lv-app--trading-sim-ref .ts-controls-live input {
+  height: 28px;
+  width: 72px;
+  border: 1px solid rgba(214, 169, 87, 0.35);
+  border-radius: 5px;
+  background: #07100f;
+  color: #e8eceb;
+  padding: 0 8px;
+}
+.lv-app--trading-sim-ref .ts-controls-live button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.lv-app--trading-sim-ref .ts-top-grid-live {
+  height: auto;
+  min-height: 320px;
+  grid-template-columns: minmax(0, 2.2fr) minmax(220px, 0.85fr) minmax(220px, 0.85fr);
+}
+.lv-app--trading-sim-ref .ts-mid-grid-live {
+  height: auto;
+  min-height: 240px;
+  grid-template-columns: 0.9fr 1.2fr 1.3fr 0.9fr;
+}
+.lv-app--trading-sim-ref .ts-bottom-grid-live {
+  height: auto;
+  min-height: 160px;
+  grid-template-columns: 1.2fr 1.3fr 0.8fr;
+}
+.lv-app--trading-sim-ref .ts-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.lv-app--trading-sim-ref .ts-panel-body {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.lv-app--trading-sim-ref .ts-panel-meta {
+  color: #8fa0a2;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-family: inherit;
+  font-weight: 500;
+}
+.lv-app--trading-sim-ref .ts-chart-live {
+  position: relative;
+  min-height: 220px;
+  padding-right: 52px;
+}
+.lv-app--trading-sim-ref .ts-chart-empty {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px;
+  color: #8fa0a2;
+}
+.lv-app--trading-sim-ref .ts-chart-empty strong {
+  color: #e8c46f;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+.lv-app--trading-sim-ref .ts-chart {
+  width: 100%;
+  height: 220px;
+  display: block;
+  background: rgba(0, 0, 0, 0.2);
+}
+.lv-app--trading-sim-ref .ts-mini-equity .ts-chart,
+.lv-app--trading-sim-ref .ts-mini-equity .ts-chart-live {
+  height: 72px;
+  min-height: 72px;
+}
+.lv-app--trading-sim-ref .ts-mini-equity {
+  padding: 4px 6px 8px;
+}
+.lv-app--trading-sim-ref .ts-mini-equity .ts-price-axis {
+  display: none;
+}
+.lv-app--trading-sim-ref .ts-progress-bar {
+  position: relative;
+  min-width: 120px;
+  height: 16px;
+  border-radius: 4px;
+  background: #0d262c;
+  overflow: hidden;
+}
+.lv-app--trading-sim-ref .ts-progress-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #10c4d8, #00e5b0);
+}
+.lv-app--trading-sim-ref .ts-progress-bar span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: #eaf4f3;
+}
+.lv-app--trading-sim-ref .ts-run-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+.lv-app--trading-sim-ref .ts-run-meta > div {
+  padding: 7px 9px;
+  border-bottom: 1px solid rgba(214, 169, 87, 0.1);
+  border-right: 1px solid rgba(214, 169, 87, 0.08);
+}
+.lv-app--trading-sim-ref .ts-run-meta span {
+  display: block;
+  color: #7a9094;
+  font-size: 7px;
+}
+.lv-app--trading-sim-ref .ts-run-meta b {
+  display: block;
+  margin-top: 2px;
+  color: #e6ebea;
+  font-size: 10px;
+  font-weight: 500;
+}
+.lv-app--trading-sim-ref .ts-strategy-card {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lv-app--trading-sim-ref .ts-strategy-card strong {
+  color: #f1f4ef;
+  font-size: 13px;
+}
+.lv-app--trading-sim-ref .ts-strategy-card > span {
+  color: #8fa0a2;
+  font-size: 9px;
+}
+.lv-app--trading-sim-ref .ts-strategy-card p {
+  margin: 4px 0;
+  color: #b7c2c2;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.lv-app--trading-sim-ref .ts-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.lv-app--trading-sim-ref .ts-tag-row em {
+  font-style: normal;
+  border: 1px solid rgba(214, 169, 87, 0.35);
+  border-radius: 3px;
+  padding: 2px 5px;
+  color: #e4b24d;
+  font-size: 8px;
+}
+.lv-app--trading-sim-ref .ts-agent-scroll {
+  max-height: 220px;
+  overflow: auto;
+}
+.lv-app--trading-sim-ref .ts-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+.lv-app--trading-sim-ref .ts-list button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(214, 169, 87, 0.12);
+  color: #d7dde0;
+  padding: 8px;
+  cursor: pointer;
+}
+.lv-app--trading-sim-ref .ts-list button.is-active {
+  background: rgba(214, 169, 87, 0.12);
+}
+.lv-app--trading-sim-ref .ts-list button span {
+  display: block;
+  color: #7a9094;
+  font-size: 8px;
+  margin-top: 2px;
+}
+.lv-app--trading-sim-ref .ts-tabs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px 2px;
+  border-bottom: 1px solid rgba(214, 169, 87, 0.12);
+}
+.lv-app--trading-sim-ref .ts-tabs-bar button {
+  height: 22px;
+  padding: 0 9px;
+  font-size: 8px;
+}
+.lv-app--trading-sim-ref .ts-tabs button {
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid rgba(214, 169, 87, 0.3);
+  border-radius: 4px;
+  background: #07100f;
+  color: #9aa;
+  font-size: 7px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.lv-app--trading-sim-ref .ts-tabs button.is-active {
+  color: #f2d496;
+  border-color: #c89739;
+}
+.lv-app--trading-sim-ref .ts-log {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 9px;
+}
+.lv-app--trading-sim-ref .ts-log li {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(214, 169, 87, 0.08);
+}
+.lv-app--trading-sim-ref .ts-log span {
+  color: #6b858a;
+  margin-right: 6px;
+}
+.lv-app--trading-sim-ref .ts-muted {
+  color: #7a9094;
+}
+.lv-app--trading-sim-ref .ts-pad {
+  padding: 8px;
+}
+.lv-app--trading-sim-ref .ts-footnote {
+  margin: 4px 0 0;
+  color: #7a9094;
+  font-size: 9px;
+}
+.lv-app--trading-sim-ref .ts-kicker {
+  color: #e0b45f;
+  letter-spacing: 0.2em;
+  font-size: 9px;
+  font-weight: 700;
+}
+.lv-app--trading-sim-ref .ts-link {
+  color: #e0b45f;
+  align-self: center;
+  font-size: 10px;
+  text-decoration: none;
+}
+.lv-app--trading-sim-ref .ts-assumptions {
+  margin: 6px 8px 8px;
+  padding-left: 16px;
+  color: #8fa;
+  font-size: 9px;
+}
+.lv-app--trading-sim-ref .ts-positions {
+  max-height: 180px;
+  overflow: auto;
+}
+@media (max-width: 1280px) {
+  .lv-app--trading-sim-ref .ts-top-grid-live,
+  .lv-app--trading-sim-ref .ts-mid-grid-live,
+  .lv-app--trading-sim-ref .ts-bottom-grid-live {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 900px) {
+  .lv-app--trading-sim-ref .ts-top-grid-live,
+  .lv-app--trading-sim-ref .ts-mid-grid-live,
+  .lv-app--trading-sim-ref .ts-bottom-grid-live {
+    grid-template-columns: 1fr;
+  }
+}
 
 .lv-tp-form{display:flex;flex-direction:column;gap:8px;padding:8px}
 .lv-tp-form label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#aab}

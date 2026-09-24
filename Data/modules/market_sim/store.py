@@ -487,6 +487,9 @@ class MarketSimStore:
 
     def claim_next_runnable(self) -> SimRun | None:
         """Claim one QUEUED or RUNNING (without worker) run for the worker."""
+        import os
+
+        pid = os.getpid()
         with self.connect() as conn:
             row = conn.execute(
                 """
@@ -503,9 +506,9 @@ class MarketSimStore:
             run = self._row_run(row)
             conn.execute(
                 "UPDATE market_sim_runs SET worker_pid=?, updated_at=? WHERE run_id=?",
-                (1, utc_now(), run.run_id),
+                (pid, utc_now(), run.run_id),
             )
-            run.worker_pid = 1
+            run.worker_pid = pid
             return run
 
     def _row_run(self, row: sqlite3.Row) -> SimRun:
@@ -582,11 +585,17 @@ class MarketSimStore:
         return fill
 
     def list_fills(self, run_id: str, *, limit: int = 500) -> list[SimFill]:
+        """Return up to ``limit`` most recent fills in chronological order."""
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT * FROM market_sim_fills
-                WHERE run_id=? ORDER BY bar_index ASC, created_at ASC LIMIT ?
+                SELECT * FROM (
+                    SELECT * FROM market_sim_fills
+                    WHERE run_id=?
+                    ORDER BY bar_index DESC, created_at DESC
+                    LIMIT ?
+                ) sub
+                ORDER BY bar_index ASC, created_at ASC
                 """,
                 (run_id, limit),
             ).fetchall()
@@ -636,11 +645,17 @@ class MarketSimStore:
         return msg
 
     def list_messages(self, run_id: str, *, limit: int = 500) -> list[DeliberationMessage]:
+        """Return up to ``limit`` most recent messages in chronological order."""
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT * FROM market_sim_messages
-                WHERE run_id=? ORDER BY bar_index ASC, created_at ASC LIMIT ?
+                SELECT * FROM (
+                    SELECT * FROM market_sim_messages
+                    WHERE run_id=?
+                    ORDER BY bar_index DESC, created_at DESC
+                    LIMIT ?
+                ) sub
+                ORDER BY bar_index ASC, created_at ASC
                 """,
                 (run_id, limit),
             ).fetchall()
@@ -676,12 +691,18 @@ class MarketSimStore:
             )
 
     def list_equity(self, run_id: str, *, limit: int = 5000) -> list[dict[str, Any]]:
+        """Return up to ``limit`` most recent equity points in chronological order."""
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT bar_index, ts, equity, cash, position_qty
-                FROM market_sim_equity
-                WHERE run_id=? ORDER BY bar_index ASC LIMIT ?
+                SELECT bar_index, ts, equity, cash, position_qty FROM (
+                    SELECT bar_index, ts, equity, cash, position_qty
+                    FROM market_sim_equity
+                    WHERE run_id=?
+                    ORDER BY bar_index DESC
+                    LIMIT ?
+                ) sub
+                ORDER BY bar_index ASC
                 """,
                 (run_id, limit),
             ).fetchall()

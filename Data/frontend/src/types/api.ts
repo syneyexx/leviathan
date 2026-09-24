@@ -1716,8 +1716,24 @@ export type MarketSimStatusResponse = {
     sources_ready: number;
   };
   active_runs: number;
-  worker: Record<string, unknown>;
-  providers?: Array<Record<string, unknown>>;
+  worker: {
+    slices?: number;
+    completed?: number;
+    failed?: number;
+    cancelled?: number;
+    worker_mode?: string;
+    worker_pid?: number;
+    isolated_subprocess?: boolean;
+    lease_model?: string;
+    [key: string]: unknown;
+  };
+  providers?: Array<{
+    provider_id: string;
+    reachable?: boolean | null;
+    detail?: string;
+    license_note?: string;
+    [key: string]: unknown;
+  }>;
   capabilities?: Record<string, unknown>;
   live_trading?: Record<string, unknown>;
   truth: Record<string, boolean | string>;
@@ -1768,6 +1784,28 @@ export type MarketStrategyVersion = {
   changelog: string;
 };
 
+export type MarketSimAgent = {
+  agent_id: string;
+  role: string;
+  label?: string;
+  parameters?: Record<string, unknown>;
+  entry_rules?: Record<string, unknown>;
+  exit_rules?: Record<string, unknown>;
+  initial_cash?: number;
+  authority?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type MarketSimWallet = {
+  wallet_id?: string;
+  owner_id?: string;
+  owner_kind?: string;
+  cash?: number;
+  position_qty?: number;
+  equity?: number;
+  [key: string]: unknown;
+};
+
 export type MarketSimRun = {
   run_id: string;
   status: string;
@@ -1795,8 +1833,15 @@ export type MarketSimRun = {
   brain_misses: number;
   metrics: Record<string, unknown>;
   error: string | null;
-  agents: Array<Record<string, unknown>>;
-  metadata?: Record<string, unknown>;
+  agents: MarketSimAgent[];
+  metadata?: {
+    wallets?: { wallets?: MarketSimWallet[] };
+    fill_assumptions?: string[];
+    multi_agent?: boolean;
+    commit_reveal?: boolean;
+    game_mode?: string;
+    [key: string]: unknown;
+  };
   created_at: string;
   updated_at: string;
   truth?: Record<string, boolean>;
