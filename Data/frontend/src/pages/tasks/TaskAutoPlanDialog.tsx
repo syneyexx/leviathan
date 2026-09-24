@@ -23,16 +23,6 @@ export function TaskAutoPlanDialog({ open, onClose, onCommitted, onError, onSucc
 
   useEffect(() => {
     if (!open) return;
-    setBrief("");
-    setProject("");
-    setTargetDate("");
-    setPriority("");
-    setProposals([]);
-    setPhase("edit");
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !busy) onClose();
     };

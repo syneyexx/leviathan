@@ -23,15 +23,6 @@ export function TaskQuickCapture({ open, agents, onClose, onCreated, onError, on
 
   useEffect(() => {
     if (!open) return;
-    setTitle("");
-    setDescription("");
-    setPriority("medium");
-    setDueAt("");
-    setAssigneeId("");
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !busy) onClose();
     };

@@ -45,8 +45,6 @@ export function TaskCreateDialog({
 
   useEffect(() => {
     if (!open) return;
-    setForm({ ...EMPTY, boardColumn: defaultBoardColumn });
-    setTagsText("");
     let cancelled = false;
     setLoadingOpts(true);
     void (async () => {
@@ -67,7 +65,7 @@ export function TaskCreateDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, defaultBoardColumn, onError]);
+  }, [open, onError]);
 
   useEffect(() => {
     if (!open) return;

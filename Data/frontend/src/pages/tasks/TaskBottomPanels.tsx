@@ -89,14 +89,13 @@ export function TaskBottomPanels({
     return activity;
   }, [activity, feedFilter]);
 
-  const bars = weekday?.bars ?? [0, 0, 0, 0, 0, 0, 0];
+  const bars = useMemo(() => weekday?.bars ?? [0, 0, 0, 0, 0, 0, 0], [weekday]);
   const weekdays = weekday?.weekdays ?? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const maxBar = Math.max(1, ...bars);
   const completionRate = useMemo(() => {
     const total = bars.reduce((a, b) => a + b, 0);
     if (total === 0) return 0;
-    // Honest rate proxy: share of weekday capacity filled vs peak day (not a fake KPI).
-    return Math.round((bars.reduce((a, b) => a + b, 0) / (maxBar * 7)) * 100);
+    return Math.round((total / (maxBar * 7)) * 100);
   }, [bars, maxBar]);
 
   const maxWorkload = Math.max(1, ...workload.map((w) => w.activeCount), 1);

@@ -89,7 +89,6 @@ export function TaskDetails({
   }, [task.taskId, onError]);
 
   useEffect(() => {
-    setTab("Details");
     void loadTabData();
   }, [loadTabData]);
 

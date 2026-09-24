@@ -66,20 +66,16 @@ export function TasksPage() {
   const [priority, setPriority] = useState("all-priorities");
   const [status, setStatus] = useState("all-statuses");
   const [assignee, setAssignee] = useState("all-assignees");
-  const [datePreset, setDatePreset] = useState("week");
+  const [datePreset, setDatePreset] = useState("all");
   const [timelineView, setTimelineView] = useState<"today" | "week" | "calendar">("today");
 
-  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("task"));
+  const selectedId = searchParams.get("task");
   const [createOpen, setCreateOpen] = useState(false);
   const [createColumn, setCreateColumn] = useState<string>("backlog");
   const [quickOpen, setQuickOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
 
   const loadGen = useRef(0);
-  const filtersRef = useRef({ search, priority, status, assignee, datePreset, timelineView });
-  filtersRef.current = { search, priority, status, assignee, datePreset, timelineView };
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
 
   const notifyError = useCallback(
     (message: string) => {
@@ -95,95 +91,84 @@ export function TasksPage() {
     [toast],
   );
 
-  const loadAll = useCallback(async (opts?: { silent?: boolean }) => {
-    const gen = ++loadGen.current;
-    const f = filtersRef.current;
-    if (!opts?.silent) setLoading(true);
-    try {
-      const listFilters = mapTaskListFilters({
-        search: f.search,
-        priority: f.priority,
-        status: f.status,
-        assignee: f.assignee,
-        datePreset: f.datePreset,
-        timezone: tz,
-      });
-      const timelineApiView = f.timelineView === "calendar" ? "calendar" : f.timelineView;
+  const loadAll = useCallback(
+    async (opts?: { silent?: boolean; selectedTaskId?: string | null }) => {
+      const gen = ++loadGen.current;
+      if (!opts?.silent) setLoading(true);
+      try {
+        const listFilters = mapTaskListFilters({
+          search,
+          priority,
+          status,
+          assignee,
+          datePreset,
+          timezone: tz,
+        });
+        const timelineApiView = timelineView === "calendar" ? "calendar" : timelineView;
+        const sel = opts?.selectedTaskId ?? null;
 
-      const [taskRes, sumRes, actRes, tlRes, wlRes, wdRes, agActRes, agentRes] = await Promise.all([
-        api.listTasks({ ...listFilters, limit: 500 }),
-        api.taskSummary(tz),
-        api.taskActivity({ limit: 50 }),
-        api.taskTimeline({ view: timelineApiView, timezone: tz }),
-        api.taskWorkload(),
-        api.taskWeekdayCompletions(tz),
-        api.taskAgentActivity(20),
-        api.listAgents({ includeArchived: false }),
-      ]);
+        const [taskRes, sumRes, actRes, tlRes, wlRes, wdRes, agActRes, agentRes] = await Promise.all([
+          api.listTasks({ ...listFilters, limit: 500 }),
+          api.taskSummary(tz),
+          api.taskActivity({ limit: 50 }),
+          api.taskTimeline({ view: timelineApiView, timezone: tz }),
+          api.taskWorkload(),
+          api.taskWeekdayCompletions(tz),
+          api.taskAgentActivity(20),
+          api.listAgents({ includeArchived: false }),
+        ]);
 
-      if (gen !== loadGen.current) return;
+        if (gen !== loadGen.current) return;
 
-      setTasks(taskRes.tasks ?? []);
-      setSummary(sumRes.summary);
-      setActivity(actRes.activity ?? []);
-      setTimeline(tlRes.timeline ?? []);
-      setWorkload(wlRes.workload ?? []);
-      setWeekday(wdRes);
-      setAgentActivity(agActRes.agents ?? []);
-      setAgents((agentRes.agents ?? []).filter((a) => !a.archived && a.enabled));
-      setError(null);
-
-      const sel = selectedIdRef.current;
-      if (sel && !(taskRes.tasks ?? []).some((t) => t.taskId === sel)) {
-        // Keep selection if deep-linked but filtered out — try fetch single
-        try {
-          const one = await api.getTask(sel);
-          if (gen !== loadGen.current) return;
-          if (one.task) {
-            setTasks((prev) => (prev.some((t) => t.taskId === sel) ? prev : [one.task, ...prev]));
+        let nextTasks = taskRes.tasks ?? [];
+        if (sel && !nextTasks.some((t) => t.taskId === sel)) {
+          try {
+            const one = await api.getTask(sel);
+            if (gen !== loadGen.current) return;
+            if (one.task) nextTasks = [one.task, ...nextTasks];
+          } catch {
+            /* selection may be archived / missing */
           }
-        } catch {
-          /* selection may be archived / missing — leave as-is */
         }
+
+        setTasks(nextTasks);
+        setSummary(sumRes.summary);
+        setActivity(actRes.activity ?? []);
+        setTimeline(tlRes.timeline ?? []);
+        setWorkload(wlRes.workload ?? []);
+        setWeekday(wdRes);
+        setAgentActivity(agActRes.agents ?? []);
+        setAgents((agentRes.agents ?? []).filter((a) => !a.archived && a.enabled));
+        setError(null);
+      } catch (err) {
+        if (gen !== loadGen.current) return;
+        const msg = errMsg(err, "Failed to load tasks");
+        setError(msg);
+        if (!opts?.silent) toast(msg);
+      } finally {
+        if (gen === loadGen.current) setLoading(false);
       }
-    } catch (err) {
-      if (gen !== loadGen.current) return;
-      const msg = errMsg(err, "Failed to load tasks");
-      setError(msg);
-      if (!opts?.silent) toast(msg);
-    } finally {
-      if (gen === loadGen.current) setLoading(false);
-    }
-  }, [tz, toast]);
+    },
+    [search, priority, status, assignee, datePreset, timelineView, tz, toast],
+  );
 
-  useEffect(() => {
-    void loadAll();
-    const id = window.setInterval(() => {
-      if (document.visibilityState === "hidden") return;
-      void loadAll({ silent: true });
-    }, POLL_MS);
-    return () => {
-      window.clearInterval(id);
-      loadGen.current += 1;
-    };
-  }, [loadAll]);
-
-  // Debounce filter-driven reload (keeps form state; cancels stale via loadGen)
   useEffect(() => {
     const id = window.setTimeout(() => {
-      void loadAll({ silent: true });
-    }, 250);
-    return () => window.clearTimeout(id);
-  }, [search, priority, status, assignee, datePreset, timelineView, loadAll]);
-
-  useEffect(() => {
-    const fromUrl = searchParams.get("task");
-    if (fromUrl && fromUrl !== selectedId) setSelectedId(fromUrl);
-  }, [searchParams, selectedId]);
+      void loadAll({ silent: false, selectedTaskId: selectedId });
+    }, 0);
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void loadAll({ silent: true, selectedTaskId: selectedId });
+    }, POLL_MS);
+    return () => {
+      window.clearTimeout(id);
+      window.clearInterval(poll);
+      loadGen.current += 1;
+    };
+  }, [loadAll, selectedId]);
 
   const selectTask = useCallback(
     (taskId: string | null) => {
-      setSelectedId(taskId);
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -257,14 +242,14 @@ export function TasksPage() {
       try {
         await fn();
         toast(`${label} ok`);
-        await loadAll({ silent: true });
+        await loadAll({ silent: true, selectedTaskId: selectedId });
       } catch (err) {
         toast(errMsg(err, `${label} failed`));
       } finally {
         setActionBusy(false);
       }
     },
-    [loadAll, toast],
+    [loadAll, toast, selectedId],
   );
 
   const onCardAction = useCallback(
@@ -287,13 +272,13 @@ export function TasksPage() {
           selectTask(res.task.taskId);
         } else if (action === "archive") {
           await api.archiveTask(task.taskId);
-          if (selectedIdRef.current === task.taskId) selectTask(null);
+          if (selectedId === task.taskId) selectTask(null);
         } else if (action === "complete") {
           await api.updateTask(task.taskId, { boardColumn: "done", progress: 1 });
         }
       });
     },
-    [runAction, selectTask],
+    [runAction, selectTask, selectedId],
   );
 
   return (
@@ -386,6 +371,7 @@ export function TasksPage() {
               aria-label="Date range"
               onChange={(e) => setDatePreset(e.target.value)}
             >
+              <option value="all">All dates</option>
               <option value="week">Today - This Week</option>
               <option value="today">Today</option>
               <option value="month">This Month</option>
@@ -420,7 +406,7 @@ export function TasksPage() {
         {error ? (
           <div className="lv-tasks-banner lv-tasks-banner--error" role="alert">
             <span>{error}</span>
-            <button type="button" className="lv-tasks-btn lv-tasks-btn--outline" onClick={() => void loadAll()}>
+            <button type="button" className="lv-tasks-btn lv-tasks-btn--outline" onClick={() => void loadAll({ selectedTaskId: selectedId })}>
               Retry
             </button>
           </div>
@@ -449,12 +435,13 @@ export function TasksPage() {
           />
           {selected ? (
             <TaskDetails
+              key={selected.taskId}
               task={selected}
               agents={agents}
               allTasks={tasks}
               busy={actionBusy}
               onClose={() => selectTask(null)}
-              onRefresh={() => void loadAll({ silent: true })}
+              onRefresh={() => void loadAll({ silent: true, selectedTaskId: selectedId })}
               onError={notifyError}
               onSuccess={notifySuccess}
               onAssign={(task, agentId) => {
@@ -489,26 +476,29 @@ export function TasksPage() {
       </main>
 
       <TaskCreateDialog
+        key={createOpen ? `create-${createColumn}` : "create-closed"}
         open={createOpen}
         agents={agents}
         defaultBoardColumn={createColumn}
         onClose={() => setCreateOpen(false)}
-        onCreated={() => void loadAll({ silent: true })}
+        onCreated={() => void loadAll({ silent: true, selectedTaskId: selectedId })}
         onError={notifyError}
         onSuccess={notifySuccess}
       />
       <TaskQuickCapture
+        key={quickOpen ? "quick-open" : "quick-closed"}
         open={quickOpen}
         agents={agents}
         onClose={() => setQuickOpen(false)}
-        onCreated={() => void loadAll({ silent: true })}
+        onCreated={() => void loadAll({ silent: true, selectedTaskId: selectedId })}
         onError={notifyError}
         onSuccess={notifySuccess}
       />
       <TaskAutoPlanDialog
+        key={autoOpen ? "auto-open" : "auto-closed"}
         open={autoOpen}
         onClose={() => setAutoOpen(false)}
-        onCommitted={() => void loadAll({ silent: true })}
+        onCommitted={() => void loadAll({ silent: true, selectedTaskId: selectedId })}
         onError={notifyError}
         onSuccess={notifySuccess}
       />
