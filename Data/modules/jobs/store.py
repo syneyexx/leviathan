@@ -84,10 +84,11 @@ class JobStore:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
+        # Hot path: busy_timeout yes; journal_mode is set during initialize/migration.
         conn = sqlite3.connect(self.path, timeout=15, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         try:
             yield conn
             conn.commit()
@@ -96,6 +97,7 @@ class JobStore:
 
     def initialize(self) -> None:
         with self.connect() as conn:
+            conn.execute("PRAGMA journal_mode = WAL")
             self._ensure_schema(conn)
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
