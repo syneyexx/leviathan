@@ -59,6 +59,8 @@ class ResearchService:
         observability_emit: ObservabilityEmit | None = None,
         auto_promote_verified_knowledge: bool = True,
         model_caller: Callable[..., dict[str, Any]] | None = None,
+        job_runtime: Any | None = None,
+        dataset_service: Any | None = None,
     ) -> None:
         self.store = store
         self.knowledge = knowledge
@@ -68,16 +70,20 @@ class ResearchService:
         self._emit = observability_emit
         self.auto_promote_verified_knowledge = bool(auto_promote_verified_knowledge)
         self.model_caller = model_caller
+        self.job_runtime = job_runtime
+        self.dataset_service = dataset_service
         if corpus is not None:
             self.snapshots_root = corpus.research_snapshots
             self.reports_root = corpus.research_reports
             self.exports_root = corpus.research_exports
             self.sources_root = corpus.research_sources
+            self._corpus = corpus
         else:
             self.snapshots_root = Path(snapshots_root or store.db_path.parent / "research_snapshots")
             self.reports_root = Path(reports_root or store.db_path.parent / "research_reports")
             self.exports_root = self.reports_root.parent / "research_exports"
             self.sources_root = Path(sources_root or store.db_path.parent / "research_sources")
+            self._corpus = None
         self.local = local or build_default_local_retriever(knowledge)
         self.web = web or (
             build_web_provider(allow_outbound=allow_outbound)
@@ -90,6 +96,50 @@ class ResearchService:
             sources_root=self.sources_root,
             snapshots_root=self.snapshots_root,
         )
+        self.source_ingestion = None
+        try:
+            from Data.modules.source_ingestion.service import SourceIngestionService
+            from Data.modules.source_ingestion.settings import load_source_ingestion_settings
+            from Data.modules.common.corpus import CorpusLayout
+
+            layout = self._corpus
+            if layout is None:
+                layout = CorpusLayout(
+                    root=self.sources_root.parent,
+                    datasets=self.sources_root.parent / "datasets",
+                    datasets_raw=self.sources_root.parent / "datasets" / "raw",
+                    datasets_materialized=self.sources_root.parent / "datasets" / "materialized",
+                    datasets_processed=self.sources_root.parent / "datasets" / "processed",
+                    datasets_exports=self.sources_root.parent / "datasets" / "exports",
+                    datasets_manifests=self.sources_root.parent / "datasets" / "manifests",
+                    training=self.sources_root.parent / "training",
+                    training_jobs=self.sources_root.parent / "training" / "jobs",
+                    training_runs=self.sources_root.parent / "training" / "runs",
+                    training_checkpoints=self.sources_root.parent / "training" / "checkpoints",
+                    training_adapters=self.sources_root.parent / "training" / "adapters",
+                    training_exports=self.sources_root.parent / "training" / "exports",
+                    training_logs=self.sources_root.parent / "training" / "logs",
+                    research=self.sources_root.parent,
+                    research_projects=self.sources_root.parent / "projects",
+                    research_sources=self.sources_root,
+                    research_snapshots=self.snapshots_root,
+                    research_reports=self.reports_root,
+                    research_exports=self.exports_root,
+                    models_artifacts=self.sources_root.parent / "models" / "artifacts",
+                    models_cache=self.sources_root.parent / "models" / "cache",
+                    hf_cache=self.sources_root.parent / "hf_cache",
+                )
+            self.source_ingestion = SourceIngestionService.from_corpus(
+                research_store=store,
+                corpus=layout,
+                database_path=store.db_path,
+                knowledge=knowledge,
+                job_runtime=job_runtime,
+                dataset_service=dataset_service,
+                settings=load_source_ingestion_settings(),
+            )
+        except Exception:  # noqa: BLE001 — keep Research usable if SI init fails
+            self.source_ingestion = None
         self.runner = ResearchRunner(
             store,
             local=self.local,
@@ -123,6 +173,8 @@ class ResearchService:
         atlas_store: Any | None = None,
         observability_emit: ObservabilityEmit | None = None,
         model_caller: Callable[..., dict[str, Any]] | None = None,
+        job_runtime: Any | None = None,
+        dataset_service: Any | None = None,
     ) -> "ResearchService":
         corpus = build_corpus_layout(settings)
         store = ResearchStore(db_path)
@@ -157,6 +209,8 @@ class ResearchService:
             observability_emit=observability_emit,
             auto_promote_verified_knowledge=auto_promote,
             model_caller=model_caller,
+            job_runtime=job_runtime,
+            dataset_service=dataset_service,
         )
 
     def reconfigure_web(
@@ -187,6 +241,11 @@ class ResearchService:
 
     def start_background(self, *, poll_seconds: float = 0.5) -> None:
         """Background dispatcher for queued research runs."""
+        if self.source_ingestion is not None:
+            try:
+                self.source_ingestion.start_background()
+            except Exception:  # noqa: BLE001
+                pass
         if self._dispatcher_thread and self._dispatcher_thread.is_alive():
             return
 
@@ -648,6 +707,90 @@ class ResearchService:
         content_type: str | None = None,
     ) -> dict[str, Any]:
         project = self.get_project(project_id)
+        if self.source_ingestion is not None:
+            result = self.source_ingestion.accept_upload(
+                project.project_id,
+                filename=filename,
+                stream=stream,
+                content_type=content_type,
+            )
+            is_archive = result.get("source_type") == "archive"
+            runner = getattr(self.source_ingestion.settings, "runner", "inprocess")
+            source_id = str(result.get("source_id") or "")
+            # Process when in-process. Prefer JobStore claim; fall back to direct pipeline.
+            # Do not start a competing background thread in this request (race on claim).
+            if runner == "inprocess" and not result.get("idempotent"):
+                if self.source_ingestion.jobs is not None:
+                    self.source_ingestion.process_next()
+                    # Archives may leave residual pending if cancelled mid-flight; drain once more.
+                    if is_archive:
+                        pending = self.source_ingestion.get_status(source_id).files_pending
+                        if pending > 0:
+                            self.source_ingestion.pipeline().process_source(source_id)
+                else:
+                    self.source_ingestion.pipeline().process_source(source_id)
+            source = self.store.get_source(source_id)
+            progress = self.source_ingestion.get_status(source_id)
+            text_chars = 0
+            page_count = None
+            if source and source.snapshot_path:
+                try:
+                    text_chars = len(Path(source.snapshot_path).read_text(encoding="utf-8"))
+                except OSError:
+                    text_chars = 0
+                page_count = (source.provenance or {}).get("page_count")
+
+            # Backward-compatible honesty for single-file uploads: raise on hard failures
+            # the way UploadIngestor historically did (archives use aggregate status instead).
+            if not is_archive and source is not None:
+                meta = source.metadata or {}
+                prov = source.provenance or {}
+                err_code = prov.get("error_code") or meta.get("error_code")
+                skip_reason = (
+                    (meta.get("quarantine_reason") or meta.get("skip_reason") or source.brain_error)
+                    or ""
+                )
+                if source.parse_status.value == "failed":
+                    code = str(err_code or "SOURCE_PARSE_FAILED")
+                    raise ResearchError(
+                        code,
+                        str(skip_reason or source.brain_error or "Parse failed"),
+                        http_status=422,
+                        details={"source_id": source_id, "filename": filename},
+                    )
+                if source.parse_status.value == "skipped":
+                    if "secrets" in str(skip_reason) or "quarantine" in str(skip_reason):
+                        pass  # quarantined secrets stay durable without raising
+                    else:
+                        kind = (prov.get("detection") or {}).get("kind")
+                        ext = Path(filename).suffix.lower()
+                        if (
+                            kind == "binary"
+                            or ext in {".exe", ".dll", ".so", ".dylib", ".bin"}
+                            or "binary" in str(skip_reason)
+                            or "unsupported" in str(skip_reason)
+                            or "ocr_unavailable" in str(skip_reason)
+                        ):
+                            raise ResearchError(
+                                "UNSUPPORTED_SOURCE_TYPE",
+                                f"Unsupported file type: {ext or '(none)'}",
+                                http_status=422,
+                                details={"filename": filename, "reason": skip_reason or "binary"},
+                            )
+
+            return {
+                "source_id": source_id,
+                "job_id": result.get("job_id"),
+                "status": progress.status.value,
+                "source_type": result.get("source_type"),
+                "filename": result.get("filename"),
+                "source": (source.public_dict() if source else result.get("source")),
+                "extracted_chars": text_chars,
+                "page_count": page_count,
+                "progress": progress.public_dict(),
+            }
+
+        # Legacy fallback (UploadIngestor) if SI unavailable
         source, text = self.uploads.from_upload_stream(
             project.project_id,
             filename=filename,
@@ -677,9 +820,85 @@ class ResearchService:
         )
         return {
             "source": synced.public_dict(),
+            "source_id": synced.source_id,
+            "job_id": None,
+            "status": synced.brain_status.value,
+            "source_type": "file",
+            "filename": filename,
             "extracted_chars": len(text),
             "page_count": (synced.provenance or {}).get("page_count"),
         }
+
+    def get_ingestion_status(self, project_id: str, source_id: str) -> dict[str, Any]:
+        self.get_project(project_id)
+        source = self.store.get_source(source_id)
+        if source is None or source.project_id != project_id:
+            raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
+        if self.source_ingestion is None:
+            return {"source": source.public_dict()}
+        progress = self.source_ingestion.get_status(source_id)
+        return {
+            "source": source.public_dict(),
+            "progress": progress.public_dict(),
+        }
+
+    def list_ingestion_children(
+        self,
+        project_id: str,
+        source_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        outcome: str | None = None,
+    ) -> dict[str, Any]:
+        self.get_project(project_id)
+        source = self.store.get_source(source_id)
+        if source is None or source.project_id != project_id:
+            raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
+        if self.source_ingestion is None:
+            return {"source_id": source_id, "members": [], "total": 0}
+        return self.source_ingestion.list_children(
+            source_id, offset=offset, limit=limit, outcome=outcome
+        )
+
+    def cancel_ingestion(self, project_id: str, source_id: str) -> dict[str, Any]:
+        self.get_project(project_id)
+        source = self.store.get_source(source_id)
+        if source is None or source.project_id != project_id:
+            raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
+        if self.source_ingestion is None:
+            raise ResearchError("SOURCE_INGESTION_UNAVAILABLE", "Not configured", http_status=503)
+        return {"progress": self.source_ingestion.cancel(source_id)}
+
+    def retry_ingestion(
+        self,
+        project_id: str,
+        source_id: str,
+        *,
+        failed_only: bool = True,
+    ) -> dict[str, Any]:
+        self.get_project(project_id)
+        source = self.store.get_source(source_id)
+        if source is None or source.project_id != project_id:
+            raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
+        if self.source_ingestion is None:
+            raise ResearchError("SOURCE_INGESTION_UNAVAILABLE", "Not configured", http_status=503)
+        result = self.source_ingestion.retry(source_id, failed_only=failed_only)
+        if self.source_ingestion.settings.runner == "inprocess":
+            self.source_ingestion.process_next()
+            result["progress"] = self.source_ingestion.get_status(source_id).public_dict()
+        return result
+
+    def retry_ingestion_brain(self, project_id: str, source_id: str) -> dict[str, Any]:
+        self.get_project(project_id)
+        source = self.store.get_source(source_id)
+        if source is None or source.project_id != project_id:
+            raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
+        if self.source_ingestion is not None:
+            meta = source.metadata or {}
+            if meta.get("is_container") or (source.provenance or {}).get("is_archive"):
+                return self.source_ingestion.retry_brain(source_id)
+        return self.retry_brain_sync(project_id, source_id)
 
     def add_url_source(self, project_id: str, url: str) -> dict[str, Any]:
         project = self.get_project(project_id)

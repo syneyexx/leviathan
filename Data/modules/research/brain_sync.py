@@ -24,13 +24,17 @@ class ResearchBrainSync:
             return self._mark(source, BrainStatus.SKIPPED, error="No parseable text")
 
         doc_id = f"research-upload:{source.content_hash or source.source_id}"
+        prov = source.provenance or {}
+        archive = prov.get("archive_filename")
+        rel = prov.get("relative_path")
+        title = f"{archive}/{rel}" if archive and rel else (source.title or "Research upload")
         try:
             record = self.knowledge.upsert_document(
                 document_id=doc_id,
-                title=source.title or "Research upload",
+                title=title,
                 content=text,
                 source="research_upload",
-                original_path=source.original_uri,
+                original_path=str(rel or source.original_uri),
                 size_bytes=len(text.encode("utf-8")),
                 parser=source.parser or "research_upload",
                 source_type="research_upload",
@@ -43,6 +47,12 @@ class ResearchBrainSync:
                     "mime_type": source.mime_type,
                     "content_hash": source.content_hash,
                     "parser": source.parser,
+                    "parser_version": prov.get("parser_version"),
+                    "container_source_id": prov.get("container_source_id"),
+                    "parent_source_id": prov.get("parent_source_id"),
+                    "archive_filename": archive,
+                    "relative_path": rel,
+                    "original_path": rel or source.original_uri,
                 },
             )
             return self._mark(

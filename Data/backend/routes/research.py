@@ -213,6 +213,53 @@ def build_research_router(service: ResearchService) -> APIRouter:
             raise_research_error(exc)
         return result
 
+    @router.get("/api/research/{project_id}/sources/{source_id}/ingestion")
+    def ingestion_status(project_id: str, source_id: str) -> dict:
+        try:
+            return service.get_ingestion_status(project_id, source_id)
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.get("/api/research/{project_id}/sources/{source_id}/children")
+    def ingestion_children(
+        project_id: str,
+        source_id: str,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=500),
+        outcome: str | None = Query(None),
+    ) -> dict:
+        try:
+            return service.list_ingestion_children(
+                project_id, source_id, offset=offset, limit=limit, outcome=outcome
+            )
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.post("/api/research/{project_id}/sources/{source_id}/ingestion/cancel")
+    def cancel_ingestion(project_id: str, source_id: str) -> dict:
+        try:
+            return service.cancel_ingestion(project_id, source_id)
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.post("/api/research/{project_id}/sources/{source_id}/ingestion/retry")
+    def retry_ingestion(
+        project_id: str,
+        source_id: str,
+        failed_only: bool = Query(True),
+    ) -> dict:
+        try:
+            return service.retry_ingestion(project_id, source_id, failed_only=failed_only)
+        except ResearchError as exc:
+            raise_research_error(exc)
+
+    @router.post("/api/research/{project_id}/sources/{source_id}/ingestion/brain-retry")
+    def retry_ingestion_brain(project_id: str, source_id: str) -> dict:
+        try:
+            return service.retry_ingestion_brain(project_id, source_id)
+        except ResearchError as exc:
+            raise_research_error(exc)
+
     @router.post("/api/research/{project_id}/sources/url")
     def add_url(project_id: str, payload: UrlSourceRequest) -> dict:
         try:

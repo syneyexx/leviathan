@@ -11,6 +11,14 @@ from .states import TERMINAL_JOB_STATES, JobState
 from .store import JobStore
 from .types import JobRecord
 
+# Capabilities owned by dedicated external/domain workers — API JobRuntime must not steal them.
+EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
+    {
+        "source_ingestion.process",
+        "source_ingestion.brain_retry",
+    }
+)
+
 
 class JobRuntime:
     """Enqueue and execute capability jobs through the Execution Gateway.
@@ -122,7 +130,9 @@ class JobRuntime:
         if not self.resources.try_acquire(reservation):
             return None
         try:
-            job = self.store.claim_next_queued()
+            job = self.store.claim_next_queued(
+                exclude_capability_ids=EXTERNAL_WORKER_CAPABILITIES,
+            )
             if job is None:
                 return None
             self.resources.rebind(reservation, job.job_id)

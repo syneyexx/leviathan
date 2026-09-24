@@ -229,19 +229,31 @@ class JobStore:
         assert row is not None
         return self._from_row(row)
 
-    def claim_next_queued(self) -> JobRecord | None:
-        """Atomically move the oldest QUEUED job to RUNNING."""
+    def claim_next_queued(
+        self,
+        *,
+        capability_ids: set[str] | frozenset[str] | None = None,
+        exclude_capability_ids: set[str] | frozenset[str] | None = None,
+    ) -> JobRecord | None:
+        """Atomically move the oldest matching QUEUED job to RUNNING.
+
+        ``capability_ids`` — only claim these capabilities (external workers).
+        ``exclude_capability_ids`` — skip these (API JobRuntime vs domain workers).
+        """
         with self.connect() as conn:
             self._ensure_schema(conn)
-            row = conn.execute(
-                """
-                SELECT * FROM jobs
-                WHERE state = ?
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (JobState.QUEUED.value,),
-            ).fetchone()
+            sql = "SELECT * FROM jobs WHERE state = ?"
+            params: list[Any] = [JobState.QUEUED.value]
+            if capability_ids:
+                placeholders = ",".join("?" for _ in capability_ids)
+                sql += f" AND capability_id IN ({placeholders})"
+                params.extend(sorted(capability_ids))
+            if exclude_capability_ids:
+                placeholders = ",".join("?" for _ in exclude_capability_ids)
+                sql += f" AND capability_id NOT IN ({placeholders})"
+                params.extend(sorted(exclude_capability_ids))
+            sql += " ORDER BY created_at ASC LIMIT 1"
+            row = conn.execute(sql, params).fetchone()
             if row is None:
                 return None
             validate_job_transition(JobState.QUEUED, JobState.RUNNING)

@@ -55,6 +55,14 @@ echo [LEVIATHAN] Starting via leviathan.py (host/port from settings)
 echo [LEVIATHAN] Keep this window open. Press Ctrl+C to stop.
 echo.
 
+REM Optional: when LEVIATHAN_SOURCE_INGESTION_RUNNER=external, start the shared
+REM source-ingestion worker in a second window (same DB; do not double inprocess).
+findstr /B /C:"LEVIATHAN_SOURCE_INGESTION_RUNNER=external" ".env" >nul 2>&1
+if not errorlevel 1 (
+  echo [LEVIATHAN] Starting source ingestion worker ^(external mode^)
+  start "LEVIATHAN Source Ingestion" "%PY%" scripts\source_ingestion_worker.py
+)
+
 "%PY%" leviathan.py
 set "EXITCODE=%ERRORLEVEL%"
 

@@ -461,6 +461,8 @@ class ResearchIntegrationSettings:
     dataset_index_batch_size: int = 50
     dataset_max_relations_per_doc: int = 24
     dataset_extract_relations: bool = True
+    # Source ingestion worker: inprocess | external | none
+    source_ingestion_runner: str = "inprocess"
 
 
 @dataclass(frozen=True)
@@ -740,6 +742,7 @@ class Settings:
                 "dataset_jobs_runner": self.research_integration.dataset_jobs_runner,
                 "dataset_index_batch_size": self.research_integration.dataset_index_batch_size,
                 "dataset_extract_relations": self.research_integration.dataset_extract_relations,
+                "source_ingestion_runner": self.research_integration.source_ingestion_runner,
             },
             "database_path": str(self.database_path),
         }
@@ -1126,6 +1129,11 @@ class Settings:
                 ),
                 dataset_extract_relations=_env_bool(
                     "LEVIATHAN_DATASET_EXTRACT_RELATIONS", True
+                ),
+                source_ingestion_runner=(
+                    (_env_raw("LEVIATHAN_SOURCE_INGESTION_RUNNER", "inprocess") or "inprocess")
+                    .strip()
+                    .lower()
                 ),
             ),
             database_path=database_path,

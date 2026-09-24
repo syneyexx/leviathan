@@ -27,11 +27,31 @@ import type {
   ResearchProject,
   ResearchSource,
   ResearchWorker,
+  SourceIngestionMember,
+  SourceIngestionProgress,
 } from "../types/api";
 
 const ACTIVE = new Set(["queued", "researching", "synthesizing", "cancelling"]);
 
-const UPLOAD_EXT = /\.(pdf|txt|md|markdown|csv|json|log)$/i;
+const UPLOAD_EXT =
+  /\.(pdf|txt|md|markdown|csv|json|jsonl|ndjson|log|rst|ya?ml|toml|docx|xlsx|pptx|py|ts|tsx|js|jsx|zip|tar|tgz|gz)$/i;
+
+const INGEST_ACTIVE = new Set([
+  "queued",
+  "inspecting",
+  "expanding",
+  "classifying",
+  "parsing",
+  "normalizing",
+  "brain_pending",
+  "brain_syncing",
+  "uploading",
+  "stored",
+]);
+
+const UPLOAD_ACCEPT =
+  ".pdf,.txt,.md,.markdown,.csv,.json,.jsonl,.ndjson,.log,.rst,.yaml,.yml,.toml,.docx,.xlsx,.pptx,.py,.ts,.tsx,.js,.jsx,.zip,.tar,.tgz,.gz";
+
 
 const PHASE_STEP_INDEX: Record<string, number> = {
   idle: 0,
@@ -403,6 +423,11 @@ export function ResearchPage() {
   const [project, setProject] = useState<ResearchProject | null>(null);
   const [workers, setWorkers] = useState<ResearchWorker[]>([]);
   const [sources, setSources] = useState<ResearchSource[]>([]);
+  const [ingestionFocusId, setIngestionFocusId] = useState<string | null>(null);
+  const [ingestionProgress, setIngestionProgress] = useState<SourceIngestionProgress | null>(null);
+  const [ingestionMembers, setIngestionMembers] = useState<SourceIngestionMember[]>([]);
+  const [ingestionTotal, setIngestionTotal] = useState(0);
+  const [ingestionOffset, setIngestionOffset] = useState(0);
   const [evidence, setEvidence] = useState<ResearchEvidence[]>([]);
   const [claims, setClaims] = useState<ResearchClaim[]>([]);
   const [hasLiveProject, setHasLiveProject] = useState(false);
@@ -525,6 +550,47 @@ export function ResearchPage() {
   useEffect(() => {
     void loadLatest();
   }, [loadLatest]);
+
+  useEffect(() => {
+    if (!ingestionFocusId || !project?.project_id) return;
+    let cancelled = false;
+    const projectId = project.project_id;
+    const sourceId = ingestionFocusId;
+
+    async function tick() {
+      try {
+        const status = await api.getSourceIngestionStatus(projectId, sourceId);
+        if (cancelled) return;
+        if (status.progress) setIngestionProgress(status.progress);
+        const kids = await api.listSourceIngestionChildren(projectId, sourceId, {
+          offset: ingestionOffset,
+          limit: 50,
+        });
+        if (cancelled) return;
+        setIngestionMembers(kids.members);
+        setIngestionTotal(kids.total);
+        await refreshArtifacts(projectId);
+      } catch {
+        /* ignore transient poll errors */
+      }
+    }
+
+    void tick();
+    const phase = ingestionProgress?.phase || ingestionProgress?.status || "";
+    if (!INGEST_ACTIVE.has(phase)) return;
+    const id = window.setInterval(() => void tick(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [
+    ingestionFocusId,
+    project?.project_id,
+    ingestionOffset,
+    ingestionProgress?.phase,
+    ingestionProgress?.status,
+    refreshArtifacts,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -669,17 +735,22 @@ export function ResearchPage() {
       const draft = await ensureDraftProject();
       for (const file of list) {
         if (!UPLOAD_EXT.test(file.name)) {
-          toast(`Unsupported: ${file.name} (use PDF, TXT, MD, CSV, JSON, LOG)`);
+          toast(`Unsupported: ${file.name}`);
           continue;
         }
-        if (file.size > 100 * 1024 * 1024) {
-          toast(`${file.name} exceeds 100MB`);
-          continue;
-        }
+        // Client accept is convenience only — backend is authoritative. No hard 100MB ceiling.
         const res = await api.uploadResearchSource(draft.project_id, file);
         ok += 1;
+        const progress = res.progress;
+        const status = progress?.status || res.status || res.source.parse_status;
         const brain = res.source.brain_status ? ` · brain ${res.source.brain_status}` : "";
-        toast(`${file.name}: parse ${res.source.parse_status}${brain}`);
+        if (res.source_type === "archive" || progress) {
+          setIngestionFocusId(res.source_id || res.source.source_id);
+          if (progress) setIngestionProgress(progress);
+          toast(`${file.name}: ${status}${brain}`);
+        } else {
+          toast(`${file.name}: parse ${res.source.parse_status}${brain}`);
+        }
       }
       if (ok > 0) {
         setContext((c) => ({ ...c, files: true }));
@@ -1095,7 +1166,9 @@ export function ResearchPage() {
               <Icon name="upload" />
               <div>
                 <strong>Drop files here or click to upload</strong>
-                <small>PDF, TXT, MD, CSV, JSON, LOG (max 100MB) → research sources</small>
+                <small>
+                  PDF, text, code, Office, ZIP/TAR archives → durable Source Ingestion (backend-enforced limits)
+                </small>
               </div>
               {fileSourceCount > 0 ? <small>{fileSourceCount} file source(s) on project</small> : null}
             </div>
@@ -1103,10 +1176,140 @@ export function ResearchPage() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".pdf,.txt,.md,.markdown,.csv,.json,.log"
+              accept={UPLOAD_ACCEPT}
               hidden
               onChange={(e) => void onFilesSelected(e.target.files)}
             />
+            {ingestionProgress ? (
+              <div className="lv-rd-ingest-status" aria-live="polite">
+                <div className="lv-rd-panel-head">
+                  <h3 className="lv-rd-panel-title">Source Ingestion</h3>
+                  <span className="lv-rd-badge is-count">
+                    {ingestionProgress.filename || "upload"} · {ingestionProgress.status}
+                  </span>
+                </div>
+                <p className="lv-rd-ingest-summary">
+                  {ingestionProgress.archive_type ? `${ingestionProgress.archive_type} · ` : ""}
+                  {ingestionProgress.progress_pct != null
+                    ? `${ingestionProgress.progress_pct}% · `
+                    : "working · "}
+                  ingested {ingestionProgress.files_ingested}/{ingestionProgress.files_discovered}
+                  {" · "}skipped {ingestionProgress.files_skipped}
+                  {" · "}failed {ingestionProgress.files_failed}
+                  {" · "}brain {ingestionProgress.brain_synced}
+                  {ingestionProgress.files_quarantined
+                    ? ` · quarantined ${ingestionProgress.files_quarantined}`
+                    : ""}
+                  {ingestionProgress.files_routed ? ` · routed ${ingestionProgress.files_routed}` : ""}
+                </p>
+                <div className="lv-rd-ingest-actions">
+                  {INGEST_ACTIVE.has(ingestionProgress.status) ? (
+                    <button
+                      type="button"
+                      className="lv-rd-ghost-btn"
+                      disabled={busy || !project}
+                      onClick={() => {
+                        if (!project || !ingestionFocusId) return;
+                        void api
+                          .cancelSourceIngestion(project.project_id, ingestionFocusId)
+                          .then((r) => setIngestionProgress(r.progress))
+                          .catch((err) => toast(errMsg(err, "Cancel failed")));
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
+                  {ingestionProgress.files_failed > 0 ? (
+                    <button
+                      type="button"
+                      className="lv-rd-ghost-btn"
+                      disabled={busy || !project}
+                      onClick={() => {
+                        if (!project || !ingestionFocusId) return;
+                        void api
+                          .retrySourceIngestion(project.project_id, ingestionFocusId, true)
+                          .then((r) => {
+                            if (r.progress) setIngestionProgress(r.progress);
+                            toast("Retry queued");
+                          })
+                          .catch((err) => toast(errMsg(err, "Retry failed")));
+                      }}
+                    >
+                      Retry failed
+                    </button>
+                  ) : null}
+                  {ingestionProgress.brain_failed > 0 ? (
+                    <button
+                      type="button"
+                      className="lv-rd-ghost-btn"
+                      disabled={busy || !project}
+                      onClick={() => {
+                        if (!project || !ingestionFocusId) return;
+                        void api
+                          .retrySourceIngestionBrain(project.project_id, ingestionFocusId)
+                          .then(() => toast("Brain retry started"))
+                          .catch((err) => toast(errMsg(err, "Brain retry failed")));
+                      }}
+                    >
+                      Retry Brain sync
+                    </button>
+                  ) : null}
+                </div>
+                {ingestionMembers.length > 0 ? (
+                  <ul className="lv-rd-ingest-members">
+                    {ingestionMembers
+                      .filter((m) => !m.is_directory)
+                      .map((m) => (
+                        <li key={m.member_id}>
+                          <span className={`lv-rd-ingest-mark is-${m.outcome}`}>
+                            {m.outcome === "success"
+                              ? "✓"
+                              : m.outcome === "failed"
+                                ? "✕"
+                                : m.outcome === "quarantined"
+                                  ? "!"
+                                  : m.outcome === "routed"
+                                    ? "↷"
+                                    : "–"}
+                          </span>
+                          <code>{m.relative_path}</code>
+                          <small>
+                            {m.outcome}
+                            {m.brain_status && m.brain_status !== "not_applicable"
+                              ? ` · brain ${m.brain_status}`
+                              : ""}
+                            {m.skip_reason ? ` · ${m.skip_reason}` : ""}
+                          </small>
+                        </li>
+                      ))}
+                  </ul>
+                ) : null}
+                {ingestionTotal > ingestionMembers.length ? (
+                  <div className="lv-rd-ingest-actions">
+                    <button
+                      type="button"
+                      className="lv-rd-ghost-btn"
+                      disabled={ingestionOffset <= 0}
+                      onClick={() => setIngestionOffset((o) => Math.max(0, o - 50))}
+                    >
+                      Prev
+                    </button>
+                    <small>
+                      {ingestionOffset + 1}–{Math.min(ingestionOffset + 50, ingestionTotal)} of{" "}
+                      {ingestionTotal}
+                    </small>
+                    <button
+                      type="button"
+                      className="lv-rd-ghost-btn"
+                      disabled={ingestionOffset + 50 >= ingestionTotal}
+                      onClick={() => setIngestionOffset((o) => o + 50)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="lv-rd-ingest-actions">
               <button
                 type="button"
