@@ -113,6 +113,19 @@ class JobRuntimeTests(unittest.TestCase):
         self.assertEqual(cancelled.state, JobState.CANCELLED)
         self.assertIsNone(self.jobs.process_next())
 
+    def test_cancel_running_requests_cooperative_cancel(self) -> None:
+        """RUNNING jobs move to CANCEL_REQUESTED, not terminal CANCELLED."""
+        job = self.store.create(capability_id="file.read", arguments={"path": "x"})
+        self.store.transition(job.job_id, JobState.QUEUED)
+        claimed = self.store.claim_next_queued(worker_id="test-worker")
+        assert claimed is not None
+        self.assertEqual(claimed.state, JobState.RUNNING)
+        pending = self.jobs.cancel(claimed.job_id)
+        self.assertEqual(pending.state, JobState.CANCEL_REQUESTED)
+        self.assertIsNotNone(pending.cancel_requested_at)
+        acked = self.store.ack_cancel(claimed.job_id)
+        self.assertEqual(acked.state, JobState.CANCELLED)
+
     def test_resource_limit_blocks_second_slot(self) -> None:
         self.assertTrue(self.resources.try_acquire("holder"))
         job = self.jobs.enqueue(

@@ -29,6 +29,35 @@ class JobRecord:
     attempt_number: int = 1
     budget: dict[str, Any] = field(default_factory=dict)
     latency_class: str = "background"
+    # Execution fabric additive fields
+    domain: str | None = None
+    consumer: str | None = None
+    correlation_id: str | None = None
+    root_job_id: str | None = None
+    parent_job_id: str | None = None
+    domain_entity_type: str | None = None
+    domain_entity_id: str | None = None
+    worker_pool: str | None = None
+    resource_class: str | None = None
+    priority: int = 100
+    queued_at: str | None = None
+    claimed_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    max_attempts: int = 3
+    next_attempt_at: str | None = None
+    timeout_seconds: float | None = None
+    deadline_at: str | None = None
+    cancel_requested_at: str | None = None
+    cancel_reason: str | None = None
+    progress: float | None = None
+    phase: str | None = None
+    message: str | None = None
+    resource_request: dict[str, Any] = field(default_factory=dict)
+    result_summary: dict[str, Any] | None = None
+    artifact_refs: list[Any] = field(default_factory=list)
+    error_code: str | None = None
+    retryable: bool | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -52,4 +81,32 @@ class JobRecord:
             "attempt_number": self.attempt_number,
             "budget": self.budget,
             "latency_class": self.latency_class,
+            "domain": self.domain,
+            "consumer": self.consumer,
+            "correlation_id": self.correlation_id,
+            "root_job_id": self.root_job_id,
+            "parent_job_id": self.parent_job_id,
+            "domain_entity_type": self.domain_entity_type,
+            "domain_entity_id": self.domain_entity_id,
+            "worker_pool": self.worker_pool,
+            "resource_class": self.resource_class,
+            "priority": self.priority,
+            "queued_at": self.queued_at,
+            "claimed_at": self.claimed_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "max_attempts": self.max_attempts,
+            "next_attempt_at": self.next_attempt_at,
+            "timeout_seconds": self.timeout_seconds,
+            "deadline_at": self.deadline_at,
+            "cancel_requested_at": self.cancel_requested_at,
+            "cancel_reason": self.cancel_reason,
+            "progress": self.progress,
+            "phase": self.phase,
+            "message": self.message,
+            "resource_request": self.resource_request,
+            "result_summary": self.result_summary,
+            "artifact_refs": self.artifact_refs,
+            "error_code": self.error_code,
+            "retryable": self.retryable,
         }
