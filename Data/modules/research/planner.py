@@ -108,6 +108,24 @@ def _subquestions(topic: str, objective: str, limit: int) -> list[str]:
     return seeds[: max(1, limit)]
 
 
+def _merge_unique(*lists: list[str], limit: int | None = None) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for items in lists:
+        for item in items:
+            key = (item or "").strip()
+            if not key:
+                continue
+            low = key.lower()
+            if low in seen:
+                continue
+            seen.add(low)
+            out.append(key)
+            if limit is not None and len(out) >= limit:
+                return out
+    return out
+
+
 def build_plan(
     project: ResearchProject,
     *,
@@ -157,37 +175,73 @@ def build_plan(
         "Do not silently drop contradictory evidence.",
     ]
 
+    subquestions = _subquestions(project.topic, project.objective, budget.search_queries + 1)
+    stopping = [
+        "All planned subquestions answered or explicitly unresolved",
+        f"At least {max(1, budget.max_sources // 2)} sources ingested or blocked honestly",
+        "Contradictions preserved rather than dropped",
+    ]
+    coverage_targets: dict = {
+        "min_sources": max(1, budget.max_sources // 2),
+        "min_supported_claims": 1,
+        "require_citation_resolution": True,
+        "prefer_primary_sources": True,
+    }
+    interpreted = project.topic.strip()
+    scope = (
+        "local_knowledge"
+        if not project.allow_web
+        else "local_knowledge+web_when_available"
+    )
+    notes = (
+        f"Depth preset={project.depth.value}; "
+        f"workers={budget.research_workers}; "
+        f"max_sources={budget.max_sources}."
+    )
+
+    # Enrich from ResearchQuestionModel when available; keep deterministic fallback.
+    try:
+        from .question_model import build_question_model
+
+        qmodel = build_question_model(project)
+        edits = qmodel.to_plan_edits()
+        interpreted = str(edits.get("interpreted_question") or interpreted)
+        scope = str(edits.get("scope") or scope)
+        assumptions = _merge_unique(assumptions, list(edits.get("assumptions") or []))
+        subquestions = _merge_unique(
+            list(edits.get("subquestions") or []),
+            subquestions,
+            limit=max(budget.search_queries + 2, len(subquestions)),
+        )
+        queries = _merge_unique(
+            list(edits.get("retrieval_queries") or []),
+            queries,
+            limit=max(budget.search_queries, len(queries)),
+        )[: max(1, budget.search_queries)]
+        preferred = _merge_unique(preferred, list(edits.get("preferred_source_types") or []))
+        exclusions = _merge_unique(exclusions, list(edits.get("exclusion_criteria") or []))
+        stopping = _merge_unique(list(edits.get("stopping_criteria") or []), stopping)
+        if isinstance(edits.get("evidence_coverage_targets"), dict):
+            coverage_targets = {**coverage_targets, **edits["evidence_coverage_targets"]}
+        if edits.get("notes"):
+            notes = f"{notes} {edits['notes']}"
+    except Exception:
+        pass
+
     return ResearchPlan(
-        interpreted_question=project.topic.strip(),
-        scope=(
-            "local_knowledge"
-            if not project.allow_web
-            else "local_knowledge+web_when_available"
-        ),
+        interpreted_question=interpreted,
+        scope=scope,
         assumptions=assumptions,
-        subquestions=_subquestions(project.topic, project.objective, budget.search_queries + 1),
+        subquestions=subquestions,
         retrieval_queries=queries,
         preferred_source_types=preferred,
         local_scopes=list(project.local_scopes),
         exclusion_criteria=exclusions,
         rounds=budget.rounds,
         budget=budget,
-        notes=(
-            f"Depth preset={project.depth.value}; "
-            f"workers={budget.research_workers}; "
-            f"max_sources={budget.max_sources}."
-        ),
-        stopping_criteria=[
-            "All planned subquestions answered or explicitly unresolved",
-            f"At least {max(1, budget.max_sources // 2)} sources ingested or blocked honestly",
-            "Contradictions preserved rather than dropped",
-        ],
-        evidence_coverage_targets={
-            "min_sources": max(1, budget.max_sources // 2),
-            "min_supported_claims": 1,
-            "require_citation_resolution": True,
-            "prefer_primary_sources": True,
-        },
+        notes=notes,
+        stopping_criteria=stopping,
+        evidence_coverage_targets=coverage_targets,
     )
 
 

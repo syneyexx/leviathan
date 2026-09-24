@@ -223,6 +223,9 @@ class CoverageSummary:
     rounds_completed: int
     web_status: str
     notes: list[str] = field(default_factory=list)
+    critical_gaps_count: int = 0
+    independent_support_ratio: float | None = None
+    primary_source_count: int = 0
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -237,12 +240,21 @@ class CoverageSummary:
             "rounds_completed": self.rounds_completed,
             "web_status": self.web_status,
             "notes": list(self.notes),
+            "critical_gaps_count": self.critical_gaps_count,
+            "independent_support_ratio": self.independent_support_ratio,
+            "primary_source_count": self.primary_source_count,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "CoverageSummary | None":
         if not data:
             return None
+        indep_raw = data.get("independent_support_ratio")
+        indep: float | None
+        if indep_raw is None or indep_raw == "":
+            indep = None
+        else:
+            indep = float(indep_raw)
         return cls(
             planned_questions=list(data.get("planned_questions") or []),
             answered_questions=list(data.get("answered_questions") or []),
@@ -255,6 +267,9 @@ class CoverageSummary:
             rounds_completed=int(data.get("rounds_completed") or 0),
             web_status=str(data.get("web_status") or "not_applicable"),
             notes=list(data.get("notes") or []),
+            critical_gaps_count=int(data.get("critical_gaps_count") or 0),
+            independent_support_ratio=indep,
+            primary_source_count=int(data.get("primary_source_count") or 0),
         )
 
 
