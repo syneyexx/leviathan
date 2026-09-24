@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../../api/client";
 import { buildAnalytics, colorForType, type LiveBrainEdge, type LiveBrainNode } from "./brain-live";
 import { Donut, Heatmap, LineChart, Panel, Spark } from "./brain-shared";
 
@@ -22,15 +23,6 @@ function pretty(value: string): string {
   return value.split(/[._-]+/g).filter(Boolean).map((part) => part.length <= 3 ? part.toUpperCase() : `${part[0].toUpperCase()}${part.slice(1)}`).join(" ");
 }
 
-function numericMeta(node: LiveBrainNode, keys: string[]): number | null {
-  for (const key of keys) {
-    const raw = node.meta?.[key];
-    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-    if (typeof raw === "string" && raw.trim() && Number.isFinite(Number(raw))) return Number(raw);
-  }
-  return null;
-}
-
 function movingSpark(values: readonly number[]): number[] {
   if (values.length >= 8) return values.slice(-12);
   if (values.length > 1) return values.slice();
@@ -41,6 +33,25 @@ export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: Li
   const analytics = useMemo(() => buildAnalytics(nodes, edges, stats ?? null), [nodes, edges, stats]);
   const [growthRange, setGrowthRange] = useState("30D");
   const [distributionMode, setDistributionMode] = useState<DistributionMode>("count");
+  const [httpLatency, setHttpLatency] = useState<Array<{ ts_ms: number; value: number }>>([]);
+  const [atlasConfidence, setAtlasConfidence] = useState<number[]>([]);
+  const [atlasAvailable, setAtlasAvailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.allSettled([
+      api.performanceSeries("http.request.latency_ms", { limit: 120 }),
+      api.brainAtlasConfidence(100),
+    ]).then(([latency, atlas]) => {
+      if (!active) return;
+      if (latency.status === "fulfilled") setHttpLatency(latency.value.points.filter((p) => Number.isFinite(p.value) && p.value >= 0));
+      if (atlas.status === "fulfilled") {
+        setAtlasAvailable(atlas.value.available);
+        setAtlasConfidence(atlas.value.records.map((r) => r.confidence).filter((v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1));
+      }
+    });
+    return () => { active = false; };
+  }, []);
 
   const degree = useMemo(() => {
     const map = new Map<string, number>();
@@ -76,8 +87,8 @@ export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: Li
     return { labels: datedSeries.labels.slice(start), cumulative: datedSeries.cumulative.slice(start), daily: datedSeries.daily.slice(start) };
   }, [datedSeries, rangeSize]);
 
-  const confidenceValues = useMemo(() => nodes.map((node) => numericMeta(node, ["confidence", "confidence_score", "score"])).filter((value): value is number => value != null).map((value) => value > 1 ? Math.min(1, value / 100) : Math.max(0, value)), [nodes]);
-  const latencyValues = useMemo(() => nodes.map((node) => numericMeta(node, ["latency_ms", "query_latency_ms", "duration_ms"])).filter((value): value is number => value != null && value >= 0), [nodes]);
+  const confidenceValues = atlasConfidence;
+  const latencyValues = useMemo(() => httpLatency.map((sample) => sample.value), [httpLatency]);
   const averageConfidence = confidenceValues.length ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length : null;
   const averageLatency = latencyValues.length ? latencyValues.reduce((sum, value) => sum + value, 0) / latencyValues.length : null;
 
@@ -103,19 +114,20 @@ export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: Li
   const heatmapData = useMemo(() => {
     const types = typeRows.slice(0, 8).map(([type]) => type);
     const index = new Map(types.map((type, i) => [type, i]));
-    const nodeType = new Map(nodes.map((node) => [node.id, node.type]));
-    const raw = types.map(() => types.map(() => 0));
-    let max = 1;
-    for (const edge of edges) {
-      const a = index.get(nodeType.get(edge.source) ?? "");
-      const b = index.get(nodeType.get(edge.target) ?? "");
-      if (a == null || b == null) continue;
-      raw[a][b] += 1;
-      if (a !== b) raw[b][a] += 1;
-      max = Math.max(max, raw[a][b], raw[b][a]);
+    const dated = nodes.map((node) => ({ node, time: Date.parse(node.created_at ?? "") })).filter(({ node, time }) => index.has(node.type) && Number.isFinite(time));
+    if (!dated.length) return { types, grid: [], labels: [] as string[], sampleCount: 0 };
+    const latest = Math.max(...dated.map(({ time }) => time));
+    const day = 86_400_000;
+    const start = Date.UTC(new Date(latest).getUTCFullYear(), new Date(latest).getUTCMonth(), new Date(latest).getUTCDate()) - 27 * day;
+    const raw = types.map(() => Array.from({ length: 28 }, () => 0));
+    for (const { node, time } of dated) {
+      const column = Math.floor((time - start) / day);
+      if (column >= 0 && column < 28) raw[index.get(node.type)!][column] += 1;
     }
-    return { types, grid: raw.map((row) => row.map((value) => value / max)) };
-  }, [edges, nodes, typeRows]);
+    const max = Math.max(1, ...raw.flat());
+    const labels = Array.from({ length: 28 }, (_, i) => i % 7 === 0 || i === 27 ? new Date(start + i * day).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
+    return { types, grid: raw.map((row) => row.map((value) => value / max)), labels, sampleCount: dated.length };
+  }, [nodes, typeRows]);
 
   const emergingTopics = useMemo(() => {
     const stop = new Set(["the", "and", "for", "with", "from", "this", "that", "into", "node", "data", "live"]);
@@ -135,8 +147,8 @@ export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: Li
     { label: "Relationship Density", value: density < 0.01 ? density.toFixed(4) : density.toFixed(2), suffix: "%", note: `${formatCount(analytics.edgeCount)} total connections`, spark: [] },
     { label: "Retrieval Quality", value: "—", note: "No retrieval telemetry in graph projection", spark: [] },
     { label: "Memory Growth", value: memoryGrowth == null ? "—" : `${memoryGrowth >= 0 ? "+" : ""}${memoryGrowth.toFixed(1)}%`, note: memoryNodes.length ? `${formatCount(memoryNodes.length)} memory nodes` : "No memory nodes in projection", spark: [] },
-    { label: "Avg. Query Latency", value: averageLatency == null ? "—" : Math.round(averageLatency).toLocaleString(), suffix: averageLatency == null ? undefined : " ms", note: averageLatency == null ? "No latency telemetry in graph projection" : `${latencyValues.length} measured nodes`, spark: movingSpark(latencyValues) },
-    { label: "Confidence Score", value: averageConfidence == null ? "—" : `${(averageConfidence * 100).toFixed(1)}%`, note: averageConfidence == null ? "No confidence telemetry in graph projection" : `${confidenceValues.length} scored nodes`, spark: movingSpark(confidenceValues) },
+    { label: "Avg. HTTP Latency", value: averageLatency == null ? "—" : Math.round(averageLatency).toLocaleString(), suffix: averageLatency == null ? undefined : " ms", note: averageLatency == null ? "No HTTP requests measured in this server process" : `${latencyValues.length} measured HTTP requests`, spark: movingSpark(latencyValues) },
+    { label: "Atlas Confidence", value: averageConfidence == null ? "—" : `${(averageConfidence * 100).toFixed(1)}%`, note: averageConfidence == null ? "No scored Atlas records available" : `${confidenceValues.length} scored Atlas records`, spark: movingSpark(confidenceValues) },
   ];
 
   const maxTypeCount = Math.max(1, ...typeRows.map(([, count]) => count));
@@ -176,15 +188,15 @@ export function BrainAnalyticsView({ nodes, edges, stats, onToast }: { nodes: Li
         </Panel>
 
         <Panel title="Latency Trends" className="lv-ba-latency">
-          {latencyValues.length > 1 ? <LineChart series={[{ name: "Measured", color: "#22C9D6", values: latencyValues.slice(-24) }]} height={145} /> : <div className="lv-ba-empty-chart">Latency telemetry is not exposed by /api/brain/graph.</div>}
+          {latencyValues.length > 1 ? <><LineChart series={[{ name: "HTTP requests (ms)", color: "#22C9D6", values: latencyValues.slice(-24) }]} height={145} /><div className="lv-ba-chart-caption">Actual server HTTP latency · last {Math.min(24, latencyValues.length)} requests · resets on restart</div></> : <div className="lv-ba-empty-chart">Waiting for measured HTTP requests in this server process.</div>}
         </Panel>
 
         <Panel title="Confidence Distribution" className="lv-ba-confidence">
-          {confidenceValues.length ? <><div className="lv-ba-hist">{confidenceHistogram.map((count, index) => <div key={index} className="lv-ba-hist-col"><div className="lv-ba-hist-bar" style={{ height: `${Math.max(count ? 5 : 0, (count / maxHist) * 100)}%`, background: index >= 8 ? "#8DE8A3" : index >= 6 ? "#22C9D6" : "#4285E8" }} /></div>)}</div><div className="lv-ba-hist-meta"><span>0.0</span><span>{averageConfidence == null ? "" : `Avg: ${averageConfidence.toFixed(3)}`}</span><span>1.0</span></div></> : <div className="lv-ba-empty-chart">Confidence telemetry is not exposed by the current Brain sources.</div>}
+          {confidenceValues.length ? <><div className="lv-ba-hist">{confidenceHistogram.map((count, index) => <div key={index} className="lv-ba-hist-col"><div className="lv-ba-hist-bar" style={{ height: `${Math.max(count ? 5 : 0, (count / maxHist) * 100)}%`, background: index >= 8 ? "#8DE8A3" : index >= 6 ? "#22C9D6" : "#4285E8" }} /></div>)}</div><div className="lv-ba-hist-meta"><span>0.0</span><span>{averageConfidence == null ? "" : `Atlas avg: ${averageConfidence.toFixed(3)}`}</span><span>1.0</span></div></> : <div className="lv-ba-empty-chart">{atlasAvailable ? "No scored Atlas records yet." : "Atlas confidence is unavailable or disabled."}</div>}
         </Panel>
 
         <Panel title="Semantic Heatmap" className="lv-ba-heatmap">
-          {heatmapData.types.length ? <Heatmap grid={heatmapData.grid} rowLabels={heatmapData.types.map((type) => pretty(type).slice(0, 11))} colLabels={heatmapData.types.map((type) => pretty(type).slice(0, 3))} /> : <div className="lv-ba-empty-chart">No semantic types available.</div>}
+          {heatmapData.grid.length ? <><Heatmap grid={heatmapData.grid} rowLabels={heatmapData.types.map((type) => pretty(type).slice(0, 11))} colLabels={heatmapData.labels} labelWidth={68} compact /><div className="lv-ba-chart-caption">Node activity by type and creation date · {heatmapData.sampleCount} dated nodes in this projection · darker cells mean fewer nodes</div></> : <div className="lv-ba-empty-chart">No dated nodes available for the activity heatmap.</div>}
         </Panel>
       </div>
 
