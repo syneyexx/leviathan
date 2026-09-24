@@ -360,7 +360,7 @@ img { display: block; max-width: 100%; }
   height: 34px;
   border-radius: 8px;
   border: 1px solid var(--lv-border-soft);
-  display: grid;
+  display: none;
   place-content: center;
   gap: 4px;
 }
@@ -1158,7 +1158,10 @@ img { display: block; max-width: 100%; }
     display: contents;
   }
   .lv-header-user { grid-area: user; }
-  .lv-menu-btn { grid-area: menu; }
+  .lv-menu-btn {
+    grid-area: menu;
+    display: grid;
+  }
   .lv-body { grid-template-columns: 1fr; }
   .lv-sidebar {
     display: none;

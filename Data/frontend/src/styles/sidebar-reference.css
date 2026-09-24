@@ -75,9 +75,8 @@
   flex-direction: column;
   gap: 3px;
   overflow: auto;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: min(52vh, 420px);
   padding: 4px 2px 6px 0;
 }
 
@@ -128,40 +127,41 @@
   color: #ffffff;
   background: linear-gradient(
     90deg,
-    rgba(34, 201, 214, 0.34) 0%,
-    rgba(34, 201, 214, 0.14) 42%,
-    rgba(34, 201, 214, 0.03) 100%
+    rgba(0, 229, 255, 0.38) 0%,
+    rgba(34, 201, 214, 0.18) 45%,
+    rgba(34, 201, 214, 0.04) 100%
   );
-  border: 1px solid rgba(34, 201, 214, 0.55);
+  border: 1px solid rgba(0, 229, 255, 0.62);
   box-shadow:
-    0 0 18px rgba(34, 201, 214, 0.22),
-    inset 0 0 18px rgba(34, 201, 214, 0.08);
+    0 0 22px rgba(0, 229, 255, 0.28),
+    inset 0 0 20px rgba(0, 229, 255, 0.1);
 }
 
 .lv-nav-item.is-active .lv-icon {
   color: #f4fcff;
   opacity: 1;
-  filter: drop-shadow(0 0 6px rgba(34, 201, 214, 0.55));
+  filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.7));
 }
 
 .lv-nav-item.is-active::after {
   content: "";
   position: absolute;
   right: -1px;
-  top: 18%;
-  bottom: 18%;
+  top: 16%;
+  bottom: 16%;
   width: 3px;
   border-radius: 4px 0 0 4px;
-  background: linear-gradient(180deg, #9ff6ff, #22c9d6 40%, #0ea5b5 100%);
+  background: linear-gradient(180deg, #b8fbff, #00e5ff 40%, #14b8c8 100%);
   box-shadow:
-    0 0 6px 2px rgba(159, 246, 255, 0.9),
-    0 0 14px 5px rgba(34, 201, 214, 0.7),
-    0 0 24px 8px rgba(34, 201, 214, 0.35);
+    0 0 6px 2px rgba(184, 251, 255, 0.95),
+    0 0 16px 6px rgba(0, 229, 255, 0.75),
+    0 0 28px 10px rgba(0, 229, 255, 0.35);
 }
 
 .lv-sidebar-footer {
   position: relative;
   margin-top: auto;
+  flex: 0 0 auto;
   padding: 8px 0 0;
   overflow: hidden;
   display: flex;
@@ -176,26 +176,25 @@
   width: calc(100% + 24px);
   margin: 0 -12px;
   overflow: hidden;
-  mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 78%, transparent 100%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 78%, transparent 100%);
+  max-height: 210px;
+  mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%);
 }
 
 .lv-sidebar-footer-mark {
   display: block;
   width: 100%;
   max-width: none;
-  height: auto;
-  min-height: 160px;
-  max-height: 240px;
+  height: 260px;
   object-fit: cover;
-  object-position: center top;
+  object-position: center 18%;
   pointer-events: none;
   user-select: none;
-  filter: none;
+  filter: saturate(1.05) contrast(1.05);
 }
 
 .lv-sidebar-motto {
-  margin: 10px 8px 8px;
+  margin: 6px 8px 8px;
   font-family: var(--lv-font-display);
   font-size: 9px;
   line-height: 1.55;
