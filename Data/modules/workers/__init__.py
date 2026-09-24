@@ -7,7 +7,12 @@ and other background execution pools only.
 
 from .admission import ResourceAdmission, ResourceClass
 from .pools import POOL_CATALOG, PoolDefinition, default_pool_counts
-from .protocol import WORKER_PROTOCOL_VERSION, WorkerInstanceState, WorkerRegistration
+from .protocol import (
+    WORKER_PROTOCOL_VERSION,
+    SupervisorHealth,
+    WorkerInstanceState,
+    WorkerRegistration,
+)
 from .registry import WorkerRegistry
 from .supervisor import WorkerSupervisor
 from .settings import WorkerSettings, load_worker_settings
@@ -17,6 +22,7 @@ __all__ = [
     "PoolDefinition",
     "ResourceAdmission",
     "ResourceClass",
+    "SupervisorHealth",
     "WORKER_PROTOCOL_VERSION",
     "WorkerInstanceState",
     "WorkerRegistration",

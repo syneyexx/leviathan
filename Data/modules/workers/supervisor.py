@@ -5,6 +5,7 @@ Does NOT own model-serving residency (Model Control Plane / ServingSupervisor).
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -15,9 +16,25 @@ from typing import Any
 from .admission import ResourceAdmission
 from .pools import POOL_CATALOG
 from .process import OwnedProcess, spawn_worker_process, terminate_owned, verify_owned
-from .protocol import WORKER_PROTOCOL_VERSION, WorkerInstanceState, WorkerRegistration
+from .protocol import (
+    WORKER_PROTOCOL_VERSION,
+    SupervisorHealth,
+    WorkerInstanceState,
+    WorkerRegistration,
+)
 from .registry import WorkerRegistry, utc_now
 from .settings import WorkerSettings, load_worker_settings
+from .sqlite_support import is_transient_sqlite_error
+
+logger = logging.getLogger(__name__)
+
+
+class SupervisorLeaseLost(RuntimeError):
+    """Singleton lease no longer owned by this process — fatal for this owner."""
+
+
+class SupervisorFatalError(RuntimeError):
+    """Unrecoverable supervisor invariant / schema failure."""
 
 
 @dataclass
@@ -41,6 +58,7 @@ class WorkerSupervisor:
         repo_root: Path | None = None,
         admission: ResourceAdmission | None = None,
         log_dir: Path | None = None,
+        restart_count: int = 0,
     ) -> None:
         self.db_path = Path(db_path)
         self.settings = settings or load_worker_settings()
@@ -61,6 +79,13 @@ class WorkerSupervisor:
         }
         self._running = False
         self._process_start_identity = f"supervisor:{os.getpid()}:{time.time_ns()}"
+        self.health = SupervisorHealth.STOPPED
+        self.last_tick_at: str | None = None
+        self.last_successful_tick_at: str | None = None
+        self.consecutive_tick_failures = 0
+        self.last_tick_error: str | None = None
+        self.restart_count = int(restart_count)
+        self._shutdown_errors: list[str] = []
 
     def initialize(self) -> None:
         self.registry.initialize()
@@ -72,56 +97,200 @@ class WorkerSupervisor:
             holder_pid=os.getpid(),
             process_start_identity=self._process_start_identity,
             ttl_seconds=self.settings.supervisor_lease_ttl_seconds,
+            restart_count=self.restart_count,
         )
 
     def start(self) -> None:
         self.initialize()
         if not self.acquire():
+            self.health = SupervisorHealth.LEASE_LOST
             raise RuntimeError("WORKER_SUPERVISOR_LEASE_HELD: another supervisor owns worker pools")
-        self.registry.reconcile_stale(
-            heartbeat_ttl_seconds=self.settings.lease_ttl_seconds * 2,
-            supervisor_generation=self.generation,
-        )
-        self.admission.recover_expired()
+        self.health = SupervisorHealth.RUNNING
+        try:
+            self.registry.reconcile_stale(
+                heartbeat_ttl_seconds=self.settings.lease_ttl_seconds * 2,
+                supervisor_generation=self.generation,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reconcile_stale at start failed: %s", exc)
+            self._note_transient("reconcile_stale", exc)
+        try:
+            self.admission.recover_expired()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("recover_expired at start failed: %s", exc)
+            self._note_transient("recover_expired", exc)
         self._running = True
-        self.reconcile_pools()
+        self._persist_health()
+        try:
+            self.reconcile_pools()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reconcile_pools at start failed: %s", exc)
+            self._note_transient("reconcile_pools", exc)
 
     def stop(self, *, grace_seconds: float | None = None) -> None:
+        """Best-effort drain. Collects shutdown errors; does not mask caller failures."""
+        self.health = SupervisorHealth.STOPPING
         self._running = False
+        self._shutdown_errors = []
         grace = (
             self.settings.shutdown_grace_seconds
             if grace_seconds is None
             else float(grace_seconds)
         )
-        # Mark draining then terminate owned processes.
+        try:
+            self._persist_health()
+        except Exception as exc:  # noqa: BLE001
+            self._shutdown_errors.append(f"persist_health: {exc}")
+
         for worker_id, proc in list(self._owned.items()):
-            proc.draining = True
-            self.registry.mark_state(worker_id, WorkerInstanceState.DRAINING)
+            try:
+                proc.draining = True
+                self.registry.mark_state(worker_id, WorkerInstanceState.DRAINING)
+            except Exception as exc:  # noqa: BLE001
+                self._shutdown_errors.append(f"mark_draining:{worker_id}: {exc}")
+
         deadline = time.time() + grace
         while time.time() < deadline and any(
             verify_owned(p) and p.popen and p.popen.poll() is None for p in self._owned.values()
         ):
             time.sleep(0.2)
+
         for worker_id, proc in list(self._owned.items()):
-            terminate_owned(proc, grace_seconds=2.0)
-            self.registry.mark_state(worker_id, WorkerInstanceState.STOPPED)
+            try:
+                terminate_owned(proc, grace_seconds=2.0)
+            except Exception as exc:  # noqa: BLE001
+                self._shutdown_errors.append(f"terminate:{worker_id}: {exc}")
+            try:
+                self.registry.mark_state(worker_id, WorkerInstanceState.STOPPED)
+            except Exception as exc:  # noqa: BLE001
+                self._shutdown_errors.append(f"mark_stopped:{worker_id}: {exc}")
             self._owned.pop(worker_id, None)
-        self.registry.release_supervisor_lease(holder_id=self.holder_id)
+
+        try:
+            self.registry.release_supervisor_lease(holder_id=self.holder_id)
+        except Exception as exc:  # noqa: BLE001
+            self._shutdown_errors.append(f"release_lease: {exc}")
+
+        self.health = SupervisorHealth.STOPPED
+        if self._shutdown_errors:
+            logger.error(
+                "supervisor stop completed with %d error(s): %s",
+                len(self._shutdown_errors),
+                "; ".join(self._shutdown_errors[:8]),
+            )
 
     def tick(self) -> dict[str, Any]:
-        """One supervisor loop iteration — call from bootstrap or tests."""
+        """One supervisor loop iteration — failure domains are isolated."""
         if not self._running:
-            return {"ok": False, "reason": "not_running"}
-        if not self.registry.heartbeat_supervisor_lease(
-            holder_id=self.holder_id,
-            ttl_seconds=self.settings.supervisor_lease_ttl_seconds,
-        ):
+            return {"ok": False, "reason": "not_running", "fatal": False, "health": self.health.value}
+
+        tick_errors: list[dict[str, Any]] = []
+        now_s = utc_now()
+        self.last_tick_at = now_s
+
+        # --- Fatal domain: singleton lease ---
+        try:
+            owned = self.registry.heartbeat_supervisor_lease(
+                holder_id=self.holder_id,
+                ttl_seconds=self.settings.supervisor_lease_ttl_seconds,
+            )
+        except Exception as exc:
+            if is_transient_sqlite_error(exc):
+                self._record_tick_failure(exc, phase="heartbeat_lease")
+                tick_errors.append({"phase": "heartbeat_lease", "error": str(exc), "transient": True})
+                self.health = SupervisorHealth.DEGRADED
+                self._persist_health()
+                return {
+                    "ok": True,
+                    "degraded": True,
+                    "fatal": False,
+                    "reason": "transient_lease_heartbeat_failure",
+                    "health": self.health.value,
+                    "errors": tick_errors,
+                    "owned": len(self._owned),
+                    "pools": self._safe_pool_status(tick_errors),
+                }
+            self._record_tick_failure(exc, phase="heartbeat_lease")
+            self.health = SupervisorHealth.DEGRADED
+            self._persist_health()
+            raise SupervisorFatalError(f"lease heartbeat failed: {exc}") from exc
+
+        if not owned:
             self._running = False
-            return {"ok": False, "reason": "lost_supervisor_lease"}
-        self.admission.recover_expired()
-        self._reap_exited()
-        self.reconcile_pools()
-        return {"ok": True, "owned": len(self._owned), "pools": self.pool_status()}
+            self.health = SupervisorHealth.LEASE_LOST
+            self.last_tick_error = "lost_supervisor_lease"
+            self._persist_health()
+            return {
+                "ok": False,
+                "fatal": True,
+                "reason": "lost_supervisor_lease",
+                "health": self.health.value,
+            }
+
+        # --- Transient-safe: expired reservation recovery ---
+        try:
+            self.admission.recover_expired()
+        except Exception as exc:  # noqa: BLE001
+            transient = is_transient_sqlite_error(exc)
+            tick_errors.append(
+                {"phase": "recover_expired", "error": str(exc), "transient": transient}
+            )
+            logger.warning("recover_expired failed transient=%s: %s", transient, exc)
+            if not transient and _looks_like_schema_error(exc):
+                self._record_tick_failure(exc, phase="recover_expired")
+                self.health = SupervisorHealth.DEGRADED
+                self._persist_health()
+                return {
+                    "ok": False,
+                    "fatal": True,
+                    "reason": "schema_error_recover_expired",
+                    "health": self.health.value,
+                    "errors": tick_errors,
+                }
+
+        # --- Per-child isolation ---
+        self._reap_exited(tick_errors)
+
+        # --- Per-pool isolation ---
+        self.reconcile_pools(tick_errors)
+
+        pools = self._safe_pool_status(tick_errors)
+        decode_diags = self.registry.pop_decode_diagnostics()
+        if decode_diags:
+            tick_errors.append(
+                {
+                    "phase": "registry_decode",
+                    "error": f"{len(decode_diags)} quarantined row(s)",
+                    "diagnostics": decode_diags,
+                    "transient": False,
+                }
+            )
+
+        degraded = bool(tick_errors) or any(p.degraded for p in self._pools.values())
+        if tick_errors:
+            self.consecutive_tick_failures += 1
+            self.last_tick_error = str(tick_errors[-1].get("error") or tick_errors[-1])
+            self.health = SupervisorHealth.DEGRADED
+        elif degraded:
+            self.health = SupervisorHealth.DEGRADED
+        else:
+            self.health = SupervisorHealth.RUNNING
+            self.consecutive_tick_failures = 0
+            self.last_tick_error = None
+            self.last_successful_tick_at = now_s
+
+        self._persist_health()
+        return {
+            "ok": True,
+            "degraded": degraded,
+            "fatal": False,
+            "health": self.health.value,
+            "owned": len(self._owned),
+            "pools": pools,
+            "errors": tick_errors,
+            "consecutive_tick_failures": self.consecutive_tick_failures,
+            "last_tick_error": self.last_tick_error,
+        }
 
     def set_desired_count(self, pool_id: str, count: int) -> None:
         if pool_id not in self._pools:
@@ -131,58 +300,93 @@ class WorkerSupervisor:
         self.settings.pool_counts[pool_id] = self._pools[pool_id].desired
         self.reconcile_pools()
 
-    def reconcile_pools(self) -> None:
+    def reconcile_pools(self, tick_errors: list[dict[str, Any]] | None = None) -> None:
+        errors = tick_errors if tick_errors is not None else []
         for pool_id, state in self._pools.items():
-            if state.degraded and time.time() < state.cooldown_until:
-                continue
-            live = [
-                w
-                for w in self.registry.list(pool_id=pool_id)
-                if w.worker_id in self._owned
-                and w.state
-                not in {
-                    WorkerInstanceState.STOPPED,
-                    WorkerInstanceState.STALE,
-                    WorkerInstanceState.CRASHED,
-                    WorkerInstanceState.DRAINING,
-                }
-            ]
-            # Scale up
-            while len(live) < state.desired and not (
-                state.degraded and time.time() < state.cooldown_until
-            ):
-                try:
-                    owned = self._spawn(pool_id, slot=len(live))
-                except Exception as exc:  # noqa: BLE001
-                    self._record_crash(pool_id, str(exc))
-                    break
-                live.append(
-                    WorkerRegistration(
-                        worker_id=owned.worker_id,
-                        pool_id=pool_id,
-                        slot=owned.slot,
-                        pid=owned.pid,
-                        process_start_identity=owned.process_start_identity,
-                    )
+            try:
+                self._reconcile_one_pool(pool_id, state)
+            except Exception as exc:  # noqa: BLE001 — per-pool isolation
+                # Reduce log spam for expected per-pool isolation failures under broken schema.
+                logger.warning("reconcile pool %s failed: %s", pool_id, exc)
+                state.degraded = True
+                state.degraded_reason = f"pool_reconcile_failed: {exc}"
+                errors.append(
+                    {
+                        "phase": "reconcile_pool",
+                        "pool_id": pool_id,
+                        "error": str(exc),
+                        "transient": is_transient_sqlite_error(exc),
+                    }
                 )
-            # Scale down — drain excess; do not kill active non-preemptible jobs.
-            excess = len(live) - state.desired
-            if excess > 0:
-                for reg in sorted(live, key=lambda r: r.slot, reverse=True)[:excess]:
-                    proc = self._owned.get(reg.worker_id)
-                    if proc is None:
-                        continue
-                    if reg.current_job_id:
-                        proc.draining = True
+
+    def _reconcile_one_pool(self, pool_id: str, state: PoolRuntimeState) -> None:
+        if state.degraded and time.time() < state.cooldown_until:
+            return
+        # Clear cooldown degradation after window if crashes stopped.
+        if state.degraded and time.time() >= state.cooldown_until:
+            state.degraded = False
+            state.degraded_reason = None
+
+        live = [
+            w
+            for w in self.registry.list(pool_id=pool_id)
+            if w.worker_id in self._owned
+            and w.state
+            not in {
+                WorkerInstanceState.STOPPED,
+                WorkerInstanceState.STALE,
+                WorkerInstanceState.CRASHED,
+                WorkerInstanceState.DRAINING,
+                WorkerInstanceState.INCOMPATIBLE,
+                WorkerInstanceState.DEGRADED,
+            }
+        ]
+        # Scale up
+        while len(live) < state.desired and not (
+            state.degraded and time.time() < state.cooldown_until
+        ):
+            try:
+                owned = self._spawn(pool_id, slot=len(live))
+            except Exception as exc:  # noqa: BLE001
+                self._record_crash(pool_id, str(exc))
+                break
+            live.append(
+                WorkerRegistration(
+                    worker_id=owned.worker_id,
+                    pool_id=pool_id,
+                    slot=owned.slot,
+                    pid=owned.pid,
+                    process_start_identity=owned.process_start_identity,
+                )
+            )
+        # Scale down — drain excess; do not kill active non-preemptible jobs.
+        excess = len(live) - state.desired
+        if excess > 0:
+            for reg in sorted(live, key=lambda r: r.slot, reverse=True)[:excess]:
+                proc = self._owned.get(reg.worker_id)
+                if proc is None:
+                    continue
+                if reg.current_job_id:
+                    proc.draining = True
+                    try:
                         self.registry.mark_state(reg.worker_id, WorkerInstanceState.DRAINING)
-                        continue
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("mark_draining failed %s: %s", reg.worker_id, exc)
+                    continue
+                try:
                     terminate_owned(proc, grace_seconds=5.0)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("terminate_owned failed %s: %s", reg.worker_id, exc)
+                try:
                     self.registry.mark_state(reg.worker_id, WorkerInstanceState.STOPPED)
-                    self._owned.pop(reg.worker_id, None)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("mark_stopped failed %s: %s", reg.worker_id, exc)
+                self._owned.pop(reg.worker_id, None)
 
     def _spawn(self, pool_id: str, *, slot: int) -> OwnedProcess:
         defn = POOL_CATALOG[pool_id]
         worker_id = f"{pool_id}-{slot}-{uuid.uuid4().hex[:8]}"
+        # Spawn outside any registry transaction (connect() already short).
         owned = spawn_worker_process(
             worker_id=worker_id,
             pool_id=pool_id,
@@ -199,34 +403,65 @@ class WorkerSupervisor:
             },
         )
         self._owned[worker_id] = owned
-        self.registry.upsert(
-            WorkerRegistration(
-                worker_id=worker_id,
-                pool_id=pool_id,
-                slot=slot,
-                pid=owned.pid,
-                process_start_identity=owned.process_start_identity,
-                protocol_version=WORKER_PROTOCOL_VERSION,
-                supported_job_kinds=defn.job_kinds,
-                started_at=utc_now(),
-                last_heartbeat_at=utc_now(),
-                state=WorkerInstanceState.STARTING,
-                supervisor_generation=self.generation,
+        try:
+            self.registry.upsert(
+                WorkerRegistration(
+                    worker_id=worker_id,
+                    pool_id=pool_id,
+                    slot=slot,
+                    pid=owned.pid,
+                    process_start_identity=owned.process_start_identity,
+                    protocol_version=WORKER_PROTOCOL_VERSION,
+                    supported_job_kinds=defn.job_kinds,
+                    started_at=utc_now(),
+                    last_heartbeat_at=utc_now(),
+                    state=WorkerInstanceState.STARTING,
+                    supervisor_generation=self.generation,
+                )
             )
-        )
+        except Exception:
+            # Registry write failed after spawn — terminate orphan and surface.
+            try:
+                terminate_owned(owned, grace_seconds=1.0)
+            except Exception:  # noqa: BLE001
+                pass
+            self._owned.pop(worker_id, None)
+            raise
         return owned
 
-    def _reap_exited(self) -> None:
+    def _reap_exited(self, tick_errors: list[dict[str, Any]] | None = None) -> None:
+        errors = tick_errors if tick_errors is not None else []
         for worker_id, proc in list(self._owned.items()):
-            exited = proc.popen is not None and proc.popen.poll() is not None
-            if exited or not verify_owned(proc):
-                self.registry.mark_state(
-                    worker_id,
-                    WorkerInstanceState.CRASHED,
-                    degraded_reason="process_exited",
+            try:
+                exited = proc.popen is not None and proc.popen.poll() is not None
+                if exited or not verify_owned(proc):
+                    try:
+                        self.registry.mark_state(
+                            worker_id,
+                            WorkerInstanceState.CRASHED,
+                            degraded_reason="process_exited",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(
+                            {
+                                "phase": "reap_mark",
+                                "worker_id": worker_id,
+                                "error": str(exc),
+                                "transient": is_transient_sqlite_error(exc),
+                            }
+                        )
+                    self._owned.pop(worker_id, None)
+                    self._record_crash(proc.pool_id, "process_exited")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(
+                    {
+                        "phase": "reap_child",
+                        "worker_id": worker_id,
+                        "error": str(exc),
+                        "transient": False,
+                    }
                 )
-                self._owned.pop(worker_id, None)
-                self._record_crash(proc.pool_id, "process_exited")
+                logger.exception("reap child %s failed", worker_id)
 
     def _record_crash(self, pool_id: str, reason: str) -> None:
         state = self._pools[pool_id]
@@ -244,25 +479,91 @@ class WorkerSupervisor:
             state.degraded_reason = f"WORKER_RESTART_EXHAUSTED: {reason}"
             state.cooldown_until = now + backoff
 
+    def _safe_pool_status(self, tick_errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        try:
+            return self.pool_status()
+        except Exception as exc:  # noqa: BLE001
+            tick_errors.append(
+                {
+                    "phase": "pool_status",
+                    "error": str(exc),
+                    "transient": is_transient_sqlite_error(exc),
+                }
+            )
+            logger.warning("pool_status failed: %s", exc)
+            return [
+                {
+                    "pool_id": pid,
+                    "desired": st.desired,
+                    "degraded": True,
+                    "degraded_reason": st.degraded_reason or "status_unavailable",
+                    "owned": sum(1 for p in self._owned.values() if p.pool_id == pid),
+                    "status_error": str(exc),
+                }
+                for pid, st in self._pools.items()
+            ]
+
     def pool_status(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
+        quarantined = 0
         for pool_id, state in self._pools.items():
-            regs = self.registry.list(pool_id=pool_id)
+            try:
+                regs = self.registry.list(pool_id=pool_id)
+            except Exception as exc:  # noqa: BLE001
+                out.append(
+                    {
+                        "pool_id": pool_id,
+                        "desired": state.desired,
+                        "degraded": True,
+                        "degraded_reason": f"list_failed: {exc}",
+                        "owned": sum(1 for p in self._owned.values() if p.pool_id == pool_id),
+                    }
+                )
+                continue
             counts = {
                 "starting": 0,
                 "ready": 0,
                 "busy": 0,
                 "draining": 0,
                 "degraded": 0,
+                "incompatible": 0,
+                "stale": 0,
                 "other": 0,
             }
             for r in regs:
+                if r.state in {
+                    WorkerInstanceState.INCOMPATIBLE,
+                    WorkerInstanceState.STALE,
+                } and r.degraded_reason in {
+                    "invalid_persisted_state",
+                    "malformed_registry_json",
+                    "registry_row_decode_failure",
+                }:
+                    quarantined += 1
                 if r.worker_id not in self._owned and r.state not in {
                     WorkerInstanceState.READY,
                     WorkerInstanceState.BUSY,
                     WorkerInstanceState.STARTING,
                     WorkerInstanceState.DRAINING,
                 }:
+                    if r.state == WorkerInstanceState.INCOMPATIBLE:
+                        counts["incompatible"] += 1
+                    elif r.state == WorkerInstanceState.STALE:
+                        counts["stale"] += 1
+                    elif r.state == WorkerInstanceState.DEGRADED:
+                        counts["degraded"] += 1
+                    continue
+                # Never count quarantined/corrupt rows as READY.
+                if r.state in {
+                    WorkerInstanceState.INCOMPATIBLE,
+                    WorkerInstanceState.STALE,
+                    WorkerInstanceState.DEGRADED,
+                } and r.degraded_reason in {
+                    "invalid_persisted_state",
+                    "malformed_registry_json",
+                    "registry_row_decode_failure",
+                }:
+                    counts["degraded"] += 1
                     continue
                 key = {
                     WorkerInstanceState.STARTING: "starting",
@@ -270,6 +571,8 @@ class WorkerSupervisor:
                     WorkerInstanceState.BUSY: "busy",
                     WorkerInstanceState.DRAINING: "draining",
                     WorkerInstanceState.DEGRADED: "degraded",
+                    WorkerInstanceState.INCOMPATIBLE: "incompatible",
+                    WorkerInstanceState.STALE: "stale",
                 }.get(r.state, "other")
                 counts[key] += 1
             out.append(
@@ -282,19 +585,87 @@ class WorkerSupervisor:
                     "owned": sum(1 for p in self._owned.values() if p.pool_id == pool_id),
                 }
             )
+        if quarantined:
+            for item in out:
+                item.setdefault("quarantined_rows_total", quarantined)
         return out
 
     def public_status(self) -> dict[str, Any]:
+        lease = self.registry.get_supervisor_lease() or {}
         return {
             "holder_id": self.holder_id,
             "generation": self.generation,
             "running": self._running,
+            "health": self.health.value,
+            "last_tick_at": self.last_tick_at,
+            "last_successful_tick_at": self.last_successful_tick_at,
+            "consecutive_tick_failures": self.consecutive_tick_failures,
+            "last_tick_error": self.last_tick_error,
+            "restart_count": self.restart_count,
             "settings": self.settings.public_dict(),
-            "pools": self.pool_status(),
+            "pools": self._safe_pool_status([]),
             "workers": [w.public_dict() for w in self.registry.list()],
-            "reservations": self.admission.list_held(),
+            "reservations": self._safe_reservations(),
+            "lease": {
+                "holder_id": lease.get("holder_id"),
+                "health_state": lease.get("health_state"),
+                "expires_at": lease.get("expires_at"),
+                "last_tick_at": lease.get("last_tick_at"),
+                "last_successful_tick_at": lease.get("last_successful_tick_at"),
+                "consecutive_tick_failures": lease.get("consecutive_tick_failures"),
+                "last_tick_error": lease.get("last_tick_error"),
+                "restart_count": lease.get("restart_count"),
+                "degraded_reason": lease.get("degraded_reason"),
+            },
             "truth": {
                 "model_serving_not_owned_here": True,
                 "pid_alone_is_not_ownership": True,
             },
         }
+
+    def _safe_reservations(self) -> list[dict[str, Any]]:
+        try:
+            return self.admission.list_held()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list_held failed: %s", exc)
+            return []
+
+    def _note_transient(self, phase: str, exc: BaseException) -> None:
+        self.health = SupervisorHealth.DEGRADED
+        self.last_tick_error = f"{phase}: {exc}"
+        self.consecutive_tick_failures += 1
+
+    def _record_tick_failure(self, exc: BaseException, *, phase: str) -> None:
+        self.consecutive_tick_failures += 1
+        self.last_tick_error = f"{phase}: {exc}"
+        logger.error("supervisor tick failure phase=%s: %s", phase, exc)
+
+    def _persist_health(self) -> None:
+        try:
+            self.registry.update_supervisor_health(
+                holder_id=self.holder_id,
+                health=self.health,
+                last_tick_at=self.last_tick_at,
+                last_successful_tick_at=self.last_successful_tick_at,
+                consecutive_tick_failures=self.consecutive_tick_failures,
+                last_tick_error=self.last_tick_error,
+                restart_count=self.restart_count,
+                degraded_reason=self.last_tick_error if self.health == SupervisorHealth.DEGRADED else None,
+                clear_error=self.last_tick_error is None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("persist health failed: %s", exc)
+
+
+def _looks_like_schema_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "no such table",
+            "no such column",
+            "has no column",
+            "syntax error",
+            "datatype mismatch",
+        )
+    )

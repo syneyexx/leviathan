@@ -7,12 +7,17 @@ Model Residency (not owned here).
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _repo_root() -> Path:
@@ -45,15 +50,28 @@ def run_api(*, host: str | None = None, port: int | None = None) -> int:
 def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
     from Data.backend.config import load_settings
     from Data.modules.workers.settings import load_worker_settings
-    from Data.modules.workers.supervisor import WorkerSupervisor
+    from Data.modules.workers.supervisor import (
+        SupervisorFatalError,
+        SupervisorLeaseLost,
+        WorkerSupervisor,
+    )
 
     settings = load_settings()
     wsettings = load_worker_settings()
     if not wsettings.enabled or not wsettings.supervisor_enabled:
         print("[supervisor] disabled by settings", flush=True)
         return 0
-    supervisor = WorkerSupervisor(settings.database_path, settings=wsettings, repo_root=_repo_root())
+
+    restart_count = int(os.environ.get("LEVIATHAN_SUPERVISOR_RESTART_COUNT") or "0")
+    supervisor = WorkerSupervisor(
+        settings.database_path,
+        settings=wsettings,
+        repo_root=_repo_root(),
+        restart_count=restart_count,
+    )
     stop = {"flag": False}
+    exit_code = 0
+    fatal_exc: BaseException | None = None
 
     def _stop(*_a: object) -> None:
         stop["flag"] = True
@@ -73,26 +91,76 @@ def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
     )
     try:
         while not stop["flag"]:
-            status = supervisor.tick()
-            if not status.get("ok"):
-                print(f"[supervisor] tick stop: {status}", flush=True)
+            try:
+                status = supervisor.tick()
+            except SupervisorLeaseLost as exc:
+                fatal_exc = exc
+                print(f"[supervisor] lease lost: {exc}", flush=True)
+                exit_code = 2
                 break
+            except SupervisorFatalError as exc:
+                fatal_exc = exc
+                print(f"[supervisor] fatal: {exc}", flush=True)
+                traceback.print_exc()
+                exit_code = 3
+                break
+            except Exception as exc:  # noqa: BLE001 — keep process alive for transient escapes
+                print(
+                    f"[supervisor] unhandled tick error (continuing): "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                traceback.print_exc()
+                # Bounded pause before next tick — avoid tight crash loop inside process.
+                time.sleep(min(2.0, max(0.2, float(tick_seconds))))
+                if once:
+                    exit_code = 4
+                    fatal_exc = exc
+                    break
+                continue
+
+            if status.get("fatal") or status.get("reason") == "lost_supervisor_lease":
+                print(f"[supervisor] tick stop: {status}", flush=True)
+                exit_code = 2 if status.get("reason") == "lost_supervisor_lease" else 3
+                break
+            if status.get("degraded"):
+                print(
+                    f"[supervisor] tick degraded: errors={status.get('errors')} "
+                    f"health={status.get('health')}",
+                    flush=True,
+                )
             if once:
                 break
             time.sleep(max(0.2, float(tick_seconds)))
     finally:
-        supervisor.stop()
+        # Best-effort stop — never mask the original fatal exception in logs.
+        try:
+            supervisor.stop()
+        except Exception as shut_exc:  # noqa: BLE001
+            print(
+                f"[supervisor] stop raised (original={type(fatal_exc).__name__ if fatal_exc else None}): "
+                f"{type(shut_exc).__name__}: {shut_exc}",
+                flush=True,
+            )
+            traceback.print_exc()
+            if fatal_exc is not None:
+                print(
+                    f"[supervisor] preserving original failure: "
+                    f"{type(fatal_exc).__name__}: {fatal_exc}",
+                    flush=True,
+                )
         print("[supervisor] stopped", flush=True)
-    return 0
+    return exit_code
 
 
-def _child_env(root: Path) -> dict[str, str]:
+def _child_env(root: Path, *, supervisor_restart_count: int = 0) -> dict[str, str]:
     """Build a relocatable child env: install root on PYTHONPATH, no stale drive letters required."""
     env = os.environ.copy()
     env.setdefault("LEVIATHAN_WORKERS_EXTERNALIZE_API", "1")
     env.setdefault("LEVIATHAN_DATASET_JOBS_RUNNER", "external")
     env.setdefault("LEVIATHAN_SOURCE_INGESTION_RUNNER", "external")
     env.setdefault("PYTHONUNBUFFERED", "1")
+    env["LEVIATHAN_SUPERVISOR_RESTART_COUNT"] = str(int(supervisor_restart_count))
     root_s = str(root)
     existing = [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
     # Prepend install root so -m Data.* resolves even if cwd/PYTHONPATH were stale.
@@ -100,9 +168,30 @@ def _child_env(root: Path) -> dict[str, str]:
     return env
 
 
+def _spawn_supervisor(root: Path, *, restart_count: int) -> subprocess.Popen[Any]:
+    env = _child_env(root, supervisor_restart_count=restart_count)
+    return subprocess.Popen(  # noqa: S603
+        [sys.executable, "-m", "Data.modules.workers.bootstrap", "supervisor"],
+        cwd=str(root),
+        env=env,
+        shell=False,
+    )
+
+
 def run_all() -> int:
-    """Spawn API + supervisor as sibling processes (Windows-friendly)."""
+    """Spawn API + supervisor as sibling processes (Windows-friendly).
+
+    Supervisor death does NOT kill the API. Parent restarts supervisor with a
+    rolling-window budget reused from WorkerSettings restart policy.
+    API death terminates the stack (existing launcher policy).
+    """
+    from Data.backend.config import load_settings
+    from Data.modules.workers.registry import WorkerRegistry
+    from Data.modules.workers.settings import load_worker_settings
+
     root = _repo_root()
+    wsettings = load_worker_settings()
+    settings = load_settings()
     env = _child_env(root)
 
     api = subprocess.Popen(  # noqa: S603
@@ -111,7 +200,7 @@ def run_all() -> int:
         env=env,
         shell=False,
     )
-    supervisor = subprocess.Popen(  # noqa: S603
+    supervisor: subprocess.Popen[Any] | None = subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "Data.modules.workers.bootstrap", "supervisor"],
         cwd=str(root),
         env=env,
@@ -127,19 +216,128 @@ def run_all() -> int:
         signal.signal(signal.SIGTERM, _stop)
 
     exit_code = 0
+    crash_timestamps: list[float] = []
+    restart_count = 0
+    next_spawn_at = 0.0
+    supervisor_unavailable = False
+    registry = WorkerRegistry(settings.database_path)
+
     try:
         while not stop["flag"]:
             if api.poll() is not None:
                 exit_code = int(api.returncode or 0)
+                print(f"[bootstrap] API exited code={exit_code}", flush=True)
                 break
-            if supervisor.poll() is not None:
-                # Supervisor death is non-fatal for API but should restart in production;
-                # here we exit so the launcher can respawn both cleanly.
-                exit_code = int(supervisor.returncode or 1)
-                break
-            time.sleep(0.5)
+
+            if supervisor is not None and supervisor.poll() is None:
+                time.sleep(0.5)
+                continue
+
+            # Supervisor not running.
+            code = int(supervisor.returncode) if supervisor is not None else -1
+            now = time.time()
+            if supervisor is not None:
+                print(
+                    f"[bootstrap] supervisor exited code={code} — API remains alive",
+                    flush=True,
+                )
+                crash_timestamps.append(now)
+                window = float(wsettings.restart_window_seconds)
+                crash_timestamps = [t for t in crash_timestamps if now - t <= window]
+                restart_count += 1
+                supervisor = None
+
+            if len(crash_timestamps) >= int(wsettings.restart_max_attempts):
+                backoff = min(
+                    float(wsettings.restart_max_backoff),
+                    float(wsettings.restart_base_backoff)
+                    * (2 ** max(0, len(crash_timestamps) - 1)),
+                )
+                if not supervisor_unavailable:
+                    reason = (
+                        f"SUPERVISOR_RESTART_EXHAUSTED: {len(crash_timestamps)} crashes "
+                        f"in {wsettings.restart_window_seconds}s"
+                    )
+                    print(f"[bootstrap] {reason}; cooldown={backoff:.1f}s", flush=True)
+                    try:
+                        registry.initialize()
+                        registry.write_parent_supervisor_unavailable(
+                            reason=reason,
+                            restart_count=restart_count,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[bootstrap] failed to persist DEGRADED: {exc}", flush=True)
+                    supervisor_unavailable = True
+                next_spawn_at = max(next_spawn_at, now + backoff)
+                # After cooldown, allow another attempt (clear window).
+                if now < next_spawn_at:
+                    time.sleep(0.5)
+                    continue
+                crash_timestamps.clear()
+                supervisor_unavailable = False
+                print("[bootstrap] supervisor cooldown elapsed — retrying spawn", flush=True)
+
+            if now < next_spawn_at:
+                time.sleep(0.5)
+                continue
+
+            # Lease reconcile: do not spawn duplicate while a valid owner holds lease.
+            try:
+                registry.initialize()
+                lease = registry.get_supervisor_lease()
+            except Exception as exc:  # noqa: BLE001
+                lease = None
+                print(f"[bootstrap] lease probe failed: {exc}", flush=True)
+
+            if lease is not None:
+                from Data.modules.common.process import pid_is_alive
+                from datetime import datetime, timezone
+
+                holder_pid = lease.get("holder_pid")
+                expires_at = lease.get("expires_at")
+                holder_alive = bool(holder_pid) and pid_is_alive(int(holder_pid))
+                lease_valid = False
+                if expires_at and holder_alive:
+                    try:
+                        exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+                        if exp.tzinfo is None:
+                            exp = exp.replace(tzinfo=timezone.utc)
+                        lease_valid = datetime.now(timezone.utc) < exp
+                    except (TypeError, ValueError):
+                        lease_valid = False
+                if lease_valid and int(holder_pid or 0) != 0:
+                    # Another valid supervisor still owns the lease — wait TTL.
+                    print(
+                        f"[bootstrap] supervisor lease still held by pid={holder_pid}; "
+                        "waiting (no duplicate spawn)",
+                        flush=True,
+                    )
+                    next_spawn_at = now + max(1.0, float(wsettings.supervisor_lease_ttl_seconds) / 2)
+                    time.sleep(0.5)
+                    continue
+
+            backoff = min(
+                float(wsettings.restart_max_backoff),
+                float(wsettings.restart_base_backoff) * (2 ** max(0, restart_count - 1)),
+            )
+            print(
+                f"[bootstrap] restarting supervisor attempt={restart_count} backoff={backoff:.1f}s",
+                flush=True,
+            )
+            time.sleep(backoff)
+            if stop["flag"] or api.poll() is not None:
+                continue
+            try:
+                supervisor = _spawn_supervisor(root, restart_count=restart_count)
+                supervisor_unavailable = False
+                next_spawn_at = 0.0
+            except Exception as exc:  # noqa: BLE001
+                print(f"[bootstrap] supervisor spawn failed: {exc}", flush=True)
+                next_spawn_at = time.time() + backoff
     finally:
         for proc in (supervisor, api):
+            if proc is None:
+                continue
             if proc.poll() is None:
                 proc.terminate()
                 try:

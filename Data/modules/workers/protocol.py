@@ -21,6 +21,17 @@ class WorkerInstanceState(str, Enum):
     INCOMPATIBLE = "INCOMPATIBLE"
 
 
+class SupervisorHealth(str, Enum):
+    """Operator-visible generic worker supervisor health (not model serving)."""
+
+    RUNNING = "RUNNING"
+    DEGRADED = "DEGRADED"
+    LEASE_LOST = "LEASE_LOST"
+    STOPPING = "STOPPING"
+    STOPPED = "STOPPED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
 @dataclass
 class WorkerRegistration:
     worker_id: str

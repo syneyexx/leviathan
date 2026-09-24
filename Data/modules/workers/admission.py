@@ -7,7 +7,7 @@ Model residency remains owned by the Model Control Plane.
 from __future__ import annotations
 
 import json
-import sqlite3
+import logging
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -15,6 +15,17 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator
+
+import sqlite3
+
+from .sqlite_support import (
+    control_plane_connection,
+    ensure_wal,
+    is_transient_sqlite_error,
+    run_with_busy_retry,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ResourceClass(str, Enum):
@@ -79,37 +90,34 @@ class ResourceAdmission:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=15, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
+        with control_plane_connection(self.db_path) as conn:
             yield conn
-            conn.commit()
-        finally:
-            conn.close()
 
     def initialize(self) -> None:
-        with self.connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS resource_reservations (
-                    reservation_id TEXT PRIMARY KEY,
-                    job_id TEXT,
-                    worker_id TEXT,
-                    resource_class TEXT NOT NULL,
-                    requested_json TEXT NOT NULL DEFAULT '{}',
-                    state TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT,
-                    released_at TEXT
+        def _init() -> None:
+            with self.connect() as conn:
+                ensure_wal(conn)
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS resource_reservations (
+                        reservation_id TEXT PRIMARY KEY,
+                        job_id TEXT,
+                        worker_id TEXT,
+                        resource_class TEXT NOT NULL,
+                        requested_json TEXT NOT NULL DEFAULT '{}',
+                        state TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT,
+                        released_at TEXT
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_resource_reservations_state "
-                "ON resource_reservations(state, resource_class)"
-            )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_resource_reservations_state "
+                    "ON resource_reservations(state, resource_class)"
+                )
+
+        run_with_busy_retry(_init)
 
     def _snapshot(self) -> dict[str, Any]:
         if self.telemetry_reader is None:
@@ -161,15 +169,19 @@ class ResourceAdmission:
                     pass
 
         if rc == ResourceClass.GPU_EXCLUSIVE:
-            with self.connect() as conn:
-                row = conn.execute(
-                    """
-                    SELECT reservation_id FROM resource_reservations
-                    WHERE state = 'HELD' AND resource_class = ?
-                    LIMIT 1
-                    """,
-                    (ResourceClass.GPU_EXCLUSIVE.value,),
-                ).fetchone()
+
+            def _check_exclusive() -> sqlite3.Row | None:
+                with self.connect() as conn:
+                    return conn.execute(
+                        """
+                        SELECT reservation_id FROM resource_reservations
+                        WHERE state = 'HELD' AND resource_class = ?
+                        LIMIT 1
+                        """,
+                        (ResourceClass.GPU_EXCLUSIVE.value,),
+                    ).fetchone()
+
+            row = run_with_busy_retry(_check_exclusive)
             if row is not None:
                 return AdmissionDecision(
                     allowed=False,
@@ -215,24 +227,28 @@ class ResourceAdmission:
         reservation_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=max(5.0, float(ttl_seconds)))
-        with self.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO resource_reservations(
-                    reservation_id, job_id, worker_id, resource_class,
-                    requested_json, state, created_at, expires_at, released_at
-                ) VALUES (?, ?, ?, ?, ?, 'HELD', ?, ?, NULL)
-                """,
-                (
-                    reservation_id,
-                    job_id,
-                    worker_id,
-                    rc.value,
-                    json.dumps(requested),
-                    now.isoformat(timespec="seconds"),
-                    expires.isoformat(timespec="seconds"),
-                ),
-            )
+
+        def _insert() -> None:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO resource_reservations(
+                        reservation_id, job_id, worker_id, resource_class,
+                        requested_json, state, created_at, expires_at, released_at
+                    ) VALUES (?, ?, ?, ?, ?, 'HELD', ?, ?, NULL)
+                    """,
+                    (
+                        reservation_id,
+                        job_id,
+                        worker_id,
+                        rc.value,
+                        json.dumps(requested),
+                        now.isoformat(timespec="seconds"),
+                        expires.isoformat(timespec="seconds"),
+                    ),
+                )
+
+        run_with_busy_retry(_insert)
         return AdmissionDecision(
             allowed=True,
             reason="granted",
@@ -244,32 +260,50 @@ class ResourceAdmission:
     def release(self, reservation_id: str | None) -> None:
         if not reservation_id:
             return
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE resource_reservations
-                SET state = 'RELEASED', released_at = ?
-                WHERE reservation_id = ? AND state = 'HELD'
-                """,
-                (utc_now(), reservation_id),
-            )
+
+        def _do() -> None:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE resource_reservations
+                    SET state = 'RELEASED', released_at = ?
+                    WHERE reservation_id = ? AND state = 'HELD'
+                    """,
+                    (utc_now(), reservation_id),
+                )
+
+        run_with_busy_retry(_do)
 
     def recover_expired(self, *, now: datetime | None = None) -> int:
         current = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
-        with self.connect() as conn:
-            cur = conn.execute(
-                """
-                UPDATE resource_reservations
-                SET state = 'EXPIRED', released_at = ?
-                WHERE state = 'HELD' AND expires_at IS NOT NULL AND expires_at <= ?
-                """,
-                (current, current),
-            )
-            return int(cur.rowcount or 0)
+
+        def _do() -> int:
+            with self.connect() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE resource_reservations
+                    SET state = 'EXPIRED', released_at = ?
+                    WHERE state = 'HELD' AND expires_at IS NOT NULL AND expires_at <= ?
+                    """,
+                    (current, current),
+                )
+                return int(cur.rowcount or 0)
+
+        try:
+            return run_with_busy_retry(_do)
+        except Exception as exc:
+            if is_transient_sqlite_error(exc):
+                logger.warning("recover_expired transient failure: %s", exc)
+                raise
+            logger.error("recover_expired non-transient failure: %s", exc)
+            raise
 
     def list_held(self) -> list[dict[str, Any]]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM resource_reservations WHERE state = 'HELD' ORDER BY created_at"
-            ).fetchall()
-        return [dict(row) for row in rows]
+        def _do() -> list[dict[str, Any]]:
+            with self.connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM resource_reservations WHERE state = 'HELD' ORDER BY created_at"
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        return run_with_busy_retry(_do)
