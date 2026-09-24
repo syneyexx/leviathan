@@ -2849,6 +2849,15 @@ def _m38_tasks_tables(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
 
 
+def _m39_behavior_settings_json(conn: sqlite3.Connection) -> None:
+    """Extended BehaviorProfile settings blob (identity/language/retrieval/generation)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(behavior_profiles)").fetchall()}
+    if "settings_json" not in cols:
+        conn.execute(
+            "ALTER TABLE behavior_profiles ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'"
+        )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2888,6 +2897,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=36, name="model_runtime_residency", apply=_m36_model_runtime_residency),
     Migration(version=37, name="execution_fabric", apply=_m37_execution_fabric),
     Migration(version=38, name="tasks_tables", apply=_m38_tasks_tables),
+    Migration(version=39, name="behavior_settings_json", apply=_m39_behavior_settings_json),
 )
 
 

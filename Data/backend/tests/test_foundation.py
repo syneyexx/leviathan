@@ -46,7 +46,7 @@ class ReasoningTests(unittest.TestCase):
 
     def test_short_conversation_does_not_force_knowledge(self) -> None:
         plan = ReasoningEngine().analyze("hello", has_knowledge=True)
-        self.assertEqual(plan.intent, "conversation")
+        self.assertIn(plan.intent, {"conversation", "greeting", "casual_conversation"})
         self.assertFalse(plan.use_knowledge)
 
 

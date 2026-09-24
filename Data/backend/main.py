@@ -16,6 +16,7 @@ from Data.backend.routes.settings import build_behavior_router, build_settings_r
 from Data.modules.settings import DEFAULT_BEHAVIOR_PROFILE, SettingsControlPlane
 from Data.modules.settings.behavior_store import BehaviorProfileStore
 from Data.modules.settings.bindings import bind_default_consumers
+from Data.modules.settings.resolver import BehaviorSettingsResolver
 from Data.modules.common import ownership_public_dict
 from Data.modules.agents import (
     AgentFleetService,
@@ -892,6 +893,8 @@ model_plane.set_telemetry_provider(lambda: system_telemetry_sampler.latest_publi
 settings_plane = SettingsControlPlane(settings)
 behavior_store = BehaviorProfileStore(settings.database_path)
 behavior_store.ensure_schema()
+behavior_resolver = BehaviorSettingsResolver(behavior_store)
+behavior_store.on_change(behavior_resolver.invalidate)
 
 cognition_store = CognitionStore(settings.database_path)
 cognition_delegation = DelegationService()
@@ -1984,20 +1987,44 @@ async def chat(payload: ChatRequest, request: Request):
     runs.transition(run.run_id, RunState.PLANNING)
     runs.append_event(run.run_id, EventType.REASONING_STARTED, {})
 
+    # Immutable behavior snapshot for this turn (sole identity/language/retrieval authority).
+    recent_user_texts = [
+        str(m.get("content") or "")
+        for m in db.get_messages(conversation_id, limit=live_settings().max_history_messages)
+        if m.get("role") == "user" and m.get("content")
+    ]
+    behavior_snapshot = behavior_resolver.resolve(
+        latest_user_message=message,
+        recent_user_messages=recent_user_texts[:-1] if recent_user_texts else [],
+    )
+    behavior_profile = behavior_snapshot.profile
+    turn_id = f"{run.run_id}:turn"
+    request_id = getattr(request.state, "request_id", None) or run.run_id
+
     has_knowledge = bool(knowledge.list_documents(limit=1))
     wm_load = neuro_memory.working.load if neuro_memory.enabled else 0.0
     # Provisional plan for economy inputs, then finalize with governor decision.
+    analyze_kwargs = dict(
+        retrieval_enabled=bool(behavior_profile.retrieval_enabled),
+        retrieval_mode=str(behavior_profile.retrieval_mode or "auto"),
+        memory_enabled=bool(behavior_profile.memory_enabled),
+    )
     provisional = (
-        reasoner.analyze(message, has_knowledge, deep_recall_enabled=settings.features.deep_recall)
+        reasoner.analyze(
+            message,
+            has_knowledge,
+            deep_recall_enabled=settings.features.deep_recall and behavior_profile.retrieval_deep_recall,
+            **analyze_kwargs,
+        )
         if settings.reasoning_enabled
-        else ReasoningEngine().analyze(message, False)
+        else ReasoningEngine().analyze(message, False, **analyze_kwargs)
     )
     economy = economy_governor.decide(
         complexity=provisional.complexity,
         intent=provisional.intent,
         memory_coverage=1.0 if has_knowledge else 0.0,
         residual_available=residual_runtime.supports_residuals(),
-        deep_recall_enabled=settings.features.deep_recall,
+        deep_recall_enabled=settings.features.deep_recall and behavior_profile.retrieval_deep_recall,
         explicit_deep_recall=any(term in message.lower() for term in ("exact", "cite", "deep recall")),
         working_memory_load=wm_load,
     )
@@ -2005,9 +2032,10 @@ async def chat(payload: ChatRequest, request: Request):
         reasoner.analyze(
             message,
             has_knowledge,
-            deep_recall_enabled=settings.features.deep_recall,
+            deep_recall_enabled=settings.features.deep_recall and behavior_profile.retrieval_deep_recall,
             economy_allow_deep_recall=economy.allow_deep_recall,
             memory_coverage=1.0 if has_knowledge else 0.0,
+            **analyze_kwargs,
         )
         if settings.reasoning_enabled
         else provisional
@@ -2015,7 +2043,18 @@ async def chat(payload: ChatRequest, request: Request):
     runs.append_event(
         run.run_id,
         EventType.REASONING_COMPLETED,
-        {**plan.public_summary(), "economy": economy.public_dict()},
+        {
+            **plan.public_summary(),
+            "economy": economy.public_dict(),
+            "behavior": behavior_snapshot.public_dict(include_prompt=False),
+            "retrieval_gate": {
+                "use_knowledge": plan.use_knowledge,
+                "reason": getattr(plan, "retrieval_reason", ""),
+                "policy_version": getattr(plan, "policy_version", ""),
+            },
+            "request_id": request_id,
+            "turn_id": turn_id,
+        },
     )
 
     cognition_meta: dict | None = None
@@ -2190,6 +2229,38 @@ async def chat(payload: ChatRequest, request: Request):
 
                 # COMMON RETRIEVAL SUCCESS FINALIZATION — single lifecycle authority.
                 # Do not duplicate EXECUTING transitions inside strategy branches.
+                # Calibrated relevance gate: retriever returning hits ≠ relevant.
+                threshold = float(behavior_profile.retrieval_relevance_threshold)
+                top_k = int(behavior_profile.retrieval_top_k or live_settings().knowledge_top_k)
+                filtered_hits: list[dict] = []
+                for item in knowledge_hits:
+                    score = item.get("score")
+                    if score is None:
+                        score = item.get("relevance") or item.get("rerank_score")
+                    try:
+                        score_f = float(score) if score is not None else None
+                    except (TypeError, ValueError):
+                        score_f = None
+                    # Honest: hash/non-semantic embeddings must not claim semantic confidence.
+                    embedding_semantic = True
+                    try:
+                        embedding_semantic = bool(retriever._embedding_is_semantic())  # noqa: SLF001
+                    except Exception:  # noqa: BLE001
+                        embedding_semantic = True
+                    if score_f is None:
+                        # No score → keep only when semantic embeddings unavailable would
+                        # make threshold meaningless; still cap by top_k.
+                        filtered_hits.append(item)
+                    elif not embedding_semantic:
+                        # Hash fallback scores are not semantic confidence.
+                        item = {**item, "score_uncalibrated": True, "score": score_f}
+                        filtered_hits.append(item)
+                    elif score_f >= threshold:
+                        filtered_hits.append(item)
+                knowledge_hits = filtered_hits[: max(1, top_k)] if filtered_hits else []
+                if behavior_profile.retrieval_max_context_chars:
+                    # Soft cap handled by ContextBuilder; annotate diagnostic.
+                    pass
                 runs.append_event(
                     run.run_id,
                     EventType.RETRIEVAL_COMPLETED,
@@ -2507,8 +2578,21 @@ async def chat(payload: ChatRequest, request: Request):
             atlas=atlas_hits or None,
             why=why_hits or None,
             contradictions=contradictions or None,
-            behavior_profile_prompt=behavior_store.get_effective().system_prompt,
+            behavior_profile_prompt=behavior_snapshot.system_prompt,
         )
+        stream_extra_kwargs: dict = {
+            "stop": list(behavior_profile.stop_sequences) or None,
+            "seed": behavior_profile.seed,
+            "frequency_penalty": behavior_profile.frequency_penalty,
+            "presence_penalty": behavior_profile.presence_penalty,
+        }
+        # Generation overrides from behavior settings when model profile lacks them.
+        if behavior_profile.temperature is not None:
+            llm_kwargs["temperature"] = behavior_profile.temperature
+        if behavior_profile.top_p is not None:
+            llm_kwargs["top_p"] = behavior_profile.top_p
+        if behavior_profile.max_output_tokens is not None:
+            llm_kwargs["max_tokens"] = behavior_profile.max_output_tokens
         if routed is not None and profile is not None:
             # Model-aware context window for ContextBuilder when known.
             if routed["model"].context_window and hasattr(llm, "context_builder"):
@@ -2520,13 +2604,14 @@ async def chat(payload: ChatRequest, request: Request):
                 model_id=routed["provider_model_id"],
                 endpoint=routed["endpoint"],
                 api_key=routed["api_key"],
-                temperature=profile.temperature,
-                max_tokens=profile.max_tokens,
-                top_p=profile.top_p,
+                temperature=profile.temperature if profile.temperature is not None else llm_kwargs.get("temperature"),
+                max_tokens=profile.max_tokens if profile.max_tokens is not None else llm_kwargs.get("max_tokens"),
+                top_p=profile.top_p if profile.top_p is not None else llm_kwargs.get("top_p"),
                 system_prompt=profile.system_prompt or None,
             )
     else:
         model_id_for_release = "cognition"
+        stream_extra_kwargs = {}
         route_meta = {
             "decision": {
                 "reason": "cognition_early_own",
@@ -2700,14 +2785,62 @@ async def chat(payload: ChatRequest, request: Request):
             )
             parts: list[str] = []
             model_name = "unknown"
+            finish_reason = None
+            termination_source = None
+            stream_stats: dict = {}
             try:
-                async for delta, model_name in llm.chat_stream(**llm_kwargs, cancel=cancel):
-                    if await request.is_disconnected():
-                        cancel.cancel("client_disconnect")
-                    if cancel.cancelled:
-                        break
-                    parts.append(delta)
-                    yield sse_encode("token", {"text": delta, "model": model_name})
+                if hasattr(llm, "chat_stream_frames"):
+                    async for frame in llm.chat_stream_frames(
+                        **llm_kwargs,
+                        **{k: v for k, v in stream_extra_kwargs.items() if v is not None},
+                        cancel=cancel,
+                        request_id=request_id,
+                        turn_id=turn_id,
+                    ):
+                        if await request.is_disconnected():
+                            cancel.cancel("client_disconnect")
+                        if cancel.cancelled:
+                            break
+                        model_name = frame.model or model_name
+                        if frame.kind == "delta" and frame.text:
+                            parts.append(frame.text)
+                            yield sse_encode(
+                                "token",
+                                {
+                                    "text": frame.text,
+                                    "model": model_name,
+                                    "sequence": frame.sequence,
+                                    "kind": "delta",
+                                    "request_id": request_id,
+                                    "turn_id": turn_id,
+                                },
+                            )
+                        elif frame.kind in {"snapshot", "replace"} and frame.text:
+                            parts.clear()
+                            parts.append(frame.text)
+                            yield sse_encode(
+                                frame.kind,
+                                {
+                                    "text": frame.text,
+                                    "model": model_name,
+                                    "sequence": frame.sequence,
+                                    "kind": frame.kind,
+                                    "request_id": request_id,
+                                    "turn_id": turn_id,
+                                },
+                            )
+                        elif frame.kind == "done":
+                            finish_reason = frame.finish_reason
+                            termination_source = frame.termination_source
+                            stream_stats = dict(frame.meta or {})
+                else:
+                    async for delta, model_name in llm.chat_stream(**llm_kwargs, cancel=cancel):
+                        if await request.is_disconnected():
+                            cancel.cancel("client_disconnect")
+                        if cancel.cancelled:
+                            break
+                        parts.append(delta)
+                        yield sse_encode("token", {"text": delta, "model": model_name})
                 if cancel.cancelled:
                     await _release_chat_inference()
                     try:
@@ -2718,6 +2851,8 @@ async def chat(payload: ChatRequest, request: Request):
                         "cancelled",
                         {
                             "reason": cancel.reason or "client_disconnect",
+                            "request_id": request_id,
+                            "turn_id": turn_id,
                             "truth": {
                                 "disconnect_cancels_stream": True,
                                 "gateway_capacity_released": True,
@@ -2730,6 +2865,18 @@ async def chat(payload: ChatRequest, request: Request):
                 if not answer:
                     raise LLMUnavailable("LLM stream produced empty text")
                 done_payload = await _finalize_chat(answer, model_name)
+                done_payload["finish_reason"] = finish_reason or "stop"
+                done_payload["termination_source"] = termination_source or "stream_end"
+                done_payload["request_id"] = request_id
+                done_payload["turn_id"] = turn_id
+                done_payload["behavior"] = behavior_snapshot.public_dict(include_prompt=False)
+                done_payload["retrieval_gate"] = {
+                    "use_knowledge": plan.use_knowledge,
+                    "reason": getattr(plan, "retrieval_reason", ""),
+                    "knowledge_count": len(knowledge_hits),
+                    "policy_version": getattr(plan, "policy_version", ""),
+                }
+                done_payload["stream_stats"] = stream_stats
                 yield sse_encode("done", done_payload)
             except LLMUnavailable as stream_exc:
                 # Honest degrade: non-stream completion still via real provider path.

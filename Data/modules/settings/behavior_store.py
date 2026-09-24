@@ -1,6 +1,6 @@
 """BehaviorProfile persistence — uses existing behavior_profiles table.
 
-Editable system prompt is behavior, not authority.
+Editable system prompt / identity / language / retrieval knobs are behavior, not authority.
 """
 
 from __future__ import annotations
@@ -12,7 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .behavior import DEFAULT_BEHAVIOR_PROFILE, BehaviorProfile
+from .behavior import (
+    DEFAULT_BEHAVIOR_PROFILE,
+    BehaviorProfile,
+    merge_behavior_patch,
+    validate_behavior_patch,
+)
+from .seed import SEED_SYSTEM_PROMPT
 
 
 def utc_now() -> str:
@@ -26,6 +32,17 @@ class BehaviorProfileStore:
 
     def __init__(self, database_path: Path) -> None:
         self.path = Path(database_path)
+        self._listeners: list[Any] = []
+
+    def on_change(self, callback: Any) -> None:
+        self._listeners.append(callback)
+
+    def _notify(self) -> None:
+        for cb in list(self._listeners):
+            try:
+                cb()
+            except Exception:  # noqa: BLE001
+                pass
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -58,6 +75,11 @@ class BehaviorProfileStore:
                 )
                 """
             )
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(behavior_profiles)").fetchall()}
+            if "settings_json" not in cols:
+                conn.execute(
+                    "ALTER TABLE behavior_profiles ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def get(self, profile_id: str | None = None) -> BehaviorProfile:
         pid = profile_id or self.DEFAULT_ID
@@ -71,9 +93,8 @@ class BehaviorProfileStore:
         return self._row_to_profile(row)
 
     def get_effective(self) -> BehaviorProfile:
-        """Return stored default profile or built-in default."""
-        profile = self.get(self.DEFAULT_ID)
-        return profile
+        """Return stored default profile or built-in seed default."""
+        return self.get(self.DEFAULT_ID)
 
     def save(self, profile: BehaviorProfile, *, updated_by: str = "operator") -> BehaviorProfile:
         hashed = profile.with_hash()
@@ -83,14 +104,15 @@ class BehaviorProfileStore:
         }
         metadata = dict(hashed.metadata)
         metadata["updated_by"] = updated_by
+        settings = hashed.settings_blob()
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO behavior_profiles (
                     id, version, system_prompt, overlays_json,
                     reasoning_mode_default, tool_use_style, hash,
-                    metadata_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    metadata_json, settings_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     version=excluded.version,
                     system_prompt=excluded.system_prompt,
@@ -99,6 +121,7 @@ class BehaviorProfileStore:
                     tool_use_style=excluded.tool_use_style,
                     hash=excluded.hash,
                     metadata_json=excluded.metadata_json,
+                    settings_json=excluded.settings_json,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -110,9 +133,11 @@ class BehaviorProfileStore:
                     hashed.tool_use_style,
                     hashed.hash,
                     json.dumps(metadata, ensure_ascii=False),
+                    json.dumps(settings, ensure_ascii=False),
                     utc_now(),
                 ),
             )
+        self._notify()
         return hashed
 
     def update_system_prompt(
@@ -123,22 +148,23 @@ class BehaviorProfileStore:
         updated_by: str = "operator",
     ) -> BehaviorProfile:
         current = self.get(profile_id)
-        # Bump version lightly for history honesty without a separate table.
-        try:
-            ver_i = int(current.version)
-            version = str(ver_i + 1)
-        except ValueError:
-            version = f"{current.version}.1"
-        updated = BehaviorProfile(
-            id=current.id if profile_id is None else (profile_id or current.id),
-            version=version,
-            system_prompt=system_prompt,
-            project_prompt_overlays=current.project_prompt_overlays,
-            task_prompt_overlays=current.task_prompt_overlays,
-            reasoning_mode_default=current.reasoning_mode_default,
-            tool_use_style=current.tool_use_style,
-            metadata={**dict(current.metadata), "updated_by": updated_by},
-        )
+        return self.patch({"system_prompt": system_prompt}, profile_id=profile_id, updated_by=updated_by)
+
+    def patch(
+        self,
+        payload: dict[str, Any],
+        *,
+        profile_id: str | None = None,
+        updated_by: str = "operator",
+    ) -> BehaviorProfile:
+        errors = validate_behavior_patch(payload)
+        if errors:
+            raise ValueError("; ".join(errors))
+        current = self.get(profile_id)
+        updated = merge_behavior_patch(current, payload)
+        meta = dict(updated.metadata)
+        meta["updated_by"] = updated_by
+        updated = BehaviorProfile(**{**updated.__dict__, "metadata": meta, "hash": None}).with_hash()  # type: ignore[arg-type]
         return self.save(updated, updated_by=updated_by)
 
     def reset_to_default(self, *, profile_id: str | None = None) -> BehaviorProfile:
@@ -146,13 +172,12 @@ class BehaviorProfileStore:
         reset = BehaviorProfile(
             id=pid,
             version=DEFAULT_BEHAVIOR_PROFILE.version,
-            system_prompt=DEFAULT_BEHAVIOR_PROFILE.system_prompt,
-            project_prompt_overlays=DEFAULT_BEHAVIOR_PROFILE.project_prompt_overlays,
-            task_prompt_overlays=DEFAULT_BEHAVIOR_PROFILE.task_prompt_overlays,
-            reasoning_mode_default=DEFAULT_BEHAVIOR_PROFILE.reasoning_mode_default,
-            tool_use_style=DEFAULT_BEHAVIOR_PROFILE.tool_use_style,
+            system_prompt=SEED_SYSTEM_PROMPT,
             metadata={"reset": True},
         )
+        # Copy all seed defaults from DEFAULT_BEHAVIOR_PROFILE
+        fields = {k: v for k, v in DEFAULT_BEHAVIOR_PROFILE.__dict__.items() if k not in {"id", "hash", "metadata"}}
+        reset = BehaviorProfile(id=pid, metadata={"reset": True}, **fields).with_hash()  # type: ignore[arg-type]
         return self.save(reset, updated_by="operator:reset")
 
     def public_effective(self, *, include_prompt: bool = True) -> dict[str, Any]:
@@ -161,12 +186,21 @@ class BehaviorProfileStore:
         payload = effective.public_dict(include_prompt=include_prompt)
         payload["default_system_prompt"] = default.system_prompt if include_prompt else None
         payload["is_default"] = effective.compute_hash() == default.compute_hash()
+        payload["updated_at"] = None
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT updated_at FROM behavior_profiles WHERE id = ?",
+                (effective.id,),
+            ).fetchone()
+            if row:
+                payload["updated_at"] = row["updated_at"]
         payload["truth"] = {
             **payload.get("truth", {}),
             "behavior_is_not_authority": True,
             "system_prompt_is_not_capability_grant": True,
             "does_not_bypass_execution_gateway": True,
             "does_not_bypass_approvals": True,
+            "settings_are_sole_identity_authority": True,
         }
         return payload
 
@@ -180,16 +214,44 @@ class BehaviorProfileStore:
             metadata = json.loads(row["metadata_json"] or "{}")
         except json.JSONDecodeError:
             metadata = {}
+        try:
+            keys = row.keys()
+            settings_raw = row["settings_json"] if "settings_json" in keys else "{}"
+            settings = json.loads(settings_raw or "{}")
+        except (json.JSONDecodeError, IndexError, KeyError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
         project = overlays.get("project_prompt_overlays") or []
         task = overlays.get("task_prompt_overlays") or []
-        return BehaviorProfile(
-            id=str(row["id"]),
-            version=str(row["version"]),
-            system_prompt=str(row["system_prompt"] or ""),
-            project_prompt_overlays=tuple(project) if isinstance(project, list) else (),
-            task_prompt_overlays=tuple(task) if isinstance(task, list) else (),
-            reasoning_mode_default=str(row["reasoning_mode_default"] or "standard"),
-            tool_use_style=str(row["tool_use_style"] or "balanced"),
-            metadata=metadata if isinstance(metadata, dict) else {},
-            hash=str(row["hash"]) if row["hash"] else None,
-        ).with_hash()
+        base = {
+            "id": str(row["id"]),
+            "version": str(row["version"]),
+            "system_prompt": str(row["system_prompt"] or ""),
+            "project_prompt_overlays": tuple(project) if isinstance(project, list) else (),
+            "task_prompt_overlays": tuple(task) if isinstance(task, list) else (),
+            "reasoning_mode_default": str(row["reasoning_mode_default"] or "standard"),
+            "tool_use_style": str(row["tool_use_style"] or "balanced"),
+            "metadata": metadata if isinstance(metadata, dict) else {},
+            "hash": str(row["hash"]) if row["hash"] else None,
+        }
+        # Merge extended settings; ignore unknown keys
+        known = {f.name for f in BehaviorProfile.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        for key, value in settings.items():
+            if key in known and key not in {"id", "hash"}:
+                if key in {
+                    "aliases",
+                    "stop_sequences",
+                    "retrieval_dataset_scopes",
+                    "project_prompt_overlays",
+                    "task_prompt_overlays",
+                }:
+                    if isinstance(value, list):
+                        base[key] = tuple(value)
+                    elif value is None:
+                        base[key] = ()
+                    else:
+                        base[key] = (value,)
+                else:
+                    base[key] = value
+        return BehaviorProfile(**base).with_hash()  # type: ignore[arg-type]
