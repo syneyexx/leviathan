@@ -116,12 +116,15 @@ def build_settings_router(plane: SettingsControlPlane) -> APIRouter:
 
 
 def build_behavior_router(behavior_store: Any) -> APIRouter:
-    """BehaviorProfile system-prompt routes — behavior is not authority."""
+    """BehaviorProfile routes — behavior is not authority."""
 
     router = APIRouter(tags=["settings", "behavior"])
 
     class BehaviorPromptPatch(BaseModel):
         system_prompt: str = Field(..., min_length=1, max_length=200_000)
+
+    class BehaviorProfilePatch(BaseModel):
+        values: dict[str, Any] = Field(default_factory=dict)
 
     @router.get("/api/settings/behavior-profile")
     def get_behavior_profile() -> dict:
@@ -132,6 +135,7 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
                 "system_prompt_is_not_capability_grant": True,
                 "does_not_bypass_execution_gateway": True,
                 "does_not_bypass_approvals": True,
+                "settings_are_sole_identity_authority": True,
             },
         }
 
@@ -144,6 +148,22 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
             "truth": {
                 "behavior_is_not_authority": True,
                 "permissions_unchanged": True,
+            },
+        }
+
+    @router.patch("/api/settings/behavior-profile")
+    def patch_behavior_profile(payload: BehaviorProfilePatch) -> dict:
+        try:
+            profile = behavior_store.patch(payload.values)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return {
+            "profile": profile.public_dict(include_prompt=True),
+            "effective": behavior_store.public_effective(include_prompt=True),
+            "truth": {
+                "behavior_is_not_authority": True,
+                "permissions_unchanged": True,
+                "applies_without_restart": True,
             },
         }
 

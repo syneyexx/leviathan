@@ -581,12 +581,12 @@ class CachePressureTests(unittest.TestCase):
 
 
 class MigrationTests(unittest.TestCase):
-    def test_migration_39_applies(self) -> None:
+    def test_migration_41_inference_efficiency_applies(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lev.db"
             runner = MigrationRunner(path)
             applied = runner.apply_all()
-            self.assertIn(39, applied)
+            self.assertIn(41, applied)
             # Upgrade path: apply again is no-op
             self.assertEqual(runner.apply_all(), [])
 

@@ -9,7 +9,11 @@ from Data.backend.config import Settings
 from Data.modules.context import ContextBuilder
 from Data.modules.reasoning import ReasoningPlan
 
-from .streaming import extract_delta_text, extract_finish_reason, parse_openai_sse_line
+from .streaming import (
+    StreamNormalizer,
+    extract_finish_reason,
+    parse_openai_sse_line,
+)
 from .serving import StreamCancelToken
 
 
@@ -118,12 +122,9 @@ class OpenAICompatibleLLM:
         # the compiler has already produced the pack.
         identity = (behavior_profile_prompt or "").strip() or None
         if identity is None:
-            try:
-                from Data.modules.settings.behavior import DEFAULT_BEHAVIOR_PROFILE
+            from Data.modules.settings.seed import SEED_SYSTEM_PROMPT
 
-                identity = DEFAULT_BEHAVIOR_PROFILE.system_prompt
-            except Exception:  # noqa: BLE001
-                identity = None
+            identity = SEED_SYSTEM_PROMPT
 
         additive = (system_prompt or "").strip()
         pack_constraints = constraints
@@ -161,7 +162,17 @@ class OpenAICompatibleLLM:
         max_tokens: int | None,
         top_p: float | None,
         stream: bool,
+        stop: list[str] | tuple[str, ...] | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        provider_hints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Build provider completion payload with optional termination controls.
+
+        Stop sequences are only attached when explicitly configured for this
+        provider/model — never universal User:/Assistant: stops.
+        """
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -172,7 +183,51 @@ class OpenAICompatibleLLM:
             payload["top_p"] = top_p
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if stop:
+            cleaned = [s for s in stop if isinstance(s, str) and s]
+            if cleaned:
+                payload["stop"] = cleaned
+        if seed is not None:
+            payload["seed"] = seed
+        if frequency_penalty is not None:
+            payload["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
+        if provider_hints:
+            # Non-conflicting provider-specific knobs (e.g. llama.cpp extras).
+            for key, value in provider_hints.items():
+                if key not in payload and value is not None:
+                    payload[key] = value
         return payload
+
+    @staticmethod
+    def _normalize_completion_result(
+        *,
+        text: str,
+        model: str,
+        finish_reason: str | None,
+        termination_source: str,
+        usage: dict[str, int],
+        usage_source: str,
+        request_id: str | None = None,
+        turn_id: str | None = None,
+        provider: str = "openai_compatible",
+        stream_stats: dict[str, Any] | None = None,
+        raw_meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "text": text,
+            "model": model,
+            "provider": provider,
+            "finish_reason": finish_reason or "stop",
+            "termination_source": termination_source,
+            "usage": usage,
+            "usage_source": usage_source,
+            "request_id": request_id,
+            "turn_id": turn_id,
+            "stream_stats": stream_stats or {},
+            "provider_meta": raw_meta or {},
+        }
 
     @staticmethod
     def _extract_usage(data: dict[str, Any]) -> tuple[dict[str, int], str]:
@@ -248,18 +303,22 @@ class OpenAICompatibleLLM:
 
         try:
             content = data["choices"][0]["message"]["content"]
+            finish_reason = data["choices"][0].get("finish_reason")
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMUnavailable("LLM server returned an unexpected chat-completion payload.") from exc
 
         if not isinstance(content, str) or not content.strip():
             raise LLMUnavailable("LLM returned an empty response.")
         usage, usage_source = self._extract_usage(data if isinstance(data, dict) else {})
-        return {
-            "text": content.strip(),
-            "model": model,
-            "usage": usage,
-            "usage_source": usage_source,
-        }
+        return self._normalize_completion_result(
+            text=content.strip(),
+            model=model,
+            finish_reason=str(finish_reason) if finish_reason else "stop",
+            termination_source="provider_finish_reason" if finish_reason else "completion_message",
+            usage=usage,
+            usage_source=usage_source,
+            raw_meta={"id": data.get("id")} if isinstance(data, dict) else {},
+        )
 
     async def chat(
         self,
@@ -333,13 +392,80 @@ class OpenAICompatibleLLM:
         system_prompt: str | None = None,
         behavior_profile_prompt: str | None = None,
         cancel: StreamCancelToken | None = None,
+        stop: list[str] | tuple[str, ...] | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
-        """Yield ``(delta_text, model_id)`` token chunks from OpenAI-compatible SSE.
+        """Yield ``(delta_text, model_id)`` from normalized stream frames.
 
-        Honors cooperative ``cancel`` between chunks (U025). Never fabricates a
-        stream from a completed non-stream response except when the server itself
-        returns JSON (honest single-chunk degrade).
+        Cumulative ``message.content`` snapshots are converted to deltas so
+        callers never append full snapshots as if they were increments.
         """
+        async for frame in self.chat_stream_frames(
+            history,
+            knowledge,
+            plan,
+            memory=memory,
+            observations=observations,
+            evidence=evidence,
+            neuro=neuro,
+            atlas=atlas,
+            why=why,
+            contradictions=contradictions,
+            model_id=model_id,
+            endpoint=endpoint,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            system_prompt=system_prompt,
+            behavior_profile_prompt=behavior_profile_prompt,
+            cancel=cancel,
+            stop=stop,
+            seed=seed,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+        ):
+            # Append-safe: only deltas (including snapshot-derived suffixes).
+            # First snapshot (empty prior) is also append-safe as initial text.
+            if frame.kind == "delta" and frame.text:
+                yield frame.text, frame.model or model_id or ""
+            elif frame.kind == "snapshot" and frame.text:
+                yield frame.text, frame.model or model_id or ""
+            # replace requires chat_stream_frames — skipped here to avoid corruption.
+    async def chat_stream_frames(
+        self,
+        history: list[dict[str, str]],
+        knowledge: list[dict],
+        plan: ReasoningPlan,
+        *,
+        memory: list[dict] | None = None,
+        observations: list[dict] | None = None,
+        evidence: list[dict] | None = None,
+        neuro: list[dict] | None = None,
+        atlas: list[dict] | None = None,
+        why: list[dict] | None = None,
+        contradictions: list[dict] | str | None = None,
+        model_id: str | None = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        behavior_profile_prompt: str | None = None,
+        cancel: StreamCancelToken | None = None,
+        stop: list[str] | tuple[str, ...] | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        request_id: str | None = None,
+        turn_id: str | None = None,
+    ) -> AsyncIterator[Any]:
+        """Yield typed StreamFrame objects with snapshot→delta normalization."""
+        from .streaming import StreamFrame
+
         model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
         messages = self._build_messages(
             history,
@@ -362,10 +488,15 @@ class OpenAICompatibleLLM:
             max_tokens=max_tokens,
             top_p=top_p,
             stream=True,
+            stop=stop,
+            seed=seed,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
         )
         base = self._base_url(endpoint)
         headers = self._headers(api_key)
         headers["Accept"] = "text/event-stream"
+        normalizer = StreamNormalizer()
         yielded = False
         try:
             async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
@@ -384,19 +515,37 @@ class OpenAICompatibleLLM:
                             f"LLM stream failed HTTP {response.status_code}: {body}"
                         )
                     content_type = (response.headers.get("content-type") or "").lower()
-                    # Some servers return application/json even for stream=false fallbacks.
                     if "text/event-stream" not in content_type and "json" in content_type:
                         raw = await response.aread()
                         try:
                             data = json.loads(raw.decode("utf-8"))
                             content = data["choices"][0]["message"]["content"]
+                            finish = data["choices"][0].get("finish_reason")
                         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
                             raise LLMUnavailable(
                                 "LLM stream endpoint returned non-SSE JSON without usable content"
                             ) from exc
                         if not isinstance(content, str) or not content.strip():
                             raise LLMUnavailable("LLM returned an empty streamed response.")
-                        yield content.strip(), model
+                        for frame in normalizer.ingest_snapshot(
+                            content.strip(),
+                            finish_reason=str(finish) if finish else "stop",
+                        ):
+                            frame.model = model
+                            frame.request_id = request_id
+                            frame.turn_id = turn_id
+                            yielded = True
+                            yield frame
+                        yield StreamFrame(
+                            kind="done",
+                            sequence=normalizer.next_seq(),
+                            finish_reason=str(finish) if finish else "stop",
+                            termination_source="json_fallback",
+                            model=model,
+                            request_id=request_id,
+                            turn_id=turn_id,
+                            meta=normalizer.stats(),
+                        )
                         return
                     async for line in response.aiter_lines():
                         if cancel and cancel.cancelled:
@@ -405,21 +554,39 @@ class OpenAICompatibleLLM:
                         chunk = parse_openai_sse_line(line)
                         if chunk is None:
                             continue
-                        if chunk.get("_done"):
-                            break
-                        finish = extract_finish_reason(chunk)
-                        delta = extract_delta_text(chunk)
-                        if not delta:
-                            if finish:
-                                break
-                            continue
-                        yielded = True
-                        yield delta, model
-                        if finish:
-                            break
+                        frames = normalizer.ingest_openai_chunk(chunk)
+                        for frame in frames:
+                            frame.model = model
+                            frame.request_id = request_id
+                            frame.turn_id = turn_id
+                            if frame.kind in {"delta", "snapshot", "replace"} and frame.text:
+                                yielded = True
+                            yield frame
+                            if frame.kind == "done":
+                                return
         except httpx.HTTPError as exc:
             raise LLMUnavailable(f"LLM stream request failed: {exc}") from exc
         if cancel and cancel.cancelled:
+            yield StreamFrame(
+                kind="done",
+                sequence=normalizer.next_seq(),
+                finish_reason="cancelled",
+                termination_source="cooperative_cancel",
+                model=model,
+                request_id=request_id,
+                turn_id=turn_id,
+                meta=normalizer.stats(),
+            )
             return
         if not yielded:
             raise LLMUnavailable("LLM stream completed without tokens.")
+        yield StreamFrame(
+            kind="done",
+            sequence=normalizer.next_seq(),
+            finish_reason="stop",
+            termination_source="stream_end",
+            model=model,
+            request_id=request_id,
+            turn_id=turn_id,
+            meta=normalizer.stats(),
+        )

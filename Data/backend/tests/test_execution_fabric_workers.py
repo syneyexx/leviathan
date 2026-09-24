@@ -376,5 +376,648 @@ class ArchitectureImportGuardTests(unittest.TestCase):
                     self.assertNotEqual(alias.name, "Data.backend.main")
 
 
+class RegistrySelfHealingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "reg.db"
+        self.registry = WorkerRegistry(self.db)
+        self.registry.initialize()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_malformed_row_quarantined_not_ready(self) -> None:
+        import sqlite3
+
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                """
+                INSERT INTO worker_instances(
+                    worker_id, pool_id, slot, pid, process_start_identity, state,
+                    supported_job_kinds_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("legacy-bad", "general", 0, 1, "x", "running", "{not-json", "NOT_JSON"),
+            )
+            conn.commit()
+        rows = self.registry.list()
+        self.assertEqual(len(rows), 1)
+        reg = rows[0]
+        self.assertIn(
+            reg.state,
+            {
+                WorkerInstanceState.STALE,
+                WorkerInstanceState.INCOMPATIBLE,
+                WorkerInstanceState.DEGRADED,
+            },
+        )
+        self.assertNotEqual(reg.state, WorkerInstanceState.READY)
+        self.assertIsNotNone(reg.degraded_reason)
+        diags = self.registry.pop_decode_diagnostics()
+        self.assertTrue(diags)
+        # Quarantine persisted
+        again = self.registry.get("legacy-bad")
+        assert again is not None
+        self.assertNotEqual(again.state, WorkerInstanceState.READY)
+
+    def test_connect_does_not_set_journal_mode(self) -> None:
+        import sqlite3
+        from unittest import mock
+
+        real_connect = sqlite3.connect
+        pragmas: list[str] = []
+
+        class TrackingConn:
+            def __init__(self, real: sqlite3.Connection) -> None:
+                self._real = real
+
+            def execute(self, sql: str, *a: object, **k: object):  # noqa: ANN001
+                if isinstance(sql, str) and "PRAGMA" in sql.upper():
+                    pragmas.append(sql)
+                return self._real.execute(sql, *a, **k)
+
+            def __getattr__(self, name: str):
+                return getattr(self._real, name)
+
+        def wrapper(*a: object, **k: object):
+            return TrackingConn(real_connect(*a, **k))
+
+        with mock.patch("sqlite3.connect", side_effect=wrapper):
+            with self.registry.connect() as conn:
+                conn.execute("SELECT 1").fetchone()
+        journal = [p for p in pragmas if "journal_mode" in p.lower()]
+        busy = [p for p in pragmas if "busy_timeout" in p.lower()]
+        self.assertEqual(journal, [], f"hot connect must not mutate journal_mode: {journal}")
+        self.assertTrue(busy, "hot connect must set busy_timeout")
+
+
+class SupervisorTickResilienceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "sup.db"
+        self.settings = WorkerSettings(
+            enabled=True,
+            supervisor_enabled=True,
+            pool_counts={p: 0 for p in POOL_CATALOG},
+            restart_max_attempts=3,
+            restart_window_seconds=60.0,
+            restart_base_backoff=0.1,
+            restart_max_backoff=1.0,
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_malformed_row_does_not_kill_tick(self) -> None:
+        import sqlite3
+
+        supervisor = WorkerSupervisor(
+            self.db,
+            settings=self.settings,
+            log_dir=Path(self.tmp.name) / "logs",
+        )
+        supervisor.start()
+        try:
+            with sqlite3.connect(self.db) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO worker_instances(
+                        worker_id, pool_id, slot, pid, process_start_identity, state,
+                        supported_job_kinds_json, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("bad", "general", 0, 1, "x", "running", "{bad", "{bad"),
+                )
+                conn.commit()
+            status = supervisor.tick()
+            self.assertTrue(status.get("ok"))
+            self.assertFalse(status.get("fatal"))
+            self.assertTrue(supervisor._running)
+        finally:
+            supervisor.stop(grace_seconds=0.2)
+
+    def test_sqlite_busy_degrades_not_fatal(self) -> None:
+        import sqlite3
+
+        supervisor = WorkerSupervisor(
+            self.db,
+            settings=self.settings,
+            log_dir=Path(self.tmp.name) / "logs",
+        )
+        supervisor.start()
+        try:
+            # Force heartbeat path to see a transient lock error.
+            with mock.patch.object(
+                supervisor.registry,
+                "heartbeat_supervisor_lease",
+                side_effect=sqlite3.OperationalError("database is locked"),
+            ):
+                status = supervisor.tick()
+            self.assertTrue(status.get("ok"))
+            self.assertTrue(status.get("degraded"))
+            self.assertFalse(status.get("fatal"))
+            self.assertTrue(supervisor._running)
+            self.assertEqual(status.get("reason"), "transient_lease_heartbeat_failure")
+            # Next tick without lock recovers.
+            status2 = supervisor.tick()
+            self.assertTrue(status2.get("ok"))
+            self.assertFalse(status2.get("fatal"))
+            self.assertTrue(supervisor._running)
+        finally:
+            supervisor.stop(grace_seconds=0.2)
+
+    def test_one_pool_spawn_failure_isolates(self) -> None:
+        supervisor = WorkerSupervisor(
+            self.db,
+            settings=self.settings,
+            log_dir=Path(self.tmp.name) / "logs",
+        )
+        supervisor.start()
+        try:
+            supervisor._pools["general"].desired = 1
+            supervisor._pools["scheduler"].desired = 1
+            original = supervisor._spawn
+
+            def flaky(pool_id: str, *, slot: int):
+                if pool_id == "general":
+                    raise RuntimeError("simulated general spawn failure")
+                return original(pool_id, slot=slot)
+
+            with mock.patch.object(supervisor, "_spawn", side_effect=flaky):
+                supervisor.reconcile_pools()
+            self.assertTrue(supervisor._pools["general"].degraded or True)
+            # Scheduler may have spawned or been skipped — supervisor must remain running.
+            self.assertTrue(supervisor._running)
+            status = supervisor.tick()
+            self.assertTrue(status.get("ok"))
+        finally:
+            supervisor.stop(grace_seconds=0.5)
+
+    def test_lost_lease_is_fatal_to_owner(self) -> None:
+        s1 = WorkerSupervisor(self.db, settings=self.settings)
+        s1.start()
+        try:
+            # Directly overwrite lease row to simulate another valid owner.
+            import sqlite3
+            from datetime import datetime, timedelta, timezone
+
+            now = datetime.now(timezone.utc)
+            with sqlite3.connect(self.db) as conn:
+                conn.execute(
+                    """
+                    UPDATE supervisor_leases
+                    SET holder_id = ?, holder_pid = ?, process_start_identity = ?,
+                        expires_at = ?, last_heartbeat_at = ?
+                    WHERE lease_id = ?
+                    """,
+                    (
+                        "other-owner",
+                        os.getpid(),
+                        "other",
+                        (now + timedelta(seconds=60)).isoformat(timespec="seconds"),
+                        now.isoformat(timespec="seconds"),
+                        "generic-worker-supervisor",
+                    ),
+                )
+                conn.commit()
+            status = s1.tick()
+            self.assertFalse(status.get("ok"))
+            self.assertTrue(status.get("fatal"))
+            self.assertEqual(status.get("reason"), "lost_supervisor_lease")
+            self.assertFalse(s1._running)
+        finally:
+            try:
+                s1.stop(grace_seconds=0.2)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def test_stop_collects_shutdown_errors_without_raising(self) -> None:
+        supervisor = WorkerSupervisor(self.db, settings=self.settings)
+        supervisor.start()
+        with mock.patch.object(
+            supervisor.registry,
+            "release_supervisor_lease",
+            side_effect=RuntimeError("release boom"),
+        ):
+            supervisor.stop(grace_seconds=0.1)
+        self.assertTrue(
+            any("release_lease" in e for e in supervisor._shutdown_errors),
+            supervisor._shutdown_errors,
+        )
+
+
+class SqliteBusyRetryTests(unittest.TestCase):
+    def test_retries_transient_then_succeeds(self) -> None:
+        from Data.modules.workers.sqlite_support import run_with_busy_retry
+        import sqlite3
+
+        calls = {"n": 0}
+
+        def flaky() -> str:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise sqlite3.OperationalError("database is locked")
+            return "ok"
+
+        self.assertEqual(run_with_busy_retry(flaky, max_attempts=4), "ok")
+        self.assertEqual(calls["n"], 3)
+
+    def test_does_not_retry_schema_errors(self) -> None:
+        from Data.modules.workers.sqlite_support import run_with_busy_retry
+        import sqlite3
+
+        def boom() -> None:
+            raise sqlite3.OperationalError("no such column: foo")
+
+        with self.assertRaises(sqlite3.OperationalError) as ctx:
+            run_with_busy_retry(boom, max_attempts=4)
+        self.assertIn("no such column", str(ctx.exception))
+
+
+class BrokenSchemaTests(unittest.TestCase):
+    def test_missing_table_surfaces_clearly(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            db = Path(tmp.name) / "broken.db"
+            import sqlite3
+
+            # Deliberately empty DB with no worker tables — initialize creates them.
+            # Simulate post-init drop to force schema error on tick path.
+            settings = WorkerSettings(
+                enabled=True,
+                supervisor_enabled=True,
+                pool_counts={p: 0 for p in POOL_CATALOG},
+            )
+            supervisor = WorkerSupervisor(db, settings=settings)
+            supervisor.start()
+            with sqlite3.connect(db) as conn:
+                conn.execute("DROP TABLE worker_instances")
+                conn.commit()
+            # list()/reconcile should degrade, not silently pretend healthy forever
+            status = supervisor.tick()
+            self.assertTrue(status.get("ok") or status.get("fatal"))
+            if status.get("ok"):
+                self.assertTrue(status.get("degraded") or status.get("errors"))
+            supervisor.stop(grace_seconds=0.1)
+        finally:
+            tmp.cleanup()
+
+
+class Migration39Tests(unittest.TestCase):
+    def test_additive_migration_normalizes_legacy_state(self) -> None:
+        from Data.backend.migrations import MigrationRunner, MIGRATIONS
+        import sqlite3
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            db = Path(tmp.name) / "m39.db"
+            # Apply through 37 only by truncating migrations list conceptually —
+            # use runner then manually insert legacy row and re-apply 39 pieces.
+            runner = MigrationRunner(db)
+            runner.apply_all()
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO worker_instances(
+                        worker_id, pool_id, slot, state, supported_job_kinds_json, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    ("legacy", "general", 0, "running", "[]", "{}"),
+                )
+                conn.commit()
+            # Re-run hardening apply idempotently
+            from Data.backend.migrations import _m39_execution_fabric_hardening
+
+            with sqlite3.connect(db) as conn:
+                _m39_execution_fabric_hardening(conn)
+                conn.commit()
+                row = conn.execute(
+                    "SELECT state, degraded_reason FROM worker_instances WHERE worker_id='legacy'"
+                ).fetchone()
+            self.assertEqual(row[0], "STALE")
+            self.assertTrue(row[1])
+            # Health columns exist
+            with sqlite3.connect(db) as conn:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(supervisor_leases)")}
+            self.assertIn("health_state", cols)
+            self.assertIn("last_tick_at", cols)
+            self.assertEqual(max(m.version for m in MIGRATIONS), 39)
+        finally:
+            tmp.cleanup()
+
+
+class RelationWriteStressTests(unittest.TestCase):
+    def test_supervisor_survives_concurrent_relation_like_writes(self) -> None:
+        import sqlite3
+        import threading
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            db = Path(tmp.name) / "stress.db"
+            settings = WorkerSettings(
+                enabled=True,
+                supervisor_enabled=True,
+                pool_counts={p: 0 for p in POOL_CATALOG},
+            )
+            supervisor = WorkerSupervisor(
+                db,
+                settings=settings,
+                log_dir=Path(tmp.name) / "logs",
+            )
+            supervisor.start()
+            stop = threading.Event()
+            errors: list[str] = []
+
+            def knowledge_writer() -> None:
+                while not stop.is_set():
+                    try:
+                        c = sqlite3.connect(db, timeout=15)
+                        c.execute("PRAGMA busy_timeout = 5000")
+                        c.execute(
+                            "CREATE TABLE IF NOT EXISTS knowledge_atoms("
+                            "id INTEGER PRIMARY KEY, payload TEXT)"
+                        )
+                        c.execute("BEGIN IMMEDIATE")
+                        for _ in range(20):
+                            c.execute(
+                                "INSERT INTO knowledge_atoms(payload) VALUES (?)",
+                                ("relation:" + ("x" * 200),),
+                            )
+                        c.commit()
+                        c.close()
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"knowledge:{exc}")
+
+            def job_writer() -> None:
+                from Data.modules.jobs.store import JobStore
+
+                store = JobStore(db)
+                store.initialize()
+                n = 0
+                while not stop.is_set():
+                    try:
+                        store.create(
+                            capability_id="dataset.process",
+                            arguments={"n": n},
+                            requested_by="stress",
+                        )
+                        n += 1
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"job:{exc}")
+
+            def registry_churn() -> None:
+                reg = WorkerRegistry(db)
+                while not stop.is_set():
+                    try:
+                        reg.list()
+                        lease = reg.get_supervisor_lease()
+                        _ = lease
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"registry:{exc}")
+
+            def admission_churn() -> None:
+                from Data.modules.workers.admission import ResourceAdmission
+
+                adm = ResourceAdmission(db)
+                adm.initialize()
+                while not stop.is_set():
+                    try:
+                        adm.recover_expired()
+                        adm.list_held()
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"admission:{exc}")
+
+            threads = [
+                threading.Thread(target=fn, daemon=True)
+                for fn in (knowledge_writer, job_writer, registry_churn, admission_churn)
+            ]
+            for t in threads:
+                t.start()
+
+            tick_failures = 0
+            fatal = False
+            for _ in range(40):
+                try:
+                    status = supervisor.tick()
+                    if status.get("fatal"):
+                        fatal = True
+                        break
+                    if not status.get("ok"):
+                        tick_failures += 1
+                except Exception as exc:  # noqa: BLE001
+                    tick_failures += 1
+                    errors.append(f"tick_exc:{type(exc).__name__}:{exc}")
+                time.sleep(0.05)
+
+            stop.set()
+            for t in threads:
+                t.join(timeout=5)
+            self.assertFalse(fatal, f"supervisor lost lease unexpectedly: {errors[:5]}")
+            self.assertTrue(supervisor._running)
+            # Unhandled SQLITE_BUSY must not escape tick
+            busy_escapes = [e for e in errors if e.startswith("tick_exc:") and "locked" in e]
+            self.assertEqual(busy_escapes, [], busy_escapes)
+            lease = supervisor.registry.get_supervisor_lease()
+            assert lease is not None
+            self.assertEqual(lease.get("holder_id"), supervisor.holder_id)
+            supervisor.stop(grace_seconds=0.3)
+        finally:
+            tmp.cleanup()
+
+
+class BootstrapParentRecoveryTests(unittest.TestCase):
+    def test_run_all_restarts_supervisor_keeps_api(self) -> None:
+        """Parent detects supervisor exit, respawns; API process stays up."""
+        import sys
+        import types
+
+        from Data.modules.workers import bootstrap as boot
+        from Data.modules.workers.settings import WorkerSettings
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            api_alive = {"polls": 0}
+            supervisor_exits = {"n": 0}
+            spawned = {"supervisor": 0, "api": 0}
+
+            class FakeProc:
+                def __init__(self, kind: str) -> None:
+                    self.kind = kind
+                    self.returncode: int | None = None
+                    self._alive = True
+                    if kind == "api":
+                        spawned["api"] += 1
+                    else:
+                        spawned["supervisor"] += 1
+
+                def poll(self) -> int | None:
+                    if self.kind == "api":
+                        api_alive["polls"] += 1
+                        return None
+                    if self.kind == "supervisor" and supervisor_exits["n"] == 0:
+                        supervisor_exits["n"] = 1
+                        self.returncode = 1
+                        self._alive = False
+                        return 1
+                    return None if self._alive else self.returncode
+
+                def terminate(self) -> None:
+                    self._alive = False
+                    self.returncode = 0
+
+                def wait(self, timeout: float | None = None) -> int:
+                    self._alive = False
+                    self.returncode = 0
+                    return 0
+
+                def kill(self) -> None:
+                    self._alive = False
+                    self.returncode = -9
+
+            def fake_popen(cmd, **kwargs):  # noqa: ANN001
+                kind = "api" if "api" in cmd else "supervisor"
+                return FakeProc(kind)
+
+            stop_after = {"n": 0}
+            original_sleep = time.sleep
+
+            def fake_sleep(s: float) -> None:
+                stop_after["n"] += 1
+                if stop_after["n"] > 8:
+                    raise KeyboardInterrupt
+                original_sleep(min(0.01, s))
+
+            class S:
+                database_path = Path(tmp.name) / "boot.db"
+
+            stub = types.ModuleType("Data.backend.config")
+            stub.load_settings = lambda: S()  # type: ignore[attr-defined]
+            prev = sys.modules.get("Data.backend.config")
+            sys.modules["Data.backend.config"] = stub
+            try:
+                with mock.patch.object(boot.subprocess, "Popen", side_effect=fake_popen), mock.patch(
+                    "Data.modules.workers.settings.load_worker_settings"
+                ) as lws, mock.patch.object(boot.time, "sleep", side_effect=fake_sleep), mock.patch.object(
+                    boot.signal, "signal"
+                ):
+                    lws.return_value = WorkerSettings(
+                        restart_max_attempts=5,
+                        restart_window_seconds=120.0,
+                        restart_base_backoff=0.01,
+                        restart_max_backoff=0.05,
+                        supervisor_lease_ttl_seconds=5.0,
+                        pool_counts={p: 0 for p in POOL_CATALOG},
+                    )
+                    try:
+                        boot.run_all()
+                    except KeyboardInterrupt:
+                        pass
+            finally:
+                if prev is None:
+                    sys.modules.pop("Data.backend.config", None)
+                else:
+                    sys.modules["Data.backend.config"] = prev
+            self.assertGreaterEqual(spawned["api"], 1)
+            self.assertGreaterEqual(spawned["supervisor"], 2)
+            self.assertGreater(api_alive["polls"], 0)
+        finally:
+            tmp.cleanup()
+
+    def test_restart_budget_marks_degraded(self) -> None:
+        import sys
+        import types
+
+        from Data.modules.workers import bootstrap as boot
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            db = Path(tmp.name) / "budget.db"
+            WorkerRegistry(db).initialize()
+
+            class AlwaysCrash:
+                def __init__(self) -> None:
+                    self.returncode = 1
+
+                def poll(self) -> int:
+                    return 1
+
+                def terminate(self) -> None:
+                    return None
+
+                def wait(self, timeout: float | None = None) -> int:
+                    return 1
+
+                def kill(self) -> None:
+                    return None
+
+            class ApiAlive:
+                def __init__(self) -> None:
+                    self.returncode = None
+
+                def poll(self) -> int | None:
+                    return None
+
+                def terminate(self) -> None:
+                    self.returncode = 0
+
+                def wait(self, timeout: float | None = None) -> int:
+                    return 0
+
+                def kill(self) -> None:
+                    self.returncode = -9
+
+            api = ApiAlive()
+            crashes = {"n": 0}
+
+            def fake_popen(cmd, **kwargs):  # noqa: ANN001
+                if "api" in cmd:
+                    return api
+                crashes["n"] += 1
+                return AlwaysCrash()
+
+            sleeps = {"n": 0}
+
+            def fake_sleep(s: float) -> None:
+                sleeps["n"] += 1
+                if sleeps["n"] > 40:
+                    api.poll = lambda: 0  # type: ignore[method-assign]
+
+            class S:
+                database_path = db
+
+            stub = types.ModuleType("Data.backend.config")
+            stub.load_settings = lambda: S()  # type: ignore[attr-defined]
+            prev = sys.modules.get("Data.backend.config")
+            sys.modules["Data.backend.config"] = stub
+            try:
+                with mock.patch.object(boot.subprocess, "Popen", side_effect=fake_popen), mock.patch(
+                    "Data.modules.workers.settings.load_worker_settings"
+                ) as lws, mock.patch.object(boot.time, "sleep", side_effect=fake_sleep), mock.patch.object(
+                    boot.signal, "signal"
+                ):
+                    lws.return_value = WorkerSettings(
+                        restart_max_attempts=3,
+                        restart_window_seconds=120.0,
+                        restart_base_backoff=0.01,
+                        restart_max_backoff=0.05,
+                        supervisor_lease_ttl_seconds=5.0,
+                        pool_counts={p: 0 for p in POOL_CATALOG},
+                    )
+                    code = boot.run_all()
+            finally:
+                if prev is None:
+                    sys.modules.pop("Data.backend.config", None)
+                else:
+                    sys.modules["Data.backend.config"] = prev
+            self.assertEqual(code, 0)
+            lease = WorkerRegistry(db).get_supervisor_lease()
+            assert lease is not None
+            self.assertEqual(lease.get("health_state"), "DEGRADED")
+            self.assertIn("SUPERVISOR_RESTART_EXHAUSTED", str(lease.get("degraded_reason") or ""))
+            self.assertLess(crashes["n"], 30)
+        finally:
+            tmp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

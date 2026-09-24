@@ -55,6 +55,8 @@ if errorlevel 1 (
 
 echo [LEVIATHAN] Starting via leviathan.py (host/port from settings)
 echo [LEVIATHAN] Keep this window open. Press Ctrl+C to stop.
+echo [LEVIATHAN] Heavy jobs: use run_leviathan_workers.bat for external Worker Supervisor
+echo [LEVIATHAN] ^(unless workers are already autostarted via leviathan.py bootstrap^).
 echo.
 
 REM Optional: when LEVIATHAN_SOURCE_INGESTION_RUNNER=external, start the shared
@@ -63,6 +65,13 @@ findstr /B /C:"LEVIATHAN_SOURCE_INGESTION_RUNNER=external" ".env" >nul 2>&1
 if not errorlevel 1 (
   echo [LEVIATHAN] Starting source ingestion worker ^(external mode^)
   start "LEVIATHAN Source Ingestion" /D "%~dp0" "%PY%" scripts\source_ingestion_worker.py
+)
+
+REM Optional autostart of full Worker Supervisor when configured.
+findstr /B /C:"LEVIATHAN_WORKERS_AUTOSTART=1" ".env" >nul 2>&1
+if not errorlevel 1 (
+  echo [LEVIATHAN] Autostarting Worker Supervisor ^(LEVIATHAN_WORKERS_AUTOSTART=1^)
+  start "LEVIATHAN Workers" /D "%~dp0" "%~dp0run_leviathan_workers.bat"
 )
 
 "%PY%" leviathan.py
