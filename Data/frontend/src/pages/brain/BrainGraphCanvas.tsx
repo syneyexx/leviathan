@@ -226,18 +226,20 @@ export function BrainGraphCanvas({ nodes, edges, selectedId, onSelect, showLabel
     if (dragRef.current?.pointerId === event.pointerId) {
       const point = pointInGraph(event.clientX, event.clientY);
       if (!point) return;
+      const draggedId = dragRef.current.id;
       setPositions((previous) => {
         const next = new Map(previous);
-        next.set(dragRef.current!.id, point);
+        next.set(draggedId, point);
         return next;
       });
       return;
     }
     if (panRef.current?.pointerId === event.pointerId) {
+      const pan = panRef.current;
       const rect = event.currentTarget.getBoundingClientRect();
-      const dx = (event.clientX - panRef.current.clientX) * (WIDTH / Math.max(rect.width, 1));
-      const dy = (event.clientY - panRef.current.clientY) * (HEIGHT / Math.max(rect.height, 1));
-      setViewport((previous) => ({ ...previous, x: panRef.current!.x + dx, y: panRef.current!.y + dy }));
+      const dx = (event.clientX - pan.clientX) * (WIDTH / Math.max(rect.width, 1));
+      const dy = (event.clientY - pan.clientY) * (HEIGHT / Math.max(rect.height, 1));
+      setViewport((previous) => ({ ...previous, x: pan.x + dx, y: pan.y + dy }));
     }
   };
 
