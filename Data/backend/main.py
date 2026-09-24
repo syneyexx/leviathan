@@ -5365,6 +5365,24 @@ def list_backups(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
 
 @app.post("/api/backup")
 def create_backup(payload: BackupCreateRequest | None = None) -> dict:
+    from Data.modules.workers.settings import load_worker_settings
+
+    wsettings = load_worker_settings()
+    if wsettings.enabled and wsettings.externalize_api_runners:
+        try:
+            job = job_runtime.enqueue(
+                capability_id="backup.create",
+                arguments={"note": (payload.note if payload else None)},
+                requested_by="api",
+                domain="backup",
+                worker_pool="backup",
+                resource_class="IO_HEAVY",
+                latency_class="maintenance",
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        metrics.incr("backups_enqueued")
+        return {"job": job.public_dict(), "queued": True}
     try:
         manifest = backup_service.create(note=(payload.note if payload else None))
     except BackupError as exc:

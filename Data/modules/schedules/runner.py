@@ -118,10 +118,28 @@ class ScheduleRunner:
                     )
                 ]
             wf = self.workflows.create(name=f"sched:{schedule.name}", steps=steps)
-            done = self.workflows.run(wf.workflow_id)
+            # Production: enqueue durable workflow.advance. execute=True keeps the
+            # legacy foreground path for tests that still expect inline completion.
+            if execute:
+                done = self.workflows.run(wf.workflow_id)
+                return {
+                    "target": "workflow",
+                    "workflow_id": done.workflow_id,
+                    "workflow_state": done.state.value,
+                    "executed_inline": True,
+                }
+            if getattr(self.workflows, "job_runtime", None) is None and self.jobs is not None:
+                self.workflows.bind_job_runtime(self.jobs)
+            job = self.workflows.enqueue_advance(
+                wf.workflow_id,
+                requested_by=f"schedule:{schedule.schedule_id}",
+            )
+            refreshed = self.workflows.store.get(wf.workflow_id) or wf
             return {
                 "target": "workflow",
-                "workflow_id": done.workflow_id,
-                "workflow_state": done.state.value,
+                "workflow_id": refreshed.workflow_id,
+                "workflow_state": refreshed.state.value,
+                "job_id": job.job_id,
+                "executed_inline": False,
             }
         raise ValueError(f"Unsupported target kind: {schedule.target_kind}")
