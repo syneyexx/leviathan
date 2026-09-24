@@ -38,6 +38,7 @@ import type {
   ModelProvider,
   ModelResidency,
   ModelRuntimeBinding,
+  ModelHardwareInventory,
   ModelsStatus,
   NeuroAssessmentResponse,
   NeuroResidualStatus,
@@ -797,6 +798,38 @@ export const api = {
     telemetry: Record<string, unknown>;
   }> {
     return request("/api/models/status");
+  },
+
+  modelsHardware(): Promise<{
+    hardware: ModelHardwareInventory;
+    reservations: Record<string, unknown>[];
+    residency: ModelResidency[];
+  }> {
+    return request("/api/models/hardware");
+  },
+
+  modelsReservations(): Promise<{ reservations: Record<string, unknown>[] }> {
+    return request("/api/models/reservations");
+  },
+
+  updateHardwarePolicy(payload: Record<string, unknown>): Promise<{
+    policy: Record<string, unknown>;
+    hardware: ModelHardwareInventory;
+  }> {
+    return request("/api/models/hardware/policy", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  placementPreflight(
+    modelId: string,
+    payload?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/models/${encodeURIComponent(modelId)}/placement-preflight`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
   },
 
   refreshModels(): Promise<{

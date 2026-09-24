@@ -22,6 +22,7 @@ from Data.modules.models.contracts import (
     MultiGpuCapability,
     PhysicalPlacement,
     PlacementMode,
+    PlacementReason,
     PlacementReceipt,
     ResidencyLease,
     ResidencyPolicy,
@@ -622,7 +623,16 @@ class ModelResidencyManager:
                     force_refresh_hardware=True,
                 )
                 self._emit("placement.planned", {"modelId": slot.model_id, "plan": plan.public_dict()})
-                if not plan.feasible:
+                hard_denials = {
+                    PlacementReason.INSUFFICIENT_VRAM,
+                    PlacementReason.INSUFFICIENT_RAM,
+                    PlacementReason.EXPLICIT_PIN,
+                    PlacementReason.SHARDING_UNSUPPORTED,
+                    PlacementReason.DEVICE_DISABLED,
+                    PlacementReason.DEVICE_UNAVAILABLE,
+                    PlacementReason.DEVICE_RESERVED,
+                }
+                if not plan.feasible and any(r in hard_denials for r in plan.reasons):
                     self._emit("placement.rejected", {"modelId": slot.model_id, "plan": plan.public_dict()})
                     raise ModelControlError(
                         code=PLACEMENT_UNAVAILABLE,
@@ -632,9 +642,20 @@ class ModelResidencyManager:
                         details=plan.public_dict(),
                         retryable=False,
                     )
-                slot.deployment_plan = plan
-                slot.assigned_devices = plan.devices
-                if self.resource_admission is not None and plan.devices:
+                if plan.feasible:
+                    slot.deployment_plan = plan
+                    slot.assigned_devices = plan.devices
+                elif plan.reasons:
+                    # Unknown / incomplete telemetry — proceed without claiming placement certainty.
+                    self._emit(
+                        "placement.planned",
+                        {
+                            "modelId": slot.model_id,
+                            "softContinue": True,
+                            "plan": plan.public_dict(),
+                        },
+                    )
+                if plan.feasible and self.resource_admission is not None and plan.devices:
                     from Data.modules.workers.admission import ResourceClass
 
                     device_ids = [d.stable_device_id for d in plan.devices]
@@ -711,9 +732,16 @@ class ModelResidencyManager:
         load_exc: BaseException | None = None
         result: dict[str, Any] = {}
         try:
-            result = await self.runtime.load(
-                slot.model_id, opts, confirm_oom=confirm_oom, deployment_plan=plan
-            )
+            import inspect
+
+            load_kwargs: dict[str, Any] = {"confirm_oom": confirm_oom}
+            try:
+                sig = inspect.signature(self.runtime.load)
+                if "deployment_plan" in sig.parameters and plan is not None and plan.feasible:
+                    load_kwargs["deployment_plan"] = plan
+            except (TypeError, ValueError):
+                pass
+            result = await self.runtime.load(slot.model_id, opts, **load_kwargs)
         except BaseException as exc:  # noqa: BLE001
             load_exc = exc
         await self._lock.acquire()

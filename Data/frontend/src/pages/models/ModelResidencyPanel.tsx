@@ -50,6 +50,34 @@ export function ModelResidencyPanel({
           <dt>Placement</dt>
           <dd>{residency.placement}</dd>
         </div>
+        {residency.assignedDevices && residency.assignedDevices.length > 0 ? (
+          <div>
+            <dt>Assigned devices</dt>
+            <dd>
+              {residency.assignedDevices
+                .map((d) => `${d.stableDeviceId}${d.ordinal != null ? ` (ord ${d.ordinal})` : ""}`)
+                .join(", ")}
+            </dd>
+          </div>
+        ) : null}
+        {residency.placementReceipt ? (
+          <div>
+            <dt>Placement receipt</dt>
+            <dd>
+              {residency.placementReceipt.state}
+              {residency.placementReceipt.mismatch ? " · MISMATCH" : ""}
+              {residency.placementReceipt.provenance
+                ? ` · ${residency.placementReceipt.provenance}`
+                : ""}
+            </dd>
+          </div>
+        ) : null}
+        {residency.reservationIds && residency.reservationIds.length > 0 ? (
+          <div>
+            <dt>Reservations</dt>
+            <dd>{residency.reservationIds.length} held</dd>
+          </div>
+        ) : null}
         <div>
           <dt>Active consumers</dt>
           <dd>

@@ -11,6 +11,7 @@ import type {
   ModelProvider,
   ModelResidency,
   ModelRuntimeBinding,
+  ModelHardwareInventory,
   ModelsStatus,
   ResidencyPolicy,
   RouterConfig,
@@ -20,6 +21,7 @@ import type { FilterKey, SortKey } from "./types";
 import { ModelCatalog } from "./ModelCatalog";
 import { ModelInspector } from "./ModelInspector";
 import { ModelStatusCards } from "./ModelStatusCards";
+import { HardwareInventoryPanel } from "./HardwareInventoryPanel";
 import { ProviderManager } from "./ProviderManager";
 import { ModelGatewayPanel } from "./ModelGatewayPanel";
 import { ModelRouterPanel } from "./ModelRouterPanel";
@@ -47,6 +49,7 @@ export function ModelsPage() {
   const [downloads, setDownloads] = useState<DownloadJob[]>([]);
   const [workers, setWorkers] = useState<ServingWorker[]>([]);
   const [telemetry, setTelemetry] = useState<Record<string, unknown> | null>(null);
+  const [hardware, setHardware] = useState<ModelHardwareInventory | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [profile, setProfile] = useState<ModelProfile | null>(null);
   const [capabilities, setCapabilities] = useState<VerifiedCapability[]>([]);
@@ -90,7 +93,7 @@ export function ModelsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [list, providersRes, gatewayRes, routerRes, downloadsRes, statusRes, workersRes] =
+      const [list, providersRes, gatewayRes, routerRes, downloadsRes, statusRes, workersRes, hardwareRes] =
         await Promise.all([
           api.listModels(),
           api.listModelProviders(),
@@ -99,6 +102,7 @@ export function ModelsPage() {
           api.listModelDownloads(),
           api.modelsStatus(),
           api.listServingWorkers().catch(() => ({ workers: [] as Record<string, unknown>[] })),
+          api.modelsHardware().catch(() => null),
         ]);
       setModels(list.models);
       setStatus(statusRes.status ?? list.status);
@@ -108,6 +112,9 @@ export function ModelsPage() {
       setDownloads(downloadsRes.downloads);
       setWorkers(workersRes.workers as ServingWorker[]);
       setTelemetry(statusRes.telemetry);
+      if (hardwareRes && hardwareRes.hardware) {
+        setHardware(hardwareRes.hardware);
+      }
       if (!selectedIdRef.current && list.models.length > 0) {
         const active = list.models.find((m) => m.active) ?? list.models[0];
         setSelectedId(active.id);
@@ -424,6 +431,7 @@ export function ModelsPage() {
           </div>
         </header>
         <ModelStatusCards status={status} loading={loading} />
+        <HardwareInventoryPanel hardware={hardware} loading={loading} />
 
         {error ? (
           <div className="lv-models-banner is-error" role="alert">

@@ -436,7 +436,7 @@ class LaunchStrategyTests(unittest.TestCase):
 
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(_run())
+        result = asyncio.run(_run())
         self.assertTrue(result["truth"]["loadOptionsApplied"])
         self.assertEqual(result["launch"]["optionsApplied"]["contextLength"], 4096)
         self.assertEqual(result["launch"]["optionsApplied"]["gpuOffloadLayers"], 20)
