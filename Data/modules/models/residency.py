@@ -14,10 +14,16 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from Data.modules.models.contracts import (
+    DeploymentPlan,
+    DeviceAssignment,
     LoadOptions,
     ModelLifecycleState,
     ModelResidencySnapshot,
+    MultiGpuCapability,
     PhysicalPlacement,
+    PlacementMode,
+    PlacementReason,
+    PlacementReceipt,
     ResidencyLease,
     ResidencyPolicy,
     ResidencyPolicyKind,
@@ -31,6 +37,7 @@ from Data.modules.models.errors import (
     MODEL_RUNTIME_UNAVAILABLE,
     MODEL_START_TIMEOUT,
     MODEL_WORKER_DIED,
+    PLACEMENT_UNAVAILABLE,
     UNSUPPORTED_RESIDENCY_POLICY,
     ModelControlError,
 )
@@ -73,6 +80,11 @@ class _ModelResidencySlot:
     load_future: asyncio.Future[Any] | None = None
     unload_handle: asyncio.TimerHandle | None = None
     last_load_result: dict[str, Any] | None = None
+    assigned_devices: tuple[DeviceAssignment, ...] = ()
+    deployment_plan: DeploymentPlan | None = None
+    placement_receipt: PlacementReceipt | None = None
+    reservation_ids: list[str] = field(default_factory=list)
+    runtime_generation: int = 0
 
 
 class ModelResidencyManager:
@@ -87,11 +99,13 @@ class ModelResidencyManager:
         registry: Any,
         serving: Any | None = None,
         observability: Any | None = None,
+        resource_admission: Any | None = None,
         default_policy: ResidencyPolicyKind = ResidencyPolicyKind.IDLE_UNLOAD,
         default_idle_unload_seconds: float = 300.0,
         allow_warm_then_unload: bool = False,
         max_managed_resident: int = 4,
         clock: Callable[[], float] | None = None,
+        multi_gpu_capability: MultiGpuCapability = MultiGpuCapability.UNKNOWN,
     ) -> None:
         self.runtime = runtime_manager
         self.resources = resource_manager
@@ -99,16 +113,23 @@ class ModelResidencyManager:
         self.registry = registry
         self.serving = serving
         self.observability = observability
+        self.resource_admission = resource_admission
         self.default_policy = default_policy
         self.default_idle_unload_seconds = float(default_idle_unload_seconds)
         self.allow_warm_then_unload = bool(allow_warm_then_unload)
         self.max_managed_resident = int(max_managed_resident)
+        self.multi_gpu_capability = multi_gpu_capability
         self._clock = clock or time.monotonic
         self._slots: dict[str, _ModelResidencySlot] = {}
         self._lock = asyncio.Lock()
         self._thread_lock = threading.RLock()
         self._stopped = False
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    def set_resource_admission(self, admission: Any | None) -> None:
+        self.resource_admission = admission
+        if admission is not None and hasattr(self.resources, "set_reservation_reader"):
+            self.resources.set_reservation_reader(admission.reservation_view_for_planner)
 
     def _emit(self, name: str, payload: dict[str, Any]) -> None:
         if self.observability:
@@ -169,6 +190,25 @@ class ModelResidencyManager:
                 cpu_threads=raw_opts.get("cpuThreads", raw_opts.get("cpu_threads")),
                 batch_size=raw_opts.get("batchSize", raw_opts.get("batch_size")),
                 flash_attention=raw_opts.get("flashAttention", raw_opts.get("flash_attention")),
+                preferred_device_ids=tuple(raw_opts["preferredDeviceIds"])
+                if isinstance(raw_opts.get("preferredDeviceIds"), list)
+                else raw_opts.get("preferred_device_ids"),
+                pinned_device_ids=tuple(raw_opts["pinnedDeviceIds"])
+                if isinstance(raw_opts.get("pinnedDeviceIds"), list)
+                else raw_opts.get("pinned_device_ids"),
+                excluded_device_ids=tuple(raw_opts["excludedDeviceIds"])
+                if isinstance(raw_opts.get("excludedDeviceIds"), list)
+                else raw_opts.get("excluded_device_ids"),
+                tensor_split=tuple(raw_opts["tensorSplit"])
+                if isinstance(raw_opts.get("tensorSplit"), list)
+                else raw_opts.get("tensor_split"),
+                main_gpu_ordinal=raw_opts.get("mainGpuOrdinal", raw_opts.get("main_gpu_ordinal")),
+                tensor_parallel_size=raw_opts.get(
+                    "tensorParallelSize", raw_opts.get("tensor_parallel_size")
+                ),
+                allow_multi_gpu=raw_opts.get("allowMultiGpu", raw_opts.get("allow_multi_gpu")),
+                allow_cpu_offload=raw_opts.get("allowCpuOffload", raw_opts.get("allow_cpu_offload")),
+                sharding_mode=raw_opts.get("shardingMode", raw_opts.get("sharding_mode")),
                 prefix_cache=raw_opts.get("prefixCache", raw_opts.get("prefix_cache")),
                 continuous_batching=raw_opts.get(
                     "continuousBatching", raw_opts.get("continuous_batching")
@@ -209,6 +249,23 @@ class ModelResidencyManager:
                 cpu_threads=opts.get("cpuThreads"),
                 batch_size=opts.get("batchSize"),
                 flash_attention=opts.get("flashAttention"),
+                preferred_device_ids=tuple(opts["preferredDeviceIds"])
+                if isinstance(opts.get("preferredDeviceIds"), list)
+                else opts.get("preferred_device_ids"),
+                pinned_device_ids=tuple(opts["pinnedDeviceIds"])
+                if isinstance(opts.get("pinnedDeviceIds"), list)
+                else opts.get("pinned_device_ids"),
+                excluded_device_ids=tuple(opts["excludedDeviceIds"])
+                if isinstance(opts.get("excludedDeviceIds"), list)
+                else opts.get("excluded_device_ids"),
+                tensor_split=tuple(opts["tensorSplit"])
+                if isinstance(opts.get("tensorSplit"), list)
+                else opts.get("tensor_split"),
+                main_gpu_ordinal=opts.get("mainGpuOrdinal"),
+                tensor_parallel_size=opts.get("tensorParallelSize"),
+                allow_multi_gpu=opts.get("allowMultiGpu"),
+                allow_cpu_offload=opts.get("allowCpuOffload"),
+                sharding_mode=opts.get("shardingMode"),
                 prefix_cache=opts.get("prefixCache"),
                 continuous_batching=opts.get("continuousBatching"),
                 kv_cache_dtype=opts.get("kvCacheDtype"),
@@ -233,20 +290,31 @@ class ModelResidencyManager:
     def _policy_to_row(self, policy: ResidencyPolicy) -> dict[str, Any]:
         opts = {}
         if policy.load_options is not None:
+            lo = policy.load_options
             opts = {
-                "contextLength": policy.load_options.context_length,
-                "gpuOffloadLayers": policy.load_options.gpu_offload_layers,
-                "gpuMemoryLimitBytes": policy.load_options.gpu_memory_limit_bytes,
-                "cpuThreads": policy.load_options.cpu_threads,
-                "batchSize": policy.load_options.batch_size,
-                "flashAttention": policy.load_options.flash_attention,
-                "prefixCache": policy.load_options.prefix_cache,
-                "continuousBatching": policy.load_options.continuous_batching,
-                "kvCacheDtype": policy.load_options.kv_cache_dtype,
-                "speculativeDecoding": policy.load_options.speculative_decoding,
-                "draftModelId": policy.load_options.draft_model_id,
-                "speculativeTokens": policy.load_options.speculative_tokens,
+                "contextLength": lo.context_length,
+                "gpuOffloadLayers": lo.gpu_offload_layers,
+                "gpuMemoryLimitBytes": lo.gpu_memory_limit_bytes,
+                "cpuThreads": lo.cpu_threads,
+                "batchSize": lo.batch_size,
+                "flashAttention": lo.flash_attention,
+                "preferredDeviceIds": list(lo.preferred_device_ids) if lo.preferred_device_ids else None,
+                "pinnedDeviceIds": list(lo.pinned_device_ids) if lo.pinned_device_ids else None,
+                "excludedDeviceIds": list(lo.excluded_device_ids) if lo.excluded_device_ids else None,
+                "tensorSplit": list(lo.tensor_split) if lo.tensor_split else None,
+                "mainGpuOrdinal": lo.main_gpu_ordinal,
+                "tensorParallelSize": lo.tensor_parallel_size,
+                "allowMultiGpu": lo.allow_multi_gpu,
+                "allowCpuOffload": lo.allow_cpu_offload,
+                "shardingMode": lo.sharding_mode,
+                "prefixCache": lo.prefix_cache,
+                "continuousBatching": lo.continuous_batching,
+                "kvCacheDtype": lo.kv_cache_dtype,
+                "speculativeDecoding": lo.speculative_decoding,
+                "draftModelId": lo.draft_model_id,
+                "speculativeTokens": lo.speculative_tokens,
             }
+            opts = {k: v for k, v in opts.items() if v is not None}
         return {
             "model_id": policy.model_id,
             "policy": policy.policy.value,
@@ -288,6 +356,11 @@ class ModelResidencyManager:
                 ready_at=slot.ready_at,
                 last_error=slot.last_error,
                 resource_estimate=estimate if isinstance(estimate, ResourceEstimate) else None,
+                assigned_devices=slot.assigned_devices,
+                deployment_plan_id=slot.deployment_plan.plan_id if slot.deployment_plan else None,
+                placement_receipt=slot.placement_receipt,
+                reservation_ids=tuple(slot.reservation_ids),
+                runtime_generation=slot.runtime_generation or None,
             )
 
     def list_snapshots(self) -> list[ModelResidencySnapshot]:
@@ -581,7 +654,8 @@ class ModelResidencyManager:
             {"modelId": slot.model_id, "runtimeKind": slot.runtime_kind},
         )
 
-        # Preflight + eviction while holding lock (short, deterministic).
+        # Preflight + placement + eviction while holding lock (short, deterministic).
+        plan: DeploymentPlan | None = None
         try:
             model = self.registry.get(slot.model_id)
             if hasattr(self.resources, "estimate"):
@@ -610,6 +684,95 @@ class ModelResidencyManager:
                             details=estimate.public_dict(),
                             retryable=False,
                         )
+            if hasattr(self.resources, "plan_placement"):
+                plan = self.resources.plan_placement(
+                    model,
+                    load_options=opts,
+                    runtime_kind=slot.runtime_kind,
+                    multi_gpu_capability=self.multi_gpu_capability,
+                    latency_class="interactive",
+                    force_refresh_hardware=True,
+                )
+                self._emit("placement.planned", {"modelId": slot.model_id, "plan": plan.public_dict()})
+                hard_denials = {
+                    PlacementReason.INSUFFICIENT_VRAM,
+                    PlacementReason.INSUFFICIENT_RAM,
+                    PlacementReason.EXPLICIT_PIN,
+                    PlacementReason.SHARDING_UNSUPPORTED,
+                    PlacementReason.DEVICE_DISABLED,
+                    PlacementReason.DEVICE_UNAVAILABLE,
+                    PlacementReason.DEVICE_RESERVED,
+                }
+                if not plan.feasible and any(r in hard_denials for r in plan.reasons):
+                    self._emit("placement.rejected", {"modelId": slot.model_id, "plan": plan.public_dict()})
+                    raise ModelControlError(
+                        code=PLACEMENT_UNAVAILABLE,
+                        message="No feasible device placement for managed model load",
+                        model_id=slot.model_id,
+                        http_status=409,
+                        details=plan.public_dict(),
+                        retryable=False,
+                    )
+                if plan.feasible:
+                    slot.deployment_plan = plan
+                    slot.assigned_devices = plan.devices
+                elif plan.reasons:
+                    # Unknown / incomplete telemetry — proceed without claiming placement certainty.
+                    self._emit(
+                        "placement.planned",
+                        {
+                            "modelId": slot.model_id,
+                            "softContinue": True,
+                            "plan": plan.public_dict(),
+                        },
+                    )
+                if plan.feasible and self.resource_admission is not None and plan.devices:
+                    from Data.modules.workers.admission import ResourceClass
+
+                    device_ids = [d.stable_device_id for d in plan.devices]
+                    device_reservations = {
+                        d.stable_device_id: d.reserved_vram_bytes
+                        for d in plan.devices
+                        if d.reserved_vram_bytes is not None
+                    }
+                    decision = self.resource_admission.try_reserve(
+                        job_id=f"model:{slot.model_id}",
+                        worker_id=f"residency:{slot.model_id}",
+                        resource_class=ResourceClass.MODEL_INFERENCE,
+                        requested={
+                            "deviceStableIds": device_ids,
+                            "deviceReservations": device_reservations,
+                            "reservedVramBytes": plan.required_vram_bytes,
+                            "planId": plan.plan_id,
+                        },
+                        ttl_seconds=600.0,
+                        latency_class="interactive",
+                        model_id=slot.model_id,
+                        owner_type="model",
+                        device_stable_ids=device_ids,
+                        reserved_vram_bytes=plan.required_vram_bytes,
+                        reserved_ram_bytes=plan.required_ram_bytes,
+                        shared=True,
+                        runtime_generation=slot.runtime_generation + 1,
+                    )
+                    if not decision.allowed:
+                        self._emit(
+                            "placement.rejected",
+                            {"modelId": slot.model_id, "reason": decision.reason, "details": decision.public_dict()},
+                        )
+                        raise ModelControlError(
+                            code=PLACEMENT_UNAVAILABLE,
+                            message=decision.reason,
+                            model_id=slot.model_id,
+                            http_status=409,
+                            details=decision.public_dict(),
+                            retryable=True,
+                        )
+                    ids = list((decision.details or {}).get("reservationIds") or [])
+                    if decision.reservation_id and decision.reservation_id not in ids:
+                        ids.insert(0, decision.reservation_id)
+                    slot.reservation_ids = ids
+                    self._emit("placement.reserved", {"modelId": slot.model_id, "reservationIds": ids})
             resident = [
                 s
                 for s in self._slots.values()
@@ -626,13 +789,11 @@ class ModelResidencyManager:
             if len(resident) >= self.max_managed_resident:
                 await self._try_evict_for_capacity_locked(exclude=slot.model_id)
         except Exception as exc:
+            self._release_reservations(slot)
             slot.state = ResidencyState.ERROR
             slot.last_error = str(exc)
             slot.load_future = None
-            self._emit(
-                "model.residency.load_failed",
-                {"modelId": slot.model_id, "error": str(exc)},
-            )
+            self._emit("model.residency.load_failed", {"modelId": slot.model_id, "error": str(exc)})
             if not fut.done():
                 fut.set_exception(exc)
             raise
@@ -642,19 +803,30 @@ class ModelResidencyManager:
         load_exc: BaseException | None = None
         result: dict[str, Any] = {}
         try:
-            result = await self.runtime.load(slot.model_id, opts, confirm_oom=confirm_oom)
+            import inspect
+
+            load_kwargs: dict[str, Any] = {"confirm_oom": confirm_oom}
+            try:
+                sig = inspect.signature(self.runtime.load)
+                if "deployment_plan" in sig.parameters and plan is not None and plan.feasible:
+                    load_kwargs["deployment_plan"] = plan
+            except (TypeError, ValueError):
+                pass
+            result = await self.runtime.load(slot.model_id, opts, **load_kwargs)
         except BaseException as exc:  # noqa: BLE001
             load_exc = exc
         await self._lock.acquire()
 
         try:
             if load_exc is not None:
+                self._release_reservations(slot)
                 slot.state = ResidencyState.ERROR
                 slot.last_error = str(load_exc)
-                self._emit(
-                    "model.residency.load_failed",
-                    {"modelId": slot.model_id, "error": str(load_exc)},
-                )
+                slot.placement_receipt = None
+                self._emit("model.residency.load_failed", {"modelId": slot.model_id, "error": str(load_exc)})
+                msg = str(load_exc).lower()
+                if "out of memory" in msg or "cuda oom" in msg or "hip out of memory" in msg:
+                    self._emit("model.resource.oom", {"modelId": slot.model_id, "error": str(load_exc)})
                 if not fut.done():
                     fut.set_exception(load_exc)
                 raise load_exc
@@ -666,6 +838,7 @@ class ModelResidencyManager:
                 slot.pid = w.get("pid")
                 slot.endpoint = w.get("endpoint") or slot.endpoint
                 if w.get("state") == "UNAVAILABLE":
+                    self._release_reservations(slot)
                     raise ModelControlError(
                         code=MODEL_RUNTIME_UNAVAILABLE,
                         message=w.get("last_error") or "managed runtime unavailable",
@@ -674,6 +847,7 @@ class ModelResidencyManager:
                         details=w,
                     )
                 if w.get("state") == "DEAD":
+                    self._release_reservations(slot)
                     raise ModelControlError(
                         code=MODEL_WORKER_DIED,
                         message=w.get("last_error") or "worker died during start",
@@ -683,21 +857,46 @@ class ModelResidencyManager:
                     )
 
             from Data.modules.model_runtime.llama_cpp_command import infer_placement_from_options
+            from datetime import datetime, timezone
 
-            if slot.runtime_kind in {"llama_cpp", "llamacpp", "llama.cpp"}:
+            if plan and plan.placement_mode == PlacementMode.SINGLE_DEVICE:
+                slot.placement = PhysicalPlacement.GPU
+            elif plan and plan.placement_mode == PlacementMode.MULTI_DEVICE:
+                slot.placement = PhysicalPlacement.GPU
+            elif plan and plan.placement_mode == PlacementMode.CPU:
+                slot.placement = PhysicalPlacement.CPU
+            elif plan and plan.placement_mode == PlacementMode.HYBRID:
+                slot.placement = PhysicalPlacement.HYBRID
+            elif slot.runtime_kind in {"llama_cpp", "llamacpp", "llama.cpp"}:
                 slot.placement = PhysicalPlacement(infer_placement_from_options(opts))
             else:
                 slot.placement = PhysicalPlacement.UNKNOWN
 
+            slot.runtime_generation += 1
             slot.state = ResidencyState.READY
             slot.ready_at = self._clock()
             slot.last_load_result = result
+            slot.placement_receipt = PlacementReceipt(
+                receipt_id=str(uuid.uuid4()),
+                plan_id=plan.plan_id if plan else None,
+                model_id=slot.model_id,
+                worker_id=slot.worker_id,
+                pid=slot.pid,
+                runtime_generation=slot.runtime_generation,
+                devices=slot.assigned_devices,
+                requested_placement=slot.placement,
+                actual_placement=slot.placement,
+                reservation_ids=tuple(slot.reservation_ids),
+                state="LIVE",
+                verified_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                provenance=ResourceProvenance.RUNTIME_REPORTED,
+                mismatch=False,
+            )
+            if self.resource_admission is not None:
+                for rid in slot.reservation_ids:
+                    self.resource_admission.mark_live(rid, accounting_mode="LIVE_UNMEASURED")
             try:
-                self.registry.set_lifecycle(
-                    slot.model_id,
-                    _map_lifecycle(slot.state),
-                    loaded=True,
-                )
+                self.registry.set_lifecycle(slot.model_id, _map_lifecycle(slot.state), loaded=True)
             except Exception:  # noqa: BLE001
                 pass
             duration_ms = (slot.ready_at - (slot.load_started_at or slot.ready_at)) * 1000.0
@@ -709,27 +908,46 @@ class ModelResidencyManager:
                     "durationMs": duration_ms,
                     "workerId": slot.worker_id,
                     "pid": slot.pid,
+                    "placementReceipt": slot.placement_receipt.public_dict(),
                 },
             )
+            self._emit("model.worker.ready", {"modelId": slot.model_id, "workerId": slot.worker_id, "pid": slot.pid})
             self._emit(
-                "model.worker.ready",
-                {"modelId": slot.model_id, "workerId": slot.worker_id, "pid": slot.pid},
+                "model.device.assigned",
+                {"modelId": slot.model_id, "devices": [d.public_dict() for d in slot.assigned_devices]},
             )
             if not fut.done():
                 fut.set_result(result)
             return result
         except Exception as exc:
+            self._release_reservations(slot)
             slot.state = ResidencyState.ERROR
             slot.last_error = str(exc)
-            self._emit(
-                "model.residency.load_failed",
-                {"modelId": slot.model_id, "error": str(exc)},
-            )
+            slot.placement_receipt = None
+            self._emit("model.residency.load_failed", {"modelId": slot.model_id, "error": str(exc)})
             if not fut.done():
                 fut.set_exception(exc)
             raise
         finally:
             slot.load_future = None
+
+    def _release_reservations(self, slot: _ModelResidencySlot) -> None:
+        if not slot.reservation_ids:
+            return
+        if self.resource_admission is not None:
+            try:
+                self.resource_admission.release_many(list(slot.reservation_ids))
+            except Exception:  # noqa: BLE001
+                for rid in list(slot.reservation_ids):
+                    try:
+                        self.resource_admission.release(rid)
+                    except Exception:  # noqa: BLE001
+                        pass
+            self._emit(
+                "placement.released",
+                {"modelId": slot.model_id, "reservationIds": list(slot.reservation_ids)},
+            )
+        slot.reservation_ids = []
 
     async def _try_evict_for_capacity_locked(self, *, exclude: str) -> list[str]:
         candidates: list[_ModelResidencySlot] = []
@@ -793,10 +1011,21 @@ class ModelResidencyManager:
         slot.idle_since = None
         slot.next_action_at = None
         slot.placement = PhysicalPlacement.UNKNOWN
+        slot.assigned_devices = ()
+        slot.deployment_plan = None
+        if slot.placement_receipt is not None:
+            slot.placement_receipt.state = "RELEASED"
+        slot.placement_receipt = None
+        self._release_reservations(slot)
+        slot.runtime_generation += 1
         duration_ms = (self._clock() - started) * 1000.0
         self._emit(
             "model.residency.unload_completed",
             {"modelId": slot.model_id, "reason": reason, "durationMs": duration_ms},
+        )
+        self._emit(
+            "model.device.released",
+            {"modelId": slot.model_id, "reason": reason},
         )
         self._emit(
             "model.worker.stopped",

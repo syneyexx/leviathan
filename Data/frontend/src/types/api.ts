@@ -466,6 +466,79 @@ export type ResourceEstimate = {
   truth?: Record<string, boolean>;
 };
 
+export type ComputeDeviceInfo = {
+  stableDeviceId: string;
+  ordinal?: number | null;
+  vendor?: string | null;
+  name?: string | null;
+  uuid?: string | null;
+  pciBusId?: string | null;
+  backend?: string | null;
+  driverVersion?: string | null;
+  totalVramBytes?: number | null;
+  usedVramBytes?: number | null;
+  freeVramBytes?: number | null;
+  utilizationPct?: number | null;
+  temperatureC?: number | null;
+  powerWatts?: number | null;
+  computeCapability?: string | null;
+  health: string;
+  enabledForNewWork: boolean;
+  measuredAt?: string | null;
+  provenance: string;
+};
+
+export type HostMemoryInfo = {
+  totalBytes?: number | null;
+  usedBytes?: number | null;
+  availableBytes?: number | null;
+  safetyReserveBytes?: number | null;
+  pressure: string;
+  provenance: string;
+  measuredAt?: string | null;
+};
+
+export type ModelHardwareInventory = {
+  hostMemory: HostMemoryInfo;
+  devices: ComputeDeviceInfo[];
+  aggregatePhysicalVramBytes?: number | null;
+  largestSingleDeviceTotalBytes?: number | null;
+  largestSingleDeviceFreeBytes?: number | null;
+  sampleAgeMs?: number | null;
+  measuredAt?: string | null;
+  provenance: string;
+  telemetryHealth: string;
+  notes: string[];
+  truth?: Record<string, boolean>;
+};
+
+export type DeviceAssignmentInfo = {
+  stableDeviceId: string;
+  ordinal?: number | null;
+  reservedVramBytes?: number | null;
+  processVisibleOrdinal?: number | null;
+  role: string;
+};
+
+export type PlacementReceiptInfo = {
+  receiptId: string;
+  planId?: string | null;
+  modelId?: string | null;
+  workerId?: string | null;
+  pid?: number | null;
+  runtimeGeneration?: number | null;
+  devices: DeviceAssignmentInfo[];
+  requestedPlacement: string;
+  actualPlacement: string;
+  reservationIds: string[];
+  measuredVramBytes?: number | null;
+  measuredRamBytes?: number | null;
+  state: string;
+  verifiedAt?: string | null;
+  provenance: string;
+  mismatch: boolean;
+};
+
 export type ModelResidency = {
   modelId: string;
   state: string;
@@ -485,6 +558,11 @@ export type ModelResidency = {
   readyAt?: number | null;
   lastError?: string | null;
   resourceEstimate?: ResourceEstimate | null;
+  assignedDevices?: DeviceAssignmentInfo[];
+  deploymentPlanId?: string | null;
+  placementReceipt?: PlacementReceiptInfo | null;
+  reservationIds?: string[];
+  runtimeGeneration?: number | null;
 };
 
 export type DownloadJob = {

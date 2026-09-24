@@ -267,6 +267,16 @@ class LoadOptions:
     cpu_threads: int | None = None
     batch_size: int | None = None
     flash_attention: bool | None = None
+    # Device placement (optional; filtered by RuntimeCapabilities.load_options).
+    preferred_device_ids: tuple[str, ...] | None = None
+    pinned_device_ids: tuple[str, ...] | None = None
+    excluded_device_ids: tuple[str, ...] | None = None
+    tensor_split: tuple[float, ...] | None = None
+    main_gpu_ordinal: int | None = None
+    tensor_parallel_size: int | None = None
+    allow_multi_gpu: bool | None = None
+    allow_cpu_offload: bool | None = None
+    sharding_mode: str | None = None  # NONE | TENSOR_SPLIT | TENSOR_PARALLEL | PIPELINE_PARALLEL
     # Inference-efficiency options — only applied when runtime capability allows.
     prefix_cache: bool | None = None
     continuous_batching: bool | None = None
@@ -283,6 +293,15 @@ class LoadOptions:
             "cpuThreads": self.cpu_threads,
             "batchSize": self.batch_size,
             "flashAttention": self.flash_attention,
+            "preferredDeviceIds": list(self.preferred_device_ids) if self.preferred_device_ids else None,
+            "pinnedDeviceIds": list(self.pinned_device_ids) if self.pinned_device_ids else None,
+            "excludedDeviceIds": list(self.excluded_device_ids) if self.excluded_device_ids else None,
+            "tensorSplit": list(self.tensor_split) if self.tensor_split else None,
+            "mainGpuOrdinal": self.main_gpu_ordinal,
+            "tensorParallelSize": self.tensor_parallel_size,
+            "allowMultiGpu": self.allow_multi_gpu,
+            "allowCpuOffload": self.allow_cpu_offload,
+            "shardingMode": self.sharding_mode,
             "prefixCache": self.prefix_cache,
             "continuousBatching": self.continuous_batching,
             "kvCacheDtype": self.kv_cache_dtype,
@@ -568,9 +587,425 @@ class ServabilityState(str, Enum):
 
 
 class ResourceProvenance(str, Enum):
+    """Truth source for resource values. Unknown remains UNKNOWN — never invent zeros."""
+
     MEASURED = "MEASURED"
+    RUNTIME_REPORTED = "RUNTIME_REPORTED"
+    PROVIDER_REPORTED = "PROVIDER_REPORTED"
+    DETERMINISTIC = "DETERMINISTIC"
     ESTIMATED = "ESTIMATED"
     UNKNOWN = "UNKNOWN"
+
+
+class MemoryPressure(str, Enum):
+    NORMAL = "NORMAL"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class DeviceHealth(str, Enum):
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    REMOVED = "REMOVED"
+    UNKNOWN = "UNKNOWN"
+
+
+class PlacementMode(str, Enum):
+    SINGLE_DEVICE = "SINGLE_DEVICE"
+    MULTI_DEVICE = "MULTI_DEVICE"
+    CPU = "CPU"
+    HYBRID = "HYBRID"
+    EXTERNAL = "EXTERNAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class ShardingMode(str, Enum):
+    NONE = "NONE"
+    TENSOR_SPLIT = "TENSOR_SPLIT"
+    TENSOR_PARALLEL = "TENSOR_PARALLEL"
+    PIPELINE_PARALLEL = "PIPELINE_PARALLEL"
+    UNKNOWN = "UNKNOWN"
+
+
+class PlacementReason(str, Enum):
+    ONLY_DEVICE_WITH_CAPACITY = "ONLY_DEVICE_WITH_CAPACITY"
+    PREFERRED_DEVICE = "PREFERRED_DEVICE"
+    PRESERVE_LARGE_GPU_HEADROOM = "PRESERVE_LARGE_GPU_HEADROOM"
+    RESIDENT_MODEL_AFFINITY = "RESIDENT_MODEL_AFFINITY"
+    SPECIALIST_PACKING = "SPECIALIST_PACKING"
+    EXPLICIT_PIN = "EXPLICIT_PIN"
+    DEVICE_DISABLED = "DEVICE_DISABLED"
+    DEVICE_UNAVAILABLE = "DEVICE_UNAVAILABLE"
+    INSUFFICIENT_VRAM = "INSUFFICIENT_VRAM"
+    INSUFFICIENT_RAM = "INSUFFICIENT_RAM"
+    DEVICE_RESERVED = "DEVICE_RESERVED"
+    BACKEND_INCOMPATIBLE = "BACKEND_INCOMPATIBLE"
+    SHARDING_UNSUPPORTED = "SHARDING_UNSUPPORTED"
+    SHARDING_REQUIRED = "SHARDING_REQUIRED"
+    INTERACTIVE_HEADROOM = "INTERACTIVE_HEADROOM"
+    UNKNOWN_RESOURCE_REQUIREMENT = "UNKNOWN_RESOURCE_REQUIREMENT"
+    NO_DEVICES = "NO_DEVICES"
+    EXTERNAL_PROVIDER = "EXTERNAL_PROVIDER"
+    CPU_ONLY = "CPU_ONLY"
+    FEASIBLE = "FEASIBLE"
+
+
+class PinMode(str, Enum):
+    NONE = "NONE"
+    PREFERENCE = "PREFERENCE"
+    HARD = "HARD"
+
+
+class MultiGpuCapability(str, Enum):
+    SUPPORTED = "SUPPORTED"
+    UNSUPPORTED = "UNSUPPORTED"
+    UNKNOWN = "UNKNOWN"
+    UNVERIFIED = "UNVERIFIED"
+
+
+@dataclass(frozen=True)
+class ComputeDevice:
+    """One physical accelerator. Ordinal is volatile; stable_device_id is preferred identity."""
+
+    stable_device_id: str
+    ordinal: int | None = None
+    vendor: str | None = None
+    name: str | None = None
+    uuid: str | None = None
+    pci_bus_id: str | None = None
+    backend: str | None = None  # cuda | rocm | unknown
+    driver_version: str | None = None
+    total_vram_bytes: int | None = None
+    used_vram_bytes: int | None = None
+    free_vram_bytes: int | None = None
+    utilization_pct: float | None = None
+    temperature_c: float | None = None
+    power_watts: float | None = None
+    compute_capability: str | None = None
+    health: DeviceHealth = DeviceHealth.UNKNOWN
+    enabled_for_new_work: bool = True
+    measured_at: str | None = None
+    provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "stableDeviceId": self.stable_device_id,
+            "ordinal": self.ordinal,
+            "vendor": self.vendor,
+            "name": self.name,
+            "uuid": self.uuid,
+            "pciBusId": self.pci_bus_id,
+            "backend": self.backend,
+            "driverVersion": self.driver_version,
+            "totalVramBytes": self.total_vram_bytes,
+            "usedVramBytes": self.used_vram_bytes,
+            "freeVramBytes": self.free_vram_bytes,
+            "utilizationPct": self.utilization_pct,
+            "temperatureC": self.temperature_c,
+            "powerWatts": self.power_watts,
+            "computeCapability": self.compute_capability,
+            "health": self.health.value,
+            "enabledForNewWork": self.enabled_for_new_work,
+            "measuredAt": self.measured_at,
+            "provenance": self.provenance.value,
+        }
+
+
+@dataclass(frozen=True)
+class HostMemorySnapshot:
+    total_bytes: int | None = None
+    used_bytes: int | None = None
+    available_bytes: int | None = None
+    safety_reserve_bytes: int | None = None
+    pressure: MemoryPressure = MemoryPressure.UNKNOWN
+    provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    measured_at: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "totalBytes": self.total_bytes,
+            "usedBytes": self.used_bytes,
+            "availableBytes": self.available_bytes,
+            "safetyReserveBytes": self.safety_reserve_bytes,
+            "pressure": self.pressure.value,
+            "provenance": self.provenance.value,
+            "measuredAt": self.measured_at,
+        }
+
+
+@dataclass(frozen=True)
+class HardwareSnapshot:
+    """Canonical host + per-device inventory. Aggregate VRAM is informational only."""
+
+    host_memory: HostMemorySnapshot = field(default_factory=HostMemorySnapshot)
+    devices: tuple[ComputeDevice, ...] = ()
+    aggregate_physical_vram_bytes: int | None = None
+    largest_single_device_total_bytes: int | None = None
+    largest_single_device_free_bytes: int | None = None
+    sample_age_ms: int | None = None
+    measured_at: str | None = None
+    provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    telemetry_health: str = "UNKNOWN"
+    notes: tuple[str, ...] = ()
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "hostMemory": self.host_memory.public_dict(),
+            "devices": [d.public_dict() for d in self.devices],
+            "aggregatePhysicalVramBytes": self.aggregate_physical_vram_bytes,
+            "largestSingleDeviceTotalBytes": self.largest_single_device_total_bytes,
+            "largestSingleDeviceFreeBytes": self.largest_single_device_free_bytes,
+            "sampleAgeMs": self.sample_age_ms,
+            "measuredAt": self.measured_at,
+            "provenance": self.provenance.value,
+            "telemetryHealth": self.telemetry_health,
+            "notes": list(self.notes),
+            "truth": {
+                "aggregateIsNotContiguous": True,
+                "unknownIsNotZero": True,
+                "ordinalIsNotStableIdentity": True,
+            },
+        }
+
+
+@dataclass(frozen=True)
+class ResourceRequirement:
+    """Placement-capable resource request — typed, not a free-form dict."""
+
+    ram_bytes: int | None = None
+    vram_bytes: int | None = None
+    gpu_count: int = 1
+    acceptable_device_ids: tuple[str, ...] | None = None
+    preferred_device_ids: tuple[str, ...] | None = None
+    excluded_device_ids: tuple[str, ...] | None = None
+    pinned_device_ids: tuple[str, ...] | None = None
+    pin_mode: PinMode = PinMode.NONE
+    accelerator_type: str | None = None  # gpu | cpu | any
+    shared: bool = True
+    workload_class: str = "MODEL_INFERENCE"
+    latency_class: str = "interactive"
+    model_id: str | None = None
+    runtime_kind: str | None = None
+    sharding_allowed: bool = False
+    sharding_required: bool = False
+    cpu_offload_allowed: bool = False
+    context_length: int | None = None
+    draft_vram_bytes: int | None = None
+    safety_headroom_vram_bytes: int | None = None
+    safety_headroom_ram_bytes: int | None = None
+    provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "ramBytes": self.ram_bytes,
+            "vramBytes": self.vram_bytes,
+            "gpuCount": self.gpu_count,
+            "acceptableDeviceIds": list(self.acceptable_device_ids) if self.acceptable_device_ids else None,
+            "preferredDeviceIds": list(self.preferred_device_ids) if self.preferred_device_ids else None,
+            "excludedDeviceIds": list(self.excluded_device_ids) if self.excluded_device_ids else None,
+            "pinnedDeviceIds": list(self.pinned_device_ids) if self.pinned_device_ids else None,
+            "pinMode": self.pin_mode.value,
+            "acceleratorType": self.accelerator_type,
+            "shared": self.shared,
+            "workloadClass": self.workload_class,
+            "latencyClass": self.latency_class,
+            "modelId": self.model_id,
+            "runtimeKind": self.runtime_kind,
+            "shardingAllowed": self.sharding_allowed,
+            "shardingRequired": self.sharding_required,
+            "cpuOffloadAllowed": self.cpu_offload_allowed,
+            "contextLength": self.context_length,
+            "draftVramBytes": self.draft_vram_bytes,
+            "safetyHeadroomVramBytes": self.safety_headroom_vram_bytes,
+            "safetyHeadroomRamBytes": self.safety_headroom_ram_bytes,
+            "provenance": self.provenance.value,
+        }
+
+
+@dataclass
+class ModelResourceProfile:
+    """Componentized model footprint with provenance. Unknown is allowed; fake precision is not."""
+
+    model_id: str
+    weight_bytes: int | None = None
+    weight_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    allocator_overhead_bytes: int | None = None
+    allocator_overhead_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    kv_cache_bytes: int | None = None
+    kv_cache_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    workspace_bytes: int | None = None
+    workspace_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    draft_bytes: int | None = None
+    draft_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    cpu_offload_bytes: int | None = None
+    cpu_offload_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    total_vram_bytes: int | None = None
+    total_vram_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    total_ram_bytes: int | None = None
+    total_ram_provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    fingerprint: str | None = None
+    sample_count: int = 0
+    high_water_vram_bytes: int | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "modelId": self.model_id,
+            "weightBytes": self.weight_bytes,
+            "weightProvenance": self.weight_provenance.value,
+            "allocatorOverheadBytes": self.allocator_overhead_bytes,
+            "allocatorOverheadProvenance": self.allocator_overhead_provenance.value,
+            "kvCacheBytes": self.kv_cache_bytes,
+            "kvCacheProvenance": self.kv_cache_provenance.value,
+            "workspaceBytes": self.workspace_bytes,
+            "workspaceProvenance": self.workspace_provenance.value,
+            "draftBytes": self.draft_bytes,
+            "draftProvenance": self.draft_provenance.value,
+            "cpuOffloadBytes": self.cpu_offload_bytes,
+            "cpuOffloadProvenance": self.cpu_offload_provenance.value,
+            "totalVramBytes": self.total_vram_bytes,
+            "totalVramProvenance": self.total_vram_provenance.value,
+            "totalRamBytes": self.total_ram_bytes,
+            "totalRamProvenance": self.total_ram_provenance.value,
+            "fingerprint": self.fingerprint,
+            "sampleCount": self.sample_count,
+            "highWaterVramBytes": self.high_water_vram_bytes,
+            "details": dict(self.details),
+        }
+
+
+@dataclass(frozen=True)
+class DeviceAssignment:
+    stable_device_id: str
+    ordinal: int | None = None
+    reserved_vram_bytes: int | None = None
+    process_visible_ordinal: int | None = None
+    role: str = "primary"  # primary | shard | draft | specialist
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "stableDeviceId": self.stable_device_id,
+            "ordinal": self.ordinal,
+            "reservedVramBytes": self.reserved_vram_bytes,
+            "processVisibleOrdinal": self.process_visible_ordinal,
+            "role": self.role,
+        }
+
+
+@dataclass
+class DeploymentPlan:
+    """Intention before launch — not live measured truth."""
+
+    plan_id: str
+    model_id: str
+    runtime_kind: str | None = None
+    devices: tuple[DeviceAssignment, ...] = ()
+    placement_mode: PlacementMode = PlacementMode.UNKNOWN
+    sharding_mode: ShardingMode = ShardingMode.NONE
+    load_options: LoadOptions | None = None
+    required_vram_bytes: int | None = None
+    required_ram_bytes: int | None = None
+    reserved_headroom_vram_bytes: int | None = None
+    reserved_headroom_ram_bytes: int | None = None
+    resource_profile: ModelResourceProfile | None = None
+    multi_gpu_capability: MultiGpuCapability = MultiGpuCapability.UNKNOWN
+    fallback_allowed: bool = False
+    fingerprint: str | None = None
+    reasons: tuple[PlacementReason, ...] = ()
+    feasible: bool = False
+    warnings: tuple[str, ...] = ()
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def public_dict(self) -> dict[str, Any]:
+        opts = None
+        if self.load_options is not None:
+            opts = self.load_options.as_provider_payload(
+                (
+                    "contextLength",
+                    "gpuOffloadLayers",
+                    "gpuMemoryLimitBytes",
+                    "cpuThreads",
+                    "batchSize",
+                    "flashAttention",
+                    "preferredDeviceIds",
+                    "pinnedDeviceIds",
+                    "excludedDeviceIds",
+                    "tensorSplit",
+                    "mainGpuOrdinal",
+                    "tensorParallelSize",
+                    "allowMultiGpu",
+                    "allowCpuOffload",
+                    "shardingMode",
+                )
+            )
+        return {
+            "planId": self.plan_id,
+            "modelId": self.model_id,
+            "runtimeKind": self.runtime_kind,
+            "devices": [d.public_dict() for d in self.devices],
+            "placementMode": self.placement_mode.value,
+            "shardingMode": self.sharding_mode.value,
+            "loadOptions": opts,
+            "requiredVramBytes": self.required_vram_bytes,
+            "requiredRamBytes": self.required_ram_bytes,
+            "reservedHeadroomVramBytes": self.reserved_headroom_vram_bytes,
+            "reservedHeadroomRamBytes": self.reserved_headroom_ram_bytes,
+            "resourceProfile": self.resource_profile.public_dict() if self.resource_profile else None,
+            "multiGpuCapability": self.multi_gpu_capability.value,
+            "fallbackAllowed": self.fallback_allowed,
+            "fingerprint": self.fingerprint,
+            "reasons": [r.value for r in self.reasons],
+            "feasible": self.feasible,
+            "warnings": list(self.warnings),
+            "details": dict(self.details),
+            "truth": {"planIsNotReceipt": True},
+        }
+
+
+@dataclass
+class PlacementReceipt:
+    """Actual/live placement truth after READY — distinct from DeploymentPlan."""
+
+    receipt_id: str
+    plan_id: str | None = None
+    model_id: str | None = None
+    worker_id: str | None = None
+    pid: int | None = None
+    runtime_generation: int | None = None
+    devices: tuple[DeviceAssignment, ...] = ()
+    requested_placement: PhysicalPlacement = PhysicalPlacement.UNKNOWN
+    actual_placement: PhysicalPlacement = PhysicalPlacement.UNKNOWN
+    reservation_ids: tuple[str, ...] = ()
+    measured_vram_bytes: int | None = None
+    measured_ram_bytes: int | None = None
+    state: str = "PENDING"
+    verified_at: str | None = None
+    provenance: ResourceProvenance = ResourceProvenance.UNKNOWN
+    mismatch: bool = False
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "receiptId": self.receipt_id,
+            "planId": self.plan_id,
+            "modelId": self.model_id,
+            "workerId": self.worker_id,
+            "pid": self.pid,
+            "runtimeGeneration": self.runtime_generation,
+            "devices": [d.public_dict() for d in self.devices],
+            "requestedPlacement": self.requested_placement.value,
+            "actualPlacement": self.actual_placement.value,
+            "reservationIds": list(self.reservation_ids),
+            "measuredVramBytes": self.measured_vram_bytes,
+            "measuredRamBytes": self.measured_ram_bytes,
+            "state": self.state,
+            "verifiedAt": self.verified_at,
+            "provenance": self.provenance.value,
+            "mismatch": self.mismatch,
+            "details": dict(self.details),
+            "truth": {"receiptIsLiveTruth": True},
+        }
 
 
 @dataclass
@@ -620,14 +1055,25 @@ class ResidencyPolicy:
     def public_dict(self) -> dict[str, Any]:
         opts = None
         if self.load_options is not None:
-            opts = {
-                "contextLength": self.load_options.context_length,
-                "gpuOffloadLayers": self.load_options.gpu_offload_layers,
-                "gpuMemoryLimitBytes": self.load_options.gpu_memory_limit_bytes,
-                "cpuThreads": self.load_options.cpu_threads,
-                "batchSize": self.load_options.batch_size,
-                "flashAttention": self.load_options.flash_attention,
-            }
+            opts = self.load_options.as_provider_payload(
+                (
+                    "contextLength",
+                    "gpuOffloadLayers",
+                    "gpuMemoryLimitBytes",
+                    "cpuThreads",
+                    "batchSize",
+                    "flashAttention",
+                    "preferredDeviceIds",
+                    "pinnedDeviceIds",
+                    "excludedDeviceIds",
+                    "tensorSplit",
+                    "mainGpuOrdinal",
+                    "tensorParallelSize",
+                    "allowMultiGpu",
+                    "allowCpuOffload",
+                    "shardingMode",
+                )
+            )
         return {
             "modelId": self.model_id,
             "policy": self.policy.value,
@@ -731,6 +1177,11 @@ class ModelResidencySnapshot:
     ready_at: float | None = None
     last_error: str | None = None
     resource_estimate: ResourceEstimate | None = None
+    assigned_devices: tuple[DeviceAssignment, ...] = ()
+    deployment_plan_id: str | None = None
+    placement_receipt: PlacementReceipt | None = None
+    reservation_ids: tuple[str, ...] = ()
+    runtime_generation: int | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -754,6 +1205,13 @@ class ModelResidencySnapshot:
             "resourceEstimate": (
                 self.resource_estimate.public_dict() if self.resource_estimate else None
             ),
+            "assignedDevices": [d.public_dict() for d in self.assigned_devices],
+            "deploymentPlanId": self.deployment_plan_id,
+            "placementReceipt": (
+                self.placement_receipt.public_dict() if self.placement_receipt else None
+            ),
+            "reservationIds": list(self.reservation_ids),
+            "runtimeGeneration": self.runtime_generation,
         }
 
 

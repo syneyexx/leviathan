@@ -6,6 +6,7 @@ import threading
 from typing import Any, Callable
 
 from Data.modules.models.contracts import (
+    DeploymentPlan,
     LoadOptions,
     ModelHealthState,
     ModelLifecycleState,
@@ -66,6 +67,7 @@ class RuntimeManager:
         options: LoadOptions | None = None,
         *,
         confirm_oom: bool = False,
+        deployment_plan: DeploymentPlan | None = None,
     ) -> dict[str, Any]:
         model = self.registry.get(model_id)
         adapter = self._get_adapter(model.provider_id)
@@ -84,8 +86,9 @@ class RuntimeManager:
                 },
             )
 
+        opts = options or (deployment_plan.load_options if deployment_plan else None)
         preflight = self.resource_manager.preflight(
-            model, requested_context=options.context_length if options else None
+            model, requested_context=opts.context_length if opts else None
         )
         if preflight.verdict == PreflightVerdict.LIKELY_OOM and not confirm_oom:
             raise ModelControlError(
@@ -101,12 +104,27 @@ class RuntimeManager:
         try:
             self.registry.set_lifecycle(model_id, ModelLifecycleState.LOADING)
             allowed = caps.load_options
-            payload_options = options.as_provider_payload(allowed) if options else {}
+            payload_options = opts.as_provider_payload(allowed) if opts else {}
             # Only pass LoadOptions fields the provider listed.
             load_opts = None
-            if options and payload_options:
-                load_opts = options
-            result = await adapter.load(model_id, load_opts)
+            if opts and payload_options:
+                load_opts = opts
+            # Prefer plan options when present (device placement already resolved).
+            if deployment_plan and deployment_plan.load_options:
+                load_opts = deployment_plan.load_options
+            # Pass deployment_plan when adapter supports it.
+            if hasattr(adapter, "load"):
+                import inspect
+
+                sig = inspect.signature(adapter.load)
+                if "deployment_plan" in sig.parameters:
+                    result = await adapter.load(
+                        model_id, load_opts, deployment_plan=deployment_plan
+                    )
+                else:
+                    result = await adapter.load(model_id, load_opts)
+            else:
+                result = await adapter.load(model_id, load_opts)
             updated = self.registry.set_lifecycle(
                 model_id,
                 ModelLifecycleState.LOADED,
@@ -117,6 +135,7 @@ class RuntimeManager:
                 "model": updated.public_dict(),
                 "preflight": preflight.public_dict(),
                 "providerResult": result,
+                "deploymentPlan": deployment_plan.public_dict() if deployment_plan else None,
             }
         except ModelControlError as exc:
             self.registry.set_lifecycle(

@@ -16,6 +16,8 @@ _SUPPORTED_OPTION_KEYS = frozenset(
         "cpuThreads",
         "batchSize",
         "flashAttention",
+        "tensorSplit",
+        "mainGpuOrdinal",
     }
 )
 
@@ -32,6 +34,8 @@ def build_llama_cpp_command(
     """Build a subprocess argv for a managed llama.cpp OpenAI-compatible server.
 
     Never uses shell=True. Rejects empty executable/model paths.
+    tensor-split / main-gpu are only emitted when present on LoadOptions
+    (caller must gate on verified multi-GPU capability).
     """
     exe = str(executable).strip()
     model = str(model_path).strip()
@@ -62,9 +66,12 @@ def build_llama_cpp_command(
             cmd.extend(["-b", str(int(options.batch_size))])
         if options.flash_attention is True:
             cmd.append("-fa")
+        if options.tensor_split:
+            cmd.extend(["--tensor-split", ",".join(str(x) for x in options.tensor_split)])
+        if options.main_gpu_ordinal is not None:
+            cmd.extend(["--main-gpu", str(int(options.main_gpu_ordinal))])
         if options.gpu_memory_limit_bytes is not None:
             # Not a universal llama.cpp flag — leave for adapters that advertise it.
-            # Callers should filter via RuntimeCapabilities.load_options.
             pass
     if extra_args:
         for arg in extra_args:
