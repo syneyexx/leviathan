@@ -1,5 +1,8 @@
 # Market Simulation & Trading Center
 
+> **Phase T0 (2026-09-24):** Source-verified gap report for the Trading Research Factory program lives in [`trading_gap_report.md`](./trading_gap_report.md). Program plan: [`trading_program.md`](./trading_program.md). Characterization tests: `Data/backend/tests/test_market_sim_characterization.py` (D1–D21). No correctness fixes in T0 — awaiting approval for Phase T1.
+
+
 Causal, multi-agent market research for LEVIATHAN. Feature flag (default **OFF**):
 
 ```bash
