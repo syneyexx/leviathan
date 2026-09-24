@@ -20,6 +20,13 @@ class RunTransitionTests(unittest.TestCase):
     def test_created_to_planning_allowed(self) -> None:
         validate_transition(RunState.CREATED, RunState.PLANNING)
 
+    def test_retrieving_to_completed_remains_illegal(self) -> None:
+        """Chat lifecycle bug guard: retrieval success must go via EXECUTING."""
+        with self.assertRaises(InvalidRunTransition):
+            validate_transition(RunState.RETRIEVING, RunState.COMPLETED)
+        validate_transition(RunState.RETRIEVING, RunState.EXECUTING)
+        validate_transition(RunState.EXECUTING, RunState.COMPLETED)
+
 
 class RunStoreTests(unittest.TestCase):
     def setUp(self) -> None:
