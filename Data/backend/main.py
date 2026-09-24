@@ -416,7 +416,7 @@ dataset_service = DatasetService.from_settings(
 )
 # Bind live Dataset Learning activity into the Agent Fleet (same jobs, no fiction).
 agent_fleet.dataset_activity_provider = lambda: dataset_service.learning_activity(limit=40)
-training_service = TrainingService(settings, corpus=corpus_layout)
+training_service = TrainingService(settings, corpus=corpus_layout, job_runtime=job_runtime)
 research_service = ResearchService.from_settings(
     settings,
     db_path=settings.database_path,
