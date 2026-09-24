@@ -419,6 +419,8 @@ research_service = ResearchService.from_settings(
     assimilation_service=assimilation_service,
     atlas_store=atlas_store,
     observability_emit=observability.emit,
+    job_runtime=job_runtime,
+    dataset_service=dataset_service,
 )
 coding_service = CodingControlPlane.from_settings(
     settings,

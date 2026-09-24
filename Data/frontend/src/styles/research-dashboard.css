@@ -581,6 +581,74 @@
   gap: 8px;
 }
 
+.lv-rd-ingest-status {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(214, 169, 87, 0.28);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(20, 24, 22, 0.9), rgba(8, 10, 9, 0.85));
+}
+
+.lv-rd-ingest-summary {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: var(--lv-text-secondary);
+  line-height: 1.45;
+}
+
+.lv-rd-ingest-members {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+  border-top: 1px solid rgba(214, 169, 87, 0.18);
+}
+
+.lv-rd-ingest-members li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(214, 169, 87, 0.1);
+  font-size: 11px;
+}
+
+.lv-rd-ingest-members code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lv-text-primary);
+}
+
+.lv-rd-ingest-members small {
+  color: var(--lv-text-muted);
+  white-space: nowrap;
+}
+
+.lv-rd-ingest-mark {
+  font-weight: 700;
+  text-align: center;
+}
+
+.lv-rd-ingest-mark.is-success {
+  color: #7dcea0;
+}
+.lv-rd-ingest-mark.is-failed {
+  color: #e07474;
+}
+.lv-rd-ingest-mark.is-quarantined {
+  color: #e0a84f;
+}
+.lv-rd-ingest-mark.is-routed {
+  color: #6cb6e0;
+}
+.lv-rd-ingest-mark.is-skipped,
+.lv-rd-ingest-mark.is-pending {
+  color: var(--lv-text-muted);
+}
+
 .lv-rd-ghost-btn {
   appearance: none;
   display: inline-flex;

@@ -2477,6 +2477,69 @@ def _m34_trading_center(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m35_source_ingestion(conn: sqlite3.Connection) -> None:
+    """Source ingestion manifests / member checkpoints (same DB, not a second queue)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_ingestion_containers (
+            container_source_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            job_id TEXT,
+            filename TEXT,
+            archive_type TEXT,
+            phase TEXT NOT NULL,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            compressed_bytes INTEGER NOT NULL DEFAULT 0,
+            uncompressed_bytes INTEGER NOT NULL DEFAULT 0,
+            progress_json TEXT NOT NULL DEFAULT '{}',
+            manifest_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_ingestion_members (
+            member_id TEXT PRIMARY KEY,
+            container_source_id TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            original_filename TEXT,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            compressed_size_bytes INTEGER,
+            content_hash TEXT,
+            mime_type TEXT,
+            detected_kind TEXT,
+            detection_json TEXT NOT NULL DEFAULT '{}',
+            outcome TEXT NOT NULL DEFAULT 'pending',
+            skip_reason TEXT,
+            error_code TEXT,
+            parse_status TEXT NOT NULL DEFAULT 'pending',
+            brain_status TEXT NOT NULL DEFAULT 'not_applicable',
+            child_source_id TEXT,
+            brain_document_id TEXT,
+            parser TEXT,
+            is_encrypted INTEGER NOT NULL DEFAULT 0,
+            is_symlink INTEGER NOT NULL DEFAULT 0,
+            is_directory INTEGER NOT NULL DEFAULT 0,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(container_source_id, relative_path)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sim_container_outcome "
+        "ON source_ingestion_members(container_source_id, outcome)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sic_project "
+        "ON source_ingestion_containers(project_id, updated_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -2512,6 +2575,7 @@ MIGRATIONS: Sequence[Migration] = (
     Migration(version=32, name="posttraining_flywheel", apply=_m32_posttraining_flywheel),
     Migration(version=33, name="research_workers_runs", apply=_m33_research_workers_runs),
     Migration(version=34, name="trading_center", apply=_m34_trading_center),
+    Migration(version=35, name="source_ingestion", apply=_m35_source_ingestion),
 )
 
 

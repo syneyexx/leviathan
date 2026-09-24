@@ -1049,6 +1049,51 @@ export type ResearchSource = {
   created_at: string;
 };
 
+export type SourceIngestionProgress = {
+  source_id: string;
+  job_id?: string | null;
+  status: string;
+  phase: string;
+  progress_pct?: number | null;
+  files_discovered: number;
+  files_ingested: number;
+  files_skipped: number;
+  files_failed: number;
+  files_pending: number;
+  files_quarantined: number;
+  files_duplicate: number;
+  files_routed: number;
+  brain_synced: number;
+  brain_failed: number;
+  bytes_processed: number;
+  compressed_bytes?: number | null;
+  uncompressed_bytes?: number | null;
+  archive_type?: string | null;
+  filename?: string | null;
+  error?: string | null;
+  cancel_requested?: boolean;
+};
+
+export type SourceIngestionMember = {
+  member_id: string;
+  container_source_id: string;
+  relative_path: string;
+  original_filename: string;
+  size_bytes: number;
+  outcome: string;
+  skip_reason?: string | null;
+  error_code?: string | null;
+  parse_status: string;
+  brain_status: string;
+  child_source_id?: string | null;
+  brain_document_id?: string | null;
+  parser?: string | null;
+  detected_kind?: string | null;
+  is_encrypted?: boolean;
+  is_symlink?: boolean;
+  is_directory?: boolean;
+};
+
 export type ResearchEvidence = {
   evidence_id: string;
   project_id: string;

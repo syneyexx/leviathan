@@ -1442,13 +1442,82 @@ export const api = {
   uploadResearchSource(
     projectId: string,
     file: File,
-  ): Promise<{ source: ResearchSource; extracted_chars: number; page_count?: number | null }> {
+  ): Promise<{
+    source: ResearchSource;
+    source_id?: string;
+    job_id?: string | null;
+    status?: string;
+    source_type?: string;
+    filename?: string;
+    extracted_chars: number;
+    page_count?: number | null;
+    progress?: import("../types/api").SourceIngestionProgress;
+  }> {
     const body = new FormData();
     body.append("file", file);
     return request(`/api/research/${encodeURIComponent(projectId)}/sources/upload`, {
       method: "POST",
       body,
     });
+  },
+
+  getSourceIngestionStatus(
+    projectId: string,
+    sourceId: string,
+  ): Promise<{ source: ResearchSource; progress?: import("../types/api").SourceIngestionProgress }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}/ingestion`,
+    );
+  },
+
+  listSourceIngestionChildren(
+    projectId: string,
+    sourceId: string,
+    opts?: { offset?: number; limit?: number; outcome?: string },
+  ): Promise<{
+    source_id: string;
+    offset: number;
+    limit: number;
+    total: number;
+    members: import("../types/api").SourceIngestionMember[];
+    counts?: Record<string, number>;
+  }> {
+    const q = new URLSearchParams();
+    if (opts?.offset != null) q.set("offset", String(opts.offset));
+    if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.outcome) q.set("outcome", opts.outcome);
+    const qs = q.toString();
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}/children${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  cancelSourceIngestion(projectId: string, sourceId: string): Promise<{ progress: import("../types/api").SourceIngestionProgress }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}/ingestion/cancel`,
+      { method: "POST" },
+    );
+  },
+
+  retrySourceIngestion(
+    projectId: string,
+    sourceId: string,
+    failedOnly = true,
+  ): Promise<{ source_id: string; job_id?: string | null; status?: string; progress?: import("../types/api").SourceIngestionProgress }> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}/ingestion/retry?failed_only=${failedOnly ? "true" : "false"}`,
+      { method: "POST" },
+    );
+  },
+
+  retrySourceIngestionBrain(
+    projectId: string,
+    sourceId: string,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/research/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}/ingestion/brain-retry`,
+      { method: "POST" },
+    );
   },
 
   addResearchUrlSource(projectId: string, url: string): Promise<{ source: ResearchSource }> {

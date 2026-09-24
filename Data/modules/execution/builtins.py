@@ -878,4 +878,57 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
+    catalog.register(
+        CapabilityDefinition(
+            id="source_ingestion.process",
+            name="Process Source Ingestion",
+            description=(
+                "Durable source/archive ingestion executed by the source-ingestion worker "
+                "(not the API JobRuntime)."
+            ),
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="source_ingestion.worker",
+            input_schema={
+                "type": "object",
+                "required": ["source_id"],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("knowledge.write", "filesystem.write"),
+            metadata={
+                "tags": ["ingestion", "research", "archive"],
+                "domains": ["source_ingestion"],
+                "worker_kind": "source_ingestion",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="source_ingestion.brain_retry",
+            name="Retry Source Brain Sync",
+            description="Retry Brain sync for already-parsed source ingestion children.",
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.EXTERNAL,
+            provider_ref="source_ingestion.worker",
+            input_schema={
+                "type": "object",
+                "required": ["source_id"],
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("knowledge.write",),
+            metadata={
+                "tags": ["ingestion", "brain", "retry"],
+                "domains": ["source_ingestion"],
+                "worker_kind": "source_ingestion",
+            },
+        )
+    )
     return catalog
