@@ -1,7 +1,8 @@
-/**
- * Lightweight micro-benchmark for tokenization + context compile paths.
- * Reports measured timings only — never fabricates speedups.
- */
+"""Lightweight micro-benchmark for tokenization + context compile paths.
+
+Reports measured timings only - never fabricates speedups.
+"""
+
 from __future__ import annotations
 
 import statistics
@@ -31,10 +32,16 @@ def _timed(fn, rounds: int = 20) -> dict[str, Any]:
 def run_inference_efficiency_benchmark(*, rounds: int = 20) -> dict[str, Any]:
     svc = TokenizationService()
     text = "Benchmark tokenization " * 40
-    cold = _timed(lambda: svc.count_text(text + str(time.time()), tokenizer_id="fixture:whitespace_v1"), rounds=5)
+    cold = _timed(
+        lambda: svc.count_text(text + str(time.time()), tokenizer_id="fixture:whitespace_v1"),
+        rounds=5,
+    )
     # Warm cache path
     svc.count_text(text, tokenizer_id="fixture:whitespace_v1")
-    warm = _timed(lambda: svc.count_text(text, tokenizer_id="fixture:whitespace_v1"), rounds=rounds)
+    warm = _timed(
+        lambda: svc.count_text(text, tokenizer_id="fixture:whitespace_v1"),
+        rounds=rounds,
+    )
     plan = ReasoningEngine().analyze("benchmark", has_knowledge=False)
     builder = ContextBuilder(tokenization=svc, model_id="fixture:demo")
     compile_stats = _timed(
