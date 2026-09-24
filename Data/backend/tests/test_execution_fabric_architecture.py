@@ -98,6 +98,8 @@ class LifespanExternalizeGuards(unittest.TestCase):
         self.assertNotIn("research_service.start_background()", if_arm)
         self.assertNotIn("coding_service.start_background()", if_arm)
         self.assertNotIn("job_runtime.start_background_worker()", if_arm)
+        # Agent fleet may enqueue via start_background under externalize (no threads).
+        self.assertIn("agent_fleet.start_background()", text)
 
     def test_research_start_background_externalize_does_not_spawn_threads(self) -> None:
         from Data.modules.research.service import ResearchService

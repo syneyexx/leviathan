@@ -131,6 +131,8 @@ class AgentFleetTests(unittest.TestCase):
         agent = self.fleet.list_agents()[0]
         from Data.modules.agents.fleet_types import AgentMission, MissionStatus
         from Data.modules.agents.store import utc_now
+        from unittest import mock
+        import os
 
         orphan = AgentMission(
             mission_id=AgentFleetStore.new_id("msn"),
@@ -143,7 +145,9 @@ class AgentFleetTests(unittest.TestCase):
             started_at=utc_now(),
         )
         store.create_mission(orphan)
-        updated = self.fleet.reconcile()
+        # Legacy in-process path: orphans are interrupted on API restart.
+        with mock.patch.dict(os.environ, {"LEVIATHAN_WORKERS_EXTERNALIZE_API": "0"}):
+            updated = self.fleet.reconcile()
         self.assertIn(orphan.mission_id, updated)
         refreshed = store.get_mission(orphan.mission_id)
         assert refreshed is not None

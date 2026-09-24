@@ -278,6 +278,7 @@ agent_fleet = AgentFleetService(
     agent_fleet_store,
     agent_runtime,
     system_inventory=system_inventory,
+    job_runtime=job_runtime,
 )
 analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
@@ -1436,6 +1437,8 @@ async def lifespan(_: FastAPI):
     agent_fleet.reconcile()
     research_service.recover()
     if externalize:
+        # Durable agent missions: enqueue agent.advance; do not own in-process threads.
+        agent_fleet.start_background()
         observability.emit(
             "workers",
             "api.runners.externalized",
@@ -1448,6 +1451,8 @@ async def lifespan(_: FastAPI):
         coding_service.start_background()
         market_sim_service.start_background()
         job_runtime.start_background_worker()
+        # Legacy: missions advance synchronously in launch_mission (no agent daemon).
+        agent_fleet.start_background()
     mcp_bridge.initialize()
     if module_manager.enabled:
         ready = module_manager.discover_load_initialize_all(
