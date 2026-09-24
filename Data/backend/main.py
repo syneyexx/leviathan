@@ -2373,16 +2373,52 @@ async def chat(payload: ChatRequest, request: Request):
                 )
                 residency_lease_id = None
             if exc.code in {"ROUTER_EXHAUSTED", "MODEL_NOT_FOUND"} and not payload.model_id:
-                routed = None
-                profile = None
-                route_meta = {
-                    "decision": {
-                        "reason": "legacy_settings_fallback",
-                        "fallbackUsed": True,
-                        "fallbackReason": exc.code,
+                # Soft settings fallback still uses EXTERNAL residency + Gateway —
+                # never silent bypass of the Model Control Plane.
+                try:
+                    routed = model_plane.resolve_settings_external_fallback(
+                        preferred_role=payload.preferred_role or "chat",
+                        router_error_code=exc.code,
+                    )
+                    decision = routed["decision"]
+                    profile = routed["profile"]
+                    provider_id_for_release = routed["provider_id"]
+                    model_id_for_release = routed["model"].id
+                    lease = await model_plane.residency.acquire_lease(
+                        model_id_for_release,
+                        consumer="chat",
+                        domain="chat",
+                        model_role=payload.preferred_role or "chat",
+                        run_id=run.run_id,
+                        trace_id=None,
+                        job_class="INTERACTIVE",
+                        explicit_selection=False,
+                        managed=False,
+                        runtime_kind="openai_compatible",
+                        ensure_ready=False,
+                        external=True,
+                        endpoint=routed["endpoint"],
+                    )
+                    residency_lease_id = lease.lease_id
+                    call_id = model_plane.gateway.acquire(
+                        model_id=model_id_for_release,
+                        provider_id=provider_id_for_release,
+                        timeout_seconds=min(settings.llm_timeout_seconds, 30.0),
+                    )
+                    route_meta = {
+                        "decision": decision.public_dict(),
+                        "traceId": call_id,
+                        "residencyLeaseId": residency_lease_id,
+                        "contextWindow": routed["model"].context_window,
+                        "settingsExternal": True,
                     }
-                }
-                model_plane.gateway.record_fallback(exc.code)
+                    runs.append_event(run.run_id, EventType.MODEL_STARTED, route_meta)
+                except ModelControlError as fallback_exc:
+                    runs.transition(run.run_id, RunState.FAILED, error=str(fallback_exc))
+                    raise HTTPException(
+                        status_code=fallback_exc.http_status,
+                        detail=fallback_exc.public_dict(),
+                    ) from fallback_exc
             else:
                 runs.transition(run.run_id, RunState.FAILED, error=str(exc))
                 raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc

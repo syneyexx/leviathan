@@ -12,19 +12,28 @@ from Data.backend.config import Settings
 from Data.modules.models.benchmarks import BenchmarkService
 from Data.modules.models.capability_probe import CapabilityProbeService
 from Data.modules.models.contracts import (
+    CapabilityState,
     LoadOptions,
+    ModelCapabilities,
+    ModelDescriptor,
     ModelHealthState,
     ModelLifecycleState,
+    ModelProfile,
     ModelRequest,
+    ModelRuntimeBinding,
+    ModelSource,
     ProviderHealth,
     ProviderRecord,
     ResidencyPolicyKind,
     ResolvedModelTarget,
+    RouteDecision,
     RuntimeCapabilities,
+    ServabilityState,
 )
 from Data.modules.models.downloads import DownloadManager
 from Data.modules.models.errors import (
     PROVIDER_NOT_FOUND,
+    ROUTER_EXHAUSTED,
     VALIDATION_ERROR,
     ModelControlError,
 )
@@ -712,6 +721,104 @@ class ModelControlPlane:
             required_capabilities=required_capabilities,
             agent_model_id=agent_model_id,
         )
+        return self._routed_dict(target)
+
+    def resolve_settings_external_fallback(
+        self,
+        *,
+        preferred_role: str | None = None,
+        router_error_code: str | None = None,
+    ) -> dict[str, Any]:
+        """EXTERNAL settings LLM path when the registry router is exhausted.
+
+        Still goes through residency (EXTERNAL) + Gateway. Never silently
+        bypasses the control plane. Requires configured base URL + model name.
+        """
+        endpoint = (self.settings.llm_base_url or "").strip()
+        backend_model = (self.settings.llm_model or "").strip()
+        if not endpoint or not backend_model:
+            raise ModelControlError(
+                code=ROUTER_EXHAUSTED,
+                message=(
+                    "No eligible registry models and settings LLM is incomplete "
+                    "(LEVIATHAN_LLM_BASE_URL / LEVIATHAN_LLM_MODEL required)"
+                ),
+                retryable=True,
+                http_status=503,
+                details={
+                    "routerError": router_error_code,
+                    "hasEndpoint": bool(endpoint),
+                    "hasModel": bool(backend_model),
+                },
+            )
+        model_id = f"settings:external:{backend_model}"
+        provider_id = "settings_external"
+        descriptor = ModelDescriptor(
+            id=model_id,
+            display_name=backend_model,
+            provider_id=provider_id,
+            source=ModelSource.API,
+            capabilities=ModelCapabilities(
+                chat=CapabilityState.UNVERIFIED,
+                streaming=CapabilityState.UNVERIFIED,
+            ),
+            lifecycle_state=ModelLifecycleState.AVAILABLE,
+            endpoint=endpoint,
+            metadata={
+                "provider_model_id": backend_model,
+                "settingsFallback": True,
+                "routerError": router_error_code,
+            },
+            tags=("settings_fallback", "external"),
+        )
+        binding = ModelRuntimeBinding(
+            model_id=model_id,
+            runtime_kind="openai_compatible",
+            runtime_provider_id=provider_id,
+            backend_model_id=backend_model,
+            managed=False,
+            servability_state=ServabilityState.SERVABLE,
+            servability_reason="Settings OpenAI-compatible endpoint (external lifecycle)",
+            metadata={"settingsFallback": True, "external": True},
+        )
+        decision = RouteDecision(
+            model_id=model_id,
+            reason="legacy_settings_fallback",
+            fallback_used=True,
+            fallback_reason=router_error_code or "ROUTER_EXHAUSTED",
+            candidates_tried=[],
+        )
+        profile = self.profiles.get_or_default(model_id)
+        if not isinstance(profile, ModelProfile):
+            profile = ModelProfile(model_id=model_id)
+        api_key = self.settings.llm_api_key
+        target = ResolvedModelTarget(
+            model=descriptor,
+            route=decision,
+            profile=profile,
+            provider_id=provider_id,
+            runtime_binding=binding,
+            backend_model_id=backend_model,
+            endpoint=endpoint,
+            api_key=api_key,
+            context_window=descriptor.context_window,
+            managed=False,
+            explicit_selection=False,
+            preferred_role=preferred_role or "chat",
+        )
+        self.gateway.record_fallback(router_error_code or "ROUTER_EXHAUSTED")
+        self._emit(
+            "model.router.fallback",
+            {
+                **decision.public_dict(),
+                "settingsExternal": True,
+                "endpoint": endpoint,
+            },
+        )
+        return self._routed_dict(target)
+
+    @staticmethod
+    def _routed_dict(target: ResolvedModelTarget) -> dict[str, Any]:
         return {
             "decision": target.route,
             "model": target.model,

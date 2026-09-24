@@ -413,3 +413,76 @@ def test_local_import_is_not_runtime() -> None:
     )
     assert binding.runtime_kind == "llama_cpp"
     assert binding.managed is False
+
+
+@pytest.mark.asyncio
+async def test_settings_external_fallback_uses_residency_and_gateway(
+    plane: ModelControlPlane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ROUTER_EXHAUSTED soft path must still acquire EXTERNAL lease + Gateway."""
+    monkeypatch.setenv("LEVIATHAN_LLM_MODEL", "local-test-model")
+    # Settings object is frozen — rebuild plane with model configured.
+    db_path = plane.settings.database_path
+    monkeypatch.setenv("LEVIATHAN_DATABASE_PATH", str(db_path))
+    monkeypatch.setenv("LEVIATHAN_LLM_BASE_URL", "http://127.0.0.1:1234/v1")
+    monkeypatch.setenv("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", "false")
+    settings = Settings.from_env()
+    plane = ModelControlPlane(settings)
+    plane.bootstrap()
+
+    routed = plane.resolve_settings_external_fallback(
+        preferred_role="chat",
+        router_error_code="ROUTER_EXHAUSTED",
+    )
+    assert routed["model"].id.startswith("settings:external:")
+    assert routed["provider_id"] == "settings_external"
+    assert routed["endpoint"].startswith("http")
+    assert routed["resolved"].managed is False
+    assert routed["decision"].reason == "legacy_settings_fallback"
+
+    model_id = routed["model"].id
+    lease = await plane.residency.acquire_lease(
+        model_id,
+        consumer="chat",
+        domain="chat",
+        model_role="chat",
+        managed=False,
+        ensure_ready=False,
+        external=True,
+        endpoint=routed["endpoint"],
+    )
+    call_id = plane.gateway.acquire(
+        model_id=model_id,
+        provider_id=routed["provider_id"],
+        timeout_seconds=1.0,
+    )
+    snap = plane.residency.snapshot(model_id)
+    assert snap.state == ResidencyState.EXTERNAL
+    assert snap.active_lease_count == 1
+    assert snap.pid is None
+    assert snap.managed is False
+    assert plane.gateway.snapshot().active_calls == 1
+
+    plane.gateway.release(model_id=model_id, provider_id=routed["provider_id"])
+    await plane.residency.release_lease(lease.lease_id, model_id=model_id)
+    assert plane.gateway.snapshot().active_calls == 0
+    assert plane.residency.snapshot(model_id).active_lease_count == 0
+    # External unload remains unavailable (no owned worker).
+    with pytest.raises(ModelControlError) as exc:
+        await plane.residency.manual_unload(model_id)
+    assert exc.value.code in {"MODEL_RUNTIME_UNAVAILABLE", "MODEL_RESIDENCY_UNAVAILABLE"}
+    _ = call_id
+
+
+def test_settings_external_fallback_fails_closed_without_settings(
+    plane: ModelControlPlane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("LEVIATHAN_LLM_MODEL", raising=False)
+    monkeypatch.setenv("LEVIATHAN_LLM_BASE_URL", "http://127.0.0.1:1234/v1")
+    monkeypatch.setenv("LEVIATHAN_DATABASE_PATH", str(plane.settings.database_path))
+    monkeypatch.setenv("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", "false")
+    settings = Settings.from_env()
+    plane = ModelControlPlane(settings)
+    with pytest.raises(ModelControlError) as exc:
+        plane.resolve_settings_external_fallback(router_error_code="ROUTER_EXHAUSTED")
+    assert exc.value.code == "ROUTER_EXHAUSTED"

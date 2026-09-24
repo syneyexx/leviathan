@@ -150,7 +150,10 @@ class ResearchService:
             brain_sync=self._sync_report,
         )
         self.ledger = EvidenceLedger(store)
-        self.reports = ReportBuilder(store, reports_root=self.reports_root)
+        self.reports = ReportBuilder(
+            store, reports_root=self.reports_root, model_caller=model_caller
+        )
+        self.runner.reports.set_model_caller(model_caller)
         self._bg_lock = threading.Lock()
         self._bg_threads: dict[str, threading.Thread] = {}
         self._dispatcher_stop = threading.Event()
@@ -238,6 +241,11 @@ class ResearchService:
 
     def set_model_caller(self, caller: Callable[..., dict[str, Any]] | None) -> None:
         self.model_caller = caller
+        # Keep report builder on the same shared MCP caller (research role injected at call site).
+        if hasattr(self, "reports") and self.reports is not None:
+            self.reports.set_model_caller(caller)
+        if hasattr(self, "runner") and self.runner is not None and hasattr(self.runner, "reports"):
+            self.runner.reports.set_model_caller(caller)
 
     def start_background(self, *, poll_seconds: float = 0.5) -> None:
         """Background dispatcher for queued research runs."""

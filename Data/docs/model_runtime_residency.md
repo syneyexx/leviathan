@@ -26,6 +26,8 @@ LEVIATHAN separates these responsibilities deliberately:
 | Managed | llama.cpp worker, vLLM worker | start/stop process, claim PID, unload |
 | External | LM Studio, remote OpenAI-compatible | route + HTTP only — never kill process / invent VRAM release |
 
+When the registry router is exhausted but `LEVIATHAN_LLM_BASE_URL` + `LEVIATHAN_LLM_MODEL` are set, Chat may use a **settings EXTERNAL fallback**. That path still acquires an EXTERNAL residency lease and Gateway admission — it does **not** silently bypass the Model Control Plane. Incomplete settings fail closed with `ROUTER_EXHAUSTED`.
+
 ## Residency policies
 
 - `KEEP_HOT` — remain resident after last lease
