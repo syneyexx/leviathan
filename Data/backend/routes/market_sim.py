@@ -159,6 +159,54 @@ class CampaignAdvance(BaseModel):
     trialId: str | None = None
 
 
+class GymEpisodeCreate(BaseModel):
+    sourceId: str | None = None
+    barsPath: str | None = None
+    curriculumStage: str = "trend"
+    seed: int = 42
+    startIndex: int = 0
+    endIndex: int | None = None
+    initialCash: float = 100_000.0
+    datasetId: str | None = None
+    datasetVersion: str | None = None
+
+
+class GymStepRequest(BaseModel):
+    action: str = "HOLD"
+
+
+class ScorecardCreate(BaseModel):
+    agentId: str
+    equity: list[float]
+    agentVersion: str = "v1"
+    regime: str = "all"
+    year: int | None = None
+    violations: dict[str, int] | None = None
+    tokenCost: int = 0
+    latencyMs: float = 0.0
+    nEpisodes: int = 1
+    timeframe: str = "1h"
+
+
+class ReadinessSet(BaseModel):
+    level: str
+    measurement: str = "UNMEASURED"
+    reason: str | None = None
+    evidence: dict[str, Any] | None = None
+
+
+class TrajectoryExportRequest(BaseModel):
+    destPath: str | None = None
+    sealedWindows: list[dict[str, Any]] | None = None
+
+
+class SimRealGapRequest(BaseModel):
+    simFills: list[dict[str, Any]]
+    paperFills: list[dict[str, Any]]
+    calibrationSourceIds: list[str] | None = None
+    evaluationSourceIds: list[str] | None = None
+
+
 class DemoRequest(BaseModel):
     family: str = Field(description="equity | crypto_spot")
     barsLimit: int = Field(120, ge=30, le=2000)
@@ -909,6 +957,168 @@ def build_market_sim_router(
             {"campaign_id": campaign_id},
             idempotency_key=f"market_sim:campaign.cancel:{campaign_id}",
             fallback=lambda: {"campaign": service.cancel_research_campaign(campaign_id)},
+        )
+
+    # --- TradingGym / scorecards / readiness / export / gap (T8) ---
+
+    @router.get("/api/market-sim/gym/curriculum")
+    def gym_curriculum() -> dict:
+        try:
+            return {"stages": service.list_gym_curriculum()}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/episodes")
+    def create_gym_episode(payload: GymEpisodeCreate) -> dict:
+        return _mutate(
+            "market_sim.gym.episode.create",
+            {
+                "source_id": payload.sourceId,
+                "bars_path": payload.barsPath,
+                "curriculum_stage": payload.curriculumStage,
+                "seed": payload.seed,
+                "start_index": payload.startIndex,
+                "end_index": payload.endIndex,
+                "initial_cash": payload.initialCash,
+                "dataset_id": payload.datasetId,
+                "dataset_version": payload.datasetVersion,
+            },
+            fallback=lambda: service.create_gym_episode(
+                source_id=payload.sourceId,
+                bars_path=payload.barsPath,
+                curriculum_stage=payload.curriculumStage,
+                seed=payload.seed,
+                start_index=payload.startIndex,
+                end_index=payload.endIndex,
+                initial_cash=payload.initialCash,
+                dataset_id=payload.datasetId,
+                dataset_version=payload.datasetVersion,
+            ),
+        )
+
+    @router.get("/api/market-sim/gym/episodes/{episode_id}")
+    def get_gym_episode(episode_id: str) -> dict:
+        try:
+            return {"episode": service.get_gym_episode(episode_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/episodes/{episode_id}/step")
+    def gym_step(episode_id: str, payload: GymStepRequest) -> dict:
+        return _mutate(
+            "market_sim.gym.episode.step",
+            {"episode_id": episode_id, "action": payload.action},
+            fallback=lambda: service.gym_step(episode_id, action=payload.action),
+        )
+
+    @router.get("/api/market-sim/gym/scorecards")
+    def list_scorecards(
+        agent_id: str | None = Query(None, alias="agentId"),
+        limit: int = Query(100, ge=1, le=500),
+    ) -> dict:
+        try:
+            return {"scorecards": service.list_agent_scorecards(agent_id=agent_id, limit=limit)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/scorecards")
+    def create_scorecard(payload: ScorecardCreate) -> dict:
+        return _mutate(
+            "market_sim.gym.scorecard.create",
+            {
+                "agent_id": payload.agentId,
+                "equity": payload.equity,
+                "agent_version": payload.agentVersion,
+                "regime": payload.regime,
+                "year": payload.year,
+                "violations": payload.violations,
+                "token_cost": payload.tokenCost,
+                "latency_ms": payload.latencyMs,
+                "n_episodes": payload.nEpisodes,
+                "timeframe": payload.timeframe,
+            },
+            fallback=lambda: {
+                "scorecard": service.create_agent_scorecard(
+                    agent_id=payload.agentId,
+                    equity=payload.equity,
+                    agent_version=payload.agentVersion,
+                    regime=payload.regime,
+                    year=payload.year,
+                    violations=payload.violations,
+                    token_cost=payload.tokenCost,
+                    latency_ms=payload.latencyMs,
+                    n_episodes=payload.nEpisodes,
+                    timeframe=payload.timeframe,
+                )
+            },
+        )
+
+    @router.get("/api/market-sim/gym/readiness/{agent_id}")
+    def get_readiness(agent_id: str) -> dict:
+        try:
+            return {"readiness": service.get_agent_readiness(agent_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/readiness/{agent_id}")
+    def set_readiness(agent_id: str, payload: ReadinessSet) -> dict:
+        return _mutate(
+            "market_sim.gym.readiness.set",
+            {
+                "agent_id": agent_id,
+                "level": payload.level,
+                "measurement": payload.measurement,
+                "reason": payload.reason,
+                "evidence": payload.evidence,
+            },
+            fallback=lambda: {
+                "readiness": service.set_agent_readiness(
+                    agent_id,
+                    level=payload.level,
+                    measurement=payload.measurement,
+                    reason=payload.reason or "",
+                    evidence=payload.evidence,
+                )
+            },
+        )
+
+    @router.post("/api/market-sim/gym/export/{episode_id}")
+    def export_trajectory(episode_id: str, payload: TrajectoryExportRequest | None = None) -> dict:
+        body = payload or TrajectoryExportRequest()
+        return _mutate(
+            "market_sim.gym.export",
+            {
+                "episode_id": episode_id,
+                "dest_path": body.destPath,
+                "sealed_windows": body.sealedWindows,
+            },
+            fallback=lambda: {
+                "export": service.export_gym_trajectory(
+                    episode_id,
+                    dest_path=body.destPath,
+                    sealed_windows=body.sealedWindows,
+                )
+            },
+        )
+
+    @router.post("/api/market-sim/gym/sim-real-gap")
+    def sim_real_gap(payload: SimRealGapRequest) -> dict:
+        return _mutate(
+            "market_sim.gym.sim_real_gap",
+            {
+                "sim_fills": payload.simFills,
+                "paper_fills": payload.paperFills,
+                "calibration_source_ids": payload.calibrationSourceIds,
+                "evaluation_source_ids": payload.evaluationSourceIds,
+            },
+            fallback=lambda: {
+                "report": service.create_sim_real_gap_report(
+                    sim_fills=payload.simFills,
+                    paper_fills=payload.paperFills,
+                    calibration_source_ids=payload.calibrationSourceIds,
+                    evaluation_source_ids=payload.evaluationSourceIds,
+                )
+            },
         )
 
     @router.post("/api/market-sim/demos/run")

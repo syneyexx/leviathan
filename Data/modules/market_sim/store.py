@@ -1417,6 +1417,361 @@ class MarketSimStore:
             },
         }
 
+    # --- T8 gym / scorecards / readiness / trajectories / gap ---
+
+    def save_gym_episode_spec(self, spec: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO gym_episode_specs(
+                    episode_spec_id, source_id, bars_path, data_hash, curriculum_stage,
+                    seed, start_index, end_index, initial_cash, timeframe, symbol,
+                    randomization_json, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(episode_spec_id) DO UPDATE SET
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    spec["episode_spec_id"],
+                    spec.get("source_id"),
+                    spec["bars_path"],
+                    spec.get("data_hash") or "",
+                    spec.get("curriculum_stage") or "trend",
+                    int(spec.get("seed") or 42),
+                    int(spec.get("start_index") or 0),
+                    spec.get("end_index"),
+                    float(spec.get("initial_cash") or 100_000.0),
+                    spec.get("timeframe") or "1h",
+                    spec.get("symbol") or "",
+                    json.dumps(spec.get("randomization") or {}),
+                    spec.get("created_at") or utc_now(),
+                    json.dumps(spec.get("metadata") or {}),
+                ),
+            )
+        return self.get_gym_episode_spec(spec["episode_spec_id"]) or spec
+
+    def get_gym_episode_spec(self, episode_spec_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM gym_episode_specs WHERE episode_spec_id=?",
+                    (episode_spec_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+        if row is None:
+            return None
+        return {
+            "episode_spec_id": row["episode_spec_id"],
+            "source_id": row["source_id"],
+            "bars_path": row["bars_path"],
+            "data_hash": row["data_hash"],
+            "curriculum_stage": row["curriculum_stage"],
+            "seed": row["seed"],
+            "start_index": row["start_index"],
+            "end_index": row["end_index"],
+            "initial_cash": row["initial_cash"],
+            "timeframe": row["timeframe"],
+            "symbol": row["symbol"],
+            "randomization": _loads(row["randomization_json"], {}),
+            "created_at": row["created_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def save_gym_episode(self, episode: dict[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO gym_episodes(
+                    episode_id, episode_spec_id, status, curriculum_stage, seed, steps,
+                    total_reward, equity_json, metrics_json, violations_json,
+                    trajectory_json, last_observation_json, data_hash,
+                    created_at, updated_at, finished_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(episode_id) DO UPDATE SET
+                    status=excluded.status,
+                    steps=excluded.steps,
+                    total_reward=excluded.total_reward,
+                    equity_json=excluded.equity_json,
+                    metrics_json=excluded.metrics_json,
+                    violations_json=excluded.violations_json,
+                    trajectory_json=excluded.trajectory_json,
+                    last_observation_json=excluded.last_observation_json,
+                    updated_at=excluded.updated_at,
+                    finished_at=excluded.finished_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    episode["episode_id"],
+                    episode.get("episode_spec_id") or "",
+                    episode.get("status") or "running",
+                    episode.get("curriculum_stage") or "trend",
+                    int(episode.get("seed") or 42),
+                    int(episode.get("steps") or 0),
+                    float(episode.get("total_reward") or 0.0),
+                    json.dumps(episode.get("equity_curve") or []),
+                    json.dumps(
+                        {
+                            "sharpe": episode.get("sharpe"),
+                            "max_drawdown": episode.get("max_drawdown"),
+                        }
+                    ),
+                    json.dumps(episode.get("violations") or {}),
+                    json.dumps(episode.get("trajectory") or []),
+                    json.dumps(episode.get("last_observation") or {}),
+                    episode.get("data_hash") or "",
+                    episode.get("created_at") or now,
+                    episode.get("updated_at") or now,
+                    episode.get("finished_at"),
+                    json.dumps(episode.get("metadata") or {}),
+                ),
+            )
+        return self.get_gym_episode(episode["episode_id"]) or episode
+
+    def get_gym_episode(self, episode_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM gym_episodes WHERE episode_id=?",
+                    (episode_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+        if row is None:
+            return None
+        metrics = _loads(row["metrics_json"], {})
+        return {
+            "episode_id": row["episode_id"],
+            "episode_spec_id": row["episode_spec_id"],
+            "status": row["status"],
+            "curriculum_stage": row["curriculum_stage"],
+            "seed": row["seed"],
+            "steps": row["steps"],
+            "total_reward": row["total_reward"],
+            "equity_curve": _loads(row["equity_json"], []),
+            "sharpe": metrics.get("sharpe"),
+            "max_drawdown": metrics.get("max_drawdown"),
+            "violations": _loads(row["violations_json"], {}),
+            "trajectory": _loads(row["trajectory_json"], []),
+            "last_observation": _loads(row["last_observation_json"], {}),
+            "data_hash": row["data_hash"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "finished_at": row["finished_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+            "truth": {
+                "deterministic_given_seed": True,
+                "reward_from_kernel": True,
+                "sealed_unreachable": True,
+            },
+        }
+
+    def list_gym_episodes(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT episode_id FROM gym_episodes ORDER BY updated_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        out = []
+        for r in rows:
+            ep = self.get_gym_episode(r["episode_id"])
+            if ep:
+                out.append(ep)
+        return out
+
+    def list_curriculum_stages(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM gym_curriculum_stages ORDER BY stage_index ASC"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [
+            {
+                "stage": r["stage"],
+                "index": r["stage_index"],
+                "description": r["description"],
+                "requires_prior": r["requires_prior"],
+            }
+            for r in rows
+        ]
+
+    def save_agent_scorecard(self, card: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_scorecards(
+                    scorecard_id, agent_id, agent_version, regime, year,
+                    metrics_json, violations_json, token_cost, latency_ms,
+                    n_episodes, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scorecard_id) DO UPDATE SET
+                    metrics_json=excluded.metrics_json,
+                    violations_json=excluded.violations_json
+                """,
+                (
+                    card["scorecard_id"],
+                    card["agent_id"],
+                    card.get("agent_version") or "v1",
+                    card.get("regime") or "all",
+                    card.get("year"),
+                    json.dumps(
+                        {
+                            "sharpe": card.get("sharpe"),
+                            "max_drawdown": card.get("max_drawdown"),
+                            "bootstrap": card.get("bootstrap"),
+                            "equity_points": card.get("equity_points"),
+                        }
+                    ),
+                    json.dumps(card.get("violations") or {}),
+                    int(card.get("token_cost") or 0),
+                    float(card.get("latency_ms") or 0.0),
+                    int(card.get("n_episodes") or 1),
+                    card.get("created_at") or utc_now(),
+                    json.dumps(card.get("metadata") or {}),
+                ),
+            )
+        return card
+
+    def list_agent_scorecards(
+        self, *, agent_id: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                if agent_id:
+                    rows = conn.execute(
+                        "SELECT * FROM agent_scorecards WHERE agent_id=? "
+                        "ORDER BY created_at DESC LIMIT ?",
+                        (agent_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM agent_scorecards ORDER BY created_at DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        out = []
+        for r in rows:
+            metrics = _loads(r["metrics_json"], {})
+            out.append(
+                {
+                    "scorecard_id": r["scorecard_id"],
+                    "agent_id": r["agent_id"],
+                    "agent_version": r["agent_version"],
+                    "regime": r["regime"],
+                    "year": r["year"],
+                    "sharpe": metrics.get("sharpe"),
+                    "max_drawdown": metrics.get("max_drawdown"),
+                    "bootstrap": metrics.get("bootstrap"),
+                    "equity_points": metrics.get("equity_points"),
+                    "violations": _loads(r["violations_json"], {}),
+                    "token_cost": r["token_cost"],
+                    "latency_ms": r["latency_ms"],
+                    "n_episodes": r["n_episodes"],
+                    "created_at": r["created_at"],
+                    "metadata": _loads(r["metadata_json"], {}),
+                }
+            )
+        return out
+
+    def save_agent_readiness(self, readiness: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_readiness(
+                    agent_id, level, measurement, reason, evidence_json, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    level=excluded.level,
+                    measurement=excluded.measurement,
+                    reason=excluded.reason,
+                    evidence_json=excluded.evidence_json,
+                    updated_at=excluded.updated_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    readiness["agent_id"],
+                    readiness["level"],
+                    readiness.get("measurement") or "UNMEASURED",
+                    readiness.get("reason") or "",
+                    json.dumps(readiness.get("evidence") or {}),
+                    readiness.get("updated_at") or utc_now(),
+                    json.dumps(readiness.get("metadata") or {}),
+                ),
+            )
+        return self.get_agent_readiness(readiness["agent_id"]) or readiness
+
+    def get_agent_readiness(self, agent_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM agent_readiness WHERE agent_id=?",
+                    (agent_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+        if row is None:
+            return None
+        return {
+            "agent_id": row["agent_id"],
+            "level": row["level"],
+            "measurement": row["measurement"],
+            "reason": row["reason"],
+            "evidence": _loads(row["evidence_json"], {}),
+            "updated_at": row["updated_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+            "truth": {"a5_blocked": True, "policy_enforced": True},
+        }
+
+    def save_training_trajectory(self, traj: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO training_trajectories(
+                    trajectory_id, episode_id, path, content_hash, record_count,
+                    contamination_json, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trajectory_id) DO UPDATE SET
+                    path=excluded.path,
+                    content_hash=excluded.content_hash,
+                    record_count=excluded.record_count
+                """,
+                (
+                    traj["trajectory_id"],
+                    traj["episode_id"],
+                    traj["path"],
+                    traj["content_hash"],
+                    int(traj.get("record_count") or 0),
+                    json.dumps(traj.get("contamination") or {}),
+                    traj.get("created_at") or utc_now(),
+                    json.dumps(traj.get("metadata") or {}),
+                ),
+            )
+        return traj
+
+    def save_sim_real_gap_report(self, report: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sim_real_gap_reports(report_id, payload_json, created_at, metadata_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(report_id) DO UPDATE SET payload_json=excluded.payload_json
+                """,
+                (
+                    report["report_id"],
+                    json.dumps(report),
+                    report.get("created_at") or utc_now(),
+                    json.dumps(report.get("metadata") or {}),
+                ),
+            )
+        return report
+
     def list_events(self, run_id: str, *, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         with self.connect() as conn:
             if kind:

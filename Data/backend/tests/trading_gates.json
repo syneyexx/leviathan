@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T7",
+  "phase": "T8",
   "frozen_at": "2026-09-25",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T7 trading fleet executors + durable ResearchCampaign",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py Data/backend/tests/test_market_sim_characterization.py -q"
+      "result": "T8 TradingGym + scorecards + readiness + trajectory export + sim-real gap",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t8_trading_gym.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -586,52 +586,125 @@
     "G26": {
       "title": "TradingGym causal reset/step",
       "phase": "T8A/T8B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/gym.py",
+        "Data/modules/market_sim/store.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::TradingGymTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::TradingGymTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t8_trading_gym.py::TradingGymTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T8A/T8B: TradingGym deterministic reset/step on SimulationClock+MarketView; curriculum stages; domain randomization; sealed windows unreachable; kernel reward; episode ledger; migration 48."
     },
     "G27": {
       "title": "Agent scorecards + leaderboard penalty",
       "phase": "T8D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/scorecards.py",
+        "Data/modules/market_sim/multi_engine.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D29PerAgentEvalCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T8D: per-agent scorecards with Sharpe/drawdown/bootstrap CIs + violations; multi-engine leaderboard applies BH-FDR multiple-testing penalty.",
+      "related_defects": [
+        "D29"
+      ]
     },
     "G28": {
       "title": "Readiness ladder A0\u2013A4; A5 blocked",
       "phase": "T8D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/scorecards.py",
+        "Data/modules/market_sim/orchestra/types.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests::test_readiness_ladder_a5_blocked"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests::test_readiness_ladder_a5_blocked",
+            "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests::test_service_readiness_and_scorecard"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T8D: A0\u2013A4 policy (no skip, UNMEASURED blocks advance); A5/live blocked by construction."
     },
     "G29": {
       "title": "Trajectory export via Datasets/Training",
       "phase": "T8C/T8D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/trajectory_export.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::TrajectoryExportTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::TrajectoryExportTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t8_trading_gym.py::TrajectoryExportTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T8C/T8D: verified episode trajectories export to JSONL with preference pairs; sealed-window contamination scan blocks dirty exports."
     },
     "G30": {
       "title": "Sim-to-real gap report",
       "phase": "T8D/T9C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/sim_real_gap.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::SimRealGapTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::SimRealGapTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t8_trading_gym.py::SimRealGapTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T8D foundation: paper vs sim fill-price/missed/slippage/latency gap report; calibration sources must be disjoint from evaluation."
     },
     "G31": {
       "title": "Promotion state machine",
