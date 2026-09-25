@@ -707,6 +707,74 @@ class MarketSimControlPlane:
         self._emit_event("market_data.sealed", {"dataset_id": dataset_id, "version": version, "role": role})
         return sealed
 
+    def get_split_manifest(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        manifest_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        found = self.store.get_split_manifest(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            manifest_id=manifest_id,
+        )
+        if found is None:
+            raise MarketSimError("SPLIT_MANIFEST_NOT_FOUND", "no split manifest", http_status=404)
+        return found
+
+    def bind_sealed_attempt(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        strategy_id: str,
+        strategy_version: int,
+        run_id: str,
+        split_manifest_id: str | None = None,
+        sealed_attempt_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Bind or resume the single SEALED holdout attempt for a strategy version."""
+        self._require_enabled()
+        from .sealed_attempts import SealedAttemptBinder
+
+        manifest_id = split_manifest_id
+        if not manifest_id:
+            manifest = self.store.get_split_manifest(
+                dataset_id=dataset_id, dataset_version=dataset_version
+            )
+            if manifest is None:
+                raise MarketSimError(
+                    "SPLIT_MANIFEST_NOT_FOUND",
+                    f"no frozen split for {dataset_id}@{dataset_version}",
+                    http_status=404,
+                )
+            if not manifest.get("frozen"):
+                raise MarketSimError(
+                    "SPLIT_NOT_FROZEN",
+                    "SEALED attempt requires frozen DatasetSplitManifest",
+                    http_status=409,
+                )
+            if not manifest.get("sealed"):
+                raise MarketSimError(
+                    "SPLIT_NO_SEALED_WINDOW",
+                    "manifest has no SEALED window",
+                    http_status=409,
+                )
+            manifest_id = str(manifest["manifest_id"])
+        binder = SealedAttemptBinder(self.store)
+        attempt = binder.bind_or_resume(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            split_manifest_id=manifest_id,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            run_id=run_id,
+            sealed_attempt_id=sealed_attempt_id,
+        )
+        return attempt.public_dict()
+
     def list_market_datasets(
         self,
         *,

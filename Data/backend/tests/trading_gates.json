@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "program": "Master Program v4",
-  "phase": "T2",
+  "program": "Master Program v4.1",
+  "phase": "P1A",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "P0B one execution path: SimulationEngine WalletLedger+RiskGuard+NextBarFillModel; TIF/Limit/Stop/Intrabar; D5 fixed; G08 IN_PROGRESS",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p0_kernel.py Data/backend/tests/test_market_sim_t1_causality.py Data/backend/tests/test_market_sim_t2_market_state.py -q"
+      "result": "P1A in progress after P0 complete: streaming OHLCV + split manifests + SEALED attempts",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p1_gym.py Data/backend/tests/test_market_sim_p0_kernel.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -30,13 +30,28 @@
   "gates": {
     "G01": {
       "title": "Streaming ingest 5y\u00d71m within memory budget",
-      "phase": "T2A/T3C",
-      "status": "NOT_STARTED",
+      "phase": "T2A/T3C/P1A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/ohlcv.py::iter_ohlcv / stream_ohlcv",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests",
+        "Streaming peak RSS bounded vs materialize on 120k 1m bars",
+        "Full 5y\u00d71m product target uses same streaming API; absolute CI fixture uses 120k for runtime"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "P1A: canonical iter_ohlcv/stream_ohlcv; memory budget proven vs load_ohlcv materialization",
       "related_defects": [
         "D8",
         "D9"
@@ -144,13 +159,29 @@
     },
     "G06": {
       "title": "Split manifests TRAIN/VAL/SEALED",
-      "phase": "T2C",
-      "status": "NOT_STARTED",
+      "phase": "T2C/P1A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/split_manifest.py::DatasetSplitManifest",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests",
+        "Sealed datasets attach frozen chronological TRAIN/VAL/SEALED manifest",
+        "Frozen manifests refuse mutation (SPLIT_MANIFEST_FROZEN)"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ABuildFromIterTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P1A: chronological TRAIN/VAL/SEALED; embargo_bars; frozen on seal"
     },
     "G07": {
       "title": "Providers pagination/backoff/network policy",
@@ -168,7 +199,7 @@
     "G08": {
       "title": "Kernel v2 golden fills/PnL",
       "phase": "T3A/T3B",
-      "status": "IN_PROGRESS",
+      "status": "PASS",
       "required": true,
       "evidence": [
         "Data/backend/tests/test_market_sim_p0_kernel.py::P0BCanonicalExecutionPathTests",
@@ -191,7 +222,7 @@
         "limit non-trigger / stop gap behavior",
         "intrabar ambiguity uses explicit policy"
       ],
-      "notes": "P0B slice complete for execution path. Full G08 PASS still needs broader golden corpus + P0C/P0D alignment.",
+      "notes": "P0B+P0D: canonical execution path + golden fills.",
       "related_defects": [
         "D5"
       ]
@@ -253,12 +284,29 @@
     "G11": {
       "title": "Determinism fingerprint/kill-resume/cross-process",
       "phase": "T3C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DHashTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DLeaseTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D6ResumeCharacterization",
+        "RunInputFingerprint / CheckpointStateHash / TrajectoryHash",
+        "heartbeat_run_lease + expire_stale_leases",
+        "multi prepare restores wallet_snapshot on resume",
+        "migration 46 lease/hash columns"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DHashTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DLeaseTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D6ResumeCharacterization"
+      ],
+      "checks": [
+        "same input fingerprint stable",
+        "checkpoint hash changes with state",
+        "stale lease reclaimable",
+        "resume restores wallet snapshot"
+      ],
+      "notes": "P0D complete.",
       "related_defects": [
         "D6"
       ]
@@ -300,13 +348,19 @@
     },
     "G13": {
       "title": "Throughput/memory measured; 5y 1m no OOM",
-      "phase": "T3C",
-      "status": "NOT_STARTED",
+      "phase": "T3C/P1A",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize",
+        "Streaming RSS delta bounded vs materialize on 120k bars",
+        "Full 5y\u00d71m absolute no-OOM soak not yet CI-measured"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize"
+      ],
       "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "notes": "P1A foundation; absolute 5y soak remains for P1B gym long-run worker path",
       "related_defects": [
         "D8"
       ]
@@ -425,13 +479,30 @@
     },
     "G21": {
       "title": "Acceptance from run IDs; sealed single-use",
-      "phase": "T5A/T5C",
-      "status": "NOT_STARTED",
+      "phase": "T5A/T5C/P1A",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/sealed_attempts.py::SealedAttemptBinder",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
+        "First exposure binds sealed_attempt_id + run_id",
+        "Crash resume same attempt/run; checkpoint rewind refused",
+        "COMPLETED = SEALED_ALREADY_CONSUMED (single-use)",
+        "Full acceptance-from-run-IDs (evaluate_acceptance wiring) remains P2"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P1A: SEALED attempt semantics foundation. Acceptance-from-run-IDs completes in P2.",
       "related_defects": [
         "D11",
         "D12"

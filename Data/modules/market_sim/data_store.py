@@ -173,6 +173,8 @@ class MarketDataStore:
             }
             source.updated_at = utc_now()
             self.store.upsert_source(source)
+            if result.dataset.sealed:
+                dataset_payload = self._attach_frozen_split(result.dataset)
         return {
             "import": result.public_dict(),
             "source": source.public_dict() if source else None,
@@ -213,7 +215,51 @@ class MarketDataStore:
         sealed = self.pipeline.seal_existing(ds, role=role)
         payload = sealed.public_dict()
         self.store.upsert_dataset_version(payload)
-        return payload
+        return self._attach_frozen_split(sealed)
+
+    def _attach_frozen_split(self, sealed: SealedMarketDataset) -> dict[str, Any]:
+        """Build and persist a frozen TRAIN/VAL/SEALED DatasetSplitManifest."""
+        payload = sealed.public_dict()
+        existing = self.store.get_split_manifest(
+            dataset_id=sealed.dataset_id, dataset_version=sealed.version
+        )
+        if existing and existing.get("frozen"):
+            payload = dict(payload)
+            payload["split_manifest"] = existing
+            meta = dict(payload.get("metadata") or {})
+            meta["split_manifest_id"] = existing.get("manifest_id")
+            meta.pop("split_manifest_error", None)
+            payload["metadata"] = meta
+            self.store.upsert_dataset_version(payload)
+            return payload
+        try:
+            from .ohlcv import iter_ohlcv
+            from .split_manifest import build_split_manifest_from_iter
+
+            path = self._abs_under_root(sealed.path)
+            if not path.is_file():
+                raise MarketSimError("DATA_NOT_FOUND", f"sealed path missing: {path}", http_status=404)
+            manifest = build_split_manifest_from_iter(
+                iter_ohlcv(path),
+                dataset_id=sealed.dataset_id,
+                dataset_version=sealed.version,
+                dataset_content_hash=sealed.content_hash,
+                frozen=True,
+            )
+            stored = self.store.upsert_split_manifest(manifest.public_dict())
+            payload = dict(payload)
+            payload["split_manifest"] = stored
+            meta = dict(payload.get("metadata") or {})
+            meta["split_manifest_id"] = stored.get("manifest_id")
+            payload["metadata"] = meta
+            self.store.upsert_dataset_version(payload)
+            return payload
+        except MarketSimError as exc:
+            meta = dict(payload.get("metadata") or {})
+            meta["split_manifest_error"] = exc.code
+            payload["metadata"] = meta
+            self.store.upsert_dataset_version(payload)
+            return payload
 
     def correct_sealed_dataset(
         self,

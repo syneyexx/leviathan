@@ -442,13 +442,16 @@ class D8PersistenceCharacterization(unittest.TestCase):
         src = inspect.getsource(MultiAgentEngine._finalize_metrics)
         self.assertIn("list_equity", src)
 
-    @unittest.expectedFailure  # D8 — fixed in Phase T1/T2
-    def test_d8_desired_streaming_bars_api(self) -> None:
+    def test_d8_streaming_bars_api(self) -> None:
         from Data.modules.market_sim import ohlcv as ohlcv_mod
 
-        self.assertTrue(
-            hasattr(ohlcv_mod, "iter_ohlcv") or hasattr(ohlcv_mod, "stream_ohlcv")
-        )
+        self.assertTrue(hasattr(ohlcv_mod, "iter_ohlcv"))
+        self.assertTrue(hasattr(ohlcv_mod, "stream_ohlcv"))
+        streamed = list(ohlcv_mod.iter_ohlcv(FIXTURE))
+        loaded = load_ohlcv(FIXTURE)
+        self.assertEqual(len(streamed), len(loaded))
+        self.assertEqual(streamed[0].ts, loaded[0].ts)
+        self.assertEqual(streamed[-1].ts, loaded[-1].ts)
 
 
 # ---------------------------------------------------------------------------

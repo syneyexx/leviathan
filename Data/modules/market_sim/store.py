@@ -14,6 +14,7 @@ from .types import (
     ClosedTrade,
     DeliberationMessage,
     MarketDataSource,
+    MarketSimError,
     SimFill,
     SimRun,
     StrategyRecord,
@@ -1370,3 +1371,189 @@ class MarketSimStore:
                 (run_id, limit),
             ).fetchall()
         return [_loads(r["payload_json"], {}) for r in rows]
+
+    # --- P1A: DatasetSplitManifest + SEALED attempts ---
+
+    def upsert_split_manifest(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        existing = self.get_split_manifest(
+            dataset_id=manifest["dataset_id"],
+            dataset_version=manifest["dataset_version"],
+        )
+        if existing and existing.get("frozen"):
+            # Frozen manifests are immutable — identical re-upsert is idempotent.
+            if (
+                existing.get("manifest_id") == manifest.get("manifest_id")
+                and existing.get("train") == (manifest.get("train") or {})
+                and existing.get("val") == manifest.get("val")
+                and existing.get("sealed") == manifest.get("sealed")
+            ):
+                return existing
+            raise MarketSimError(
+                "SPLIT_MANIFEST_FROZEN",
+                f"{manifest['dataset_id']}@{manifest['dataset_version']} split is frozen",
+                http_status=409,
+            )
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_split_manifests(
+                    manifest_id, dataset_id, dataset_version, dataset_content_hash,
+                    train_json, val_json, sealed_json, train_frac, val_frac, sealed_frac,
+                    embargo_bars, frozen, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset_id, dataset_version) DO UPDATE SET
+                    manifest_id=excluded.manifest_id,
+                    dataset_content_hash=excluded.dataset_content_hash,
+                    train_json=excluded.train_json,
+                    val_json=excluded.val_json,
+                    sealed_json=excluded.sealed_json,
+                    train_frac=excluded.train_frac,
+                    val_frac=excluded.val_frac,
+                    sealed_frac=excluded.sealed_frac,
+                    embargo_bars=excluded.embargo_bars,
+                    frozen=excluded.frozen,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    manifest["manifest_id"],
+                    manifest["dataset_id"],
+                    manifest["dataset_version"],
+                    manifest.get("dataset_content_hash") or "",
+                    json.dumps(manifest.get("train") or {}),
+                    json.dumps(manifest.get("val")) if manifest.get("val") is not None else None,
+                    json.dumps(manifest.get("sealed")) if manifest.get("sealed") is not None else None,
+                    float(manifest.get("train_frac") or 0.0),
+                    float(manifest.get("val_frac") or 0.0),
+                    float(manifest.get("sealed_frac") or 0.0),
+                    int(manifest.get("embargo_bars") or 0),
+                    1 if manifest.get("frozen") else 0,
+                    manifest.get("created_at") or utc_now(),
+                    json.dumps(manifest.get("metadata") or {}),
+                ),
+            )
+        return self.get_split_manifest(
+            dataset_id=manifest["dataset_id"],
+            dataset_version=manifest["dataset_version"],
+        ) or manifest
+
+    def get_split_manifest(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        manifest_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            if manifest_id:
+                row = conn.execute(
+                    "SELECT * FROM market_sim_split_manifests WHERE manifest_id=?",
+                    (manifest_id,),
+                ).fetchone()
+            elif dataset_id and dataset_version:
+                row = conn.execute(
+                    "SELECT * FROM market_sim_split_manifests WHERE dataset_id=? AND dataset_version=?",
+                    (dataset_id, dataset_version),
+                ).fetchone()
+            else:
+                return None
+        return self._row_split_manifest(row) if row else None
+
+    def _row_split_manifest(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "manifest_id": row["manifest_id"],
+            "dataset_id": row["dataset_id"],
+            "dataset_version": row["dataset_version"],
+            "dataset_content_hash": row["dataset_content_hash"],
+            "train": _loads(row["train_json"], {}),
+            "val": _loads(row["val_json"], None) if row["val_json"] else None,
+            "sealed": _loads(row["sealed_json"], None) if row["sealed_json"] else None,
+            "train_frac": float(row["train_frac"]),
+            "val_frac": float(row["val_frac"]),
+            "sealed_frac": float(row["sealed_frac"]),
+            "embargo_bars": int(row["embargo_bars"]),
+            "frozen": bool(row["frozen"]),
+            "created_at": row["created_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def upsert_sealed_attempt(self, attempt: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_sealed_attempts(
+                    sealed_attempt_id, dataset_id, dataset_version, split_manifest_id,
+                    strategy_id, strategy_version, run_id, status, bound_at,
+                    checkpoint_bar_index, completed_at, failure_reason, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(sealed_attempt_id) DO UPDATE SET
+                    status=excluded.status,
+                    checkpoint_bar_index=excluded.checkpoint_bar_index,
+                    completed_at=excluded.completed_at,
+                    failure_reason=excluded.failure_reason,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    attempt["sealed_attempt_id"],
+                    attempt["dataset_id"],
+                    attempt["dataset_version"],
+                    attempt.get("split_manifest_id") or "",
+                    attempt["strategy_id"],
+                    int(attempt.get("strategy_version") or 0),
+                    attempt["run_id"],
+                    attempt["status"],
+                    attempt.get("bound_at") or utc_now(),
+                    int(attempt.get("checkpoint_bar_index") or 0),
+                    attempt.get("completed_at"),
+                    attempt.get("failure_reason") or "",
+                    json.dumps(attempt.get("metadata") or {}),
+                ),
+            )
+        return attempt
+
+    def get_sealed_attempt(self, sealed_attempt_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sim_sealed_attempts WHERE sealed_attempt_id=?",
+                (sealed_attempt_id,),
+            ).fetchone()
+        return self._row_sealed_attempt(row) if row else None
+
+    def find_sealed_attempt(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        strategy_id: str,
+        strategy_version: int,
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_sim_sealed_attempts
+                WHERE dataset_id=? AND dataset_version=? AND strategy_id=? AND strategy_version=?
+                LIMIT 1
+                """,
+                (dataset_id, dataset_version, strategy_id, int(strategy_version)),
+            ).fetchone()
+        return self._row_sealed_attempt(row) if row else None
+
+    def _row_sealed_attempt(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "sealed_attempt_id": row["sealed_attempt_id"],
+            "dataset_id": row["dataset_id"],
+            "dataset_version": row["dataset_version"],
+            "split_manifest_id": row["split_manifest_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": int(row["strategy_version"]),
+            "run_id": row["run_id"],
+            "status": row["status"],
+            "bound_at": row["bound_at"],
+            "checkpoint_bar_index": int(row["checkpoint_bar_index"]),
+            "completed_at": row["completed_at"],
+            "failure_reason": row["failure_reason"] or "",
+            "metadata": _loads(row["metadata_json"], {}),
+        }

@@ -24,7 +24,7 @@ from Data.modules.common.paths import PathEscapeError, safe_relpath
 from .ohlcv import (
     REQUIRED_OHLCV_COLUMNS,
     _parquet_available,
-    load_ohlcv,
+    iter_ohlcv,
     validate_ohlcv_file,
 )
 from .types import Bar, CausalityViolation, DataKind, MarketSimError, SourceStatus
@@ -374,7 +374,7 @@ class MarketDatasetPipeline:
             return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath))
 
         try:
-            bars = load_ohlcv(qpath)
+            bars = list(iter_ohlcv(qpath))
         except MarketSimError as exc:
             report = DatasetQualityReport(
                 ok=False,

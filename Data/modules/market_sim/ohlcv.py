@@ -6,7 +6,7 @@ import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator  # Any used by parquet column helpers
 
 from Data.modules.common.hashing import sha256_file
 
@@ -134,7 +134,13 @@ def _map_header(fieldnames: list[str] | None) -> dict[str, str]:
     return mapping
 
 
-def iter_ohlcv_csv(path: Path) -> Iterator[Bar]:
+def iter_ohlcv_csv(
+    path: Path,
+    *,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+) -> Iterator[Bar]:
+    """Stream CSV bars without materializing the full series."""
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         mapping = _map_header(list(reader.fieldnames or []))
@@ -168,6 +174,10 @@ def iter_ohlcv_csv(path: Path) -> Iterator[Bar]:
                     f"Row {row_num}: duplicate timestamp {ts}",
                 )
             prev_ts = ts
+            if start_ts and ts < start_ts:
+                continue
+            if end_ts and ts > end_ts:
+                break
             yield Bar(ts=ts, open=o, high=h, low=l, close=c, volume=v)
 
 
@@ -179,7 +189,17 @@ def _parquet_available() -> bool:
         return False
 
 
-def load_ohlcv(path: Path, *, start_ts: str | None = None, end_ts: str | None = None) -> list[Bar]:
+def iter_ohlcv(
+    path: Path | str,
+    *,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+) -> Iterator[Bar]:
+    """Canonical streaming OHLCV reader — does not materialize the full series.
+
+    Prefer this over ``load_ohlcv`` for ingest, validation, split-manifest
+    construction, and any path that must stay within a memory budget.
+    """
     path = Path(path)
     if not path.is_file():
         raise MarketSimError("DATA_NOT_FOUND", f"Market file not found: {path}", http_status=404)
@@ -191,26 +211,99 @@ def load_ohlcv(path: Path, *, start_ts: str | None = None, end_ts: str | None = 
                 "Parquet support requires optional dependency pyarrow (not installed)",
                 http_status=503,
             )
-        bars = _load_parquet(path)
+        yield from _iter_parquet(path, start_ts=start_ts, end_ts=end_ts)
     elif suffix in {".csv", ".txt"}:
-        bars = list(iter_ohlcv_csv(path))
+        yield from iter_ohlcv_csv(path, start_ts=start_ts, end_ts=end_ts)
     else:
         raise MarketSimError("UNSUPPORTED_FORMAT", f"Unsupported market file format: {suffix}")
 
-    if start_ts:
-        bars = [b for b in bars if b.ts >= start_ts]
-    if end_ts:
-        bars = [b for b in bars if b.ts <= end_ts]
+
+def stream_ohlcv(
+    path: Path | str,
+    *,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+) -> Iterator[Bar]:
+    """Alias for ``iter_ohlcv`` (characterization / Master Program P1A surface)."""
+    yield from iter_ohlcv(path, start_ts=start_ts, end_ts=end_ts)
+
+
+def load_ohlcv(path: Path, *, start_ts: str | None = None, end_ts: str | None = None) -> list[Bar]:
+    """Materialize bars for small fixtures / SimulationClock. Prefer ``iter_ohlcv``."""
+    bars = list(iter_ohlcv(path, start_ts=start_ts, end_ts=end_ts))
     if not bars:
         raise MarketSimError("EMPTY_WINDOW", "No bars in requested date range")
     return bars
 
 
-def _load_parquet(path: Path) -> list[Bar]:
+def _iter_parquet(
+    path: Path,
+    *,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+) -> Iterator[Bar]:
+    """Stream parquet by row-group / batch — avoids loading the whole table."""
     import pyarrow.parquet as pq
 
-    table = pq.read_table(path)
-    cols = {name.lower(): name for name in table.column_names}
+    pf = pq.ParquetFile(path)
+    cols = {name.lower(): name for name in (pf.schema_arrow.names if pf.schema_arrow else [])}
+    if not cols:
+        # Fallback for older pyarrow: read schema from first batch
+        table = pq.read_table(path)
+        cols = {name.lower(): name for name in table.column_names}
+        mapping = _parquet_column_map(cols)
+        yield from _bars_from_column_lists(
+            table.column(mapping["timestamp"]).to_pylist(),
+            table.column(mapping["open"]).to_pylist(),
+            table.column(mapping["high"]).to_pylist(),
+            table.column(mapping["low"]).to_pylist(),
+            table.column(mapping["close"]).to_pylist(),
+            table.column(mapping["volume"]).to_pylist(),
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        return
+
+    mapping = _parquet_column_map(cols)
+    needed = [mapping[c] for c in REQUIRED_OHLCV_COLUMNS]
+    prev: str | None = None
+    row_offset = 0
+    for batch in pf.iter_batches(columns=needed, batch_size=65_536):
+        ts_col = batch.column(needed.index(mapping["timestamp"])).to_pylist()
+        o_col = batch.column(needed.index(mapping["open"])).to_pylist()
+        h_col = batch.column(needed.index(mapping["high"])).to_pylist()
+        l_col = batch.column(needed.index(mapping["low"])).to_pylist()
+        c_col = batch.column(needed.index(mapping["close"])).to_pylist()
+        v_col = batch.column(needed.index(mapping["volume"])).to_pylist()
+        for i, raw_ts in enumerate(ts_col):
+            ts = _normalize_ts(str(raw_ts))
+            if prev is not None and ts < prev:
+                raise MarketSimError(
+                    "INVALID_OHLCV",
+                    f"Parquet row {row_offset + i}: unsorted timestamps",
+                )
+            if prev is not None and ts == prev:
+                raise MarketSimError(
+                    "INVALID_OHLCV",
+                    f"Parquet row {row_offset + i}: duplicate timestamp {ts}",
+                )
+            prev = ts
+            if start_ts and ts < start_ts:
+                continue
+            if end_ts and ts > end_ts:
+                return
+            yield Bar(
+                ts=ts,
+                open=float(o_col[i]),
+                high=float(h_col[i]),
+                low=float(l_col[i]),
+                close=float(c_col[i]),
+                volume=float(v_col[i]),
+            )
+        row_offset += len(ts_col)
+
+
+def _parquet_column_map(cols: dict[str, str]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for alt in ALT_TS_COLUMNS:
         if alt in cols:
@@ -222,14 +315,20 @@ def _load_parquet(path: Path) -> list[Bar]:
     missing = [c for c in REQUIRED_OHLCV_COLUMNS if c not in mapping]
     if missing:
         raise MarketSimError("INVALID_OHLCV", f"Parquet missing columns: {missing}")
+    return mapping
 
-    ts_col = table.column(mapping["timestamp"]).to_pylist()
-    o_col = table.column(mapping["open"]).to_pylist()
-    h_col = table.column(mapping["high"]).to_pylist()
-    l_col = table.column(mapping["low"]).to_pylist()
-    c_col = table.column(mapping["close"]).to_pylist()
-    v_col = table.column(mapping["volume"]).to_pylist()
-    bars: list[Bar] = []
+
+def _bars_from_column_lists(
+    ts_col: list[Any],
+    o_col: list[Any],
+    h_col: list[Any],
+    l_col: list[Any],
+    c_col: list[Any],
+    v_col: list[Any],
+    *,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+) -> Iterator[Bar]:
     prev: str | None = None
     for i, raw_ts in enumerate(ts_col):
         ts = _normalize_ts(str(raw_ts))
@@ -238,17 +337,28 @@ def _load_parquet(path: Path) -> list[Bar]:
         if prev is not None and ts == prev:
             raise MarketSimError("INVALID_OHLCV", f"Parquet row {i}: duplicate timestamp {ts}")
         prev = ts
-        bars.append(
-            Bar(
-                ts=ts,
-                open=float(o_col[i]),
-                high=float(h_col[i]),
-                low=float(l_col[i]),
-                close=float(c_col[i]),
-                volume=float(v_col[i]),
-            )
+        if start_ts and ts < start_ts:
+            continue
+        if end_ts and ts > end_ts:
+            break
+        yield Bar(
+            ts=ts,
+            open=float(o_col[i]),
+            high=float(h_col[i]),
+            low=float(l_col[i]),
+            close=float(c_col[i]),
+            volume=float(v_col[i]),
         )
-    return bars
+
+
+def count_ohlcv(
+    path: Path | str,
+    *,
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+) -> int:
+    """Count bars via streaming — O(1) extra memory beyond one bar."""
+    return sum(1 for _ in iter_ohlcv(path, start_ts=start_ts, end_ts=end_ts))
 
 
 def validate_ohlcv_file(path: Path) -> OhlcvValidation:
