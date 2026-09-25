@@ -331,6 +331,37 @@ def _independent_verification_scan() -> tuple[str, str]:
     return "PASS", "independent_verification_research_file_receipts_ok"
 
 
+def _capability_state_scan() -> tuple[str, str]:
+    """R15 structural: cognitive CapabilityState matrix wired into runtime."""
+    path = ROOT / "Data" / "modules" / "cognition" / "capability_state.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    selector = ROOT / "Data" / "modules" / "cognition" / "action_selector.py"
+    if not path.is_file():
+        return "FAIL", "missing:capability_state.py"
+    text = path.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    sel = selector.read_text(encoding="utf-8") if selector.is_file() else ""
+    if "class CapabilityState" not in text:
+        return "FAIL", "missing_CapabilityState"
+    if "def derive_capability_state" not in text:
+        return "FAIL", "missing_derive_capability_state"
+    if "capability_state_is_cognition_matrix" not in text:
+        return "FAIL", "missing_cognition_matrix_truth"
+    if "not_provider_capability_probe" not in text:
+        return "FAIL", "missing_not_provider_probe_flag"
+    if "generate" not in text or "execute" not in text or "network" not in text:
+        return "FAIL", "missing_matrix_axes"
+    if "capability_state" not in rt or "derive_capability_state" not in rt:
+        return "FAIL", "runtime_missing_capability_state_wire"
+    if "_capability_block_observation" not in rt:
+        return "FAIL", "runtime_missing_capability_enforcement"
+    if 'checkpoint["capability_state"]' not in rt:
+        return "FAIL", "persist_missing_capability_state"
+    if "capability_state" not in sel:
+        return "FAIL", "action_selector_missing_capability_state"
+    return "PASS", "cognitive_capability_state_matrix_wired"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -507,6 +538,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st14, ev14
                     else:
                         evidence = f"{evidence};{ev14}"
+                if status == "PASS" and gid == "R15":
+                    st15, ev15 = _capability_state_scan()
+                    if st15 != "PASS":
+                        status, evidence = st15, ev15
+                    else:
+                        evidence = f"{evidence};{ev15}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

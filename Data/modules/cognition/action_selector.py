@@ -7,6 +7,7 @@ from typing import Any
 
 from .belief_state import BeliefState
 from .capability_broker import CapabilityBroker
+from .capability_state import AxisState, CapabilityAxis, CapabilityState
 from .meta_controller import MetaController, MetaDecision
 from .task_model import TaskModel
 from .types import (
@@ -41,6 +42,7 @@ class ActionSelector:
         observations: list[CognitiveObservation],
         budgets_remaining: dict[str, int],
         cancel_requested: bool = False,
+        capability_state: CapabilityState | None = None,
     ) -> CognitiveAction:
         if cancel_requested:
             return CognitiveAction(
@@ -77,6 +79,10 @@ class ActionSelector:
             observations=observations,
             budgets_remaining=budgets_remaining,
         )
+        if capability_state is not None:
+            candidates = [
+                c for c in candidates if self._allowed_by_capability_state(c, capability_state)
+            ]
         if not candidates:
             return CognitiveAction(
                 kind=CognitiveActionKind.COMPLETE,
@@ -90,11 +96,48 @@ class ActionSelector:
             ready = self._next_ready_step(plan)
             if ready is not None:
                 mapped = self._action_for_step(ready, task, decision, budgets_remaining, working_memory)
-                if mapped is not None:
+                if mapped is not None and (
+                    capability_state is None
+                    or self._allowed_by_capability_state((0.0, mapped), capability_state)
+                ):
                     return mapped
 
         candidates.sort(key=lambda c: c[0], reverse=True)
         return candidates[0][1]
+
+    @staticmethod
+    def _allowed_by_capability_state(
+        scored: tuple[float, CognitiveAction],
+        capability_state: CapabilityState,
+    ) -> bool:
+        action = scored[1]
+        kind = action.kind
+        if kind in {CognitiveActionKind.MODEL_CALL, CognitiveActionKind.RESPOND}:
+            return not capability_state.blocks(CapabilityAxis.GENERATE)
+        if kind == CognitiveActionKind.INVOKE_CAPABILITY:
+            if capability_state.blocks(CapabilityAxis.EXECUTE):
+                # REQUIRES_APPROVAL is not blocks() — still selectable (runtime gates).
+                if capability_state.axis(CapabilityAxis.EXECUTE) == AxisState.REQUIRES_APPROVAL:
+                    return True
+                return False
+            return True
+        if kind == CognitiveActionKind.DELEGATE_AGENT:
+            if capability_state.blocks(CapabilityAxis.DELEGATE):
+                if capability_state.axis(CapabilityAxis.DELEGATE) == AxisState.REQUIRES_APPROVAL:
+                    return True
+                return False
+            if bool(action.arguments.get("allow_web")) and capability_state.blocks(
+                CapabilityAxis.NETWORK
+            ):
+                return False
+            return True
+        if kind == CognitiveActionKind.RETRIEVE:
+            if bool(action.arguments.get("allow_web")) and capability_state.blocks(
+                CapabilityAxis.NETWORK
+            ):
+                return False
+            return True
+        return True
 
     def _candidates(
         self,
