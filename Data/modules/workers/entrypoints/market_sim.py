@@ -111,6 +111,47 @@ def _handle_research_campaign(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _handle_portfolio_tick(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.portfolio_tick — autonomous paper Portefeuille cycle on worker."""
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    portfolio_id = str(args.get("portfolio_id") or "")
+    try:
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        if not portfolio_id:
+            raise ValueError("portfolio_id required for portfolio_tick")
+        result = plane.portfolio_tick(portfolio_id)
+        result["executed_via"] = "market_sim_worker"
+        # Continue while RUNNING
+        pf = result.get("portfolio") or {}
+        if pf.get("status") == "RUNNING" and plane.job_runtime is not None:
+            try:
+                nxt = plane.job_runtime.enqueue(
+                    capability_id="market_sim.portfolio_tick",
+                    arguments={"portfolio_id": portfolio_id},
+                    requested_by="market_sim_worker",
+                    parent_job_id=job.job_id,
+                    domain="market_sim",
+                    domain_entity_type="market_sim_portfolio",
+                    domain_entity_id=portfolio_id,
+                    worker_pool="market_sim",
+                    latency_class="background",
+                )
+                result["continuation_job_id"] = nxt.job_id
+            except Exception:  # noqa: BLE001
+                pass
+        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        return {"error": str(exc)}
+
+
 def _handle_scan_batch(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
     """market_sim.scan_batch — batch source scan / bounded provider refresh on worker."""
     from Data.modules.jobs.states import JobState
@@ -154,6 +195,8 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         return _handle_research_campaign(ctx, job)
     if cap == "market_sim.scan_batch":
         return _handle_scan_batch(ctx, job)
+    if cap == "market_sim.portfolio_tick":
+        return _handle_portfolio_tick(ctx, job)
 
     args = dict(getattr(job, "arguments", None) or {})
     simulation_id = str(args.get("simulation_id") or args.get("run_id") or "")

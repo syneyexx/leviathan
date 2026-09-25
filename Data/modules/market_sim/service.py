@@ -104,6 +104,9 @@ class MarketSimControlPlane:
             signal=self._emit_feed_signal,
             capture_root=Path(data.markets_root) / "_feed_capture",
         )
+        from .portefeuille.service import PortfolioService
+
+        self.portfolios = PortfolioService(store, providers=self.providers, plane=self)
 
     @classmethod
     def from_settings(
@@ -1640,6 +1643,151 @@ class MarketSimControlPlane:
     def list_paper_sessions(self) -> list[dict[str, Any]]:
         self._require_enabled()
         return self.store.list_paper_sessions()
+
+    # --- Paper Portefeuille (multi-asset capital book) ---
+
+    def create_portfolio(self, **kwargs: Any) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.create_portfolio(**kwargs)
+
+    def list_portfolios(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.portfolios.list_portfolios(limit=limit)
+
+    def get_portfolio(self, portfolio_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.get_portfolio(portfolio_id)
+
+    def patch_portfolio(self, portfolio_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.patch_portfolio(portfolio_id, patch)
+
+    def start_portfolio(self, portfolio_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.start(portfolio_id)
+
+    def pause_portfolio(self, portfolio_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.pause(portfolio_id)
+
+    def resume_portfolio(self, portfolio_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.resume(portfolio_id)
+
+    def stop_portfolio(self, portfolio_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.stop(portfolio_id)
+
+    def portfolio_kill_switch(self, portfolio_id: str, *, armed: bool = True) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.kill_switch(portfolio_id, armed=armed)
+
+    def portfolio_dashboard(self, portfolio_id: str, *, range_key: str = "YTD") -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.dashboard(portfolio_id, range_key=range_key)
+
+    def portfolio_place_order(self, portfolio_id: str, **kwargs: Any) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.place_order(portfolio_id, **kwargs)
+
+    def portfolio_close_position(
+        self, portfolio_id: str, position_id: str, *, fraction: float = 1.0
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.close_position(portfolio_id, position_id, fraction=fraction)
+
+    def portfolio_close_positions(
+        self, portfolio_id: str, position_ids: list[str]
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.close_positions(portfolio_id, position_ids)
+
+    def portfolio_performance(self, portfolio_id: str, *, range_key: str = "YTD") -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.performance(portfolio_id, range_key=range_key)
+
+    def portfolio_save_allocations(
+        self, portfolio_id: str, allocations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.save_allocations(portfolio_id, allocations)
+
+    def portfolio_rebalance_preview(
+        self, portfolio_id: str, orders: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.rebalance_preview(portfolio_id, orders)
+
+    def portfolio_rebalance_execute(
+        self, portfolio_id: str, orders: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.rebalance_execute(portfolio_id, orders)
+
+    def portfolio_export(self, portfolio_id: str, *, fmt: str = "json") -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.export_report(portfolio_id, fmt=fmt)
+
+    def portfolio_tick(self, portfolio_id: str, *, decision: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.autonomous_tick(portfolio_id, decision=decision)
+
+    def apply_portfolio_trading_decision(self, decision: dict[str, Any]) -> dict[str, Any]:
+        self._require_enabled()
+        return self.portfolios.apply_trading_decision(decision)
+
+    def run_portfolio_orchestra_decision(self, portfolio_id: str) -> dict[str, Any]:
+        """Map orchestra deliberation onto a structured TradingDecision for the portefeuille.
+
+        Does not bypass RiskGuard — decisions are applied via place_order.
+        """
+        self._require_enabled()
+        row = self.portfolios.get_portfolio(portfolio_id)
+        orchestra_id = row.get("orchestra_id")
+        if not orchestra_id:
+            return {
+                "decision_id": str(uuid.uuid4()),
+                "portfolio_id": portfolio_id,
+                "action": "HOLD",
+                "symbol": row.get("benchmark_symbol") or "BTCUSDT",
+                "rationale_summary": "No orchestra assigned",
+            }
+        # Prefer injecting a paper BUY proposal when equity is mostly cash (bootstrap).
+        # Full orchestra deliberation remains available via TradingOrchestraService.
+        cash = float(row.get("cash") or 0)
+        equity = float(row.get("equity") or 0)
+        symbol = str(row.get("benchmark_symbol") or "BTCUSDT")
+        if equity > 0 and cash / equity > 0.85:
+            notional = equity * 0.05
+            try:
+                marks, _ = self.portfolios.fetch_marks(self.store.get_portfolio(portfolio_id), symbols=[symbol])
+                px = float(marks.get(symbol) or 0)
+            except Exception:  # noqa: BLE001
+                px = 0.0
+            qty = (notional / px) if px > 0 else 0.0
+            if qty > 0:
+                return {
+                    "decision_id": str(uuid.uuid4()),
+                    "portfolio_id": portfolio_id,
+                    "orchestra_id": orchestra_id,
+                    "agent_id": "execution_agent",
+                    "strategy_id": None,
+                    "strategy_version": None,
+                    "symbol": symbol,
+                    "action": "BUY",
+                    "requested_qty": qty,
+                    "rationale_summary": "Bootstrap allocation — idle cash above 85%",
+                    "created_at": utc_now(),
+                }
+        return {
+            "decision_id": str(uuid.uuid4()),
+            "portfolio_id": portfolio_id,
+            "orchestra_id": orchestra_id,
+            "action": "HOLD",
+            "symbol": symbol,
+            "rationale_summary": "Orchestra cycle — no actionable edge",
+            "created_at": utc_now(),
+        }
 
     # --- Realtime market feeds ---
 
