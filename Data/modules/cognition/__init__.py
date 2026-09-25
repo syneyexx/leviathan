@@ -12,6 +12,13 @@ from .adaptive_compute import (
 )
 from .belief_state import BeliefItem, BeliefState
 from .capability_broker import CapabilityBroker, CapabilityShortlist
+from .capability_state import (
+    AxisState,
+    CapabilityAxis,
+    CapabilityState,
+    capability_state_from_mapping,
+    derive_capability_state,
+)
 from .completion import CompletionDecision, CompletionEngine, CriterionResult
 from .context_v3 import ContextBuilderV3, ContextV3Result
 from .delegation import DelegateRequest, DelegateResult, DelegationService
@@ -89,6 +96,9 @@ __all__ = [
     "CandidateSummary",
     "CapabilityBroker",
     "CapabilityShortlist",
+    "CapabilityAxis",
+    "CapabilityState",
+    "AxisState",
     "ClampReason",
     "CognitionError",
     "CognitionFeatureDisabled",
@@ -176,6 +186,8 @@ __all__ = [
     "should_blind_retry",
     "structured_state_from_mapping",
     "hypothesis_board_from_mapping",
+    "derive_capability_state",
+    "capability_state_from_mapping",
     "validate_plan_advice",
     "validate_task_advice",
 ]

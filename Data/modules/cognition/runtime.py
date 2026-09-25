@@ -14,6 +14,13 @@ from typing import Any, Callable
 from .action_selector import ActionSelector
 from .belief_state import BeliefState
 from .capability_broker import CapabilityBroker
+from .capability_state import (
+    AxisState,
+    CapabilityAxis,
+    CapabilityState,
+    capability_state_from_mapping,
+    derive_capability_state,
+)
 from .completion import CompletionEngine
 from .context_v3 import ContextBuilderV3
 from .critic_mesh import CriticMesh, CriticMeshReport
@@ -105,6 +112,8 @@ class CognitiveRunState:
     hypothesis_board: HypothesisBoard = field(default_factory=HypothesisBoard)
     # Last named-domain critic mesh report (public signals only).
     last_critic_report: dict[str, Any] | None = None
+    # Cognitive capability matrix (generate / execute / network / …).
+    capability_state: CapabilityState = field(default_factory=CapabilityState)
 
     def public_status(self) -> dict[str, Any]:
         return {
@@ -142,6 +151,7 @@ class CognitiveRunState:
                 if self.decision and self.decision.capability_profile
                 else None
             ),
+            "capability_state": self.capability_state.public_dict(),
             "expected_gain": self.decision.expected_gain if self.decision else None,
             "neural_adaptation": self.decision.neural_adaptation if self.decision else None,
             "reasoning_state": self.reasoning_state.public_dict(),
@@ -174,6 +184,7 @@ class CognitiveRunState:
                 "reasoning_state_is_public_contract": True,
                 "hypothesis_board_is_public": True,
                 "critic_mesh_is_named_domain_critics": True,
+                "capability_state_is_cognition_matrix": True,
             },
         }
 
@@ -214,6 +225,7 @@ class CognitiveRuntime:
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
         behavior_resolver: Any | None = None,
+        network_outbound_allowed: bool = False,
     ) -> None:
         self.enabled = enabled
         self.shadow_default = shadow
@@ -253,6 +265,7 @@ class CognitiveRuntime:
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
         # Settings Control Plane — same BehaviorProfile plane as Chat.
         self.behavior_resolver = behavior_resolver
+        self.network_outbound_allowed = bool(network_outbound_allowed)
         # Named domain critic mesh (public critique signals, not private CoT).
         self.critic_mesh = CriticMesh()
 
@@ -391,6 +404,7 @@ class CognitiveRuntime:
             unknowns=task.unknowns,
             domain=task.domain or "general",
         )
+        state.capability_state = self._derive_capability_state(state)
         self._runs[run_id] = state
         self._loops[run_id] = LoopDetector()
         self._persist_create(state)
@@ -400,6 +414,7 @@ class CognitiveRuntime:
             "reasoning_state",
             state.reasoning_state.public_dict(),
         )
+        self._emit(state, "capability_state", state.capability_state.public_dict())
         if seeded:
             self._emit(state, "hypothesis_board", state.hypothesis_board.public_dict())
         if run:
@@ -672,6 +687,10 @@ class CognitiveRuntime:
                     else None
                 )
             ),
+            capability_state=capability_state_from_mapping(
+                checkpoint.get("capability_state")
+                or result.get("capability_state")
+            ),
         )
         events = self.store.list_events(run_id)
         state.events = list(events)
@@ -874,6 +893,8 @@ class CognitiveRuntime:
                     self._emit(state, "meta_decision", state.decision.public_dict())
 
             state.usage.iterations += 1
+            # Refresh capability matrix each iteration (affordances may change).
+            state.capability_state = self._derive_capability_state(state)
             action = self.actions.select(
                 task=state.task,
                 decision=state.decision,  # type: ignore[arg-type]
@@ -883,6 +904,7 @@ class CognitiveRuntime:
                 observations=state.observations,
                 budgets_remaining=remaining,
                 cancel_requested=state.cancel_requested,
+                capability_state=state.capability_state,
             )
             state.actions.append(action)
             self._emit(state, "action_requested", action.public_dict())
@@ -1023,6 +1045,10 @@ class CognitiveRuntime:
         *,
         history: list[dict[str, str]] | None,
     ) -> CognitiveObservation | None:
+        # Enforce cognitive CapabilityState before privileged kinds.
+        blocked = self._capability_block_observation(state, action)
+        if blocked is not None:
+            return blocked
         kind = action.kind
         if kind == CognitiveActionKind.RETRIEVE:
             self._transition(state, CognitiveRunStatus.PERCEIVING)
@@ -1629,6 +1655,158 @@ class CognitiveRuntime:
             if state.usage.token_usage_source != "provider":
                 state.usage.token_usage_source = "estimate"
 
+    def _derive_capability_state(self, state: CognitiveRunState) -> CapabilityState:
+        return derive_capability_state(
+            task=state.task,
+            model_available=self.model_caller is not None,
+            execution_gateway_available=self.execution_gateway is not None,
+            delegation_enabled=self.delegation_enabled,
+            network_outbound_allowed=self.network_outbound_allowed,
+            cognition_enabled=self.enabled,
+        )
+
+    def _capability_block_observation(
+        self,
+        state: CognitiveRunState,
+        action: CognitiveAction,
+    ) -> CognitiveObservation | None:
+        """Return an error observation when CapabilityState blocks the action."""
+        cs = state.capability_state
+        kind = action.kind
+        axis: CapabilityAxis | None = None
+        if kind in {CognitiveActionKind.MODEL_CALL, CognitiveActionKind.RESPOND}:
+            axis = CapabilityAxis.GENERATE
+        elif kind == CognitiveActionKind.INVOKE_CAPABILITY:
+            axis = CapabilityAxis.EXECUTE
+            # Filesystem writes additionally need write_filesystem axis.
+            side = str(action.arguments.get("side_effect") or "").lower()
+            caps = str(action.capability_id or action.arguments.get("capability_id") or "").lower()
+            if "filesystem" in side or "write" in caps or "fs." in caps:
+                if cs.blocks(CapabilityAxis.WRITE_FILESYSTEM) and not cs.allows(
+                    CapabilityAxis.WRITE_FILESYSTEM
+                ):
+                    if cs.axis(CapabilityAxis.WRITE_FILESYSTEM) == AxisState.REQUIRES_APPROVAL:
+                        if not action.arguments.get("approval_id"):
+                            self._emit(
+                                state,
+                                "capability_state_blocked",
+                                {
+                                    "action": kind.value,
+                                    "axis": "write_filesystem",
+                                    "state": cs.write_filesystem.value,
+                                },
+                            )
+                            return CognitiveObservation(
+                                kind=CognitiveObservationKind.APPROVAL_RESULT,
+                                observation_id=str(uuid.uuid4()),
+                                summary="filesystem write requires approval (capability_state)",
+                                success=None,
+                                payload={
+                                    "requires_approval": True,
+                                    "axis": "write_filesystem",
+                                    "capability_state": cs.public_dict(),
+                                },
+                            )
+                    elif cs.blocks(CapabilityAxis.WRITE_FILESYSTEM):
+                        self._emit(
+                            state,
+                            "capability_state_blocked",
+                            {
+                                "action": kind.value,
+                                "axis": "write_filesystem",
+                                "state": cs.write_filesystem.value,
+                            },
+                        )
+                        return CognitiveObservation(
+                            kind=CognitiveObservationKind.ERROR,
+                            observation_id=str(uuid.uuid4()),
+                            summary="filesystem write denied by capability_state",
+                            success=False,
+                            error="COGNITION_CAPABILITY_WRITE_DENIED",
+                            payload={"capability_state": cs.public_dict()},
+                        )
+        elif kind == CognitiveActionKind.DELEGATE_AGENT:
+            axis = CapabilityAxis.DELEGATE
+            if bool(action.arguments.get("allow_web")):
+                if cs.blocks(CapabilityAxis.NETWORK):
+                    self._emit(
+                        state,
+                        "capability_state_blocked",
+                        {
+                            "action": kind.value,
+                            "axis": "network",
+                            "state": cs.network.value,
+                        },
+                    )
+                    return CognitiveObservation(
+                        kind=CognitiveObservationKind.ERROR,
+                        observation_id=str(uuid.uuid4()),
+                        summary="outbound network denied by capability_state",
+                        success=False,
+                        error="COGNITION_CAPABILITY_NETWORK_DENIED",
+                        payload={"capability_state": cs.public_dict()},
+                    )
+        elif kind == CognitiveActionKind.RETRIEVE:
+            # Retrieval may be local; only block when task requires current info and network denied
+            # and retrieval explicitly requested web — otherwise allow local Knowledge path.
+            if bool(action.arguments.get("allow_web")) and cs.blocks(CapabilityAxis.NETWORK):
+                self._emit(
+                    state,
+                    "capability_state_blocked",
+                    {"action": kind.value, "axis": "network", "state": cs.network.value},
+                )
+                return CognitiveObservation(
+                    kind=CognitiveObservationKind.ERROR,
+                    observation_id=str(uuid.uuid4()),
+                    summary="web retrieval denied by capability_state",
+                    success=False,
+                    error="COGNITION_CAPABILITY_NETWORK_DENIED",
+                    payload={"capability_state": cs.public_dict()},
+                )
+            return None
+
+        if axis is None:
+            return None
+
+        state_axis = cs.axis(axis)
+        if state_axis == AxisState.ALLOWED:
+            return None
+        if state_axis == AxisState.REQUIRES_APPROVAL:
+            if action.arguments.get("approval_id"):
+                return None
+            self._emit(
+                state,
+                "capability_state_blocked",
+                {"action": kind.value, "axis": axis.value, "state": state_axis.value},
+            )
+            return CognitiveObservation(
+                kind=CognitiveObservationKind.APPROVAL_RESULT,
+                observation_id=str(uuid.uuid4()),
+                summary=f"{axis.value} requires approval (capability_state)",
+                success=None,
+                payload={
+                    "requires_approval": True,
+                    "axis": axis.value,
+                    "capability_state": cs.public_dict(),
+                },
+            )
+        # DENIED / UNAVAILABLE / UNKNOWN → hard block for privileged kinds
+        if state_axis in {AxisState.DENIED, AxisState.UNAVAILABLE}:
+            self._emit(
+                state,
+                "capability_state_blocked",
+                {"action": kind.value, "axis": axis.value, "state": state_axis.value},
+            )
+            return CognitiveObservation(
+                kind=CognitiveObservationKind.ERROR,
+                observation_id=str(uuid.uuid4()),
+                summary=f"{axis.value} blocked by capability_state ({state_axis.value})",
+                success=False,
+                error=f"COGNITION_CAPABILITY_{axis.value.upper()}_BLOCKED",
+                payload={"capability_state": cs.public_dict(), "axis": axis.value},
+            )
+        return None
+
     def _verify(self, state: CognitiveRunState) -> bool:
         if self.verification_engine is None:
             # Without VerificationEngine, never claim verified.
@@ -1938,6 +2116,7 @@ class CognitiveRuntime:
                 "reasoning_state": state.reasoning_state.public_dict(),
                 "hypothesis_board": state.hypothesis_board.public_dict(),
                 "critic_report": state.last_critic_report,
+                "capability_state": state.capability_state.public_dict(),
             }
             result_json = {
                 "response_text": state.response_text,
@@ -1952,6 +2131,7 @@ class CognitiveRuntime:
                 "reasoning_state": checkpoint["reasoning_state"],
                 "hypothesis_board": checkpoint["hypothesis_board"],
                 "critic_report": checkpoint["critic_report"],
+                "capability_state": checkpoint["capability_state"],
             }
             self.store.update_run(
                 state.run_id,

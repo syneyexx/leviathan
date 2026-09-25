@@ -69,7 +69,7 @@
     {"id": "R12", "title": "HypothesisBoard", "required": true, "status": "PASS", "phase": "F8", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f8_hypotheses_critics", "evidence": "HypothesisBoard deep-branched + runtime seed/persist/hydrate"},
     {"id": "R13", "title": "Critic mesh", "required": true, "status": "PASS", "phase": "F8", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f8_hypotheses_critics", "evidence": "named domain CriticMesh wired into _process_critic"},
     {"id": "R14", "title": "Independent verification", "required": true, "status": "PASS", "phase": "F9", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f9_verification", "evidence": "research/file/receipt evidence kinds + verification_bridge + runtime _verify"},
-    {"id": "R15", "title": "CapabilityState", "required": true, "status": "NOT_STARTED", "phase": "F10", "check": "manual"},
+    {"id": "R15", "title": "CapabilityState", "required": true, "status": "PASS", "phase": "F10", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f10_capability_state", "evidence": "cognitive CapabilityState matrix generate/execute/network + runtime gates"},
     {"id": "R16", "title": "Iterative tools", "required": true, "status": "NOT_STARTED", "phase": "F4+", "check": "manual"},
     {"id": "R17", "title": "Async workers", "required": true, "status": "NOT_STARTED", "phase": "F11", "check": "manual"},
     {"id": "R18", "title": "Steering", "required": true, "status": "NOT_STARTED", "phase": "F12", "check": "manual"},
