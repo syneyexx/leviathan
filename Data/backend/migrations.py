@@ -3126,6 +3126,117 @@ def _m42_resource_reservations_device_aware(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m43_trading_orchestra(conn: sqlite3.Connection) -> None:
+    """Trade orchestras: append-only decision chain, news feeds/items/signals (frontier_program §3).
+
+    Orchestras and trade agents themselves are Agent Fleet rows (no second fleet).
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_news_feeds (
+            feed_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL DEFAULT 'rss',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            declared_latency_seconds INTEGER NOT NULL DEFAULT 0,
+            license_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+            symbols_hint_json TEXT NOT NULL DEFAULT '[]',
+            last_polled_at TEXT,
+            last_status TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_news_items (
+            item_id TEXT PRIMARY KEY,
+            feed_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            url TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            content_hash TEXT NOT NULL UNIQUE,
+            published_at TEXT,
+            fetched_at TEXT NOT NULL,
+            available_at TEXT NOT NULL,
+            license_state TEXT NOT NULL DEFAULT 'UNKNOWN',
+            symbols_hint_json TEXT NOT NULL DEFAULT '[]',
+            knowledge_document_id TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_news_items_available ON market_news_items(available_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_news_signals (
+            signal_id TEXT PRIMARY KEY,
+            item_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            mission_id TEXT,
+            instruments_json TEXT NOT NULL DEFAULT '[]',
+            event_type TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            magnitude REAL NOT NULL,
+            confidence REAL NOT NULL,
+            horizon TEXT NOT NULL,
+            rationale TEXT NOT NULL DEFAULT '',
+            as_of TEXT NOT NULL,
+            model_id TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_market_news_signals_as_of ON market_news_signals(as_of)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_decisions (
+            decision_id TEXT PRIMARY KEY,
+            orchestra_id TEXT NOT NULL,
+            mission_id TEXT,
+            agent_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            parent_decision_id TEXT,
+            model_id TEXT,
+            prompt_artifact_id TEXT,
+            output_artifact_id TEXT,
+            mandate_fingerprint TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_decisions_orchestra ON market_decisions(orchestra_id, created_at)"
+    )
+    # Append-only enforcement: the decision chain is evidence; edits and deletes are refused.
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_decisions_no_update
+        BEFORE UPDATE ON market_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'market_decisions is append-only');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_decisions_no_delete
+        BEFORE DELETE ON market_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'market_decisions is append-only');
+        END
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3173,6 +3284,7 @@ MIGRATIONS: Sequence[Migration] = (
         name="resource_reservations_device_aware",
         apply=_m42_resource_reservations_device_aware,
     ),
+    Migration(version=43, name="trading_orchestra", apply=_m43_trading_orchestra),
 )
 
 

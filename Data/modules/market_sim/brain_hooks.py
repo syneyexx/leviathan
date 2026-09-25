@@ -69,6 +69,32 @@ class BrainFacade:
         *,
         dependencies: list[str] | None = None,
         limit: int = 3,
+        as_of: str | None = None,
+    ) -> BrainRetrieval:
+        """Retrieve brain hits; with ``as_of`` any hit carrying a timestamp newer than
+        the decision time is dropped (causal boundary for trading agents)."""
+        retrieval = self._retrieve(query, dependencies=dependencies, limit=limit)
+        if not as_of:
+            return retrieval
+        kept: list[dict[str, Any]] = []
+        dropped = 0
+        for hit in retrieval.hits:
+            stamp = _hit_timestamp(hit)
+            if stamp and stamp > as_of:
+                dropped += 1
+                continue
+            kept.append(hit)
+        notes = list(retrieval.notes)
+        if dropped:
+            notes.append(f"as_of filter dropped {dropped} hit(s) newer than {as_of}")
+        return BrainRetrieval(hits=kept, miss=len(kept) == 0, notes=notes)
+
+    def _retrieve(
+        self,
+        query: str,
+        *,
+        dependencies: list[str] | None = None,
+        limit: int = 3,
     ) -> BrainRetrieval:
         deps = dependencies or self.enabled_deps
         hits: list[dict[str, Any]] = []
@@ -127,6 +153,23 @@ class BrainFacade:
                     notes.append(f"neuro error: {exc}")
 
         return BrainRetrieval(hits=hits, miss=len(hits) == 0, notes=notes)
+
+
+_TIMESTAMP_KEYS = ("available_at", "availableAt", "created_at", "createdAt", "updated_at", "updatedAt", "timestamp")
+
+
+def _hit_timestamp(hit: dict[str, Any]) -> str | None:
+    for key in _TIMESTAMP_KEYS:
+        value = hit.get(key)
+        if value:
+            return str(value)
+    meta = hit.get("metadata")
+    if isinstance(meta, dict):
+        for key in _TIMESTAMP_KEYS:
+            value = meta.get(key)
+            if value:
+                return str(value)
+    return None
 
 
 class NullKnowledge:

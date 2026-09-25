@@ -13,6 +13,9 @@ class AgentDefinitionKind(str, Enum):
     RESEARCH = "research"
     ORCHESTRATOR = "orchestrator"
     SPECIALIST = "specialist"
+    # Trading-only agents: executed exclusively by the registered trading executor
+    # (Data/modules/market_sim/orchestra). Refused by coding/research planners.
+    TRADING = "trading"
 
 
 class AgentHealth(str, Enum):

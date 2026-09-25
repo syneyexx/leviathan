@@ -6,6 +6,43 @@ LEVIATHAN is a **Python-first rebuild from the ground up**. HADES is used as a f
 
 ---
 
+## 2026-09-24 — Frontier Program — trade orchestras, trading agents, news intelligence, F0-lite externalization
+
+### Objective
+Approved build of `Data/docs/frontier_program.md` (F1, F2, F4-partial, F0-lite, F8). Additive only: no existing
+route, table, pool or UI removed; trading stays separate from chat.
+
+### Added / changed
+- **Agent Fleet:** `AgentDefinitionKind.TRADING`; `register_kind_executor()` (pluggable domain executor);
+  `_domain_executor_for()` claims trade orchestras (`role=trade_orchestra`); isolation rule
+  `TRADING_MEMBER_ISOLATION`; generic planning refuses trading (`TRADING_EXECUTOR_REQUIRED`);
+  `launch_mission(metadata=...)`.
+- **New package** `Data/modules/market_sim/orchestra/` — `types` (Mandate A0–A4, DecisionRecord, News*),
+  `store` (migration **43**: `market_news_feeds/items/signals`, `market_decisions` append-only triggers),
+  `news` (RSS/Atom/JSON parse, `available_at` causal boundary, provider_io fetcher only), `executors`
+  (signal/news/critic/risk-officer/execution/post-mortem + `run_orchestra_round`), `model_adapter`
+  (Model Control Plane `consumer="trading"`; scripted + unavailable fakes), `service`
+  (`TradingOrchestraService`, `TradingMissionExecutor`).
+- **Jobs/workers:** `market_sim.news.poll` (EXTERNAL_WORKER_CAPABILITIES, builtin, market_sim entrypoint);
+  `knowledge.ingest_scan` handled by `knowledge_prepare` pool; `/api/knowledge/ingest/scan` and
+  `/api/neuro/absorb` enqueue when `externalize_api_runners` (F0-lite).
+- **Brain:** `BrainFacade.retrieve(as_of=...)` drops hits newer than the decision time (D22 fixed).
+- **Routes:** `Data/backend/routes/trading_orchestra.py` — orchestras, mandate, autonomy, missions,
+  decisions, news feeds/poll/items/signals. Wired in `main.py` (service + fleet binding in lifespan).
+- **Roles:** all `TRADING_ROLE_SPECS` are `kind=trading` (+ signal_analyst, news_analyst, execution_agent,
+  postmortem_agent); pre-existing rows are re-typed; `market_sim_service.attach_fleet()` now called at boot.
+- **Frontend:** `TradeOrchestraSection` (Agents page section 9), `/trading/onderzoek` (menu "Onderzoek"),
+  typed client + `tradingHelpers`, `"trading"` in `AGENT_KINDS`.
+- **Tests:** `test_trading_orchestra.py` (25), `tradingOrchestraContracts.test.ts` (8), characterization
+  D21/D22 updated, migration head assertion 43. Gates G61–G66 PASS in `trading_gates.json`
+  (`verify_trading_100.py --run-tests`).
+
+### Honesty
+- Readiness is `UNMEASURED` for every orchestra until a sealed evaluation exists (F3 not built).
+- `execution_agent` records paper intents; no fills are produced by orchestras yet (F7).
+- News signals reach trade agents only; `MarketView`/strategy features do not read news yet.
+- `agents/execute`, `agents/multi`, `neuro/soak` remain inline (bounded via `use_jobs`); see §1 of the program.
+
 ## 2026-09-24 — Trading Center Master Program v4 — Phase T0 (recon) — AWAITING APPROVAL
 
 ### Objective

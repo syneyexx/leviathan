@@ -51,6 +51,7 @@ import {
   type LogFilter,
   type MissionTab,
 } from "./agents/helpers";
+import { TradeOrchestraSection } from "./agents/TradeOrchestraSection";
 
 const MISSION_TABS: MissionTab[] = [
   "All Tasks",
@@ -2302,6 +2303,14 @@ export function AgentsPage() {
                 )
               ) : null}
             </div>
+          </section>
+
+          <section className="lv-ag-panel lv-ag-panel-trading">
+            <SectionTitle n={9} title="TRADE ORKESTEN / TRADING AGENTS (PAPER)" />
+            <TradeOrchestraSection
+              onSelectAgent={(id) => setSelectedAgentId(id)}
+              onChanged={() => void loadAll()}
+            />
           </section>
         </div>
       </main>

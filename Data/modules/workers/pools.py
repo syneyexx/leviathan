@@ -148,9 +148,9 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         pool_id="knowledge_prepare",
         entrypoint="Data.modules.workers.entrypoints.knowledge_prepare",
         default_count=1,
-        job_kinds=("knowledge.prepare",),
+        job_kinds=("knowledge.prepare", "knowledge.ingest_scan"),
         resource_classes=("CPU_HEAVY", "MEMORY_HEAVY"),
-        description="Chunking, embeddings prep, entity extraction",
+        description="Chunking, embeddings prep, entity extraction, externalized ModelData scan",
     ),
     "knowledge_commit": PoolDefinition(
         pool_id="knowledge_commit",

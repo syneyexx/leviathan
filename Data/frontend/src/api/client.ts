@@ -91,6 +91,12 @@ import type {
   MarketStrategyVersion,
   MarketSimRun,
   MarketSimLiveState,
+  TradeOrchestra,
+  TradeOrchestraSummary,
+  TradingDecision,
+  TradingNewsFeed,
+  TradingNewsItem,
+  TradingNewsSignal,
   SettingsSnapshot,
   SettingState,
   SettingMutationResult,
@@ -2103,6 +2109,123 @@ export const api = {
 
   marketSimLiveTradingStatus(): Promise<Record<string, unknown>> {
     return request("/api/market-sim/live-trading");
+  },
+
+  // --- Trade orchestras / trading agents ---
+
+  tradeOrchestraSummary(): Promise<TradeOrchestraSummary> {
+    return request("/api/market-sim/orchestras/summary");
+  },
+
+  listTradeOrchestras(includeArchived = false): Promise<{ orchestras: TradeOrchestra[] }> {
+    return request(`/api/market-sim/orchestras?includeArchived=${includeArchived ? "true" : "false"}`);
+  },
+
+  getTradeOrchestra(orchestraId: string): Promise<{ orchestra: TradeOrchestra }> {
+    return request(`/api/market-sim/orchestras/${encodeURIComponent(orchestraId)}`);
+  },
+
+  createTradeOrchestra(payload: {
+    name: string;
+    description?: string;
+    mandate?: Record<string, unknown>;
+    memberAgentIds?: string[];
+    seedRoles?: string[];
+  }): Promise<{ orchestra: TradeOrchestra }> {
+    return request("/api/market-sim/orchestras", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  updateTradeMandate(
+    orchestraId: string,
+    mandate: Record<string, unknown>,
+    approvalId?: string,
+  ): Promise<{ orchestra: TradeOrchestra }> {
+    return request(`/api/market-sim/orchestras/${encodeURIComponent(orchestraId)}/mandate`, {
+      method: "PUT",
+      body: JSON.stringify({ mandate, approvalId }),
+    });
+  },
+
+  setTradeAutonomy(orchestraId: string, level: string, approvalId?: string): Promise<{ orchestra: TradeOrchestra }> {
+    return request(`/api/market-sim/orchestras/${encodeURIComponent(orchestraId)}/autonomy`, {
+      method: "POST",
+      body: JSON.stringify({ level, approvalId }),
+    });
+  },
+
+  launchTradeMission(
+    orchestraId: string,
+    payload: { kind: string; asOf?: string; request?: string; priority?: string; dryRun?: boolean },
+  ): Promise<{ mission: AgentMission }> {
+    return request(`/api/market-sim/orchestras/${encodeURIComponent(orchestraId)}/missions`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listTradeMissions(orchestraId: string, limit = 50): Promise<{ missions: AgentMission[] }> {
+    return request(`/api/market-sim/orchestras/${encodeURIComponent(orchestraId)}/missions?limit=${limit}`);
+  },
+
+  listTradingDecisions(params: {
+    orchestraId?: string;
+    missionId?: string;
+    stage?: string;
+    limit?: number;
+  } = {}): Promise<{ decisions: TradingDecision[] }> {
+    const q = new URLSearchParams();
+    if (params.orchestraId) q.set("orchestraId", params.orchestraId);
+    if (params.missionId) q.set("missionId", params.missionId);
+    if (params.stage) q.set("stage", params.stage);
+    q.set("limit", String(params.limit ?? 200));
+    return request(`/api/market-sim/decisions?${q.toString()}`);
+  },
+
+  listTradingNewsFeeds(): Promise<{ feeds: TradingNewsFeed[] }> {
+    return request("/api/market-sim/news/feeds");
+  },
+
+  createTradingNewsFeed(payload: {
+    name: string;
+    url: string;
+    kind?: string;
+    enabled?: boolean;
+    declaredLatencySeconds?: number;
+    licenseState?: string;
+    symbolsHint?: string[];
+  }): Promise<{ feed: TradingNewsFeed }> {
+    return request("/api/market-sim/news/feeds", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  updateTradingNewsFeed(feedId: string, payload: Partial<TradingNewsFeed>): Promise<{ feed: TradingNewsFeed }> {
+    return request(`/api/market-sim/news/feeds/${encodeURIComponent(feedId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteTradingNewsFeed(feedId: string): Promise<{ feedId: string; deleted: boolean }> {
+    return request(`/api/market-sim/news/feeds/${encodeURIComponent(feedId)}`, { method: "DELETE" });
+  },
+
+  pollTradingNews(feedId?: string): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/news/poll", { method: "POST", body: JSON.stringify({ feedId: feedId ?? null }) });
+  },
+
+  listTradingNewsItems(params: { asOf?: string; feedId?: string; limit?: number } = {}): Promise<{ items: TradingNewsItem[] }> {
+    const q = new URLSearchParams();
+    if (params.asOf) q.set("asOf", params.asOf);
+    if (params.feedId) q.set("feedId", params.feedId);
+    q.set("limit", String(params.limit ?? 100));
+    return request(`/api/market-sim/news/items?${q.toString()}`);
+  },
+
+  listTradingNewsSignals(params: { asOf?: string; instrument?: string; limit?: number } = {}): Promise<{ signals: TradingNewsSignal[] }> {
+    const q = new URLSearchParams();
+    if (params.asOf) q.set("asOf", params.asOf);
+    if (params.instrument) q.set("instrument", params.instrument);
+    q.set("limit", String(params.limit ?? 100));
+    return request(`/api/market-sim/news/signals?${q.toString()}`);
   },
 
   runMarketDemo(payload: { family: string; barsLimit?: number }): Promise<Record<string, unknown>> {

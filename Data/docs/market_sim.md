@@ -66,10 +66,42 @@ Equity and crypto spot historical + paper paths are implemented. Options / futur
 Adds: providers, capabilities, paper sessions/orders/kill-switch, experiments, demos, live-trading status.
 Does **not** create a second overlapping trading API.
 
+## Trade orchestras & trading agents (`Data/modules/market_sim/orchestra/`)
+
+Trading-only agents live on the **existing Agent Fleet** as `kind=trading`; a trade orchestra is a fleet
+orchestrator with `role=trade_orchestra`. The fleet delegates both to the registered trading executor
+(`AgentFleetService.register_kind_executor`), so no second fleet, runtime or scheduler exists.
+
+- **Mandate** (operator-owned limits: universe, paper capital, exposure/risk/orders/drawdown, autonomy
+  `A0..A4`, model budget). `cannotEnableLive` is immutable; loosening a mandate needs an approval for
+  `market_sim.mandate.loosen`. Stored in the orchestrator's metadata with a fingerprint + history.
+- **Deliberation round** (`deliberation_round`): news digest → per-instrument proposals (signal analysts)
+  → critique → **deterministic `RiskGuard` decision** → paper order intent (recorded, not routed).
+  Agents propose/critique/explain; they never size or approve. Every step is an append-only
+  `DecisionRecord` (`market_decisions`, migration 43; UPDATE/DELETE refused by triggers) with `as_of`,
+  `mandateFingerprint` and `modelId`.
+- **News** (`news_digest`): feeds are fetched only by the `market_sim.news.poll` job through the
+  `provider_io` pool; items carry `available_at = max(published, fetched) + declared latency` and are
+  invisible to any decision whose `as_of` is earlier. Article text is `<reference_context>` in prompts;
+  the news analyst emits schema-validated signals (data, not authority).
+- **Learning** (`post_mortem`): lessons are written to Memory as `trust=derived` /
+  `trust_state=agent_proposed` with evidence refs to decision ids; never as facts.
+- **Model access:** `TradingModelAdapter` → Model Control Plane (`consumer="trading"`,
+  `model_role="trading.<role>"`). Without a bound model the round degrades to labelled `tier0_rules`
+  proposals or `UNAVAILABLE`; nothing is fabricated. No LLM call happens inside the per-bar kernel.
+- **Isolation:** trading agents cannot join non-trading orchestrators and vice versa; generic planners
+  refuse `kind=trading` (409 `TRADING_EXECUTOR_REQUIRED`). Chat is not involved.
+- **API:** `/api/market-sim/orchestras[/summary|/{id}|/{id}/mandate|/{id}/autonomy|/{id}/missions|/{id}/decisions]`,
+  `/api/market-sim/news/{feeds,poll,items,signals}`, `/api/market-sim/decisions`.
+- **Readiness:** stays `UNMEASURED` until a sealed evaluation exists (Frontier Program F3); paper PnL is
+  only shown when fill records exist.
+
 ## Frontend
 
-Trading Center pages bind to live APIs (Simulatie, Strategieën, Marktdata, Paper, Portefeuille, Broker honesty page).
-Agents fleet page remains the single agent registry; trading roles tag `trading` / `market_sim`.
+Trading Center pages bind to live APIs (Simulatie, Strategieën, Marktdata, Paper, Portefeuille, Broker honesty page,
+Onderzoek = orkesten + nieuws + beslissingsketen).
+Agents fleet page remains the single agent registry; trading roles tag `trading` / `market_sim` and appear in
+section 9 (trade orkesten) with mandate, autonomy, readiness and the decision timeline.
 
 ## HADES
 

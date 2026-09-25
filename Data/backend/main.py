@@ -40,6 +40,7 @@ from Data.backend.routes.agents import build_agents_router
 from Data.backend.routes.analytics import build_analytics_router
 from Data.modules.market_sim import MarketSimControlPlane
 from Data.backend.routes.market_sim import build_market_sim_router
+from Data.backend.routes.trading_orchestra import build_trading_orchestra_router
 from Data.modules.artifacts import ArtifactStore
 from Data.modules.evidence import EvidenceService, EvidenceStatus, EvidenceStore
 from Data.modules.execution import (
@@ -1049,6 +1050,23 @@ coding_service.bind_intelligence(
     reasoning=reasoner,
 )
 
+# Trade orchestras / trading agents: trading-only protocol on the existing Agent Fleet.
+# Model calls go through the Model Control Plane (consumer="trading"); news I/O through
+# provider_io; risk decisions stay deterministic (Mandate + RiskGuard). Chat is untouched.
+from Data.modules.market_sim.orchestra import TradingOrchestraService
+from Data.modules.market_sim.orchestra.model_adapter import TradingModelAdapter
+from Data.modules.market_sim.orchestra.store import OrchestraStore
+
+trading_orchestra_service = TradingOrchestraService(
+    store=OrchestraStore(settings.database_path),
+    market_plane=market_sim_service,
+    model=TradingModelAdapter(model_plane, llm),
+    job_runtime=job_runtime,
+    approval_service=approval_service,
+    memory=memory_store,
+    enabled=bool(settings.features.market_sim_enabled),
+)
+
 
 def _wire_system_inventory_status() -> None:
     """Bind truthful status probes to components actually constructed above."""
@@ -1489,6 +1507,19 @@ async def lifespan(_: FastAPI):
     training_service.reconcile()
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
+    # Trading agents/orchestras live on the same fleet (visible on the Agents page);
+    # the trading executor claims kind=trading and role=trade_orchestra missions.
+    trading_orchestra_service.bind_fleet(agent_fleet)
+    try:
+        market_sim_service.attach_fleet(agent_fleet)
+    except Exception as exc:  # noqa: BLE001 — trading roles are optional at boot
+        observability.emit(
+            "market_sim",
+            "trading.roles.ensure_failed",
+            payload={"error": str(exc)[:300]},
+            level="warn",
+            message="Could not ensure trading roles on the Agent Fleet",
+        )
     research_service.recover()
     if externalize:
         # Durable agent missions: enqueue agent.advance; do not own in-process threads.
@@ -1650,6 +1681,7 @@ app.include_router(
 app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
+app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))
 app.include_router(build_settings_router(settings_plane))
@@ -3326,9 +3358,38 @@ def ingest_knowledge_path(payload: KnowledgeIngestPath) -> dict:
     }
 
 
+def _enqueue_ingest_scan(limit: int, *, requested_by: str, extra_metadata: dict | None = None) -> dict:
+    """F0-lite: heavy ModelData scan runs on the knowledge_prepare pool, never inline."""
+    import uuid
+
+    job = job_runtime.enqueue(
+        capability_id="knowledge.ingest_scan",
+        arguments={"limit": limit},
+        requested_by=requested_by,
+        domain="knowledge",
+        domain_entity_type="knowledge_scan",
+        domain_entity_id=str(settings.knowledge.data_root),
+        worker_pool="knowledge_prepare",
+        resource_class="CPU_HEAVY",
+        latency_class="background",
+        idempotency_key=f"knowledge:ingest_scan:{uuid.uuid4().hex[:8]}",
+        metadata={"limit": limit, **dict(extra_metadata or {})},
+    )
+    return {
+        "job": job.public_dict(),
+        "queued": True,
+        "scanned": None,
+        "data_root": str(settings.knowledge.data_root),
+        "documents": [],
+        "truth": {"executed_via": "knowledge_prepare_worker", "result_in_job": True},
+    }
+
+
 @app.post("/api/knowledge/ingest/scan")
 def ingest_knowledge_scan(limit: int = 50) -> dict:
     safe_limit = min(max(limit, 1), 500)
+    if _evaluation_externalize():
+        return _enqueue_ingest_scan(safe_limit, requested_by="api.knowledge.ingest_scan")
     try:
         docs = knowledge.scan_data_root(limit=safe_limit)
     except ValueError as exc:
@@ -4476,6 +4537,13 @@ class NeuroAbsorbRequest(BaseModel):
 @app.post("/api/neuro/absorb")
 def neuro_absorb_scan(payload: NeuroAbsorbRequest) -> dict:
     """Operator-triggered ModelData absorb via Knowledge V2 (not a parallel pipeline)."""
+    if _evaluation_externalize():
+        queued = _enqueue_ingest_scan(
+            payload.limit, requested_by="api.neuro.absorb", extra_metadata={"neuro_absorb": True}
+        )
+        observability.emit("neuro", "absorb.enqueued", payload={"job_id": queued["job"]["job_id"]})
+        metrics.incr("neuro_absorb_scans")
+        return queued
     result = neuro_absorb.scan_once(limit=payload.limit)
     observability.emit("neuro", "absorb", payload={"ingested": result.get("ingested", 0)})
     metrics.incr("neuro_absorb_scans")
