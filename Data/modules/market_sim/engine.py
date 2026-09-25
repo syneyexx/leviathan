@@ -15,7 +15,10 @@ from .ohlcv import load_ohlcv
 from .portfolio import Portfolio, RiskEngine, RiskLimits
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
-from .types import FillStatus, OrderSide, RunStatus, SimFill
+from .types import FillStatus, MarketSimError, OrderSide, RunStatus, SimFill, SimRun
+
+from Data.modules.common.hashing import sha256_file
+from pathlib import Path
 
 
 CancelCheck = Callable[[], bool]
@@ -23,7 +26,7 @@ CancelCheck = Callable[[], bool]
 
 @dataclass
 class EngineState:
-    run: SimRun  # noqa: F821 — forward via Any-compatible SimRun
+    run: SimRun
     clock: SimulationClock
     portfolio: Portfolio
     risk: RiskEngine
@@ -33,10 +36,6 @@ class EngineState:
     veto_count: int = 0
     deliberation_rounds: int = 0
     benchmark_equity: list[float] = field(default_factory=list)
-
-
-# Fix annotation
-from .types import SimRun  # noqa: E402
 
 
 class SimulationEngine:
@@ -66,7 +65,24 @@ class SimulationEngine:
         entry_rules: dict[str, Any] | None = None,
         exit_rules: dict[str, Any] | None = None,
         brain_dependencies: list[str] | None = None,
+        verify_data_hash: bool = True,
     ) -> EngineState:
+        path = Path(bars_path)
+        if verify_data_hash and run.data_hash:
+            if not path.is_file():
+                raise MarketSimError(
+                    "DATA_NOT_FOUND",
+                    f"Market file not found for hash verify: {bars_path}",
+                    http_status=404,
+                )
+            file_hash = sha256_file(path)
+            if file_hash != run.data_hash:
+                raise MarketSimError(
+                    "DATA_HASH_MISMATCH",
+                    f"Run data_hash {run.data_hash[:16]}… does not match file "
+                    f"{file_hash[:16]}… — refusing prepare (reproducibility)",
+                    http_status=409,
+                )
         bars = load_ohlcv(bars_path, start_ts=run.start_ts or None, end_ts=run.end_ts or None)
         clock = SimulationClock(bars=bars, index=run.bar_index - 1 if run.bar_index > 0 else -1)
         if run.bar_index > 0:

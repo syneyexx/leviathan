@@ -28,6 +28,9 @@ class OhlcvValidation:
     error: str | None = None
     columns: tuple[str, ...] = ()
     parquet_available: bool = False
+    duplicate_count: int = 0
+    gap_count: int = 0
+    quality: dict[str, Any] | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -40,26 +43,62 @@ class OhlcvValidation:
             "error": self.error,
             "columns": list(self.columns),
             "parquet_available": self.parquet_available,
+            "duplicate_count": self.duplicate_count,
+            "gap_count": self.gap_count,
+            "quality": self.quality,
         }
 
 
 def _normalize_ts(raw: str) -> str:
+    """Normalize vendor timestamps to UTC ISO-8601 seconds.
+
+    Handles ISO, common calendar formats, ``YYYYMMDD``, and epoch seconds /
+    milliseconds / microseconds. Digits that look like calendar dates are
+    never treated as Unix epochs.
+    """
     text = (raw or "").strip()
     if not text:
         raise ValueError("empty timestamp")
-    # Numeric epoch (seconds or ms)
+
+    # Compact calendar date YYYYMMDD (and optional HHMMSS) — before epoch heuristics.
+    if text.isdigit() and len(text) == 8:
+        dt = datetime.strptime(text, "%Y%m%d").replace(tzinfo=timezone.utc)
+        return dt.isoformat(timespec="seconds")
+    if text.isdigit() and len(text) == 14:
+        dt = datetime.strptime(text, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        return dt.isoformat(timespec="seconds")
+
+    # Numeric epoch (seconds / ms / µs)
     if text.replace(".", "", 1).isdigit():
         value = float(text)
-        if value > 1e12:
+        # Microseconds since epoch (~1e15 for 2024)
+        if value >= 1e14:
+            value /= 1_000_000.0
+        elif value >= 1e12:  # milliseconds
             value /= 1000.0
+        # Values that look like YYYYMMDD after float parse (e.g. 20240115.0)
+        if 19_000_000 <= value <= 21_001_231 and value == int(value):
+            as_int = int(value)
+            as_text = f"{as_int:08d}"
+            if len(as_text) == 8:
+                dt = datetime.strptime(as_text, "%Y%m%d").replace(tzinfo=timezone.utc)
+                return dt.isoformat(timespec="seconds")
         dt = datetime.fromtimestamp(value, tz=timezone.utc)
         return dt.isoformat(timespec="seconds")
+
     # ISO-ish
     cleaned = text.replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(cleaned)
     except ValueError:
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S"):
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d",
+            "%Y%m%d",
+            "%Y%m%d%H%M%S",
+        ):
             try:
                 dt = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
                 break
@@ -122,6 +161,11 @@ def iter_ohlcv_csv(path: Path) -> Iterator[Bar]:
                 raise MarketSimError(
                     "INVALID_OHLCV",
                     f"Row {row_num}: timestamps not sorted ({prev_ts} -> {ts})",
+                )
+            if prev_ts is not None and ts == prev_ts:
+                raise MarketSimError(
+                    "INVALID_OHLCV",
+                    f"Row {row_num}: duplicate timestamp {ts}",
                 )
             prev_ts = ts
             yield Bar(ts=ts, open=o, high=h, low=l, close=c, volume=v)
@@ -191,6 +235,8 @@ def _load_parquet(path: Path) -> list[Bar]:
         ts = _normalize_ts(str(raw_ts))
         if prev is not None and ts < prev:
             raise MarketSimError("INVALID_OHLCV", f"Parquet row {i}: unsorted timestamps")
+        if prev is not None and ts == prev:
+            raise MarketSimError("INVALID_OHLCV", f"Parquet row {i}: duplicate timestamp {ts}")
         prev = ts
         bars.append(
             Bar(
@@ -223,6 +269,15 @@ def validate_ohlcv_file(path: Path) -> OhlcvValidation:
     try:
         content_hash = sha256_file(path)
         bars = load_ohlcv(path)
+        gap_count = 0
+        if len(bars) >= 2:
+            # Lightweight gap count only — full quality report lives in dataset_pipeline.
+            prev_dt = datetime.fromisoformat(bars[0].ts.replace("Z", "+00:00"))
+            for bar in bars[1:]:
+                cur_dt = datetime.fromisoformat(bar.ts.replace("Z", "+00:00"))
+                if (cur_dt - prev_dt).total_seconds() > 86400 * 3:
+                    gap_count += 1
+                prev_dt = cur_dt
         return OhlcvValidation(
             ok=True,
             bar_count=len(bars),
@@ -232,12 +287,16 @@ def validate_ohlcv_file(path: Path) -> OhlcvValidation:
             byte_size=byte_size,
             columns=REQUIRED_OHLCV_COLUMNS,
             parquet_available=parquet_ok,
+            duplicate_count=0,
+            gap_count=gap_count,
+            quality={"gap_count": gap_count} if gap_count else None,
         )
     except MarketSimError as exc:
         try:
             content_hash = sha256_file(path)
         except OSError:
             content_hash = ""
+        dup = 1 if "duplicate timestamp" in (exc.message or "") else 0
         return OhlcvValidation(
             ok=False,
             bar_count=0,
@@ -247,6 +306,7 @@ def validate_ohlcv_file(path: Path) -> OhlcvValidation:
             byte_size=byte_size,
             error=exc.message,
             parquet_available=parquet_ok,
+            duplicate_count=dup,
         )
 
 

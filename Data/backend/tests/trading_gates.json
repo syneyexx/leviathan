@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T0",
+  "phase": "T1",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
-      "date": "2026-09-24",
-      "result": "74 passed, 31 xfailed",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_characterization.py -q"
+      "date": "2026-09-25",
+      "result": "T1 causality+data foundation; D7/D9/D10 fixed; stale D6/D16/D25/D27 characterization refreshed",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t1_causality.py Data/backend/tests/test_market_sim.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -29,7 +29,7 @@
   ],
   "gates": {
     "G01": {
-      "title": "Streaming ingest 5y×1m within memory budget",
+      "title": "Streaming ingest 5y\u00d71m within memory budget",
       "phase": "T2A/T3C",
       "status": "NOT_STARTED",
       "required": true,
@@ -44,26 +44,61 @@
     },
     "G02": {
       "title": "Timestamp parser + quarantine",
-      "phase": "T2B",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests",
+            "Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests",
+            "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T1: YYYYMMDD + microsecond epoch normalization; quarantine import pipeline; duplicates rejected",
       "related_defects": [
         "D9"
       ]
     },
     "G03": {
       "title": "Quality report persisted",
-      "phase": "T2B",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting",
+            "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T1: DatasetQualityReport with gaps/duplicates/repairs persisted on sealed dataset versions",
       "related_defects": [
         "D9"
       ]
@@ -80,13 +115,29 @@
     },
     "G05": {
       "title": "Immutable content-addressed datasets",
-      "phase": "T2A",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
+            "Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T1: sealed dataset versions immutable; corrections create new version/hash; prepare refuses hash mismatch",
       "related_defects": [
         "D7"
       ]
@@ -165,13 +216,35 @@
     },
     "G12": {
       "title": "Causality MarketView poison-future",
-      "phase": "T1D",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests",
+            "Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests",
+            "Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests",
+            "Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T1: MarketView + EpistemicFirewall; available_at <= as_of; sealed holdout blocked during research",
       "related_defects": [
         "D10"
       ]
@@ -354,7 +427,7 @@
       "notes": "T0: gate not yet implemented; characterization only"
     },
     "G28": {
-      "title": "Readiness ladder A0–A4; A5 blocked",
+      "title": "Readiness ladder A0\u2013A4; A5 blocked",
       "phase": "T8D",
       "status": "NOT_STARTED",
       "required": true,
@@ -554,7 +627,7 @@
       "notes": "T0: gate not yet implemented; characterization only"
     },
     "G45": {
-      "title": "All T0 characterization → regressions",
+      "title": "All T0 characterization \u2192 regressions",
       "phase": "T11",
       "status": "NOT_STARTED",
       "required": true,
@@ -738,7 +811,7 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
       ],
-      "notes": "Frontier Program F1/F4 — offline evidence only; live feed fetch through provider_io not exercised in CI",
+      "notes": "Frontier Program F1/F4 \u2014 offline evidence only; live feed fetch through provider_io not exercised in CI",
       "assertions": [
         "available_at = max(published, fetched) + declared latency",
         "content_hash dedupe",
@@ -768,7 +841,7 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
       ],
-      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) — PARTIAL scope, see notes in frontier_program.md",
+      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) \u2014 PARTIAL scope, see notes in frontier_program.md",
       "assertions": [
         "list_items(as_of) hides future items",
         "news_digest at early as_of makes zero model calls",
@@ -788,7 +861,7 @@
       ]
     },
     "G63": {
-      "title": "News-reader safety (schema → repair → honest failure; article text is reference context)",
+      "title": "News-reader safety (schema \u2192 repair \u2192 honest failure; article text is reference context)",
       "phase": "F4",
       "status": "PASS",
       "required": true,
@@ -831,8 +904,8 @@
       "notes": "Frontier Program F1",
       "assertions": [
         "_execution_kind(TRADING) raises TRADING_EXECUTOR_REQUIRED",
-        "TRADING member outside trade orchestra → TRADING_MEMBER_ISOLATION",
-        "trade orchestra with non-trading member → 422",
+        "TRADING member outside trade orchestra \u2192 TRADING_MEMBER_ISOLATION",
+        "trade orchestra with non-trading member \u2192 422",
         "Mandate.cannot_enable_live immutable; A5 does not parse"
       ],
       "checks": [
@@ -847,7 +920,7 @@
       ]
     },
     "G65": {
-      "title": "Decision record completeness (proposal → critique → risk → intent, as_of + model id, append-only)",
+      "title": "Decision record completeness (proposal \u2192 critique \u2192 risk \u2192 intent, as_of + model id, append-only)",
       "phase": "F2",
       "status": "PASS",
       "required": true,
@@ -860,7 +933,7 @@
       ],
       "notes": "fill and post_mortem links exist as stages; paper routing (fill) is not produced by the orchestra yet (execution_agent records intents only)",
       "assertions": [
-        "parent chain proposal→critique→risk→intent",
+        "parent chain proposal\u2192critique\u2192risk\u2192intent",
         "as_of + mandateFingerprint on every record",
         "SQLite triggers refuse UPDATE/DELETE on market_decisions"
       ],
@@ -886,7 +959,7 @@
       "test_node_ids": [
         "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
       ],
-      "notes": "vitest contract test; visual check recorded in PR — vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
+      "notes": "vitest contract test; visual check recorded in PR \u2014 vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
       "assertions": [
         "readiness label never inferred client-side",
         "PnL UNMEASURED without fill records",

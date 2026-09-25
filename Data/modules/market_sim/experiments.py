@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .types import MetricStatus
+from .epistemic import is_available
 
 
 @dataclass
@@ -205,7 +206,7 @@ class StrategyMemoryIndex:
         feats = features or {}
         hits = []
         for e in self._entries:
-            if e.available_at > as_of_ts:
+            if not is_available(available_at=e.available_at, as_of=as_of_ts):
                 continue
             score = 0
             for k, v in feats.items():

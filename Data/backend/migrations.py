@@ -3237,6 +3237,87 @@ def _m43_trading_orchestra(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m44_trading_causality_data_foundation(conn: sqlite3.Connection) -> None:
+    """T1: sealed market dataset versions + trading knowledge snapshots."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_dataset_versions (
+            dataset_id TEXT NOT NULL,
+            version TEXT NOT NULL,
+            source_id TEXT,
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            venue TEXT NOT NULL DEFAULT '',
+            instrument_family TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL DEFAULT 'csv_local',
+            timezone TEXT NOT NULL DEFAULT 'UTC',
+            start_ts TEXT NOT NULL,
+            end_ts TEXT NOT NULL,
+            bar_count INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT NOT NULL,
+            adjustment_mode TEXT NOT NULL DEFAULT 'as_traded',
+            quality_state TEXT NOT NULL,
+            quality_json TEXT NOT NULL DEFAULT '{}',
+            provenance_json TEXT NOT NULL DEFAULT '{}',
+            known_gaps_json TEXT NOT NULL DEFAULT '[]',
+            sealed INTEGER NOT NULL DEFAULT 0,
+            sealed_at TEXT,
+            path TEXT NOT NULL,
+            parent_version TEXT,
+            role TEXT NOT NULL DEFAULT 'RESEARCH',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (dataset_id, version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_dataset_versions_hash "
+        "ON market_dataset_versions(content_hash)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_dataset_versions_symbol "
+        "ON market_dataset_versions(symbol, timeframe, sealed)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_knowledge_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            snapshot_hash TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_knowledge_snapshots_run "
+        "ON market_knowledge_snapshots(run_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_dataset_versions_sealed_no_update
+        BEFORE UPDATE ON market_dataset_versions
+        FOR EACH ROW
+        WHEN OLD.sealed = 1 AND (
+            NEW.content_hash != OLD.content_hash
+            OR NEW.path != OLD.path
+            OR NEW.bar_count != OLD.bar_count
+            OR NEW.start_ts != OLD.start_ts
+            OR NEW.end_ts != OLD.end_ts
+        )
+        BEGIN
+            SELECT RAISE(
+                ABORT,
+                'sealed market_dataset_versions row is immutable; create a new version'
+            );
+        END
+        """
+    )
+
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3285,6 +3366,11 @@ MIGRATIONS: Sequence[Migration] = (
         apply=_m42_resource_reservations_device_aware,
     ),
     Migration(version=43, name="trading_orchestra", apply=_m43_trading_orchestra),
+    Migration(
+        version=44,
+        name="trading_causality_data_foundation",
+        apply=_m44_trading_causality_data_foundation,
+    ),
 )
 
 

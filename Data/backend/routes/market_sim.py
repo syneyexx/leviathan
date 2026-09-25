@@ -20,6 +20,19 @@ class RegisterDataRequest(BaseModel):
     timeframe: str | None = None
 
 
+class ImportDatasetRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+    symbol: str | None = None
+    timeframe: str | None = None
+    seal: bool = False
+    role: str = "RESEARCH"
+    provider: str = "csv_local"
+
+
+class SealDatasetRequest(BaseModel):
+    role: str = "SEALED_TEST"
+
+
 class StrategyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=240)
     description: str = ""
@@ -157,6 +170,44 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
             raise_market_sim_error(exc)
         return {"source": source}
 
+    @router.post("/api/market-sim/data/import")
+    def import_dataset(payload: ImportDatasetRequest) -> dict:
+        try:
+            return service.import_market_dataset(
+                payload.path,
+                symbol=payload.symbol,
+                timeframe=payload.timeframe,
+                seal=payload.seal,
+                role=payload.role,
+                provider=payload.provider,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/datasets")
+    def list_datasets(
+        symbol: str | None = Query(None),
+        sealed: bool | None = Query(None),
+        role: str | None = Query(None),
+        limit: int = Query(200, ge=1, le=2000),
+    ) -> dict:
+        try:
+            return {
+                "datasets": service.list_market_datasets(
+                    symbol=symbol, sealed=sealed, role=role, limit=limit
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/datasets/{dataset_id}/{version}/seal")
+    def seal_dataset(dataset_id: str, version: str, payload: SealDatasetRequest | None = None) -> dict:
+        body = payload or SealDatasetRequest()
+        try:
+            return {"dataset": service.seal_market_dataset(dataset_id, version, role=body.role)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     @router.get("/api/market-sim/data/{source_id}")
     def get_data(source_id: str) -> dict:
         try:
@@ -275,6 +326,13 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
     def get_run(run_id: str) -> dict:
         try:
             return {"run": service.get_run(run_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/runs/{run_id}/knowledge-snapshot")
+    def get_run_knowledge_snapshot(run_id: str) -> dict:
+        try:
+            return {"snapshots": service.get_run_knowledge_snapshots(run_id)}
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
