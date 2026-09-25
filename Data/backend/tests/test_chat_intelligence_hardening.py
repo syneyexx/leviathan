@@ -287,8 +287,49 @@ class SeedContractTests(unittest.TestCase):
         self.assertTrue(SEED_SYSTEM_PROMPT.startswith("You are LEVIATHAN"))
 
 
-if __name__ == "__main__":
-    unittest.main()
+class CognitionLanguagePinTests(unittest.TestCase):
+    def test_dutch_language_pin_is_last_after_english_contract(self) -> None:
+        from Data.modules.cognition.context_v3 import ContextBuilderV3
+        from Data.modules.cognition.task_model import TaskModelBuilder
+
+        task = TaskModelBuilder().build(
+            "Hoe gaat het met jou?",
+            metadata={
+                "behavior_system_prompt": SEED_SYSTEM_PROMPT,
+                "response_language": "nl",
+            },
+        )
+        result = ContextBuilderV3(token_budget=4000, auto_budget=False).build(task=task)
+        prompt = result.pack.system_prompt
+        self.assertIn("Reply in Dutch", prompt)
+        # English seed/contract may appear earlier; Dutch pin must win last.
+        dutch_idx = prompt.rfind("Reply in Dutch")
+        self.assertGreater(dutch_idx, -1)
+        self.assertGreater(dutch_idx, prompt.find("SYSTEM CONTRACT"))
+        self.assertTrue(
+            prompt.strip().endswith("output language.")
+            or prompt[dutch_idx:].startswith("Reply in Dutch"),
+        )
+        # Nothing after the language pin should re-assert English-only reply.
+        after = prompt[dutch_idx:]
+        self.assertNotIn("Reply in English", after)
+        self.assertNotIn("Reply in the language of the user unless instructed otherwise", after)
+
+    def test_behavior_overlay_preferred_over_seed_alone(self) -> None:
+        from Data.modules.cognition.context_v3 import ContextBuilderV3
+        from Data.modules.cognition.task_model import TaskModelBuilder
+
+        marker = "UNIQUE_BEHAVIOR_OVERLAY_MARKER_99"
+        task = TaskModelBuilder().build(
+            "hi",
+            metadata={
+                "behavior_system_prompt": marker,
+                "response_language": "en",
+            },
+        )
+        result = ContextBuilderV3(token_budget=4000, auto_budget=False).build(task=task)
+        self.assertIn(marker, result.pack.system_prompt)
+        self.assertIn("Reply in English", result.pack.system_prompt)
 
 
 class BehaviorRouteBodyBindingTests(unittest.TestCase):
@@ -302,3 +343,7 @@ class BehaviorRouteBodyBindingTests(unittest.TestCase):
         src = open(settings_routes.__file__, encoding="utf-8").read()
         self.assertIn("payload: BehaviorPromptPatch = Body(...)", src)
         self.assertIn("payload: BehaviorProfilePatch = Body(...)", src)
+
+
+if __name__ == "__main__":
+    unittest.main()
