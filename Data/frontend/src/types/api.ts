@@ -77,20 +77,57 @@ export type ChatResponse = {
   };
 };
 
+/** Public tool-call row for Chat Tools tab — status/duration/receipt only. */
+export type AssistantToolCallTelemetry = {
+  capability_id: string;
+  status: string;
+  success?: boolean | null;
+  duration_ms?: number | null;
+  receipt_id?: string | null;
+  error?: string | null;
+  summary?: string | null;
+};
+
+/** Specialist delegation row for Chat Agents tab. */
+export type AssistantAgentDelegationTelemetry = {
+  agent_kind: string;
+  status: string;
+  success?: boolean | null;
+  summary?: string | null;
+  artifact_refs?: string[];
+  evidence_refs?: string[];
+  idempotent_reuse?: boolean;
+};
+
+export type AssistantWebSourceTelemetry = {
+  title?: string | null;
+  url?: string | null;
+  source?: string | null;
+  snippet?: string | null;
+  error?: string | null;
+  error_code?: string | null;
+  honest_failure?: boolean;
+};
+
 /** Real turn telemetry for Chat Context/Tools/Agents panels — never mocked. */
 export type AssistantTurnTelemetry = {
   model?: string | null;
   behavior_hash?: string | null;
   behavior_profile_id?: string | null;
+  behavior_version?: string | null;
   context_budget?: number | null;
+  context_used?: number | null;
   context_tokens?: number | null;
   brain_hits?: number;
   knowledge_hits?: number;
   memory_hits?: number;
   evidence_hits?: number;
   tools_invoked?: string[];
+  tool_calls?: AssistantToolCallTelemetry[];
   agents?: string[];
+  agent_delegations?: AssistantAgentDelegationTelemetry[];
   gi_specialists?: string[];
+  web_sources?: AssistantWebSourceTelemetry[];
   verification_mode?: string | null;
   verification_passed?: boolean | null;
   factuality?: Record<string, unknown> | null;
@@ -152,7 +189,9 @@ export type CognitionRunStatus = {
   gi_specialists?: string[];
   behavior_hash?: string | null;
   behavior_profile_id?: string | null;
+  behavior_profile_version?: string | null;
   context_budget?: number | null;
+  context_used?: number | null;
   retrieval_hits?: {
     brain?: number;
     knowledge?: number;
@@ -160,7 +199,11 @@ export type CognitionRunStatus = {
     evidence?: number;
   };
   tools_invoked?: string[];
+  tool_calls?: AssistantToolCallTelemetry[];
   active_agents?: Array<string | null | undefined>;
+  agent_delegations?: AssistantAgentDelegationTelemetry[];
+  web_sources?: AssistantWebSourceTelemetry[];
+  latency_ms?: number | null;
   truth?: Record<string, boolean>;
 };
 
