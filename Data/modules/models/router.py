@@ -5,14 +5,23 @@ from __future__ import annotations
 import uuid
 from typing import Callable
 
+from Data.modules.models.capability_eligibility import (
+    capability_satisfies_request,
+    enrich_descriptor_capabilities,
+)
 from Data.modules.models.contracts import (
-    CapabilityState,
     ModelDescriptor,
     ModelRequest,
     RouteDecision,
     RouterConfig,
 )
-from Data.modules.models.errors import MODEL_NOT_FOUND, ROUTER_EXHAUSTED, ModelControlError
+from Data.modules.models.errors import (
+    MODEL_NOT_CHAT_CAPABLE,
+    MODEL_NOT_FOUND,
+    NO_CHAT_MODEL_AVAILABLE,
+    ROUTER_EXHAUSTED,
+    ModelControlError,
+)
 from Data.modules.models.gateway import ModelGateway
 from Data.modules.models.store import ModelStore
 
@@ -92,17 +101,27 @@ class ModelRouter:
 
     def resolve(self, request: ModelRequest | None = None) -> RouteDecision:
         request = request or ModelRequest()
-        models = {m.id: m for m in self._get_models()}
+        models = {
+            m.id: enrich_descriptor_capabilities(m) for m in self._get_models()
+        }
         config = self.get_config()
         trace_id = str(uuid.uuid4())
         tried: list[str] = []
+        requires_chat = any(
+            _cap_attr(c) == "chat" for c in (request.required_capabilities or ())
+        )
 
-        def eligible(model: ModelDescriptor) -> bool:
+        def eligible(model: ModelDescriptor, *, explicit: bool = False) -> bool:
             if model.lifecycle_state.value in {"error", "offline"}:
                 return False
+            ctx = {
+                "explicit_selection": explicit,
+                "runtime_supports_chat": True,
+                "preferred_role": request.preferred_role,
+            }
             for cap in request.required_capabilities:
-                state = getattr(model.capabilities, _cap_attr(cap), CapabilityState.UNKNOWN)
-                if state == CapabilityState.UNSUPPORTED:
+                decision = capability_satisfies_request(model, cap, request_context=ctx)
+                if not decision.satisfies:
                     return False
             if request.locality == "local_only" and model.source.value not in {"local", "imported", "downloaded"}:
                 return False
@@ -122,7 +141,7 @@ class ModelRouter:
                     pass
             return True
 
-        def try_model(model_id: str, reason: str) -> RouteDecision | None:
+        def try_model(model_id: str, reason: str, *, explicit: bool = False) -> RouteDecision | None:
             if not model_id:
                 return None
             tried.append(model_id)
@@ -136,7 +155,7 @@ class ModelRouter:
                         break
             if model is None:
                 return None
-            if not eligible(model):
+            if not eligible(model, explicit=explicit):
                 return None
             decision = RouteDecision(
                 model_id=model.id,
@@ -151,9 +170,43 @@ class ModelRouter:
 
         # 1. Explicit
         if request.explicit_model_id:
-            decision = try_model(request.explicit_model_id, "explicit")
+            decision = try_model(request.explicit_model_id, "explicit", explicit=True)
             if decision:
                 return decision
+            # Distinguish not-found vs not chat-capable for clearer API errors.
+            model = models.get(request.explicit_model_id)
+            if model is None:
+                for candidate in models.values():
+                    if (
+                        candidate.display_name == request.explicit_model_id
+                        or candidate.metadata.get("provider_model_id") == request.explicit_model_id
+                    ):
+                        model = candidate
+                        break
+            if model is not None and requires_chat:
+                chat_decision = capability_satisfies_request(
+                    model,
+                    "chat",
+                    request_context={"explicit_selection": True, "runtime_supports_chat": True},
+                )
+                if not chat_decision.satisfies:
+                    raise ModelControlError(
+                        code=MODEL_NOT_CHAT_CAPABLE,
+                        message=(
+                            f"Model {model.id} is not eligible for conversational chat generation"
+                        ),
+                        model_id=model.id,
+                        provider_id=model.provider_id,
+                        http_status=422,
+                        details={
+                            "modelId": model.id,
+                            "chatCapability": chat_decision.state.value,
+                            "provider": model.provider_id,
+                            "reason": chat_decision.reason,
+                            "provenance": chat_decision.provenance.value,
+                            "capabilities": model.capabilities.public_dict(),
+                        },
+                    )
             raise ModelControlError(
                 code=MODEL_NOT_FOUND,
                 message=f"Explicit model not found or ineligible: {request.explicit_model_id}",
@@ -207,30 +260,36 @@ class ModelRouter:
                     return decision
 
         raise ModelControlError(
-            code=ROUTER_EXHAUSTED,
-            message="No eligible models available for request",
+            code=NO_CHAT_MODEL_AVAILABLE if requires_chat else ROUTER_EXHAUSTED,
+            message=(
+                "No chat-capable generative model is available"
+                if requires_chat
+                else "No eligible models available for request"
+            ),
             retryable=True,
             http_status=503,
             details={"tried": tried, "requiredCapabilities": list(request.required_capabilities)},
         )
 
     def find_compatible(self, *, required_capabilities: list[str], locality: str = "any") -> list[str]:
-        models = self._get_models()
+        models = [enrich_descriptor_capabilities(m) for m in self._get_models()]
         out: list[str] = []
         for model in models:
-            req = ModelRequest(
-                required_capabilities=tuple(required_capabilities),
-                locality=locality if locality != "any" else "local_preferred",
-            )
-            # Reuse eligibility via temporary check
-            ok = True
             if locality == "local_only" and model.source.value not in {"local", "imported", "downloaded"}:
-                ok = False
-            for cap in req.required_capabilities:
-                state = getattr(model.capabilities, _cap_attr(cap), CapabilityState.UNKNOWN)
-                if state == CapabilityState.UNSUPPORTED:
+                continue
+            if model.lifecycle_state.value in {"error", "offline"}:
+                continue
+            ok = True
+            for cap in required_capabilities:
+                decision = capability_satisfies_request(
+                    model,
+                    cap,
+                    request_context={"explicit_selection": False, "runtime_supports_chat": True},
+                )
+                if not decision.satisfies:
                     ok = False
-            if ok and model.lifecycle_state.value not in {"error", "offline"}:
+                    break
+            if ok:
                 out.append(model.id)
         return out
 

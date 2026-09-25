@@ -1056,16 +1056,29 @@ class ContextBuilder:
             "evidence": ExternalTextSource.DOCUMENT,
         }
         for idx, item in enumerate(items):
-            raw = str(item.get("content") or item.get("claim") or item.get("summary") or item)
+            from Data.modules.context.advisory import (
+                normalize_generic_advisory,
+                normalize_neuro_item,
+                sanitize_model_facing_text,
+            )
+
             if kind == "neuro":
-                signal_kind = item.get("kind") or item.get("signal_kind") or "advisory"
-                raw = f"[{signal_kind}] {raw}"
-            elif kind == "atlas":
-                atlas_id = item.get("atlas_id") or item.get("id")
-                raw = f"[atlas:{atlas_id}] {item.get('title', '')}: {raw}".strip()
-            elif kind == "why":
-                bucket = item.get("bucket") or item.get("kind") or "why"
-                raw = f"[{bucket}] {raw}"
+                normalized = normalize_neuro_item(item, max_chars=item_max)
+                raw = normalized["content"]
+                item = {**(item if isinstance(item, dict) else {}), **normalized}
+            else:
+                if not isinstance(item, dict):
+                    item = normalize_generic_advisory(item, kind=kind, max_chars=item_max)
+                raw = str(item.get("content") or item.get("claim") or item.get("summary") or "")
+                raw = sanitize_model_facing_text(raw)
+                if kind == "atlas":
+                    atlas_id = item.get("atlas_id") or item.get("id")
+                    raw = f"[atlas:{atlas_id}] {item.get('title', '')}: {raw}".strip()
+                elif kind == "why":
+                    bucket = item.get("bucket") or item.get("kind") or "why"
+                    raw = f"[{bucket}] {raw}"
+                elif not raw:
+                    raw = normalize_generic_advisory(item, kind=kind, max_chars=item_max)["content"]
             if kind in source_map:
                 raw = quarantine_external_text(raw, source=source_map[kind]).text
             truncated = False

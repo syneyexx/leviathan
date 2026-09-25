@@ -159,10 +159,32 @@ function detailMessage(data: ApiErrorBody | null, status: number): string {
     return data.detail;
   }
   if (Array.isArray(data.detail) && data.detail.length > 0) {
-    return data.detail.map((item) => item.msg).join("; ");
+    return data.detail
+      .map((item) => {
+        const row = item as { msg?: string; loc?: Array<string | number>; type?: string };
+        const loc = Array.isArray(row.loc) ? row.loc.filter((p) => p !== "body").join(".") : "";
+        const msg = row.msg || "validation error";
+        if (loc === "system_prompt" || loc.endsWith(".system_prompt")) {
+          return "System prompt payload missing: expected `system_prompt`";
+        }
+        if (loc === "values" || loc.endsWith(".values")) {
+          return "Behavior update body missing `values`";
+        }
+        if (row.type === "missing" && loc) {
+          return `Field required: ${loc}`;
+        }
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .join("; ");
   }
   if (typeof data.detail === "object" && data.detail !== null && "message" in data.detail) {
     const body = data.detail as { code?: string; message?: string };
+    if (body.code === "MODEL_NOT_CHAT_CAPABLE") {
+      return "Dit model kan geen chat-antwoorden genereren. Kies een chatmodel of gebruik Auto.";
+    }
+    if (body.code === "NO_CHAT_MODEL_AVAILABLE") {
+      return "No chat-capable generative model is configured. Configure one under Models.";
+    }
     return body.code ? `${body.code}: ${body.message ?? ""}` : String(body.message ?? `Request failed (${status})`);
   }
   if (typeof data.detail === "object" && data.detail !== null && "error" in data.detail) {
@@ -356,6 +378,7 @@ export const api = {
         conversation_id: options.conversationId ?? null,
         ...(options.modelId ? { model_id: options.modelId } : {}),
         ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
+        ...(options.reasoningMode ? { reasoning_mode: options.reasoningMode } : {}),
         ...(options.stream != null ? { stream: options.stream } : {}),
       }),
     });
@@ -390,6 +413,7 @@ export const api = {
         stream: true,
         ...(options.modelId ? { model_id: options.modelId } : {}),
         ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
+        ...(options.reasoningMode ? { reasoning_mode: options.reasoningMode } : {}),
       }),
       signal: fetchInit?.signal,
     });
@@ -2368,6 +2392,21 @@ export const api = {
     return request("/api/settings/behavior-profile", {
       method: "PATCH",
       body: JSON.stringify({ values }),
+    });
+  },
+
+  previewBehaviorProfile(payload: {
+    latest_user_message?: string;
+    recent_user_messages?: string[];
+  }): Promise<{
+    language: Record<string, unknown>;
+    behavior: Record<string, unknown>;
+    system_prompt_digest: string;
+    snapshot_hash: string;
+  }> {
+    return request("/api/settings/behavior-profile/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   },
 

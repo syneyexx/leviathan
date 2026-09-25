@@ -16,24 +16,63 @@ from typing import Any
 from .behavior import DEFAULT_BEHAVIOR_PROFILE, BehaviorProfile
 from .seed import SEED_LANGUAGE_FALLBACK, SEED_SYSTEM_PROMPT
 
+# Broader Dutch function-word / pronoun / morphology markers for local detection.
 _NL_MARKERS = re.compile(
-    r"\b(wat|hoe|waar|wanneer|waarom|wie|jou|jij|je|het|een|van|met|"
-    r"antwoord|alleen|exact|goedemorgen|goedenavond|alsjeblieft|bedankt|"
-    r"nederlands|hallo|dag|naam)\b",
+    r"\b("
+    r"wat|hoe|waar|wanneer|waarom|wie|welke|welk|"
+    r"jou|jij|je|jullie|mij|ik|we|wij|ze|zij|hij|het|"
+    r"een|van|met|voor|naar|over|onder|tussen|door|"
+    r"niet|geen|nog|al|ook|maar|want|dus|toch|even|"
+    r"goed|graag|dank|bedankt|alsjeblieft|"
+    r"antwoord|alleen|exact|uitleg|uitleggen|vertel|zeg|doe|maak|"
+    r"goedemorgen|goedenavond|hallo|dag|hoi|naam|"
+    r"nederlands|nederlandse|kun|kan|kunnen|zou|zullen|moet|mag|"
+    r"gaat|gaan|doen|heb|hebt|heeft|zijn|bent|is|was|waren|"
+    r"dit|dat|deze|die|hier|daar|"
+    r"als|omdat|terwijl|zodat|voordat|nadat|"
+    r"eerste|tweede|derde|punt|korter|langer"
+    r")\b",
     re.IGNORECASE,
 )
 _EN_MARKERS = re.compile(
-    r"\b(what|how|where|when|why|who|your|you|the|a|an|with|from|"
-    r"answer|only|exactly|please|thanks|hello|hi|name|english)\b",
+    r"\b("
+    r"what|how|where|when|why|who|which|"
+    r"your|you|the|a|an|with|from|for|about|"
+    r"not|please|thanks|thank|hello|hi|hey|"
+    r"answer|only|exactly|explain|tell|make|do|"
+    r"name|english|can|could|would|should|must|"
+    r"is|are|was|were|be|been|being|have|has|had|"
+    r"this|that|these|those|here|there|"
+    r"because|while|before|after|first|second|point|shorter|longer"
+    r")\b",
     re.IGNORECASE,
 )
 _EXPLICIT_LANG = re.compile(
-    r"(?:answer|reply|respond|schrijf|antwoord)\s+(?:in|op)\s+"
-    r"(english|dutch|nederlands|duits|german|french|français|spanish|español)",
+    r"(?:"
+    r"(?:answer|reply|respond|schrijf|antwoord|praat|spreek|ga\s+(?:weer\s+)?verder)"
+    r"\s+(?:nu\s+)?(?:in|op|in\s+het)\s+"
+    r"(english|engels|dutch|nederlands|duits|german|french|français|spanish|español)"
+    r"|"
+    r"(?:in\s+(?:het\s+)?(nederlands|engels|english|dutch))"
+    r")",
     re.IGNORECASE,
 )
 _NOW_ENGLISH = re.compile(
     r"(?i)\b(now\s+answer\s+in\s+english|antwoord\s+(?:nu\s+)?in\s+(?:het\s+)?engels)\b"
+)
+_NOW_DUTCH = re.compile(
+    r"(?i)\b("
+    r"now\s+answer\s+in\s+dutch|"
+    r"answer\s+in\s+dutch|"
+    r"antwoord\s+(?:nu\s+)?in\s+(?:het\s+)?nederlands|"
+    r"ga\s+(?:weer\s+)?verder\s+in\s+(?:het\s+)?nederlands|"
+    r"schrijf\s+in\s+(?:het\s+)?nederlands"
+    r")\b"
+)
+# Short / ambiguous tokens that should inherit conversation language.
+_SHORT_AMBIGUOUS = re.compile(
+    r"(?i)^(oke|oké|ok|ja|nee|yes|no|yep|nope|en\??|waarom\??|why\??|"
+    r"doe\s+maar|goed|prima|sure|thanks|dank|bedankt|hm+|uh+|hmm+)\.?$"
 )
 
 
@@ -63,7 +102,8 @@ class LanguageDecision:
         label = names.get(lang, lang)
         return (
             f"Reply in {label}. "
-            "Internal English configuration must not force a different output language."
+            "Internal English configuration must not force a different output language. "
+            "This language constraint overrides earlier English system text."
         )
 
 
@@ -85,6 +125,9 @@ class BehaviorSnapshot:
             "version": self.version,
             "language": self.language.public_dict(),
             "assistant_display_name": self.profile.assistant_display_name,
+            "reasoning_mode_default": self.profile.reasoning_mode_default,
+            "tool_use_style": self.profile.tool_use_style,
+            "diagnostic_visibility": self.profile.diagnostic_visibility,
             "source": self.source,
             "resolved_at": self.resolved_at,
             "truth": {
@@ -106,11 +149,14 @@ def detect_message_language(text: str) -> tuple[str, str]:
         return "und", "empty"
     if _NOW_ENGLISH.search(raw):
         return "en", "explicit_user_request"
+    if _NOW_DUTCH.search(raw):
+        return "nl", "explicit_user_request"
     explicit = _EXPLICIT_LANG.search(raw)
     if explicit:
-        token = explicit.group(1).lower()
+        token = (explicit.group(1) or explicit.group(2) or "").lower()
         mapping = {
             "english": "en",
+            "engels": "en",
             "dutch": "nl",
             "nederlands": "nl",
             "german": "de",
@@ -121,18 +167,28 @@ def detect_message_language(text: str) -> tuple[str, str]:
             "español": "es",
         }
         return mapping.get(token, token[:2]), "explicit_user_request"
-    nl = len(_NL_MARKERS.findall(raw))
+
+    # Diacritics common in Dutch / Romance — soft Dutch bias when paired with NL markers.
+    diacritic_bonus = 1 if any(ch in raw.lower() for ch in "ëïöüáéíóúàè") else 0
+    nl = len(_NL_MARKERS.findall(raw)) + diacritic_bonus
     en = len(_EN_MARKERS.findall(raw))
-    if any(ch in raw.lower() for ch in "ëïöüáéíóúàè"):
+
+    # Morphology: Dutch plural/diminutive endings on short messages.
+    if re.search(r"(?i)\b\w+(je|tje|jes)\b", raw):
         nl += 1
+    if re.search(r"(?i)\b\w+heid\b", raw):
+        nl += 1
+
     if nl > en and nl > 0:
         return "nl", "marker_score"
     if en > nl and en > 0:
         return "en", "marker_score"
     if nl == en and nl > 0:
-        if re.search(r"\b(jou|jij|hoe gaat|wat is)\b", raw, re.IGNORECASE):
+        if re.search(r"\b(jou|jij|hoe gaat|wat is|waarom|nederlands)\b", raw, re.IGNORECASE):
             return "nl", "dutch_pronoun_tiebreak"
         return "en", "english_tiebreak"
+    if _SHORT_AMBIGUOUS.match(raw):
+        return "und", "short_ambiguous"
     return "und", "ambiguous"
 
 
@@ -162,16 +218,23 @@ def resolve_language(
             source="latest_user",
             reason=reason,
         )
+
+    # Stickiness: short/ambiguous messages inherit last confident conversation language.
     if profile.language_follow_latest_user:
         for prev in reversed(recent_user_messages or []):
-            detected, reason = detect_message_language(prev)
-            if detected != "und":
+            prev_detected, prev_reason = detect_message_language(prev)
+            if prev_detected != "und":
                 return LanguageDecision(
                     mode="auto_follow_user",
-                    response_language=detected,
+                    response_language=prev_detected,
                     source="recent_conversation",
-                    reason=reason,
+                    reason=prev_reason if reason != "short_ambiguous" else "short_message_continuity",
                 )
+
+    if mode == "custom" and profile.language_custom_policy.strip():
+        # Custom policy text is honored in the system prompt; fallback language still used.
+        pass
+
     fb = profile.language_fallback or SEED_LANGUAGE_FALLBACK
     return LanguageDecision(mode="auto_follow_user", response_language=fb, source="fallback", reason="ambiguous_fallback")
 
@@ -240,6 +303,7 @@ class BehaviorSettingsResolver:
             parts.extend(o.strip() for o in overlays if o and o.strip())
         if language.mode == "custom" and profile.language_custom_policy.strip():
             parts.append(f"Language policy: {profile.language_custom_policy.strip()}")
+        # Language instruction last so it wins over English-internal configuration.
         parts.append(language.instruction())
         system_prompt = "\n\n".join(p for p in parts if p and str(p).strip())
         return BehaviorSnapshot(

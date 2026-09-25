@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { media } from "../assets/media";
 import { BrandMark, BotAvatar } from "../components/BrandMark";
 import { AppShell } from "../layouts/AppShell";
+import { chatIneligibilityReason, partitionChatModels } from "../lib/chatModels";
 import { useAppToast } from "../state/useAppToast";
 import type {
   CapabilityListItem,
@@ -36,6 +37,11 @@ type LastTurnMeta = {
   cognitionMode: string | null;
   cognitionStatus: string | null;
   cognitionPhase: string | null;
+  language: string | null;
+  languageSource: string | null;
+  reasoningMode: string | null;
+  memoryCount: number;
+  verification: string | null;
 };
 
 const EMPTY_TURN: LastTurnMeta = {
@@ -49,6 +55,11 @@ const EMPTY_TURN: LastTurnMeta = {
   cognitionMode: null,
   cognitionStatus: null,
   cognitionPhase: null,
+  language: null,
+  languageSource: null,
+  reasoningMode: null,
+  memoryCount: 0,
+  verification: null,
 };
 
 function formatTime(value: string | null | undefined): string {
@@ -89,6 +100,7 @@ export function ChatPage() {
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [reasoningMode, setReasoningMode] = useState<"auto" | "fast" | "deep">("auto");
   const [capabilities, setCapabilities] = useState<CapabilityListItem[]>([]);
   const [agentsEnabled, setAgentsEnabled] = useState<boolean | null>(null);
   const [codingEnabled, setCodingEnabled] = useState<boolean | null>(null);
@@ -116,11 +128,25 @@ export function ChatPage() {
     });
   }, [conversations, searchQuery, activeChip]);
 
+  const { eligible: chatModels, ineligible: nonChatModels } = useMemo(
+    () => partitionChatModels(models),
+    [models],
+  );
+
   const modelLabel = useMemo(() => {
     if (!selectedModelId) return "Auto";
-    const match = models.find((item) => item.id === selectedModelId);
+    const match = chatModels.find((item) => item.id === selectedModelId);
     return match?.displayName || match?.id || selectedModelId;
-  }, [models, selectedModelId]);
+  }, [chatModels, selectedModelId]);
+
+  useEffect(() => {
+    if (!selectedModelId) return;
+    const stillEligible = chatModels.some((item) => item.id === selectedModelId);
+    if (!stillEligible) {
+      setSelectedModelId(null);
+      toast("Selected model is not chat-capable — switched to Auto");
+    }
+  }, [chatModels, selectedModelId, toast]);
 
   const turnTags = useMemo(() => {
     const tags: string[] = [];
@@ -454,6 +480,7 @@ export function ChatPage() {
         {
           conversationId: activeId,
           modelId: selectedModelId,
+          reasoningMode: reasoningMode === "auto" ? null : reasoningMode,
         },
         {
           onToken: (token) => {
@@ -529,6 +556,13 @@ export function ChatPage() {
           cogStatus && ["REASONING", "PERCEIVING", "VERIFYING", "EXECUTING"].includes(cogStatus)
             ? cogStatus.charAt(0) + cogStatus.slice(1).toLowerCase()
             : null,
+        language: data.language?.response_language ?? null,
+        languageSource: data.language?.source ?? null,
+        reasoningMode: data.reasoning?.mode?.effective ?? reasoningMode,
+        memoryCount: Array.isArray((data as { memory_sources?: unknown[] }).memory_sources)
+          ? ((data as { memory_sources?: unknown[] }).memory_sources?.length ?? 0)
+          : 0,
+        verification: data.quality?.pass === false ? "issues found" : data.quality ? "ok" : "not required",
       });
       const list = await refreshConversations(data.conversation_id);
       const active = list.find((item) => item.id === data.conversation_id);
@@ -808,7 +842,23 @@ export function ChatPage() {
                 }
               }}
             />
-            <div ref={modelMenuRef} style={{ position: "relative" }}>
+            <div ref={modelMenuRef} style={{ position: "relative", display: "flex", gap: "0.35rem", alignItems: "center" }}>
+              <label className="lv-muted" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                <span className="sr-only">Reasoning</span>
+                <select
+                  className="lv-input"
+                  aria-label="Reasoning mode"
+                  disabled={busy}
+                  value={reasoningMode}
+                  onChange={(e) => setReasoningMode(e.target.value as "auto" | "fast" | "deep")}
+                  style={{ minWidth: "5.5rem", padding: "0.25rem 0.4rem", fontSize: "0.78rem" }}
+                  title="Session reasoning override"
+                >
+                  <option value="auto">Auto</option>
+                  <option value="fast">Fast</option>
+                  <option value="deep">Deep</option>
+                </select>
+              </label>
               <button
                 className="lv-model"
                 type="button"
@@ -856,7 +906,12 @@ export function ChatPage() {
                   >
                     Auto
                   </button>
-                  {models.map((model) => (
+                  {chatModels.length === 0 ? (
+                    <div className="lv-muted" style={{ padding: "0.4rem 0.55rem", fontSize: "0.8rem" }}>
+                      No chat-capable models. Configure one under Models.
+                    </div>
+                  ) : null}
+                  {chatModels.map((model) => (
                     <button
                       key={model.id}
                       type="button"
@@ -867,10 +922,34 @@ export function ChatPage() {
                         setSelectedModelId(model.id);
                         setModelMenuOpen(false);
                       }}
+                      title={`${model.providerId} · chat=${model.capabilities?.chat ?? "?"} · ctx=${model.contextWindow ?? "?"}`}
                     >
                       {model.displayName || model.id}
+                      <small style={{ display: "block", opacity: 0.65 }}>
+                        {model.providerId}
+                        {model.capabilities?.reasoning === "supported" ? " · reasoning" : ""}
+                        {model.loaded ? " · loaded" : ""}
+                      </small>
                     </button>
                   ))}
+                  {nonChatModels.length ? (
+                    <div
+                      className="lv-muted"
+                      style={{
+                        marginTop: "0.35rem",
+                        paddingTop: "0.35rem",
+                        borderTop: "1px solid var(--lv-border, rgba(255,255,255,0.1))",
+                        fontSize: "0.72rem",
+                      }}
+                    >
+                      Unavailable for chat
+                      {nonChatModels.slice(0, 6).map((model) => (
+                        <div key={model.id} style={{ opacity: 0.55, padding: "0.2rem 0" }} title={chatIneligibilityReason(model)}>
+                          {model.displayName || model.id} — {chatIneligibilityReason(model)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -927,17 +1006,23 @@ export function ChatPage() {
             <div className="lv-context-active">
               <strong>{activeConversation?.title ?? title}</strong>
               <small>
+                {lastTurn.model ? `Model ${lastTurn.model}` : selectedModelId ? modelLabel : "Auto model"}
+                {lastTurn.language
+                  ? ` · Language ${lastTurn.language}${lastTurn.languageSource ? ` · ${lastTurn.languageSource}` : ""}`
+                  : ""}
+                {lastTurn.reasoningMode ? ` · Reasoning ${lastTurn.reasoningMode}` : ""}
+                {` · Knowledge ${lastTurn.knowledgeCount}`}
+                {` · Memory ${lastTurn.memoryCount}`}
+                {lastTurn.verification ? ` · Verification ${lastTurn.verification}` : ""}
+              </small>
+              <small>
                 {lastTurn.intent && lastTurn.complexity
                   ? `${lastTurn.intent} · ${lastTurn.complexity}`
                   : conversationId
                     ? "Persistent local session"
                     : "No active conversation"}
                 {lastTurn.cognitionMode ? ` · ${lastTurn.cognitionMode}` : ""}
-                {lastTurn.knowledgeCount
-                  ? ` · ${lastTurn.knowledgeCount} knowledge source${
-                      lastTurn.knowledgeCount === 1 ? "" : "s"
-                    }`
-                  : ""}
+                {lastTurn.cognitionPhase ? ` · ${lastTurn.cognitionPhase}` : ""}
               </small>
             </div>
             {lastTurn.reasoning?.steps?.length ? (

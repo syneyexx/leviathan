@@ -126,6 +126,10 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
     class BehaviorProfilePatch(BaseModel):
         values: dict[str, Any] = Field(default_factory=dict)
 
+    class BehaviorPreviewRequest(BaseModel):
+        latest_user_message: str = ""
+        recent_user_messages: list[str] = Field(default_factory=list)
+
     @router.get("/api/settings/behavior-profile")
     def get_behavior_profile() -> dict:
         return {
@@ -153,6 +157,14 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
 
     @router.patch("/api/settings/behavior-profile")
     def patch_behavior_profile(payload: BehaviorProfilePatch) -> dict:
+        if not isinstance(payload.values, dict):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Behavior update body missing `values`",
+                    "expected": {"values": {"system_prompt": "...", "...": "..."}},
+                },
+            )
         try:
             profile = behavior_store.patch(payload.values)
         except ValueError as exc:
@@ -173,6 +185,30 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
         return {
             "profile": profile.public_dict(include_prompt=True),
             "effective": behavior_store.public_effective(include_prompt=True),
+        }
+
+    @router.post("/api/settings/behavior-profile/preview")
+    def preview_behavior(payload: BehaviorPreviewRequest) -> dict:
+        """Safe preview of language decision + public behavior metadata (no secrets)."""
+        from Data.modules.settings.resolver import BehaviorSettingsResolver, snapshot_hash
+
+        resolver = BehaviorSettingsResolver(behavior_store)
+        snap = resolver.resolve(
+            latest_user_message=payload.latest_user_message,
+            recent_user_messages=list(payload.recent_user_messages or []),
+        )
+        prompt = snap.system_prompt or ""
+        digest = __import__("hashlib").sha256(prompt.encode("utf-8")).hexdigest()
+        return {
+            "language": snap.language.public_dict(),
+            "behavior": snap.public_dict(include_prompt=False),
+            "system_prompt_digest": digest,
+            "system_prompt_chars": len(prompt),
+            "snapshot_hash": snapshot_hash(snap),
+            "truth": {
+                "preview_does_not_mutate_settings": True,
+                "full_system_prompt_not_returned_by_default": True,
+            },
         }
 
     return router

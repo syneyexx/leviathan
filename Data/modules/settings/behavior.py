@@ -31,6 +31,8 @@ from .seed import (
 
 LANGUAGE_MODES = frozenset({"auto_follow_user", "explicit", "custom"})
 RETRIEVAL_MODES = frozenset({"auto", "forced_on", "forced_off"})
+REASONING_MODES = frozenset({"auto", "fast", "standard", "deep"})
+TOOL_USE_STYLES = frozenset({"minimal", "balanced", "proactive"})
 
 
 @dataclass(frozen=True)
@@ -294,6 +296,10 @@ def validate_behavior_patch(payload: dict[str, Any]) -> list[str]:
         errors.append(f"language_mode must be one of {sorted(LANGUAGE_MODES)}")
     if "retrieval_mode" in payload and payload["retrieval_mode"] not in RETRIEVAL_MODES:
         errors.append(f"retrieval_mode must be one of {sorted(RETRIEVAL_MODES)}")
+    if "reasoning_mode_default" in payload and payload["reasoning_mode_default"] not in REASONING_MODES:
+        errors.append(f"reasoning_mode_default must be one of {sorted(REASONING_MODES)}")
+    if "tool_use_style" in payload and payload["tool_use_style"] not in TOOL_USE_STYLES:
+        errors.append(f"tool_use_style must be one of {sorted(TOOL_USE_STYLES)}")
     if "system_prompt" in payload:
         sp = payload["system_prompt"]
         if not isinstance(sp, str) or not sp.strip():
@@ -418,6 +424,6 @@ def merge_behavior_patch(current: BehaviorProfile, patch: dict[str, Any]) -> Beh
 
 DEFAULT_BEHAVIOR_PROFILE = BehaviorProfile(
     id="leviathan.default",
-    version="2",
+    version="3",
     system_prompt=SEED_SYSTEM_PROMPT,
 ).with_hash()

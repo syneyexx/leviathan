@@ -111,8 +111,9 @@ export function SettingsPage() {
     assistant_display_name: "",
     identity_description: "",
     language_mode: "auto_follow_user",
+    language_explicit: "nl",
     language_fallback: "en",
-    reasoning_mode_default: "standard",
+    reasoning_mode_default: "auto",
     tool_use_style: "balanced",
     retrieval_mode: "auto",
     retrieval_top_k: 8,
@@ -172,8 +173,9 @@ export function SettingsPage() {
           assistant_display_name: String(profile.assistant_display_name ?? ""),
           identity_description: String(profile.identity_description ?? ""),
           language_mode: String(profile.language_mode ?? "auto_follow_user"),
+          language_explicit: String(profile.language_explicit ?? "nl"),
           language_fallback: String(profile.language_fallback ?? "en"),
-          reasoning_mode_default: String(profile.reasoning_mode_default ?? "standard"),
+          reasoning_mode_default: String(profile.reasoning_mode_default ?? "auto"),
           tool_use_style: String(profile.tool_use_style ?? "balanced"),
           retrieval_mode: String(retrieval.mode ?? "auto"),
           retrieval_top_k: Number(retrieval.top_k ?? 8),
@@ -461,30 +463,59 @@ export function SettingsPage() {
                         setBehaviorDraft((d) => ({ ...d, language_mode: e.target.value }))
                       }
                     >
-                      <option value="auto_follow_user">Auto-follow user</option>
-                      <option value="explicit">Explicit language</option>
+                      <option value="auto_follow_user">Auto — follow user</option>
+                      <option value="explicit">Always / explicit language</option>
                       <option value="custom">Custom policy</option>
                     </select>
                   </label>
+                  {behaviorDraft.language_mode === "explicit" ? (
+                    <label>
+                      Explicit language
+                      <select
+                        className="lv-input"
+                        value={behaviorDraft.language_explicit || "nl"}
+                        onChange={(e) =>
+                          setBehaviorDraft((d) => ({ ...d, language_explicit: e.target.value }))
+                        }
+                      >
+                        <option value="nl">Dutch</option>
+                        <option value="en">English</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                      </select>
+                    </label>
+                  ) : null}
                   <label>
                     Fallback language
-                    <input
+                    <select
                       className="lv-input"
                       value={behaviorDraft.language_fallback}
                       onChange={(e) =>
                         setBehaviorDraft((d) => ({ ...d, language_fallback: e.target.value }))
                       }
-                    />
+                    >
+                      <option value="en">English</option>
+                      <option value="nl">Dutch</option>
+                      <option value="de">German</option>
+                      <option value="fr">French</option>
+                      <option value="es">Spanish</option>
+                    </select>
                   </label>
                   <label>
                     Reasoning default
-                    <input
+                    <select
                       className="lv-input"
                       value={behaviorDraft.reasoning_mode_default}
                       onChange={(e) =>
                         setBehaviorDraft((d) => ({ ...d, reasoning_mode_default: e.target.value }))
                       }
-                    />
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="fast">Fast</option>
+                      <option value="standard">Standard</option>
+                      <option value="deep">Deep</option>
+                    </select>
                   </label>
                   <label>
                     Tool style
@@ -604,6 +635,7 @@ export function SettingsPage() {
                             assistant_display_name: behaviorDraft.assistant_display_name,
                             identity_description: behaviorDraft.identity_description,
                             language_mode: behaviorDraft.language_mode,
+                            language_explicit: behaviorDraft.language_explicit,
                             language_fallback: behaviorDraft.language_fallback,
                             reasoning_mode_default: behaviorDraft.reasoning_mode_default,
                             tool_use_style: behaviorDraft.tool_use_style,
@@ -629,10 +661,21 @@ export function SettingsPage() {
                           }
                           const res = await api.patchBehaviorProfile(values);
                           const effective = res.effective || res.profile || {};
-                          setSystemPrompt(String(effective.system_prompt ?? systemPrompt));
-                          setSystemPromptHash(typeof effective.hash === "string" ? effective.hash : null);
-                          toast("Behavior settings saved");
+                          const persistedPrompt = String(effective.system_prompt ?? "");
+                          const persistedHash = typeof effective.hash === "string" ? effective.hash : null;
+                          if (persistedPrompt.trim() !== systemPrompt.trim()) {
+                            throw new Error("Save verification failed: system prompt did not persist");
+                          }
+                          setSystemPrompt(persistedPrompt || systemPrompt);
+                          setSystemPromptHash(persistedHash);
+                          toast(`Behavior settings saved · hash ${persistedHash?.slice(0, 10) ?? "—"}`);
                           setStatusLine("BehaviorProfile updated (live for next turn)");
+                          // Reload to confirm round-trip
+                          const verified = await api.getBehaviorProfile();
+                          const verifiedPrompt = String(verified.profile?.system_prompt ?? "");
+                          if (verifiedPrompt.trim() !== systemPrompt.trim()) {
+                            throw new Error("Reload verification failed: stored prompt mismatch");
+                          }
                         } catch (error) {
                           toast(error instanceof ApiError ? error.message : "Failed to save behavior");
                         } finally {

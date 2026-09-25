@@ -132,6 +132,30 @@ describe("behavior settings client", () => {
     const res = await api.patchBehaviorProfile({ assistant_display_name: "ORCA" });
     expect(capture.url).toBe("/api/settings/behavior-profile");
     expect(capture.init?.method).toBe("PATCH");
+    expect(JSON.parse(String(capture.init?.body))).toEqual({ values: { assistant_display_name: "ORCA" } });
     expect(res.effective.assistant_display_name).toBe("ORCA");
+  });
+
+  it("putBehaviorSystemPrompt sends exact expected body", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        capture.url = String(url);
+        capture.init = init;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            profile: { system_prompt: "PROMPT" },
+            effective: { system_prompt: "PROMPT" },
+          }),
+        };
+      }),
+    );
+    await api.putBehaviorSystemPrompt("PROMPT");
+    expect(capture.url).toBe("/api/settings/behavior-profile/system-prompt");
+    expect(capture.init?.method).toBe("PUT");
+    expect(JSON.parse(String(capture.init?.body))).toEqual({ system_prompt: "PROMPT" });
   });
 });
