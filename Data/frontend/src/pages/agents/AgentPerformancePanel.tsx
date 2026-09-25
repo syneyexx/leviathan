@@ -11,11 +11,11 @@ const PERFORMANCE_WINDOWS: Array<{ hours: number; label: string }> = [
 ];
 
 const W = 320;
-const H = 110;
+const H = 74;
 const PAD_L = 22;
 const PAD_R = 26;
-const PAD_T = 8;
-const PAD_B = 16;
+const PAD_T = 6;
+const PAD_B = 12;
 
 export function AgentPerformancePanel({
   dashboard,

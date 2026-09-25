@@ -42,7 +42,13 @@ export function AgentsKpiStrip({
           ? `${d.workers.instances ?? 0} registered · ${d.workers.supervisorHealth ?? "unknown"}`
           : "registry unavailable",
       icon: "workers",
-      tone: d && !workersAvailable ? "muted" : undefined,
+      tone: !d
+        ? undefined
+        : !workersAvailable
+          ? "muted"
+          : d.workers.supervisorHealth !== "RUNNING"
+            ? "warn"
+            : undefined,
       title: "Ready/busy/starting/draining registry instances",
     },
     {

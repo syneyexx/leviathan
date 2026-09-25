@@ -124,6 +124,10 @@ export function SelectedAgentPanel({
     () => events.filter((e) => e.agentId === agentId).slice(0, 4),
     [events, agentId],
   );
+  const recentMissions = useMemo(
+    () => missions.filter((m) => m.agentId === agentId).slice(0, 4),
+    [missions, agentId],
+  );
   const matchedWorkers = useMemo(
     () => (workers ? workersForMissions(workers, active) : []),
     [workers, active],
@@ -319,6 +323,26 @@ export function SelectedAgentPanel({
                 </ul>
               )}
             </div>
+
+            {!arch ? (
+              <div className="lv-ag-sel-block">
+                <h4>Recent missions</h4>
+                {recentMissions.length === 0 ? (
+                  <p className="lv-ag-muted">No missions launched for this agent yet.</p>
+                ) : (
+                  <ul className="lv-ag-decisions">
+                    {recentMissions.map((m) => (
+                      <li key={m.missionId}>
+                        <time>{(m.finishedAt || m.startedAt || m.createdAt).slice(11, 16)}</time>
+                        <button type="button" className="lv-ag-linkish" title={`${m.title} · ${m.status}`} onClick={() => onSelectMission(m.missionId)}>
+                          {m.status} · {m.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : null}
 
             <div className="lv-ag-sel-block">
               <h4>Capabilities &amp; tags</h4>

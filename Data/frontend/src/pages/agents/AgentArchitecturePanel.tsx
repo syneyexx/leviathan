@@ -127,10 +127,10 @@ export function AgentArchitecturePanel({
       <div className="lv-ag-arch-body">
         <div className="lv-ag-arch-rail" aria-hidden="true">
           <span>Core</span>
-          <span>Orchestrators</span>
+          <span>Orches{"\u00ad"}trators</span>
           <span>Specialist agents</span>
           <span>Worker pools</span>
-          <span>Infrastructure</span>
+          <span>Infra{"\u00ad"}structure</span>
         </div>
         <div className="lv-ag-arch-tree">
           <div className="lv-ag-arch-tier is-core">

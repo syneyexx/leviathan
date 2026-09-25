@@ -43,7 +43,7 @@
 .lv-ag-hero {
   position: relative;
   flex: 0 0 auto;
-  height: 78px;
+  height: 74px;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid rgba(214, 169, 87, 0.3);
@@ -56,11 +56,16 @@
   inset: 0;
 }
 
+/* agentsHeroWide carries baked-in copy at both ends; crop to the 24%–91% art band. */
 .lv-ag-hero-media img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center 38%;
+  position: absolute;
+  left: -36%;
+  top: 50%;
+  width: 149%;
+  max-width: none;
+  height: auto;
+  min-height: 100%;
+  transform: translateY(-46%);
   display: block;
 }
 
@@ -466,7 +471,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 52px;
+  height: 48px;
   padding: 0 10px;
   border-radius: 7px;
   border: 1px solid var(--ag-border);
@@ -859,7 +864,7 @@
 
 .lv-ag-arch-body {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 62px minmax(0, 1fr);
   gap: 4px;
   flex: 1;
   min-height: 0;
@@ -867,7 +872,7 @@
 
 .lv-ag-arch-rail {
   display: grid;
-  grid-template-rows: 58px 44px 60px 48px 38px;
+  grid-template-rows: 58px 44px 66px 48px 38px;
   row-gap: 10px;
   border-right: 1px dashed var(--ag-border-soft);
   padding-right: 4px;
@@ -875,8 +880,9 @@
 
 .lv-ag-arch-rail span {
   align-self: center;
-  font-size: 8.5px;
-  letter-spacing: 0.1em;
+  font-size: 7.5px;
+  letter-spacing: 0.05em;
+  hyphens: manual;
   line-height: 1.2;
   text-transform: uppercase;
   color: var(--lv-text-muted);
@@ -884,7 +890,7 @@
 
 .lv-ag-arch-tree {
   display: grid;
-  grid-template-rows: 58px 44px 60px 48px 38px;
+  grid-template-rows: 58px 44px 66px 48px 38px;
   row-gap: 10px;
   min-width: 0;
 }
@@ -1070,8 +1076,8 @@
   text-align: center;
 }
 
-.lv-ag-arch-node.is-tile .lv-ag-glyph { width: 26px; height: 26px; }
-.lv-ag-arch-node.is-tile .lv-ag-glyph svg { width: 15px; height: 15px; }
+.lv-ag-arch-node.is-tile .lv-ag-glyph { width: 24px; height: 24px; }
+.lv-ag-arch-node.is-tile .lv-ag-glyph svg { width: 14px; height: 14px; }
 
 .lv-ag-arch-node.is-tile strong {
   max-width: 100%;
@@ -1595,7 +1601,13 @@
 
 /* ---------- Worker pools ---------- */
 
-.lv-ag-pools .lv-ag-table-wrap { max-height: 170px; }
+.lv-ag-pools .lv-ag-table-wrap { max-height: 142px; }
+
+.lv-ag-active .lv-ag-table td:nth-child(1) { max-width: 130px; }
+.lv-ag-active .lv-ag-table td:nth-child(2) { max-width: 92px; }
+.lv-ag-active .lv-ag-table td:nth-child(3) { max-width: 70px; }
+.lv-ag-active .lv-ag-table td:nth-child(7) { max-width: 60px; }
+.lv-ag-active .lv-ag-table-wrap { max-height: 268px; }
 
 .lv-ag-stepper { display: inline-flex; gap: 2px; }
 
@@ -1684,7 +1696,7 @@
 
 /* ---------- Missions ---------- */
 
-.lv-ag-missions .lv-ag-table-wrap { max-height: 190px; }
+.lv-ag-missions .lv-ag-table-wrap { max-height: 150px; }
 
 /* ---------- Signals slot ---------- */
 
@@ -1692,7 +1704,7 @@
 
 .lv-ag-signals { display: flex; flex-direction: column; gap: 5px; min-height: 0; }
 
-.lv-ag-signals.is-compact { max-height: 250px; overflow: auto; }
+.lv-ag-signals.is-compact { max-height: 214px; overflow: auto; }
 
 .lv-ag-signals.is-compact .lv-ag-signal-row {
   grid-template-columns: 42px minmax(0, 1fr);
@@ -1706,7 +1718,7 @@
 .lv-ag-signals.is-compact .lv-ag-signal-row .lv-ag-log-text { grid-area: text; }
 .lv-ag-signals.is-compact .lv-ag-signal-status,
 .lv-ag-signals.is-compact .lv-ag-signal-conf { display: none; }
-.lv-ag-signals.is-compact .lv-ag-signal-feed { max-height: 170px; }
+.lv-ag-signals.is-compact .lv-ag-signal-feed { max-height: 130px; }
 .lv-ag-signals.is-compact .lv-ag-signal-feed li { display: block; border-bottom: 1px solid var(--ag-row); }
 .lv-ag-signals.is-compact .lv-ag-tabs button { height: 18px; padding: 0 6px; font-size: var(--ag-fs-xs); }
 
@@ -1834,12 +1846,12 @@
 
 .lv-ag-donut-wrap {
   display: grid;
-  grid-template-columns: 84px minmax(0, 1fr);
+  grid-template-columns: 62px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
 }
 
-.lv-ag-donut { width: 84px; height: 84px; }
+.lv-ag-donut { width: 62px; height: 62px; }
 .lv-ag-donut-track { fill: none; stroke: rgba(255, 255, 255, 0.06); }
 .lv-ag-donut-num { fill: var(--lv-text-bright); font-size: 15px; font-weight: 600; }
 .lv-ag-donut-cap { fill: var(--lv-text-muted); font-size: 7px; letter-spacing: 0.08em; }
@@ -2160,4 +2172,12 @@
   .lv-ag-logs li { grid-template-columns: 50px minmax(0, 1fr); }
   .lv-ag-log-src,
   .lv-ag-logs em { display: none; }
+}
+
+.lv-ag-decisions .lv-ag-linkish {
+  min-width: 0;
+  font-size: var(--ag-fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
