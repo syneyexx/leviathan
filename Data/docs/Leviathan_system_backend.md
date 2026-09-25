@@ -471,7 +471,18 @@ BehaviorProfile is **not** AuthorityProfile. Side effects that require approval 
 
 Current entrypoint families include agents, backup, coding, dataset, document AI, embeddings, evaluation, general jobs, knowledge prepare, **db_commit** (canonical bulk writer; knowledge_commit is a deprecated compatibility shim with desired=0), maintenance, market simulation, MCP execution, model downloads, provider I/O, reranking, research, scheduler, source ingestion, telemetry, training control and workflows.
 
-Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/CPU/GPU work should be externalized through JobRuntime/workers when practical.
+Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/CPU/GPU work must be externalized through JobRuntime/workers.
+
+**Production defaults (CURRENT):**
+- `workers.enabled` / `supervisor_enabled` / `externalize_api_runners` = ON
+- Dataset / source-ingestion runners = `external` (inprocess is TEST/LEGACY only)
+- Agents / Coding / Signal Fabric / Reasoning = ON
+- `network.allow_outbound` = ON (SSRF, private-network, and ExecutionGateway restrictions still apply)
+- Canonical launcher: `run_leviathan_workers.bat` → one consolidated supervisor terminal for **all** pools
+- Operator read-model: `GET /api/workers/dashboard` (pools + workers + job join + progress + resources)
+- Agents page → **Worker Fabric** monitor consumes that dashboard (never agentCount as “Active Workers”)
+
+When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
 
 ### Control Plane vs Execution Plane
 
@@ -752,7 +763,7 @@ Relevant modules:
 - `Data/modules/backup/`: backup/restore;
 - `Data/modules/chaos/`: fault injection for controlled testing.
 
-Default posture is local/loopback-oriented and outbound network is policy-controlled. Non-loopback privileged mutations may require the configured operator token. Do not store secrets in prompts, docs or public telemetry.
+Default posture is local/loopback-oriented. Outbound network is **enabled by default** for provider connectivity, but remains policy-controlled (SSRF protection, private-network restrictions, credential isolation, ExecutionGateway). Non-loopback privileged mutations may require the configured operator token. Do not store secrets in prompts, docs or public telemetry.
 
 ---
 

@@ -35,7 +35,10 @@ export function AgentsKpiStrip({
     {
       key: "workers",
       label: "Active Workers",
-      value: d && workersAvailable && d.workers.active != null ? String(d.workers.active) : "—",
+      value:
+        d && workersAvailable && d.workers.active != null
+          ? String(d.workers.active)
+          : "—",
       sub: !d
         ? "loading"
         : workersAvailable
@@ -49,7 +52,8 @@ export function AgentsKpiStrip({
           : d.workers.supervisorHealth !== "RUNNING"
             ? "warn"
             : undefined,
-      title: "Ready/busy/starting/draining registry instances",
+      title:
+        "Ready/busy/starting/draining registry worker processes — NOT agentCount",
     },
     {
       key: "orch",

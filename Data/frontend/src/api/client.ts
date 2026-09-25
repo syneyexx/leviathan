@@ -18,6 +18,9 @@ import type {
   WorkerPoolDefinition,
   WorkerPoolScaleResponse,
   WorkersListResponse,
+  WorkerFabricDashboard,
+  WorkerFabricPool,
+  WorkerFabricWorker,
   AnalyticsAgentsResponse,
   AnalyticsDatasetsResponse,
   AnalyticsOverview,
@@ -2940,6 +2943,14 @@ export const api = {
     if (opts?.pool) params.set("pool", opts.pool);
     const q = params.toString();
     return request(`/api/workers${q ? `?${q}` : ""}`);
+  },
+
+  getWorkersDashboard(): Promise<WorkerFabricDashboard> {
+    return request("/api/workers/dashboard");
+  },
+
+  getWorker(workerId: string): Promise<{ worker: WorkerFabricWorker; pool?: WorkerFabricPool | null }> {
+    return request(`/api/workers/${encodeURIComponent(workerId)}`);
   },
 
   listWorkerPools(): Promise<{

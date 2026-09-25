@@ -17,6 +17,7 @@ import type {
   ModelDescriptor,
   SystemArchitectureEntry,
   WorkersListResponse,
+  WorkerFabricDashboard,
 } from "../types/api";
 import {
   canLaunchAgent,
@@ -121,6 +122,7 @@ export function AgentsPage() {
   const [datasetLearning, setDatasetLearning] = useState<DatasetLearningStatus | null>(null);
   const [dashboard, setDashboard] = useState<AgentsDashboard | null>(null);
   const [workersList, setWorkersList] = useState<WorkersListResponse | null>(null);
+  const [fabricDashboard, setFabricDashboard] = useState<WorkerFabricDashboard | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [live, setLive] = useState(false);
@@ -172,7 +174,7 @@ export function AgentsPage() {
     const gen = ++loadGen.current;
     const win = windowsRef.current;
     try {
-      const [roster, missionRes, eventRes, caps, modelRes, knowledgeRes, datasetRes, learningRes, dash, workersRes] =
+      const [roster, missionRes, eventRes, caps, modelRes, knowledgeRes, datasetRes, learningRes, dash, workersRes, fabricRes] =
         await Promise.all([
           api.listAgentRoster({ includeArchived: true, includeArchitecture: true }),
           api.listAgentMissions({ limit: 200 }),
@@ -187,6 +189,7 @@ export function AgentsPage() {
             .then((d) => ({ ok: true as const, d }))
             .catch((err: unknown) => ({ ok: false as const, err })),
           api.listWorkers().catch(() => null),
+          api.getWorkersDashboard().catch(() => null),
         ]);
       if (gen !== loadGen.current) return;
       setAgents(roster.agents);
@@ -200,6 +203,7 @@ export function AgentsPage() {
       setDatasets(datasetRes.datasets ?? []);
       setDatasetLearning(learningRes);
       setWorkersList(workersRes);
+      setFabricDashboard(fabricRes);
       if (dash.ok) {
         setDashboard(dash.d);
         setDashboardError(null);
@@ -610,6 +614,7 @@ export function AgentsPage() {
             <div className="lv-ag-area-pools">
               <WorkerPoolsPanel
                 workers={workersSummary}
+                fabric={fabricDashboard}
                 busy={busy}
                 onScale={(pid, n) => void onScale(pid, n)}
                 onManage={(pid) => setSpawnPoolId(pid ?? pools[0]?.poolId ?? "")}

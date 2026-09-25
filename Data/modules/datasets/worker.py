@@ -42,7 +42,11 @@ LOCK_ENV = "LEVIATHAN_DATASET_WORKER_LOCK"
 
 
 def resolve_runner_mode(settings: Any | None = None) -> str:
-    """Return ``inprocess``, ``external``, or ``none``."""
+    """Return ``inprocess``, ``external``, or ``none``.
+
+    Production default is ``external`` (heavy work owned by dataset workers).
+    ``inprocess`` remains available as an explicit TEST/LEGACY mode only.
+    """
     raw = (os.environ.get(RUNNER_ENV) or "").strip().lower()
     if not raw and settings is not None:
         ri = getattr(settings, "research_integration", None)
@@ -53,7 +57,7 @@ def resolve_runner_mode(settings: Any | None = None) -> str:
         return "external"
     if raw in {"none", "off", "disabled"}:
         return "none"
-    return "inprocess"
+    return "external"
 
 
 def should_start_inprocess_runner(settings: Any | None = None) -> bool:

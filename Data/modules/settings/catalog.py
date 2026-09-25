@@ -704,9 +704,12 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             key="network.allow_outbound",
             category="rechten",
             label="Allow outbound network",
-            description="Permit outbound HTTP for research, downloads, and MCP HTTP. Dangerous.",
+            description=(
+                "Permit outbound HTTP for research, downloads, and MCP HTTP. "
+                "SSRF protection, private-network restrictions, and ExecutionGateway still apply."
+            ),
             value_type=SettingType.BOOLEAN,
-            default=False,
+            default=True,
             env_name="LEVIATHAN_NETWORK_ALLOW_OUTBOUND",
             path=("network", "allow_outbound"),
             dangerous=True,
@@ -2095,7 +2098,7 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             "agents_coding",
             "Agents",
             "Enable the Agent Runtime (shared gateway only).",
-            default=False,
+            default=True,
             env="LEVIATHAN_FEATURE_AGENTS",
             path=("features", "agents_enabled"),
             consumer="AgentRuntime",
@@ -2115,7 +2118,7 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             "agents_coding",
             "Coding Agent",
             "Enable the Coding Agent. Requires Agents.",
-            default=False,
+            default=True,
             env="LEVIATHAN_FEATURE_CODING",
             path=("features", "coding_enabled"),
             requires=("features.agents_enabled",),

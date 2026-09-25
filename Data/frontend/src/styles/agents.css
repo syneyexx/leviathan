@@ -2181,3 +2181,104 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---------- Worker Fabric Monitor ---------- */
+.lv-ag-fabric-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0 0 10px;
+  font-size: var(--ag-fs-xs);
+  color: var(--ag-muted, #8a8f98);
+}
+.lv-ag-fabric-kpis em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--ag-fg, #e8eaed);
+  margin-right: 4px;
+}
+.lv-ag-fabric-kpis .is-warn em,
+.lv-ag-fabric-kpis.is-warn {
+  color: var(--ag-warn, #e0a040);
+}
+.lv-ag-fabric-live {
+  font-size: var(--ag-fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ag-ok, #5cb87a);
+}
+.lv-ag-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 10px;
+  border-bottom: 1px solid var(--ag-border, rgba(255, 255, 255, 0.08));
+}
+.lv-ag-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--ag-muted, #8a8f98);
+  padding: 6px 10px;
+  font-size: var(--ag-fs-xs);
+  cursor: pointer;
+}
+.lv-ag-tab.is-active {
+  color: var(--ag-fg, #e8eaed);
+  border-bottom-color: var(--ag-accent, #6ea8fe);
+}
+.lv-ag-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  background: rgba(255, 255, 255, 0.06);
+}
+.lv-ag-pill.is-ok { color: var(--ag-ok, #5cb87a); }
+.lv-ag-pill.is-warn { color: var(--ag-warn, #e0a040); }
+.lv-ag-pill.is-muted { color: var(--ag-muted, #8a8f98); }
+.lv-ag-table tr.is-clickable { cursor: pointer; }
+.lv-ag-table tr.is-clickable:hover { background: rgba(255, 255, 255, 0.03); }
+.lv-ag-table .is-clip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lv-ag-fabric-inspect {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ag-border, rgba(255, 255, 255, 0.08));
+  background: rgba(0, 0, 0, 0.2);
+}
+.lv-ag-fabric-inspect header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.lv-ag-fabric-inspect dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 12px;
+  margin: 0;
+}
+.lv-ag-fabric-inspect dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ag-muted, #8a8f98);
+}
+.lv-ag-fabric-inspect dd {
+  margin: 0;
+  font-size: var(--ag-fs-xs);
+}
+.lv-ag-fabric-inspect-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.lv-ag-hint {
+  margin: 8px 0 0;
+  font-size: var(--ag-fs-xs);
+}

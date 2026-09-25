@@ -82,6 +82,13 @@ class SettingsControlPlaneTests(unittest.TestCase):
         self.assertNotIn("sk-secret-value", blob)
 
     def test_feature_hierarchy_coding_requires_agents(self) -> None:
+        # Defaults now keep Agents+Coding ON; force hierarchy violation explicitly.
+        self.plane.patch_many(
+            {
+                "features.coding_enabled": False,
+                "features.agents_enabled": False,
+            }
+        )
         with self.assertRaises(SettingsError) as ctx:
             self.plane.patch_many({"features.coding_enabled": True})
         self.assertEqual(ctx.exception.code, "FEATURE_DEPENDENCY")
