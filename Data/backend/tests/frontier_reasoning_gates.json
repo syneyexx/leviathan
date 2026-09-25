@@ -2,8 +2,8 @@
   "program": "frontier_reasoning",
   "version": 1,
   "updated": "2026-09-25",
-  "active_phase": "F17",
-  "notes": "F17 frontend reasoning controls + two-axis cognition compute observability landed. R02–R15/R17–R27/R28–R29 PASS evidence. Remaining open: R01/R16/R30. Distinct from trading frontier_program.",
+  "active_phase": "F18",
+  "notes": "F18 iterative tool↔native interleaving + wrap. R01–R15/R17–R29 PASS. R16/R30 closed in F18. Distinct from trading frontier_program.",
   "f0_skeleton_checks": [
     {
       "id": "F0_AUDIT_DOC",
@@ -55,7 +55,7 @@
     }
   ],
   "gates": [
-    {"id": "R01", "title": "Canonical CognitiveRuntime", "required": true, "status": "IN_PROGRESS", "phase": "F0+", "check": "manual", "evidence": "CognitiveRuntime remains sole orch owner; preserved in F1/F2"},
+    {"id": "R01", "title": "Canonical CognitiveRuntime", "required": true, "status": "PASS", "phase": "F0+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f18_iterative_wrap.CanonicalRuntimeAndWrapTests", "evidence": "CognitiveRuntime sole orch; chat.submit wired; no parallel runtimes"},
     {"id": "R02", "title": "Context authority separation", "required": true, "status": "PASS", "phase": "F1", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests", "evidence": "test_frontier_reasoning_f1_context.ContextV3AuthorityTests"},
     {"id": "R03", "title": "BehaviorProfile identity", "required": true, "status": "PASS", "phase": "F1", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.CognitionBehaviorIdentityTests", "evidence": "test_frontier_reasoning_f1_context.CognitionBehaviorIdentityTests"},
     {"id": "R04", "title": "Two-axis compute", "required": true, "status": "PASS", "phase": "F2", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests", "evidence": "NeuralComputeBudget + MetaDecision two-axis"},
@@ -70,7 +70,7 @@
     {"id": "R13", "title": "Critic mesh", "required": true, "status": "PASS", "phase": "F8", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f8_hypotheses_critics", "evidence": "named domain CriticMesh wired into _process_critic"},
     {"id": "R14", "title": "Independent verification", "required": true, "status": "PASS", "phase": "F9", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f9_verification", "evidence": "research/file/receipt evidence kinds + verification_bridge + runtime _verify"},
     {"id": "R15", "title": "CapabilityState", "required": true, "status": "PASS", "phase": "F10", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f10_capability_state", "evidence": "cognitive CapabilityState matrix generate/execute/network + runtime gates"},
-    {"id": "R16", "title": "Iterative tools", "required": true, "status": "NOT_STARTED", "phase": "F4+", "check": "manual"},
+    {"id": "R16", "title": "Iterative tools", "required": true, "status": "PASS", "phase": "F18", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f18_iterative_wrap", "evidence": "tool_interleaving after native MODEL_CALL when profile supports"},
     {"id": "R17", "title": "Async workers", "required": true, "status": "PASS", "phase": "F11", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f11_async_workers", "evidence": "cognition.advance job + cognition worker pool + runtime externalize"},
     {"id": "R18", "title": "Steering", "required": true, "status": "PASS", "phase": "F12", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f12_steering_resume", "evidence": "scoped InvalidationScope per SteerKind + runtime apply"},
     {"id": "R19", "title": "Restart/resume", "required": true, "status": "PASS", "phase": "F12", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f12_steering_resume", "evidence": "WAITING_WORKER preserved on reconcile; resume re-enqueues"},
@@ -84,6 +84,6 @@
     {"id": "R27", "title": "Resource pressure", "required": true, "status": "PASS", "phase": "F2+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests", "evidence": "requested MAXIMUM → effective DEEP under GPU_RESOURCE_PRESSURE"},
     {"id": "R28", "title": "Security", "required": true, "status": "PASS", "phase": "F1+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests", "evidence": "prompt-injection + role-marker + RAG/tool/memory authority tests"},
     {"id": "R29", "title": "No hidden CoT leakage", "required": true, "status": "PASS", "phase": "F3+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f3_native", "evidence": "strip_private_reasoning_fields + normalize_result public channel only"},
-    {"id": "R30", "title": "Tests/typecheck/lint/build", "required": true, "status": "NOT_STARTED", "phase": "F18", "check": "manual"}
+    {"id": "R30", "title": "Tests/typecheck/lint/build", "required": true, "status": "PASS", "phase": "F18", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f18_iterative_wrap.CanonicalRuntimeAndWrapTests", "evidence": "frontend scripts + frontier unittests; known pre-existing market_sim/pypdf/neuro/rounds CI red outside frontier"}
   ]
 }
