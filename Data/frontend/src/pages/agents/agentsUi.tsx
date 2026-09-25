@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 export function AgentIcon({ kind }: { kind: string }) {
   switch (kind) {
@@ -112,6 +112,14 @@ export function Modal({
   wide?: boolean;
   className?: string;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <div className="lv-ag-modal-backdrop" role="presentation" onClick={onClose}>
       <div
