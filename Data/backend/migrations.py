@@ -3317,6 +3317,169 @@ def _m44_trading_causality_data_foundation(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m46_p0d_resume_hashes_leases(conn: sqlite3.Connection) -> None:
+    """P0D: run identity hashes + lease heartbeat columns."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+    alter = {
+        "input_fingerprint": "TEXT",
+        "trajectory_hash": "TEXT",
+        "checkpoint_state_hash": "TEXT",
+        "lease_heartbeat_ts": "TEXT",
+        "wallet_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+        "reward_spec_json": "TEXT NOT NULL DEFAULT '{}'",
+    }
+    for name, ddl in alter.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE market_sim_runs ADD COLUMN {name} {ddl}")
+
+
+def _m47_p1a_splits_sealed_attempts(conn: sqlite3.Connection) -> None:
+    """P1A: DatasetSplitManifest + SEALED attempt binding tables."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_split_manifests (
+            manifest_id TEXT PRIMARY KEY,
+            dataset_id TEXT NOT NULL,
+            dataset_version TEXT NOT NULL,
+            dataset_content_hash TEXT NOT NULL,
+            train_json TEXT NOT NULL,
+            val_json TEXT,
+            sealed_json TEXT,
+            train_frac REAL NOT NULL,
+            val_frac REAL NOT NULL,
+            sealed_frac REAL NOT NULL,
+            embargo_bars INTEGER NOT NULL DEFAULT 0,
+            frozen INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(dataset_id, dataset_version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_split_manifests_dataset "
+        "ON market_sim_split_manifests(dataset_id, dataset_version)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_sealed_attempts (
+            sealed_attempt_id TEXT PRIMARY KEY,
+            dataset_id TEXT NOT NULL,
+            dataset_version TEXT NOT NULL,
+            split_manifest_id TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            run_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            bound_at TEXT NOT NULL,
+            checkpoint_bar_index INTEGER NOT NULL DEFAULT 0,
+            completed_at TEXT,
+            failure_reason TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(dataset_id, dataset_version, strategy_id, strategy_version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_sealed_attempts_run "
+        "ON market_sim_sealed_attempts(run_id)"
+    )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+    if "sealed_attempt_id" not in cols:
+        conn.execute("ALTER TABLE market_sim_runs ADD COLUMN sealed_attempt_id TEXT")
+    if "split_manifest_id" not in cols:
+        conn.execute("ALTER TABLE market_sim_runs ADD COLUMN split_manifest_id TEXT")
+
+
+def _m48_p3b_research_campaigns(conn: sqlite3.Connection) -> None:
+    """P3B: durable ResearchCampaign table for resumable research loops."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_research_campaigns (
+            campaign_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            source_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            max_iterations INTEGER NOT NULL DEFAULT 10,
+            checkpoint_iteration INTEGER NOT NULL DEFAULT 0,
+            current_iteration INTEGER NOT NULL DEFAULT 0,
+            seed INTEGER NOT NULL DEFAULT 42,
+            hypothesis TEXT NOT NULL DEFAULT '',
+            acceptance_criteria_json TEXT NOT NULL DEFAULT '{}',
+            trial_ids_json TEXT NOT NULL DEFAULT '[]',
+            results_json TEXT NOT NULL DEFAULT '{}',
+            scorecard_json TEXT NOT NULL DEFAULT '{}',
+            promotion_json TEXT NOT NULL DEFAULT '{}',
+            autonomy_ceiling TEXT NOT NULL DEFAULT 'A2',
+            as_of TEXT NOT NULL DEFAULT '',
+            job_id TEXT,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_research_campaigns_status "
+        "ON market_sim_research_campaigns(status, updated_at)"
+    )
+
+
+def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
+    """P0A: SimFill honesty fields + ClosedTrade / PositionEpisode table."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
+    fill_alter = {
+        "realized_delta": "REAL",
+        "remaining_qty": "REAL",
+        "order_type": "TEXT NOT NULL DEFAULT 'MARKET'",
+        "fill_price_source": "TEXT NOT NULL DEFAULT 'next_bar_open'",
+        "observed_execution": "INTEGER NOT NULL DEFAULT 0",
+        "decision_bar_index": "INTEGER",
+        "intent_id": "TEXT",
+        "trade_id": "TEXT",
+    }
+    for name, ddl in fill_alter.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE market_sim_fills ADD COLUMN {name} {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_closed_trades (
+            trade_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            instrument TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            opened_at TEXT NOT NULL,
+            closed_at TEXT NOT NULL,
+            side TEXT NOT NULL,
+            entry_quantity REAL NOT NULL,
+            exit_quantity REAL NOT NULL,
+            avg_entry_price REAL NOT NULL,
+            avg_exit_price REAL NOT NULL,
+            gross_pnl REAL NOT NULL,
+            fees REAL NOT NULL DEFAULT 0,
+            slippage_cost REAL NOT NULL DEFAULT 0,
+            net_pnl REAL NOT NULL,
+            holding_period_bars INTEGER NOT NULL DEFAULT 0,
+            partial_fill_count INTEGER NOT NULL DEFAULT 0,
+            close_reason TEXT NOT NULL DEFAULT '',
+            open_bar_index INTEGER NOT NULL DEFAULT 0,
+            close_bar_index INTEGER NOT NULL DEFAULT 0,
+            agent_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_closed_trades_run "
+        "ON market_sim_closed_trades(run_id, close_bar_index)"
+    )
+
 
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
@@ -3370,6 +3533,26 @@ MIGRATIONS: Sequence[Migration] = (
         version=44,
         name="trading_causality_data_foundation",
         apply=_m44_trading_causality_data_foundation,
+    ),
+    Migration(
+        version=45,
+        name="p0a_kernel_honesty",
+        apply=_m45_p0a_kernel_honesty,
+    ),
+    Migration(
+        version=46,
+        name="p0d_resume_hashes_leases",
+        apply=_m46_p0d_resume_hashes_leases,
+    ),
+    Migration(
+        version=47,
+        name="p1a_splits_sealed_attempts",
+        apply=_m47_p1a_splits_sealed_attempts,
+    ),
+    Migration(
+        version=48,
+        name="p3b_research_campaigns",
+        apply=_m48_p3b_research_campaigns,
     ),
 )
 

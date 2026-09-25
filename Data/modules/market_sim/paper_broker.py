@@ -131,7 +131,10 @@ class PaperBroker(ABC):
 
 
 class LocalPaperBroker(PaperBroker):
-    """Local simulated fills against a live quote price — not exchange-matched."""
+    """Local simulated fills against a live quote price — not exchange-matched.
+
+    P4A: per-session WalletLedger isolation (no shared cash across sessions).
+    """
 
     broker_id = "local_paper"
 
@@ -139,6 +142,7 @@ class LocalPaperBroker(PaperBroker):
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
         self._orders: dict[str, PaperOrder] = {}
+        # Legacy default wallet retained for account() when no session bound.
         self.wallet = WalletLedger(
             wallet_id="wal-paper",
             owner_id="paper",
@@ -146,6 +150,29 @@ class LocalPaperBroker(PaperBroker):
             cash=money(100_000),
             currency="USD",
         )
+        self.sessions: dict[str, WalletLedger] = {}
+
+    def wallet_for_session(
+        self,
+        session_id: str,
+        *,
+        initial_cash: float = 100_000.0,
+        create: bool = True,
+    ) -> WalletLedger:
+        sid = str(session_id)
+        if sid in self.sessions:
+            return self.sessions[sid]
+        if not create:
+            raise KeyError(sid)
+        wal = WalletLedger(
+            wallet_id=f"wal-paper-{sid[:8]}",
+            owner_id=sid,
+            owner_kind="paper_session",
+            cash=money(initial_cash),
+            currency="USD",
+        )
+        self.sessions[sid] = wal
+        return wal
 
     def place(
         self,
@@ -156,11 +183,15 @@ class LocalPaperBroker(PaperBroker):
         client_order_id: str,
         price_hint: float | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> PaperOrder:
         # Idempotent by client_order_id
         for existing in self._orders.values():
             if existing.client_order_id == client_order_id:
                 return existing
+        meta = dict(metadata or {})
+        sid = session_id or meta.get("session_id")
+        wallet = self.wallet_for_session(str(sid), create=True) if sid else self.wallet
         now = utc_now()
         order = PaperOrder(
             order_id=str(uuid.uuid4()),
@@ -171,7 +202,7 @@ class LocalPaperBroker(PaperBroker):
             status="submitted",
             submitted_at=now,
             updated_at=now,
-            metadata=dict(metadata or {}),
+            metadata=meta,
         )
         if price_hint is None or price_hint <= 0:
             order.status = "rejected"
@@ -185,11 +216,11 @@ class LocalPaperBroker(PaperBroker):
         fee = abs(qty * px) * (self.fee_bps / 10_000.0)
         try:
             if order.side == "BUY":
-                self.wallet.apply_buy(
+                wallet.apply_buy(
                     qty=qty, price=px, fee=fee, tx_id=order.order_id, meta={"symbol": symbol}
                 )
             else:
-                self.wallet.apply_sell(
+                wallet.apply_sell(
                     qty=qty, price=px, fee=fee, tx_id=order.order_id, meta={"symbol": symbol}
                 )
             order.status = "filled"
@@ -212,12 +243,21 @@ class LocalPaperBroker(PaperBroker):
             current.updated_at = utc_now()
         return current
 
-    def account(self) -> dict[str, Any]:
+    def account(self, session_id: str | None = None) -> dict[str, Any]:
+        if session_id and session_id in self.sessions:
+            wallet = self.sessions[session_id]
+        else:
+            wallet = self.wallet
         return {
             "broker_id": self.broker_id,
-            "wallet": self.wallet.public_dict(),
+            "wallet": wallet.public_dict(),
             "open_orders": [o.public_dict() for o in self._orders.values() if o.status == "submitted"],
-            "truth": {"paper_only": True, "local_simulation": True},
+            "session_count": len(self.sessions),
+            "truth": {
+                "paper_only": True,
+                "local_simulation": True,
+                "isolated_session_wallets": True,
+            },
         }
 
 

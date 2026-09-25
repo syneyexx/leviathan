@@ -112,7 +112,7 @@ class RiskEngine:
         if side == "BUY":
             affordable = portfolio.cash / price
             target = requested_qty if requested_qty is not None else min(cap_qty, risk_qty)
-            qty = max(0.0, min(target, cap_qty, affordable, risk_qty * 5))
+            qty = max(0.0, min(target, cap_qty, affordable, risk_qty))
             if qty <= 0:
                 return RiskDecision(False, "insufficient cash or size")
             # Position cap after buy

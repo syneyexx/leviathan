@@ -358,20 +358,24 @@ Training UI must show real training jobs, recipes, readiness, candidate versions
 
 `pages/trading/` contains:
 
-- `SimulatiePage.tsx` — causal simulation/runs/agents/activity;
+- `SimulatiePage.tsx` — causal simulation/runs/agents/activity with explicit run builder (`initialCash`, `engine` single|multi, `decisionCadence`); default is single-strategy (no silent multi-agent roster);
 - `StrategieenPage.tsx` — strategy definitions/versions;
 - `MarktdataPage.tsx` — market-data registration/inspection;
 - `PortefeuillePage.tsx` — portfolio view;
-- `PaperTradingPage.tsx` — paper trading;
-- `BrokerTradingPage.tsx` — broker/live boundary and guarded state;
+- `PaperTradingPage.tsx` — paper trading against real `/api/market-sim/paper` + capabilities;
+- `BrokerTradingPage.tsx` — broker/live boundary and guarded state (live remains BLOCKED);
 - `OnderzoekPage.tsx` — trading research;
 - `shared.tsx` — shared TradingCenter components/contracts.
 
-This UI sits on the existing `MarketSimControlPlane` and trading-orchestra backend. It must not imply live-money readiness or profitability. Paper/simulation state is distinct from live broker state.
+This UI sits on the existing `MarketSimControlPlane` and trading-orchestra backend. It must not imply live-money readiness or profitability. Paper/simulation state is distinct from live broker state. No mock success badges.
 
 T1 backend additions consumed by TradingCenter (no mock data): sealed/versioned market datasets (`/api/market-sim/datasets`, `/api/market-sim/data/import`), run knowledge snapshots (`/api/market-sim/runs/{id}/knowledge-snapshot`), and causal `MarketView` / epistemic `as_of` boundaries on historical runs.
 
 T2 backend: simulation rounds persist deterministic `MarketState` (regime/trend/volatility/features with provenance). UI continues to read live run events — no fabricated order-book capabilities.
+
+**P4C:** SimulatiePage run builder is explicit; PaperTradingPage and capabilities come from the live API. G41/G42 PASS.
+
+**Slice 16:** TradingCenter UI remains paper/sim-backed only. Live broker stays BLOCKED; A5 is impossible. No mock-success badges. Gate evidence: G41/G42/G48 PASS. Remaining advanced ops gates (G49–G60) stay honest NOT_STARTED.
 
 ---
 

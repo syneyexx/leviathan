@@ -64,7 +64,37 @@ def evaluate_strategy(
     position_qty: float,
     role_bias: str | None = None,
 ) -> StrategySignal:
-    """Evaluate safe structured rules against a causal window only."""
+    """Evaluate safe structured rules against a causal window only.
+
+    DSL v2 kinds (breakout/rsi/feature_compare + filters) dispatch through
+    ``strategy_dsl.evaluate_dsl_v2``. Legacy ma_cross / mean_reversion remain.
+    """
+    kind = str((entry_rules or {}).get("kind") or "ma_cross").lower()
+    v2_kinds = {"breakout", "rsi", "feature_compare", "hold", "composite"}
+    has_filters = bool((entry_rules or {}).get("filters"))
+    is_v2_doc = int((entry_rules or {}).get("version") or 0) >= 2
+    if kind in v2_kinds or has_filters or is_v2_doc:
+        from .strategy_dsl import evaluate_dsl_v2, parse_strategy_spec
+
+        spec = parse_strategy_spec(entry_rules, exit_rules=exit_rules, parameters=parameters)
+        # Role bias may remap composite/ma_cross inside DSL when kind is legacy-compatible
+        if role_bias == "mean_reversion" and spec.kind in {"ma_cross", "composite"}:
+            from dataclasses import replace
+
+            spec = replace(spec, kind="mean_reversion")
+        elif role_bias == "trend" and spec.kind == "mean_reversion":
+            from dataclasses import replace
+
+            spec = replace(spec, kind="ma_cross")
+        dsl = evaluate_dsl_v2(clock, spec, position_qty=position_qty)
+        return StrategySignal(
+            side=dsl.side,
+            qty=dsl.qty,
+            confidence=dsl.confidence,
+            rationale=dsl.rationale,
+            parameters_used=dsl.parameters_used,
+        )
+
     fast = int(parameters.get("fast_ma", entry_rules.get("fast_ma", 10)))
     slow = int(parameters.get("slow_ma", entry_rules.get("slow_ma", 30)))
     lookback = max(fast, slow, int(parameters.get("lookback", 20)))

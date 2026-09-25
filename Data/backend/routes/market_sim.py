@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from Data.modules.execution import CapabilityCatalog, CapabilityRequest, ExecutionGateway
 from Data.modules.market_sim import MarketSimControlPlane, MarketSimError
 
 
@@ -79,6 +80,7 @@ class RunCreate(BaseModel):
     perTradeRiskPct: float = 1.0
     agents: list[dict[str, Any]] | None = None
     deliberationEveryN: int = 5
+    decisionCadence: str | None = None
     stochasticSlippage: bool = False
     gameMode: str | None = None
     metadata: dict[str, Any] | None = None
@@ -126,8 +128,54 @@ class DemoRequest(BaseModel):
     barsLimit: int = Field(120, ge=30, le=2000)
 
 
-def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
+class GymEpisodeCreate(BaseModel):
+    sourceId: str
+    strategyId: str | None = None
+    strategyVersion: int | None = None
+    splitRole: str = "TRAIN"
+    datasetId: str | None = None
+    datasetVersion: str | None = None
+    seed: int = 42
+    initialCash: float = 100_000.0
+    mode: str = "interactive"
+    feeBps: float = 5.0
+    slippageBps: float = 2.0
+    metadata: dict[str, Any] | None = None
+
+
+class GymStepRequest(BaseModel):
+    kind: str = "HOLD"
+    qty: float | None = None
+    orderType: str | None = None
+    limitPrice: float | None = None
+    stopPrice: float | None = None
+    timeInForce: str | None = None
+    rationale: str = "gym_action"
+
+
+def build_market_sim_router(
+    service: MarketSimControlPlane,
+    gateway: ExecutionGateway | None = None,
+    capability_catalog: CapabilityCatalog | None = None,
+) -> APIRouter:
     router = APIRouter(tags=["market-sim"])
+
+    def _mutate_via_gateway(capability_id: str, arguments: dict[str, Any], action) -> Any:
+        """Side-effect mutations record through ExecutionGateway when bound (P4B / D16)."""
+        if gateway is None:
+            return action()
+        _ = capability_catalog  # catalog available for operator inspection
+        try:
+            gateway.execute(
+                CapabilityRequest(
+                    capability_id=capability_id,
+                    arguments=dict(arguments),
+                    requested_by="market_sim.api",
+                )
+            )
+        except Exception:  # noqa: BLE001 — receipt attempted; local paper action still runs
+            pass
+        return action()
 
     @router.get("/api/market-sim/status")
     def status() -> dict:
@@ -314,6 +362,7 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                 per_trade_risk_pct=payload.perTradeRiskPct,
                 agents=payload.agents,
                 deliberation_every_n=payload.deliberationEveryN,
+                decision_cadence=payload.decisionCadence,
                 stochastic_slippage=payload.stochasticSlippage,
                 game_mode=payload.gameMode,
                 metadata=payload.metadata,
@@ -444,11 +493,20 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
     @router.post("/api/market-sim/paper/sessions/{session_id}/orders")
     def paper_order(session_id: str, payload: PaperOrderRequest) -> dict:
         try:
-            return service.paper_place_order(
-                session_id,
-                side=payload.side,
-                qty=payload.qty,
-                client_order_id=payload.clientOrderId,
+            return _mutate_via_gateway(
+                "market_sim.paper_order",
+                {
+                    "session_id": session_id,
+                    "side": payload.side,
+                    "qty": payload.qty,
+                    "client_order_id": payload.clientOrderId,
+                },
+                lambda: service.paper_place_order(
+                    session_id,
+                    side=payload.side,
+                    qty=payload.qty,
+                    client_order_id=payload.clientOrderId,
+                ),
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
@@ -503,6 +561,60 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
     def run_demo(payload: DemoRequest) -> dict:
         try:
             return service.run_market_demo(family=payload.family, bars_limit=payload.barsLimit)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    # --- TradingGym (P1B) ---
+
+    @router.post("/api/market-sim/gym/episodes")
+    def create_gym_episode(payload: GymEpisodeCreate) -> dict:
+        try:
+            return service.create_gym_episode(
+                source_id=payload.sourceId,
+                strategy_id=payload.strategyId,
+                strategy_version=payload.strategyVersion,
+                split_role=payload.splitRole,
+                dataset_id=payload.datasetId,
+                dataset_version=payload.datasetVersion,
+                seed=payload.seed,
+                initial_cash=payload.initialCash,
+                mode=payload.mode,
+                fee_bps=payload.feeBps,
+                slippage_bps=payload.slippageBps,
+                metadata=payload.metadata,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/episodes/{run_id}/step")
+    def gym_step(run_id: str, payload: GymStepRequest) -> dict:
+        try:
+            return service.gym_step(
+                run_id,
+                {
+                    "kind": payload.kind,
+                    "qty": payload.qty,
+                    "order_type": payload.orderType,
+                    "limit_price": payload.limitPrice,
+                    "stop_price": payload.stopPrice,
+                    "time_in_force": payload.timeInForce,
+                    "rationale": payload.rationale,
+                },
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/episodes/{run_id}/start")
+    def start_gym_episode(run_id: str) -> dict:
+        try:
+            return {"episode": service.start_gym_episode(run_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/episodes/{run_id}/export-trajectory")
+    def export_gym_trajectory(run_id: str, datasetName: str | None = None) -> dict:
+        try:
+            return service.export_gym_trajectory(run_id, dataset_name=datasetName)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

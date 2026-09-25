@@ -1,4 +1,8 @@
-"""Bar-by-bar simulation engine with strict causality and next-bar fills."""
+"""Bar-by-bar simulation engine with strict causality and next-bar fills.
+
+Canonical path: WalletLedger + RiskGuard + NextBarFillModel.
+Legacy Portfolio / FillModel are not used in step_once.
+"""
 
 from __future__ import annotations
 
@@ -6,16 +10,32 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .accounting import money
+from .accounting import WalletLedger, money
 from .causality import CausalityViolation, SimulationClock
 from .deliberation import DeliberationRuntime
 from .execution import NextBarFillModel, OrderIntent, make_intent
-from .metrics import compute_metrics
+from .hashes import checkpoint_state_hash, run_input_fingerprint, trajectory_hash
+from .instruments import infer_family, spec_for_symbol
+from .metrics import compute_metrics, resolve_periods_per_year
 from .ohlcv import load_ohlcv
-from .portfolio import Portfolio, RiskEngine, RiskLimits
+from .portfolio import Portfolio
+from .position_episodes import PositionEpisodeTracker
+from .risk_guard import RiskGuard, RiskLimits
+from .short_margin import ShortMarginPolicy
+from .sizing import SizingModel
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
-from .types import FillStatus, MarketSimError, OrderSide, RunStatus, SimFill, SimRun
+from .types import (
+    FillStatus,
+    IntrabarPathPolicy,
+    MarketSimError,
+    OrderSide,
+    OrderType,
+    RunStatus,
+    SimFill,
+    SimRun,
+    TimeInForce,
+)
 
 from Data.modules.common.hashing import sha256_file
 from pathlib import Path
@@ -28,14 +48,31 @@ CancelCheck = Callable[[], bool]
 class EngineState:
     run: SimRun
     clock: SimulationClock
-    portfolio: Portfolio
-    risk: RiskEngine
+    wallet: WalletLedger
+    risk: RiskGuard
     fills: list[SimFill] = field(default_factory=list)
     pending_intents: list[OrderIntent] = field(default_factory=list)
     agreement_samples: list[float] = field(default_factory=list)
     veto_count: int = 0
     deliberation_rounds: int = 0
     benchmark_equity: list[float] = field(default_factory=list)
+    equity_curve: list[float] = field(default_factory=list)
+    episodes: PositionEpisodeTracker | None = None
+    fill_model: NextBarFillModel | None = None
+    intrabar_path_policy: str = IntrabarPathPolicy.CONSERVATIVE.value
+
+    @property
+    def portfolio(self) -> Portfolio:
+        """Compatibility shim — mirrors wallet floats; mutations are not written back."""
+        p = Portfolio(
+            cash=float(self.wallet.cash),
+            position_qty=float(self.wallet.position_qty),
+            avg_entry=float(self.wallet.avg_entry),
+            realized_pnl=float(self.wallet.realized_pnl),
+            peak_equity=float(self.wallet.peak_equity),
+        )
+        p.equity_curve = list(self.equity_curve)
+        return p
 
 
 class SimulationEngine:
@@ -87,16 +124,57 @@ class SimulationEngine:
         clock = SimulationClock(bars=bars, index=run.bar_index - 1 if run.bar_index > 0 else -1)
         if run.bar_index > 0:
             clock.index = min(run.bar_index, len(bars) - 1)
-        portfolio = Portfolio(cash=run.cash if run.bar_index > 0 else run.initial_cash)
-        if run.bar_index > 0:
-            portfolio.position_qty = run.position_qty
-            portfolio.realized_pnl = run.realized_pnl
-        risk = RiskEngine(
+
+        meta = dict(run.metadata or {})
+        cash0 = run.cash if run.bar_index > 0 else run.initial_cash
+        wallet = WalletLedger(
+            wallet_id="shared",
+            owner_id="shared",
+            owner_kind="shared",
+            cash=money(cash0),
+            position_qty=money(run.position_qty if run.bar_index > 0 else 0.0),
+            avg_entry=money(0),
+            realized_pnl=money(run.realized_pnl if run.bar_index > 0 else 0.0),
+            peak_equity=money(max(cash0, run.equity or cash0)),
+        )
+        sizing = SizingModel.from_dict(
+            run.sizing_model or meta.get("sizing_model") or meta.get("sizingModel"),
+            defaults={
+                "kind": "risk_pct",
+                "per_trade_risk_pct": run.per_trade_risk_pct,
+                "max_position_pct": run.max_position_pct,
+            },
+        )
+        run.sizing_model = sizing.public_dict()
+        meta["sizing_model"] = run.sizing_model
+        run.metadata = meta
+        instrument = spec_for_symbol(
+            run.symbol,
+            timeframe=run.timeframe,
+            metadata=meta,
+        )
+        short_policy = ShortMarginPolicy.from_dict(
+            meta.get("short_margin_policy") or meta.get("shortMarginPolicy")
+        )
+        risk = RiskGuard(
             RiskLimits(
                 max_position_pct=run.max_position_pct,
                 max_drawdown_pct=run.max_drawdown_pct,
                 per_trade_risk_pct=run.per_trade_risk_pct,
-            )
+            ),
+            sizing_model=sizing,
+            instrument_spec=instrument,
+            short_margin_policy=short_policy,
+        )
+        policy = str(
+            meta.get("intrabar_path_policy")
+            or meta.get("intrabarPathPolicy")
+            or IntrabarPathPolicy.CONSERVATIVE.value
+        )
+        fill_model = NextBarFillModel(
+            fee_bps=run.fee_bps,
+            slippage_bps=run.slippage_bps,
+            intrabar_path_policy=policy,
         )
         run.bar_count = len(bars)
         first_price = bars[0].close
@@ -104,15 +182,46 @@ class SimulationEngine:
         state = EngineState(
             run=run,
             clock=clock,
-            portfolio=portfolio,
+            wallet=wallet,
             risk=risk,
             benchmark_equity=[],
+            equity_curve=[],
+            episodes=PositionEpisodeTracker(
+                run_id=run.run_id,
+                instrument=run.symbol,
+                strategy_id=run.strategy_id,
+                strategy_version=run.strategy_version,
+            ),
+            fill_model=fill_model,
+            intrabar_path_policy=policy,
         )
         state._bh_shares = bh_shares  # type: ignore[attr-defined]
         state._strategy_params = dict(strategy_params or {"fast_ma": 10, "slow_ma": 30})  # type: ignore[attr-defined]
         state._entry_rules = dict(entry_rules or {"kind": "ma_cross"})  # type: ignore[attr-defined]
         state._exit_rules = dict(exit_rules or {"kind": "ma_cross"})  # type: ignore[attr-defined]
         state._brain_deps = list(brain_dependencies or ["knowledge", "memory", "neuro"])  # type: ignore[attr-defined]
+        # Immutable input fingerprint
+        fp = run_input_fingerprint(
+            dataset_content_hash=run.data_hash,
+            strategy_content_hash=str((run.metadata or {}).get("strategy_content_hash") or run.strategy_id or ""),
+            seed=run.seed,
+            fee_bps=run.fee_bps,
+            slippage_bps=run.slippage_bps,
+            execution_assumptions=list(self.FILL_ASSUMPTIONS),
+            intrabar_path_policy=policy,
+            risk_config={
+                "max_position_pct": run.max_position_pct,
+                "max_drawdown_pct": run.max_drawdown_pct,
+                "per_trade_risk_pct": run.per_trade_risk_pct,
+            },
+            sizing_config=run.sizing_model,
+            instrument_spec_version=instrument.instrument_id,
+            code_version=str(meta.get("code_version") or ""),
+            reward_spec=meta.get("reward_spec") if isinstance(meta.get("reward_spec"), dict) else {},
+        )
+        meta["input_fingerprint"] = fp
+        run.metadata = meta
+        state._trajectory_events = []  # type: ignore[attr-defined]
         return state
 
     def step_once(self, state: EngineState) -> bool:
@@ -123,13 +232,15 @@ class SimulationEngine:
 
         run.bar_index = state.clock.index
         run.clock_ts = bar.ts
+        state.risk.on_bar_timestamp(bar.ts)
 
         bh_shares = getattr(state, "_bh_shares", 0.0)
         state.benchmark_equity.append(bh_shares * bar.close)
 
-        fill_model = NextBarFillModel(
+        fill_model = state.fill_model or NextBarFillModel(
             fee_bps=run.fee_bps,
             slippage_bps=run.slippage_bps,
+            intrabar_path_policy=state.intrabar_path_policy,
         )
 
         # --- Fill intents decided on prior bars (eligible at this open) ---
@@ -138,78 +249,121 @@ class SimulationEngine:
             if state.clock.index < intent.eligible_bar_index:
                 still.append(intent)
                 continue
-            # Bridge Portfolio ↔ temporary sizing
-            decision = state.risk.size_order(
-                portfolio=state.portfolio,
-                price=bar.open,
-                side=intent.side,
-                requested_qty=float(intent.qty) if intent.qty is not None else None,
-                equity=state.portfolio.cash + state.portfolio.position_qty * bar.open,
+
+            decision = state.risk.evaluate_intent(
+                intent, wallet=state.wallet, price=bar.open
             )
             if not decision.allowed or decision.sized_qty <= 0:
                 intent.status = "rejected"
+                self.store.add_event(
+                    run.run_id,
+                    kind="risk_reject",
+                    payload={"intent": intent.public_dict(), "reason": decision.reason},
+                    bar_index=state.clock.index,
+                )
                 continue
-            # Execute against portfolio using next-bar open
-            from .fill_model import FillModel as LegacyFill
+            if decision.sized_qty > 0:
+                intent.qty = money(decision.sized_qty)
 
-            legacy = LegacyFill(
-                fee_bps=run.fee_bps,
-                slippage_bps=run.slippage_bps,
-                seed=run.seed + state.clock.index,
-                stochastic=False,
-            )
-            before_realized = state.portfolio.realized_pnl
-            fill = legacy.execute(
-                portfolio=state.portfolio,
-                side=intent.side,
-                qty=decision.sized_qty,
-                bar_close=bar.open,  # fill at OPEN, not close
+            before_realized = float(state.wallet.realized_pnl)
+            fill = fill_model.execute_intent(
+                wallet=state.wallet,
+                intent=intent,
+                fill_open=bar.open,
                 bar_volume=bar.volume,
+                fill_bar_index=state.clock.index,
+                fill_high=bar.high,
+                fill_low=bar.low,
+                fill_close=bar.close,
+                intrabar_path_policy=state.intrabar_path_policy,
             )
             if fill.filled:
-                realized_delta = state.portfolio.realized_pnl - before_realized
+                realized_delta = float(state.wallet.realized_pnl) - before_realized
+                remaining = float(fill.remaining_qty) if fill.remaining_qty is not None else None
+                trade_id = None
+                if state.episodes is not None:
+                    trade_id = state.episodes.current_trade_id()
+                    closed = state.episodes.on_fill(
+                        side=intent.side,
+                        qty=float(fill.qty),
+                        price=float(fill.price),
+                        fee=float(fill.fee),
+                        slippage=float(fill.slippage),
+                        ts=bar.ts,
+                        bar_index=state.clock.index,
+                        status=fill.status,
+                        agent_id=intent.agent_id,
+                        close_reason=intent.rationale or "signal",
+                        trade_id=trade_id,
+                    )
+                    trade_id = (
+                        closed.trade_id
+                        if closed is not None
+                        else state.episodes.current_trade_id()
+                    )
+                    if closed is not None:
+                        self.store.add_closed_trade(closed)
                 record = SimFill(
                     fill_id=str(uuid.uuid4()),
                     run_id=run.run_id,
                     bar_index=state.clock.index,
                     ts=bar.ts,
                     side=intent.side,
-                    qty=fill.qty,
-                    price=fill.price,
-                    fee=fill.fee,
-                    slippage=fill.slippage,
+                    qty=float(fill.qty),
+                    price=float(fill.price),
+                    fee=float(fill.fee),
+                    slippage=float(fill.slippage),
                     agent_id=intent.agent_id,
                     rationale=intent.rationale,
-                    status=FillStatus.FILLED.value,
+                    status=fill.status,
                     created_at=utc_now(),
+                    realized_delta=float(realized_delta),
+                    remaining_qty=remaining,
+                    order_type=fill.order_type or intent.order_type,
+                    fill_price_source=fill.fill_price_source,
+                    observed_execution=False,
+                    decision_bar_index=intent.decision_bar_index,
+                    intent_id=intent.intent_id,
+                    trade_id=trade_id,
                 )
                 self.store.add_fill(record)
                 state.fills.append(record)
                 self.store.add_event(
                     run.run_id,
                     kind="fill",
-                    payload={
-                        **record.public_dict(),
-                        "realized_delta": realized_delta,
-                        "fill_price_source": "next_bar_open",
-                        "decision_bar_index": intent.decision_bar_index,
-                        "observed_execution": False,
-                    },
+                    payload=record.public_dict(),
                     bar_index=state.clock.index,
                 )
-            intent.status = "filled" if fill.filled else "rejected"
+                state.risk.orders_today += 1
+
+            if intent.status == "working":
+                still.append(intent)
+            # filled / rejected / cancelled → drop from pending
         state.pending_intents = still
 
-        should_deliberate = (
-            bool(run.agents)
-            and (state.clock.index % max(1, run.deliberation_every_n) == 0)
+        from .decision_cadence import CADENCE_EVERY_N_BARS, should_decide_on_bar
+
+        meta = dict(run.metadata or {})
+        cadence = str(meta.get("decision_cadence") or meta.get("decisionCadence") or CADENCE_EVERY_N_BARS)
+        prev_ts = meta.get("last_decision_ts")
+        should_deliberate = bool(run.agents) and should_decide_on_bar(
+            cadence=cadence,
+            bar_index=state.clock.index,
+            bar_ts=bar.ts,
+            every_n=run.deliberation_every_n,
+            previous_decision_ts=str(prev_ts) if prev_ts else None,
         )
 
         side = OrderSide.HOLD.value
         qty: float | None = None
         rationale = "hold"
         agent_id = None
+        order_type = OrderType.MARKET.value
+        limit_price: float | None = None
+        stop_price: float | None = None
+        time_in_force = TimeInForce.BAR.value
 
+        pos_qty = float(state.wallet.position_qty)
         try:
             if should_deliberate:
                 result = self.deliberation.run_round(
@@ -219,7 +373,7 @@ class SimulationEngine:
                     strategy_params=getattr(state, "_strategy_params"),
                     entry_rules=getattr(state, "_entry_rules"),
                     exit_rules=getattr(state, "_exit_rules"),
-                    position_qty=state.portfolio.position_qty,
+                    position_qty=pos_qty,
                     brain_dependencies=getattr(state, "_brain_deps"),
                 )
                 for msg in result.messages:
@@ -234,13 +388,15 @@ class SimulationEngine:
                 qty = result.final_qty
                 rationale = result.rationale
                 agent_id = "allocator"
+                meta["last_decision_ts"] = bar.ts
+                run.metadata = meta
             else:
                 signal = evaluate_strategy(
                     state.clock,
                     parameters=getattr(state, "_strategy_params"),
                     entry_rules=getattr(state, "_entry_rules"),
                     exit_rules=getattr(state, "_exit_rules"),
-                    position_qty=state.portfolio.position_qty,
+                    position_qty=pos_qty,
                 )
                 side = signal.side
                 qty = signal.qty
@@ -256,11 +412,15 @@ class SimulationEngine:
             )
             side = OrderSide.HOLD.value
 
-        equity = state.portfolio.mark_to_market(bar.close)
-        if not state.risk.check_drawdown(state.portfolio, equity):
-            if state.portfolio.position_qty > 0:
+        equity = float(state.wallet.mark(bar.close))
+        if state.equity_curve and len(state.equity_curve) == state.clock.index + 1:
+            state.equity_curve[-1] = equity
+        else:
+            state.equity_curve.append(equity)
+        if not state.risk.check_drawdown(state.wallet, bar.close):
+            if state.wallet.position_qty > 0:
                 side = OrderSide.SELL.value
-                qty = state.portfolio.position_qty
+                qty = float(state.wallet.position_qty)
                 rationale = state.risk.kill_reason or "drawdown kill-switch"
             else:
                 side = OrderSide.HOLD.value
@@ -270,16 +430,20 @@ class SimulationEngine:
             intent = make_intent(
                 run_id=run.run_id,
                 agent_id=agent_id or "strategy",
-                wallet_id="shared",
+                wallet_id=state.wallet.wallet_id,
                 side=side,
                 qty=qty,
                 decision_bar_index=state.clock.index,
                 decision_ts=bar.ts,
-                info_version=f"legacy-{state.clock.index}-{bar.ts}",
+                info_version=f"wallet-{state.clock.index}-{bar.ts}",
                 strategy_id=run.strategy_id,
                 strategy_version=run.strategy_version,
                 rationale=rationale,
                 decision_scope="shared",
+                order_type=order_type,
+                limit_price=limit_price,
+                stop_price=stop_price,
+                time_in_force=time_in_force,
             )
             state.pending_intents.append(intent)
             self.store.add_event(
@@ -289,26 +453,75 @@ class SimulationEngine:
                 bar_index=state.clock.index,
             )
 
-        equity = state.portfolio.mark_to_market(bar.close)
-        run.cash = state.portfolio.cash
+        equity = float(state.wallet.mark(bar.close))
+        if state.equity_curve:
+            state.equity_curve[-1] = equity
+        else:
+            state.equity_curve.append(equity)
+        run.cash = float(state.wallet.cash)
         run.equity = equity
-        run.position_qty = state.portfolio.position_qty
-        run.realized_pnl = state.portfolio.realized_pnl
-        run.unrealized_pnl = (
-            state.portfolio.position_qty * (bar.close - state.portfolio.avg_entry)
-            if state.portfolio.position_qty
-            else 0.0
-        )
+        run.position_qty = float(state.wallet.position_qty)
+        run.realized_pnl = float(state.wallet.realized_pnl)
+        run.unrealized_pnl = float(state.wallet.unrealized_pnl(bar.close))
         run.metadata = dict(run.metadata or {})
         run.metadata["fill_assumptions"] = list(self.FILL_ASSUMPTIONS)
+        run.metadata["intrabar_path_policy"] = state.intrabar_path_policy
         run.metadata["pending_intents"] = [i.public_dict() for i in state.pending_intents]
+        run.metadata["execution"] = {
+            "model": "NextBarFillModel",
+            "wallet": "WalletLedger",
+            "risk": "RiskGuard",
+            "legacy_fill_model": False,
+        }
+        wallet_snap = {
+            state.wallet.wallet_id: {
+                "cash": str(state.wallet.cash),
+                "position_qty": str(state.wallet.position_qty),
+                "avg_entry": str(state.wallet.avg_entry),
+                "realized_pnl": str(state.wallet.realized_pnl),
+                "reserved_cash": str(state.wallet.reserved_cash),
+                "peak_equity": str(state.wallet.peak_equity),
+            }
+        }
+        run.metadata["wallet_snapshot"] = wallet_snap
+        cp = checkpoint_state_hash(
+            run_id=run.run_id,
+            bar_index=state.clock.index,
+            wallet_snapshot=wallet_snap,
+            pending_intents=run.metadata["pending_intents"],
+            reserved_cash=state.wallet.reserved_cash,
+            metrics_state={"fills": len(state.fills)},
+        )
+        run.metadata["checkpoint_state_hash"] = cp
+        events = getattr(state, "_trajectory_events", None)
+        if events is not None:
+            events.append(
+                {
+                    "bar_index": state.clock.index,
+                    "equity": equity,
+                    "cash": float(state.wallet.cash),
+                    "position_qty": float(state.wallet.position_qty),
+                    "fills": len(state.fills),
+                    "checkpoint": cp,
+                }
+            )
+        try:
+            state.wallet.assert_invariants(bar.close)
+        except ValueError as exc:
+            self.store.add_event(
+                run.run_id,
+                kind="accounting_invariant_violation",
+                payload={"error": str(exc)},
+                bar_index=state.clock.index,
+            )
+            raise
         self.store.add_equity_point(
             run.run_id,
             state.clock.index,
             bar.ts,
             equity,
-            state.portfolio.cash,
-            state.portfolio.position_qty,
+            float(state.wallet.cash),
+            float(state.wallet.position_qty),
         )
         return True
 
@@ -347,7 +560,7 @@ class SimulationEngine:
 
     def _finalize_metrics(self, state: EngineState) -> None:
         run = state.run
-        equity = list(state.portfolio.equity_curve) or [run.initial_cash]
+        equity = list(state.equity_curve) or [run.initial_cash]
         fill_payloads = [f.public_dict() for f in state.fills]
         agreement = (
             sum(state.agreement_samples) / len(state.agreement_samples)
@@ -359,6 +572,24 @@ class SimulationEngine:
             if state.deliberation_rounds
             else None
         )
+        family = infer_family(run.symbol, metadata=dict(run.metadata or {}))
+        spec = spec_for_symbol(
+            run.symbol,
+            timeframe=run.timeframe,
+            metadata=dict(run.metadata or {}),
+        )
+        bar_timestamps = [b.ts for b in state.clock.bars] if state.clock.bars else None
+        annualization = resolve_periods_per_year(
+            timeframe=run.timeframe,
+            instrument_family=family,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
+        )
+        closed_payloads = (
+            [t.public_dict() for t in state.episodes.closed]
+            if state.episodes is not None
+            else []
+        )
         run.metrics = compute_metrics(
             equity=equity,
             fills=fill_payloads,
@@ -369,7 +600,22 @@ class SimulationEngine:
             brain_misses=run.brain_misses,
             agreement_rate=agreement,
             veto_rate=veto_rate,
+            periods_per_year=None,
+            annualization=annualization,
+            closed_trades=closed_payloads,
+            timeframe=run.timeframe,
+            instrument_family=family.value,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
         )
         run.metrics["fill_assumptions"] = list(self.FILL_ASSUMPTIONS)
+        run.metrics["intrabar_path_policy"] = state.intrabar_path_policy
+        events = getattr(state, "_trajectory_events", []) or []
+        th = trajectory_hash(events)
+        run.metadata = dict(run.metadata or {})
+        run.metadata["trajectory_hash"] = th
+        run.metrics["input_fingerprint"] = run.metadata.get("input_fingerprint")
+        run.metrics["trajectory_hash"] = th
+        run.metrics["checkpoint_state_hash"] = run.metadata.get("checkpoint_state_hash")
         if state.run.status == RunStatus.COMPLETED.value:
             state.run.finished_at = utc_now()

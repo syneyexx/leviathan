@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .types import (
+    ClosedTrade,
     DeliberationMessage,
     MarketDataSource,
+    MarketSimError,
     SimFill,
     SimRun,
     StrategyRecord,
@@ -486,11 +488,18 @@ class MarketSimStore:
         return [self._row_run(r) for r in rows]
 
     def claim_next_runnable(self) -> SimRun | None:
-        """Claim one QUEUED or RUNNING (without worker) run for the worker."""
+        """Claim one QUEUED or RUNNING (without fresh lease) run for the worker.
+
+        Uses BEGIN IMMEDIATE so two workers cannot double-claim the same run.
+        """
         import os
 
         pid = os.getpid()
-        with self.connect() as conn:
+        self.expire_stale_leases()
+        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT * FROM market_sim_runs
@@ -502,16 +511,124 @@ class MarketSimStore:
                 """
             ).fetchone()
             if row is None:
+                conn.rollback()
                 return None
             run = self._row_run(row)
+            now = utc_now()
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+            if "lease_heartbeat_ts" in cols:
+                cur = conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, lease_heartbeat_ts=?, updated_at=? "
+                    "WHERE run_id=? AND (worker_pid IS NULL OR worker_pid=? OR status='STEPPING')",
+                    (pid, now, now, run.run_id, pid),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, updated_at=? "
+                    "WHERE run_id=? AND (worker_pid IS NULL OR worker_pid=? OR status='STEPPING')",
+                    (pid, now, run.run_id, pid),
+                )
+            if cur.rowcount == 0:
+                conn.rollback()
+                return None
+            meta = dict(run.metadata or {})
+            meta["lease_heartbeat_ts"] = now
             conn.execute(
-                "UPDATE market_sim_runs SET worker_pid=?, updated_at=? WHERE run_id=?",
-                (pid, utc_now(), run.run_id),
+                "UPDATE market_sim_runs SET metadata_json=? WHERE run_id=?",
+                (json.dumps(meta), run.run_id),
             )
+            conn.commit()
             run.worker_pid = pid
+            run.metadata = meta
             return run
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def heartbeat_run_lease(self, run_id: str, *, worker_pid: int | None = None) -> bool:
+        """Fresh heartbeat while holding a run. Returns False if lease not held by this worker."""
+        import os
+
+        pid = worker_pid if worker_pid is not None else os.getpid()
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT worker_pid, metadata_json FROM market_sim_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            held = row["worker_pid"]
+            if held is not None and int(held) != int(pid):
+                return False
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+            meta = _loads(row["metadata_json"], {})
+            meta["lease_heartbeat_ts"] = now
+            if "lease_heartbeat_ts" in cols:
+                conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, lease_heartbeat_ts=?, metadata_json=?, updated_at=? WHERE run_id=?",
+                    (pid, now, json.dumps(meta), now, run_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, metadata_json=?, updated_at=? WHERE run_id=?",
+                    (pid, json.dumps(meta), now, run_id),
+                )
+        return True
+
+    def expire_stale_leases(self, *, stale_after_seconds: int = 120) -> int:
+        """Clear worker_pid on runs whose lease heartbeat is stale. Returns count expired."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(seconds=stale_after_seconds)).isoformat(timespec="seconds")
+        expired = 0
+        with self.connect() as conn:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+            rows = conn.execute(
+                """
+                SELECT run_id, worker_pid, metadata_json
+                FROM market_sim_runs
+                WHERE worker_pid IS NOT NULL
+                  AND status IN ('QUEUED', 'RUNNING', 'STEPPING', 'PAUSED')
+                """
+            ).fetchall()
+            for row in rows:
+                meta = _loads(row["metadata_json"], {})
+                hb = None
+                if "lease_heartbeat_ts" in cols:
+                    try:
+                        hb = row["lease_heartbeat_ts"]
+                    except (KeyError, IndexError):
+                        hb = None
+                hb = hb or meta.get("lease_heartbeat_ts")
+                if not hb:
+                    # No heartbeat yet — treat updated_at via metadata absence as stale only if old claim
+                    continue
+                if str(hb) < cutoff:
+                    meta.pop("lease_heartbeat_ts", None)
+                    if "lease_heartbeat_ts" in cols:
+                        conn.execute(
+                            "UPDATE market_sim_runs SET worker_pid=NULL, lease_heartbeat_ts=NULL, metadata_json=?, updated_at=? WHERE run_id=?",
+                            (json.dumps(meta), utc_now(), row["run_id"]),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE market_sim_runs SET worker_pid=NULL, metadata_json=?, updated_at=? WHERE run_id=?",
+                            (json.dumps(meta), utc_now(), row["run_id"]),
+                        )
+                    expired += 1
+        return expired
 
     def _row_run(self, row: sqlite3.Row) -> SimRun:
+        meta = _loads(row["metadata_json"], {})
+        sizing = meta.get("sizing_model") or meta.get("sizingModel") or {
+            "kind": "risk_pct",
+            "perTradeRiskPct": row["per_trade_risk_pct"],
+            "maxPositionPct": row["max_position_pct"],
+        }
         return SimRun(
             run_id=row["run_id"],
             status=row["status"],
@@ -552,7 +669,8 @@ class MarketSimStore:
             updated_at=row["updated_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
-            metadata=_loads(row["metadata_json"], {}),
+            metadata=meta,
+            sizing_model=sizing if isinstance(sizing, dict) else {"kind": "risk_pct"},
         )
 
     # --- Fills / messages / equity ---
@@ -563,8 +681,10 @@ class MarketSimStore:
                 """
                 INSERT INTO market_sim_fills(
                     fill_id, run_id, bar_index, ts, side, qty, price, fee, slippage,
-                    agent_id, rationale, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    agent_id, rationale, status, created_at,
+                    realized_delta, remaining_qty, order_type, fill_price_source,
+                    observed_execution, decision_bar_index, intent_id, trade_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     fill.fill_id,
@@ -580,9 +700,48 @@ class MarketSimStore:
                     fill.rationale,
                     fill.status,
                     fill.created_at,
+                    fill.realized_delta,
+                    fill.remaining_qty,
+                    fill.order_type,
+                    fill.fill_price_source,
+                    1 if fill.observed_execution else 0,
+                    fill.decision_bar_index,
+                    fill.intent_id,
+                    fill.trade_id,
                 ),
             )
         return fill
+
+    def _fill_from_row(self, r: Any) -> SimFill:
+        keys = set(r.keys()) if hasattr(r, "keys") else set()
+        def _opt(name: str, default: Any = None) -> Any:
+            if name not in keys:
+                return default
+            return r[name]
+
+        return SimFill(
+            fill_id=r["fill_id"],
+            run_id=r["run_id"],
+            bar_index=r["bar_index"],
+            ts=r["ts"],
+            side=r["side"],
+            qty=r["qty"],
+            price=r["price"],
+            fee=r["fee"],
+            slippage=r["slippage"],
+            agent_id=r["agent_id"],
+            rationale=r["rationale"],
+            status=r["status"],
+            created_at=r["created_at"],
+            realized_delta=_opt("realized_delta"),
+            remaining_qty=_opt("remaining_qty"),
+            order_type=str(_opt("order_type") or "MARKET"),
+            fill_price_source=str(_opt("fill_price_source") or "next_bar_open"),
+            observed_execution=bool(_opt("observed_execution") or 0),
+            decision_bar_index=_opt("decision_bar_index"),
+            intent_id=_opt("intent_id"),
+            trade_id=_opt("trade_id"),
+        )
 
     def list_fills(self, run_id: str, *, limit: int = 500) -> list[SimFill]:
         """Return up to ``limit`` most recent fills in chronological order."""
@@ -599,21 +758,84 @@ class MarketSimStore:
                 """,
                 (run_id, limit),
             ).fetchall()
+        return [self._fill_from_row(r) for r in rows]
+
+    def add_closed_trade(self, trade: ClosedTrade) -> ClosedTrade:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_closed_trades(
+                    trade_id, run_id, instrument, strategy_id, strategy_version,
+                    opened_at, closed_at, side, entry_quantity, exit_quantity,
+                    avg_entry_price, avg_exit_price, gross_pnl, fees, slippage_cost,
+                    net_pnl, holding_period_bars, partial_fill_count, close_reason,
+                    open_bar_index, close_bar_index, agent_id, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trade.trade_id,
+                    trade.run_id,
+                    trade.instrument,
+                    trade.strategy_id,
+                    trade.strategy_version,
+                    trade.opened_at,
+                    trade.closed_at,
+                    trade.side,
+                    trade.entry_quantity,
+                    trade.exit_quantity,
+                    trade.avg_entry_price,
+                    trade.avg_exit_price,
+                    trade.gross_pnl,
+                    trade.fees,
+                    trade.slippage_cost,
+                    trade.net_pnl,
+                    trade.holding_period_bars,
+                    trade.partial_fill_count,
+                    trade.close_reason,
+                    trade.open_bar_index,
+                    trade.close_bar_index,
+                    trade.agent_id,
+                    json.dumps(trade.metadata),
+                ),
+            )
+        return trade
+
+    def list_closed_trades(self, run_id: str, *, limit: int = 500) -> list[ClosedTrade]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_closed_trades
+                WHERE run_id=?
+                ORDER BY close_bar_index ASC, closed_at ASC
+                LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
         return [
-            SimFill(
-                fill_id=r["fill_id"],
+            ClosedTrade(
+                trade_id=r["trade_id"],
                 run_id=r["run_id"],
-                bar_index=r["bar_index"],
-                ts=r["ts"],
+                instrument=r["instrument"],
+                strategy_id=r["strategy_id"],
+                strategy_version=r["strategy_version"],
+                opened_at=r["opened_at"],
+                closed_at=r["closed_at"],
                 side=r["side"],
-                qty=r["qty"],
-                price=r["price"],
-                fee=r["fee"],
-                slippage=r["slippage"],
+                entry_quantity=r["entry_quantity"],
+                exit_quantity=r["exit_quantity"],
+                avg_entry_price=r["avg_entry_price"],
+                avg_exit_price=r["avg_exit_price"],
+                gross_pnl=r["gross_pnl"],
+                fees=r["fees"],
+                slippage_cost=r["slippage_cost"],
+                net_pnl=r["net_pnl"],
+                holding_period_bars=r["holding_period_bars"],
+                partial_fill_count=r["partial_fill_count"],
+                close_reason=r["close_reason"],
+                open_bar_index=r["open_bar_index"],
+                close_bar_index=r["close_bar_index"],
                 agent_id=r["agent_id"],
-                rationale=r["rationale"],
-                status=r["status"],
-                created_at=r["created_at"],
+                metadata=_loads(r["metadata_json"], {}),
             )
             for r in rows
         ]
@@ -821,8 +1043,11 @@ class MarketSimStore:
                     acceptance_json, rejection_reason, seed, created_at, finished_at, metadata_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(trial_id) DO UPDATE SET
+                    strategy_version=excluded.strategy_version,
                     status=excluded.status,
                     results_json=excluded.results_json,
+                    split_json=excluded.split_json,
+                    acceptance_json=excluded.acceptance_json,
                     rejection_reason=excluded.rejection_reason,
                     finished_at=excluded.finished_at,
                     metadata_json=excluded.metadata_json
@@ -848,6 +1073,47 @@ class MarketSimStore:
                 ),
             )
         return trial
+
+    def append_trial(self, trial: dict[str, Any]) -> dict[str, Any]:
+        """Append-only Trial Ledger entry — never overwrites prior trial_id rows.
+
+        Uses a new trial_id when colliding so the global ledger remains append-only.
+        """
+        import uuid as _uuid
+
+        payload = dict(trial)
+        existing = None
+        tid = str(payload.get("trial_id") or "")
+        if tid:
+            with self.connect() as conn:
+                row = conn.execute(
+                    "SELECT trial_id FROM market_experiments WHERE trial_id=?",
+                    (tid,),
+                ).fetchone()
+            if row:
+                payload["trial_id"] = str(_uuid.uuid4())
+                meta = dict(payload.get("metadata") or {})
+                meta["supersedes_trial_id"] = tid
+                meta["append_only"] = True
+                payload["metadata"] = meta
+        else:
+            payload["trial_id"] = str(_uuid.uuid4())
+        meta = dict(payload.get("metadata") or {})
+        meta.setdefault("append_only", True)
+        meta.setdefault("ledger", "global_trial_ledger")
+        payload["metadata"] = meta
+        return self.save_experiment(payload)
+
+    def count_trials(self, *, strategy_id: str | None = None) -> int:
+        with self.connect() as conn:
+            if strategy_id:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM market_experiments WHERE strategy_id=?",
+                    (strategy_id,),
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) AS c FROM market_experiments").fetchone()
+        return int(row["c"] if row else 0)
 
     def list_experiments(self, *, strategy_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -1170,3 +1436,297 @@ class MarketSimStore:
                 (run_id, limit),
             ).fetchall()
         return [_loads(r["payload_json"], {}) for r in rows]
+
+    # --- P1A: DatasetSplitManifest + SEALED attempts ---
+
+    def upsert_split_manifest(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        existing = self.get_split_manifest(
+            dataset_id=manifest["dataset_id"],
+            dataset_version=manifest["dataset_version"],
+        )
+        if existing and existing.get("frozen"):
+            # Frozen manifests are immutable — identical re-upsert is idempotent.
+            if (
+                existing.get("manifest_id") == manifest.get("manifest_id")
+                and existing.get("train") == (manifest.get("train") or {})
+                and existing.get("val") == manifest.get("val")
+                and existing.get("sealed") == manifest.get("sealed")
+            ):
+                return existing
+            raise MarketSimError(
+                "SPLIT_MANIFEST_FROZEN",
+                f"{manifest['dataset_id']}@{manifest['dataset_version']} split is frozen",
+                http_status=409,
+            )
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_split_manifests(
+                    manifest_id, dataset_id, dataset_version, dataset_content_hash,
+                    train_json, val_json, sealed_json, train_frac, val_frac, sealed_frac,
+                    embargo_bars, frozen, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset_id, dataset_version) DO UPDATE SET
+                    manifest_id=excluded.manifest_id,
+                    dataset_content_hash=excluded.dataset_content_hash,
+                    train_json=excluded.train_json,
+                    val_json=excluded.val_json,
+                    sealed_json=excluded.sealed_json,
+                    train_frac=excluded.train_frac,
+                    val_frac=excluded.val_frac,
+                    sealed_frac=excluded.sealed_frac,
+                    embargo_bars=excluded.embargo_bars,
+                    frozen=excluded.frozen,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    manifest["manifest_id"],
+                    manifest["dataset_id"],
+                    manifest["dataset_version"],
+                    manifest.get("dataset_content_hash") or "",
+                    json.dumps(manifest.get("train") or {}),
+                    json.dumps(manifest.get("val")) if manifest.get("val") is not None else None,
+                    json.dumps(manifest.get("sealed")) if manifest.get("sealed") is not None else None,
+                    float(manifest.get("train_frac") or 0.0),
+                    float(manifest.get("val_frac") or 0.0),
+                    float(manifest.get("sealed_frac") or 0.0),
+                    int(manifest.get("embargo_bars") or 0),
+                    1 if manifest.get("frozen") else 0,
+                    manifest.get("created_at") or utc_now(),
+                    json.dumps(manifest.get("metadata") or {}),
+                ),
+            )
+        return self.get_split_manifest(
+            dataset_id=manifest["dataset_id"],
+            dataset_version=manifest["dataset_version"],
+        ) or manifest
+
+    def get_split_manifest(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        manifest_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            if manifest_id:
+                row = conn.execute(
+                    "SELECT * FROM market_sim_split_manifests WHERE manifest_id=?",
+                    (manifest_id,),
+                ).fetchone()
+            elif dataset_id and dataset_version:
+                row = conn.execute(
+                    "SELECT * FROM market_sim_split_manifests WHERE dataset_id=? AND dataset_version=?",
+                    (dataset_id, dataset_version),
+                ).fetchone()
+            else:
+                return None
+        return self._row_split_manifest(row) if row else None
+
+    def _row_split_manifest(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "manifest_id": row["manifest_id"],
+            "dataset_id": row["dataset_id"],
+            "dataset_version": row["dataset_version"],
+            "dataset_content_hash": row["dataset_content_hash"],
+            "train": _loads(row["train_json"], {}),
+            "val": _loads(row["val_json"], None) if row["val_json"] else None,
+            "sealed": _loads(row["sealed_json"], None) if row["sealed_json"] else None,
+            "train_frac": float(row["train_frac"]),
+            "val_frac": float(row["val_frac"]),
+            "sealed_frac": float(row["sealed_frac"]),
+            "embargo_bars": int(row["embargo_bars"]),
+            "frozen": bool(row["frozen"]),
+            "created_at": row["created_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def upsert_sealed_attempt(self, attempt: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_sealed_attempts(
+                    sealed_attempt_id, dataset_id, dataset_version, split_manifest_id,
+                    strategy_id, strategy_version, run_id, status, bound_at,
+                    checkpoint_bar_index, completed_at, failure_reason, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(sealed_attempt_id) DO UPDATE SET
+                    status=excluded.status,
+                    checkpoint_bar_index=excluded.checkpoint_bar_index,
+                    completed_at=excluded.completed_at,
+                    failure_reason=excluded.failure_reason,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    attempt["sealed_attempt_id"],
+                    attempt["dataset_id"],
+                    attempt["dataset_version"],
+                    attempt.get("split_manifest_id") or "",
+                    attempt["strategy_id"],
+                    int(attempt.get("strategy_version") or 0),
+                    attempt["run_id"],
+                    attempt["status"],
+                    attempt.get("bound_at") or utc_now(),
+                    int(attempt.get("checkpoint_bar_index") or 0),
+                    attempt.get("completed_at"),
+                    attempt.get("failure_reason") or "",
+                    json.dumps(attempt.get("metadata") or {}),
+                ),
+            )
+        return attempt
+
+    def get_sealed_attempt(self, sealed_attempt_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sim_sealed_attempts WHERE sealed_attempt_id=?",
+                (sealed_attempt_id,),
+            ).fetchone()
+        return self._row_sealed_attempt(row) if row else None
+
+    def find_sealed_attempt(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        strategy_id: str,
+        strategy_version: int,
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_sim_sealed_attempts
+                WHERE dataset_id=? AND dataset_version=? AND strategy_id=? AND strategy_version=?
+                LIMIT 1
+                """,
+                (dataset_id, dataset_version, strategy_id, int(strategy_version)),
+            ).fetchone()
+        return self._row_sealed_attempt(row) if row else None
+
+    def _row_sealed_attempt(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "sealed_attempt_id": row["sealed_attempt_id"],
+            "dataset_id": row["dataset_id"],
+            "dataset_version": row["dataset_version"],
+            "split_manifest_id": row["split_manifest_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": int(row["strategy_version"]),
+            "run_id": row["run_id"],
+            "status": row["status"],
+            "bound_at": row["bound_at"],
+            "checkpoint_bar_index": int(row["checkpoint_bar_index"]),
+            "completed_at": row["completed_at"],
+            "failure_reason": row["failure_reason"] or "",
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    # --- Research campaigns (P3B) ---
+
+    def upsert_research_campaign(self, campaign: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_research_campaigns(
+                    campaign_id, name, strategy_id, strategy_version, source_id, status,
+                    max_iterations, checkpoint_iteration, current_iteration, seed,
+                    hypothesis, acceptance_criteria_json, trial_ids_json, results_json,
+                    scorecard_json, promotion_json, autonomy_ceiling, as_of, job_id,
+                    error, created_at, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(campaign_id) DO UPDATE SET
+                    name=excluded.name,
+                    status=excluded.status,
+                    max_iterations=excluded.max_iterations,
+                    checkpoint_iteration=excluded.checkpoint_iteration,
+                    current_iteration=excluded.current_iteration,
+                    hypothesis=excluded.hypothesis,
+                    acceptance_criteria_json=excluded.acceptance_criteria_json,
+                    trial_ids_json=excluded.trial_ids_json,
+                    results_json=excluded.results_json,
+                    scorecard_json=excluded.scorecard_json,
+                    promotion_json=excluded.promotion_json,
+                    autonomy_ceiling=excluded.autonomy_ceiling,
+                    as_of=excluded.as_of,
+                    job_id=excluded.job_id,
+                    error=excluded.error,
+                    updated_at=excluded.updated_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    campaign["campaign_id"],
+                    campaign.get("name") or "",
+                    campaign["strategy_id"],
+                    int(campaign["strategy_version"]),
+                    campaign["source_id"],
+                    campaign.get("status") or "CREATED",
+                    int(campaign.get("max_iterations") or 10),
+                    int(campaign.get("checkpoint_iteration") or 0),
+                    int(campaign.get("current_iteration") or 0),
+                    int(campaign.get("seed") or 42),
+                    campaign.get("hypothesis") or "",
+                    json.dumps(campaign.get("acceptance_criteria") or {}),
+                    json.dumps(campaign.get("trial_ids") or []),
+                    json.dumps(campaign.get("results") or {}),
+                    json.dumps(campaign.get("scorecard") or {}),
+                    json.dumps(campaign.get("promotion") or {}),
+                    campaign.get("autonomy_ceiling") or "A2",
+                    campaign.get("as_of") or "",
+                    campaign.get("job_id"),
+                    campaign.get("error") or "",
+                    campaign.get("created_at") or utc_now(),
+                    campaign.get("updated_at") or utc_now(),
+                    json.dumps(campaign.get("metadata") or {}),
+                ),
+            )
+        return campaign
+
+    def get_research_campaign(self, campaign_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sim_research_campaigns WHERE campaign_id=?",
+                (campaign_id,),
+            ).fetchone()
+        return self._row_research_campaign(row)
+
+    def list_research_campaigns(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_research_campaigns
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._row_research_campaign(r) for r in rows if r]
+
+    def _row_research_campaign(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "campaign_id": row["campaign_id"],
+            "name": row["name"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": int(row["strategy_version"]),
+            "source_id": row["source_id"],
+            "status": row["status"],
+            "max_iterations": int(row["max_iterations"]),
+            "checkpoint_iteration": int(row["checkpoint_iteration"]),
+            "current_iteration": int(row["current_iteration"]),
+            "seed": int(row["seed"]),
+            "hypothesis": row["hypothesis"] or "",
+            "acceptance_criteria": _loads(row["acceptance_criteria_json"], {}),
+            "trial_ids": _loads(row["trial_ids_json"], []),
+            "results": _loads(row["results_json"], {}),
+            "scorecard": _loads(row["scorecard_json"], {}),
+            "promotion": _loads(row["promotion_json"], {}),
+            "autonomy_ceiling": row["autonomy_ceiling"] or "A2",
+            "as_of": row["as_of"] or "",
+            "job_id": row["job_id"],
+            "error": row["error"] or "",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }

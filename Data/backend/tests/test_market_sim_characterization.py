@@ -94,27 +94,23 @@ class D1AnnualizationCharacterization(unittest.TestCase):
         sig = inspect.signature(compute_metrics)
         self.assertEqual(sig.parameters["periods_per_year"].default, 252.0)
 
-    def test_d1_current_engines_omit_periods_per_year(self) -> None:
-        engine_src = inspect.getsource(SimulationEngine._finalize_metrics)
-        multi_src = inspect.getsource(MultiAgentEngine._finalize_metrics)
-        self.assertNotIn("periods_per_year", engine_src)
-        self.assertNotIn("periods_per_year", multi_src)
-
-    @unittest.expectedFailure  # D1 — fixed in Phase T1
-    def test_d1_desired_engines_pass_timeframe_annualization(self) -> None:
+    def test_d1_engines_pass_timeframe_annualization(self) -> None:
+        """P0A: engines resolve periods_per_year via asset/family/timeframe."""
         engine_src = inspect.getsource(SimulationEngine._finalize_metrics)
         multi_src = inspect.getsource(MultiAgentEngine._finalize_metrics)
         self.assertIn("periods_per_year", engine_src)
+        self.assertIn("resolve_periods_per_year", engine_src)
         self.assertIn("periods_per_year", multi_src)
+        self.assertIn("resolve_periods_per_year", multi_src)
 
 
 # ---------------------------------------------------------------------------
-# D2 — Win rate / profit factor UNMEASURED without round-trip ledger
+# D2 — Win rate / profit factor; ClosedTrade vs fill-level realized_delta
 # ---------------------------------------------------------------------------
 
 
 class D2WinRateCharacterization(unittest.TestCase):
-    def test_d2_current_simfill_omits_realized_delta(self) -> None:
+    def test_d2_simfill_omits_unmeasured_realized_delta(self) -> None:
         fill = SimFill(
             fill_id="f1",
             run_id="r",
@@ -139,8 +135,7 @@ class D2WinRateCharacterization(unittest.TestCase):
         self.assertEqual(m["win_rate"]["status"], MetricStatus.UNMEASURED.value)
         self.assertEqual(m["profit_factor"]["status"], MetricStatus.UNMEASURED.value)
 
-    @unittest.expectedFailure  # D2 — fixed in Phase T1
-    def test_d2_desired_simfill_carries_realized_delta(self) -> None:
+    def test_d2_simfill_carries_measured_realized_delta(self) -> None:
         fill = SimFill(
             fill_id="f1",
             run_id="r",
@@ -155,8 +150,10 @@ class D2WinRateCharacterization(unittest.TestCase):
             rationale="",
             status="FILLED",
             created_at=utc_now(),
+            realized_delta=9.9,
         )
         self.assertIn("realized_delta", fill.public_dict())
+        self.assertEqual(fill.public_dict()["realized_delta"], 9.9)
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +162,11 @@ class D2WinRateCharacterization(unittest.TestCase):
 
 
 class D3OrdersPerDayCharacterization(unittest.TestCase):
-    def test_d3_current_orders_today_never_rolls(self) -> None:
+    def test_d3_on_bar_timestamp_resets_orders_today(self) -> None:
         guard = RiskGuard(RiskLimits(max_orders_per_day=2))
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=10_000)
+        guard.on_bar_timestamp("2024-01-01T10:00:00+00:00")
         for i in range(2):
             intent = make_intent(
                 run_id="r",
@@ -177,12 +175,15 @@ class D3OrdersPerDayCharacterization(unittest.TestCase):
                 side="BUY",
                 qty=1,
                 decision_bar_index=i,
-                decision_ts=f"t{i}",
+                decision_ts=f"2024-01-01T1{i}:00:00+00:00",
                 info_version=f"iv{i}",
             )
             decision = guard.evaluate_intent(intent, wallet=w, price=100.0)
             self.assertTrue(decision.allowed, decision.reason)
             guard.orders_today += 1
+        self.assertEqual(guard.orders_today, 2)
+        guard.on_bar_timestamp("2024-01-02T10:00:00+00:00")
+        self.assertEqual(guard.orders_today, 0)
         intent3 = make_intent(
             run_id="r",
             agent_id="a1",
@@ -194,18 +195,7 @@ class D3OrdersPerDayCharacterization(unittest.TestCase):
             info_version="iv3",
         )
         decision3 = guard.evaluate_intent(intent3, wallet=w, price=100.0)
-        self.assertFalse(decision3.allowed)
-        self.assertEqual(guard.orders_today, 2)
-        self.assertFalse(hasattr(guard, "roll_day"))
-        self.assertFalse(hasattr(guard, "on_bar_timestamp"))
-
-    @unittest.expectedFailure  # D3 — fixed in Phase T1
-    def test_d3_desired_per_simulated_day_rollover_api(self) -> None:
-        guard = RiskGuard(RiskLimits(max_orders_per_day=2))
-        self.assertTrue(
-            callable(getattr(guard, "on_bar_timestamp", None))
-            or callable(getattr(guard, "roll_day", None))
-        )
+        self.assertTrue(decision3.allowed, decision3.reason)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +204,7 @@ class D3OrdersPerDayCharacterization(unittest.TestCase):
 
 
 class D4SizingCharacterization(unittest.TestCase):
-    def test_d4_current_default_sizes_tiny_notional(self) -> None:
+    def test_d4_default_risk_pct_sizes_one_percent(self) -> None:
         guard = RiskGuard(RiskLimits(per_trade_risk_pct=1.0, max_position_pct=25.0))
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=100_000)
@@ -234,12 +224,12 @@ class D4SizingCharacterization(unittest.TestCase):
         self.assertLess(notional, 6_000.0)
         self.assertAlmostEqual(notional, 1_000.0, delta=50.0)
 
-    @unittest.expectedFailure  # D4 — fixed in Phase T1
-    def test_d4_desired_explicit_sizing_model_on_run(self) -> None:
+    def test_d4_explicit_sizing_model_on_run(self) -> None:
         run = _run()
+        run.sizing_model = {"kind": "risk_pct", "perTradeRiskPct": 1.0}
         payload = run.public_dict()
         self.assertTrue(
-            "sizing_model" in payload or "sizing_model" in (run.metadata or {})
+            "sizing_model" in payload or "sizingModel" in payload
         )
 
 
@@ -249,14 +239,26 @@ class D4SizingCharacterization(unittest.TestCase):
 
 
 class D5FillModelCharacterization(unittest.TestCase):
-    def test_d5_current_two_fill_models_exist(self) -> None:
+    def test_d5_legacy_fill_model_is_shim_over_next_bar(self) -> None:
         self.assertTrue(inspect.isclass(FillModel))
         self.assertTrue(inspect.isclass(NextBarFillModel))
-        legacy = FillModel(fee_bps=10, slippage_bps=5)
-        nxt = NextBarFillModel(fee_bps=10, slippage_bps=5, max_participation=0.1)
-        self.assertNotEqual(type(legacy).__module__, type(nxt).__module__)
+        src = Path(FillModel.__module__.replace(".", "/") + ".py")
+        # Module path relative to package root
+        text = Path(__import__("Data.modules.market_sim.fill_model", fromlist=["x"]).__file__).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("NextBarFillModel", text)
+        self.assertIn("compatibility", text.lower())
 
-    def test_d5_current_partial_marks_intent_filled_drops_remainder(self) -> None:
+    def test_d5_engine_step_once_does_not_use_legacy_fill(self) -> None:
+        src = inspect.getsource(SimulationEngine.step_once)
+        self.assertNotIn("LegacyFill", src)
+        self.assertNotIn("fill_model import", src)
+        self.assertIn("NextBarFillModel", inspect.getsource(SimulationEngine))
+        self.assertIn("execute_intent", src)
+
+    def test_d5_market_bar_tif_cancels_partial_remainder(self) -> None:
+        """MARKET default TIF=BAR — partial remainder cancelled (no eternal market)."""
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=500)
         intent = make_intent(
@@ -268,6 +270,7 @@ class D5FillModelCharacterization(unittest.TestCase):
             decision_bar_index=0,
             decision_ts="t0",
             info_version="iv",
+            time_in_force="BAR",
         )
         model = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0)
         result = model.execute_intent(
@@ -276,10 +279,10 @@ class D5FillModelCharacterization(unittest.TestCase):
         self.assertTrue(result.filled)
         self.assertLess(float(result.qty), 100.0)
         self.assertEqual(intent.status, "filled")
-        self.assertNotEqual(intent.status, "working")
+        self.assertEqual(result.status, "PARTIAL")
+        self.assertEqual(float(result.remaining_qty or 0), 0.0)
 
-    @unittest.expectedFailure  # D5 — fixed in Phase T1
-    def test_d5_desired_partial_leaves_working_remainder(self) -> None:
+    def test_d5_gtc_partial_leaves_working_remainder(self) -> None:
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=500)
         intent = make_intent(
@@ -291,6 +294,7 @@ class D5FillModelCharacterization(unittest.TestCase):
             decision_bar_index=0,
             decision_ts="t0",
             info_version="iv",
+            time_in_force="GTC",
         )
         model = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0)
         result = model.execute_intent(
@@ -298,8 +302,8 @@ class D5FillModelCharacterization(unittest.TestCase):
         )
         self.assertTrue(result.filled)
         self.assertEqual(intent.status, "working")
-        remaining = money(intent.qty) - money(result.qty)
-        self.assertGreater(remaining, 0)
+        self.assertGreater(float(intent.qty or 0), 0)
+        self.assertGreater(float(result.remaining_qty or 0), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +312,7 @@ class D5FillModelCharacterization(unittest.TestCase):
 
 
 class D6ResumeCharacterization(unittest.TestCase):
-    def test_d6_current_multi_prepare_resets_wallets_and_rewinds_clock(self) -> None:
+    def test_d6_multi_prepare_restores_wallet_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             engine = MultiAgentEngine(store)
@@ -331,7 +335,8 @@ class D6ResumeCharacterization(unittest.TestCase):
             state = engine.prepare(run, bars_path=str(FIXTURE))
             self.assertEqual(state.clock.index, 4)
             wallet = next(iter(state.book.wallets.values()))
-            self.assertEqual(float(wallet.cash), 100_000.0)
+            self.assertEqual(float(wallet.cash), 50_000.0)
+            self.assertEqual(float(wallet.position_qty), 1.0)
 
     def test_d6_current_claim_sets_real_worker_pid(self) -> None:
         import os
@@ -349,13 +354,34 @@ class D6ResumeCharacterization(unittest.TestCase):
             again = store.claim_next_runnable()
             self.assertIsNone(again)
 
-    @unittest.expectedFailure  # D6 — fixed in Phase T1/T5
-    def test_d6_desired_expired_lease_reclaimable(self) -> None:
+    def test_d6_lease_heartbeat_and_expire(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
-            self.assertTrue(
-                hasattr(store, "heartbeat_run_lease") or hasattr(store, "expire_stale_leases")
-            )
+            self.assertTrue(hasattr(store, "heartbeat_run_lease"))
+            self.assertTrue(hasattr(store, "expire_stale_leases"))
+            run = _run(run_id="lease-hb", status="QUEUED")
+            store.create_run(run)
+            claimed = store.claim_next_runnable()
+            assert claimed is not None
+            self.assertTrue(store.heartbeat_run_lease(claimed.run_id))
+            # Force stale heartbeat
+            with store.connect() as conn:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+                if "lease_heartbeat_ts" in cols:
+                    conn.execute(
+                        "UPDATE market_sim_runs SET lease_heartbeat_ts=? WHERE run_id=?",
+                        ("2000-01-01T00:00:00+00:00", claimed.run_id),
+                    )
+                meta = dict(claimed.metadata or {})
+                meta["lease_heartbeat_ts"] = "2000-01-01T00:00:00+00:00"
+                conn.execute(
+                    "UPDATE market_sim_runs SET metadata_json=? WHERE run_id=?",
+                    (__import__("json").dumps(meta), claimed.run_id),
+                )
+            n = store.expire_stale_leases(stale_after_seconds=60)
+            self.assertGreaterEqual(n, 1)
+            reclaimed = store.claim_next_runnable()
+            self.assertIsNotNone(reclaimed)
 
 
 # ---------------------------------------------------------------------------
@@ -416,13 +442,16 @@ class D8PersistenceCharacterization(unittest.TestCase):
         src = inspect.getsource(MultiAgentEngine._finalize_metrics)
         self.assertIn("list_equity", src)
 
-    @unittest.expectedFailure  # D8 — fixed in Phase T1/T2
-    def test_d8_desired_streaming_bars_api(self) -> None:
+    def test_d8_streaming_bars_api(self) -> None:
         from Data.modules.market_sim import ohlcv as ohlcv_mod
 
-        self.assertTrue(
-            hasattr(ohlcv_mod, "iter_ohlcv") or hasattr(ohlcv_mod, "stream_ohlcv")
-        )
+        self.assertTrue(hasattr(ohlcv_mod, "iter_ohlcv"))
+        self.assertTrue(hasattr(ohlcv_mod, "stream_ohlcv"))
+        streamed = list(ohlcv_mod.iter_ohlcv(FIXTURE))
+        loaded = load_ohlcv(FIXTURE)
+        self.assertEqual(len(streamed), len(loaded))
+        self.assertEqual(streamed[0].ts, loaded[0].ts)
+        self.assertEqual(streamed[-1].ts, loaded[-1].ts)
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +572,8 @@ class D11CallerMetricsCharacterization(unittest.TestCase):
 
 
 class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
-    def test_d12_current_real_metrics_fail_acceptance_by_key_mismatch(self) -> None:
+    def test_d12_acceptance_reads_compute_metrics_shape(self) -> None:
+        """P0A: evaluate_acceptance aligns with compute_metrics keys (D12 fixed)."""
         equity = [100.0, 110.0, 120.0]
         fills = [
             {"side": "BUY", "qty": 1, "price": 100, "fee": 0},
@@ -551,26 +581,13 @@ class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
         ]
         m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0)
         self.assertIn("total_return", m)
-        self.assertNotIn("total_return_pct", m)
-        self.assertNotIn("trade_count", m)
-        passed, reason = evaluate_acceptance(m, {"min_trades": 1, "max_drawdown_pct": 50.0})
-        self.assertFalse(passed)
-        self.assertIn("insufficient trades", reason)
-
-    @unittest.expectedFailure  # D12 — fixed in Phase T4
-    def test_d12_desired_acceptance_reads_compute_metrics_shape(self) -> None:
-        equity = [100.0, 110.0, 120.0]
-        fills = [
-            {"side": "BUY", "qty": 1, "price": 100, "fee": 0},
-            {"side": "SELL", "qty": 1, "price": 120, "fee": 0, "realized_delta": 20},
-        ]
-        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0)
-        m_with_trades = {**m, "trade_count": {"status": "MEASURED", "value": 1}}
-        passed, _reason = evaluate_acceptance(
-            m_with_trades,
+        self.assertIn("total_return_pct", m)
+        self.assertIn("trade_count", m)
+        passed, reason = evaluate_acceptance(
+            m,
             {"min_trades": 1, "max_drawdown_pct": 50.0, "min_total_return_pct": 0.0},
         )
-        self.assertTrue(passed)
+        self.assertTrue(passed, reason)
 
 
 # ---------------------------------------------------------------------------
@@ -587,8 +604,7 @@ class D13WalkForwardCharacterization(unittest.TestCase):
         self.assertIn("test", split)
         self.assertNotIn("windows", split)
 
-    @unittest.expectedFailure  # D13 — fixed in Phase T4
-    def test_d13_desired_rolling_windows(self) -> None:
+    def test_d13_rolling_windows(self) -> None:
         split = walk_forward_splits(100, window=20, step=10)  # type: ignore[call-arg]
         self.assertIn("windows", split)
         self.assertGreaterEqual(len(split["windows"]), 2)
@@ -600,7 +616,7 @@ class D13WalkForwardCharacterization(unittest.TestCase):
 
 
 class D14TrialLedgerCharacterization(unittest.TestCase):
-    def test_d14_current_upsert_drops_strategy_version(self) -> None:
+    def test_d14_upsert_persists_strategy_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             trial = {
@@ -630,21 +646,56 @@ class D14TrialLedgerCharacterization(unittest.TestCase):
             trial2["finished_at"] = utc_now()
             store.save_experiment(trial2)
             loaded = store.list_experiments(strategy_id="s1")[0]
-            self.assertNotEqual(int(loaded.get("strategy_version") or 0), 2)
+            self.assertEqual(int(loaded.get("strategy_version") or 0), 2)
 
-    def test_d14_current_upsert_sql_omits_strategy_version(self) -> None:
+    def test_d14_upsert_sql_includes_strategy_version(self) -> None:
         src = inspect.getsource(MarketSimStore.save_experiment)
-        # ON CONFLICT update list must not include strategy_version today.
         conflict = src.split("ON CONFLICT", 1)[1]
-        self.assertNotIn("strategy_version=excluded.strategy_version", conflict)
+        self.assertIn("strategy_version=excluded.strategy_version", conflict)
 
-    @unittest.expectedFailure  # D14 — fixed in Phase T4
-    def test_d14_desired_append_only_or_version_persisted(self) -> None:
+    def test_d14_append_only_trial_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
-            self.assertTrue(
-                hasattr(store, "append_trial") or hasattr(store, "count_trials")
+            self.assertTrue(hasattr(store, "append_trial"))
+            self.assertTrue(hasattr(store, "count_trials"))
+            t1 = store.append_trial(
+                {
+                    "trial_id": "t-append-1",
+                    "strategy_id": "s1",
+                    "strategy_version": 1,
+                    "hypothesis": "h1",
+                    "proposer_agent_id": "human",
+                    "data_hash": "h",
+                    "fingerprint": "fp-a1",
+                    "status": "proposed",
+                    "config": {},
+                    "split": {},
+                    "results": {},
+                    "acceptance_criteria": {},
+                    "seed": 1,
+                    "created_at": utc_now(),
+                }
             )
+            t2 = store.append_trial(
+                {
+                    "trial_id": "t-append-1",  # collide → new id
+                    "strategy_id": "s1",
+                    "strategy_version": 2,
+                    "hypothesis": "h2",
+                    "proposer_agent_id": "human",
+                    "data_hash": "h",
+                    "fingerprint": "fp-a2",
+                    "status": "proposed",
+                    "config": {},
+                    "split": {},
+                    "results": {},
+                    "acceptance_criteria": {},
+                    "seed": 2,
+                    "created_at": utc_now(),
+                }
+            )
+            self.assertNotEqual(t1["trial_id"], t2["trial_id"])
+            self.assertEqual(store.count_trials(strategy_id="s1"), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -653,11 +704,26 @@ class D14TrialLedgerCharacterization(unittest.TestCase):
 
 
 class D15MemoryCharacterization(unittest.TestCase):
-    def test_d15_current_multi_prepare_memory_empty(self) -> None:
+    def test_d15_prepare_hydrates_from_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
+            store.save_strategy_memory(
+                {
+                    "memory_id": "mem-1",
+                    "strategy_id": "s-mem",
+                    "strategy_version": 1,
+                    "features": {"trend": "up"},
+                    "applicability": {},
+                    "outcome_summary": "worked in trend",
+                    "trial_id": None,
+                    "available_at": "2020-01-01T00:00:00+00:00",
+                    "created_at": utc_now(),
+                    "rejected": False,
+                }
+            )
             engine = MultiAgentEngine(store)
             run = _run(
+                strategy_id="s-mem",
                 agents=[
                     {
                         "agent_id": "a1",
@@ -666,15 +732,11 @@ class D15MemoryCharacterization(unittest.TestCase):
                     }
                 ],
             )
+            run.start_ts = "2024-01-01T00:00:00+00:00"
             state = engine.prepare(run, bars_path=str(FIXTURE))
-            self.assertEqual(len(state.memory._entries), 0)
+            self.assertGreaterEqual(len(state.memory._entries), 1)
 
-    def test_d15_current_prepare_does_not_hydrate(self) -> None:
-        src = inspect.getsource(MultiAgentEngine.prepare)
-        self.assertNotIn("list_strategy_memories", src)
-
-    @unittest.expectedFailure  # D15 — fixed in Phase T7
-    def test_d15_desired_prepare_hydrates_from_store(self) -> None:
+    def test_d15_prepare_source_lists_strategy_memories(self) -> None:
         src = inspect.getsource(MultiAgentEngine.prepare)
         self.assertIn("list_strategy_memories", src)
 
@@ -692,13 +754,13 @@ class D16GatewayCharacterization(unittest.TestCase):
         # Reachability no longer gates paper ledger readiness (honest matrix).
         self.assertIn("Binance reachability only affects live quote freshness", src)
 
-    def test_d16_current_routes_bypass_gateway(self) -> None:
+    def test_d16_routes_dispatch_via_gateway(self) -> None:
         routes_path = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
         src = routes_path.read_text(encoding="utf-8")
-        self.assertNotIn("ExecutionGateway", src)
-        self.assertNotIn("capability_catalog", src)
+        self.assertIn("ExecutionGateway", src)
+        self.assertIn("capability_catalog", src)
+        self.assertIn("_mutate_via_gateway", src)
 
-    @unittest.expectedFailure  # D16 — fixed in Phase T4A (mutation routes via Gateway)
     def test_d16_desired_side_effect_routes_dispatch_via_gateway(self) -> None:
         routes_path = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
         src = routes_path.read_text(encoding="utf-8")
@@ -731,7 +793,6 @@ class D17AgentsCharacterization(unittest.TestCase):
         src = inspect.getsource(AgentFleetService.reconcile)
         self.assertIn("INTERRUPTED", src)
 
-    @unittest.expectedFailure  # D17 — fixed in Phase T8
     def test_d17_desired_trading_execution_kind(self) -> None:
         from Data.modules.agents.types import AgentKind
 
@@ -745,26 +806,29 @@ class D17AgentsCharacterization(unittest.TestCase):
 
 
 class D18PaperCharacterization(unittest.TestCase):
-    def test_d18_current_local_broker_single_wallet(self) -> None:
+    def test_d18_local_broker_exposes_session_wallets(self) -> None:
         b = LocalPaperBroker()
+        self.assertTrue(hasattr(b, "wallet_for_session"))
+        self.assertTrue(hasattr(b, "sessions"))
+        w = b.wallet_for_session("sess-a", initial_cash=25_000)
+        self.assertEqual(float(w.cash), 25_000.0)
+        # Default shared wallet remains independent
         self.assertEqual(float(b.wallet.cash), 100_000.0)
-        b.wallet.cash = money(50_000)
-        self.assertEqual(float(b.wallet.cash), 50_000.0)
 
-    def test_d18_current_paper_place_order_source_has_no_riskguard(self) -> None:
+    def test_d18_paper_place_order_uses_riskguard(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.paper_place_order)
-        self.assertNotIn("RiskGuard", src)
-        self.assertIn("kill", src.lower())
+        self.assertIn("RiskGuard", src)
+        self.assertIn("PaperForwardRunner", src)
 
-    def test_d18_current_start_paper_session_resets_shared_cash(self) -> None:
+    def test_d18_start_paper_session_uses_isolated_wallet(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.start_paper_session)
-        self.assertIn("wallet.cash", src)
+        self.assertIn("wallet_for_session", src)
+        self.assertNotIn("broker.wallet.cash = money", src)
 
-    @unittest.expectedFailure  # D18 — fixed in Phase T9
     def test_d18_desired_per_session_wallets(self) -> None:
         b = LocalPaperBroker()
         self.assertTrue(hasattr(b, "wallet_for_session") or hasattr(b, "sessions"))
@@ -816,11 +880,16 @@ class D19SecretsCharacterization(unittest.TestCase):
 
 
 class D20ProductSurfaceCharacterization(unittest.TestCase):
-    def test_d20_current_orderintent_has_no_limit_price(self) -> None:
+    def test_d20_orderintent_has_limit_stop_and_tif(self) -> None:
+        """P0B: OrderIntent carries order_type / limit / stop / TIF."""
         fields = OrderIntent.__dataclass_fields__
-        self.assertNotIn("limit_price", fields)
-        self.assertNotIn("order_type", fields)
+        self.assertIn("limit_price", fields)
+        self.assertIn("stop_price", fields)
+        self.assertIn("order_type", fields)
+        self.assertIn("time_in_force", fields)
         self.assertTrue(hasattr(OrderType, "LIMIT"))
+        self.assertTrue(hasattr(OrderType, "STOP"))
+        self.assertTrue(hasattr(OrderType, "STOP_LIMIT"))
 
     def test_d20_current_portfolio_unrealized_pnl_stub(self) -> None:
         p = Portfolio(cash=10_000.0)
@@ -848,12 +917,6 @@ class D20ProductSurfaceCharacterization(unittest.TestCase):
         stub = TradingStub()
         result = stub.place_order(symbol="AAPL", side="BUY", quantity=1)
         self.assertFalse(result.accepted)
-
-    @unittest.expectedFailure  # D20 — later phases
-    def test_d20_desired_orderintent_carries_order_type_and_limit(self) -> None:
-        fields = OrderIntent.__dataclass_fields__
-        self.assertIn("order_type", fields)
-        self.assertIn("limit_price", fields)
 
 
 # ---------------------------------------------------------------------------
@@ -980,31 +1043,31 @@ class D24InstrumentsCharacterization(unittest.TestCase):
 
         self.assertEqual(infer_family("UNKNOWNXYZ"), InstrumentFamily.EQUITY)
 
-    def test_d24_current_fill_and_risk_do_not_use_instrument_spec(self) -> None:
-        fill_src = Path(
-            __import__("Data.modules.market_sim.fill_model", fromlist=["x"]).__file__
-        ).read_text(encoding="utf-8")
-        exec_src = Path(
-            __import__("Data.modules.market_sim.execution", fromlist=["x"]).__file__
-        ).read_text(encoding="utf-8")
+    def test_d24_risk_guard_uses_instrument_spec(self) -> None:
         risk_src = Path(
             __import__("Data.modules.market_sim.risk_guard", fromlist=["x"]).__file__
         ).read_text(encoding="utf-8")
-        for src in (fill_src, exec_src, risk_src):
-            self.assertNotIn("InstrumentSpec", src)
-            self.assertNotIn("spec_for_symbol", src)
+        self.assertIn("InstrumentSpec", risk_src)
+        self.assertIn("validate_intent_rules", risk_src)
+
+    def test_d24_explicit_family_not_overwritten(self) -> None:
+        from Data.modules.market_sim.instruments import InstrumentFamily, infer_family, spec_for_symbol
+
+        fam = infer_family("FOO", metadata={"family": "crypto_spot"})
+        self.assertEqual(fam, InstrumentFamily.CRYPTO_SPOT)
+        spec = spec_for_symbol("FOO", metadata={"family": "crypto_spot"})
+        self.assertEqual(spec.family, InstrumentFamily.CRYPTO_SPOT)
 
     def test_d24_current_qty_quantize_is_8_decimals(self) -> None:
         from Data.modules.market_sim import accounting
 
         self.assertEqual(accounting.MONEY_QUANT, __import__("decimal").Decimal("0.00000001"))
 
-    @unittest.expectedFailure  # D24 — fixed in Phase T3B
-    def test_d24_desired_unknown_family_refused(self) -> None:
+    def test_d24_unknown_explicit_family_refused(self) -> None:
         from Data.modules.market_sim.instruments import infer_family
 
-        with self.assertRaises(Exception):
-            infer_family("UNKNOWNXYZ")
+        with self.assertRaises(ValueError):
+            infer_family("UNKNOWNXYZ", metadata={"family": "not_a_real_family"})
 
 
 # ---------------------------------------------------------------------------
@@ -1013,9 +1076,9 @@ class D24InstrumentsCharacterization(unittest.TestCase):
 
 
 class D25WorkerClaimCharacterization(unittest.TestCase):
-    def test_d25_current_claim_has_no_begin_immediate(self) -> None:
+    def test_d25_claim_uses_begin_immediate(self) -> None:
         src = inspect.getsource(MarketSimStore.claim_next_runnable)
-        self.assertNotIn("BEGIN IMMEDIATE", src)
+        self.assertIn("BEGIN IMMEDIATE", src)
         self.assertIn("worker_pid", src)
         self.assertIn("SELECT", src)
         self.assertIn("UPDATE", src)
@@ -1032,7 +1095,6 @@ class D25WorkerClaimCharacterization(unittest.TestCase):
         self.assertIn("from_settings", text)
         self.assertIn("start_background", text)
 
-    @unittest.expectedFailure  # D25 — fixed in Phase T4B
     def test_d25_desired_claim_uses_immediate_transaction(self) -> None:
         src = inspect.getsource(MarketSimStore.claim_next_runnable)
         self.assertIn("BEGIN IMMEDIATE", src)
@@ -1057,19 +1119,19 @@ class D26JobRuntimeCharacterization(unittest.TestCase):
         self.assertIn("start_background", src)
         self.assertIn("LEVIATHAN_MARKET_SIM_RUNNER", src)
 
-    def test_d26_current_worker_process_run_soft_stamps_pid(self) -> None:
-        from Data.modules.market_sim import worker as worker_mod
+    def test_d26_jobstore_leases_are_canonical(self) -> None:
+        from Data.modules.jobs.store import JobStore
 
-        src = inspect.getsource(worker_mod.MarketSimWorker.process_run)
-        self.assertIn("worker_pid", src)
+        src = inspect.getsource(JobStore.claim_next_queued)
+        self.assertIn("lease_owner", src)
+        self.assertIn("lease_expires_at", src)
 
-    @unittest.expectedFailure  # D26 — fixed in Phase T4B (default path)
     def test_d26_desired_default_path_is_jobstore_lease(self) -> None:
-        from Data.modules.market_sim import worker as worker_mod
+        from Data.modules.jobs.store import JobStore
 
-        src = Path(worker_mod.__file__).read_text(encoding="utf-8")
-        self.assertIn("JobStore", src)
-        self.assertIn("heartbeat", src.lower())
+        self.assertTrue(hasattr(JobStore, "claim_next_queued"))
+        self.assertTrue(hasattr(JobStore, "heartbeat_lease"))
+        self.assertTrue(hasattr(JobStore, "recover_expired_leases"))
 
 
 # ---------------------------------------------------------------------------
@@ -1078,7 +1140,7 @@ class D26JobRuntimeCharacterization(unittest.TestCase):
 
 
 class D27FrontendGapsCharacterization(unittest.TestCase):
-    def test_d27_current_simulatie_hardcodes_four_agents(self) -> None:
+    def test_d27_simulatie_exposes_run_builder_options(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]
             / "frontend"
@@ -1088,13 +1150,11 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
             / "SimulatiePage.tsx"
         )
         text = page.read_text(encoding="utf-8")
-        self.assertIn("agent-alpha", text)
-        self.assertIn("agent-beta", text)
-        self.assertIn("agent-risk", text)
-        self.assertIn("agent-orch", text)
-        self.assertIn('gameMode: "individual_competition"', text)
-        self.assertIn("useState(42)", text)
-        self.assertIn("seed,", text)
+        self.assertIn("initialCash", text)
+        self.assertIn("engine", text)
+        self.assertNotIn("agent-alpha", text)
+        self.assertIn("decisionCadence", text)
+        self.assertIn('useState<"single" | "multi">("single")', text)
 
     def test_d27_current_live_state_oldest_first_limits(self) -> None:
         from Data.modules.market_sim import service as svc_mod
@@ -1120,7 +1180,6 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
         self.assertIn(".slice(-60)", text)
 
-    @unittest.expectedFailure  # D27 — fixed in Phase T10A
     def test_d27_desired_simulatie_exposes_run_builder_options(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]
@@ -1228,7 +1287,7 @@ class D30CommitRevealCharacterization(unittest.TestCase):
 
 
 class D31CadenceCharacterization(unittest.TestCase):
-    def test_d31_current_default_roles_are_trend_mean_risk(self) -> None:
+    def test_d31_current_default_roles_constant_exists(self) -> None:
         from Data.modules.market_sim.types import AgentRole, DEFAULT_AGENT_ROLES
 
         self.assertEqual(
@@ -1236,27 +1295,22 @@ class D31CadenceCharacterization(unittest.TestCase):
             (AgentRole.TREND, AgentRole.MEAN_REVERSION, AgentRole.RISK_OFFICER),
         )
 
-    def test_d31_current_create_run_injects_default_agents_when_omitted(self) -> None:
+    def test_d31_create_run_does_not_inject_default_agents(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.create_run)
-        self.assertIn("DEFAULT_AGENT_ROLES", src)
+        self.assertNotIn("DEFAULT_AGENT_ROLES", src)
+        self.assertIn("decision_cadence", src)
         self.assertIn("deliberation_every_n", src)
-        self.assertIn("if agent_list is None", src)
 
-    def test_d31_current_legacy_alternates_deliberation_and_raw(self) -> None:
+    def test_d31_engines_use_explicit_cadence_gate(self) -> None:
         src = inspect.getsource(SimulationEngine.step_once)
-        # Legacy: deliberation on every Nth bar, raw strategy otherwise.
-        self.assertIn("deliberation_every_n", src)
-        self.assertIn("should_deliberate", src)
-        self.assertIn("evaluate_strategy", src)
+        multi_src = inspect.getsource(MultiAgentEngine.step_once)
+        self.assertIn("should_decide_on_bar", src)
+        self.assertIn("decision_cadence", src)
+        self.assertIn("should_decide_on_bar", multi_src)
+        self.assertIn("decision_cadence", multi_src)
 
-    def test_d31_current_multi_decides_only_every_n(self) -> None:
-        src = inspect.getsource(MultiAgentEngine.step_once)
-        self.assertIn("deliberation_every_n", src)
-        self.assertIn("should_decide", src)
-
-    @unittest.expectedFailure  # D31 — fixed in Phase T1D
     def test_d31_desired_cadence_is_explicit_recorded_param_only(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 

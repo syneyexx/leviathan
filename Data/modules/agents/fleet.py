@@ -744,6 +744,7 @@ class AgentFleetService:
             return AgentKind.RESEARCH
         if definition.kind == AgentDefinitionKind.TRADING:
             # Trading agents are never planned by the generic/coding/research planners.
+            # AgentKind.TRADING exists for domain labeling; execution requires the orchestra executor.
             raise AgentFleetError(
                 "TRADING_EXECUTOR_REQUIRED",
                 "Trading agents execute only through the registered trading executor "

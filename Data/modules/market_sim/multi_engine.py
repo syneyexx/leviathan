@@ -14,13 +14,17 @@ from .causality import CausalityViolation, MarketView, SimulationClock
 from .commit_reveal import CommitRevealProtocol
 from .execution import NextBarFillModel, OrderIntent
 from .experiments import StrategyMemoryIndex, market_features_from_closes
+from .instruments import infer_family, spec_for_symbol
 from .market_state import build_market_state
-from .metrics import compute_metrics
+from .metrics import compute_metrics, resolve_periods_per_year
 from .ohlcv import load_ohlcv
+from .position_episodes import PositionEpisodeTracker
 from .risk_guard import RiskGuard, RiskLimits
+from .short_margin import ShortMarginPolicy
+from .sizing import SizingModel
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
-from .types import FillStatus, MarketSimError, OrderSide, RunStatus, SimFill
+from .types import FillStatus, MarketSimError, OrderSide, OrderType, RunStatus, SimFill
 
 
 CancelCheck = Callable[[], bool]
@@ -47,6 +51,7 @@ class MultiEngineState:
     benchmark_equity: list[float] = field(default_factory=list)
     memory: StrategyMemoryIndex = field(default_factory=StrategyMemoryIndex)
     game_mode: str = GAME_INDIVIDUAL
+    episodes_by_wallet: dict[str, PositionEpisodeTracker] = field(default_factory=dict)
 
 
 class MultiAgentEngine:
@@ -117,10 +122,60 @@ class MultiAgentEngine:
                 aid = str(a.get("agent_id") or a.get("role"))
                 cash = float(a.get("initial_cash") if a.get("initial_cash") is not None else agent_cash)
                 book.ensure_agent(aid, initial_cash=cash, currency=currency)
-            # Shared book optional for tournament leaderboard baseline
             if game_mode == GAME_TOURNAMENT:
                 book.ensure_shared(initial_cash=run.initial_cash, currency=currency)
 
+        # P0D: resume from wallet_snapshot when bar_index > initial — no rewind to initial cash
+        if run.bar_index > 0:
+            snap = meta.get("wallet_snapshot") or meta.get("walletSnapshot") or {}
+            if isinstance(snap, dict) and snap:
+                for wid, payload in snap.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    # Match by agent_id key or wallet_id
+                    wallet = book.for_owner(str(wid)) or book.wallets.get(str(wid))
+                    if wallet is None and book.shared_wallet_id and wid in {"shared", book.shared_wallet_id}:
+                        wallet = book.wallets.get(book.shared_wallet_id)
+                    if wallet is None:
+                        continue
+                    if "cash" in payload:
+                        wallet.cash = money(payload["cash"])
+                    if "position_qty" in payload:
+                        wallet.position_qty = money(payload["position_qty"])
+                    if "avg_entry" in payload:
+                        wallet.avg_entry = money(payload["avg_entry"])
+                    if "realized_pnl" in payload:
+                        wallet.realized_pnl = money(payload["realized_pnl"])
+                    if "reserved_cash" in payload:
+                        wallet.reserved_cash = money(payload["reserved_cash"])
+                    if "peak_equity" in payload:
+                        wallet.peak_equity = money(payload["peak_equity"])
+            elif run.cash and game_mode == GAME_SHARED and book.shared_wallet_id:
+                w = book.wallets[book.shared_wallet_id]
+                w.cash = money(run.cash)
+                w.position_qty = money(run.position_qty)
+                w.realized_pnl = money(run.realized_pnl)
+
+        sizing = SizingModel.from_dict(
+            getattr(run, "sizing_model", None) or meta.get("sizing_model") or meta.get("sizingModel"),
+            defaults={
+                "kind": "risk_pct",
+                "per_trade_risk_pct": run.per_trade_risk_pct,
+                "max_position_pct": run.max_position_pct,
+            },
+        )
+        if hasattr(run, "sizing_model"):
+            run.sizing_model = sizing.public_dict()
+        meta["sizing_model"] = sizing.public_dict()
+        run.metadata = meta
+        instrument = spec_for_symbol(
+            getattr(run, "symbol", "UNKNOWN"),
+            timeframe=getattr(run, "timeframe", "1D") or "1D",
+            metadata=meta,
+        )
+        short_policy = ShortMarginPolicy.from_dict(
+            meta.get("short_margin_policy") or meta.get("shortMarginPolicy")
+        )
         risk = RiskGuard(
             RiskLimits(
                 max_position_pct=run.max_position_pct,
@@ -128,7 +183,10 @@ class MultiAgentEngine:
                 per_trade_risk_pct=run.per_trade_risk_pct,
                 max_orders_per_day=int(meta.get("max_orders_per_day") or 50),
                 leverage_allowed=False,
-            )
+            ),
+            sizing_model=sizing,
+            instrument_spec=instrument,
+            short_margin_policy=short_policy,
         )
         run.bar_count = len(bars)
         first_price = bars[0].close if bars else 1.0
@@ -151,6 +209,34 @@ class MultiAgentEngine:
         state._brain_deps = list(brain_dependencies or [])  # type: ignore[attr-defined]
         state._trading_agents = trading_agents  # type: ignore[attr-defined]
         state._all_agents = agents  # type: ignore[attr-defined]
+
+        # P2C: hydrate durable StrategyMemory from store (causal as_of = run start)
+        from .experiments import StrategyMemoryEntry
+
+        as_of = run.start_ts or run.created_at or ""
+        try:
+            rows = self.store.list_strategy_memories(
+                strategy_id=run.strategy_id,
+                as_of_ts=as_of or None,
+                limit=100,
+            )
+        except Exception:  # noqa: BLE001
+            rows = []
+        for row in rows:
+            state.memory.add(
+                StrategyMemoryEntry(
+                    memory_id=str(row.get("memory_id") or ""),
+                    strategy_id=str(row.get("strategy_id") or ""),
+                    strategy_version=int(row.get("strategy_version") or 0),
+                    features=dict(row.get("features") or {}),
+                    applicability=dict(row.get("applicability") or {}),
+                    outcome_summary=str(row.get("outcome_summary") or ""),
+                    trial_id=row.get("trial_id"),
+                    created_at=str(row.get("created_at") or ""),
+                    available_at=str(row.get("available_at") or ""),
+                    rejected=bool(row.get("rejected")),
+                )
+            )
         return state
 
     def step_once(self, state: MultiEngineState) -> bool:
@@ -162,6 +248,7 @@ class MultiAgentEngine:
 
         run.bar_index = state.clock.index
         run.clock_ts = bar.ts
+        state.risk.on_bar_timestamp(bar.ts)
         bh = getattr(state, "_bh_shares", 0.0)
         state.benchmark_equity.append(bh * bar.close)
 
@@ -185,14 +272,54 @@ class MultiAgentEngine:
                 continue
             if decision.sized_qty > 0:
                 intent.qty = money(decision.sized_qty)
+            before_realized = float(wallet.realized_pnl)
             fill = fill_model.execute_intent(
                 wallet=wallet,
                 intent=intent,
                 fill_open=bar.open,
                 bar_volume=bar.volume,
                 fill_bar_index=state.clock.index,
+                fill_high=bar.high,
+                fill_low=bar.low,
+                fill_close=bar.close,
             )
             if fill.filled:
+                realized_delta = float(wallet.realized_pnl) - before_realized
+                remaining = None
+                if fill.remaining_qty is not None:
+                    remaining = float(fill.remaining_qty)
+                elif intent.qty is not None:
+                    try:
+                        rem = float(intent.qty) - float(fill.qty)
+                        remaining = rem if rem > 1e-12 else 0.0
+                    except (TypeError, ValueError):
+                        remaining = None
+                tracker = state.episodes_by_wallet.get(intent.wallet_id)
+                if tracker is None:
+                    tracker = PositionEpisodeTracker(
+                        run_id=run.run_id,
+                        instrument=run.symbol,
+                        strategy_id=getattr(run, "strategy_id", None),
+                        strategy_version=getattr(run, "strategy_version", None),
+                    )
+                    state.episodes_by_wallet[intent.wallet_id] = tracker
+                trade_id = tracker.current_trade_id()
+                closed = tracker.on_fill(
+                    side=intent.side,
+                    qty=float(fill.qty),
+                    price=float(fill.price),
+                    fee=float(fill.fee),
+                    slippage=float(fill.slippage),
+                    ts=bar.ts,
+                    bar_index=state.clock.index,
+                    status=fill.status,
+                    agent_id=intent.agent_id,
+                    close_reason=intent.rationale or "signal",
+                    trade_id=trade_id,
+                )
+                trade_id = closed.trade_id if closed is not None else tracker.current_trade_id()
+                if closed is not None:
+                    self.store.add_closed_trade(closed)
                 record = SimFill(
                     fill_id=str(uuid.uuid4()),
                     run_id=run.run_id,
@@ -207,6 +334,14 @@ class MultiAgentEngine:
                     rationale=intent.rationale,
                     status=fill.status,
                     created_at=utc_now(),
+                    realized_delta=float(realized_delta),
+                    remaining_qty=remaining,
+                    order_type=fill.order_type or getattr(intent, "order_type", OrderType.MARKET.value),
+                    fill_price_source=fill.fill_price_source,
+                    observed_execution=False,
+                    decision_bar_index=intent.decision_bar_index,
+                    intent_id=intent.intent_id,
+                    trade_id=trade_id,
                 )
                 self.store.add_fill(record)
                 state.fills.append(record)
@@ -216,15 +351,14 @@ class MultiAgentEngine:
                     payload={
                         **record.public_dict(),
                         "wallet_id": intent.wallet_id,
-                        "decision_bar_index": intent.decision_bar_index,
                         "eligible_bar_index": intent.eligible_bar_index,
                         "info_version": intent.info_version,
-                        "fill_price_source": "next_bar_open",
-                        "observed_execution": False,
                     },
                     bar_index=state.clock.index,
                 )
                 state.risk.orders_today += 1
+            if intent.status == "working":
+                still_pending.append(intent)
         state.pending_intents = still_pending
 
         # 2) Kill-switch / drawdown on each trading wallet
@@ -249,14 +383,24 @@ class MultiAgentEngine:
                     )
                     state.pending_intents.append(flatten)
 
-        # 3) Commit-reveal decision round (every N bars)
-        should_decide = (
-            bool(getattr(state, "_trading_agents", None))
-            and (state.clock.index % max(1, run.deliberation_every_n) == 0)
+        # 3) Commit-reveal decision round (explicit cadence — P3A / D31)
+        from .decision_cadence import CADENCE_EVERY_N_BARS, should_decide_on_bar
+
+        meta = dict(run.metadata or {})
+        cadence = str(meta.get("decision_cadence") or meta.get("decisionCadence") or CADENCE_EVERY_N_BARS)
+        prev_ts = meta.get("last_decision_ts")
+        should_decide = bool(getattr(state, "_trading_agents", None)) and should_decide_on_bar(
+            cadence=cadence,
+            bar_index=state.clock.index,
+            bar_ts=bar.ts,
+            every_n=run.deliberation_every_n,
+            previous_decision_ts=str(prev_ts) if prev_ts else None,
         )
         if should_decide:
             try:
                 self._commit_round(state)
+                meta["last_decision_ts"] = bar.ts
+                run.metadata = meta
             except CausalityViolation as exc:
                 run.causality_violations += 1
                 self.store.add_event(
@@ -638,6 +782,25 @@ class MultiAgentEngine:
                 initial_for_metrics = float(equity_curve[0])
             else:
                 initial_for_metrics = float(run.initial_cash)
+        family = infer_family(
+            getattr(run, "symbol", ""),
+            metadata=dict(getattr(run, "metadata", None) or {}),
+        )
+        spec = spec_for_symbol(
+            getattr(run, "symbol", "UNKNOWN"),
+            timeframe=getattr(run, "timeframe", "1D") or "1D",
+            metadata=dict(getattr(run, "metadata", None) or {}),
+        )
+        bar_timestamps = [b.ts for b in state.clock.bars] if state.clock.bars else None
+        annualization = resolve_periods_per_year(
+            timeframe=getattr(run, "timeframe", None),
+            instrument_family=family,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
+        )
+        closed_payloads: list[dict[str, Any]] = []
+        for tracker in state.episodes_by_wallet.values():
+            closed_payloads.extend(t.public_dict() for t in tracker.closed)
         run.metrics = compute_metrics(
             equity=equity_curve,
             fills=[f.public_dict() for f in state.fills],
@@ -648,6 +811,13 @@ class MultiAgentEngine:
             brain_misses=run.brain_misses,
             agreement_rate=agreement,
             veto_rate=veto_rate,
+            periods_per_year=None,
+            annualization=annualization,
+            closed_trades=closed_payloads,
+            timeframe=getattr(run, "timeframe", None),
+            instrument_family=family.value,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
         )
         run.metrics["game_mode"] = state.game_mode
         run.metrics["wallets"] = state.book.public_dict(

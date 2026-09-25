@@ -128,6 +128,44 @@ class MarketSimWorker:
 
     def _advance_run(self, run: Any) -> bool:
         try:
+            meta = dict(run.metadata or {})
+            if meta.get("gym") and str(meta.get("gym_mode") or "") == "complete":
+                # Complete gym episodes: run TradingGym to terminal in worker process.
+                from Data.modules.market_sim.gym import TradingGym
+
+                if run.status == RunStatus.QUEUED.value:
+                    run.status = RunStatus.RUNNING.value
+                    run.started_at = run.started_at or utc_now()
+                    self.store.update_run(run)
+                gym = TradingGym(self.store, self.engine)
+                strat = self.resolve_strategy(run) if self.resolve_strategy else {}
+                bars_path = self.resolve_bars_path(run)
+                result = gym.run_episode(
+                    run,
+                    bars_path=bars_path,
+                    split_role=str(meta.get("split_role") or "TRAIN"),
+                    start_ts=run.start_ts or None,
+                    end_ts=run.end_ts or None,
+                    strategy_params=(strat or {}).get("parameters"),
+                    entry_rules=(strat or {}).get("entry_rules") or {"kind": "hold"},
+                    exit_rules=(strat or {}).get("exit_rules") or {"kind": "hold"},
+                    policy=None,
+                )
+                out = self.store.get_run(run.run_id) or run
+                out.worker_pid = None
+                if out.status not in TERMINAL_RUN_STATUSES:
+                    out.status = RunStatus.COMPLETED.value
+                    out.finished_at = out.finished_at or utc_now()
+                self.store.update_run(out)
+                self.store.add_event(
+                    out.run_id,
+                    kind="gym_episode_finished",
+                    payload={"steps": result.get("steps"), "status": out.status},
+                )
+                self.telemetry["completed"] += 1
+                self.telemetry["last_engine"] = "gym"
+                return True
+
             if run.status == RunStatus.QUEUED.value:
                 run.status = RunStatus.RUNNING.value
                 run.started_at = run.started_at or utc_now()

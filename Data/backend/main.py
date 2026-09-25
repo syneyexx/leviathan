@@ -1727,7 +1727,13 @@ app.include_router(
 )
 app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
-app.include_router(build_market_sim_router(market_sim_service))
+app.include_router(
+    build_market_sim_router(
+        market_sim_service,
+        gateway=execution_gateway,
+        capability_catalog=capability_catalog,
+    )
+)
 app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))

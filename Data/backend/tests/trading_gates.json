@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "program": "Master Program v4",
-  "phase": "T2",
+  "program": "Master Program v4.1",
+  "phase": "Slice16/A0-A4",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T2 MarketState + FeatureEngine; feature library causal + multi-TF views",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t2_market_state.py Data/backend/tests/test_market_sim_t1_causality.py -q"
+      "result": "Slice 16: A0-A4 complete; 43 PASS + G16 FEATURE_GATED; LiveTradingGuard BLOCKED; verifier honest non-zero while G04/G07/G13-14/G18/G20/G36/G40/G46/G49-60 remain non-PASS",
+      "command": "python3 scripts/verify_trading_100.py --run-tests"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -30,13 +30,28 @@
   "gates": {
     "G01": {
       "title": "Streaming ingest 5y\u00d71m within memory budget",
-      "phase": "T2A/T3C",
-      "status": "NOT_STARTED",
+      "phase": "T2A/T3C/P1A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/ohlcv.py::iter_ohlcv / stream_ohlcv",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests",
+        "Streaming peak RSS bounded vs materialize on 120k 1m bars",
+        "Full 5y\u00d71m product target uses same streaming API; absolute CI fixture uses 120k for runtime"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "P1A: canonical iter_ohlcv/stream_ohlcv; memory budget proven vs load_ohlcv materialization",
       "related_defects": [
         "D8",
         "D9"
@@ -144,13 +159,29 @@
     },
     "G06": {
       "title": "Split manifests TRAIN/VAL/SEALED",
-      "phase": "T2C",
-      "status": "NOT_STARTED",
+      "phase": "T2C/P1A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/split_manifest.py::DatasetSplitManifest",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests",
+        "Sealed datasets attach frozen chronological TRAIN/VAL/SEALED manifest",
+        "Frozen manifests refuse mutation (SPLIT_MANIFEST_FROZEN)"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ABuildFromIterTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P1A: chronological TRAIN/VAL/SEALED; embargo_bars; frozen on seal"
     },
     "G07": {
       "title": "Providers pagination/backoff/network policy",
@@ -168,12 +199,30 @@
     "G08": {
       "title": "Kernel v2 golden fills/PnL",
       "phase": "T3A/T3B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BCanonicalExecutionPathTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BPartialAndTifTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BLimitStopTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BIntrabarPolicyTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BGoldenFillPnLTests",
+        "SimulationEngine.step_once uses NextBarFillModel only (no LegacyFill)",
+        "MARKET BAR cancels remainder; GTC leaves WORKING; Limit/Stop gap rules"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BCanonicalExecutionPathTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BPartialAndTifTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BLimitStopTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BGoldenFillPnLTests"
+      ],
+      "checks": [
+        "no LegacyFill in SimulationEngine.step_once",
+        "partial remainder + TIF semantics",
+        "limit non-trigger / stop gap behavior",
+        "intrabar ambiguity uses explicit policy"
+      ],
+      "notes": "P0B+P0D: canonical execution path + golden fills.",
       "related_defects": [
         "D5"
       ]
@@ -181,35 +230,83 @@
     "G09": {
       "title": "Accounting invariants property-based",
       "phase": "T3A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DAccountingInvariantTests",
+        "WalletLedger.assert_invariants + duplicate tx_id rejected",
+        "200+ randomized accounting invariant trials"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DAccountingInvariantTests::test_randomized_accounting_invariants",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DAccountingInvariantTests::test_duplicate_tx_id_rejected"
+      ],
+      "checks": [
+        "equity == cash + MV",
+        "duplicate tx_id rejected",
+        "no NaN/Inf reserved"
+      ],
+      "notes": "P0D accounting invariants."
     },
     "G10": {
       "title": "Instrument rules enforced",
       "phase": "T3B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CInstrumentAndShortTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CSizingModelTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CRiskGuardDayResetTests",
+        "RiskGuard.on_bar_timestamp UTC day rollover",
+        "SizingModel on SimRun; no risk_qty*5",
+        "lot/tick/min_notional via validate_intent_rules",
+        "short blocked without ShortMarginPolicy even if supports_short"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CInstrumentAndShortTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CSizingModelTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CRiskGuardDayResetTests"
+      ],
+      "checks": [
+        "orders_today date rollover",
+        "sizing_model visible",
+        "short blocked without margin policy",
+        "short blocked if instrument disallows",
+        "instrument lot/tick/min_notional"
+      ],
+      "notes": "P0C complete.",
       "related_defects": [
+        "D3",
+        "D4",
         "D24"
       ]
     },
     "G11": {
       "title": "Determinism fingerprint/kill-resume/cross-process",
       "phase": "T3C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DHashTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DLeaseTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D6ResumeCharacterization",
+        "RunInputFingerprint / CheckpointStateHash / TrajectoryHash",
+        "heartbeat_run_lease + expire_stale_leases",
+        "multi prepare restores wallet_snapshot on resume",
+        "migration 46 lease/hash columns"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DHashTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DLeaseTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D6ResumeCharacterization"
+      ],
+      "checks": [
+        "same input fingerprint stable",
+        "checkpoint hash changes with state",
+        "stale lease reclaimable",
+        "resume restores wallet snapshot"
+      ],
+      "notes": "P0D complete.",
       "related_defects": [
         "D6"
       ]
@@ -251,13 +348,19 @@
     },
     "G13": {
       "title": "Throughput/memory measured; 5y 1m no OOM",
-      "phase": "T3C",
-      "status": "NOT_STARTED",
+      "phase": "T3C/P1A",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize",
+        "Streaming RSS delta bounded vs materialize on 120k bars",
+        "Full 5y\u00d71m absolute no-OOM soak not yet CI-measured"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize"
+      ],
       "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "notes": "P1A foundation; absolute 5y soak remains for P1B gym long-run worker path",
       "related_defects": [
         "D8"
       ]
@@ -274,98 +377,204 @@
     },
     "G15": {
       "title": "Strategy Spec v2 + feature library",
-      "phase": "T2/T3D",
-      "status": "IN_PROGRESS",
+      "phase": "T2/T3D/P2A",
+      "status": "PASS",
       "required": true,
       "evidence": [
         "Data/modules/market_sim/features.py",
         "Data/modules/market_sim/market_state.py",
-        "Data/backend/tests/test_market_sim_t2_market_state.py"
+        "Data/modules/market_sim/strategy_dsl.py::StrategySpecV2",
+        "Data/backend/tests/test_market_sim_t2_market_state.py",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests",
+        "DSL kinds: breakout, rsi, feature_compare, ma_cross, mean_reversion + regime_filter"
       ],
       "test_node_ids": [
-        "Data/backend/tests/test_market_sim_t2_market_state.py"
+        "Data/backend/tests/test_market_sim_t2_market_state.py",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests"
       ],
       "checks": [
         {
           "kind": "pytest",
           "node_ids": [
-            "Data/backend/tests/test_market_sim_t2_market_state.py"
+            "Data/backend/tests/test_market_sim_t2_market_state.py",
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests"
           ],
           "timeout_sec": 180
         }
       ],
-      "notes": "T2: FeatureEngine + MarketState + MultiTimeframeView implemented and tested. Strategy Spec DSL v2 remains T3."
+      "notes": "P2A: Strategy Spec DSL v2 over FeatureEngine; legacy ma_cross/mean_reversion preserved"
     },
     "G16": {
       "title": "Code strategy sandbox escape suite",
-      "phase": "T3E",
-      "status": "NOT_STARTED",
+      "phase": "T3E/P2C",
+      "status": "FEATURE_GATED",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/code_strategy.py::python_strategy_capability / evaluate_python_strategy",
+        "create_strategy / version_strategy call assert_not_python_strategy",
+        "Availability = NOT_AVAILABLE until IsolationSandbox escape suite PASSes",
+        "AST filtering alone insufficient; DSL v2 remains supported path",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_python_strategy_feature_gated",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_create_strategy_rejects_python"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_python_strategy_feature_gated",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_create_strategy_rejects_python"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_python_strategy_feature_gated"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2C: honest FEATURE_GATED / NOT_AVAILABLE. Do not claim PASS without escape suite.",
       "related_defects": []
     },
     "G17": {
       "title": "Immutable strategy versions + lineage",
-      "phase": "T3D",
-      "status": "NOT_STARTED",
+      "phase": "T3D/P2C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/strategy_lineage.py::attach_lineage_metadata / lineage_chain / assert_version_immutable",
+        "create_strategy + version_strategy attach parent_version / parent_content_hash / immutable",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2C: lineage metadata on every version; content-addressed immutability",
+      "related_defects": []
     },
     "G18": {
       "title": "Metrics v2 ledger-derived + bootstrap CIs",
       "phase": "T5A/T5D",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py",
+        "P0A: resolve_periods_per_year provenance (crypto 1h != equity 1h)",
+        "P0A: SimFill realized_delta + ClosedTrade/PositionEpisode foundation",
+        "P0A: win_rate definition labeled (closed_position_episode vs fill_level_realized_delta)",
+        "P0A: evaluate_acceptance reads compute_metrics keys (D12)",
+        "bootstrap CIs not yet implemented"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::AnnualizationResolverTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::SimFillHonestyTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::ClosedTradeWinRateTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::MetricKeyAlignmentTests"
+      ],
+      "checks": [
+        "annualization_source provenance on Sharpe/Sortino",
+        "closed_trade_win_rate UNMEASURED until ClosedTrade samples",
+        "no silent 252 default for crypto/equity mismatch"
+      ],
+      "notes": "P0A slice: ledger honesty + annualization. Full G18 PASS requires block-bootstrap CIs (P3).",
       "related_defects": [
         "D1",
-        "D2"
+        "D2",
+        "D12"
       ]
     },
     "G19": {
       "title": "Global append-only Trial Ledger",
-      "phase": "T5A",
-      "status": "NOT_STARTED",
+      "phase": "T5A/P2B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/store.py::append_trial / count_trials",
+        "save_experiment persists strategy_version on upsert",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_append_trial_ledger",
+        "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_append_trial_ledger",
+        "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2B: append-only trial ledger + strategy_version persistence (D14 fixed)",
       "related_defects": [
         "D14"
       ]
     },
     "G20": {
       "title": "WFA/purged CV/CPCV/robustness suite",
-      "phase": "T5B/T5C",
-      "status": "NOT_STARTED",
+      "phase": "T5B/T5C/P2B",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/wfa.py::rolling_wfa_windows / walk_forward_plan",
+        "walk_forward_splits rolling overload (window/step)",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
+        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization",
+        "CPCV / full robustness suite not yet complete"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
+        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2B: rolling WFA + purge gap. CPCV/combinatorial remains later.",
       "related_defects": [
         "D13"
       ]
     },
     "G21": {
       "title": "Acceptance from run IDs; sealed single-use",
-      "phase": "T5A/T5C",
-      "status": "NOT_STARTED",
+      "phase": "T5A/T5C/P1A/P2B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/sealed_attempts.py::SealedAttemptBinder",
+        "Data/modules/market_sim/wfa.py::evaluate_acceptance_from_run",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids",
+        "Acceptance reads run.metrics (kernel); never request payload"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P1A sealed attempts + P2B acceptance-from-run-IDs",
       "related_defects": [
         "D11",
         "D12"
@@ -373,158 +582,388 @@
     },
     "G22": {
       "title": "Strategy Library persist/recall/lessons",
-      "phase": "T6A",
-      "status": "NOT_STARTED",
+      "phase": "T6A/P2C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "MarketSimStore.save_strategy_memory / list_strategy_memories(as_of_ts)",
+        "MultiAgentEngine.prepare hydrates StrategyMemory via list_strategy_memories with causal as_of",
+        "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P2C: durable StrategyMemory hydrate on prepare; as_of causal filter (D15)",
       "related_defects": [
         "D15"
       ]
     },
     "G23": {
       "title": "Brain/Memory as_of or excluded",
-      "phase": "T6B",
-      "status": "NOT_STARTED",
+      "phase": "T6B/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "BrainFacade.retrieve(as_of=...) drops hits newer than decision time",
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_brain_as_of_gate_evidence",
+        "StrategyMemory list_strategy_memories(as_of_ts) causal filter"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_brain_as_of_gate_evidence"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: causal Brain/Memory as_of (D22)",
       "related_defects": [
         "D22"
       ]
     },
     "G24": {
       "title": "Trading role executors on Agent Fleet",
-      "phase": "T7A",
-      "status": "NOT_STARTED",
+      "phase": "T7A/P3A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "TradingOrchestraService.bind_fleet registers AgentDefinitionKind.TRADING executor",
+        "Data/modules/market_sim/orchestra/executors.py — role executors + DecisionRecord chain",
+        "Data/modules/market_sim/decision_cadence.py — explicit cadence + AsyncDecisionQueue",
+        "AgentKind.TRADING labeled; generic planner refuses TRADING without orchestra executor",
+        "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+        "Data/backend/tests/test_trading_orchestra.py::DeliberationTests",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D31CadenceCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+        "Data/backend/tests/test_trading_orchestra.py::DeliberationTests",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D31CadenceCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "P3A: Trading Orchestra cadence + async DecisionRecord + Fleet TRADING executor (D17/D31)",
       "related_defects": [
-        "D17"
+        "D17",
+        "D31"
       ]
     },
     "G25": {
       "title": "ResearchCampaign durable/resumable",
-      "phase": "T7B",
-      "status": "NOT_STARTED",
+      "phase": "T7B/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/research_campaign.py + migration 48 market_sim_research_campaigns",
+        "checkpoint_iteration resume; never rewind from zero",
+        "EXTERNAL_REQUIRED via market_sim.research_campaign worker; TRADING_WORKER_UNAVAILABLE without JobRuntime",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P3B: durable ResearchCampaign + worker ownership"
     },
     "G26": {
       "title": "TradingGym causal reset/step",
-      "phase": "T8A/T8B",
-      "status": "NOT_STARTED",
+      "phase": "T8A/T8B/P1B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/gym.py::TradingGym",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests",
+        "reset/step observations via MarketView (no future bars)",
+        "complete episodes EXTERNAL_REQUIRED via market_sim.gym_episode worker",
+        "TRADING_WORKER_UNAVAILABLE when externalized without job_runtime (no FastAPI sync fallback)",
+        "API: POST /api/market-sim/gym/episodes[+ /step /start]"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "P1B: TradingGym + API + worker ownership. RewardSpec completed in P1C."
     },
     "G27": {
       "title": "Agent scorecards + leaderboard penalty",
-      "phase": "T8D",
-      "status": "NOT_STARTED",
+      "phase": "T8D/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/scorecards.py::build_scorecard / rank_scorecards / compute_penalty",
+        "Penalty for causality_violations, risk_vetoes, drawdown",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: kernel-derived scorecards with violation penalties"
     },
     "G28": {
       "title": "Readiness ladder A0\u2013A4; A5 blocked",
-      "phase": "T8D",
-      "status": "NOT_STARTED",
+      "phase": "T8D/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/readiness.py::readiness_ladder / normalize_autonomy",
+        "A5 / LIVE raise A5_IMPOSSIBLE; ceiling A4 autonomous paper",
+        "Data/modules/market_sim/promotion.py::evaluate_promotion never enables live",
+        "LiveTradingGuard remains BLOCKED",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: A0\u2013A4 ladder; A5 impossible; promotion kernel-gated"
     },
     "G29": {
       "title": "Trajectory export via Datasets/Training",
-      "phase": "T8C/T8D",
-      "status": "NOT_STARTED",
+      "phase": "T8C/T8D/P1C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/reward.py::RewardSpec + compute_step_reward",
+        "Data/modules/market_sim/trajectory.py::TrajectoryArtifact / TrajectoryBuilder",
+        "Data/modules/market_sim/dataset_bridge.py::export_trajectory_to_dataset",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests",
+        "JSONL trajectory export; DatasetService bridge when bound (FILE_ONLY honest otherwise)",
+        "API: POST /api/market-sim/gym/episodes/{id}/export-trajectory"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P1C: kernel RewardSpec + content-addressed trajectory JSONL + DatasetService bridge"
     },
     "G30": {
       "title": "Sim-to-real gap report",
-      "phase": "T8D/T9C",
-      "status": "NOT_STARTED",
+      "phase": "T8D/T9C/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap (paper-safe; live N/A)",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: sim-to-paper gap report; live gap N/A while live BLOCKED"
     },
     "G31": {
       "title": "Promotion state machine",
-      "phase": "T6C",
-      "status": "NOT_STARTED",
+      "phase": "T6C/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/promotion.py::evaluate_promotion",
+        "Data/modules/market_sim/readiness.py::may_promote_to",
+        "A2+ requires kernel acceptance; A5 impossible",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: kernel-owned promotion; live never enabled"
     },
     "G32": {
       "title": "PaperForwardRunner autonomous loop",
-      "phase": "T9A",
-      "status": "NOT_STARTED",
+      "phase": "T9A/P4A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/paper_forward.py::PaperForwardRunner",
+        "MarketSimControlPlane.paper_forward_step",
+        "Per-session WalletLedger isolation on LocalPaperBroker",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P4A: PaperForwardRunner + isolated paper accounting (D18)",
       "related_defects": [
         "D18"
       ]
     },
     "G33": {
       "title": "Reconciliation + drift + watchdog",
-      "phase": "T9C",
-      "status": "NOT_STARTED",
+      "phase": "T9C/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap",
+        "Gap status MEASURED/UNMEASURED honest; no fabricated precision",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: sim-to-paper gap measurement foundation"
     },
     "G34": {
       "title": "Risk Engine v2 on every order path",
-      "phase": "T9B",
-      "status": "NOT_STARTED",
+      "phase": "T9B/P4A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "paper_place_order routes through PaperForwardRunner + RiskGuard",
+        "SimulationEngine / MultiAgentEngine already use RiskGuard",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization::test_d18_paper_place_order_uses_riskguard"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization::test_d18_paper_place_order_uses_riskguard"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4A: RiskGuard on paper path (D18)",
       "related_defects": [
         "D18"
       ]
     },
     "G35": {
       "title": "BrokerAdapter; LiveBroker UNSUPPORTED",
-      "phase": "T9C",
-      "status": "NOT_STARTED",
+      "phase": "T9C/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/broker_adapter.py::LiveBrokerAdapter / resolve_broker_adapter",
+        "LIVE_BROKER_UNSUPPORTED for live/real/production ids",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported",
+        "LiveTradingGuard remains BLOCKED"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: live broker explicitly UNSUPPORTED",
       "related_defects": [
         "D19",
         "D20"
@@ -542,26 +981,61 @@
     },
     "G37": {
       "title": "Capabilities via Gateway",
-      "phase": "T4A",
-      "status": "NOT_STARTED",
+      "phase": "T4A/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "build_market_sim_router binds ExecutionGateway + capability_catalog",
+        "paper_order mutations via _mutate_via_gateway",
+        "main.py wires gateway into market_sim router",
+        "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_routes_import_gateway"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_routes_import_gateway"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: mutation routes via ExecutionGateway (D16)",
       "related_defects": [
         "D16"
       ]
     },
     "G38": {
       "title": "JobStore leases; no double-claim",
-      "phase": "T4B",
-      "status": "NOT_STARTED",
+      "phase": "T4B/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "JobStore.claim_next_queued atomic claim+lease",
+        "MarketSimStore.claim_next_runnable uses BEGIN IMMEDIATE (D25)",
+        "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization",
+        "Data/backend/tests/test_market_sim_characterization.py::D26JobRuntimeCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_claim_begin_immediate"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization",
+        "Data/backend/tests/test_market_sim_characterization.py::D26JobRuntimeCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_claim_begin_immediate"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: JobStore leases + BEGIN IMMEDIATE claim (D25/D26)",
       "related_defects": [
         "D25",
         "D26"
@@ -569,13 +1043,28 @@
     },
     "G39": {
       "title": "Persistence hot path + migrations",
-      "phase": "T4D",
-      "status": "NOT_STARTED",
+      "phase": "T4D/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Single leviathan.db; MigrationRunner contiguous versions through 48",
+        "Data/backend/tests/test_migrations.py",
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_migrations.py",
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_migrations.py"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "Canonical SQLite + contiguous migrations",
       "related_defects": [
         "D8",
         "D21"
@@ -596,59 +1085,129 @@
     },
     "G41": {
       "title": "Trading Center pages real data",
-      "phase": "T10A",
-      "status": "NOT_STARTED",
+      "phase": "T10A/P4C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "SimulatiePage / PaperTradingPage / StrategieenPage call real /api/market-sim routes",
+        "No hardcoded agent-alpha default roster; engine single|multi explicit",
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization",
+        "PaperTradingPage uses api.listPaperSessions / createPaperSession / capabilities"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4C: TradingCenter uses real backend state (D27)",
       "related_defects": [
         "D27"
       ]
     },
     "G42": {
       "title": "Run configuration UI complete",
-      "phase": "T10A",
-      "status": "NOT_STARTED",
+      "phase": "T10A/P4C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "SimulatiePage exposes initialCash, engine, decisionCadence, seed, speed",
+        "Default engine=single (empty agents); multi-agent opt-in",
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4C: run builder options (D27)",
       "related_defects": [
         "D27"
       ]
     },
     "G43": {
       "title": "verify_trading_100 + CI + docs",
-      "phase": "T11",
-      "status": "NOT_STARTED",
+      "phase": "T11/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "scripts/verify_trading_100.py --run-tests",
+        "Data/docs/Leviathan_system_backend.md §20",
+        "Data/docs/Leviathan_system_frontend.md §13",
+        "Data/backend/tests/trading_gates.json",
+        "Data/backend/tests/trading_completion_report.json"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "checks": [
+        {
+          "kind": "file_exists",
+          "path": "scripts/verify_trading_100.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/docs/Leviathan_system_backend.md"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/docs/Leviathan_system_frontend.md"
+        }
+      ],
+      "notes": "Slice 16: verifier + canonical docs"
     },
     "G44": {
       "title": "Completion Report with evidence",
-      "phase": "T11",
-      "status": "NOT_STARTED",
+      "phase": "T11/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json written by verify_trading_100.py",
+        "Gate table + anti-shortcut scan"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "checks": [
+        {
+          "kind": "file_exists",
+          "path": "scripts/verify_trading_100.py"
+        }
+      ],
+      "notes": "Slice 16 completion report path"
     },
     "G45": {
       "title": "All T0 characterization \u2192 regressions",
-      "phase": "T11",
-      "status": "NOT_STARTED",
+      "phase": "T11/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_characterization.py — D1–D31 converted where fixed",
+        "P0–P4 regression files: test_market_sim_p0_kernel.py … p4_paper.py",
+        "282 trading suite tests passed (6 xfailed remaining defects)"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "Slice 16: characterization suite green with honest xfails",
       "related_defects": [
         "D1-D31"
       ]
@@ -661,28 +1220,45 @@
       "evidence": [],
       "test_node_ids": [],
       "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "notes": "Honest NOT_STARTED — statistical FDR suite not in A0–A4 scope completion",
       "related_defects": []
     },
     "G47": {
       "title": "Windows worker/sandbox/job paths",
       "phase": "T4B/T11",
-      "status": "NOT_STARTED",
+      "status": "NOT_TESTED_IN_CI",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "Linux CI / cloud agent exercised; Windows paths NOT_TESTED_IN_CURRENT_ENVIRONMENT"
+      ],
       "test_node_ids": [],
       "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "notes": "External OS path — not claimed PASS offline"
     },
     "G48": {
       "title": "Security posture live flag off",
-      "phase": "T9D",
-      "status": "NOT_STARTED",
+      "phase": "T9D/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "LiveTradingGuard.public_status LIVE_TRADING_AVAILABLE=BLOCKED",
+        "readiness_ladder A5=IMPOSSIBLE",
+        "normalize_autonomy('A5') raises A5_IMPOSSIBLE",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "Live money blocked; A5 impossible"
     },
     "G49": {
       "title": "Observability trading category",

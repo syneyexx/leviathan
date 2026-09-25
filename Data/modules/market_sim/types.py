@@ -109,6 +109,28 @@ class OrderSide(str, Enum):
 class OrderType(str, Enum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"
+    STOP = "STOP"
+    STOP_LIMIT = "STOP_LIMIT"
+
+
+class TimeInForce(str, Enum):
+    """Historical TIF — no implicit eternal MARKET orders."""
+
+    BAR = "BAR"  # one eligible-bar attempt; remainder cancelled
+    IOC = "IOC"  # immediate-or-cancel (same as BAR for OHLCV next-bar model)
+    FOK = "FOK"  # fill-or-kill — reject if full qty cannot fill
+    GTC = "GTC"  # good-till-cancelled — remainder stays WORKING
+    DAY = "DAY"  # working until UTC calendar day rolls (engine cancels)
+
+
+class IntrabarPathPolicy(str, Enum):
+    """OHLCV has no full intra-bar sequence — never silently pick favorable path."""
+
+    CONSERVATIVE = "CONSERVATIVE"  # adverse-to-position when stop+target both possible
+    PESSIMISTIC = "PESSIMISTIC"  # alias of CONSERVATIVE for evaluation default
+    OPEN_HIGH_LOW_CLOSE = "OPEN_HIGH_LOW_CLOSE"
+    OPEN_LOW_HIGH_CLOSE = "OPEN_LOW_HIGH_CLOSE"
+    UNRESOLVED = "UNRESOLVED"
 
 
 class FillStatus(str, Enum):
@@ -116,6 +138,15 @@ class FillStatus(str, Enum):
     PARTIAL = "PARTIAL"
     REJECTED = "REJECTED"
     CANCELLED = "CANCELLED"
+    WORKING = "WORKING"
+
+
+class WinRateDefinition(str, Enum):
+    """Exact label for how win_rate was derived — never conflate fill vs closed-trade."""
+
+    CLOSED_POSITION_EPISODE = "closed_position_episode"
+    FILL_LEVEL_REALIZED_DELTA = "fill_level_realized_delta"
+    UNMEASURED = "unmeasured"
 
 
 class MetricStatus(str, Enum):
@@ -292,6 +323,7 @@ class SimRun:
     started_at: str | None = None
     finished_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    sizing_model: dict[str, Any] = field(default_factory=lambda: {"kind": "risk_pct"})
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -313,6 +345,8 @@ class SimRun:
             "max_position_pct": self.max_position_pct,
             "max_drawdown_pct": self.max_drawdown_pct,
             "per_trade_risk_pct": self.per_trade_risk_pct,
+            "sizingModel": self.sizing_model,
+            "sizing_model": self.sizing_model,
             "agents": self.agents,
             "deliberation_every_n": self.deliberation_every_n,
             "clock_ts": self.clock_ts,
@@ -358,9 +392,110 @@ class SimFill:
     rationale: str
     status: str
     created_at: str
+    # Honesty / execution provenance (P0A)
+    realized_delta: float | None = None
+    remaining_qty: float | None = None
+    order_type: str = OrderType.MARKET.value
+    fill_price_source: str = "next_bar_open"
+    observed_execution: bool = False
+    decision_bar_index: int | None = None
+    intent_id: str | None = None
+    trade_id: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        """Expose measured fields only when actually measured."""
+        out: dict[str, Any] = {
+            "fill_id": self.fill_id,
+            "run_id": self.run_id,
+            "bar_index": self.bar_index,
+            "ts": self.ts,
+            "side": self.side,
+            "qty": self.qty,
+            "price": self.price,
+            "fee": self.fee,
+            "slippage": self.slippage,
+            "agent_id": self.agent_id,
+            "rationale": self.rationale,
+            "status": self.status,
+            "created_at": self.created_at,
+            "order_type": self.order_type,
+            "fill_price_source": self.fill_price_source,
+            "observed_execution": self.observed_execution,
+        }
+        if self.decision_bar_index is not None:
+            out["decision_bar_index"] = self.decision_bar_index
+        if self.intent_id is not None:
+            out["intent_id"] = self.intent_id
+        if self.realized_delta is not None:
+            out["realized_delta"] = self.realized_delta
+        if self.remaining_qty is not None:
+            out["remaining_qty"] = self.remaining_qty
+        if self.trade_id is not None:
+            out["trade_id"] = self.trade_id
+        return out
+
+
+@dataclass
+class ClosedTrade:
+    """Canonical closed position episode — basis for closed-trade win rate.
+
+    Fill-level realized_delta is NOT equivalent to one won/lost trade.
+    """
+
+    trade_id: str
+    run_id: str
+    instrument: str
+    strategy_id: str | None
+    strategy_version: int | None
+    opened_at: str
+    closed_at: str
+    side: str  # LONG | SHORT
+    entry_quantity: float
+    exit_quantity: float
+    avg_entry_price: float
+    avg_exit_price: float
+    gross_pnl: float
+    fees: float
+    slippage_cost: float
+    net_pnl: float
+    holding_period_bars: int
+    partial_fill_count: int
+    close_reason: str
+    open_bar_index: int = 0
+    close_bar_index: int = 0
+    agent_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "trade_id": self.trade_id,
+            "run_id": self.run_id,
+            "instrument": self.instrument,
+            "strategy_id": self.strategy_id,
+            "strategy_version": self.strategy_version,
+            "opened_at": self.opened_at,
+            "closed_at": self.closed_at,
+            "side": self.side,
+            "entry_quantity": self.entry_quantity,
+            "exit_quantity": self.exit_quantity,
+            "avg_entry_price": self.avg_entry_price,
+            "avg_exit_price": self.avg_exit_price,
+            "gross_pnl": self.gross_pnl,
+            "fees": self.fees,
+            "slippage_cost": self.slippage_cost,
+            "net_pnl": self.net_pnl,
+            "holding_period_bars": self.holding_period_bars,
+            "partial_fill_count": self.partial_fill_count,
+            "close_reason": self.close_reason,
+            "open_bar_index": self.open_bar_index,
+            "close_bar_index": self.close_bar_index,
+            "agent_id": self.agent_id,
+            "metadata": self.metadata,
+        }
+
+
+# Alias used in the master program
+PositionEpisode = ClosedTrade
 
 
 @dataclass

@@ -204,12 +204,26 @@ class MarketSimIntegrationTests(unittest.TestCase):
             name="multi",
             brain_dependencies=["knowledge", "memory", "neuro"],
         )
+        from Data.modules.market_sim.types import AgentRole, AgentConfig
+
+        agents = [
+            AgentConfig(
+                agent_id=f"agent-{role.value}",
+                role=role.value,
+                strategy_id=strat["strategy"]["strategy_id"],
+                strategy_version=strat["strategy"]["current_version"],
+                label=role.value.replace("_", " ").title(),
+            ).public_dict()
+            for role in (AgentRole.TREND, AgentRole.MEAN_REVERSION, AgentRole.RISK_OFFICER)
+        ]
         run = self.svc.create_run(
             source_id=source_id,
             strategy_id=strat["strategy"]["strategy_id"],
             start_ts="2024-01-01T00:00:00+00:00",
             end_ts="2024-01-03T12:00:00+00:00",
             deliberation_every_n=1,
+            decision_cadence="every_n_bars",
+            agents=agents,
             seed=1,
         )
         run_id = run["run_id"]

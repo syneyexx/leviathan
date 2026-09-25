@@ -635,9 +635,9 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 - causality / epistemic time: `causality.py` (`SimulationClock`, `MarketView`), `epistemic.py` (`EpistemicFirewall`, `available_at <= as_of`);
 - market state / features (T2): `features.py` (deterministic OHLCV indicator library + provenance), `market_state.py` (`MarketState`, `MultiTimeframeView`, causal higher-TF aggregation);
 - reproducibility: `knowledge_snapshot.py` (`TradingKnowledgeSnapshot` persisted per run);
-- engine: `engine.py`, `multi_engine.py`, `fill_model.py`, `execution.py` (prepare verifies `data_hash`; multi-agent rounds attach `MarketState`);
+- engine: `engine.py` (WalletLedger + RiskGuard + NextBarFillModel), `multi_engine.py`, `fill_model.py` (legacy shim), `execution.py` (TIF / Limit / Stop / IntrabarPathPolicy; prepare verifies `data_hash`; multi-agent rounds attach `MarketState`);
 - accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
-- strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py`;
+- strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py` (`resolve_periods_per_year`), `position_episodes.py` (`ClosedTrade` / `PositionEpisodeTracker`);
 - multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py` (as_of / firewall filtering);
 - paper path: `paper_broker.py`;
 - service/store/worker/types/capabilities;
@@ -646,6 +646,36 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 **T1 (causality + data foundation):** historical agents observe markets through `MarketView`; information sources must respect `available_at <= simulation as_of`; sealed market dataset versions are content-addressed and immutable (corrections create a new version); every run stores a `TradingKnowledgeSnapshot`.
 
 **T2 (market state + features):** `FeatureEngine` computes causal SMA/EMA/RSI/ATR/ADX/Bollinger/z-score/ROC/realized-vol/Donchian/VWAP/volume/breakout/slope/drawdown/correlation/beta/relative-strength with measured/insufficient/not-implemented status and provenance. `MarketState` packages deterministic price/trend/momentum/volatility/volume/structure/regime fields (neural interpretation excluded). Multi-timeframe views synthesize higher TFs from visible base bars only. OHLCV never claims order-book imbalance. Live broker/real-money execution remains blocked.
+
+**P0A (kernel honesty):** `SimFill` carries measured honesty fields (`realized_delta`, `remaining_qty`, `order_type`, `fill_price_source`, `observed_execution`, `decision_bar_index`, `intent_id`, `trade_id`) — unmeasured fields are omitted from `public_dict`. `ClosedTrade` / `PositionEpisode` (`position_episodes.py`) is the foundation for closed-trade win rate; fill-level win rate is separately labeled and must not be conflated. `resolve_periods_per_year` annualizes Sharpe/Sortino via instrument calendar → observed frequency → asset-family default → timeframe fallback (crypto 1h ≠ equity 1h); unresolved annualization yields UNMEASURED. `evaluate_acceptance` reads `compute_metrics` keys (`trade_count`, `total_return`/`total_return_pct`, `max_drawdown`/`max_drawdown_pct`). Migration 45 persists honesty fill columns and `market_sim_closed_trades`.
+
+**P0D (resume/determinism/leases):** Three hashes — `RunInputFingerprint` (immutable), `CheckpointStateHash` (per checkpoint), `TrajectoryHash` (trajectory). `SimulationEngine` records fingerprints/checkpoints; multi-engine `prepare` restores `wallet_snapshot` when `bar_index > 0` (no cash rewind). Soft leases: `heartbeat_run_lease` / `expire_stale_leases` (migration 46). WalletLedger rejects duplicate `tx_id` and exposes `assert_invariants`. G08–G11 PASS. P0 complete.
+
+**P0C (risk/sizing/instruments):** `RiskGuard.on_bar_timestamp` resets `orders_today` on UTC day change. Explicit `SizingModel` on `SimRun.sizingModel`. Instrument lot/tick/min_notional. Shorts require `ShortMarginPolicy`. G10 PASS.
+
+**P1A (streaming + splits + SEALED attempts):** Canonical `iter_ohlcv` / `stream_ohlcv` stream CSV/Parquet without materializing the series (G01). `DatasetSplitManifest` (`split_manifest.py`) builds chronological TRAIN/VAL/SEALED windows with optional `embargo_bars`; sealing a dataset freezes the manifest (G06). `SealedAttemptBinder` binds `sealed_attempt_id` + `run_id` on first SEALED exposure; crash/resume keeps the same attempt and checkpoint (never rewind); COMPLETED is single-use (`SEALED_ALREADY_CONSUMED`). Migration 47. G13/G21 IN_PROGRESS (absolute 5y soak + acceptance-from-run-IDs remain later).
+
+**P1B (TradingGym + API + worker):** `TradingGym` (`gym.py`) provides causal `reset`/`step` with observations via `MarketView` (G26 PASS). Interactive episodes may step in the control plane; **complete** episodes are `EXTERNAL_REQUIRED` (`market_sim.gym_episode`) on the market_sim worker — FastAPI refuses sync fallback with `TRADING_WORKER_UNAVAILABLE`. Routes under `/api/market-sim/gym/episodes`.
+
+**P1C (trajectory + RewardSpec + dataset bridge):** Canonical `RewardSpec` (`reward.py`) computes kernel-derived step rewards (`equity_delta`, `log_return`, `realized_pnl_delta`, sparse `episode_total_return`); unknown defs stay UNMEASURED. `TrajectoryBuilder` / `TrajectoryArtifact` (`trajectory.py`) seal content-addressed gym step streams; `dataset_bridge.export_trajectory_to_dataset` writes JSONL under markets `.artifacts` and registers via DatasetService when bound (honest `FILE_ONLY` otherwise). G29 PASS.
+
+**P2A (Strategy DSL v2):** `strategy_dsl.py` defines `StrategySpecV2` over `FeatureEngine` — kinds `breakout`, `rsi`, `feature_compare`, plus legacy `ma_cross` / `mean_reversion`, with `regime_filter` gating entries fail-closed. `evaluate_strategy` dispatches v2 kinds; no arbitrary code execution. G15 PASS.
+
+**P2B (Trial Ledger + WFA + sealed acceptance):** Append-only `append_trial` / `count_trials`; `save_experiment` persists `strategy_version` (D14). `wfa.py` rolling WFA windows with purge gap; `walk_forward_splits` rolling overload (D13). `evaluate_acceptance_from_run` reads kernel `run.metrics` only (G21 PASS). G19 PASS; G20 IN_PROGRESS (CPCV later).
+
+**P2C (sandbox + lineage + StrategyMemory):** Python code strategies are `FEATURE_GATED` / `NOT_AVAILABLE` (`code_strategy.py`) until an IsolationSandbox escape suite PASSes — AST filtering alone is insufficient; create/version reject `kind=python`. Immutable lineage via `strategy_lineage.py` (`parent_version`, `parent_content_hash`, `immutable`) on create/version (G17 PASS). `MultiAgentEngine.prepare` hydrates durable StrategyMemory from `list_strategy_memories(as_of_ts=run.start)` (G22 PASS, D15). G16 remains FEATURE_GATED (honest).
+
+**P3A (orchestra cadence + async DecisionRecord):** `decision_cadence.py` owns explicit cadence gates (`every_n_bars` / `daily_close` / `hourly` / `event_driven` / `off`) and `AsyncDecisionQueue` (causal as_of eligibility, no rewind). `create_run` no longer injects a silent multi-agent roster (D31); cadence is recorded on run metadata. Engines consult `should_decide_on_bar`. Trading Orchestra registers `AgentDefinitionKind.TRADING` executors on Agent Fleet; append-only `DecisionRecord` chain (proposal→critique→risk→intent). `AgentKind.TRADING` labeled. G24 PASS.
+
+**P3B (ResearchCampaign + causal Brain/Memory + A0–A4):** Durable `ResearchCampaign` (migration 48) with `checkpoint_iteration` resume; worker job `market_sim.research_campaign` is EXTERNAL_REQUIRED (`TRADING_WORKER_UNAVAILABLE` without JobRuntime). `BrainFacade.retrieve(as_of)` + StrategyMemory as_of (G23 PASS). Scorecards with violation penalties (G27 PASS). Readiness ladder A0–A4; A5/LIVE → `A5_IMPOSSIBLE`; promotion via kernel acceptance never enables live (G25/G28/G31 PASS).
+
+**P4A (PaperForwardRunner + isolated paper + RiskGuard):** `LocalPaperBroker.wallet_for_session` isolates cash per paper session (D18). `PaperForwardRunner` + `paper_forward_step` / `paper_place_order` run every paper order through canonical `RiskGuard` (G32/G34 PASS). Live money remains BLOCKED.
+
+**P4B (sim-to-paper gap + Gateway + leases):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
+
+**P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
+
+**Slice 16 (final gates + verifier):** A0–A4 Trading Center Master Program complete on this branch. `LiveTradingGuard` = BLOCKED; A5 = impossible; long work is `market_sim` worker EXTERNAL_REQUIRED; no second trading runtime. Verifier: `scripts/verify_trading_100.py --run-tests`. Remaining honest non-PASS gates (e.g. CPCV/FDR/Windows/corporate-actions) stay NOT_STARTED / IN_PROGRESS / NOT_TESTED_IN_CI — never false PASS.
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

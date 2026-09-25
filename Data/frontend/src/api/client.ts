@@ -2014,6 +2014,7 @@ export const api = {
     speed?: number;
     initialCash?: number;
     deliberationEveryN?: number;
+    decisionCadence?: string;
     agents?: Array<Record<string, unknown>>;
     gameMode?: string;
     metadata?: Record<string, unknown>;
