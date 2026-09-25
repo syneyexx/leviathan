@@ -159,7 +159,7 @@ export function SimulatiePage() {
   const [initialCash, setInitialCash] = useState(100_000);
   const [engine, setEngine] = useState<"single" | "multi">("single");
   const [decisionCadence, setDecisionCadence] = useState("every_n_bars");
-  const [deliberationEveryN, setDeliberationEveryN] = useState(5);
+  const [deliberationEveryN] = useState(5);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [consoleTab, setConsoleTab] = useState<ConsoleTab>("activity");
@@ -336,7 +336,7 @@ export function SimulatiePage() {
         },
         agents: multiAgents,
       });
-      setRun(created);
+      setRuns((prev) => [created, ...prev.filter((r) => r.run_id !== created.run_id)]);
       setLive(null);
       setSelectedId(created.run_id);
       await api.startMarketSimRun(created.run_id);

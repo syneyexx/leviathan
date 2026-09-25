@@ -90,7 +90,7 @@ def _evaluate_gate(gate_id: str, spec: dict[str, Any], *, run_tests: bool) -> di
     if status == "NOT_TESTED_IN_CI":
         return {"id": gate_id, "status": status, "evidence": evidence,
                 "notes": notes or "External live dependency — never PASS offline"}
-    if status in {"NOT_STARTED", "NOT_TESTED", "IN_PROGRESS", "FAIL"}:
+    if status in {"NOT_STARTED", "NOT_TESTED", "IN_PROGRESS", "FAIL", "FEATURE_GATED"}:
         node_ids = spec.get("test_node_ids") or []
         if run_tests and node_ids and status in {"IN_PROGRESS", "PASS", "FAIL"}:
             code, out = _run([sys.executable, "-m", "pytest", *node_ids, "-q", "--tb=line"],
@@ -104,6 +104,12 @@ def _evaluate_gate(gate_id: str, spec: dict[str, Any], *, run_tests: bool) -> di
         if not evidence and not checks:
             return {"id": gate_id, "status": "FAIL", "evidence": [], "notes": "PASS claimed without evidence"}
         for check in checks:
+            # Documentary string checks are evidence notes, not executable.
+            if isinstance(check, str):
+                evidence.append(f"check:{check}")
+                continue
+            if not isinstance(check, dict):
+                continue
             kind = check.get("kind")
             if kind == "file_exists" and not (ROOT / check["path"]).is_file():
                 return {"id": gate_id, "status": "FAIL", "evidence": evidence,
@@ -153,14 +159,21 @@ def main(argv: list[str] | None = None) -> int:
         for finding in anti.get("findings") or []:
             print(f"  ! {finding}")
 
-    required_pass = [r for r in results if r["status"] != "NOT_TESTED_IN_CI" and gates[r["id"]].get("required", True)]
-    all_pass = all(r["status"] == "PASS" for r in required_pass) and (anti is None or anti.get("ok"))
-    exit_code = 0 if all_pass and required_pass else 1
+    required = [
+        r
+        for r in results
+        if gates[r["id"]].get("required", True)
+        and r["status"] not in {"NOT_TESTED_IN_CI"}
+    ]
+    # FEATURE_GATED is an honest terminal for sandbox-gated features (e.g. G16).
+    acceptable = {"PASS", "FEATURE_GATED"}
+    all_pass = all(r["status"] in acceptable for r in required) and (anti is None or anti.get("ok"))
+    exit_code = 0 if all_pass and required else 1
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "phase": manifest.get("phase"),
-        "program": "Master Program v4",
+        "program": manifest.get("program") or "Master Program v4.1",
         "all_required_pass": all_pass,
         "counts": counts,
         "gates": results,

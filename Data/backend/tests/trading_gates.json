@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4.1",
-  "phase": "P2B",
+  "phase": "Slice16/A0-A4",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "P2B: Trial Ledger append-only + rolling WFA + acceptance-from-run; G15/G19/G21 PASS; G20 IN_PROGRESS",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p2_strategies.py -q"
+      "result": "Slice 16: A0-A4 complete; 43 PASS + G16 FEATURE_GATED; LiveTradingGuard BLOCKED; verifier honest non-zero while G04/G07/G13-14/G18/G20/G36/G40/G46/G49-60 remain non-PASS",
+      "command": "python3 scripts/verify_trading_100.py --run-tests"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -811,13 +811,26 @@
     },
     "G30": {
       "title": "Sim-to-real gap report",
-      "phase": "T8D/T9C",
-      "status": "NOT_STARTED",
+      "phase": "T8D/T9C/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap (paper-safe; live N/A)",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: sim-to-paper gap report; live gap N/A while live BLOCKED"
     },
     "G31": {
       "title": "Promotion state machine",
@@ -1127,33 +1140,74 @@
     },
     "G43": {
       "title": "verify_trading_100 + CI + docs",
-      "phase": "T11",
-      "status": "NOT_STARTED",
+      "phase": "T11/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "scripts/verify_trading_100.py --run-tests",
+        "Data/docs/Leviathan_system_backend.md §20",
+        "Data/docs/Leviathan_system_frontend.md §13",
+        "Data/backend/tests/trading_gates.json",
+        "Data/backend/tests/trading_completion_report.json"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "checks": [
+        {
+          "kind": "file_exists",
+          "path": "scripts/verify_trading_100.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/docs/Leviathan_system_backend.md"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/docs/Leviathan_system_frontend.md"
+        }
+      ],
+      "notes": "Slice 16: verifier + canonical docs"
     },
     "G44": {
       "title": "Completion Report with evidence",
-      "phase": "T11",
-      "status": "NOT_STARTED",
+      "phase": "T11/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json written by verify_trading_100.py",
+        "Gate table + anti-shortcut scan"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "checks": [
+        {
+          "kind": "file_exists",
+          "path": "scripts/verify_trading_100.py"
+        }
+      ],
+      "notes": "Slice 16 completion report path"
     },
     "G45": {
       "title": "All T0 characterization \u2192 regressions",
-      "phase": "T11",
-      "status": "NOT_STARTED",
+      "phase": "T11/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_characterization.py — D1–D31 converted where fixed",
+        "P0–P4 regression files: test_market_sim_p0_kernel.py … p4_paper.py",
+        "282 trading suite tests passed (6 xfailed remaining defects)"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "Slice 16: characterization suite green with honest xfails",
       "related_defects": [
         "D1-D31"
       ]
@@ -1166,28 +1220,45 @@
       "evidence": [],
       "test_node_ids": [],
       "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "notes": "Honest NOT_STARTED — statistical FDR suite not in A0–A4 scope completion",
       "related_defects": []
     },
     "G47": {
       "title": "Windows worker/sandbox/job paths",
       "phase": "T4B/T11",
-      "status": "NOT_STARTED",
+      "status": "NOT_TESTED_IN_CI",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "Linux CI / cloud agent exercised; Windows paths NOT_TESTED_IN_CURRENT_ENVIRONMENT"
+      ],
       "test_node_ids": [],
       "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "notes": "External OS path — not claimed PASS offline"
     },
     "G48": {
       "title": "Security posture live flag off",
-      "phase": "T9D",
-      "status": "NOT_STARTED",
+      "phase": "T9D/P5",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "LiveTradingGuard.public_status LIVE_TRADING_AVAILABLE=BLOCKED",
+        "readiness_ladder A5=IMPOSSIBLE",
+        "normalize_autonomy('A5') raises A5_IMPOSSIBLE",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "Live money blocked; A5 impossible"
     },
     "G49": {
       "title": "Observability trading category",

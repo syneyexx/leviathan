@@ -375,6 +375,8 @@ T2 backend: simulation rounds persist deterministic `MarketState` (regime/trend/
 
 **P4C:** SimulatiePage run builder is explicit; PaperTradingPage and capabilities come from the live API. G41/G42 PASS.
 
+**Slice 16:** TradingCenter UI remains paper/sim-backed only. Live broker stays BLOCKED; A5 is impossible. No mock-success badges. Gate evidence: G41/G42/G48 PASS. Remaining advanced ops gates (G49–G60) stay honest NOT_STARTED.
+
 ---
 
 # 14. Media Control UI

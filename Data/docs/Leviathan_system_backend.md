@@ -673,7 +673,9 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **P4B (sim-to-paper gap + Gateway + leases):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
 
-**P4C (TradingCenter frontend real backend — CURRENT):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
+**P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
+
+**Slice 16 (final gates + verifier):** A0–A4 Trading Center Master Program complete on this branch. `LiveTradingGuard` = BLOCKED; A5 = impossible; long work is `market_sim` worker EXTERNAL_REQUIRED; no second trading runtime. Verifier: `scripts/verify_trading_100.py --run-tests`. Remaining honest non-PASS gates (e.g. CPCV/FDR/Windows/corporate-actions) stay NOT_STARTED / IN_PROGRESS / NOT_TESTED_IN_CI — never false PASS.
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
