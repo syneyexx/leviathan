@@ -2,8 +2,8 @@
   "program": "frontier_reasoning",
   "version": 1,
   "updated": "2026-09-25",
-  "active_phase": "F6",
-  "notes": "F6 neural TaskModel/planner advisors landed. R02–R07/R09–R11/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
+  "active_phase": "F7",
+  "notes": "F7 adaptive compute landed. R02–R11/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
   "f0_skeleton_checks": [
     {
       "id": "F0_AUDIT_DOC",
@@ -62,7 +62,7 @@
     {"id": "R05", "title": "Reasoning capability profile", "required": true, "status": "PASS", "phase": "F2", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f2_two_axis.CapabilityProfileTests", "evidence": "resolve_reasoning_capability_profile never guesses from name"},
     {"id": "R06", "title": "Native reasoning adapter", "required": true, "status": "PASS", "phase": "F3", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f3_native", "evidence": "InferenceComputeController + provider maps; generic sends no unknown knobs"},
     {"id": "R07", "title": "TTC fallback", "required": true, "status": "PASS", "phase": "F4", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f4_ttc", "evidence": "TTCExecutor multi-candidate + majority/longest select; no unknown knobs"},
-    {"id": "R08", "title": "Adaptive compute", "required": true, "status": "NOT_STARTED", "phase": "F2+", "check": "manual"},
+    {"id": "R08", "title": "Adaptive compute", "required": true, "status": "PASS", "phase": "F7", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f7_adaptive", "evidence": "expected_gain calibration + neural-axis escalate/deescalate/clamp"},
     {"id": "R09", "title": "Structured reasoning state", "required": true, "status": "PASS", "phase": "F5", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f5_structured", "evidence": "StructuredReasoningState public contract + persist/hydrate + candidate summaries"},
     {"id": "R10", "title": "Neural TaskModel", "required": true, "status": "PASS", "phase": "F6", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f6_neural_advisors.TaskAdviceValidationTests", "evidence": "validated TaskModelAdvice; forbidden authority fields rejected"},
     {"id": "R11", "title": "Neural planner", "required": true, "status": "PASS", "phase": "F6", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f6_neural_advisors.PlanAdviceValidationTests", "evidence": "validated plan advice append-only; template plan remains owner"},

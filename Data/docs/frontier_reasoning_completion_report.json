@@ -1,6 +1,6 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-25T08:04:05Z",
+  "generated_at": "2026-09-25T08:09:16Z",
   "phase": "F0",
   "exit_code": 0,
   "definition_of_done": true,
@@ -116,9 +116,9 @@
       "id": "R08",
       "title": "Adaptive compute",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
-      "phase": "F2+",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f7_adaptive;adaptive_compute_neural_axis_ok",
+      "phase": "F7",
       "kind": "program_gate"
     },
     {
