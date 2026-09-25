@@ -3610,6 +3610,206 @@ def _m50_agent_signal_fabric(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
 
 
+def _m52_paper_portefeuille(conn: sqlite3.Connection) -> None:
+    """Paper Portefeuille — multi-asset durable capital book for TradingCenter."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_portfolios (
+            portfolio_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'CREATED',
+            mode TEXT NOT NULL DEFAULT 'PAPER',
+            base_currency TEXT NOT NULL DEFAULT 'USD',
+            broker_mode TEXT NOT NULL DEFAULT 'local_paper',
+            provider_id TEXT NOT NULL DEFAULT 'binance_public',
+            benchmark_symbol TEXT NOT NULL DEFAULT 'BTCUSDT',
+            orchestra_id TEXT,
+            initial_equity TEXT NOT NULL DEFAULT '100000',
+            cash TEXT NOT NULL DEFAULT '100000',
+            reserved_cash TEXT NOT NULL DEFAULT '0',
+            realized_pnl TEXT NOT NULL DEFAULT '0',
+            unrealized_pnl TEXT NOT NULL DEFAULT '0',
+            fees_paid TEXT NOT NULL DEFAULT '0',
+            equity TEXT NOT NULL DEFAULT '100000',
+            peak_equity TEXT NOT NULL DEFAULT '100000',
+            margin_used TEXT NOT NULL DEFAULT '0',
+            gross_exposure TEXT NOT NULL DEFAULT '0',
+            net_exposure TEXT NOT NULL DEFAULT '0',
+            kill_switch INTEGER NOT NULL DEFAULT 0,
+            shorting_enabled INTEGER NOT NULL DEFAULT 0,
+            sod_equity TEXT,
+            sod_date TEXT,
+            last_mark_at TEXT,
+            book_json TEXT NOT NULL DEFAULT '{}',
+            settings_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_portfolio_positions (
+            position_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            asset_class TEXT NOT NULL DEFAULT 'crypto',
+            side TEXT NOT NULL DEFAULT 'LONG',
+            qty TEXT NOT NULL DEFAULT '0',
+            avg_entry_price TEXT NOT NULL DEFAULT '0',
+            mark_price TEXT NOT NULL DEFAULT '0',
+            market_value TEXT NOT NULL DEFAULT '0',
+            cost_basis TEXT NOT NULL DEFAULT '0',
+            realized_pnl TEXT NOT NULL DEFAULT '0',
+            unrealized_pnl TEXT NOT NULL DEFAULT '0',
+            pnl_pct TEXT NOT NULL DEFAULT '0',
+            fees TEXT NOT NULL DEFAULT '0',
+            margin_used TEXT NOT NULL DEFAULT '0',
+            agent_id TEXT,
+            orchestra_id TEXT,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            opened_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(portfolio_id) REFERENCES market_sim_portfolios(portfolio_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_portfolio_transactions (
+            transaction_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            order_id TEXT,
+            fill_id TEXT,
+            decision_id TEXT,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            qty TEXT NOT NULL,
+            price TEXT NOT NULL,
+            gross_notional TEXT NOT NULL DEFAULT '0',
+            fees TEXT NOT NULL DEFAULT '0',
+            net_cash_effect TEXT NOT NULL DEFAULT '0',
+            result TEXT NOT NULL DEFAULT '',
+            agent_id TEXT,
+            orchestra_id TEXT,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            risk_result_json TEXT NOT NULL DEFAULT '{}',
+            market_snapshot_id TEXT,
+            timestamp TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(portfolio_id) REFERENCES market_sim_portfolios(portfolio_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_portfolio_orders (
+            order_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            client_order_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            qty TEXT NOT NULL,
+            status TEXT NOT NULL,
+            fill_price TEXT,
+            fee TEXT NOT NULL DEFAULT '0',
+            reject_reason TEXT NOT NULL DEFAULT '',
+            decision_id TEXT,
+            agent_id TEXT,
+            orchestra_id TEXT,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            risk_result_json TEXT NOT NULL DEFAULT '{}',
+            submitted_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(portfolio_id, client_order_id),
+            FOREIGN KEY(portfolio_id) REFERENCES market_sim_portfolios(portfolio_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_portfolio_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            equity TEXT NOT NULL,
+            cash TEXT NOT NULL,
+            realized_pnl TEXT NOT NULL DEFAULT '0',
+            unrealized_pnl TEXT NOT NULL DEFAULT '0',
+            gross_exposure TEXT NOT NULL DEFAULT '0',
+            net_exposure TEXT NOT NULL DEFAULT '0',
+            margin_used TEXT NOT NULL DEFAULT '0',
+            drawdown TEXT NOT NULL DEFAULT '0',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(portfolio_id) REFERENCES market_sim_portfolios(portfolio_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_portfolio_allocations (
+            allocation_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            target_allocation_pct REAL NOT NULL DEFAULT 0,
+            allocated_budget TEXT NOT NULL DEFAULT '0',
+            current_attributed_equity TEXT NOT NULL DEFAULT '0',
+            active INTEGER NOT NULL DEFAULT 1,
+            strategy_version INTEGER,
+            agent_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(portfolio_id) REFERENCES market_sim_portfolios(portfolio_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_portfolio_recommendations (
+            recommendation_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            target TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            current_value TEXT NOT NULL DEFAULT '',
+            target_value TEXT NOT NULL DEFAULT '',
+            impact TEXT NOT NULL DEFAULT 'MEDIUM',
+            estimated_orders_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(portfolio_id) REFERENCES market_sim_portfolios(portfolio_id) ON DELETE CASCADE
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_ms_portfolios_status "
+        "ON market_sim_portfolios(status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ms_pf_positions_portfolio "
+        "ON market_sim_portfolio_positions(portfolio_id, status, symbol)",
+        "CREATE INDEX IF NOT EXISTS idx_ms_pf_tx_portfolio "
+        "ON market_sim_portfolio_transactions(portfolio_id, timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_ms_pf_tx_fill "
+        "ON market_sim_portfolio_transactions(fill_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ms_pf_orders_portfolio "
+        "ON market_sim_portfolio_orders(portfolio_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_ms_pf_snap_portfolio "
+        "ON market_sim_portfolio_snapshots(portfolio_id, timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_ms_pf_alloc_portfolio "
+        "ON market_sim_portfolio_allocations(portfolio_id, kind)",
+        "CREATE INDEX IF NOT EXISTS idx_ms_pf_rec_portfolio "
+        "ON market_sim_portfolio_recommendations(portfolio_id, status)",
+    ):
+        conn.execute(ddl)
+
+
 def _m51_market_feed_fabric(conn: sqlite3.Connection) -> None:
     """Realtime market feed fabric — sessions, coalesced checkpoints, latency rollups."""
     conn.execute(
@@ -3814,6 +4014,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=51,
         name="market_feed_fabric",
         apply=_m51_market_feed_fabric,
+    ),
+    Migration(
+        version=52,
+        name="paper_portefeuille",
+        apply=_m52_paper_portefeuille,
     ),
 )
 

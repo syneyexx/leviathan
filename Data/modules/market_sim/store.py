@@ -1740,3 +1740,545 @@ class MarketSimStore:
             "updated_at": row["updated_at"],
             "metadata": _loads(row["metadata_json"], {}),
         }
+
+    # --- Paper Portefeuille ---
+
+    def upsert_portfolio(self, row: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_portfolios(
+                    portfolio_id, name, status, mode, base_currency, broker_mode,
+                    provider_id, benchmark_symbol, orchestra_id, initial_equity,
+                    cash, reserved_cash, realized_pnl, unrealized_pnl, fees_paid,
+                    equity, peak_equity, margin_used, gross_exposure, net_exposure,
+                    kill_switch, shorting_enabled, sod_equity, sod_date, last_mark_at,
+                    book_json, settings_json, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(portfolio_id) DO UPDATE SET
+                    name=excluded.name,
+                    status=excluded.status,
+                    orchestra_id=excluded.orchestra_id,
+                    cash=excluded.cash,
+                    reserved_cash=excluded.reserved_cash,
+                    realized_pnl=excluded.realized_pnl,
+                    unrealized_pnl=excluded.unrealized_pnl,
+                    fees_paid=excluded.fees_paid,
+                    equity=excluded.equity,
+                    peak_equity=excluded.peak_equity,
+                    margin_used=excluded.margin_used,
+                    gross_exposure=excluded.gross_exposure,
+                    net_exposure=excluded.net_exposure,
+                    kill_switch=excluded.kill_switch,
+                    shorting_enabled=excluded.shorting_enabled,
+                    sod_equity=excluded.sod_equity,
+                    sod_date=excluded.sod_date,
+                    last_mark_at=excluded.last_mark_at,
+                    book_json=excluded.book_json,
+                    settings_json=excluded.settings_json,
+                    metadata_json=excluded.metadata_json,
+                    benchmark_symbol=excluded.benchmark_symbol,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    row["portfolio_id"],
+                    row["name"],
+                    row.get("status") or "CREATED",
+                    row.get("mode") or "PAPER",
+                    row.get("base_currency") or "USD",
+                    row.get("broker_mode") or "local_paper",
+                    row.get("provider_id") or "binance_public",
+                    row.get("benchmark_symbol") or "BTCUSDT",
+                    row.get("orchestra_id"),
+                    str(row.get("initial_equity") or "100000"),
+                    str(row.get("cash") or "0"),
+                    str(row.get("reserved_cash") or "0"),
+                    str(row.get("realized_pnl") or "0"),
+                    str(row.get("unrealized_pnl") or "0"),
+                    str(row.get("fees_paid") or "0"),
+                    str(row.get("equity") or "0"),
+                    str(row.get("peak_equity") or "0"),
+                    str(row.get("margin_used") or "0"),
+                    str(row.get("gross_exposure") or "0"),
+                    str(row.get("net_exposure") or "0"),
+                    1 if row.get("kill_switch") else 0,
+                    1 if row.get("shorting_enabled") else 0,
+                    row.get("sod_equity"),
+                    row.get("sod_date"),
+                    row.get("last_mark_at"),
+                    json.dumps(row.get("book_json") or {}),
+                    json.dumps(row.get("settings") or {}),
+                    json.dumps(row.get("metadata") or {}),
+                    row.get("created_at") or utc_now(),
+                    row.get("updated_at") or utc_now(),
+                ),
+            )
+        return row
+
+    def get_portfolio(self, portfolio_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sim_portfolios WHERE portfolio_id=?",
+                (portfolio_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return self._row_portfolio(row)
+
+    def list_portfolios(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM market_sim_portfolios ORDER BY updated_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._row_portfolio(r) for r in rows]
+
+    def _row_portfolio(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "portfolio_id": row["portfolio_id"],
+            "name": row["name"],
+            "status": row["status"],
+            "mode": row["mode"],
+            "base_currency": row["base_currency"],
+            "broker_mode": row["broker_mode"],
+            "provider_id": row["provider_id"],
+            "benchmark_symbol": row["benchmark_symbol"],
+            "orchestra_id": row["orchestra_id"],
+            "initial_equity": row["initial_equity"],
+            "cash": row["cash"],
+            "reserved_cash": row["reserved_cash"],
+            "realized_pnl": row["realized_pnl"],
+            "unrealized_pnl": row["unrealized_pnl"],
+            "fees_paid": row["fees_paid"],
+            "equity": row["equity"],
+            "peak_equity": row["peak_equity"],
+            "margin_used": row["margin_used"],
+            "gross_exposure": row["gross_exposure"],
+            "net_exposure": row["net_exposure"],
+            "kill_switch": bool(row["kill_switch"]),
+            "shorting_enabled": bool(row["shorting_enabled"]),
+            "sod_equity": row["sod_equity"],
+            "sod_date": row["sod_date"],
+            "last_mark_at": row["last_mark_at"],
+            "book_json": _loads(row["book_json"], {}),
+            "settings": _loads(row["settings_json"], {}),
+            "metadata": _loads(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def insert_portfolio_snapshot(self, snap: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO market_sim_portfolio_snapshots(
+                    snapshot_id, portfolio_id, timestamp, equity, cash,
+                    realized_pnl, unrealized_pnl, gross_exposure, net_exposure,
+                    margin_used, drawdown, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snap["snapshot_id"],
+                    snap["portfolio_id"],
+                    snap["timestamp"],
+                    str(snap["equity"]),
+                    str(snap["cash"]),
+                    str(snap.get("realized_pnl") or "0"),
+                    str(snap.get("unrealized_pnl") or "0"),
+                    str(snap.get("gross_exposure") or "0"),
+                    str(snap.get("net_exposure") or "0"),
+                    str(snap.get("margin_used") or "0"),
+                    str(snap.get("drawdown") or "0"),
+                    json.dumps(snap.get("metadata") or {}),
+                ),
+            )
+        return snap
+
+    def list_portfolio_snapshots(self, portfolio_id: str, *, limit: int = 2000) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_portfolio_snapshots
+                WHERE portfolio_id=? ORDER BY timestamp ASC LIMIT ?
+                """,
+                (portfolio_id, max(1, int(limit))),
+            ).fetchall()
+        return [
+            {
+                "snapshot_id": r["snapshot_id"],
+                "portfolio_id": r["portfolio_id"],
+                "timestamp": r["timestamp"],
+                "equity": r["equity"],
+                "cash": r["cash"],
+                "realized_pnl": r["realized_pnl"],
+                "unrealized_pnl": r["unrealized_pnl"],
+                "gross_exposure": r["gross_exposure"],
+                "net_exposure": r["net_exposure"],
+                "margin_used": r["margin_used"],
+                "drawdown": r["drawdown"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
+
+    def latest_portfolio_snapshot(self, portfolio_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_sim_portfolio_snapshots
+                WHERE portfolio_id=? ORDER BY timestamp DESC LIMIT 1
+                """,
+                (portfolio_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "snapshot_id": row["snapshot_id"],
+            "portfolio_id": row["portfolio_id"],
+            "timestamp": row["timestamp"],
+            "equity": row["equity"],
+            "cash": row["cash"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def insert_portfolio_transaction(self, tx: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO market_sim_portfolio_transactions(
+                    transaction_id, portfolio_id, order_id, fill_id, decision_id,
+                    symbol, side, qty, price, gross_notional, fees, net_cash_effect,
+                    result, agent_id, orchestra_id, strategy_id, strategy_version,
+                    risk_result_json, market_snapshot_id, timestamp, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tx["transaction_id"],
+                    tx["portfolio_id"],
+                    tx.get("order_id"),
+                    tx.get("fill_id"),
+                    tx.get("decision_id"),
+                    tx["symbol"],
+                    tx["side"],
+                    str(tx["qty"]),
+                    str(tx["price"]),
+                    str(tx.get("gross_notional") or "0"),
+                    str(tx.get("fees") or "0"),
+                    str(tx.get("net_cash_effect") or "0"),
+                    tx.get("result") or "",
+                    tx.get("agent_id"),
+                    tx.get("orchestra_id"),
+                    tx.get("strategy_id"),
+                    tx.get("strategy_version"),
+                    json.dumps(tx.get("risk_result") or {}),
+                    tx.get("market_snapshot_id"),
+                    tx.get("timestamp") or utc_now(),
+                    json.dumps(tx.get("metadata") or {}),
+                ),
+            )
+        return tx
+
+    def list_portfolio_transactions(self, portfolio_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_portfolio_transactions
+                WHERE portfolio_id=? ORDER BY timestamp DESC LIMIT ?
+                """,
+                (portfolio_id, max(1, int(limit))),
+            ).fetchall()
+        return [
+            {
+                "transaction_id": r["transaction_id"],
+                "portfolio_id": r["portfolio_id"],
+                "order_id": r["order_id"],
+                "fill_id": r["fill_id"],
+                "decision_id": r["decision_id"],
+                "symbol": r["symbol"],
+                "side": r["side"],
+                "qty": r["qty"],
+                "price": r["price"],
+                "gross_notional": r["gross_notional"],
+                "fees": r["fees"],
+                "net_cash_effect": r["net_cash_effect"],
+                "result": r["result"],
+                "agent_id": r["agent_id"],
+                "orchestra_id": r["orchestra_id"],
+                "strategy_id": r["strategy_id"],
+                "strategy_version": r["strategy_version"],
+                "risk_result": _loads(r["risk_result_json"], {}),
+                "timestamp": r["timestamp"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
+
+    def upsert_portfolio_order(self, order: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_portfolio_orders(
+                    order_id, portfolio_id, client_order_id, symbol, side, qty, status,
+                    fill_price, fee, reject_reason, decision_id, agent_id, orchestra_id,
+                    strategy_id, strategy_version, risk_result_json, submitted_at,
+                    updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    status=excluded.status,
+                    fill_price=excluded.fill_price,
+                    fee=excluded.fee,
+                    reject_reason=excluded.reject_reason,
+                    risk_result_json=excluded.risk_result_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    order["order_id"],
+                    order["portfolio_id"],
+                    order["client_order_id"],
+                    order["symbol"],
+                    order["side"],
+                    str(order["qty"]),
+                    order["status"],
+                    order.get("fill_price"),
+                    str(order.get("fee") or "0"),
+                    order.get("reject_reason") or "",
+                    order.get("decision_id"),
+                    order.get("agent_id"),
+                    order.get("orchestra_id"),
+                    order.get("strategy_id"),
+                    order.get("strategy_version"),
+                    json.dumps(order.get("risk_result") or {}),
+                    order.get("submitted_at") or utc_now(),
+                    order.get("updated_at") or utc_now(),
+                    json.dumps(order.get("metadata") or {}),
+                ),
+            )
+        return order
+
+    def get_portfolio_order_by_client(
+        self, portfolio_id: str, client_order_id: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_sim_portfolio_orders
+                WHERE portfolio_id=? AND client_order_id=?
+                """,
+                (portfolio_id, client_order_id),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "order_id": row["order_id"],
+            "portfolio_id": row["portfolio_id"],
+            "client_order_id": row["client_order_id"],
+            "symbol": row["symbol"],
+            "side": row["side"],
+            "qty": row["qty"],
+            "status": row["status"],
+            "fill_price": row["fill_price"],
+            "fee": row["fee"],
+            "reject_reason": row["reject_reason"],
+            "decision_id": row["decision_id"],
+            "agent_id": row["agent_id"],
+            "orchestra_id": row["orchestra_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": row["strategy_version"],
+            "risk_result": _loads(row["risk_result_json"], {}),
+            "submitted_at": row["submitted_at"],
+            "updated_at": row["updated_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def list_portfolio_orders(self, portfolio_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_portfolio_orders
+                WHERE portfolio_id=? ORDER BY submitted_at DESC LIMIT ?
+                """,
+                (portfolio_id, max(1, int(limit))),
+            ).fetchall()
+        out = []
+        for row in rows:
+            out.append(
+                {
+                    "order_id": row["order_id"],
+                    "portfolio_id": row["portfolio_id"],
+                    "client_order_id": row["client_order_id"],
+                    "symbol": row["symbol"],
+                    "side": row["side"],
+                    "qty": row["qty"],
+                    "status": row["status"],
+                    "fill_price": row["fill_price"],
+                    "fee": row["fee"],
+                    "reject_reason": row["reject_reason"],
+                    "agent_id": row["agent_id"],
+                    "strategy_id": row["strategy_id"],
+                    "status_raw": row["status"],
+                    "submitted_at": row["submitted_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
+
+    def replace_portfolio_positions(self, portfolio_id: str, positions: list[dict[str, Any]]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM market_sim_portfolio_positions WHERE portfolio_id=?",
+                (portfolio_id,),
+            )
+            for p in positions:
+                conn.execute(
+                    """
+                    INSERT INTO market_sim_portfolio_positions(
+                        position_id, portfolio_id, symbol, asset_class, side, qty,
+                        avg_entry_price, mark_price, market_value, cost_basis,
+                        realized_pnl, unrealized_pnl, pnl_pct, fees, margin_used,
+                        agent_id, orchestra_id, strategy_id, strategy_version,
+                        opened_at, updated_at, status, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        p["position_id"],
+                        portfolio_id,
+                        p["symbol"],
+                        p.get("asset_class") or "crypto",
+                        p.get("side") or "LONG",
+                        str(p.get("qty") or "0"),
+                        str(p.get("avg_entry_price") or "0"),
+                        str(p.get("mark_price") or "0"),
+                        str(p.get("market_value") or "0"),
+                        str(p.get("cost_basis") or "0"),
+                        str(p.get("realized_pnl") or "0"),
+                        str(p.get("unrealized_pnl") or "0"),
+                        str(p.get("pnl_pct") or "0"),
+                        str(p.get("fees") or "0"),
+                        str(p.get("margin_used") or "0"),
+                        p.get("agent_id"),
+                        p.get("orchestra_id"),
+                        p.get("strategy_id"),
+                        p.get("strategy_version"),
+                        p.get("opened_at") or "",
+                        p.get("updated_at") or utc_now(),
+                        p.get("status") or "OPEN",
+                        json.dumps(p.get("metadata") or {}),
+                    ),
+                )
+
+    def upsert_portfolio_allocation(self, row: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_portfolio_allocations(
+                    allocation_id, portfolio_id, kind, target_id, target_allocation_pct,
+                    allocated_budget, current_attributed_equity, active, strategy_version,
+                    agent_id, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(allocation_id) DO UPDATE SET
+                    target_allocation_pct=excluded.target_allocation_pct,
+                    allocated_budget=excluded.allocated_budget,
+                    current_attributed_equity=excluded.current_attributed_equity,
+                    active=excluded.active,
+                    strategy_version=excluded.strategy_version,
+                    agent_id=excluded.agent_id,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    row["allocation_id"],
+                    row["portfolio_id"],
+                    row["kind"],
+                    row["target_id"],
+                    float(row.get("target_allocation_pct") or 0),
+                    str(row.get("allocated_budget") or "0"),
+                    str(row.get("current_attributed_equity") or "0"),
+                    1 if row.get("active", True) else 0,
+                    row.get("strategy_version"),
+                    row.get("agent_id"),
+                    json.dumps(row.get("metadata") or {}),
+                ),
+            )
+        return row
+
+    def list_portfolio_allocations(self, portfolio_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM market_sim_portfolio_allocations WHERE portfolio_id=?",
+                (portfolio_id,),
+            ).fetchall()
+        return [
+            {
+                "allocation_id": r["allocation_id"],
+                "portfolio_id": r["portfolio_id"],
+                "kind": r["kind"],
+                "target_id": r["target_id"],
+                "target_allocation_pct": float(r["target_allocation_pct"]),
+                "allocated_budget": r["allocated_budget"],
+                "current_attributed_equity": r["current_attributed_equity"],
+                "active": bool(r["active"]),
+                "strategy_version": r["strategy_version"],
+                "agent_id": r["agent_id"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
+
+    def replace_portfolio_recommendations(
+        self, portfolio_id: str, recs: list[dict[str, Any]]
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM market_sim_portfolio_recommendations WHERE portfolio_id=? AND status='PENDING'",
+                (portfolio_id,),
+            )
+            for r in recs:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO market_sim_portfolio_recommendations(
+                        recommendation_id, portfolio_id, type, target, reason,
+                        current_value, target_value, impact, estimated_orders_json,
+                        status, created_at, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        r["recommendation_id"],
+                        portfolio_id,
+                        r["type"],
+                        r.get("target") or "",
+                        r.get("reason") or "",
+                        r.get("current_value") or "",
+                        r.get("target_value") or "",
+                        r.get("impact") or "MEDIUM",
+                        json.dumps(r.get("estimated_orders") or []),
+                        r.get("status") or "PENDING",
+                        r.get("created_at") or utc_now(),
+                        json.dumps(r.get("metadata") or {}),
+                    ),
+                )
+
+    def list_portfolio_recommendations(self, portfolio_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_portfolio_recommendations
+                WHERE portfolio_id=? ORDER BY created_at DESC LIMIT 20
+                """,
+                (portfolio_id,),
+            ).fetchall()
+        return [
+            {
+                "recommendation_id": r["recommendation_id"],
+                "portfolio_id": r["portfolio_id"],
+                "type": r["type"],
+                "target": r["target"],
+                "reason": r["reason"],
+                "current_value": r["current_value"],
+                "target_value": r["target_value"],
+                "impact": r["impact"],
+                "estimated_orders": _loads(r["estimated_orders_json"], []),
+                "status": r["status"],
+                "created_at": r["created_at"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]

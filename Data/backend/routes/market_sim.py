@@ -108,6 +108,52 @@ class PaperOrderRequest(BaseModel):
     clientOrderId: str | None = None
 
 
+class PortfolioCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=240)
+    initialEquity: float = Field(100_000.0, gt=0)
+    baseCurrency: str = "USD"
+    brokerMode: str = "local_paper"
+    providerId: str = "binance_public"
+    benchmarkSymbol: str = "BTCUSDT"
+    orchestraId: str | None = None
+    shortingEnabled: bool = False
+    settings: dict[str, Any] | None = None
+    agentAllocations: list[dict[str, Any]] | None = None
+    strategyAllocations: list[dict[str, Any]] | None = None
+    allowManualOnly: bool = True
+
+
+class PortfolioPatch(BaseModel):
+    name: str | None = None
+    orchestraId: str | None = None
+    benchmarkSymbol: str | None = None
+    settings: dict[str, Any] | None = None
+
+
+class PortfolioOrderRequest(BaseModel):
+    symbol: str
+    side: str
+    qty: float = Field(gt=0)
+    clientOrderId: str | None = None
+    agentId: str | None = None
+    orchestraId: str | None = None
+    strategyId: str | None = None
+    strategyVersion: int | None = None
+    decisionId: str | None = None
+
+
+class PortfolioCloseSelected(BaseModel):
+    positionIds: list[str] = Field(min_length=1)
+
+
+class PortfolioAllocationsSave(BaseModel):
+    allocations: list[dict[str, Any]]
+
+
+class PortfolioRebalanceRequest(BaseModel):
+    orders: list[dict[str, Any]] | None = None
+
+
 class FeedStartRequest(BaseModel):
     providerId: str = "binance_public"
     symbols: list[str] = Field(min_length=1)
@@ -536,6 +582,271 @@ def build_market_sim_router(
     def paper_kill(session_id: str, armed: bool = True) -> dict:
         try:
             return {"session": service.paper_kill_switch(session_id, armed=armed)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    # --- Paper Portefeuille ---
+
+    @router.get("/api/market-sim/portfolios")
+    def list_portfolios(limit: int = Query(50, ge=1, le=200)) -> dict:
+        try:
+            return {"portfolios": service.list_portfolios(limit=limit)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios")
+    def create_portfolio(payload: PortfolioCreate) -> dict:
+        try:
+            settings = dict(payload.settings or {})
+            if payload.allowManualOnly:
+                settings["allow_manual_only"] = True
+            return {
+                "portfolio": service.create_portfolio(
+                    name=payload.name,
+                    initial_equity=payload.initialEquity,
+                    base_currency=payload.baseCurrency,
+                    broker_mode=payload.brokerMode,
+                    provider_id=payload.providerId,
+                    benchmark_symbol=payload.benchmarkSymbol,
+                    orchestra_id=payload.orchestraId,
+                    shorting_enabled=payload.shortingEnabled,
+                    settings=settings,
+                    agent_allocations=payload.agentAllocations,
+                    strategy_allocations=payload.strategyAllocations,
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}")
+    def get_portfolio(portfolio_id: str) -> dict:
+        try:
+            return {"portfolio": service.get_portfolio(portfolio_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.patch("/api/market-sim/portfolios/{portfolio_id}")
+    def patch_portfolio(portfolio_id: str, payload: PortfolioPatch) -> dict:
+        try:
+            patch: dict[str, Any] = {}
+            if payload.name is not None:
+                patch["name"] = payload.name
+            if payload.orchestraId is not None:
+                patch["orchestra_id"] = payload.orchestraId
+            if payload.benchmarkSymbol is not None:
+                patch["benchmark_symbol"] = payload.benchmarkSymbol
+            if payload.settings is not None:
+                patch["settings"] = payload.settings
+            return {"portfolio": service.patch_portfolio(portfolio_id, patch)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/start")
+    def start_portfolio(portfolio_id: str) -> dict:
+        try:
+            return {"portfolio": service.start_portfolio(portfolio_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/pause")
+    def pause_portfolio(portfolio_id: str) -> dict:
+        try:
+            return {"portfolio": service.pause_portfolio(portfolio_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/resume")
+    def resume_portfolio(portfolio_id: str) -> dict:
+        try:
+            return {"portfolio": service.resume_portfolio(portfolio_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/stop")
+    def stop_portfolio(portfolio_id: str) -> dict:
+        try:
+            return {"portfolio": service.stop_portfolio(portfolio_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/kill-switch")
+    def portfolio_kill(portfolio_id: str, armed: bool = True) -> dict:
+        try:
+            return {"portfolio": service.portfolio_kill_switch(portfolio_id, armed=armed)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/dashboard")
+    def portfolio_dashboard(
+        portfolio_id: str,
+        range: str = Query("YTD", alias="range"),
+    ) -> dict:
+        try:
+            return service.portfolio_dashboard(portfolio_id, range_key=range)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/positions")
+    def portfolio_positions(portfolio_id: str) -> dict:
+        try:
+            dash = service.portfolio_dashboard(portfolio_id)
+            return {"positions": dash.get("positions") or []}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/transactions")
+    def portfolio_transactions(
+        portfolio_id: str, limit: int = Query(50, ge=1, le=500)
+    ) -> dict:
+        try:
+            return {
+                "transactions": service.store.list_portfolio_transactions(
+                    portfolio_id, limit=limit
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/orders")
+    def portfolio_orders(portfolio_id: str, limit: int = Query(50, ge=1, le=500)) -> dict:
+        try:
+            return {
+                "orders": service.store.list_portfolio_orders(portfolio_id, limit=limit)
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/performance")
+    def portfolio_performance(
+        portfolio_id: str,
+        range: str = Query("YTD", alias="range"),
+    ) -> dict:
+        try:
+            return {
+                "performance": service.portfolio_performance(
+                    portfolio_id, range_key=range
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/risk")
+    def portfolio_risk(portfolio_id: str) -> dict:
+        try:
+            dash = service.portfolio_dashboard(portfolio_id)
+            return {"risk": dash.get("risk") or {}}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/allocations")
+    def portfolio_allocations(portfolio_id: str) -> dict:
+        try:
+            return {
+                "allocations": service.store.list_portfolio_allocations(portfolio_id)
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/allocations")
+    def save_portfolio_allocations(
+        portfolio_id: str, payload: PortfolioAllocationsSave
+    ) -> dict:
+        try:
+            return service.portfolio_save_allocations(portfolio_id, payload.allocations)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/strategies")
+    def portfolio_strategies(portfolio_id: str) -> dict:
+        try:
+            dash = service.portfolio_dashboard(portfolio_id)
+            return {"strategies": dash.get("strategy_allocation") or []}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/recommendations")
+    def portfolio_recommendations(portfolio_id: str) -> dict:
+        try:
+            dash = service.portfolio_dashboard(portfolio_id)
+            return {"recommendations": dash.get("recommendations") or []}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/orders")
+    def portfolio_order(portfolio_id: str, payload: PortfolioOrderRequest) -> dict:
+        try:
+            return _mutate_via_gateway(
+                "market_sim.portfolio_order",
+                {
+                    "portfolio_id": portfolio_id,
+                    "symbol": payload.symbol,
+                    "side": payload.side,
+                    "qty": payload.qty,
+                    "client_order_id": payload.clientOrderId,
+                },
+                lambda: service.portfolio_place_order(
+                    portfolio_id,
+                    symbol=payload.symbol,
+                    side=payload.side,
+                    qty=payload.qty,
+                    client_order_id=payload.clientOrderId,
+                    agent_id=payload.agentId,
+                    orchestra_id=payload.orchestraId,
+                    strategy_id=payload.strategyId,
+                    strategy_version=payload.strategyVersion,
+                    decision_id=payload.decisionId,
+                ),
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/positions/{position_id}/close")
+    def close_portfolio_position(portfolio_id: str, position_id: str) -> dict:
+        try:
+            return service.portfolio_close_position(portfolio_id, position_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/positions/close-selected")
+    def close_selected_positions(
+        portfolio_id: str, payload: PortfolioCloseSelected
+    ) -> dict:
+        try:
+            return service.portfolio_close_positions(portfolio_id, payload.positionIds)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/rebalance/preview")
+    def rebalance_preview(portfolio_id: str, payload: PortfolioRebalanceRequest) -> dict:
+        try:
+            return service.portfolio_rebalance_preview(portfolio_id, payload.orders)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/rebalance/execute")
+    def rebalance_execute(portfolio_id: str, payload: PortfolioRebalanceRequest) -> dict:
+        try:
+            return _mutate_via_gateway(
+                "market_sim.portfolio_rebalance",
+                {"portfolio_id": portfolio_id, "orders": payload.orders},
+                lambda: service.portfolio_rebalance_execute(portfolio_id, payload.orders),
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/portfolios/{portfolio_id}/export")
+    def export_portfolio(
+        portfolio_id: str, format: str = Query("json", alias="format")
+    ) -> dict:
+        try:
+            return service.portfolio_export(portfolio_id, fmt=format)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/portfolios/{portfolio_id}/tick")
+    def portfolio_tick(portfolio_id: str) -> dict:
+        try:
+            return service.portfolio_tick(portfolio_id)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

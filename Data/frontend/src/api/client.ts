@@ -98,6 +98,8 @@ import type {
   McpServerPublic,
   McpToolRecord,
   MarketSimStatusResponse,
+  PaperPortfolio,
+  PortfolioDashboard,
   MarketDataSource,
   MarketStrategy,
   MarketStrategyVersion,
@@ -2107,6 +2109,167 @@ export const api = {
 
   listPaperSessions(): Promise<{ sessions: Array<Record<string, unknown>> }> {
     return request("/api/market-sim/paper/sessions");
+  },
+
+  listPortfolios(limit = 50): Promise<{ portfolios: PaperPortfolio[] }> {
+    return request(`/api/market-sim/portfolios?limit=${limit}`);
+  },
+
+  createPortfolio(payload: {
+    name: string;
+    initialEquity?: number;
+    baseCurrency?: string;
+    brokerMode?: string;
+    providerId?: string;
+    benchmarkSymbol?: string;
+    orchestraId?: string | null;
+    shortingEnabled?: boolean;
+    settings?: Record<string, unknown>;
+    agentAllocations?: Array<Record<string, unknown>>;
+    strategyAllocations?: Array<Record<string, unknown>>;
+    allowManualOnly?: boolean;
+  }): Promise<{ portfolio: PaperPortfolio }> {
+    return request("/api/market-sim/portfolios", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getPortfolio(portfolioId: string): Promise<{ portfolio: PaperPortfolio }> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}`);
+  },
+
+  patchPortfolio(
+    portfolioId: string,
+    payload: {
+      name?: string;
+      orchestraId?: string | null;
+      benchmarkSymbol?: string;
+      settings?: Record<string, unknown>;
+    },
+  ): Promise<{ portfolio: PaperPortfolio }> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  startPortfolio(portfolioId: string): Promise<{ portfolio: PaperPortfolio }> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/start`, {
+      method: "POST",
+    });
+  },
+
+  pausePortfolio(portfolioId: string): Promise<{ portfolio: PaperPortfolio }> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/pause`, {
+      method: "POST",
+    });
+  },
+
+  resumePortfolio(portfolioId: string): Promise<{ portfolio: PaperPortfolio }> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/resume`, {
+      method: "POST",
+    });
+  },
+
+  stopPortfolio(portfolioId: string): Promise<{ portfolio: PaperPortfolio }> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/stop`, {
+      method: "POST",
+    });
+  },
+
+  portfolioDashboard(portfolioId: string, range = "YTD"): Promise<PortfolioDashboard> {
+    return request(
+      `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/dashboard?range=${encodeURIComponent(range)}`,
+    );
+  },
+
+  portfolioPerformance(
+    portfolioId: string,
+    range = "YTD",
+  ): Promise<{ performance: Record<string, unknown> }> {
+    return request(
+      `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/performance?range=${encodeURIComponent(range)}`,
+    );
+  },
+
+  placePortfolioOrder(
+    portfolioId: string,
+    payload: {
+      symbol: string;
+      side: string;
+      qty: number;
+      clientOrderId?: string;
+      agentId?: string;
+      orchestraId?: string;
+      strategyId?: string;
+      strategyVersion?: number;
+      decisionId?: string;
+    },
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/orders`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  closePortfolioPosition(portfolioId: string, positionId: string): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/positions/${encodeURIComponent(positionId)}/close`,
+      { method: "POST" },
+    );
+  },
+
+  closeSelectedPortfolioPositions(
+    portfolioId: string,
+    positionIds: string[],
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/positions/close-selected`,
+      { method: "POST", body: JSON.stringify({ positionIds }) },
+    );
+  },
+
+  savePortfolioAllocations(
+    portfolioId: string,
+    allocations: Array<Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/allocations`, {
+      method: "POST",
+      body: JSON.stringify({ allocations }),
+    });
+  },
+
+  portfolioRebalancePreview(
+    portfolioId: string,
+    orders?: Array<Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/rebalance/preview`, {
+      method: "POST",
+      body: JSON.stringify({ orders: orders ?? null }),
+    });
+  },
+
+  portfolioRebalanceExecute(
+    portfolioId: string,
+    orders?: Array<Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/rebalance/execute`, {
+      method: "POST",
+      body: JSON.stringify({ orders: orders ?? null }),
+    });
+  },
+
+  exportPortfolio(portfolioId: string, format: "json" | "csv" = "json"): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/export?format=${format}`,
+    );
+  },
+
+  portfolioTick(portfolioId: string): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/portfolios/${encodeURIComponent(portfolioId)}/tick`, {
+      method: "POST",
+    });
   },
 
   createPaperSession(payload: {

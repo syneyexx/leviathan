@@ -1904,6 +1904,205 @@ export type MarketSimLiveState = {
   truth: Record<string, unknown>;
 };
 
+export type PaperPortfolio = {
+  portfolio_id: string;
+  name: string;
+  status: string;
+  mode: string;
+  base_currency: string;
+  broker_mode: string;
+  provider_id: string;
+  benchmark_symbol: string;
+  orchestra_id: string | null;
+  initial_equity: string;
+  cash: string;
+  reserved_cash: string;
+  available_buying_power?: string;
+  realized_pnl: string;
+  unrealized_pnl: string;
+  fees_paid: string;
+  equity: string;
+  peak_equity: string;
+  margin_used: string;
+  gross_exposure: string;
+  net_exposure: string;
+  kill_switch: boolean;
+  shorting_enabled: boolean;
+  last_mark_at: string | null;
+  created_at: string;
+  updated_at: string;
+  settings?: Record<string, unknown>;
+  truth?: Record<string, unknown>;
+};
+
+export type PaperPortfolioKpis = {
+  total_equity: string;
+  daily_pnl: string;
+  daily_pnl_pct: number;
+  unrealized_pnl: string;
+  unrealized_pnl_pct: number;
+  realized_pnl: string;
+  realized_pnl_pct: number;
+  cash_balance: string;
+  reserved_cash: string;
+  available_buying_power: string;
+  margin_usage_pct: number;
+  margin_disabled?: boolean;
+  win_rate: number | null;
+  last_sync: string | null;
+  stale?: boolean;
+};
+
+export type PortfolioPosition = {
+  position_id: string;
+  portfolio_id: string;
+  symbol: string;
+  display_name?: string;
+  asset_class: string;
+  side: string;
+  qty: string;
+  avg_entry_price: string;
+  mark_price: string;
+  market_value: string;
+  cost_basis: string;
+  realized_pnl: string;
+  unrealized_pnl: string;
+  pnl_pct: string;
+  fees: string;
+  allocation_pct: number;
+  risk: string;
+  agent_id: string | null;
+  orchestra_id: string | null;
+  strategy_id: string | null;
+  strategy_version: number | null;
+  status: string;
+  opened_at?: string;
+  updated_at?: string;
+};
+
+export type PortfolioTransaction = {
+  transaction_id: string;
+  portfolio_id: string;
+  symbol: string;
+  side: string;
+  qty: string;
+  price: string;
+  fees: string;
+  gross_notional?: string;
+  net_cash_effect?: string;
+  result: string;
+  agent_id?: string | null;
+  strategy_id?: string | null;
+  timestamp: string;
+};
+
+export type PortfolioRiskSummary = {
+  sharpe: number | null;
+  sortino: number | null;
+  max_drawdown: number | null;
+  var_1d_95: number | null;
+  beta: number | null;
+  volatility: number | null;
+  correlation: number | null;
+  stress_level: string;
+  liquidity_score: number | null;
+  exposure_pct?: number;
+  health: {
+    score: number;
+    label: string;
+    components: Record<string, number>;
+  };
+  insufficient?: Record<string, boolean>;
+};
+
+export type PortfolioAllocationRow = {
+  symbol: string;
+  display_name?: string;
+  asset_class: string;
+  value: string;
+  allocation_pct: number;
+  pnl_24h?: string;
+};
+
+export type PortfolioAllocation = {
+  total_equity: string;
+  assets: PortfolioAllocationRow[];
+  by_asset_class: Array<{ asset_class: string; value: string; allocation_pct: number }>;
+  by_sector: Array<{ name: string; value: string; allocation_pct: number }>;
+  by_geography: Array<{ name: string; value: string; allocation_pct: number }>;
+};
+
+export type PortfolioPerformancePoint = {
+  timestamp?: string;
+  equity?: string;
+  drawdown?: string;
+};
+
+export type PortfolioStrategyAllocation = {
+  strategy_id: string;
+  strategy_version?: number | null;
+  allocation_pct: number;
+  equity: string;
+  daily_pnl: string;
+  total_pnl: string;
+  status: string;
+  agent_id?: string | null;
+};
+
+export type PortfolioRecommendation = {
+  recommendation_id: string;
+  portfolio_id: string;
+  type: string;
+  target: string;
+  reason: string;
+  current_value: string;
+  target_value: string;
+  impact: string;
+  estimated_orders: Array<{ symbol: string; side: string; qty: number }>;
+  status: string;
+  created_at: string;
+};
+
+export type PortfolioDashboard = {
+  portfolio: PaperPortfolio;
+  kpis: PaperPortfolioKpis;
+  positions: PortfolioPosition[];
+  allocation: PortfolioAllocation;
+  exposure: {
+    net_exposure_pct: number;
+    gross_exposure_pct: number;
+    leverage: number;
+    largest_position_pct: number;
+    top3_concentration: Array<{ symbol: string; allocation_pct: number }>;
+    crypto_allocation_pct: number;
+    equities_allocation_pct: number;
+    stablecoin_cash_allocation_pct: number;
+    other_allocation_pct: number;
+    margin_used: string;
+  };
+  risk: PortfolioRiskSummary;
+  insights: Array<{ id: string; severity: string; text: string }>;
+  recent_transactions: PortfolioTransaction[];
+  strategy_allocation: PortfolioStrategyAllocation[];
+  recommendations: PortfolioRecommendation[];
+  performance_summary: {
+    total_return: number | null;
+    sharpe: number | null;
+    max_drawdown: number | null;
+    volatility: number | null;
+    range: string;
+    series: PortfolioPerformancePoint[];
+  };
+  market_status: {
+    provider_id?: string;
+    stale?: boolean;
+    errors?: string[];
+    marks?: Record<string, number>;
+  };
+  generated_at: string;
+  truth?: Record<string, unknown>;
+};
+
 export type SettingsCategory = {
   id: string;
   label: string;

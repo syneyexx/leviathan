@@ -1305,6 +1305,41 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "paper", "order"],
     )
     _ext(
+        cap_id="market_sim.portfolio_order",
+        name="Place Portefeuille Paper Order",
+        description="Place a paper order against a multi-asset Paper Portefeuille (RiskGuard gated).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={
+            "portfolio_id": {"type": "string"},
+            "symbol": {"type": "string"},
+            "side": {"type": "string"},
+            "qty": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["market_sim", "paper", "portefeuille", "order"],
+    )
+    _ext(
+        cap_id="market_sim.portfolio_rebalance",
+        name="Execute Portefeuille Rebalance",
+        description="Execute paper rebalance orders for a Portefeuille via RiskGuard.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={"portfolio_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "paper", "portefeuille", "rebalance"],
+    )
+    _ext(
+        cap_id="market_sim.portfolio_tick",
+        name="Portefeuille Autonomous Tick",
+        description="One autonomous paper Portefeuille decision/mark cycle on the market_sim worker.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={"portfolio_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "paper", "portefeuille", "autonomous"],
+    )
+    _ext(
         cap_id="market_sim.news.poll",
         name="Poll Market News Feeds",
         description="Fetch registered news feeds (via provider_io) and store items with a causal available_at.",

@@ -52,6 +52,7 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "provider.market.stream",
         "provider.market.stream.stop",
         "market_sim.scan_batch",
+        "market_sim.portfolio_tick",
         "provider.alpaca.paper",
         "provider.hf.list",
         "model_download.start",
