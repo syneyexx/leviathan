@@ -15,6 +15,11 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from .task_model import TaskModel
+from .trajectory_export import (
+    PublicCognitiveTrajectory,
+    TrajectoryExportBridge,
+    build_trajectory_from_run_snapshot,
+)
 from .types import CognitiveRunStatus, ReasoningStrategy
 
 
@@ -302,6 +307,34 @@ class ExperienceStore:
         self._buckets: dict[str, BucketStats] = {}
         self._db_store = store
         self.policy = ExperienceAdmissionPolicy()
+        self.trajectory_bridge = TrajectoryExportBridge()
+
+    def record_trajectory(
+        self,
+        trajectory: PublicCognitiveTrajectory,
+    ) -> PublicCognitiveTrajectory:
+        return self.trajectory_bridge.record(trajectory)
+
+    def record_trajectory_from_run(
+        self,
+        snapshot: Mapping[str, Any],
+        *,
+        experience: VerifiedExperience | Mapping[str, Any] | None = None,
+    ) -> PublicCognitiveTrajectory:
+        traj = build_trajectory_from_run_snapshot(snapshot, experience=experience)
+        return self.record_trajectory(traj)
+
+    def export_training_bundle(
+        self,
+        *,
+        include_excluded: bool = False,
+        include_active_learning: bool = True,
+    ) -> dict[str, Any]:
+        """Structured public trajectory bridge — never auto-trains or promotes."""
+        return self.trajectory_bridge.export_bundle(
+            active_learning=self._active_learning if include_active_learning else [],
+            include_excluded=include_excluded,
+        )
 
     def build_from_run(
         self,

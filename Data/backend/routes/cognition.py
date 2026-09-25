@@ -140,4 +140,20 @@ def build_cognition_router(runtime: CognitiveRuntime) -> APIRouter:
             _raise(exc)
             raise
 
+    @router.get("/api/cognition/training-export")
+    def cognition_training_export(
+        include_excluded: bool = False,
+        include_active_learning: bool = True,
+    ) -> dict:
+        """Structured public trajectory bridge — export is not training."""
+        try:
+            bundle = runtime.export_training_bundle(
+                include_excluded=include_excluded,
+                include_active_learning=include_active_learning,
+            )
+            return {"export": bundle}
+        except Exception as exc:  # noqa: BLE001
+            _raise(exc)
+            raise
+
     return router

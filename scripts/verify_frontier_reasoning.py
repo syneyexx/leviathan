@@ -472,6 +472,43 @@ def _experience_v2_scan() -> tuple[str, str]:
     return "PASS", "experience_v2_aggregates_and_active_learning_triggers_ok"
 
 
+def _training_export_scan() -> tuple[str, str]:
+    """R22 structural: public trajectory export bridge; no private CoT; never auto-trains."""
+    path = ROOT / "Data" / "modules" / "cognition" / "trajectory_export.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    routes = ROOT / "Data" / "backend" / "routes" / "cognition.py"
+    exp = ROOT / "Data" / "modules" / "cognition" / "experience.py"
+    if not path.is_file():
+        return "FAIL", "missing:trajectory_export.py"
+    text = path.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    route_t = routes.read_text(encoding="utf-8") if routes.is_file() else ""
+    exp_t = exp.read_text(encoding="utf-8") if exp.is_file() else ""
+    if "class PublicCognitiveTrajectory" not in text:
+        return "FAIL", "missing_PublicCognitiveTrajectory"
+    if "class TrajectoryExportBridge" not in text:
+        return "FAIL", "missing_TrajectoryExportBridge"
+    if "def scrub_private_fields" not in text:
+        return "FAIL", "missing_scrub_private_fields"
+    if "structured_trajectory_bridge" not in text:
+        return "FAIL", "missing_structured_trajectory_bridge_truth"
+    if "auto_promote_forbidden" not in text:
+        return "FAIL", "missing_auto_promote_forbidden"
+    if "export_is_not_training" not in text:
+        return "FAIL", "missing_export_is_not_training"
+    if "reasoning_content" not in text or "thinking" not in text:
+        return "FAIL", "scrub_must_list_private_cot_keys"
+    if "export_training_bundle" not in rt:
+        return "FAIL", "runtime_missing_export_training_bundle"
+    if "record_trajectory_from_run" not in rt and "trajectory_exported" not in rt:
+        return "FAIL", "runtime_missing_trajectory_record_on_finalize"
+    if "export_training_bundle" not in exp_t:
+        return "FAIL", "experience_store_missing_export_training_bundle"
+    if "/api/cognition/training-export" not in route_t:
+        return "FAIL", "route_missing_training_export"
+    return "PASS", "structured_trajectory_export_bridge_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -672,6 +709,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = stE, evE
                     else:
                         evidence = f"{evidence};{evE}"
+                if status == "PASS" and gid == "R22":
+                    st22, ev22 = _training_export_scan()
+                    if st22 != "PASS":
+                        status, evidence = st22, ev22
+                    else:
+                        evidence = f"{evidence};{ev22}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":
