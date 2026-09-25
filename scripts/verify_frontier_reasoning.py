@@ -648,6 +648,74 @@ def _cognition_compute_obs_scan() -> tuple[str, str]:
     return "PASS", "cognition_compute_two_axis_observability_ok"
 
 
+def _tool_interleaving_scan() -> tuple[str, str]:
+    """R16 structural: native↔tool interleaving honors capability profile."""
+    mod = ROOT / "Data" / "modules" / "cognition" / "tool_interleaving.py"
+    selector = ROOT / "Data" / "modules" / "cognition" / "action_selector.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    for path in (mod, selector, runtime):
+        if not path.is_file():
+            return "FAIL", f"missing:{path.relative_to(ROOT)}"
+    text = mod.read_text(encoding="utf-8")
+    sel = selector.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8")
+    if "def should_interleave_tool_after_native" not in text:
+        return "FAIL", "missing_should_interleave_tool_after_native"
+    if "never_invent_tool_interleaving_from_model_name" not in text:
+        return "FAIL", "missing_no_invent_truth"
+    if "should_interleave_tool_after_native" not in sel:
+        return "FAIL", "selector_missing_interleave_wire"
+    if "tool_interleaving" not in rt:
+        return "FAIL", "runtime_missing_tool_interleaving_status"
+    if "inference_path=" not in rt:
+        return "FAIL", "runtime_select_missing_inference_path"
+    return "PASS", "tool_native_interleaving_wired_ok"
+
+
+def _canonical_runtime_scan() -> tuple[str, str]:
+    """R01 structural: CognitiveRuntime remains sole orchestration owner."""
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    main = ROOT / "Data" / "backend" / "main.py"
+    if not runtime.is_file():
+        return "FAIL", "missing:runtime.py"
+    if not main.is_file():
+        return "FAIL", "missing:main.py"
+    rt = runtime.read_text(encoding="utf-8")
+    m = main.read_text(encoding="utf-8")
+    if "class CognitiveRuntime" not in rt:
+        return "FAIL", "missing_CognitiveRuntime"
+    if "cognition_runtime.submit" not in m:
+        return "FAIL", "chat_missing_cognition_runtime_submit"
+    for stem in (
+        "CognitionV2",
+        "FrontierRuntime",
+        "ReasoningRuntime2",
+        "BrainV2",
+    ):
+        forbidden = f"class {stem}"
+        if forbidden in rt or forbidden in m:
+            return "FAIL", f"forbidden_parallel_runtime:{forbidden}"
+    return "PASS", "cognitive_runtime_sole_orch_ok"
+
+
+def _f18_wrap_scan() -> tuple[str, str]:
+    """R30 structural: frontend scripts + frontier verifier assets present."""
+    pkg = ROOT / "Data" / "frontend" / "package.json"
+    verifier = ROOT / "scripts" / "verify_frontier_reasoning.py"
+    gates = ROOT / "Data" / "backend" / "tests" / "frontier_reasoning_gates.json"
+    if not pkg.is_file():
+        return "FAIL", "missing:frontend/package.json"
+    if not verifier.is_file():
+        return "FAIL", "missing:verify_frontier_reasoning.py"
+    if not gates.is_file():
+        return "FAIL", "missing:frontier_reasoning_gates.json"
+    text = pkg.read_text(encoding="utf-8")
+    for script in ('"typecheck"', '"lint"', '"test"', '"build"'):
+        if script not in text:
+            return "FAIL", f"frontend_missing_script:{script}"
+    return "PASS", "frontier_wrap_scripts_and_verifier_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -747,6 +815,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             else:
                 status, evidence = _run_unittest(module)
                 # Also enforce structural invariants for F1 authority gates.
+                if status == "PASS" and gid == "R01":
+                    st01, ev01 = _canonical_runtime_scan()
+                    if st01 != "PASS":
+                        status, evidence = st01, ev01
+                    else:
+                        evidence = f"{evidence};{ev01}"
                 if status == "PASS" and gid == "R02":
                     st2, ev2 = _anti_fold_scan()
                     if st2 != "PASS":
@@ -830,6 +904,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st15, ev15
                     else:
                         evidence = f"{evidence};{ev15}"
+                if status == "PASS" and gid == "R16":
+                    st16, ev16 = _tool_interleaving_scan()
+                    if st16 != "PASS":
+                        status, evidence = st16, ev16
+                    else:
+                        evidence = f"{evidence};{ev16}"
                 if status == "PASS" and gid == "R17":
                     st17, ev17 = _cognition_advance_scan()
                     if st17 != "PASS":
@@ -884,6 +964,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st29, ev29
                     else:
                         evidence = f"{evidence};{ev29}"
+                if status == "PASS" and gid == "R30":
+                    st30, ev30 = _f18_wrap_scan()
+                    if st30 != "PASS":
+                        status, evidence = st30, ev30
+                    else:
+                        evidence = f"{evidence};{ev30}"
         elif declared == "PASS" and evidence in {"", "—", "None", "null"}:
             status, evidence = "FAIL", "PASS_without_evidence"
         elif declared == "PASS":

@@ -10,6 +10,7 @@ from .capability_broker import CapabilityBroker
 from .capability_state import AxisState, CapabilityAxis, CapabilityState
 from .meta_controller import MetaController, MetaDecision
 from .task_model import TaskModel
+from .tool_interleaving import interleave_boost, should_interleave_tool_after_native
 from .types import (
     BeliefCategory,
     CognitiveAction,
@@ -43,6 +44,8 @@ class ActionSelector:
         budgets_remaining: dict[str, int],
         cancel_requested: bool = False,
         capability_state: CapabilityState | None = None,
+        actions: list[CognitiveAction] | None = None,
+        inference_path: str | None = None,
     ) -> CognitiveAction:
         if cancel_requested:
             return CognitiveAction(
@@ -70,6 +73,39 @@ class ActionSelector:
                 risk_class=task.risk_class,
             )
 
+        # Native↔tool interleaving: after a native MODEL_CALL, prefer tool/capability
+        # when the capability profile explicitly supports tool interleaving (R16).
+        profile = getattr(decision, "capability_profile", None)
+        neural = getattr(decision, "neural_budgets", None)
+        native_effort = None
+        if neural is not None and getattr(neural, "native_effort", None) is not None:
+            native_effort = neural.native_effort.value
+        path = inference_path
+        if path is None and profile is not None and getattr(profile, "supports_native_reasoning", False):
+            path = "native"
+        interleave = should_interleave_tool_after_native(
+            capability_profile=profile,
+            inference_path=path,
+            native_effort=native_effort,
+            actions=actions,
+            observations=observations,
+            tool_budget_remaining=int(budgets_remaining.get("tool_calls", 0) or 0),
+            task_requires_tools=bool(getattr(task, "requires_tools", False)),
+            strategy=decision.strategy.value if decision.strategy else None,
+        )
+        if interleave:
+            forced = self._interleave_tool_action(
+                task=task,
+                decision=decision,
+                working_memory=working_memory,
+                budgets_remaining=budgets_remaining,
+            )
+            if forced is not None and (
+                capability_state is None
+                or self._allowed_by_capability_state((1.0, forced), capability_state)
+            ):
+                return forced
+
         candidates = self._candidates(
             task=task,
             decision=decision,
@@ -79,6 +115,27 @@ class ActionSelector:
             observations=observations,
             budgets_remaining=budgets_remaining,
         )
+        boost = interleave_boost(
+            capability_profile=profile,
+            inference_path=path,
+            native_effort=native_effort,
+            actions=actions,
+            observations=observations,
+            tool_budget_remaining=int(budgets_remaining.get("tool_calls", 0) or 0),
+            task_requires_tools=bool(getattr(task, "requires_tools", False)),
+            strategy=decision.strategy.value if decision.strategy else None,
+        )
+        if boost > 0:
+            boosted: list[tuple[float, CognitiveAction]] = []
+            for score, action in candidates:
+                if action.kind in {
+                    CognitiveActionKind.INVOKE_CAPABILITY,
+                    CognitiveActionKind.SEARCH_CAPABILITY,
+                }:
+                    boosted.append((score + boost, action))
+                else:
+                    boosted.append((score, action))
+            candidates = boosted
         if capability_state is not None:
             candidates = [
                 c for c in candidates if self._allowed_by_capability_state(c, capability_state)
@@ -104,6 +161,49 @@ class ActionSelector:
 
         candidates.sort(key=lambda c: c[0], reverse=True)
         return candidates[0][1]
+
+    def _interleave_tool_action(
+        self,
+        *,
+        task: TaskModel,
+        decision: MetaDecision,
+        working_memory: WorkingMemory,
+        budgets_remaining: dict[str, int],
+    ) -> CognitiveAction | None:
+        """Build the preferred tool/capability action for an interleave slot."""
+        caps = working_memory.list_by_kind("capability")
+        if caps and budgets_remaining.get("tool_calls", 0) > 0:
+            capability_id = caps[0].content.strip().split()[0]
+            return CognitiveAction(
+                kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                action_id=str(uuid.uuid4()),
+                capability_id=capability_id,
+                rationale="interleave tool after native reasoning",
+                arguments={"query": task.goal, "limit": 5, "tool_interleave": True},
+                expected_observation="tool observation",
+                risk_class=task.risk_class,
+                requires_approval=task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL},
+            )
+        if (
+            decision.strategy
+            in {
+                ReasoningStrategy.TOOL_DRIVEN,
+                ReasoningStrategy.MULTI_AGENT,
+                ReasoningStrategy.PLAN_EXECUTE_VERIFY,
+            }
+            or getattr(task, "requires_tools", False)
+        ) and budgets_remaining.get("tool_calls", 0) > 0:
+            return CognitiveAction(
+                kind=CognitiveActionKind.SEARCH_CAPABILITY,
+                action_id=str(uuid.uuid4()),
+                rationale="interleave capability search after native reasoning",
+                arguments={
+                    "query": task.goal,
+                    "domain": task.domain,
+                    "tool_interleave": True,
+                },
+            )
+        return None
 
     @staticmethod
     def _allowed_by_capability_state(

@@ -160,6 +160,7 @@ class CognitiveRunState:
             "reasoning_state": self.reasoning_state.public_dict(),
             "hypothesis_board": self.hypothesis_board.public_dict(),
             "critic_report": self.last_critic_report,
+            "tool_interleaving": self._tool_interleaving_status(),
             "usage": self.usage.public_dict(),
             "plan": self.plan.public_dict() if self.plan else None,
             "observations": [o.public_dict() for o in self.observations[-12:]],
@@ -189,8 +190,46 @@ class CognitiveRunState:
                 "critic_mesh_is_named_domain_critics": True,
                 "capability_state_is_cognition_matrix": True,
                 "cognition_advance_externalizable": True,
+                "tool_interleaving_honors_capability_profile": True,
             },
         }
+
+    def _tool_interleaving_status(self) -> dict[str, Any]:
+        from .tool_interleaving import interleaving_public_status, should_interleave_tool_after_native
+
+        profile = self.decision.capability_profile if self.decision else None
+        neural = self.decision.neural_budgets if self.decision else None
+        active = False
+        if self.actions:
+            last = self.actions[-1]
+            active = bool((last.arguments or {}).get("tool_interleave")) or (
+                last.kind.value in {"INVOKE_CAPABILITY", "SEARCH_CAPABILITY"}
+                and "interleave" in (last.rationale or "").lower()
+            )
+        # Reflect whether the *next* select would interleave given current state.
+        would = should_interleave_tool_after_native(
+            capability_profile=profile,
+            inference_path=self.reasoning_state.inference_path,
+            native_effort=(
+                neural.native_effort.value
+                if neural is not None and getattr(neural, "native_effort", None) is not None
+                else None
+            ),
+            actions=self.actions,
+            observations=self.observations,
+            tool_budget_remaining=max(
+                0,
+                (self.decision.budgets.max_tool_calls if self.decision else 0)
+                - self.usage.tool_calls,
+            ),
+            task_requires_tools=bool(getattr(self.task, "requires_tools", False)),
+            strategy=self.decision.strategy.value if self.decision and self.decision.strategy else None,
+        )
+        return interleaving_public_status(
+            capability_profile=profile,
+            active=active or would,
+            reason="pending_tool_after_native" if would else ("last_action_interleaved" if active else None),
+        )
 
 
 class CognitiveRuntime:
@@ -1253,6 +1292,12 @@ class CognitiveRuntime:
                 budgets_remaining=remaining,
                 cancel_requested=state.cancel_requested,
                 capability_state=state.capability_state,
+                actions=state.actions,
+                inference_path=(
+                    state.reasoning_state.inference_path
+                    if state.reasoning_state
+                    else None
+                ),
             )
             state.actions.append(action)
             self._emit(state, "action_requested", action.public_dict())

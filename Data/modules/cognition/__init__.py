@@ -92,6 +92,12 @@ from .steering import InvalidationScope, SteerClassification, SteerKind, classif
 from .failure import FailureCategory, classify_failure, should_blind_retry
 from .store import CognitionStore
 from .task_model import TaskModel, TaskModelBuilder
+from .tool_interleaving import (
+    interleave_boost,
+    interleaving_public_status,
+    profile_supports_tool_interleaving,
+    should_interleave_tool_after_native,
+)
 from .types import (
     BeliefCategory,
     BeliefStatus,
@@ -220,10 +226,14 @@ __all__ = [
     "should_blind_retry",
     "structured_state_from_mapping",
     "hypothesis_board_from_mapping",
+    "interleave_boost",
+    "interleaving_public_status",
     "derive_capability_state",
     "capability_state_from_mapping",
     "enqueue_cognition_advance",
     "should_externalize_advance",
+    "profile_supports_tool_interleaving",
+    "should_interleave_tool_after_native",
     "validate_plan_advice",
     "validate_task_advice",
     "wilson_interval",
