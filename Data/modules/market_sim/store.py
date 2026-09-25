@@ -1293,6 +1293,130 @@ class MarketSimStore:
             for r in rows
         ]
 
+    def save_research_campaign(self, campaign: dict[str, Any]) -> dict[str, Any]:
+        """Upsert durable research campaign (G25). Checkpoint fields are always persisted."""
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_research_campaigns(
+                    campaign_id, strategy_id, hypothesis, status, phase, proposer_agent_id,
+                    source_id, data_hash, seed, config_json, split_json, checkpoint_json,
+                    trial_ids_json, acceptance_json, results_json, error,
+                    created_at, updated_at, started_at, paused_at, resumed_at, finished_at,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(campaign_id) DO UPDATE SET
+                    status=excluded.status,
+                    phase=excluded.phase,
+                    config_json=excluded.config_json,
+                    split_json=excluded.split_json,
+                    checkpoint_json=excluded.checkpoint_json,
+                    trial_ids_json=excluded.trial_ids_json,
+                    acceptance_json=excluded.acceptance_json,
+                    results_json=excluded.results_json,
+                    error=excluded.error,
+                    updated_at=excluded.updated_at,
+                    started_at=excluded.started_at,
+                    paused_at=excluded.paused_at,
+                    resumed_at=excluded.resumed_at,
+                    finished_at=excluded.finished_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    campaign["campaign_id"],
+                    campaign["strategy_id"],
+                    campaign.get("hypothesis") or "",
+                    campaign.get("status") or "proposed",
+                    campaign.get("phase") or "design",
+                    campaign.get("proposer_agent_id") or "human",
+                    campaign.get("source_id"),
+                    campaign.get("data_hash") or "",
+                    int(campaign.get("seed") or 42),
+                    json.dumps(campaign.get("config") or {}),
+                    json.dumps(campaign.get("split") or {}),
+                    json.dumps(campaign.get("checkpoint") or {}),
+                    json.dumps(campaign.get("trial_ids") or []),
+                    json.dumps(campaign.get("acceptance_criteria") or {}),
+                    json.dumps(campaign.get("results") or {}),
+                    campaign.get("error") or "",
+                    campaign.get("created_at") or utc_now(),
+                    campaign.get("updated_at") or utc_now(),
+                    campaign.get("started_at"),
+                    campaign.get("paused_at"),
+                    campaign.get("resumed_at"),
+                    campaign.get("finished_at"),
+                    json.dumps(campaign.get("metadata") or {}),
+                ),
+            )
+        loaded = self.get_research_campaign(campaign["campaign_id"])
+        return loaded or campaign
+
+    def get_research_campaign(self, campaign_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM market_research_campaigns WHERE campaign_id=?",
+                    (campaign_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+        if row is None:
+            return None
+        return self._campaign_row(row)
+
+    def list_research_campaigns(
+        self, *, strategy_id: str | None = None, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                sql = "SELECT * FROM market_research_campaigns WHERE 1=1"
+                params: list[Any] = []
+                if strategy_id:
+                    sql += " AND strategy_id=?"
+                    params.append(strategy_id)
+                if status:
+                    sql += " AND status=?"
+                    params.append(status)
+                sql += " ORDER BY updated_at DESC LIMIT ?"
+                params.append(limit)
+                rows = conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [self._campaign_row(r) for r in rows]
+
+    @staticmethod
+    def _campaign_row(r: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "campaign_id": r["campaign_id"],
+            "strategy_id": r["strategy_id"],
+            "hypothesis": r["hypothesis"],
+            "status": r["status"],
+            "phase": r["phase"],
+            "proposer_agent_id": r["proposer_agent_id"],
+            "source_id": r["source_id"],
+            "data_hash": r["data_hash"],
+            "seed": r["seed"],
+            "config": _loads(r["config_json"], {}),
+            "split": _loads(r["split_json"], {}),
+            "checkpoint": _loads(r["checkpoint_json"], {}),
+            "trial_ids": _loads(r["trial_ids_json"], []),
+            "acceptance_criteria": _loads(r["acceptance_json"], {}),
+            "results": _loads(r["results_json"], {}),
+            "error": r["error"],
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+            "started_at": r["started_at"],
+            "paused_at": r["paused_at"],
+            "resumed_at": r["resumed_at"],
+            "finished_at": r["finished_at"],
+            "metadata": _loads(r["metadata_json"], {}),
+            "truth": {
+                "durable": True,
+                "resumable": True,
+                "checkpointed": True,
+            },
+        }
+
     def list_events(self, run_id: str, *, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         with self.connect() as conn:
             if kind:

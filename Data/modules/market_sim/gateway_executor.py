@@ -179,6 +179,51 @@ class MarketSimModuleExecutor:
                 family=str(arguments.get("family") or "crypto_spot"),
                 bars_limit=int(arguments.get("bars_limit") or arguments.get("barsLimit") or 120),
             )
+        if action == "campaign.create":
+            args = _snake_args(arguments)
+            return {
+                "campaign": svc.create_research_campaign(
+                    strategy_id=str(args.get("strategy_id") or ""),
+                    hypothesis=str(args.get("hypothesis") or ""),
+                    proposer_agent_id=str(args.get("proposer_agent_id") or "human"),
+                    source_id=args.get("source_id"),
+                    seed=int(args.get("seed") or 42),
+                    config=args.get("config"),
+                    acceptance_criteria=args.get("acceptance_criteria"),
+                    n_bars=args.get("n_bars"),
+                )
+            }
+        if action == "campaign.start":
+            return {
+                "campaign": svc.start_research_campaign(
+                    str(arguments.get("campaign_id") or arguments.get("campaignId") or "")
+                )
+            }
+        if action == "campaign.pause":
+            return {
+                "campaign": svc.pause_research_campaign(
+                    str(arguments.get("campaign_id") or arguments.get("campaignId") or "")
+                )
+            }
+        if action == "campaign.resume":
+            return {
+                "campaign": svc.resume_research_campaign(
+                    str(arguments.get("campaign_id") or arguments.get("campaignId") or "")
+                )
+            }
+        if action == "campaign.advance":
+            return {
+                "campaign": svc.advance_research_campaign(
+                    str(arguments.get("campaign_id") or arguments.get("campaignId") or ""),
+                    trial_id=arguments.get("trial_id") or arguments.get("trialId"),
+                )
+            }
+        if action == "campaign.cancel":
+            return {
+                "campaign": svc.cancel_research_campaign(
+                    str(arguments.get("campaign_id") or arguments.get("campaignId") or "")
+                )
+            }
         raise MarketSimError(
             "UNKNOWN_MODULE_ACTION",
             f"Unsupported market_sim module action: {provider_ref}",
@@ -216,6 +261,9 @@ def _snake_args(arguments: dict[str, Any], *, skip: set[str] | None = None) -> d
         "clientOrderId": "client_order_id",
         "brokerId": "broker_id",
         "providerId": "provider_id",
+        "campaignId": "campaign_id",
+        "trialId": "trial_id",
+        "nBars": "n_bars",
     }
     out: dict[str, Any] = {}
     for key, value in arguments.items():

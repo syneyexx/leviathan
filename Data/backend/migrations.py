@@ -3439,6 +3439,43 @@ def _m46_trading_strategy_library(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m47_trading_research_campaigns(conn: sqlite3.Connection) -> None:
+    """T7: durable/resumable research campaigns with checkpoints."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_research_campaigns (
+            campaign_id TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            hypothesis TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            phase TEXT NOT NULL DEFAULT 'design',
+            proposer_agent_id TEXT NOT NULL DEFAULT 'human',
+            source_id TEXT,
+            data_hash TEXT NOT NULL DEFAULT '',
+            seed INTEGER NOT NULL DEFAULT 42,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            split_json TEXT NOT NULL DEFAULT '{}',
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
+            trial_ids_json TEXT NOT NULL DEFAULT '[]',
+            acceptance_json TEXT NOT NULL DEFAULT '{}',
+            results_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            paused_at TEXT,
+            resumed_at TEXT,
+            finished_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_research_campaigns_strategy "
+        "ON market_research_campaigns(strategy_id, status, updated_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3501,6 +3538,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=46,
         name="trading_strategy_library",
         apply=_m46_trading_strategy_library,
+    ),
+    Migration(
+        version=47,
+        name="trading_research_campaigns",
+        apply=_m47_trading_research_campaigns,
     ),
 )
 

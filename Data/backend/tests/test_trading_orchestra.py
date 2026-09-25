@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 from Data.backend.migrations import MIGRATIONS, MigrationRunner
-from Data.modules.agents import AgentDefinitionKind, AgentFleetService, AgentFleetStore, AgentRuntime
+from Data.modules.agents import AgentDefinitionKind, AgentFleetService, AgentFleetStore, AgentKind, AgentRuntime
 from Data.modules.agents.fleet import AgentFleetError
 from Data.modules.execution import ExecutionGateway, build_default_catalog
 from Data.modules.market_sim.orchestra import (
@@ -204,11 +204,22 @@ class MandateTests(unittest.TestCase):
 
 class FleetIsolationTests(OrchestraTestBase):
     def test_g64_trading_kind_refused_by_generic_planner(self) -> None:
+        """T7 / G64: TRADING maps to AgentKind.TRADING; generic runtime refuses execute."""
         agent = self.fleet.create_agent({"name": "Lone Trader", "kind": "trading", "role": "signal_analyst"})
         self.assertEqual(agent.kind, AgentDefinitionKind.TRADING)
-        with self.assertRaises(AgentFleetError) as ctx:
-            self.fleet._execution_kind(agent)
-        self.assertEqual(ctx.exception.code, "TRADING_EXECUTOR_REQUIRED")
+        self.assertEqual(self.fleet._execution_kind(agent), AgentKind.TRADING)
+        # Generic AgentRuntime never runs coding/research capability chains for TRADING.
+        result = self.fleet.runtime.execute("deliberate", kind=AgentKind.TRADING)
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("TRADING_EXECUTOR_REQUIRED", result.error or "")
+        # Without a registered kind executor, fleet falls through to the same refusal.
+        self.fleet._kind_executors.pop(AgentDefinitionKind.TRADING, None)
+        mission = self.fleet.launch_mission(
+            agent_id=agent.agent_id,
+            request="analyze BTC without trading executor",
+        )
+        self.assertEqual(mission.status.value, "failed")
+        self.assertIn("TRADING_EXECUTOR_REQUIRED", str(mission.error or ""))
 
     def test_g64_trading_member_only_inside_trade_orchestra(self) -> None:
         desk = self._desk()

@@ -456,3 +456,67 @@ def register_market_sim_module_capabilities(catalog: Any) -> None:
         provider_ref="demo.run",
         properties={"family": {"type": "string"}, "bars_limit": {"type": "integer"}},
     )
+    _mod(
+        cap_id="market_sim.campaign.create",
+        name="Create Research Campaign",
+        description="Create a durable/resumable multi-step research campaign.",
+        provider_ref="campaign.create",
+        required=["strategy_id", "hypothesis"],
+        properties={
+            "strategy_id": {"type": "string"},
+            "hypothesis": {"type": "string"},
+            "proposer_agent_id": {"type": "string"},
+            "source_id": {"type": "string"},
+            "seed": {"type": "integer"},
+            "config": {"type": "object"},
+            "acceptance_criteria": {"type": "object"},
+            "n_bars": {"type": "integer"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.campaign.start",
+        name="Start Research Campaign",
+        description="Start or resume a research campaign to running.",
+        provider_ref="campaign.start",
+        required=["campaign_id"],
+        properties={"campaign_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.campaign.pause",
+        name="Pause Research Campaign",
+        description="Pause a running research campaign (checkpoint preserved).",
+        provider_ref="campaign.pause",
+        required=["campaign_id"],
+        properties={"campaign_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.campaign.resume",
+        name="Resume Research Campaign",
+        description="Resume a paused research campaign from its checkpoint.",
+        provider_ref="campaign.resume",
+        required=["campaign_id"],
+        properties={"campaign_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.campaign.advance",
+        name="Advance Research Campaign",
+        description="Advance one durable checkpoint step (window/phase).",
+        provider_ref="campaign.advance",
+        required=["campaign_id"],
+        properties={
+            "campaign_id": {"type": "string"},
+            "trial_id": {"type": "string"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.campaign.cancel",
+        name="Cancel Research Campaign",
+        description="Cancel a non-terminal research campaign.",
+        provider_ref="campaign.cancel",
+        required=["campaign_id"],
+        properties={"campaign_id": {"type": "string"}},
+        idempotent=True,
+    )

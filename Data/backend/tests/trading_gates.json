@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T6",
+  "phase": "T7",
   "frozen_at": "2026-09-25",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T6 strategy library + causal memory + promotion + provenance fingerprint",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t6_strategy_library.py Data/backend/tests/test_market_sim_characterization.py -q"
+      "result": "T7 trading fleet executors + durable ResearchCampaign",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -524,12 +524,30 @@
     "G24": {
       "title": "Trading role executors on Agent Fleet",
       "phase": "T7A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/agents/types.py",
+        "Data/modules/agents/fleet.py",
+        "Data/modules/agents/planner.py",
+        "Data/modules/agents/runtime.py",
+        "Data/modules/market_sim/orchestra/service.py",
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::TradingExecutorKindTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::TradingExecutorKindTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D17AgentsCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::TradingExecutorKindTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T7A: AgentKind.TRADING; fleet maps trading agents to TradingMissionExecutor; generic AgentRuntime refuses TRADING; reconcile skips durable trading/domain-executor missions.",
       "related_defects": [
         "D17"
       ]
@@ -537,12 +555,33 @@
     "G25": {
       "title": "ResearchCampaign durable/resumable",
       "phase": "T7B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/research_campaign.py",
+        "Data/modules/market_sim/store.py",
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/capabilities.py",
+        "Data/modules/market_sim/gateway_executor.py",
+        "Data/backend/routes/market_sim.py",
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::ResearchCampaignTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::ResearchCampaignTests",
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::CampaignGatewayTests",
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::Migration47Tests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::ResearchCampaignTests",
+            "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::CampaignGatewayTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T7B: ResearchCampaign state machine (proposed/running/paused/completed) with durable checkpoints and WFA windows; Gateway capabilities market_sim.campaign.*; migration 47."
     },
     "G26": {
       "title": "TradingGym causal reset/step",
@@ -1213,9 +1252,9 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests"
       ],
-      "notes": "Frontier Program F1",
+      "notes": "Frontier Program F1; T7: TRADING maps to AgentKind.TRADING and is refused by generic AgentRuntime (TRADING_EXECUTOR_REQUIRED) unless TradingMissionExecutor is registered.",
       "assertions": [
-        "_execution_kind(TRADING) raises TRADING_EXECUTOR_REQUIRED",
+        "_execution_kind(TRADING) \u2192 AgentKind.TRADING; AgentRuntime refuses TRADING_EXECUTOR_REQUIRED",
         "TRADING member outside trade orchestra \u2192 TRADING_MEMBER_ISOLATION",
         "trade orchestra with non-trading member \u2192 422",
         "Mandate.cannot_enable_live immutable; A5 does not parse"

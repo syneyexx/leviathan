@@ -144,6 +144,21 @@ class StrategyPromoteRequest(BaseModel):
     evidence: dict[str, Any] | None = None
 
 
+class CampaignCreate(BaseModel):
+    strategyId: str
+    hypothesis: str
+    proposerAgentId: str = "human"
+    sourceId: str | None = None
+    seed: int = 42
+    config: dict[str, Any] | None = None
+    acceptanceCriteria: dict[str, Any] | None = None
+    nBars: int | None = None
+
+
+class CampaignAdvance(BaseModel):
+    trialId: str | None = None
+
+
 class DemoRequest(BaseModel):
     family: str = Field(description="equity | crypto_spot")
     barsLimit: int = Field(120, ge=30, le=2000)
@@ -793,6 +808,107 @@ def build_market_sim_router(
                     run_ids=payload.runIds,
                 )
             },
+        )
+
+    # --- Research campaigns (T7 / G25) ---
+
+    @router.get("/api/market-sim/campaigns")
+    def list_campaigns(
+        strategy_id: str | None = Query(None, alias="strategyId"),
+        status: str | None = Query(None),
+        limit: int = Query(100, ge=1, le=500),
+    ) -> dict:
+        try:
+            return {
+                "campaigns": service.list_research_campaigns(
+                    strategy_id=strategy_id, status=status, limit=limit
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/campaigns")
+    def create_campaign(payload: CampaignCreate) -> dict:
+        return _mutate(
+            "market_sim.campaign.create",
+            {
+                "strategy_id": payload.strategyId,
+                "hypothesis": payload.hypothesis,
+                "proposer_agent_id": payload.proposerAgentId,
+                "source_id": payload.sourceId,
+                "seed": payload.seed,
+                "config": payload.config,
+                "acceptance_criteria": payload.acceptanceCriteria,
+                "n_bars": payload.nBars,
+            },
+            fallback=lambda: {
+                "campaign": service.create_research_campaign(
+                    strategy_id=payload.strategyId,
+                    hypothesis=payload.hypothesis,
+                    proposer_agent_id=payload.proposerAgentId,
+                    source_id=payload.sourceId,
+                    seed=payload.seed,
+                    config=payload.config,
+                    acceptance_criteria=payload.acceptanceCriteria,
+                    n_bars=payload.nBars,
+                )
+            },
+        )
+
+    @router.get("/api/market-sim/campaigns/{campaign_id}")
+    def get_campaign(campaign_id: str) -> dict:
+        try:
+            return {"campaign": service.get_research_campaign(campaign_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/campaigns/{campaign_id}/start")
+    def start_campaign(campaign_id: str) -> dict:
+        return _mutate(
+            "market_sim.campaign.start",
+            {"campaign_id": campaign_id},
+            idempotency_key=f"market_sim:campaign.start:{campaign_id}",
+            fallback=lambda: {"campaign": service.start_research_campaign(campaign_id)},
+        )
+
+    @router.post("/api/market-sim/campaigns/{campaign_id}/pause")
+    def pause_campaign(campaign_id: str) -> dict:
+        return _mutate(
+            "market_sim.campaign.pause",
+            {"campaign_id": campaign_id},
+            idempotency_key=f"market_sim:campaign.pause:{campaign_id}",
+            fallback=lambda: {"campaign": service.pause_research_campaign(campaign_id)},
+        )
+
+    @router.post("/api/market-sim/campaigns/{campaign_id}/resume")
+    def resume_campaign(campaign_id: str) -> dict:
+        return _mutate(
+            "market_sim.campaign.resume",
+            {"campaign_id": campaign_id},
+            idempotency_key=f"market_sim:campaign.resume:{campaign_id}",
+            fallback=lambda: {"campaign": service.resume_research_campaign(campaign_id)},
+        )
+
+    @router.post("/api/market-sim/campaigns/{campaign_id}/advance")
+    def advance_campaign(campaign_id: str, payload: CampaignAdvance | None = None) -> dict:
+        body = payload or CampaignAdvance()
+        return _mutate(
+            "market_sim.campaign.advance",
+            {"campaign_id": campaign_id, "trial_id": body.trialId},
+            fallback=lambda: {
+                "campaign": service.advance_research_campaign(
+                    campaign_id, trial_id=body.trialId
+                )
+            },
+        )
+
+    @router.post("/api/market-sim/campaigns/{campaign_id}/cancel")
+    def cancel_campaign(campaign_id: str) -> dict:
+        return _mutate(
+            "market_sim.campaign.cancel",
+            {"campaign_id": campaign_id},
+            idempotency_key=f"market_sim:campaign.cancel:{campaign_id}",
+            fallback=lambda: {"campaign": service.cancel_research_campaign(campaign_id)},
         )
 
     @router.post("/api/market-sim/demos/run")

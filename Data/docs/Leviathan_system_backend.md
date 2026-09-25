@@ -609,6 +609,8 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **T6 (strategy library + memory):** `strategy_library.py` persists/recalls lessons with `available_at <= as_of`; `MultiAgentEngine.prepare` hydrates durable memories. Time-sensitive Brain retrieval requires `as_of` or is excluded; deliberation passes bar timestamps. Explicit promotion state machine (RESEARCH→CANDIDATE→PAPER_READY→ACTIVE) with append-only promotion ledger. Knowledge snapshots seal a full provenance fingerprint. Migration 46.
 
+**T7 (trading fleet + research campaigns):** `AgentKind.TRADING` maps fleet trading agents to the registered `TradingMissionExecutor` (market_sim orchestra); generic `AgentRuntime` refuses TRADING executes; reconcile skips durable trading/domain-executor missions. `ResearchCampaign` is a durable/resumable multi-step research state machine (proposed→running↔paused→completed) with checkpointed WFA windows, Gateway capabilities (`market_sim.campaign.*`), and migration 47.
+
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
 Machine gate state lives in `Data/backend/tests/trading_gates.json`; `scripts/verify_trading_100.py` is the verifier.

@@ -80,6 +80,25 @@ class AgentRuntime:
                 error="Agents feature flag is OFF (LEVIATHAN_FEATURE_AGENTS)",
             )
 
+        # T7 / G24: trading never runs through generic AgentRuntime capability loops.
+        if kind == AgentKind.TRADING:
+            return AgentResult(
+                agent_kind=kind,
+                run_id=run_id,
+                status="FAILED",
+                error=(
+                    "TRADING_EXECUTOR_REQUIRED: trading agents execute only through "
+                    "the registered TradingMissionExecutor (market_sim orchestra)"
+                ),
+                steps=[
+                    {
+                        "kind": "PLAN",
+                        "note": "Refused generic runtime — use TradingMissionExecutor",
+                        "status": "REFUSED",
+                    }
+                ],
+            )
+
         # When coding is enabled, delegate CODING executes to the control plane
         # without blocking the caller for a full LLM loop (wake worker only).
         if kind == AgentKind.CODING and self.coding_enabled and self.coding is not None:

@@ -738,24 +738,32 @@ class D17AgentsCharacterization(unittest.TestCase):
         self.assertIn("evaluate_strategy", src)
         self.assertNotIn("AgentRuntime", src)
 
-    def test_d17_current_fleet_maps_specialists_to_generic(self) -> None:
+    def test_d17_current_fleet_still_has_generic_fallback(self) -> None:
         from Data.modules.agents.fleet import AgentFleetService
 
         src = inspect.getsource(AgentFleetService._execution_kind)
         self.assertIn("GENERIC", src)
 
-    def test_d17_current_reconcile_interrupts_active(self) -> None:
+    def test_d17_current_reconcile_interrupts_orphans(self) -> None:
         from Data.modules.agents.fleet import AgentFleetService
 
         src = inspect.getsource(AgentFleetService.reconcile)
         self.assertIn("INTERRUPTED", src)
 
-    @unittest.expectedFailure  # D17 — fixed in Phase T8
-    def test_d17_desired_trading_execution_kind(self) -> None:
+    def test_d17_trading_execution_kind_and_executor_gate(self) -> None:
+        """T7 / G24: TRADING kind exists; runtime refuses generic execute; reconcile skips."""
         from Data.modules.agents.types import AgentKind
+        from Data.modules.agents.fleet import AgentFleetService
+        from Data.modules.agents.runtime import AgentRuntime
 
         names = [m.name for m in AgentKind]
         self.assertIn("TRADING", names)
+        kind_src = inspect.getsource(AgentFleetService._execution_kind)
+        self.assertIn("AgentKind.TRADING", kind_src)
+        runtime_src = inspect.getsource(AgentRuntime.execute)
+        self.assertIn("TRADING_EXECUTOR_REQUIRED", runtime_src)
+        reconcile_src = inspect.getsource(AgentFleetService.reconcile)
+        self.assertIn("AgentDefinitionKind.TRADING", reconcile_src)
 
 
 # ---------------------------------------------------------------------------
@@ -884,14 +892,16 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         # T1 causality/data foundation adds migration 44.
         # T5 science layer adds migration 45.
         # T6 strategy library adds migration 46.
+        # T7 research campaigns adds migration 47.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 46)
+        self.assertGreaterEqual(head, 47)
         by_ver = {m.version: m.name for m in MIGRATIONS}
         self.assertEqual(by_ver[42], "resource_reservations_device_aware")
         self.assertEqual(by_ver[43], "trading_orchestra")
         self.assertEqual(by_ver[44], "trading_causality_data_foundation")
         self.assertEqual(by_ver[45], "trading_science_layer")
         self.assertEqual(by_ver[46], "trading_strategy_library")
+        self.assertEqual(by_ver[47], "trading_research_campaigns")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 
