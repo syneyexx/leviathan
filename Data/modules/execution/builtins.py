@@ -1123,6 +1123,30 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         domains=["workflows"],
     )
     _ext(
+        cap_id="cognition.advance",
+        name="Advance Cognitive Run",
+        description=(
+            "Advance one bounded CognitiveRuntime iteration batch for a durable run. "
+            "Owned by the cognition worker pool — API enqueues; workers execute. "
+            "Not a second cognitive runtime."
+        ),
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="cognition",
+        required_args=["run_id"],
+        properties={
+            "run_id": {"type": "string"},
+            "max_iterations": {"type": "integer"},
+            "cursor_iteration": {"type": "integer"},
+        },
+        permissions=("process.execute",),
+        tags=["cognition", "advance", "durable"],
+        domains=["cognition"],
+        extra_meta={
+            "not_a_second_runtime": True,
+            "parent_runtime_remains_authority": True,
+        },
+    )
+    _ext(
         cap_id="schedule.tick",
         name="Schedule Tick",
         description="Evaluate due schedules and enqueue targets (enqueue-only; no inline execute).",

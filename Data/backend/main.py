@@ -970,6 +970,8 @@ cognition_runtime = CognitiveRuntime(
     resource_pressure_fn=lambda: 0.0,
     behavior_resolver=behavior_resolver,
     network_outbound_allowed=bool(settings.network.allow_outbound),
+    job_runtime=job_runtime,
+    externalize_deep=True,
 )
 register_specialist_handlers(
     cognition_delegation,

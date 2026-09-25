@@ -114,6 +114,8 @@ class CognitiveRunState:
     last_critic_report: dict[str, Any] | None = None
     # Cognitive capability matrix (generate / execute / network / …).
     capability_state: CapabilityState = field(default_factory=CapabilityState)
+    # Durable worker externalization (cognition.advance).
+    pending_advance_job_id: str | None = None
 
     def public_status(self) -> dict[str, Any]:
         return {
@@ -152,6 +154,7 @@ class CognitiveRunState:
                 else None
             ),
             "capability_state": self.capability_state.public_dict(),
+            "pending_advance_job_id": self.pending_advance_job_id,
             "expected_gain": self.decision.expected_gain if self.decision else None,
             "neural_adaptation": self.decision.neural_adaptation if self.decision else None,
             "reasoning_state": self.reasoning_state.public_dict(),
@@ -185,6 +188,7 @@ class CognitiveRunState:
                 "hypothesis_board_is_public": True,
                 "critic_mesh_is_named_domain_critics": True,
                 "capability_state_is_cognition_matrix": True,
+                "cognition_advance_externalizable": True,
             },
         }
 
@@ -226,6 +230,8 @@ class CognitiveRuntime:
         resource_pressure_fn: Callable[[], float] | None = None,
         behavior_resolver: Any | None = None,
         network_outbound_allowed: bool = False,
+        job_runtime: Any | None = None,
+        externalize_deep: bool = True,
     ) -> None:
         self.enabled = enabled
         self.shadow_default = shadow
@@ -266,6 +272,8 @@ class CognitiveRuntime:
         # Settings Control Plane — same BehaviorProfile plane as Chat.
         self.behavior_resolver = behavior_resolver
         self.network_outbound_allowed = bool(network_outbound_allowed)
+        self.job_runtime = job_runtime
+        self.externalize_deep = bool(externalize_deep)
         # Named domain critic mesh (public critique signals, not private CoT).
         self.critic_mesh = CriticMesh()
 
@@ -455,6 +463,15 @@ class CognitiveRuntime:
 
             if not self.iterative or decision.mode == ReasoningMode.FAST:
                 return self._fast_path(state, history=history)
+
+            from .advance import should_externalize_advance
+
+            if should_externalize_advance(
+                mode=decision.mode.value if decision.mode else None,
+                externalize_deep=self.externalize_deep,
+                job_runtime_bound=self.job_runtime is not None,
+            ):
+                return self._externalize_iterative(state)
 
             return self._iterative_loop(state, history=history)
         except CognitionCancelled:
@@ -691,6 +708,15 @@ class CognitiveRuntime:
                 checkpoint.get("capability_state")
                 or result.get("capability_state")
             ),
+            pending_advance_job_id=(
+                str(checkpoint["pending_advance_job_id"])
+                if checkpoint.get("pending_advance_job_id")
+                else (
+                    str(result["pending_advance_job_id"])
+                    if result.get("pending_advance_job_id")
+                    else None
+                )
+            ),
         )
         events = self.store.list_events(run_id)
         state.events = list(events)
@@ -857,6 +883,132 @@ class CognitiveRuntime:
             "wall_ok": 1 if wall_left > 0 else 0,
         }
 
+    def enqueue_advance(
+        self,
+        run_id: str,
+        *,
+        max_iterations: int = 1,
+        parent_job_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Enqueue a durable cognition.advance job (API or worker continuation)."""
+        from .advance import enqueue_cognition_advance
+
+        state = self._require(run_id, hydrate=True)
+        job = enqueue_cognition_advance(
+            self.job_runtime,
+            run_id=run_id,
+            max_iterations=max_iterations,
+            cursor_iteration=state.usage.iterations,
+            trace_id=state.trace_id,
+            parent_job_id=parent_job_id,
+        )
+        job_id = getattr(job, "job_id", None) or (job.get("job_id") if isinstance(job, dict) else None)
+        state.pending_advance_job_id = str(job_id) if job_id else None
+        if state.status not in {
+            CognitiveRunStatus.WAITING_WORKER,
+            *TERMINAL_STATUSES,
+        }:
+            try:
+                if validate_transition(state.status, CognitiveRunStatus.WAITING_WORKER):
+                    self._transition(state, CognitiveRunStatus.WAITING_WORKER)
+                else:
+                    self._persist_update(state)
+            except CognitionTransitionInvalid:
+                self._persist_update(state)
+        else:
+            self._persist_update(state)
+        self._emit(
+            state,
+            "cognition_advance_enqueued",
+            {
+                "job_id": state.pending_advance_job_id,
+                "cursor_iteration": state.usage.iterations,
+                "max_iterations": max_iterations,
+                "truth": {
+                    "cognition_advance_is_externalized": True,
+                    "not_a_second_runtime": True,
+                },
+            },
+        )
+        return {
+            **state.public_status(),
+            "enqueued_job_id": state.pending_advance_job_id,
+        }
+
+    def advance_external(
+        self,
+        run_id: str,
+        *,
+        max_iterations: int = 1,
+        history: list[dict[str, str]] | None = None,
+        requeue: bool = True,
+        parent_job_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Worker entry: advance a bounded batch; optionally re-enqueue if not terminal.
+
+        CognitiveRuntime remains authority — this is not a second runtime.
+        """
+        from .advance import AdvanceJobResult
+
+        state = self._require(run_id, hydrate=True)
+        if state.status in TERMINAL_STATUSES:
+            return AdvanceJobResult(
+                run_id=run_id,
+                status=state.status.value,
+                terminal=True,
+                iterations_advanced=0,
+                pending_job_id=None,
+            ).public_dict()
+
+        if state.status == CognitiveRunStatus.WAITING_WORKER:
+            try:
+                self._transition(state, CognitiveRunStatus.REASONING)
+            except CognitionTransitionInvalid:
+                state.status = CognitiveRunStatus.REASONING
+
+        if state.decision is None:
+            state.decision = self._meta_decide(state)
+        if state.plan is None:
+            state.plan = self.planner.plan(state.task, state.decision)
+            self._record_plan_advice(state, state.plan)
+
+        before = state.usage.iterations
+        status = self._iterative_loop(
+            state,
+            history=history,
+            max_iterations=max(1, int(max_iterations)),
+        )
+        advanced = max(0, state.usage.iterations - before)
+        terminal = state.status in TERMINAL_STATUSES
+        pending_job_id = None
+        if (not terminal) and requeue and self.job_runtime is not None:
+            enq = self.enqueue_advance(
+                run_id,
+                max_iterations=max_iterations,
+                parent_job_id=parent_job_id,
+            )
+            pending_job_id = enq.get("enqueued_job_id") or state.pending_advance_job_id
+        elif terminal:
+            state.pending_advance_job_id = None
+            self._persist_update(state, final=True)
+
+        result = AdvanceJobResult(
+            run_id=run_id,
+            status=state.status.value,
+            terminal=terminal,
+            iterations_advanced=advanced,
+            pending_job_id=pending_job_id,
+        )
+        out = result.public_dict()
+        out["public_status"] = status
+        return out
+
+    def _externalize_iterative(self, state: CognitiveRunState) -> dict[str, Any]:
+        """Hand iterative work to cognition.advance worker pool."""
+        if self.job_runtime is None:
+            return self._iterative_loop(state, history=None)
+        return self.enqueue_advance(state.run_id, max_iterations=1)
+
     def _fast_path(self, state: CognitiveRunState, *, history: list[dict[str, str]] | None) -> dict[str, Any]:
         ctx = self._build_context(state, history=history)
         state.context_public = ctx.public_dict()
@@ -875,9 +1027,26 @@ class CognitiveRuntime:
         self._finalize(state)
         return state.public_status()
 
-    def _iterative_loop(self, state: CognitiveRunState, *, history: list[dict[str, str]] | None) -> dict[str, Any]:
-        detector = self._loops[state.run_id]
+    def _iterative_loop(
+        self,
+        state: CognitiveRunState,
+        *,
+        history: list[dict[str, str]] | None,
+        max_iterations: int | None = None,
+    ) -> dict[str, Any]:
+        detector = self._loops.setdefault(state.run_id, LoopDetector())
+        batch = 0
         while True:
+            if max_iterations is not None and batch >= max_iterations:
+                # Yield to worker continuation — durable externalization checkpoint.
+                self._persist_update(state)
+                if state.status not in TERMINAL_STATUSES and state.status != CognitiveRunStatus.WAITING_WORKER:
+                    try:
+                        if validate_transition(state.status, CognitiveRunStatus.WAITING_WORKER):
+                            self._transition(state, CognitiveRunStatus.WAITING_WORKER)
+                    except CognitionTransitionInvalid:
+                        pass
+                return state.public_status()
             if state.cancel_requested:
                 raise CognitionCancelled("cancellation requested")
             remaining = self._budgets_remaining(state)
@@ -893,6 +1062,7 @@ class CognitiveRuntime:
                     self._emit(state, "meta_decision", state.decision.public_dict())
 
             state.usage.iterations += 1
+            batch += 1
             # Refresh capability matrix each iteration (affordances may change).
             state.capability_state = self._derive_capability_state(state)
             action = self.actions.select(
@@ -2117,6 +2287,7 @@ class CognitiveRuntime:
                 "hypothesis_board": state.hypothesis_board.public_dict(),
                 "critic_report": state.last_critic_report,
                 "capability_state": state.capability_state.public_dict(),
+                "pending_advance_job_id": state.pending_advance_job_id,
             }
             result_json = {
                 "response_text": state.response_text,
@@ -2132,6 +2303,7 @@ class CognitiveRuntime:
                 "hypothesis_board": checkpoint["hypothesis_board"],
                 "critic_report": checkpoint["critic_report"],
                 "capability_state": checkpoint["capability_state"],
+                "pending_advance_job_id": state.pending_advance_job_id,
             }
             self.store.update_run(
                 state.run_id,

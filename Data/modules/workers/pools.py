@@ -136,6 +136,18 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         description="Coding session advancement",
         max_count=2,
     ),
+    "cognition": PoolDefinition(
+        pool_id="cognition",
+        entrypoint="Data.modules.workers.entrypoints.cognition",
+        default_count=1,
+        job_kinds=("cognition.advance", "cognition."),
+        resource_classes=("CPU_HEAVY", "MODEL_INFERENCE"),
+        description=(
+            "Durable CognitiveRuntime advance — deep/long runs externalized "
+            "from the API process (not a second cognition runtime)"
+        ),
+        max_count=4,
+    ),
     "agents": PoolDefinition(
         pool_id="agents",
         entrypoint="Data.modules.workers.entrypoints.agents",

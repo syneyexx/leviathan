@@ -18,6 +18,7 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "source_ingestion.process",
         "source_ingestion.brain_retry",
         "coding.advance",
+        "cognition.advance",
         "research.advance",
         "research.plan",
         "research.retrieve",

@@ -362,6 +362,42 @@ def _capability_state_scan() -> tuple[str, str]:
     return "PASS", "cognitive_capability_state_matrix_wired"
 
 
+def _cognition_advance_scan() -> tuple[str, str]:
+    """R17 structural: cognition.advance externalization + worker pool."""
+    advance = ROOT / "Data" / "modules" / "cognition" / "advance.py"
+    entry = ROOT / "Data" / "modules" / "workers" / "entrypoints" / "cognition.py"
+    pools = ROOT / "Data" / "modules" / "workers" / "pools.py"
+    builtins = ROOT / "Data" / "modules" / "execution" / "builtins.py"
+    jobs = ROOT / "Data" / "modules" / "jobs" / "runtime.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    types = ROOT / "Data" / "modules" / "cognition" / "types.py"
+    if not advance.is_file():
+        return "FAIL", "missing:cognition/advance.py"
+    if not entry.is_file():
+        return "FAIL", "missing:workers/entrypoints/cognition.py"
+    adv = advance.read_text(encoding="utf-8")
+    pools_t = pools.read_text(encoding="utf-8") if pools.is_file() else ""
+    builtins_t = builtins.read_text(encoding="utf-8") if builtins.is_file() else ""
+    jobs_t = jobs.read_text(encoding="utf-8") if jobs.is_file() else ""
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    ty = types.read_text(encoding="utf-8") if types.is_file() else ""
+    if "cognition.advance" not in adv or "enqueue_cognition_advance" not in adv:
+        return "FAIL", "missing_cognition_advance_api"
+    if '"cognition"' not in pools_t or "cognition.advance" not in pools_t:
+        return "FAIL", "missing_cognition_worker_pool"
+    if 'cap_id="cognition.advance"' not in builtins_t:
+        return "FAIL", "missing_cognition_advance_capability"
+    if "cognition.advance" not in jobs_t:
+        return "FAIL", "missing_external_worker_capability_guard"
+    if "advance_external" not in rt or "enqueue_advance" not in rt:
+        return "FAIL", "runtime_missing_advance_external_wire"
+    if "WAITING_WORKER" not in ty:
+        return "FAIL", "missing_WAITING_WORKER_status"
+    if "cognition_advance_is_externalized" not in adv:
+        return "FAIL", "missing_externalized_truth"
+    return "PASS", "cognition_advance_worker_externalization_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -544,6 +580,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st15, ev15
                     else:
                         evidence = f"{evidence};{ev15}"
+                if status == "PASS" and gid == "R17":
+                    st17, ev17 = _cognition_advance_scan()
+                    if st17 != "PASS":
+                        status, evidence = st17, ev17
+                    else:
+                        evidence = f"{evidence};{ev17}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":
