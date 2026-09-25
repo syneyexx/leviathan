@@ -289,3 +289,16 @@ class SeedContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BehaviorRouteBodyBindingTests(unittest.TestCase):
+    def test_behavior_models_are_module_level_for_fastapi_body(self) -> None:
+        from Data.backend.routes import settings as settings_routes
+
+        self.assertTrue(hasattr(settings_routes, "BehaviorPromptPatch"))
+        self.assertTrue(hasattr(settings_routes, "BehaviorProfilePatch"))
+        # Nested local classes caused FastAPI to bind payload as a query param
+        # (422 Field required at loc=['query','payload']).
+        src = open(settings_routes.__file__, encoding="utf-8").read()
+        self.assertIn("payload: BehaviorPromptPatch = Body(...)", src)
+        self.assertIn("payload: BehaviorProfilePatch = Body(...)", src)

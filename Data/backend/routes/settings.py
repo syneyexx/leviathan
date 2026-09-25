@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
 
 from Data.modules.settings import SettingsControlPlane, SettingsError
@@ -19,6 +19,19 @@ class SettingPatchRequest(BaseModel):
     value: Any = None
     confirm_dangerous: bool = False
     clear_secret: bool = False
+
+
+class BehaviorPromptPatch(BaseModel):
+    system_prompt: str = Field(..., min_length=1, max_length=200_000)
+
+
+class BehaviorProfilePatch(BaseModel):
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class BehaviorPreviewRequest(BaseModel):
+    latest_user_message: str = ""
+    recent_user_messages: list[str] = Field(default_factory=list)
 
 
 def build_settings_router(plane: SettingsControlPlane) -> APIRouter:
@@ -85,7 +98,10 @@ def build_settings_router(plane: SettingsControlPlane) -> APIRouter:
                 result = results[0] if results else None
                 if result is None:
                     # Empty secret keep-existing
-                    return {"result": {"key": key, "status": "SAVED", "message": "Unchanged"}, "setting": plane.get_state(key).public_dict()}
+                    return {
+                        "result": {"key": key, "status": "SAVED", "message": "Unchanged"},
+                        "setting": plane.get_state(key).public_dict(),
+                    }
         except Exception as exc:  # noqa: BLE001
             _raise(exc)
             raise
@@ -116,19 +132,14 @@ def build_settings_router(plane: SettingsControlPlane) -> APIRouter:
 
 
 def build_behavior_router(behavior_store: Any) -> APIRouter:
-    """BehaviorProfile routes — behavior is not authority."""
+    """BehaviorProfile routes — behavior is not authority.
+
+    Models are defined at module scope so FastAPI treats them as JSON bodies.
+    Nested local classes were incorrectly bound as required query params,
+    producing opaque ``Field required`` / ``query.payload`` 422s.
+    """
 
     router = APIRouter(tags=["settings", "behavior"])
-
-    class BehaviorPromptPatch(BaseModel):
-        system_prompt: str = Field(..., min_length=1, max_length=200_000)
-
-    class BehaviorProfilePatch(BaseModel):
-        values: dict[str, Any] = Field(default_factory=dict)
-
-    class BehaviorPreviewRequest(BaseModel):
-        latest_user_message: str = ""
-        recent_user_messages: list[str] = Field(default_factory=list)
 
     @router.get("/api/settings/behavior-profile")
     def get_behavior_profile() -> dict:
@@ -144,7 +155,7 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
         }
 
     @router.put("/api/settings/behavior-profile/system-prompt")
-    def put_system_prompt(payload: BehaviorPromptPatch) -> dict:
+    def put_system_prompt(payload: BehaviorPromptPatch = Body(...)) -> dict:
         profile = behavior_store.update_system_prompt(payload.system_prompt)
         return {
             "profile": profile.public_dict(include_prompt=True),
@@ -156,7 +167,7 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
         }
 
     @router.patch("/api/settings/behavior-profile")
-    def patch_behavior_profile(payload: BehaviorProfilePatch) -> dict:
+    def patch_behavior_profile(payload: BehaviorProfilePatch = Body(...)) -> dict:
         if not isinstance(payload.values, dict):
             raise HTTPException(
                 status_code=422,
@@ -188,7 +199,7 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
         }
 
     @router.post("/api/settings/behavior-profile/preview")
-    def preview_behavior(payload: BehaviorPreviewRequest) -> dict:
+    def preview_behavior(payload: BehaviorPreviewRequest = Body(...)) -> dict:
         """Safe preview of language decision + public behavior metadata (no secrets)."""
         from Data.modules.settings.resolver import BehaviorSettingsResolver, snapshot_hash
 
