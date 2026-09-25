@@ -207,6 +207,9 @@ class CognitiveRuntime:
         model_caller: ModelCaller | None = None,
         neuro_advisor: Any | None = None,
         verification_engine: Any | None = None,
+        evidence_service: Any | None = None,
+        receipt_store: Any | None = None,
+        research_lookup: Any | None = None,
         execution_gateway: Any | None = None,
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
@@ -242,6 +245,9 @@ class CognitiveRuntime:
         self.model_caller = model_caller
         self.neuro_advisor = neuro_advisor
         self.verification_engine = verification_engine
+        self.evidence_service = evidence_service
+        self.receipt_store = receipt_store
+        self.research_lookup = research_lookup
         self.execution_gateway = execution_gateway
         self.observability = observability
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
@@ -1281,6 +1287,21 @@ class CognitiveRuntime:
                 result_dict = result.public_dict() if hasattr(result, "public_dict") else dict(result)
                 status_value = str(result_dict.get("status") or "")
                 success = status_value in {"COMPLETED", "OK", "SUCCESS"}
+                telemetry = result_dict.get("telemetry") if isinstance(result_dict.get("telemetry"), dict) else {}
+                receipt_id = telemetry.get("receipt_id") if isinstance(telemetry, dict) else None
+                evidence_refs: list[str] = []
+                artifact_refs: list[str] = []
+                if receipt_id:
+                    evidence_refs.append(f"receipt:{receipt_id}")
+                # Surface file/artifact refs from capability output when present.
+                output = result_dict.get("output") if isinstance(result_dict.get("output"), dict) else {}
+                for key in ("artifact_id", "artifact_ref"):
+                    if output.get(key):
+                        raw = str(output[key])
+                        artifact_refs.append(raw if ":" in raw else f"artifact:{raw}")
+                for key in ("path", "file_path", "written_path"):
+                    if output.get(key):
+                        evidence_refs.append(f"file:{output[key]}")
                 self._transition(state, CognitiveRunStatus.OBSERVING)
                 return CognitiveObservation(
                     kind=CognitiveObservationKind.TOOL_RESULT,
@@ -1293,10 +1314,13 @@ class CognitiveRuntime:
                     source_type=EpistemicType.TOOL_OBSERVATION,
                     success=success,
                     error=result_dict.get("error"),
+                    evidence_refs=tuple(evidence_refs),
+                    artifact_refs=tuple(artifact_refs),
                     payload={
                         "action_id": action.action_id,
                         "capability_id": capability_id,
                         "result": result_dict,
+                        "receipt_id": receipt_id,
                         "idempotency_key": f"cog:{state.run_id}:{action.action_id}",
                     },
                 )
@@ -1610,50 +1634,40 @@ class CognitiveRuntime:
             # Without VerificationEngine, never claim verified.
             return False
         try:
-            from Data.modules.verification import VerificationRequirement
+            from .verification_bridge import (
+                build_verification_plan,
+                collapse_or_groups,
+                materialize_evidence_claims,
+            )
 
-            evidence_ids = [
-                ref
-                for o in state.observations
-                for ref in o.evidence_refs
-            ]
-            requirements: list[Any] = []
-            for req_kind in state.task.required_evidence:
-                kind = str(req_kind).strip()
-                if not kind:
-                    continue
-                requirements.append(
-                    VerificationRequirement(
-                        requirement_id=f"required:{kind}",
-                        description=f"Required evidence: {kind}",
-                        evidence_kind=kind if kind.isupper() or "_" in kind else None,
-                        min_verified=1,
-                    )
-                )
-            # Observation-linked evidence refs become OBSERVATION_REF requirements.
-            for ref in evidence_ids:
-                if ref.startswith("obs:") or ref.startswith("observation:"):
-                    requirements.append(
-                        VerificationRequirement(
-                            requirement_id=f"obs:{ref}",
-                            description=f"Observation evidence {ref}",
-                            evidence_kind="OBSERVATION_REF",
-                            observation_id=ref.split(":", 1)[-1],
-                            min_verified=1,
-                        )
-                    )
-                elif ref.startswith("artifact:") or ref.startswith("art:"):
-                    requirements.append(
-                        VerificationRequirement(
-                            requirement_id=f"art:{ref}",
-                            description=f"Artifact evidence {ref}",
-                            evidence_kind="ARTIFACT_HASH",
-                            artifact_id=ref.split(":", 1)[-1],
-                            min_verified=1,
-                        )
-                    )
+            plan = build_verification_plan(
+                required_evidence=getattr(state.task, "required_evidence", None) or [],
+                observations=state.observations,
+            )
+            collected = plan["collected"]
+            requirements = list(plan["requirements"])
+            or_groups = dict(plan.get("or_groups") or {})
+
+            # Materialize research/file/receipt evidence into the Evidence store when available.
+            materialize_evidence_claims(
+                collected,
+                evidence_service=self.evidence_service,
+                run_id=state.run_id,
+                receipt_lookup=self.receipt_store,
+                research_lookup=self.research_lookup,
+            )
+            self._emit(
+                state,
+                "verification_plan",
+                {
+                    "collected": collected.public_dict(),
+                    "requirement_count": len(requirements),
+                    "or_groups": {k: list(v) for k, v in or_groups.items()},
+                    "truth": plan.get("truth"),
+                },
+            )
+
             if not requirements:
-                # No typed requirements → cannot claim PASSED.
                 self._emit(
                     state,
                     "verification_unmeasured",
@@ -1673,6 +1687,8 @@ class CognitiveRuntime:
                 requirements,
                 run_id=state.run_id,
             )
+            if or_groups:
+                report = collapse_or_groups(report, or_groups)
             outcome = getattr(report, "outcome", None)
             outcome_s = str(getattr(outcome, "value", outcome)).upper()
             self._emit(

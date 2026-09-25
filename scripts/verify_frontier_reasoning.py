@@ -304,6 +304,33 @@ def _critic_mesh_scan() -> tuple[str, str]:
     return "PASS", "critic_mesh_named_domain_wired"
 
 
+def _independent_verification_scan() -> tuple[str, str]:
+    """R14 structural: research/file/receipt evidence + verification bridge."""
+    evidence_types = ROOT / "Data" / "modules" / "evidence" / "types.py"
+    service = ROOT / "Data" / "modules" / "evidence" / "service.py"
+    bridge = ROOT / "Data" / "modules" / "cognition" / "verification_bridge.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    if not evidence_types.is_file():
+        return "FAIL", "missing:evidence/types.py"
+    if not bridge.is_file():
+        return "FAIL", "missing:verification_bridge.py"
+    et = evidence_types.read_text(encoding="utf-8")
+    svc = service.read_text(encoding="utf-8") if service.is_file() else ""
+    br = bridge.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    if "CAPABILITY_RECEIPT" not in et or "RESEARCH_SOURCE" not in et:
+        return "FAIL", "missing_receipt_research_evidence_kinds"
+    if "claim_capability_receipt" not in svc or "claim_research_source" not in svc:
+        return "FAIL", "missing_evidence_claim_helpers"
+    if "build_verification_plan" not in br or "materialize_evidence_claims" not in br:
+        return "FAIL", "missing_verification_bridge_api"
+    if "research_and_file_receipts_covered" not in br:
+        return "FAIL", "missing_receipt_coverage_truth"
+    if "build_verification_plan" not in rt or "evidence_service" not in rt:
+        return "FAIL", "runtime_missing_verification_bridge_wire"
+    return "PASS", "independent_verification_research_file_receipts_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -474,6 +501,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st13, ev13
                     else:
                         evidence = f"{evidence};{ev13}"
+                if status == "PASS" and gid == "R14":
+                    st14, ev14 = _independent_verification_scan()
+                    if st14 != "PASS":
+                        status, evidence = st14, ev14
+                    else:
+                        evidence = f"{evidence};{ev14}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

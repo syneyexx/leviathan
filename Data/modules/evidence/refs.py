@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class EvidenceRef:
-    kind: str  # evidence | research | chunk | document | observation | artifact
+    kind: str  # evidence | research | chunk | document | observation | artifact | receipt | file | research_project
     ref_id: str
     raw: str
 
@@ -28,6 +28,9 @@ class EvidenceRef:
             "document": "doc",
             "observation": "obs",
             "artifact": "art",
+            "receipt": "receipt",
+            "file": "file",
+            "research_project": "research_project",
         }.get(self.kind, self.kind)
         return f"{prefix}:{self.ref_id}"
 
@@ -53,6 +56,12 @@ def parse_evidence_ref(raw: str) -> EvidenceRef | None:
         "observation": "observation",
         "art": "artifact",
         "artifact": "artifact",
+        "receipt": "receipt",
+        "cap": "receipt",
+        "capability_receipt": "receipt",
+        "file": "file",
+        "path": "file",
+        "research_project": "research_project",
     }
     kind = mapping.get(prefix.lower())
     if kind is None:

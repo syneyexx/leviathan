@@ -148,3 +148,23 @@ class VerificationEngine:
             evidence_kind=EvidenceKind.FILE_EXISTS.value,
             path=path,
         )
+
+    @staticmethod
+    def require_capability_receipt(
+        receipt_id: str, *, requirement_id: str | None = None
+    ) -> VerificationRequirement:
+        return VerificationRequirement(
+            requirement_id=requirement_id or f"receipt:{receipt_id}",
+            description=f"Capability receipt {receipt_id}",
+            evidence_kind=EvidenceKind.CAPABILITY_RECEIPT.value,
+        )
+
+    @staticmethod
+    def require_research_source(
+        research_evidence_id: str, *, requirement_id: str | None = None
+    ) -> VerificationRequirement:
+        return VerificationRequirement(
+            requirement_id=requirement_id or f"research:{research_evidence_id}",
+            description=f"Research evidence {research_evidence_id} resolves to a source",
+            evidence_kind=EvidenceKind.RESEARCH_SOURCE.value,
+        )
