@@ -2525,6 +2525,163 @@ export type AgentMissionLaunchPayload = {
   dryRun?: boolean;
 };
 
+/* ---------- Agents dashboard read-model (GET /api/agents/dashboard) ---------- */
+
+export type AgentsDashboardPool = {
+  poolId: string;
+  description: string;
+  desired: number;
+  maxCount: number;
+  instances: number;
+  ready: number;
+  busy: number;
+  draining: number;
+  degraded: number;
+  queue: number | null;
+  utilization: number | null;
+  resourceClasses: string[];
+  jobKinds: string[];
+  entrypoint?: string | null;
+};
+
+export type AgentsDashboardWorkers = {
+  available: boolean;
+  active: number | null;
+  instances: number | null;
+  supervisorHealth: string | null;
+  degradedReason?: string | null;
+  pools: AgentsDashboardPool[];
+  truth?: Record<string, boolean>;
+};
+
+export type AgentsDashboardBucket = {
+  start: string;
+  end: string;
+  completed: number;
+  failed: number;
+  successRate: number | null;
+};
+
+export type AgentsDashboard = {
+  generatedAt: string;
+  windowHours: number;
+  agentsEnabled: boolean;
+  fleet: {
+    totalAgents: number;
+    orchestrators: number;
+    orchestratorsFleet: number;
+    orchestratorsSystem: number;
+    architecture: number;
+    memoryLinked: number;
+    truth?: Record<string, boolean>;
+  };
+  workers: AgentsDashboardWorkers;
+  missions: {
+    queued: number;
+    starting: number;
+    running: number;
+    cancelling: number;
+    active: number;
+    completedInWindow: number;
+    failedInWindow: number;
+    cancelledInWindow: number;
+  };
+  performance: {
+    successRate: number | null;
+    avgDurationMs: number | null;
+    p50DurationMs: number | null;
+    p95DurationMs: number | null;
+    sampleSize: number;
+    eligibleTerminal: number;
+    buckets: AgentsDashboardBucket[];
+    truth?: Record<string, boolean>;
+  };
+  failureRetry: {
+    windowHours: number;
+    success: number;
+    failed: number;
+    retry: number;
+    successRate: number | null;
+    retryRate: number | null;
+    failedRate: number | null;
+    truth?: Record<string, boolean>;
+  };
+  flow: {
+    incoming: number;
+    routing: number;
+    orchestrators: number;
+    executing: number;
+    verifying: number | null;
+    memoryWriteback: number | null;
+    completed: number;
+    truth?: Record<string, boolean>;
+  };
+  teamDistribution: Array<{ team: string; count: number }>;
+  lastSync: string;
+  truth?: Record<string, boolean>;
+};
+
+/* ---------- Worker registry (GET /api/workers, /api/workers/pools) ---------- */
+
+export type WorkerRegistration = {
+  worker_id: string;
+  pool_id: string;
+  slot?: number;
+  pid?: number | null;
+  host?: string | null;
+  started_at?: string | null;
+  last_heartbeat_at?: string | null;
+  state: string;
+  current_job_id?: string | null;
+  restart_count?: number;
+  degraded_reason?: string | null;
+  supported_job_kinds?: string[];
+  metadata?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type WorkerPoolDefinition = {
+  pool_id: string;
+  entrypoint: string;
+  default_count: number;
+  job_kinds: string[];
+  resource_classes: string[];
+  description: string;
+  max_count: number;
+  desired: number;
+  instances?: number;
+  ready?: number;
+  busy?: number;
+};
+
+export type WorkersListResponse = {
+  workers: WorkerRegistration[];
+  pools: WorkerPoolDefinition[];
+  settings?: Record<string, unknown>;
+  supervisor?: {
+    health: string;
+    degraded_reason?: string | null;
+    last_tick_at?: string | null;
+    last_successful_tick_at?: string | null;
+    consecutive_tick_failures?: number;
+    restart_count?: number;
+    [key: string]: unknown;
+  };
+  truth?: Record<string, boolean>;
+};
+
+export type WorkerPoolScaleResponse = {
+  pool: WorkerPoolDefinition & { envDesired?: number };
+  override: { poolId: string; desiredCount: number; updatedAt: string; updatedBy?: string | null };
+  truth?: Record<string, boolean>;
+};
+
+export type FleetBulkResult = {
+  changed: string[];
+  skipped: Array<{ agentId: string; reason: string }>;
+  truth?: Record<string, boolean>;
+};
+
 /* ---------- Agent Signal Fabric ---------- */
 
 export type AgentSignalType =

@@ -1,6 +1,34 @@
 import { describe, expect, it } from "vitest";
-import type { AgentDefinition, AgentMission, AgentSignal, CapabilityListItem } from "../types/api";
+import type {
+  AgentDefinition,
+  AgentMission,
+  AgentSignal,
+  CapabilityListItem,
+  SystemArchitectureEntry,
+} from "../types/api";
 import {
+  ALL_ENVIRONMENTS,
+  ALL_MODELS,
+  ALL_ROLES,
+  ALL_STATUS,
+  ALL_TEAMS,
+  MODEL_UNSET,
+  agentEnvironment,
+  agentMissionStats,
+  buildArchitectureTiers,
+  deriveModelOptions,
+  deriveTeamOptions,
+  donutSegments,
+  emptyDashboardFilters,
+  filterDashboardAgents,
+  formatDurationMs,
+  formatPct,
+  formatSyncAge,
+  groupSystemEntriesByRuntime,
+  isDefaultDashboardFilters,
+  orchestratorsForMember,
+  teamBucketForAgent,
+  workersForMissions,
   agentEntityType,
   agentOrigin,
   assignedCapabilityCards,
@@ -356,5 +384,178 @@ describe("signal helpers", () => {
   it("formats confidence honestly", () => {
     expect(formatSignalConfidence(0.94)).toBe("94%");
     expect(formatSignalConfidence(null)).toBeNull();
+  });
+});
+
+function mission(partial: Partial<AgentMission> & Pick<AgentMission, "missionId" | "agentId" | "status">): AgentMission {
+  return {
+    title: "t",
+    request: "r",
+    priority: "med",
+    progress: 0,
+    jobIds: [],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...partial,
+  };
+}
+
+function sysEntry(partial: Partial<SystemArchitectureEntry> & Pick<SystemArchitectureEntry, "id" | "name">): SystemArchitectureEntry {
+  return {
+    origin: "system",
+    entityType: "architecture",
+    systemKey: partial.id,
+    status: "unknown",
+    mutable: false,
+    ...partial,
+  };
+}
+
+describe("agents dashboard helpers", () => {
+  it("team buckets mirror backend team_bucket_for_agent precedence", () => {
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Scout", kind: "research" }))).toBe("Research");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Builder", kind: "coding", role: "" }))).toBe("Development");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Desk", kind: "trading", role: "" }))).toBe("Trading");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Lead", kind: "orchestrator", role: "" }))).toBe("Planning");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Guardian", kind: "generic", role: "Risk" }))).toBe("Risk");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Recall", kind: "generic", role: "memory keeper" }))).toBe("Memory");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Judge", kind: "generic", role: "", tags: ["QA"] }))).toBe("Evaluation");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Eye", kind: "generic", role: "vision" }))).toBe("Vision");
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Misc", kind: "generic", role: "" }))).toBe("Other");
+    // research wins over trading when both match (same order as backend)
+    expect(teamBucketForAgent(agent({ agentId: "a", name: "Trade research", kind: "generic", role: "" }))).toBe("Research");
+    expect(
+      teamBucketForAgent(agent({ agentId: "a", name: "Crit", kind: "generic", role: "", systemKey: "critic" })),
+    ).toBe("Risk");
+  });
+
+  it("formats durations and sync age honestly", () => {
+    expect(formatDurationMs(null)).toBe("—");
+    expect(formatDurationMs(-5)).toBe("—");
+    expect(formatDurationMs(420)).toBe("420ms");
+    expect(formatDurationMs(1800)).toBe("1.8s");
+    expect(formatDurationMs(42_000)).toBe("42s");
+    expect(formatDurationMs(125_000)).toBe("2m 5s");
+    expect(formatDurationMs(3_600_000)).toBe("1h");
+    const now = Date.parse("2026-01-01T12:00:00Z");
+    expect(formatSyncAge(null, now)).toBe("—");
+    expect(formatSyncAge("garbage", now)).toBe("—");
+    expect(formatSyncAge("2026-01-01T11:59:58Z", now)).toBe("just now");
+    expect(formatSyncAge("2026-01-01T11:59:30Z", now)).toBe("30s ago");
+    expect(formatSyncAge("2026-01-01T11:58:00Z", now)).toBe("2 min ago");
+    expect(formatSyncAge("2026-01-01T09:00:00Z", now)).toBe("3h ago");
+    expect(formatPct(null)).toBe("—");
+    expect(formatPct(0.968)).toBe("96.8%");
+  });
+
+  it("per-agent mission stats exclude cancelled from success and return null without evidence", () => {
+    const missions = [
+      mission({ missionId: "1", agentId: "a", status: "completed", startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:02Z" }),
+      mission({ missionId: "2", agentId: "a", status: "failed" }),
+      mission({ missionId: "3", agentId: "a", status: "cancelled" }),
+      mission({ missionId: "4", agentId: "a", status: "running" }),
+      mission({ missionId: "5", agentId: "b", status: "completed" }),
+    ];
+    const st = agentMissionStats(missions, "a");
+    expect(st).toMatchObject({ total: 4, active: 1, completed: 1, failed: 1, successRate: 0.5, avgDurationMs: 2000 });
+    expect(agentMissionStats(missions, "none").successRate).toBeNull();
+    expect(agentMissionStats(missions, "none").avgDurationMs).toBeNull();
+  });
+
+  it("architecture tiers use real orchestrators and cap visible nodes", () => {
+    const orch = agent({
+      agentId: "o1",
+      name: "Chief",
+      kind: "orchestrator",
+      orchestrator: {
+        memberAgentIds: ["s1"],
+        strategy: "sequential",
+        routingRules: [],
+        maxDelegationDepth: 3,
+        parallelismLimit: 2,
+        fanOutPolicy: "ordered",
+        retryPolicy: {},
+        approvalEscalation: "inherit",
+        failureStrategy: "fail_fast",
+        verificationRequired: false,
+      },
+    });
+    const specialists = Array.from({ length: 10 }, (_, i) =>
+      agent({ agentId: `s${i}`, name: `Spec ${i}`, kind: i % 2 ? "coding" : "research" }),
+    );
+    const archived = agent({ agentId: "old", name: "Old", kind: "research", archived: true });
+    const sys = [
+      sysEntry({ id: "system:orchestrator:cog", name: "Cognitive Runtime", entityType: "orchestrator", runtimeKind: "cognition" }),
+      sysEntry({ id: "system:architecture:gw", name: "Gateway", runtimeKind: "execution" }),
+    ];
+    const tiers = buildArchitectureTiers([orch, ...specialists, archived], sys, { maxOrchestrators: 4, maxSpecialists: 8 });
+    expect(tiers.orchestrators.map((o) => o.id)).toEqual(["o1", "system:orchestrator:cog"]);
+    expect(tiers.orchestrators[0].memberIds).toEqual(["s1"]);
+    expect(tiers.orchestrators[1].source).toBe("system");
+    expect(tiers.specialists).toHaveLength(8);
+    expect(tiers.hiddenSpecialists).toBe(2);
+    expect(tiers.specialists.some((s) => s.id === "old")).toBe(false);
+    // research before development in bucket order
+    expect(tiers.specialists[0].team).toBe("Research");
+    expect(orchestratorsForMember([orch, ...specialists], "s1").map((o) => o.agentId)).toEqual(["o1"]);
+    expect(orchestratorsForMember([orch, ...specialists], "s2")).toEqual([]);
+
+    const groups = groupSystemEntriesByRuntime(sys);
+    expect(groups.map((g) => g.runtimeKind)).toEqual(["cognition", "execution"]);
+  });
+
+  it("dashboard filters apply team/status/role/model/environment together", () => {
+    const agents = [
+      agent({ agentId: "r", name: "Research", kind: "research", role: "Analysis", modelRef: "llama3", origin: "system", systemKey: "research" }),
+      agent({ agentId: "c", name: "Coder", kind: "coding", role: "Development", health: "busy", origin: "user" }),
+      agent({ agentId: "t", name: "Trader", kind: "trading", role: "Markets", enabled: false, origin: "user" }),
+    ];
+    const f = emptyDashboardFilters();
+    expect(isDefaultDashboardFilters(f)).toBe(true);
+    expect(filterDashboardAgents(agents, f)).toHaveLength(3);
+    expect(filterDashboardAgents(agents, { ...f, team: "Development" }).map((a) => a.agentId)).toEqual(["c"]);
+    expect(filterDashboardAgents(agents, { ...f, status: "Offline" }).map((a) => a.agentId)).toEqual(["t"]);
+    expect(filterDashboardAgents(agents, { ...f, role: "analysis" }).map((a) => a.agentId)).toEqual(["r"]);
+    expect(filterDashboardAgents(agents, { ...f, model: MODEL_UNSET }).map((a) => a.agentId)).toEqual(["c", "t"]);
+    expect(filterDashboardAgents(agents, { ...f, environment: "System" }).map((a) => a.agentId)).toEqual(["r"]);
+    expect(filterDashboardAgents(agents, { ...f, query: "trad" }).map((a) => a.agentId)).toEqual(["t"]);
+    expect(
+      filterDashboardAgents(agents, {
+        team: ALL_TEAMS,
+        status: ALL_STATUS,
+        role: ALL_ROLES,
+        model: ALL_MODELS,
+        environment: ALL_ENVIRONMENTS,
+      }),
+    ).toHaveLength(3);
+    expect(deriveTeamOptions(agents)).toEqual(["Research", "Development", "Trading"]);
+    expect(deriveModelOptions(agents)).toEqual([MODEL_UNSET, "llama3"]);
+    expect(
+      agentEnvironment(agent({ agentId: "system:architecture:x", name: "X", entityType: "architecture" })),
+    ).toBe("Architecture");
+  });
+
+  it("workers match missions only through registry current_job_id", () => {
+    const workers = [
+      { worker_id: "w1", current_job_id: "job-1" },
+      { worker_id: "w2", current_job_id: null },
+      { worker_id: "w3", current_job_id: "job-9" },
+    ];
+    const ms = [mission({ missionId: "m", agentId: "a", status: "running", jobIds: ["job-1", "job-2"] })];
+    expect(workersForMissions(workers, ms).map((w) => w.worker_id)).toEqual(["w1"]);
+    expect(workersForMissions(workers, [])).toEqual([]);
+  });
+
+  it("donut segments are proportional and skip empty teams", () => {
+    expect(donutSegments([])).toEqual([]);
+    expect(donutSegments([{ label: "A", value: 0 }])).toEqual([]);
+    const segs = donutSegments([
+      { label: "A", value: 3 },
+      { label: "B", value: 0 },
+      { label: "C", value: 1 },
+    ]);
+    expect(segs.map((s) => s.label)).toEqual(["A", "C"]);
+    expect(segs[0]).toMatchObject({ start: 0, end: 0.75 });
+    expect(segs[1]).toMatchObject({ start: 0.75, end: 1 });
   });
 });

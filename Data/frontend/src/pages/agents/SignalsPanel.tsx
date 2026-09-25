@@ -1,7 +1,7 @@
 /**
  * AGENT COMMUNICATION / SIGNALS panel — real Signal Fabric data (no mocks).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../../api/client";
 import type {
   AgentCommunicationGraph,
@@ -18,11 +18,13 @@ type Props = {
   selectedAgentId: string | null;
   selectedMissionId: string | null;
   agentNameById: Record<string, string>;
+  /** Dense layout: metrics, graph and dead letters collapse into an expandable section. */
+  compact?: boolean;
 };
 
 type InspectorTab = "Overview" | "Payload" | "Deliveries" | "Causal Chain" | "Mission" | "Evidence";
 
-export function SignalsPanel({ selectedAgentId, selectedMissionId, agentNameById }: Props) {
+export function SignalsPanel({ selectedAgentId, selectedMissionId, agentNameById, compact = false }: Props) {
   const [filter, setFilter] = useState<SignalFilterId>("ALL");
   const [signals, setSignals] = useState<AgentSignal[]>([]);
   const [metrics, setMetrics] = useState<AgentSignalMetrics | null>(null);
@@ -147,7 +149,7 @@ export function SignalsPanel({ selectedAgentId, selectedMissionId, agentNameById
   }
 
   return (
-    <div className="lv-ag-signals">
+    <div className={`lv-ag-signals${compact ? " is-compact" : ""}`}>
       <div className="lv-ag-panel-bar">
         <strong>AGENT COMMUNICATION / SIGNALS</strong>
         <span className={`lv-ag-live ${live ? "is-on" : "is-off"}`}>
@@ -174,7 +176,7 @@ export function SignalsPanel({ selectedAgentId, selectedMissionId, agentNameById
         </div>
       ) : null}
 
-      {metrics ? (
+      {metrics && !compact ? (
         <div className="lv-ag-signal-metrics">
           <span>Total {metrics.signalsTotal}</span>
           <span>Delivered {metrics.delivered}</span>
@@ -342,6 +344,19 @@ export function SignalsPanel({ selectedAgentId, selectedMissionId, agentNameById
         </div>
       ) : null}
 
+      <Collapsible compact={compact} summary={`Graph · metrics${deadLetters.length ? ` · ${deadLetters.length} dead letters` : ""}`}>
+        {compact && metrics ? (
+          <div className="lv-ag-signal-metrics">
+            <span>Total {metrics.signalsTotal}</span>
+            <span>Delivered {metrics.delivered}</span>
+            <span>ACK {metrics.acknowledged}</span>
+            <span>Failed {metrics.failed}</span>
+            <span>DLQ {metrics.deadLetter}</span>
+            {metrics.avgDeliveryLatencyS != null ? (
+              <span>Avg lat {metrics.avgDeliveryLatencyS.toFixed(2)}s</span>
+            ) : null}
+          </div>
+        ) : null}
       <div className="lv-ag-panel-bar" style={{ marginTop: "0.75rem" }}>
         <strong>Communication Graph</strong>
         <div className="lv-ag-tabs">
@@ -412,7 +427,26 @@ export function SignalsPanel({ selectedAgentId, selectedMissionId, agentNameById
           </ul>
         </>
       ) : null}
+      </Collapsible>
     </div>
+  );
+}
+
+function Collapsible({
+  compact,
+  summary,
+  children,
+}: {
+  compact: boolean;
+  summary: string;
+  children: ReactNode;
+}) {
+  if (!compact) return <>{children}</>;
+  return (
+    <details className="lv-ag-signal-more">
+      <summary>{summary}</summary>
+      {children}
+    </details>
   );
 }
 

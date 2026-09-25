@@ -12,7 +12,12 @@ import type {
   AgentSignalMetrics,
   AgentSignalStats,
   AgentCommunicationGraph,
+  AgentsDashboard,
+  FleetBulkResult,
   SignalCausalChain,
+  WorkerPoolDefinition,
+  WorkerPoolScaleResponse,
+  WorkersListResponse,
   AnalyticsAgentsResponse,
   AnalyticsDatasetsResponse,
   AnalyticsOverview,
@@ -2703,6 +2708,50 @@ export const api = {
 
   reconcileAgents(): Promise<{ updated: string[]; count: number }> {
     return request("/api/agents/reconcile", { method: "POST" });
+  },
+
+  getAgentsDashboard(opts?: {
+    windowHours?: number;
+    failureWindowHours?: number;
+  }): Promise<AgentsDashboard> {
+    const params = new URLSearchParams();
+    if (opts?.windowHours != null) params.set("windowHours", String(opts.windowHours));
+    if (opts?.failureWindowHours != null) {
+      params.set("failureWindowHours", String(opts.failureWindowHours));
+    }
+    const q = params.toString();
+    return request(`/api/agents/dashboard${q ? `?${q}` : ""}`);
+  },
+
+  fleetStartAll(): Promise<FleetBulkResult> {
+    return request("/api/agents/fleet/start-all", { method: "POST" });
+  },
+
+  fleetPauseAll(): Promise<FleetBulkResult> {
+    return request("/api/agents/fleet/pause-all", { method: "POST" });
+  },
+
+  /* ---------- Worker registry ---------- */
+
+  listWorkers(opts?: { pool?: string }): Promise<WorkersListResponse> {
+    const params = new URLSearchParams();
+    if (opts?.pool) params.set("pool", opts.pool);
+    const q = params.toString();
+    return request(`/api/workers${q ? `?${q}` : ""}`);
+  },
+
+  listWorkerPools(): Promise<{
+    pools: WorkerPoolDefinition[];
+    provider_io?: Record<string, unknown>;
+  }> {
+    return request("/api/workers/pools");
+  },
+
+  scaleWorkerPool(poolId: string, desiredCount: number): Promise<WorkerPoolScaleResponse> {
+    return request(`/api/workers/pools/${encodeURIComponent(poolId)}/scale`, {
+      method: "POST",
+      body: JSON.stringify({ desiredCount }),
+    });
   },
 
   /* ---------- Analytics ---------- */
