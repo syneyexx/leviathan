@@ -38,8 +38,6 @@ from .store import MarketSimStore, utc_now
 from .strategy_eval import strategy_content_hash
 from .types import (
     ACTIVE_RUN_STATUSES,
-    AgentConfig,
-    DEFAULT_AGENT_ROLES,
     MarketSimError,
     RunStatus,
     SimRun,
@@ -630,12 +628,15 @@ class MarketSimControlPlane:
         per_trade_risk_pct: float = 1.0,
         agents: list[dict[str, Any]] | None = None,
         deliberation_every_n: int = 5,
+        decision_cadence: str | None = None,
         stochastic_slippage: bool = False,
         game_mode: str | None = None,
         metadata: dict[str, Any] | None = None,
         sizing_model: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
+        from .decision_cadence import CADENCE_EVERY_N_BARS, CADENCE_OFF, normalize_cadence
+
         source = self.data.get_source(source_id)
         if source.status != SourceStatus.READY.value:
             raise MarketSimError(
@@ -651,23 +652,24 @@ class MarketSimControlPlane:
             if ver is None:
                 raise MarketSimError("STRATEGY_VERSION_MISSING", strategy_id, http_status=404)
             strategy_version = ver.version
-        agent_list = agents
-        if agent_list is None:
-            agent_list = [
-                AgentConfig(
-                    agent_id=f"agent-{role.value}",
-                    role=role.value,
-                    strategy_id=strategy_id,
-                    strategy_version=strategy_version,
-                    label=role.value.replace("_", " ").title(),
-                ).public_dict()
-                for role in DEFAULT_AGENT_ROLES
-            ]
+        # P3A / D31: no silent default multi-agent roster — agents must be explicit.
+        agent_list = list(agents) if agents is not None else []
+        every_n = max(1, int(deliberation_every_n))
+        meta_in = dict(metadata or {})
+        raw_cadence = (
+            decision_cadence
+            or meta_in.get("decision_cadence")
+            or meta_in.get("decisionCadence")
+        )
+        if raw_cadence is None:
+            cadence = CADENCE_EVERY_N_BARS if agent_list else CADENCE_OFF
+        else:
+            cadence = normalize_cadence(str(raw_cadence))
         now = utc_now()
         from .sizing import SizingModel
 
         sizing = SizingModel.from_dict(
-            sizing_model or (metadata or {}).get("sizing_model") or (metadata or {}).get("sizingModel"),
+            sizing_model or meta_in.get("sizing_model") or meta_in.get("sizingModel"),
             defaults={
                 "kind": "risk_pct",
                 "per_trade_risk_pct": per_trade_risk_pct,
@@ -695,7 +697,7 @@ class MarketSimControlPlane:
             max_drawdown_pct=max_drawdown_pct,
             per_trade_risk_pct=per_trade_risk_pct,
             agents=agent_list,
-            deliberation_every_n=max(1, int(deliberation_every_n)),
+            deliberation_every_n=every_n,
             cash=initial_cash,
             equity=initial_cash,
             created_at=now,
@@ -703,11 +705,14 @@ class MarketSimControlPlane:
             sizing_model=sizing_payload,
             metadata={
                 "stochastic_slippage": stochastic_slippage,
-                **(dict(metadata or {})),
+                **meta_in,
                 **({"game_mode": game_mode} if game_mode else {}),
                 "instrument_family": infer_family(source.symbol, metadata=source.metadata).value,
                 "fill_schedule": "next_bar_open",
                 "sizing_model": sizing_payload,
+                "decision_cadence": cadence,
+                "decisionCadence": cadence,
+                "deliberation_every_n": every_n,
             },
         )
         self.store.create_run(run)

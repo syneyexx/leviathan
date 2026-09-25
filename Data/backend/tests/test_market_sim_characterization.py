@@ -793,7 +793,6 @@ class D17AgentsCharacterization(unittest.TestCase):
         src = inspect.getsource(AgentFleetService.reconcile)
         self.assertIn("INTERRUPTED", src)
 
-    @unittest.expectedFailure  # D17 — fixed in Phase T8
     def test_d17_desired_trading_execution_kind(self) -> None:
         from Data.modules.agents.types import AgentKind
 
@@ -1289,7 +1288,7 @@ class D30CommitRevealCharacterization(unittest.TestCase):
 
 
 class D31CadenceCharacterization(unittest.TestCase):
-    def test_d31_current_default_roles_are_trend_mean_risk(self) -> None:
+    def test_d31_current_default_roles_constant_exists(self) -> None:
         from Data.modules.market_sim.types import AgentRole, DEFAULT_AGENT_ROLES
 
         self.assertEqual(
@@ -1297,27 +1296,22 @@ class D31CadenceCharacterization(unittest.TestCase):
             (AgentRole.TREND, AgentRole.MEAN_REVERSION, AgentRole.RISK_OFFICER),
         )
 
-    def test_d31_current_create_run_injects_default_agents_when_omitted(self) -> None:
+    def test_d31_create_run_does_not_inject_default_agents(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.create_run)
-        self.assertIn("DEFAULT_AGENT_ROLES", src)
+        self.assertNotIn("DEFAULT_AGENT_ROLES", src)
+        self.assertIn("decision_cadence", src)
         self.assertIn("deliberation_every_n", src)
-        self.assertIn("if agent_list is None", src)
 
-    def test_d31_current_legacy_alternates_deliberation_and_raw(self) -> None:
+    def test_d31_engines_use_explicit_cadence_gate(self) -> None:
         src = inspect.getsource(SimulationEngine.step_once)
-        # Legacy: deliberation on every Nth bar, raw strategy otherwise.
-        self.assertIn("deliberation_every_n", src)
-        self.assertIn("should_deliberate", src)
-        self.assertIn("evaluate_strategy", src)
+        multi_src = inspect.getsource(MultiAgentEngine.step_once)
+        self.assertIn("should_decide_on_bar", src)
+        self.assertIn("decision_cadence", src)
+        self.assertIn("should_decide_on_bar", multi_src)
+        self.assertIn("decision_cadence", multi_src)
 
-    def test_d31_current_multi_decides_only_every_n(self) -> None:
-        src = inspect.getsource(MultiAgentEngine.step_once)
-        self.assertIn("deliberation_every_n", src)
-        self.assertIn("should_decide", src)
-
-    @unittest.expectedFailure  # D31 — fixed in Phase T1D
     def test_d31_desired_cadence_is_explicit_recorded_param_only(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 

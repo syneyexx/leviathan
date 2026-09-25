@@ -9,6 +9,7 @@ class AgentKind(str, Enum):
     GENERIC = "GENERIC"
     CODING = "CODING"
     RESEARCH = "RESEARCH"
+    TRADING = "TRADING"
 
 
 class AgentStepKind(str, Enum):

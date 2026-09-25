@@ -79,6 +79,7 @@ class RunCreate(BaseModel):
     perTradeRiskPct: float = 1.0
     agents: list[dict[str, Any]] | None = None
     deliberationEveryN: int = 5
+    decisionCadence: str | None = None
     stochasticSlippage: bool = False
     gameMode: str | None = None
     metadata: dict[str, Any] | None = None
@@ -339,6 +340,7 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                 per_trade_risk_pct=payload.perTradeRiskPct,
                 agents=payload.agents,
                 deliberation_every_n=payload.deliberationEveryN,
+                decision_cadence=payload.decisionCadence,
                 stochastic_slippage=payload.stochasticSlippage,
                 game_mode=payload.gameMode,
                 metadata=payload.metadata,

@@ -625,15 +625,39 @@
     },
     "G24": {
       "title": "Trading role executors on Agent Fleet",
-      "phase": "T7A",
-      "status": "NOT_STARTED",
+      "phase": "T7A/P3A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "TradingOrchestraService.bind_fleet registers AgentDefinitionKind.TRADING executor",
+        "Data/modules/market_sim/orchestra/executors.py — role executors + DecisionRecord chain",
+        "Data/modules/market_sim/decision_cadence.py — explicit cadence + AsyncDecisionQueue",
+        "AgentKind.TRADING labeled; generic planner refuses TRADING without orchestra executor",
+        "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+        "Data/backend/tests/test_trading_orchestra.py::DeliberationTests",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D31CadenceCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+        "Data/backend/tests/test_trading_orchestra.py::DeliberationTests",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D31CadenceCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "P3A: Trading Orchestra cadence + async DecisionRecord + Fleet TRADING executor (D17/D31)",
       "related_defects": [
-        "D17"
+        "D17",
+        "D31"
       ]
     },
     "G25": {

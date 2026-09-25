@@ -383,14 +383,24 @@ class MultiAgentEngine:
                     )
                     state.pending_intents.append(flatten)
 
-        # 3) Commit-reveal decision round (every N bars)
-        should_decide = (
-            bool(getattr(state, "_trading_agents", None))
-            and (state.clock.index % max(1, run.deliberation_every_n) == 0)
+        # 3) Commit-reveal decision round (explicit cadence — P3A / D31)
+        from .decision_cadence import CADENCE_EVERY_N_BARS, should_decide_on_bar
+
+        meta = dict(run.metadata or {})
+        cadence = str(meta.get("decision_cadence") or meta.get("decisionCadence") or CADENCE_EVERY_N_BARS)
+        prev_ts = meta.get("last_decision_ts")
+        should_decide = bool(getattr(state, "_trading_agents", None)) and should_decide_on_bar(
+            cadence=cadence,
+            bar_index=state.clock.index,
+            bar_ts=bar.ts,
+            every_n=run.deliberation_every_n,
+            previous_decision_ts=str(prev_ts) if prev_ts else None,
         )
         if should_decide:
             try:
                 self._commit_round(state)
+                meta["last_decision_ts"] = bar.ts
+                run.metadata = meta
             except CausalityViolation as exc:
                 run.causality_violations += 1
                 self.store.add_event(
