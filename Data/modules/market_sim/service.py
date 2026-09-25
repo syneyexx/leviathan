@@ -1366,10 +1366,14 @@ class MarketSimControlPlane:
             match = {"matched": False, "reason": "no strategy bound"}
 
         broker = self._paper_broker(broker_id)
-        if hasattr(broker, "wallet"):
-            from .accounting import money
-            broker.wallet.cash = money(initial_cash)
-            broker.wallet.peak_equity = money(initial_cash)
+        now = utc_now()
+        session_id = str(uuid.uuid4())
+        # P4A: isolated per-session wallet — do not mutate shared broker.wallet
+        if hasattr(broker, "wallet_for_session"):
+            session_wallet = broker.wallet_for_session(session_id, initial_cash=initial_cash, create=True)
+            wallet_payload = session_wallet.public_dict()
+        else:
+            wallet_payload = broker.account().get("wallet") if hasattr(broker, "account") else {}
 
         quote = None
         feed_status = "disconnected"
@@ -1383,9 +1387,8 @@ class MarketSimControlPlane:
         except Exception as exc:  # noqa: BLE001
             feed_status = f"error:{exc}"
 
-        now = utc_now()
         session = {
-            "session_id": str(uuid.uuid4()),
+            "session_id": session_id,
             "status": "active",
             "broker_id": broker_id,
             "provider_id": provider_id,
@@ -1394,17 +1397,20 @@ class MarketSimControlPlane:
             "strategy_version": strategy_version,
             "kill_switch": False,
             "feed_status": feed_status,
-            "wallet": broker.account().get("wallet") if hasattr(broker, "account") else {},
+            "wallet": wallet_payload,
             "orders": [],
             "metadata": {
                 "mode": "live_paper",
                 "regime_match": match,
                 "last_quote": quote,
                 "feed_latency_ms": latency,
+                "initial_cash": initial_cash,
+                "isolated_wallet": True,
                 "truth": {
                     "not_live_money": True,
                     "not_historical_backtest": True,
                     "paper_never_auto_approves_live": True,
+                    "canonical_risk_guard": True,
                 },
             },
             "created_at": now,
@@ -1431,7 +1437,13 @@ class MarketSimControlPlane:
             session["feed_status"] = f"error:{exc}"
         broker = self._paper_brokers.get(session["broker_id"])
         if broker is not None:
-            session["wallet"] = broker.account().get("wallet") or broker.account()
+            if hasattr(broker, "account"):
+                try:
+                    session["wallet"] = broker.account(session_id=session_id).get("wallet") or broker.account()
+                except TypeError:
+                    session["wallet"] = broker.account().get("wallet") or broker.account()
+            elif hasattr(broker, "wallet_for_session") and session_id in getattr(broker, "sessions", {}):
+                session["wallet"] = broker.sessions[session_id].public_dict()
         session["updated_at"] = utc_now()
         self.store.upsert_paper_session(session)
         return session
@@ -1445,6 +1457,9 @@ class MarketSimControlPlane:
         client_order_id: str | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
+        from .paper_forward import PaperForwardRunner
+        from .risk_guard import RiskGuard, RiskLimits
+
         session = self.paper_session_state(session_id)
         if session.get("kill_switch"):
             raise MarketSimError("KILL_SWITCH", "Paper session kill switch armed", http_status=409)
@@ -1460,25 +1475,113 @@ class MarketSimControlPlane:
                 "No live quote — refusing paper order (no blind resubmit)",
                 http_status=409,
             )
+        # P4A: canonical RiskGuard on every paper order path
+        if hasattr(broker, "wallet_for_session"):
+            wallet = broker.wallet_for_session(session_id, create=True)
+        else:
+            wallet = getattr(broker, "wallet", None)
+        if wallet is None:
+            raise MarketSimError("PAPER_WALLET_MISSING", session_id, http_status=500)
+        runner = PaperForwardRunner(
+            risk=RiskGuard(
+                RiskLimits(
+                    max_position_pct=25.0,
+                    max_drawdown_pct=20.0,
+                    per_trade_risk_pct=1.0,
+                    kill_switch_armed=bool(session.get("kill_switch")),
+                )
+            )
+        )
+        decision = runner.step(
+            wallet=wallet,
+            symbol=session["symbol"],
+            price=float(price),
+            side=side,
+            qty=qty,
+            rationale="paper_place_order",
+            metadata={"session_id": session_id},
+        )
+        if not decision.get("allowed"):
+            raise MarketSimError(
+                "RISK_VETO",
+                decision.get("reason") or "RiskGuard blocked paper order",
+                http_status=409,
+            )
+        sized_qty = float(decision.get("qty") or qty)
         order = broker.place(
             symbol=session["symbol"],
             side=side,
-            qty=qty,
+            qty=sized_qty,
             client_order_id=client_order_id or str(uuid.uuid4()),
             price_hint=float(price),
+            session_id=session_id,
             metadata={
                 "strategy_id": session.get("strategy_id"),
                 "strategy_version": session.get("strategy_version"),
                 "session_id": session_id,
+                "risk": decision.get("risk"),
             },
         )
         orders = list(session.get("orders") or [])
         orders.append(order.public_dict())
         session["orders"] = orders
-        session["wallet"] = broker.account().get("wallet") or {}
+        session["wallet"] = broker.account(session_id=session_id).get("wallet") if hasattr(broker, "account") else {}
         session["updated_at"] = utc_now()
         self.store.upsert_paper_session(session)
-        return {"order": order.public_dict(), "session": session}
+        return {"order": order.public_dict(), "session": session, "risk": decision.get("risk")}
+
+    def paper_forward_step(
+        self,
+        session_id: str,
+        *,
+        side: str = "HOLD",
+        qty: float | None = None,
+    ) -> dict[str, Any]:
+        """One PaperForwardRunner step (RiskGuard + isolated wallet)."""
+        self._require_enabled()
+        from .paper_forward import PaperForwardRunner, new_paper_forward_state
+        from .risk_guard import RiskGuard, RiskLimits
+
+        session = self.paper_session_state(session_id)
+        if session.get("kill_switch"):
+            raise MarketSimError("KILL_SWITCH", "Paper session kill switch armed", http_status=409)
+        broker = self._paper_broker(session["broker_id"])
+        quote = (session.get("metadata") or {}).get("last_quote") or {}
+        price = quote.get("price")
+        if price is None:
+            raise MarketSimError("FEED_UNCERTAIN", "no quote for paper forward", http_status=409)
+        wallet = broker.wallet_for_session(session_id, create=True) if hasattr(broker, "wallet_for_session") else broker.wallet
+        runner = PaperForwardRunner(risk=RiskGuard(RiskLimits()))
+        result = runner.step(
+            wallet=wallet,
+            symbol=session["symbol"],
+            price=float(price),
+            side=side,
+            qty=qty,
+        )
+        meta = dict(session.get("metadata") or {})
+        fwd = meta.get("paper_forward") or new_paper_forward_state(
+            session_id=session_id, symbol=session["symbol"]
+        ).public_dict()
+        fwd["steps"] = int(fwd.get("steps") or 0) + 1
+        fwd["checkpoint_step"] = fwd["steps"]
+        fwd["last_decision"] = result
+        fwd["last_risk"] = result.get("risk") or {}
+        fwd["status"] = "RUNNING"
+        fwd["updated_at"] = utc_now()
+        meta["paper_forward"] = fwd
+        session["metadata"] = meta
+        if result.get("allowed") and result.get("action") == "order":
+            placed = self.paper_place_order(
+                session_id,
+                side=str(result.get("side") or side),
+                qty=float(result.get("qty") or qty or 0),
+            )
+            session = placed["session"]
+            result["order"] = placed["order"]
+        else:
+            self.store.upsert_paper_session(session)
+        return {"forward": fwd, "result": result, "session": session}
 
     def paper_kill_switch(self, session_id: str, *, armed: bool = True) -> dict[str, Any]:
         self._require_enabled()

@@ -806,26 +806,29 @@ class D17AgentsCharacterization(unittest.TestCase):
 
 
 class D18PaperCharacterization(unittest.TestCase):
-    def test_d18_current_local_broker_single_wallet(self) -> None:
+    def test_d18_local_broker_exposes_session_wallets(self) -> None:
         b = LocalPaperBroker()
+        self.assertTrue(hasattr(b, "wallet_for_session"))
+        self.assertTrue(hasattr(b, "sessions"))
+        w = b.wallet_for_session("sess-a", initial_cash=25_000)
+        self.assertEqual(float(w.cash), 25_000.0)
+        # Default shared wallet remains independent
         self.assertEqual(float(b.wallet.cash), 100_000.0)
-        b.wallet.cash = money(50_000)
-        self.assertEqual(float(b.wallet.cash), 50_000.0)
 
-    def test_d18_current_paper_place_order_source_has_no_riskguard(self) -> None:
+    def test_d18_paper_place_order_uses_riskguard(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.paper_place_order)
-        self.assertNotIn("RiskGuard", src)
-        self.assertIn("kill", src.lower())
+        self.assertIn("RiskGuard", src)
+        self.assertIn("PaperForwardRunner", src)
 
-    def test_d18_current_start_paper_session_resets_shared_cash(self) -> None:
+    def test_d18_start_paper_session_uses_isolated_wallet(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.start_paper_session)
-        self.assertIn("wallet.cash", src)
+        self.assertIn("wallet_for_session", src)
+        self.assertNotIn("broker.wallet.cash = money", src)
 
-    @unittest.expectedFailure  # D18 — fixed in Phase T9
     def test_d18_desired_per_session_wallets(self) -> None:
         b = LocalPaperBroker()
         self.assertTrue(hasattr(b, "wallet_for_session") or hasattr(b, "sessions"))

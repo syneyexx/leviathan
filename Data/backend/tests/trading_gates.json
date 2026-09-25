@@ -821,23 +821,55 @@
     },
     "G31": {
       "title": "Promotion state machine",
-      "phase": "T6C",
-      "status": "NOT_STARTED",
+      "phase": "T6C/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/promotion.py::evaluate_promotion",
+        "Data/modules/market_sim/readiness.py::may_promote_to",
+        "A2+ requires kernel acceptance; A5 impossible",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: kernel-owned promotion; live never enabled"
     },
     "G32": {
       "title": "PaperForwardRunner autonomous loop",
-      "phase": "T9A",
-      "status": "NOT_STARTED",
+      "phase": "T9A/P4A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/paper_forward.py::PaperForwardRunner",
+        "MarketSimControlPlane.paper_forward_step",
+        "Per-session WalletLedger isolation on LocalPaperBroker",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P4A: PaperForwardRunner + isolated paper accounting (D18)",
       "related_defects": [
         "D18"
       ]
@@ -854,13 +886,29 @@
     },
     "G34": {
       "title": "Risk Engine v2 on every order path",
-      "phase": "T9B",
-      "status": "NOT_STARTED",
+      "phase": "T9B/P4A",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "paper_place_order routes through PaperForwardRunner + RiskGuard",
+        "SimulationEngine / MultiAgentEngine already use RiskGuard",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization::test_d18_paper_place_order_uses_riskguard"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order",
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization::test_d18_paper_place_order_uses_riskguard"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4A: RiskGuard on paper path (D18)",
       "related_defects": [
         "D18"
       ]
