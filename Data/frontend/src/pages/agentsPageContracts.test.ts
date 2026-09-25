@@ -320,9 +320,6 @@ describe("agents page helpers", () => {
   });
 });
 
-import { matchesSignalFilter, formatSignalConfidence } from "./agents/signalHelpers";
-import type { AgentSignal } from "../types/api";
-
 function signal(partial: Partial<AgentSignal> & Pick<AgentSignal, "signalId" | "signalType">): AgentSignal {
   return {
     senderType: "AGENT",
