@@ -90,6 +90,13 @@ def _evaluate_gate(gate_id: str, spec: dict[str, Any], *, run_tests: bool) -> di
     if status == "NOT_TESTED_IN_CI":
         return {"id": gate_id, "status": status, "evidence": evidence,
                 "notes": notes or "External live dependency — never PASS offline"}
+    if status == "DEFERRED":
+        return {
+            "id": gate_id,
+            "status": status,
+            "evidence": evidence,
+            "notes": notes or "Deferred beyond current Master Program delivery stack",
+        }
     if status in {"NOT_STARTED", "NOT_TESTED", "IN_PROGRESS", "FAIL"}:
         node_ids = spec.get("test_node_ids") or []
         if run_tests and node_ids and status in {"IN_PROGRESS", "PASS", "FAIL"}:
@@ -153,7 +160,12 @@ def main(argv: list[str] | None = None) -> int:
         for finding in anti.get("findings") or []:
             print(f"  ! {finding}")
 
-    required_pass = [r for r in results if r["status"] != "NOT_TESTED_IN_CI" and gates[r["id"]].get("required", True)]
+    required_pass = [
+        r
+        for r in results
+        if r["status"] not in {"NOT_TESTED_IN_CI", "DEFERRED"}
+        and gates[r["id"]].get("required", True)
+    ]
     all_pass = all(r["status"] == "PASS" for r in required_pass) and (anti is None or anti.get("ok"))
     exit_code = 0 if all_pass and required_pass else 1
 
@@ -163,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         "program": "Master Program v4",
         "all_required_pass": all_pass,
         "counts": counts,
+        "deferred_gates": [r["id"] for r in results if r["status"] == "DEFERRED"],
         "gates": results,
         "anti_shortcut": anti,
         "explicitly_not_claimed": manifest.get("explicitly_not_claimed") or [],

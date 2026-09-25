@@ -95,6 +95,7 @@ class RunCreate(BaseModel):
     deliberationEveryN: int = 5
     stochasticSlippage: bool = False
     gameMode: str | None = None
+    engine: str | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -610,8 +611,21 @@ def build_market_sim_router(
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    @router.get("/api/market-sim/run-builder")
+    def run_builder() -> dict:
+        try:
+            return service.run_builder_options()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     @router.post("/api/market-sim/runs")
     def create_run(payload: RunCreate) -> dict:
+        meta = dict(payload.metadata or {})
+        if payload.engine:
+            meta.setdefault("engine", payload.engine)
+        game_mode = payload.gameMode
+        if not game_mode and payload.engine in {"multi_agent", "multi", "individual_competition"}:
+            game_mode = "individual_competition"
         args = {
             "source_id": payload.sourceId,
             "strategy_id": payload.strategyId,
@@ -629,8 +643,8 @@ def build_market_sim_router(
             "agents": payload.agents,
             "deliberation_every_n": payload.deliberationEveryN,
             "stochastic_slippage": payload.stochasticSlippage,
-            "game_mode": payload.gameMode,
-            "metadata": payload.metadata,
+            "game_mode": game_mode,
+            "metadata": meta,
         }
         return _mutate(
             "market_sim.run.create",
@@ -653,8 +667,8 @@ def build_market_sim_router(
                     agents=payload.agents,
                     deliberation_every_n=payload.deliberationEveryN,
                     stochastic_slippage=payload.stochasticSlippage,
-                    game_mode=payload.gameMode,
-                    metadata=payload.metadata,
+                    game_mode=game_mode,
+                    metadata=meta,
                 )
             },
         )

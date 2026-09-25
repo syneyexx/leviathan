@@ -778,17 +778,30 @@ class MarketSimControlPlane:
                 raise MarketSimError("STRATEGY_VERSION_MISSING", strategy_id, http_status=404)
             strategy_version = ver.version
         agent_list = agents
-        if agent_list is None:
-            agent_list = [
-                AgentConfig(
-                    agent_id=f"agent-{role.value}",
-                    role=role.value,
-                    strategy_id=strategy_id,
-                    strategy_version=strategy_version,
-                    label=role.value.replace("_", " ").title(),
-                ).public_dict()
-                for role in DEFAULT_AGENT_ROLES
-            ]
+        if not agent_list:
+            # T10: multi-agent competition uses role presets from backend (not UI hardcodes).
+            gm = (game_mode or "").lower()
+            meta_mode = str((metadata or {}).get("engine") or "").lower()
+            if gm in {"individual_competition", "multi_agent"} or meta_mode in {
+                "multi",
+                "multi_agent",
+                "individual_competition",
+            }:
+                from .roles import default_competition_agents
+
+                per_agent = float(initial_cash) / 2.0 if float(initial_cash) > 0 else 50_000.0
+                agent_list = default_competition_agents(initial_cash=per_agent)
+            else:
+                agent_list = [
+                    AgentConfig(
+                        agent_id=f"agent-{role.value}",
+                        role=role.value,
+                        strategy_id=strategy_id,
+                        strategy_version=strategy_version,
+                        label=role.value.replace("_", " ").title(),
+                    ).public_dict()
+                    for role in DEFAULT_AGENT_ROLES
+                ]
         now = utc_now()
         run = SimRun(
             run_id=str(uuid.uuid4()),
@@ -858,6 +871,35 @@ class MarketSimControlPlane:
         self.store.update_run(run)
         self._emit_event("run.created", {"run_id": run.run_id, "data_hash": run.data_hash})
         return run.public_dict()
+
+    def run_builder_options(self) -> dict[str, Any]:
+        """T10 / G42 — run configuration options for the Trading Center UI."""
+        self._require_enabled()
+        from .roles import default_competition_agents
+
+        return {
+            "engines": [
+                {
+                    "id": "multi_agent",
+                    "label": "Multi-agent competition",
+                    "game_mode": "individual_competition",
+                    "default_agents": default_competition_agents(initial_cash=50_000.0),
+                },
+                {
+                    "id": "single",
+                    "label": "Single strategy engine",
+                    "game_mode": None,
+                    "default_agents": None,
+                },
+            ],
+            "initial_cash_presets": [10_000.0, 50_000.0, 100_000.0, 250_000.0],
+            "speeds": [1, 2, 5],
+            "truth": {
+                "agents_from_backend_presets": True,
+                "ui_must_not_hardcode_agent_ids": True,
+                "live_series_are_recent_tail": True,
+            },
+        }
 
     def import_market_dataset(
         self,
@@ -974,6 +1016,7 @@ class MarketSimControlPlane:
     def run_live_state(self, run_id: str, *, message_limit: int = 100, fill_limit: int = 100) -> dict[str, Any]:
         self._require_enabled()
         run = self._get_run(run_id)
+        # Recent-tail loaders (newest N, re-ordered chronologically) — not oldest-first.
         fills = [f.public_dict() for f in self.store.list_fills(run_id, limit=fill_limit)]
         messages = [m.public_dict() for m in self.store.list_messages(run_id, limit=message_limit)]
         equity = self.store.list_equity(run_id, limit=2000)
@@ -985,6 +1028,9 @@ class MarketSimControlPlane:
             "truth": {
                 "causality_violations": run.causality_violations,
                 "paper_sim_only": True,
+                "live_series_recent_tail": True,
+                "fill_limit": fill_limit,
+                "message_limit": message_limit,
             },
         }
 

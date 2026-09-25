@@ -2016,12 +2016,22 @@ export const api = {
     deliberationEveryN?: number;
     agents?: Array<Record<string, unknown>>;
     gameMode?: string;
+    engine?: string;
     metadata?: Record<string, unknown>;
   }): Promise<{ run: MarketSimRun }> {
     return request("/api/market-sim/runs", {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  marketSimRunBuilder(): Promise<{
+    engines: Array<Record<string, unknown>>;
+    initial_cash_presets: number[];
+    speeds: number[];
+    truth?: Record<string, unknown>;
+  }> {
+    return request("/api/market-sim/run-builder");
   },
 
   startMarketSimRun(runId: string): Promise<{ run: MarketSimRun }> {
@@ -2105,6 +2115,57 @@ export const api = {
       `/api/market-sim/paper/sessions/${encodeURIComponent(sessionId)}/kill-switch?armed=${armed ? "true" : "false"}`,
       { method: "POST" },
     );
+  },
+
+  startPaperForward(
+    sessionId: string,
+    payload?: { strategyId?: string; strategyVersion?: number },
+  ): Promise<{ runner: Record<string, unknown> }> {
+    return request(`/api/market-sim/paper/sessions/${encodeURIComponent(sessionId)}/forward`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
+
+  paperForwardTick(runnerId: string, side?: string): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/paper/forward/${encodeURIComponent(runnerId)}/tick`, {
+      method: "POST",
+      body: JSON.stringify(side ? { side } : {}),
+    });
+  },
+
+  paperForwardPause(runnerId: string): Promise<{ runner: Record<string, unknown> }> {
+    return request(`/api/market-sim/paper/forward/${encodeURIComponent(runnerId)}/pause`, {
+      method: "POST",
+    });
+  },
+
+  paperForwardResume(runnerId: string): Promise<{ runner: Record<string, unknown> }> {
+    return request(`/api/market-sim/paper/forward/${encodeURIComponent(runnerId)}/resume`, {
+      method: "POST",
+    });
+  },
+
+  marketSimRiskStatus(): Promise<{ risk: Record<string, unknown> }> {
+    return request("/api/market-sim/risk");
+  },
+
+  marketSimRiskReset(payload: {
+    humanToken: string;
+    strategyId?: string;
+  }): Promise<{ kill: Record<string, unknown> }> {
+    return request("/api/market-sim/risk/reset", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  marketSimAuditVerify(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/audit/verify");
+  },
+
+  marketSimSecurityPosture(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/security-posture");
   },
 
   marketSimLiveTradingStatus(): Promise<Record<string, unknown>> {

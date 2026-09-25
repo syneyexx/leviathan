@@ -68,7 +68,19 @@ class MarketSimModuleExecutor:
             rid = str(arguments.get("run_id") or run_id or "")
             return {"run": svc.stop_run(rid)}
         if action == "run.create":
-            run = svc.create_run(**{k: v for k, v in _snake_args(arguments).items() if v is not None})
+            args = {k: v for k, v in _snake_args(arguments).items() if v is not None}
+            engine = args.pop("engine", None)
+            if engine:
+                meta = dict(args.get("metadata") or {})
+                meta.setdefault("engine", engine)
+                args["metadata"] = meta
+                if not args.get("game_mode") and str(engine) in {
+                    "multi_agent",
+                    "multi",
+                    "individual_competition",
+                }:
+                    args["game_mode"] = "individual_competition"
+            run = svc.create_run(**args)
             return {"run": run}
         if action == "strategy.create":
             return svc.create_strategy(**_snake_args(arguments))
@@ -416,6 +428,7 @@ def _snake_args(arguments: dict[str, Any], *, skip: set[str] | None = None) -> d
         "bandPct": "band_pct",
         "humanToken": "human_token",
         "approvalId": "approval_id",
+        "engine": "engine",
     }
     out: dict[str, Any] = {}
     for key, value in arguments.items():

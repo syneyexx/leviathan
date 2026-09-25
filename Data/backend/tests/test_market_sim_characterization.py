@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -1122,7 +1123,7 @@ class D26JobRuntimeCharacterization(unittest.TestCase):
 
 
 class D27FrontendGapsCharacterization(unittest.TestCase):
-    def test_d27_current_simulatie_hardcodes_four_agents(self) -> None:
+    def test_d27_simulatie_no_longer_hardcodes_four_agents(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]
             / "frontend"
@@ -1132,27 +1133,26 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
             / "SimulatiePage.tsx"
         )
         text = page.read_text(encoding="utf-8")
-        self.assertIn("agent-alpha", text)
-        self.assertIn("agent-beta", text)
-        self.assertIn("agent-risk", text)
-        self.assertIn("agent-orch", text)
-        self.assertIn('gameMode: "individual_competition"', text)
-        self.assertIn("useState(42)", text)
-        self.assertIn("seed,", text)
+        self.assertNotIn("agent-alpha", text)
+        self.assertNotIn("agent-beta", text)
+        self.assertNotIn("agent-risk", text)
+        self.assertNotIn("agent-orch", text)
+        self.assertIn("initialCash", text)
+        self.assertIn("engine", text)
 
-    def test_d27_current_live_state_oldest_first_limits(self) -> None:
+    def test_d27_live_state_uses_recent_tail_loaders(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.run_live_state)
         self.assertIn("fill_limit", src)
         self.assertIn("message_limit", src)
-        # Store loaders use ASC LIMIT — oldest N, not tail.
+        self.assertIn("live_series_recent_tail", src)
         fill_src = inspect.getsource(MarketSimStore.list_fills)
         eq_src = inspect.getsource(MarketSimStore.list_equity)
-        self.assertIn("ASC", fill_src)
-        self.assertIn("ASC", eq_src)
+        self.assertIn("ORDER BY bar_index DESC", fill_src)
+        self.assertIn("ORDER BY bar_index DESC", eq_src)
 
-    def test_d27_current_ui_slices_recent_window(self) -> None:
+    def test_d27_ui_uses_api_recent_equity_not_stale_oldest_slice(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]
             / "frontend"
@@ -1162,9 +1162,9 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
             / "SimulatiePage.tsx"
         )
         text = page.read_text(encoding="utf-8")
-        self.assertIn(".slice(-60)", text)
+        self.assertNotIn(".slice(-60)", text)
+        self.assertIn("EquityChart equity={equity}", text)
 
-    @unittest.expectedFailure  # D27 — fixed in Phase T10A
     def test_d27_desired_simulatie_exposes_run_builder_options(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]
@@ -1206,10 +1206,12 @@ class D28WeakTestsCharacterization(unittest.TestCase):
         self.assertIn("total_return_pct", text)
         self.assertIn("complete_experiment", text)
 
-    @unittest.expectedFailure  # D28 — strengthened across fixing phases / T11
     def test_d28_desired_has_golden_fill_suite(self) -> None:
+        # T11 / G45: golden fill fixture is now a real regression (no expectedFailure).
         golden = Path(__file__).resolve().parent / "fixtures" / "market_sim_golden_fills.json"
         self.assertTrue(golden.is_file())
+        data = json.loads(golden.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(data.get("fills") or []), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1289,7 +1291,9 @@ class D31CadenceCharacterization(unittest.TestCase):
         src = inspect.getsource(svc_mod.MarketSimControlPlane.create_run)
         self.assertIn("DEFAULT_AGENT_ROLES", src)
         self.assertIn("deliberation_every_n", src)
-        self.assertIn("if agent_list is None", src)
+        # T10: empty/omitted agents still get presets (`if not agent_list`).
+        self.assertIn("if not agent_list", src)
+        self.assertIn("default_competition_agents", src)
 
     def test_d31_current_legacy_alternates_deliberation_and_raw(self) -> None:
         src = inspect.getsource(SimulationEngine.step_once)

@@ -54,6 +54,8 @@ jobs:
         run: python -m pytest Data/backend/tests/test_round*.py -q --tb=line
       - name: CI plan honesty (no skip→pass)
         run: python -c "from Data.modules.release import default_leviathan_ci_plan, GateMeasurement; p=default_leviathan_ci_plan(); d=p.public_dict(); assert d['truth']['skipped_unavailable_is_not_success']; assert all(s.measurement==GateMeasurement.NOT_APPLICABLE for s in p.suites if s.suite_id in ('hades','editor')); print('ci-plan-ok', d['summary'])"
+      - name: Trading Master Program verifier
+        run: python scripts/verify_trading_100.py --run-tests
 
   frontend:
     name: Frontend typecheck + lint + test + build

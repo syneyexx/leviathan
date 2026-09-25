@@ -156,6 +156,8 @@ export function SimulatiePage() {
   const [strategyId, setStrategyId] = useState("");
   const [seed, setSeed] = useState(42);
   const [speed, setSpeed] = useState(1);
+  const [initialCash, setInitialCash] = useState(100_000);
+  const [engine, setEngine] = useState<"multi_agent" | "single">("multi_agent");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [consoleTab, setConsoleTab] = useState<ConsoleTab>("activity");
@@ -284,48 +286,22 @@ export function SimulatiePage() {
     setBusy(true);
     setError(null);
     try {
+      // Agents come from backend run-builder presets — UI must not hardcode agent ids (D27/T10).
       const { run: created } = await api.createMarketSimRun({
         sourceId,
         strategyId: strategyId || undefined,
         seed,
         speed,
-        deliberationEveryN: 3,
-        gameMode: "individual_competition",
-        metadata: { multi_agent: true, commit_reveal: true, multi_wallet: true },
-        agents: [
-          {
-            agent_id: "agent-alpha",
-            role: "market_analyst",
-            label: "Alpha (trend)",
-            parameters: { fast_ma: 8, slow_ma: 21, lookback: 30 },
-            initial_cash: 50000,
-            authority: { may_order: true },
-          },
-          {
-            agent_id: "agent-beta",
-            role: "strategy_researcher",
-            label: "Beta (mean-reversion)",
-            parameters: { lookback: 20, entry_z: -1.2, exit_z: 0.2 },
-            entry_rules: { kind: "mean_reversion", entry_z: -1.2 },
-            exit_rules: { kind: "mean_reversion", exit_z: 0.2 },
-            initial_cash: 50000,
-            authority: { may_order: true },
-          },
-          {
-            agent_id: "agent-risk",
-            role: "risk_agent",
-            label: "Risk Officer",
-            authority: { may_order: false, may_veto: true, veto_is_binding: true },
-            initial_cash: 0,
-          },
-          {
-            agent_id: "agent-orch",
-            role: "trading_orchestrator",
-            label: "Orchestrator",
-            authority: { manages_task: true, may_order: false },
-            initial_cash: 0,
-          },
-        ],
+        initialCash,
+        engine,
+        deliberationEveryN: engine === "multi_agent" ? 3 : 5,
+        gameMode: engine === "multi_agent" ? "individual_competition" : undefined,
+        metadata: {
+          multi_agent: engine === "multi_agent",
+          commit_reveal: engine === "multi_agent",
+          multi_wallet: engine === "multi_agent",
+          engine,
+        },
       });
       setSelectedId(created.run_id);
       await api.startMarketSimRun(created.run_id);
@@ -434,6 +410,28 @@ export function SimulatiePage() {
               disabled={!enabled || busy}
             />
           </label>
+          <label>
+            initialCash
+            <input
+              type="number"
+              value={initialCash}
+              onChange={(e) => setInitialCash(Number(e.target.value) || 100_000)}
+              disabled={!enabled || busy}
+              min={1000}
+              step={1000}
+            />
+          </label>
+          <label>
+            engine
+            <select
+              value={engine}
+              onChange={(e) => setEngine(e.target.value === "single" ? "single" : "multi_agent")}
+              disabled={!enabled || busy}
+            >
+              <option value="multi_agent">Multi-agent competition</option>
+              <option value="single">Single strategy</option>
+            </select>
+          </label>
           <div className="ts-speed-row" aria-label="Simulation speed">
             {[1, 2, 5].map((s) => (
               <button
@@ -452,7 +450,7 @@ export function SimulatiePage() {
             Scan / seed data
           </button>
           <button type="button" className="ts-run-btn" disabled={!enabled || busy} onClick={() => void onCreate()}>
-            New multi-agent run
+            New {engine === "multi_agent" ? "multi-agent" : "single-engine"} run
           </button>
           <button
             type="button"
@@ -566,7 +564,8 @@ export function SimulatiePage() {
               </div>
             </div>
             <div className="ts-mini-equity">
-              <EquityChart equity={equity.slice(-60)} fills={[]} />
+              {/* Live equity is already a recent-tail from the API (G41/D27). */}
+              <EquityChart equity={equity} fills={fills.slice(-40)} />
             </div>
           </DeskPanel>
 

@@ -1,0 +1,739 @@
+{
+  "generated_at": "2026-09-25T15:57:31+00:00",
+  "phase": "T11",
+  "program": "Master Program v4",
+  "all_required_pass": true,
+  "counts": {
+    "DEFERRED": 12,
+    "PASS": 54
+  },
+  "deferred_gates": [
+    "G01",
+    "G04",
+    "G06",
+    "G07",
+    "G08",
+    "G09",
+    "G10",
+    "G11",
+    "G13",
+    "G14",
+    "G55",
+    "G56"
+  ],
+  "gates": [
+    {
+      "id": "G01",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Streaming 5y\u00d71m memory budget \u2014 deferred beyond T1\u2013T11 control-plane/UI delivery stack."
+    },
+    {
+      "id": "G02",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability",
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests', 'Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests', 'Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability'] exit=0"
+      ],
+      "notes": "T1: YYYYMMDD + microsecond epoch normalization; quarantine import pipeline; duplicates rejected"
+    },
+    {
+      "id": "G03",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability",
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting', 'Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability'] exit=0"
+      ],
+      "notes": "T1: DatasetQualityReport with gaps/duplicates/repairs persisted on sealed dataset versions"
+    },
+    {
+      "id": "G04",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Corporate actions point-in-time \u2014 deferred; no CA adjustment path in delivered stack."
+    },
+    {
+      "id": "G05",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests",
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests', 'Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests'] exit=0"
+      ],
+      "notes": "T1: sealed dataset versions immutable; corrections create new version/hash; prepare refuses hash mismatch"
+    },
+    {
+      "id": "G06",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Split manifests TRAIN/VAL/SEALED \u2014 partial via sealed windows/gym; full split manifests deferred."
+    },
+    {
+      "id": "G07",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Providers pagination/backoff/network policy \u2014 deferred beyond current provider adapters."
+    },
+    {
+      "id": "G08",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Kernel v2 golden fills/PnL suite \u2014 golden fixture foundation added in T11; full kernel-v2 deferred."
+    },
+    {
+      "id": "G09",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Accounting invariants property-based \u2014 deferred (existing unit coverage only)."
+    },
+    {
+      "id": "G10",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Instrument rules enforcement matrix \u2014 deferred."
+    },
+    {
+      "id": "G11",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Determinism fingerprint/kill-resume/cross-process \u2014 partial via seed/replay; full gate deferred."
+    },
+    {
+      "id": "G12",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests",
+        "Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests",
+        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests', 'Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests', 'Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests', 'Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests'] exit=0"
+      ],
+      "notes": "T1: MarketView + EpistemicFirewall; available_at <= as_of; sealed holdout blocked during research"
+    },
+    {
+      "id": "G13",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Throughput/memory 5y 1m no OOM \u2014 deferred (needs long-horizon fixtures)."
+    },
+    {
+      "id": "G14",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Kernel v2 legacy parity report \u2014 deferred."
+    },
+    {
+      "id": "G15",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/features.py",
+        "Data/modules/market_sim/market_state.py",
+        "Data/modules/market_sim/strategy_dsl.py",
+        "Data/modules/market_sim/strategy_eval.py",
+        "Data/backend/tests/test_market_sim_t2_market_state.py",
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py",
+        "pytest ['Data/backend/tests/test_market_sim_t2_market_state.py', 'Data/backend/tests/test_market_sim_t3_strategy_dsl.py'] exit=0"
+      ],
+      "notes": "T2+T3: FeatureEngine + MarketState + Strategy Spec DSL v2 (sandboxed AST, family templates, legacy ma_cross/mean_reversion lift, validate/template APIs)."
+    },
+    {
+      "id": "G16",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/strategy_dsl.py",
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::SandboxEscapeSuite",
+        "pytest ['Data/backend/tests/test_market_sim_t3_strategy_dsl.py::SandboxEscapeSuite'] exit=0"
+      ],
+      "notes": "T3: DSL rejects eval/exec/import/script/path/url/code/module escape hatches and dunder feature params. No arbitrary Python strategy path."
+    },
+    {
+      "id": "G17",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::ServiceDslIntegrationTests",
+        "pytest ['Data/backend/tests/test_market_sim_t3_strategy_dsl.py::ServiceDslIntegrationTests'] exit=0"
+      ],
+      "notes": "T3: version_strategy appends immutable versions with content_hash; fork clones DSL lineage without mutating source."
+    },
+    {
+      "id": "G18",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/metrics.py",
+        "Data/modules/market_sim/types.py",
+        "Data/modules/market_sim/engine.py",
+        "Data/modules/market_sim/multi_engine.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::MetricsV2Tests",
+        "pytest ['Data/backend/tests/test_market_sim_t5_science.py::MetricsV2Tests'] exit=0"
+      ],
+      "notes": "T5: engines pass timeframe periods_per_year; SimFill.realized_delta feeds win_rate/profit_factor; bootstrap CIs on Sharpe/mean return."
+    },
+    {
+      "id": "G19",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/store.py",
+        "Data/backend/migrations.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::TrialLedgerTests",
+        "pytest ['Data/backend/tests/test_market_sim_t5_science.py::TrialLedgerTests'] exit=0"
+      ],
+      "notes": "T5: market_trial_ledger append-only events (no UPDATE/DELETE); append_trial refuses overwrite; strategy_version persisted."
+    },
+    {
+      "id": "G20",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/experiments.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::WalkForwardScienceTests",
+        "pytest ['Data/backend/tests/test_market_sim_t5_science.py::WalkForwardScienceTests'] exit=0"
+      ],
+      "notes": "T5: rolling WFA + purged K-fold + combinatorial purged CV + cross-window robustness report."
+    },
+    {
+      "id": "G21",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/experiments.py",
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/store.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::SealedAcceptanceTests",
+        "pytest ['Data/backend/tests/test_market_sim_t5_science.py::SealedAcceptanceTests'] exit=0"
+      ],
+      "notes": "T5: evaluate_acceptance requires run_id/run_ids; complete_experiment loads run metrics and seals runs single-use via market_acceptance_seals."
+    },
+    {
+      "id": "G22",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/strategy_library.py",
+        "Data/modules/market_sim/multi_engine.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::StrategyLibraryTests",
+        "pytest ['Data/backend/tests/test_market_sim_t6_strategy_library.py::StrategyLibraryTests'] exit=0"
+      ],
+      "notes": "T6A: StrategyLibrary persist/recall/lessons with available_at<=as_of; MultiAgentEngine.prepare hydrates from store."
+    },
+    {
+      "id": "G23",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/brain_hooks.py",
+        "Data/modules/market_sim/deliberation.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::BrainAsOfTests",
+        "pytest ['Data/backend/tests/test_market_sim_t6_strategy_library.py::BrainAsOfTests'] exit=0"
+      ],
+      "notes": "T6B: time-sensitive BrainFacade.retrieve requires as_of or excludes hits; deliberation passes bar.ts."
+    },
+    {
+      "id": "G24",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/agents/types.py",
+        "Data/modules/agents/fleet.py",
+        "Data/modules/agents/planner.py",
+        "Data/modules/agents/runtime.py",
+        "Data/modules/market_sim/orchestra/service.py",
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::TradingExecutorKindTests",
+        "pytest ['Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::TradingExecutorKindTests'] exit=0"
+      ],
+      "notes": "T7A: AgentKind.TRADING; fleet maps trading agents to TradingMissionExecutor; generic AgentRuntime refuses TRADING; reconcile skips durable trading/domain-executor missions."
+    },
+    {
+      "id": "G25",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/research_campaign.py",
+        "Data/modules/market_sim/store.py",
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/capabilities.py",
+        "Data/modules/market_sim/gateway_executor.py",
+        "Data/backend/routes/market_sim.py",
+        "Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::ResearchCampaignTests",
+        "pytest ['Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::ResearchCampaignTests', 'Data/backend/tests/test_market_sim_t7_trading_fleet_campaigns.py::CampaignGatewayTests'] exit=0"
+      ],
+      "notes": "T7B: ResearchCampaign state machine (proposed/running/paused/completed) with durable checkpoints and WFA windows; Gateway capabilities market_sim.campaign.*; migration 47."
+    },
+    {
+      "id": "G26",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/gym.py",
+        "Data/modules/market_sim/store.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::TradingGymTests",
+        "pytest ['Data/backend/tests/test_market_sim_t8_trading_gym.py::TradingGymTests'] exit=0"
+      ],
+      "notes": "T8A/T8B: TradingGym deterministic reset/step on SimulationClock+MarketView; curriculum stages; domain randomization; sealed windows unreachable; kernel reward; episode ledger; migration 48."
+    },
+    {
+      "id": "G27",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/scorecards.py",
+        "Data/modules/market_sim/multi_engine.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests",
+        "pytest ['Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests'] exit=0"
+      ],
+      "notes": "T8D: per-agent scorecards with Sharpe/drawdown/bootstrap CIs + violations; multi-engine leaderboard applies BH-FDR multiple-testing penalty."
+    },
+    {
+      "id": "G28",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/scorecards.py",
+        "Data/modules/market_sim/orchestra/types.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests",
+        "pytest ['Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests::test_readiness_ladder_a5_blocked', 'Data/backend/tests/test_market_sim_t8_trading_gym.py::ScorecardReadinessTests::test_service_readiness_and_scorecard'] exit=0"
+      ],
+      "notes": "T8D: A0\u2013A4 policy (no skip, UNMEASURED blocks advance); A5/live blocked by construction."
+    },
+    {
+      "id": "G29",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/trajectory_export.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::TrajectoryExportTests",
+        "pytest ['Data/backend/tests/test_market_sim_t8_trading_gym.py::TrajectoryExportTests'] exit=0"
+      ],
+      "notes": "T8C/T8D: verified episode trajectories export to JSONL with preference pairs; sealed-window contamination scan blocks dirty exports."
+    },
+    {
+      "id": "G30",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/sim_real_gap.py",
+        "Data/backend/tests/test_market_sim_t8_trading_gym.py::SimRealGapTests",
+        "pytest ['Data/backend/tests/test_market_sim_t8_trading_gym.py::SimRealGapTests'] exit=0"
+      ],
+      "notes": "T8D foundation: paper vs sim fill-price/missed/slippage/latency gap report; calibration sources must be disjoint from evaluation."
+    },
+    {
+      "id": "G31",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/strategy_library.py",
+        "Data/modules/market_sim/service.py",
+        "Data/backend/migrations.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::PromotionStateMachineTests",
+        "pytest ['Data/backend/tests/test_market_sim_t6_strategy_library.py::PromotionStateMachineTests'] exit=0"
+      ],
+      "notes": "T6C: explicit DRAFT/RESEARCH/CANDIDATE/PAPER_READY/ACTIVE/REJECTED/ARCHIVED transitions; append-only promotion ledger."
+    },
+    {
+      "id": "G32",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/paper_forward.py",
+        "Data/modules/market_sim/paper_broker.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperForwardTests",
+        "pytest ['Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperForwardTests', 'Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperSessionWalletTests'] exit=0"
+      ],
+      "notes": "T9A: per-session wallets; PaperForwardRunner start/pause/resume/tick with idempotent client_order_ids; readonly GET session helper."
+    },
+    {
+      "id": "G33",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/reconciliation.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::ReconciliationTests",
+        "pytest ['Data/backend/tests/test_market_sim_t9_paper_risk.py::ReconciliationTests'] exit=0"
+      ],
+      "notes": "T9C: independent shadow-ledger reconciliation; drift-vs-backtest bands; data-quality watchdog pause/halt."
+    },
+    {
+      "id": "G34",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/risk_engine_v2.py",
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::RiskEngineV2Tests",
+        "pytest ['Data/backend/tests/test_market_sim_t9_paper_risk.py::RiskEngineV2Tests'] exit=0"
+      ],
+      "notes": "T9B: RiskEngineV2 on paper_place_order; global/per-strategy kill with human reset; limit loosening approval-gated."
+    },
+    {
+      "id": "G35",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/brokers.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::BrokerAdapterTests",
+        "pytest ['Data/backend/tests/test_market_sim_t9_paper_risk.py::BrokerAdapterTests'] exit=0"
+      ],
+      "notes": "T9C: BrokerAdapter + ReplayBroker + LiveBroker UNSUPPORTED (501); local paper retains SecretsBroker Alpaca path."
+    },
+    {
+      "id": "G36",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/audit_ledger.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::AuditLedgerTests",
+        "pytest ['Data/backend/tests/test_market_sim_t9_paper_risk.py::AuditLedgerTests'] exit=0"
+      ],
+      "notes": "T9D: intent\u2192risk\u2192broker\u2192fill\u2192reconcile hash chain; tamper detection; append-only trading_audit_chain (migration 49)."
+    },
+    {
+      "id": "G37",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/routes/market_sim.py",
+        "Data/modules/market_sim/gateway_executor.py",
+        "Data/modules/market_sim/capabilities.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests'] exit=0"
+      ],
+      "notes": "T4A: market_sim mutations dispatch via ExecutionGateway + MODULE catalog (approval_mode=receipt_only for paper/sim)."
+    },
+    {
+      "id": "G38",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/store.py",
+        "Data/modules/market_sim/worker.py",
+        "Data/modules/workers/entrypoints/market_sim.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests'] exit=0"
+      ],
+      "notes": "T4B: claim_next_runnable uses BEGIN IMMEDIATE; worker heartbeats JobStore leases on durable advance jobs."
+    },
+    {
+      "id": "G39",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization",
+        "Data/modules/market_sim/store.py",
+        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization'] exit=0"
+      ],
+      "notes": "T4D slice: migration head consistent; atomic claim transaction. Full streaming OHLCV (D8) deferred."
+    },
+    {
+      "id": "G40",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/paper_broker.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::SecretsBrokerAlpacaTests",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::SecretsBrokerAlpacaTests'] exit=0"
+      ],
+      "notes": "T4C: Alpaca paper credentials resolve via SecretsBroker env: refs (no raw os.environ retention on broker)."
+    },
+    {
+      "id": "G41",
+      "status": "PASS",
+      "evidence": [
+        "Data/frontend/src/pages/trading/SimulatiePage.tsx",
+        "Data/frontend/src/pages/trading/PaperTradingPage.tsx",
+        "Data/frontend/src/pages/trading/PortefeuillePage.tsx",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::LiveSeriesRecentTailTests",
+        "pytest ['Data/backend/tests/test_market_sim_t10_trading_center.py::LiveSeriesRecentTailTests', 'Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization'] exit=0"
+      ],
+      "notes": "T10A: Trading Center pages bind to control-plane APIs; live equity/fills/messages are recent-tail (not oldest-first)."
+    },
+    {
+      "id": "G42",
+      "status": "PASS",
+      "evidence": [
+        "Data/frontend/src/pages/trading/SimulatiePage.tsx",
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::RunBuilderUiTests",
+        "pytest ['Data/backend/tests/test_market_sim_t10_trading_center.py::RunBuilderUiTests'] exit=0"
+      ],
+      "notes": "T10A: SimulatiePage exposes initialCash + engine; agents from backend presets (no UI hardcodes)."
+    },
+    {
+      "id": "G43",
+      "status": "PASS",
+      "evidence": [
+        "scripts/verify_trading_100.py",
+        ".github/workflows/leviathan-ci.yml",
+        "Data/docs/Leviathan_system_backend.md",
+        "Data/backend/tests/test_market_sim_t11_completion.py::VerifyTrading100Tests",
+        "pytest ['Data/backend/tests/test_market_sim_t11_completion.py::VerifyTrading100Tests'] exit=0"
+      ],
+      "notes": "T11: verify_trading_100.py + CI step + system docs; DEFERRED gates excluded from exit-zero requirement."
+    },
+    {
+      "id": "G44",
+      "status": "PASS",
+      "evidence": [
+        "Data/docs/trading_master_program_completion.md",
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/backend/tests/test_market_sim_t11_completion.py::CompletionReportTests",
+        "pytest ['Data/backend/tests/test_market_sim_t11_completion.py::CompletionReportTests'] exit=0"
+      ],
+      "notes": "T11: human completion report + machine trading_completion_report.json from verifier."
+    },
+    {
+      "id": "G45",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_characterization.py",
+        "Data/backend/tests/fixtures/market_sim_golden_fills.json",
+        "Data/backend/tests/test_market_sim_t11_completion.py::CharacterizationRegressionTests",
+        "pytest ['Data/backend/tests/test_market_sim_t11_completion.py::CharacterizationRegressionTests'] exit=0"
+      ],
+      "notes": "T11: flipped fixed characterization (D18/D27/D28+); remaining expectedFailure desired-contracts tracked as open debt."
+    },
+    {
+      "id": "G46",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/science.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::FdrPowerTests",
+        "pytest ['Data/backend/tests/test_market_sim_t5_science.py::FdrPowerTests'] exit=0"
+      ],
+      "notes": "T5: Benjamini\u2013Hochberg FDR + approximate z-test power + trial-family calibration helper."
+    },
+    {
+      "id": "G47",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/paths.py",
+        "Data/backend/tests/test_market_sim_t11_completion.py::WindowsPathTests",
+        "pytest ['Data/backend/tests/test_market_sim_t11_completion.py::WindowsPathTests'] exit=0"
+      ],
+      "notes": "T11: pathlib helpers normalize Windows-style paths and refuse sandbox escape."
+    },
+    {
+      "id": "G48",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/brokers.py",
+        "Data/modules/trading/stub.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::SecurityPostureTests",
+        "pytest ['Data/backend/tests/test_market_sim_t9_paper_risk.py::SecurityPostureTests'] exit=0"
+      ],
+      "notes": "T9D: LEVIATHAN_FEATURE_TRADING_LIVE off by default; TradingStub refuses; LiveBroker UNSUPPORTED; live guard BLOCKED."
+    },
+    {
+      "id": "G49",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::ObservabilityTradingCategoryTests",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::ObservabilityTradingCategoryTests'] exit=0"
+      ],
+      "notes": "T4D: control plane emits under category=trading (subsystem=market_sim)."
+    },
+    {
+      "id": "G50",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests'] exit=0"
+      ],
+      "notes": "T4D: BackupService create/restore round-trip preserves market_experiments."
+    },
+    {
+      "id": "G51",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests'] exit=0"
+      ],
+      "notes": "T4B: enqueue_advance uses latency_class=background so sim work cannot claim interactive slots."
+    },
+    {
+      "id": "G52",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/routes/market_sim.py",
+        "Data/modules/market_sim/service.py",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests'] exit=0"
+      ],
+      "notes": "T4B: Gateway mutations carry idempotency_key; enqueue_advance keys by run generation."
+    },
+    {
+      "id": "G53",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/strategy_library.py",
+        "Data/modules/market_sim/knowledge_snapshot.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::ProvenanceFingerprintTests",
+        "pytest ['Data/backend/tests/test_market_sim_t6_strategy_library.py::ProvenanceFingerprintTests'] exit=0"
+      ],
+      "notes": "T6C: compute_provenance_fingerprint over dataset/strategy/code/seed; sealed into TradingKnowledgeSnapshot."
+    },
+    {
+      "id": "G54",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/backup/service.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests'] exit=0"
+      ],
+      "notes": "T4D: BackupService.restore writes .restore-tmp then atomic replace."
+    },
+    {
+      "id": "G55",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Data provenance/licensing state machine \u2014 deferred beyond source metadata."
+    },
+    {
+      "id": "G56",
+      "status": "DEFERRED",
+      "evidence": [
+        "Data/backend/tests/trading_completion_report.json",
+        "Data/docs/Leviathan_system_backend.md"
+      ],
+      "notes": "T11 closeout: Unified time semantics across feeds \u2014 deferred (as_of present in science/brain paths)."
+    },
+    {
+      "id": "G57",
+      "status": "PASS",
+      "evidence": [
+        "Data/frontend/src/pages/trading/actionMatrix.ts",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::ActionMatrixTests",
+        "pytest ['Data/backend/tests/test_market_sim_t10_trading_center.py::ActionMatrixTests'] exit=0"
+      ],
+      "notes": "T10D: every Trading Center operator action maps to a real api.client method + control-plane path."
+    },
+    {
+      "id": "G58",
+      "status": "PASS",
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/worker.py",
+        "pytest ['Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests'] exit=0"
+      ],
+      "notes": "T4D: status.truth.default_path_jobstore_lease / worker.telemetry.lease_model reflect JobStore when bound."
+    },
+    {
+      "id": "G59",
+      "status": "PASS",
+      "evidence": [
+        "Data/frontend/src/api/client.ts",
+        "Data/frontend/src/pages/trading/actionMatrix.ts",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::TypedContractTests",
+        "pytest ['Data/backend/tests/test_market_sim_t10_trading_center.py::TypedContractTests'] exit=0"
+      ],
+      "notes": "T10: typed api.client methods for run-builder, paper-forward, risk, audit, security posture."
+    },
+    {
+      "id": "G60",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/migrations.py",
+        "Data/backend/tests/test_market_sim_t11_completion.py::MigrationPostureTests",
+        "Data/docs/trading_master_program_completion.md",
+        "pytest ['Data/backend/tests/test_market_sim_t11_completion.py::MigrationPostureTests'] exit=0"
+      ],
+      "notes": "T11: append-only numbered migrations; head \u2265 49; compatibility posture documented."
+    },
+    {
+      "id": "G61",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at",
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only",
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only'] exit=0"
+      ],
+      "notes": "Frontier Program F1/F4 \u2014 offline evidence only; live feed fetch through provider_io not exercised in CI"
+    },
+    {
+      "id": "G62",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at",
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at",
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at', 'Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization'] exit=0"
+      ],
+      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) \u2014 PARTIAL scope, see notes in frontier_program.md"
+    },
+    {
+      "id": "G63",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced",
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure",
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure'] exit=0"
+      ],
+      "notes": "Injection corpus is a 1-item corpus today; extend in F4b"
+    },
+    {
+      "id": "G64",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests::test_mandate_can_never_enable_live",
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests', 'Data/backend/tests/test_trading_orchestra.py::MandateTests'] exit=0"
+      ],
+      "notes": "Frontier Program F1; T7: TRADING maps to AgentKind.TRADING and is refused by generic AgentRuntime (TRADING_EXECUTOR_REQUIRED) unless TradingMissionExecutor is registered."
+    },
+    {
+      "id": "G65",
+      "status": "PASS",
+      "evidence": [
+        "Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent",
+        "Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only",
+        "pytest ['Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent', 'Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only'] exit=0"
+      ],
+      "notes": "fill and post_mortem links exist as stages; paper routing (fill) is not produced by the orchestra yet (execution_agent records intents only)"
+    },
+    {
+      "id": "G66",
+      "status": "PASS",
+      "evidence": [
+        "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
+      ],
+      "notes": "vitest contract test; visual check recorded in PR \u2014 vitest not run by verify_trading_100.py; run `npm test` in Data/frontend"
+    }
+  ],
+  "anti_shortcut": {
+    "ok": true,
+    "finding_count": 0,
+    "findings": [],
+    "truncated": false
+  },
+  "explicitly_not_claimed": [
+    "profitability or expected returns of any strategy or agent",
+    "gym performance transfers to real markets",
+    "production-grade live execution or any live venue integration",
+    "L5 autonomy",
+    "microstructure realism without L2/L3 data",
+    "options/futures/forex support unless separately built and proven",
+    "tax/legal compliance",
+    "investment advice"
+  ],
+  "canonical_system_doc": "Data/docs/Leviathan_system_backend.md"
+}
