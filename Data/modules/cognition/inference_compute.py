@@ -4,8 +4,8 @@ Flow:
   CognitiveRuntime → MODEL_CALL/RESPOND
        → InferenceComputeController
             → resolve capability + NeuralComputeBudget
-            → native path (provider hints) OR TTC path (no unknown knobs)
-       → normalized candidates/results (F3: single primary; F4 expands TTC)
+            → native path (provider hints) OR TTC path (multi-candidate)
+       → normalized candidates/results
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from .neural_compute import (
     neural_budget_for_mode,
     resolve_reasoning_capability_profile,
 )
+from .ttc import TTCExecutor, TTCRunResult, select_ttc_candidate
 from .types import ReasoningMode
 
 
@@ -40,9 +41,10 @@ class InferenceComputePlan:
     neural_budget: NeuralComputeBudget
     capability_profile: ReasoningCapabilityProfile
     hints: NativeReasoningHints
-    # F3: always 1 primary call; F4 uses candidate_count for TTC fan-out.
+    # Native: always 1 primary. TTC: fan-out uses ttc_candidate_budget.
     primary_candidate_count: int = 1
     ttc_candidate_budget: int = 1
+    max_parallel_candidates: int = 1
     notes: tuple[str, ...] = ()
 
     def public_dict(self) -> dict[str, Any]:
@@ -54,6 +56,7 @@ class InferenceComputePlan:
             "hints": self.hints.public_dict(),
             "primary_candidate_count": self.primary_candidate_count,
             "ttc_candidate_budget": self.ttc_candidate_budget,
+            "max_parallel_candidates": self.max_parallel_candidates,
             "notes": list(self.notes),
             "truth": {
                 "not_a_second_runtime": True,
@@ -70,7 +73,7 @@ class InferenceComputePlan:
 
 @dataclass
 class InferenceComputeResult:
-    """Normalized public result after a model call."""
+    """Normalized public result after a model call (possibly multi-candidate TTC)."""
 
     text: str
     path: str
@@ -83,6 +86,8 @@ class InferenceComputeResult:
     finish_reason: str | None = None
     provider_hints_sent: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    model_calls_consumed: int = 1
+    ttc: dict[str, Any] | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -95,6 +100,8 @@ class InferenceComputeResult:
             "finish_reason": self.finish_reason,
             "provider_hints_sent": list(self.provider_hints_sent),
             "notes": list(self.notes),
+            "model_calls_consumed": self.model_calls_consumed,
+            "ttc": self.ttc,
             "text_preview": (self.text or "")[:200],
             "truth": {
                 "unmeasured_when_provider_omits_reasoning_tokens": (
@@ -109,6 +116,9 @@ class InferenceComputeResult:
 class InferenceComputeController:
     """Decide native vs TTC and normalize provider results (no CoT leakage)."""
 
+    def __init__(self) -> None:
+        self._ttc = TTCExecutor()
+
     def prepare(
         self,
         *,
@@ -120,6 +130,7 @@ class InferenceComputeController:
         model_metadata: Mapping[str, Any] | None = None,
         settings_capability_override: Mapping[str, Any] | None = None,
         policy_neural_budgets: Mapping[str, Mapping[str, Any]] | None = None,
+        remaining_model_calls: int | None = None,
     ) -> InferenceComputePlan:
         profile = capability_profile or resolve_reasoning_capability_profile(
             provider_adapter=provider_adapter,
@@ -143,11 +154,18 @@ class InferenceComputeController:
             max_reasoning_tokens=neural_budget.max_reasoning_tokens,
         )
         notes: list[str] = list(hints.notes)
+        ttc_budget = 1
+        max_parallel = 1
         if hints.path == "ttc":
+            ttc_budget = max(1, int(neural_budget.candidate_count))
+            max_parallel = max(1, int(neural_budget.max_parallel_candidates))
+            if remaining_model_calls is not None:
+                ttc_budget = max(1, min(ttc_budget, max(1, int(remaining_model_calls))))
             notes.append(
-                f"ttc_candidate_budget={neural_budget.candidate_count} "
-                "(F3 prepares; F4 executes multi-candidate TTC)"
+                f"ttc_candidate_budget={ttc_budget} max_parallel={max_parallel}"
             )
+        else:
+            notes.append("native_path — single_primary_call")
         return InferenceComputePlan(
             path=hints.path,
             provider_family=hints.provider_family,
@@ -155,7 +173,8 @@ class InferenceComputeController:
             capability_profile=profile,
             hints=hints,
             primary_candidate_count=1,
-            ttc_candidate_budget=max(1, int(neural_budget.candidate_count)),
+            ttc_candidate_budget=ttc_budget,
+            max_parallel_candidates=max_parallel,
             notes=tuple(notes),
         )
 
@@ -165,6 +184,8 @@ class InferenceComputeController:
         plan: InferenceComputePlan,
         raw_result: Mapping[str, Any] | None,
         public_text: str | None = None,
+        model_calls_consumed: int = 1,
+        ttc: Mapping[str, Any] | None = None,
     ) -> InferenceComputeResult:
         raw = dict(raw_result or {})
         # Prefer explicit public text; never fall back to reasoning channels.
@@ -181,7 +202,6 @@ class InferenceComputeController:
         usage = raw.get("usage") if isinstance(raw.get("usage"), dict) else {}
         reasoning_tokens, r_source = parse_reasoning_usage(usage)
         if reasoning_tokens is None:
-            # Sometimes nested on raw root
             reasoning_tokens, r_source = parse_reasoning_usage(raw)
         status = "provider" if r_source == "provider" and reasoning_tokens is not None else "UNMEASURED"
 
@@ -190,7 +210,6 @@ class InferenceComputeController:
         if plan.path == "ttc":
             effective = NativeEffort.UNSUPPORTED.value
 
-        # Scrub any accidental CoT keys from usage copy for public telemetry.
         public_usage = {
             k: v
             for k, v in usage.items()
@@ -216,4 +235,54 @@ class InferenceComputeController:
             finish_reason=str(raw.get("finish_reason")) if raw.get("finish_reason") else None,
             provider_hints_sent=tuple(sorted(plan.provider_hints.keys())),
             notes=plan.notes,
+            model_calls_consumed=max(1, int(model_calls_consumed)),
+            ttc=dict(ttc) if isinstance(ttc, Mapping) else None,
         )
+
+    async def execute_ttc(
+        self,
+        *,
+        plan: InferenceComputePlan,
+        complete: Any,
+        complete_kwargs: Mapping[str, Any] | None = None,
+        base_temperature: float = 0.2,
+    ) -> tuple[InferenceComputeResult, TTCRunResult]:
+        """Run multi-candidate TTC for a prepared plan (path must be ttc)."""
+        if plan.path != "ttc":
+            raise ValueError("execute_ttc requires plan.path == 'ttc'")
+        run = await self._ttc.run(
+            candidate_count=plan.ttc_candidate_budget,
+            max_parallel=plan.max_parallel_candidates,
+            diversity_temperature=float(plan.neural_budget.diversity_temperature),
+            base_temperature=base_temperature,
+            complete=complete,
+            complete_kwargs=complete_kwargs,
+        )
+        chosen = next(
+            (c for c in run.candidates if c.index == run.selection.chosen_index),
+            None,
+        )
+        raw = {
+            "text": run.selection.chosen_text,
+            "usage": dict(chosen.usage) if chosen else {},
+            "usage_source": chosen.usage_source if chosen else "unavailable",
+            "finish_reason": chosen.finish_reason if chosen else None,
+        }
+        normalized = self.normalize_result(
+            plan=plan,
+            raw_result=raw,
+            public_text=run.selection.chosen_text,
+            model_calls_consumed=run.model_calls_consumed,
+            ttc=run.public_dict(),
+        )
+        return normalized, run
+
+
+__all__ = [
+    "InferenceComputeController",
+    "InferenceComputePlan",
+    "InferenceComputeResult",
+    "TTCExecutor",
+    "TTCRunResult",
+    "select_ttc_candidate",
+]

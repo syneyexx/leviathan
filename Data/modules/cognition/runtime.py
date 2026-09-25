@@ -1366,6 +1366,7 @@ class CognitiveRuntime:
         neural_budget = state.decision.neural_budgets if state.decision else None
         capability_profile = state.decision.capability_profile if state.decision else None
         reasoning_mode = state.decision.mode.value if state.decision else None
+        remaining_calls = remaining.get("model_calls")
         override = None
         policy = getattr(self.meta, "policy", None)
         if policy is not None:
@@ -1384,6 +1385,7 @@ class CognitiveRuntime:
                 capability_profile=capability_profile,
                 reasoning_mode=reasoning_mode,
                 settings_capability_override=override,
+                remaining_model_calls=remaining_calls,
             )
             usage: dict[str, Any] = {}
             usage_source = "unavailable"
@@ -1393,6 +1395,10 @@ class CognitiveRuntime:
                 text = result.get("text") or result.get("content")
                 usage = result.get("usage") or {}
                 usage_source = str(result.get("usage_source") or "unavailable")
+                # Account for TTC multi-candidate fan-out (we already counted 1).
+                consumed = int(result.get("model_calls_consumed") or 1)
+                if consumed > 1:
+                    state.usage.model_calls += consumed - 1
                 # Public telemetry only — never private CoT.
                 inference_meta = result.get("inference_compute")
                 if isinstance(inference_meta, dict):
@@ -1408,6 +1414,8 @@ class CognitiveRuntime:
                                 "reasoning_tokens_status", "UNMEASURED"
                             ),
                             "provider_hints_sent": inference_meta.get("provider_hints_sent"),
+                            "model_calls_consumed": inference_meta.get("model_calls_consumed"),
+                            "ttc": inference_meta.get("ttc"),
                             "truth": inference_meta.get("truth"),
                         },
                     )

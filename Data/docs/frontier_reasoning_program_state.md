@@ -1,9 +1,9 @@
 # Frontier Reasoning Program State
 
-**Active phase:** F3 (Native reasoning — complete; next F4)  
+**Active phase:** F4 (TTC multi-candidate — complete; next F5)  
 **Date:** 2026-09-25  
-**Branch:** `cursor/frontier-reasoning-f3-native-4064`  
-**Base:** `cursor/frontier-reasoning-f2-two-axis-4064`  
+**Branch:** `cursor/frontier-reasoning-f4-ttc-4064`  
+**Base:** `cursor/frontier-reasoning-f3-native-4064`  
 **Program:** Master Implementation Program (Frontier Reasoning + Inference-Time Compute + Verified Learning)  
 **Audit:** [`frontier_reasoning_f0_audit.md`](./frontier_reasoning_f0_audit.md)  
 **Gates manifest:** `Data/backend/tests/frontier_reasoning_gates.json`  
@@ -19,7 +19,8 @@
 | F1 Context / Trust | PASS | BehaviorProfile + ContextBuilderV3 authority |
 | F2 Two-axis compute | PASS | NeuralComputeBudget + ReasoningCapabilityProfile + clamps |
 | F3 Native reasoning | PASS | InferenceComputeController + provider maps; no CoT leak |
-| F4–F18 | NOT_STARTED | |
+| F4 TTC multi-candidate | PASS | TTCExecutor fan-out + majority/longest select |
+| F5–F18 | NOT_STARTED | |
 
 ---
 
@@ -27,26 +28,22 @@
 
 | Gate | Status | Evidence |
 |---|---|---|
-| R02 | PASS | F1 authority tests |
-| R03 | PASS | F1 BehaviorProfile tests |
-| R04 | PASS | `test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests` |
-| R05 | PASS | `CapabilityProfileTests` — never guess from model name |
-| R06 | PASS | `test_frontier_reasoning_f3_native` — native maps / TTC for generic |
-| R27 | PASS | MAXIMUM → DEEP under GPU_RESOURCE_PRESSURE |
-| R28 | PASS | F1 injection suite |
-| R29 | PASS | strip private CoT + public normalize path |
+| R02–R05 | PASS | F1/F2 suites |
+| R06 | PASS | F3 native maps |
+| R07 | PASS | `test_frontier_reasoning_f4_ttc` |
+| R27–R29 | PASS | pressure / injection / CoT strip |
 | R01 | IN_PROGRESS | Owner preserved |
-| R07+ | NOT_STARTED | |
+| R08+ | NOT_STARTED | |
 
 ---
 
-## F3 summary
+## F4 summary
 
-1. `InferenceComputeController` — inside CognitiveRuntime path (not a second runtime); native vs TTC plan.
-2. `native_reasoning` — provider-family maps; generic sends **no** unknown knobs.
-3. Provider adapters expose honest `reasoning_capability_profile()` (default: native unsupported).
-4. Transport strips private reasoning/thinking fields; `reasoning_tokens` only when provider-reported else `UNMEASURED`.
+1. `TTCExecutor` — fan-out N completions with diversity temperatures; respects `max_parallel_candidates`.
+2. `select_ttc_candidate` — majority-normalized self-consistency, else longest valid public text; never fabricates.
+3. TTC path clears `provider_hints` (no unknown knobs). Native path stays single-call.
+4. Runtime accounts for `model_calls_consumed` from multi-candidate runs.
 
 ## Next
 
-**F4 — TTC multi-candidate** (execute candidate budget prepared in F3; verify/select without inventing native knobs).
+**F5 — Structured reasoning state** (public candidate summaries / persistence contract).
