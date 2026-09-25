@@ -107,6 +107,8 @@ class EvaluationPlatform:
             "paired_assistant",
             "ablations",
             "neuro_ablation",
+            "frontier_reasoning",
+            "frontier_ablation",
             "serving_conformance",
         ),
         required_components: tuple[str, ...] | None = None,
@@ -318,6 +320,59 @@ class EvaluationPlatform:
             payload["persisted_report_id"] = saved.report_id
         return payload
 
+    def run_frontier_reasoning(self, *, persist: bool = False) -> dict[str, Any]:
+        """F16 / R24 frontier reasoning contract suite."""
+        report = self.harness.run_suite(
+            "frontier_reasoning",
+            self.harness.frontier_reasoning_suite(),
+            suite_id="frontier_reasoning",
+            system_level=True,
+        )
+        if persist and self.enabled:
+            report = self.store.save_report(report)
+        return self._named_suite_report("frontier_reasoning", report)
+
+    def run_frontier_ablations(self, *, persist: bool = False) -> dict[str, Any]:
+        from .frontier_reasoning import frontier_ablation_public_bundle, run_all_frontier_ablations
+
+        reports = run_all_frontier_ablations()
+        payload = frontier_ablation_public_bundle()
+        if persist and self.enabled:
+            from .types import EvalCaseResult, EvalOutcome, EvalReport, JudgmentKind, MeasurementState
+
+            results = []
+            for abl in reports:
+                ok = abl.with_feature.measured and abl.without_feature.measured
+                results.append(
+                    EvalCaseResult(
+                        case_id=f"frontier_ablation:{abl.feature}",
+                        outcome=EvalOutcome.PASSED if ok else EvalOutcome.UNMEASURED,
+                        detail=f"delta_success={abl.delta_success}",
+                        judgment_kind=JudgmentKind.EXECUTABLE_VERIFIER,
+                        measurement=MeasurementState.PASS if ok else MeasurementState.UNMEASURED,
+                        artifact_refs=(abl.report_id,),
+                        component="cognition",
+                    )
+                )
+            report = EvalReport(
+                suite_id="frontier_ablation",
+                name="frontier_feature_ablations",
+                results=tuple(results),
+                summary={
+                    "passed": sum(1 for r in results if r.outcome == EvalOutcome.PASSED),
+                    "failed": 0,
+                    "unmeasured": sum(1 for r in results if r.outcome == EvalOutcome.UNMEASURED),
+                    "error": 0,
+                    "total": len(results),
+                },
+                suite_version="1",
+                component_scope=("cognition",),
+                system_level=True,
+            )
+            saved = self.store.save_report(report)
+            payload["persisted_report_id"] = saved.report_id
+        return payload
+
     def run_named_suite(
         self,
         suite_id: str,
@@ -337,6 +392,7 @@ class EvaluationPlatform:
             "platform": "foundation",
             "neuro": "neuro_ablation",
             "serving": "serving_conformance",
+            "frontier": "frontier_reasoning",
         }
         sid = aliases.get(str(suite_id or "").strip(), str(suite_id or "").strip())
 
@@ -358,6 +414,15 @@ class EvaluationPlatform:
             return self._named_suite_payload(sid, payload)
         if sid == "ablations":
             payload = self.run_ablations(persist=persist)
+            if persist and self.enabled and payload.get("persisted_report_id"):
+                saved = self.store.get_report(str(payload["persisted_report_id"]))
+                if saved:
+                    payload = {**payload, "report": saved}
+            return self._named_suite_payload(sid, payload)
+        if sid == "frontier_reasoning":
+            return self.run_frontier_reasoning(persist=persist)
+        if sid == "frontier_ablation":
+            payload = self.run_frontier_ablations(persist=persist)
             if persist and self.enabled and payload.get("persisted_report_id"):
                 saved = self.store.get_report(str(payload["persisted_report_id"]))
                 if saved:

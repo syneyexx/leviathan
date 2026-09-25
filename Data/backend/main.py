@@ -4964,6 +4964,26 @@ def run_ablation_evaluation() -> dict:
     return evaluation_platform.run_ablations(persist=True)
 
 
+@app.post("/api/evaluation/frontier-reasoning")
+def run_frontier_reasoning_evaluation() -> dict:
+    """F16 frontier reasoning contract suite (deterministic probes)."""
+    if not settings.features.eval_platform:
+        raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("frontier_reasoning")
+    return evaluation_platform.run_frontier_reasoning(persist=True)
+
+
+@app.post("/api/evaluation/frontier-ablations")
+def run_frontier_ablation_evaluation() -> dict:
+    """F16 frontier cognition ablations (belief / experience / trajectory / lifecycle)."""
+    if not settings.features.eval_platform:
+        raise HTTPException(status_code=503, detail="eval platform disabled")
+    if _evaluation_externalize():
+        return _enqueue_evaluation_suite("frontier_ablation")
+    return evaluation_platform.run_frontier_ablations(persist=True)
+
+
 @app.post("/api/context/preview")
 def preview_context(
     message: str = "preview",

@@ -9,6 +9,16 @@ from .assistant_benchmark import (
     TaskRunResult,
     default_assistant_tasks,
 )
+from .frontier_reasoning import (
+    FRONTIER_ABLATION_FEATURES,
+    FRONTIER_SUITE_ID,
+    frontier_ablation_public_bundle,
+    frontier_reasoning_suite,
+    run_all_frontier_ablations,
+    run_frontier_feature_ablation,
+    run_frontier_probe,
+    run_frontier_reasoning_suite,
+)
 from .harness import EvaluationHarness
 from .paired import PairedEvaluationReport, run_paired_evaluation
 from .platform import EvaluationPlatform
@@ -40,6 +50,8 @@ __all__ = [
     "EvaluationHarness",
     "EvaluationPlatform",
     "EvaluationStore",
+    "FRONTIER_ABLATION_FEATURES",
+    "FRONTIER_SUITE_ID",
     "JudgmentKind",
     "MeasurementState",
     "PairedEvaluationReport",
@@ -51,10 +63,16 @@ __all__ = [
     "TaskRunResult",
     "build_scorecard",
     "default_assistant_tasks",
+    "frontier_ablation_public_bundle",
+    "frontier_reasoning_suite",
     "measurement_is_pass",
     "outcome_to_measurement",
     "run_all_ablations",
+    "run_all_frontier_ablations",
     "run_feature_ablation",
+    "run_frontier_feature_ablation",
+    "run_frontier_probe",
+    "run_frontier_reasoning_suite",
     "run_paired_evaluation",
     "scorecard_from_report_dicts",
     "seed_default_regressions",
