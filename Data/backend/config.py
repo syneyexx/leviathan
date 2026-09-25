@@ -253,8 +253,8 @@ class KnowledgeSettings:
     atlas_expansion_depth: int = 1
     auto_dedupe: bool = True
     integrity_checks: bool = True
-    # Serialized knowledge.commit lane worker count (pool max is 1).
-    commit_concurrency: int = 1
+    # Deprecated specialized knowledge.commit lane (max 1). Bulk writes owned by db_commit.
+    commit_concurrency: int = 0
 
 
 @dataclass(frozen=True)
@@ -443,6 +443,22 @@ class WorkersSettings:
     restart_base_backoff: float = 2.0
     restart_max_backoff: float = 60.0
     supervisor_lease_ttl_seconds: float = 20.0
+    pool_db_commit_count: int = 1
+
+
+@dataclass(frozen=True)
+class DbCommitSettings:
+    """DB Commit Coordinator — serialized COMMIT_WRITE fabric knobs."""
+
+    enabled: bool = True
+    max_pending_count: int = 2_000
+    max_pending_bytes: int = 2_147_483_648
+    max_batch_rows: int = 1_000
+    target_transaction_ms: float = 250.0
+    retry_limit: int = 8
+    spool_retention_hours: float = 72.0
+    applied_retention_hours: float = 24.0
+    priority_aging_seconds: float = 120.0
 
 
 @dataclass(frozen=True)
@@ -555,6 +571,7 @@ class Settings:
     market_sim: MarketSimSettings
     neuro_runtime: NeuroRuntimeSettings
     workers: WorkersSettings
+    db_commit: DbCommitSettings
     resources: ResourceLimits
     context: ContextSettings
     inference: InferenceSettings
@@ -1028,7 +1045,7 @@ class Settings:
                 auto_dedupe=_env_bool("LEVIATHAN_KNOWLEDGE_AUTO_DEDUPE", True),
                 integrity_checks=_env_bool("LEVIATHAN_KNOWLEDGE_INTEGRITY_CHECKS", True),
                 commit_concurrency=_env_int(
-                    "LEVIATHAN_KNOWLEDGE_COMMIT_CONCURRENCY", 1, minimum=1, maximum=1
+                    "LEVIATHAN_WORKERS_POOL_KNOWLEDGE_COMMIT_COUNT", 0, minimum=0, maximum=1
                 ),
             ),
             reasoning=ReasoningSettings(
@@ -1216,6 +1233,38 @@ class Settings:
                 ),
                 supervisor_lease_ttl_seconds=_env_float(
                     "LEVIATHAN_WORKERS_SUPERVISOR_LEASE_TTL_SECONDS", 20.0, minimum=2.0
+                ),
+                pool_db_commit_count=_env_int(
+                    "LEVIATHAN_WORKERS_POOL_DB_COMMIT_COUNT", 1, minimum=0, maximum=1
+                ),
+            ),
+            db_commit=DbCommitSettings(
+                enabled=_env_bool("LEVIATHAN_DB_COMMIT_ENABLED", True),
+                max_pending_count=_env_int(
+                    "LEVIATHAN_DB_COMMIT_MAX_PENDING_COUNT", 2_000, minimum=10
+                ),
+                max_pending_bytes=_env_int(
+                    "LEVIATHAN_DB_COMMIT_MAX_PENDING_BYTES",
+                    2_147_483_648,
+                    minimum=1_048_576,
+                ),
+                max_batch_rows=_env_int(
+                    "LEVIATHAN_DB_COMMIT_MAX_BATCH_ROWS", 1_000, minimum=50, maximum=50_000
+                ),
+                target_transaction_ms=_env_float(
+                    "LEVIATHAN_DB_COMMIT_TARGET_TRANSACTION_MS", 250.0, minimum=10.0
+                ),
+                retry_limit=_env_int(
+                    "LEVIATHAN_DB_COMMIT_RETRY_LIMIT", 8, minimum=0, maximum=64
+                ),
+                spool_retention_hours=_env_float(
+                    "LEVIATHAN_DB_COMMIT_SPOOL_RETENTION_HOURS", 72.0, minimum=1.0
+                ),
+                applied_retention_hours=_env_float(
+                    "LEVIATHAN_DB_COMMIT_APPLIED_RETENTION_HOURS", 24.0, minimum=0.1
+                ),
+                priority_aging_seconds=_env_float(
+                    "LEVIATHAN_DB_COMMIT_PRIORITY_AGING_SECONDS", 120.0, minimum=1.0
                 ),
             ),
             context=ContextSettings(

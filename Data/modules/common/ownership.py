@@ -183,6 +183,21 @@ CANONICAL_OWNERSHIP: tuple[OwnershipRule, ...] = (
         rule="One canonical metadata database per local deployment; no competing truth DB",
         forbidden_duplicates=("research.db", "memory.db", "training.db", "agent.db"),
     ),
+    OwnershipRule(
+        concern="db_commit_coordinator",
+        owner_module="db_commit",
+        rule=(
+            "One physical COMMIT_WRITE authority via DB Commit Coordinator; "
+            "CONTROL_WRITE remains tiny direct SQLite; no second metadata DB or queue DB"
+        ),
+        forbidden_duplicates=(
+            "DatabaseV2",
+            "JobRuntime2",
+            "WriterAgent",
+            "db_commit.db",
+            "commit_queue.db",
+        ),
+    ),
 )
 
 # Modules that may define these class names (relative to Data/modules/).
@@ -197,6 +212,8 @@ SINGLETON_CLASS_OWNERS: dict[str, str] = {
     "McpBridge": "mcp",
     "BrainAccessFacade": "brain",
     "StrategyRegistry": "cognition",
+    "DbCommitCoordinator": "db_commit",
+    "CommitHandlerRegistry": "db_commit",
 }
 
 # Private worker/agent DBs are forbidden as permanent paths.
@@ -212,6 +229,8 @@ FORBIDDEN_PRIVATE_DB_FILENAMES: frozenset[str] = frozenset(
         "coding_memory.db",
         "media.db",
         "voice.db",
+        "db_commit.db",
+        "commit_queue.db",
     }
 )
 

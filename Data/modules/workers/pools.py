@@ -155,9 +155,23 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
     "knowledge_commit": PoolDefinition(
         pool_id="knowledge_commit",
         entrypoint="Data.modules.workers.entrypoints.knowledge_commit",
+        default_count=0,
+        job_kinds=(),
+        description=(
+            "Deprecated specialized knowledge commit lane — bulk Knowledge COMMIT_WRITE "
+            "is owned by db_commit. Kept for catalog compatibility (desired=0)."
+        ),
+        max_count=1,
+    ),
+    "db_commit": PoolDefinition(
+        pool_id="db_commit",
+        entrypoint="Data.modules.workers.entrypoints.db_commit",
         default_count=1,
-        job_kinds=("knowledge.commit",),
-        description="Single serialized canonical knowledge commit lane",
+        job_kinds=("db_commit.", "knowledge.commit"),
+        resource_classes=("IO_HEAVY", "DB_SERIAL"),
+        description=(
+            "Single serialized DB Commit Coordinator — all COMMIT_WRITE bulk mutations"
+        ),
         max_count=1,
     ),
     "embedding": PoolDefinition(

@@ -229,6 +229,7 @@ def _domain_noun(pool: str | None, capability_id: str | None, domain: str | None
         "mcp_execution": "MCP",
         "mcp": "MCP",
         "market_sim": "Market sim",
+        "db_commit": "DB Commit",
         "scheduler": "Scheduler",
         "document_ai": "Document AI",
     }

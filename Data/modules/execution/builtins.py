@@ -1197,14 +1197,14 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         name="Commit Knowledge Artifact",
         description="Serialized canonical knowledge commit lane (single-writer pool).",
         side_effects=(SideEffect.WRITE,),
-        worker_kind="knowledge_commit",
+        worker_kind="db_commit",
         properties={
             "artifact_id": {"type": "string"},
             "artifact": {"type": "object"},
             "idempotency_key": {"type": "string"},
         },
         permissions=("knowledge.write",),
-        tags=["knowledge", "commit"],
+        tags=["knowledge", "commit", "db_commit"],
         domains=["knowledge"],
     )
     _ext(

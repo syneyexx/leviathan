@@ -45,6 +45,7 @@ class ResourceClass(str, Enum):
     MODEL_INFERENCE = "MODEL_INFERENCE"
     MAINTENANCE_EXCLUSIVE = "MAINTENANCE_EXCLUSIVE"
     BATCH = "BATCH"
+    DB_SERIAL = "DB_SERIAL"
 
 
 class AccountingMode(str, Enum):

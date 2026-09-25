@@ -3428,6 +3428,57 @@ def _m48_p3b_research_campaigns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m49_db_commit_receipts(conn: sqlite3.Connection) -> None:
+    """DB Commit Coordinator: idempotent commit receipts + multi-batch progress."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS commit_receipts (
+            commit_id TEXT PRIMARY KEY,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            domain TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            entity_type TEXT NOT NULL DEFAULT '',
+            entity_id TEXT NOT NULL DEFAULT '',
+            payload_hash TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            record_count INTEGER NOT NULL DEFAULT 0,
+            result_ref TEXT NOT NULL DEFAULT '',
+            producer_job_id TEXT NOT NULL DEFAULT '',
+            trace_id TEXT NOT NULL DEFAULT '',
+            batch_index INTEGER NOT NULL DEFAULT 0,
+            batch_count INTEGER NOT NULL DEFAULT 1,
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error_code TEXT NOT NULL DEFAULT '',
+            error_message TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS commit_batches (
+            commit_id TEXT NOT NULL,
+            batch_index INTEGER NOT NULL,
+            batch_count INTEGER NOT NULL,
+            batch_hash TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            record_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (commit_id, batch_index)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_commit_receipts_domain "
+        "ON commit_receipts(domain, applied_at)"
+    )
+    # Ensure WAL once at migration time — not on every hot connection.
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        pass
+
+
 def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
     """P0A: SimFill honesty fields + ClosedTrade / PositionEpisode table."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
@@ -3553,6 +3604,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=48,
         name="p3b_research_campaigns",
         apply=_m48_p3b_research_campaigns,
+    ),
+    Migration(
+        version=49,
+        name="db_commit_receipts",
+        apply=_m49_db_commit_receipts,
     ),
 )
 
