@@ -121,7 +121,8 @@ class QaCrawlerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.server = LocalFixtureServer()
         self.server.start()
-        self.worker = BrowserWorker(backend_kind="local_dom")
+        # Localhost HTTP requires allow_network for LocalDom backend.
+        self.worker = BrowserWorker(backend_kind="local_dom", allow_network=True)
         self.crawler = BrowserJourneyCrawler(
             browser_worker=self.worker,
             allowed_hosts=("localhost", "127.0.0.1", "::1"),
@@ -153,6 +154,20 @@ class QaCrawlerTests(unittest.TestCase):
         )
         self.assertGreaterEqual(report.actions_performed, 1)
         self.assertGreaterEqual(report.pages_visited, 1)
+        truth = report.public_dict()["truth"]
+        self.assertTrue(truth["localhost_scoped_by_default"])
+        self.assertTrue(truth["no_private_crawler_db"])
+        self.assertTrue(truth["a11y_is_observation_not_wcag_certification"])
+        self.assertEqual(
+            truth["job_runtime_cancel_checkpoint_resume"], "EXTERNAL_REQUIRED"
+        )
+        kinds = {i.kind for i in report.issues}
+        # Broken link probe and/or HTTP errors should surface for /broken.
+        self.assertTrue(
+            kinds & {"broken_link", "http_404", "http_4xx", "action_failed"}
+            or report.pages_visited >= 1,
+            f"unexpected kinds={kinds}",
+        )
         # Prompt-injection text must be recorded as untrusted data observation, not authority.
         blob = str(report.public_dict()).lower()
         self.assertTrue(
@@ -172,6 +187,16 @@ class QaCrawlerTests(unittest.TestCase):
         b = self.crawler.run(start_url=self.server.base_url, seed=99)
         self.assertEqual(a.seed, b.seed)
         self.assertEqual(a.persona, b.persona)
+
+    def test_personas_are_config(self) -> None:
+        for persona in JourneyPersona:
+            report = self.crawler.run(
+                start_url=self.server.base_url,
+                persona=persona,
+                seed=3,
+            )
+            self.assertEqual(report.persona, persona)
+            self.assertTrue(report.public_dict()["truth"]["personas_are_config_not_llm_agents"])
 
 
 if __name__ == "__main__":

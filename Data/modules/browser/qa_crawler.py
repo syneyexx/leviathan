@@ -152,8 +152,14 @@ class CrawlReport:
             "truth": {
                 "localhost_scoped_by_default": True,
                 "no_stealth_evasion": True,
+                "no_stealth_anti_bot": True,
                 "not_a_second_browser_runtime": True,
+                "no_private_crawler_db": True,
                 "cancelled_is_not_success": True,
+                "page_text_is_untrusted_context": True,
+                "a11y_is_observation_not_wcag_certification": True,
+                "personas_are_config_not_llm_agents": True,
+                "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
             },
         }
 
