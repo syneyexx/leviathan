@@ -578,6 +578,13 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    @router.post("/api/market-sim/gym/episodes/{run_id}/export-trajectory")
+    def export_gym_trajectory(run_id: str, datasetName: str | None = None) -> dict:
+        try:
+            return service.export_gym_trajectory(run_id, dataset_name=datasetName)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     @router.get("/api/market-sim/live-trading")
     def live_trading_status() -> dict:
         return service.live_guard.public_status()

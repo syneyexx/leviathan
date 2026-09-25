@@ -487,5 +487,98 @@ class P1BTradingGymTests(unittest.TestCase):
             self.assertEqual(stepped["observation"]["bar_index"], 1)
 
 
+class P1CRewardAndTrajectoryTests(unittest.TestCase):
+    def test_reward_spec_equity_delta_and_unknown(self) -> None:
+        from Data.modules.market_sim.reward import (
+            RewardDefinition,
+            RewardSpec,
+            compute_step_reward,
+        )
+
+        spec = RewardSpec(definition=RewardDefinition.EQUITY_DELTA)
+        measured = compute_step_reward(spec, prev_equity=100.0, equity=101.5)
+        self.assertEqual(measured["status"], "MEASURED")
+        self.assertAlmostEqual(float(measured["value"]), 1.5)
+
+        unknown = compute_step_reward(
+            RewardSpec(definition="not_a_real_def"),
+            prev_equity=100.0,
+            equity=101.0,
+        )
+        self.assertEqual(unknown["status"], "UNMEASURED")
+
+        terminal = compute_step_reward(
+            RewardSpec(definition=RewardDefinition.EPISODE_TOTAL_RETURN),
+            prev_equity=100.0,
+            equity=110.0,
+            done=True,
+            initial_cash=100.0,
+        )
+        self.assertEqual(terminal["status"], "MEASURED")
+        self.assertAlmostEqual(float(terminal["value"]), 0.1)
+
+    def test_trajectory_jsonl_and_dataset_bridge_file_only(self) -> None:
+        from Data.modules.market_sim.dataset_bridge import (
+            export_trajectory_to_dataset,
+            trajectory_records_for_training,
+        )
+        from Data.modules.market_sim.gym import GymAction, GymActionKind, TradingGym
+        from Data.modules.market_sim.reward import RewardSpec
+        from Data.modules.market_sim.trajectory import load_trajectory_jsonl
+        from Data.modules.market_sim.types import RunStatus, SimRun
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bars.csv"
+            _write_csv(path, 20)
+            store = _store(tmp)
+            now = "2024-01-01T00:00:00+00:00"
+            run = SimRun(
+                run_id="traj-1",
+                status=RunStatus.CREATED.value,
+                source_id="src",
+                strategy_id=None,
+                strategy_version=None,
+                symbol="BTCUSDT",
+                timeframe="1m",
+                start_ts="",
+                end_ts="",
+                data_hash="",
+                seed=7,
+                created_at=now,
+                updated_at=now,
+            )
+            store.create_run(run)
+            gym = TradingGym(store)
+            gym.reset(
+                run,
+                bars_path=str(path),
+                reward_spec=RewardSpec(),
+                entry_rules={"kind": "hold"},
+                exit_rules={"kind": "hold"},
+            )
+            for _ in range(5):
+                r = gym.step(GymAction(kind=GymActionKind.HOLD))
+                if r.done:
+                    break
+            artifact = gym.seal_trajectory()
+            self.assertGreater(len(artifact.steps), 0)
+            self.assertTrue(artifact.trajectory_hash)
+
+            out = export_trajectory_to_dataset(
+                artifact,
+                artifacts_root=Path(tmp) / "artifacts",
+                dataset_service=None,
+            )
+            self.assertEqual(out["registration"], "FILE_ONLY")
+            export_path = Path(out["export"]["path"])
+            self.assertTrue(export_path.is_file())
+            manifest, steps = load_trajectory_jsonl(export_path)
+            self.assertEqual(manifest["trajectory_hash"], artifact.trajectory_hash)
+            self.assertEqual(len(steps), len(artifact.steps))
+            records = trajectory_records_for_training(artifact)
+            self.assertEqual(len(records), len(artifact.steps))
+            self.assertIn("observation", records[0]["text"])
+
+
 if __name__ == "__main__":
     unittest.main()

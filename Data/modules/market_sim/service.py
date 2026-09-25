@@ -83,6 +83,7 @@ class MarketSimControlPlane:
         self.live_guard = LiveTradingGuard()
         self._bars_per_slice = 50
         self.default_initial_cash = 100_000.0
+        self._dataset_service: Any | None = None
         self.worker = MarketSimWorker(
             store,
             self.engine,
@@ -144,6 +145,60 @@ class MarketSimControlPlane:
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
+
+    def bind_dataset_service(self, dataset_service: Any) -> None:
+        """Optional DatasetService for trajectory export bridge (P1C)."""
+        self._dataset_service = dataset_service
+
+    def export_gym_trajectory(
+        self,
+        run_id: str,
+        *,
+        dataset_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Export sealed trajectory JSONL and optionally bridge into DatasetService."""
+        self._require_enabled()
+        from .dataset_bridge import export_trajectory_to_dataset
+        from .trajectory import TrajectoryBuilder
+
+        run = self._get_run(run_id)
+        meta = dict(run.metadata or {})
+        gym = self._gym_sessions.get(run_id)
+        artifact = None
+        if gym is not None and getattr(gym, "_trajectory", None) is not None:
+            artifact = gym.seal_trajectory()
+        elif meta.get("trajectory_id"):
+            events = self.store.list_events(run_id, kind="gym_step", limit=50_000)
+            builder = TrajectoryBuilder(
+                run_id=run_id,
+                split_role=str(meta.get("split_role") or "TRAIN"),
+                reward_spec=dict(meta.get("reward_spec") or {}),
+                input_fingerprint=str(meta.get("input_fingerprint") or ""),
+            )
+            for ev in events:
+                payload = ev.get("payload") or {}
+                builder.add_step(
+                    observation=dict(payload.get("observation") or {}),
+                    action=dict(payload.get("action") or {}),
+                    reward=dict(payload.get("reward") or {}),
+                    done=bool(payload.get("done")),
+                    info=dict(payload.get("info") or {}),
+                )
+            if builder._steps:  # noqa: SLF001
+                artifact = builder.seal(trajectory_id=str(meta.get("trajectory_id")))
+        if artifact is None:
+            raise MarketSimError(
+                "TRAJECTORY_NOT_AVAILABLE",
+                "no sealed gym trajectory for this run; complete a gym episode first",
+                http_status=404,
+            )
+        root = Path(self.data.markets_root) / ".artifacts"
+        return export_trajectory_to_dataset(
+            artifact,
+            artifacts_root=root,
+            dataset_service=self._dataset_service,
+            dataset_name=dataset_name,
+        )
 
     @staticmethod
     def _runners_externalized() -> bool:

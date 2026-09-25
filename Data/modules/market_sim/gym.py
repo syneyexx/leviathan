@@ -16,8 +16,10 @@ from .causality import MarketView
 from .engine import EngineState, SimulationEngine
 from .execution import OrderIntent, make_intent
 from .ohlcv import iter_ohlcv, load_ohlcv
+from .reward import RewardDefinition, RewardSpec, compute_step_reward
 from .split_manifest import SplitRole
 from .store import MarketSimStore, utc_now
+from .trajectory import TrajectoryBuilder
 from .types import (
     MarketSimError,
     OrderSide,
@@ -153,6 +155,9 @@ class TradingGym:
         self._state: EngineState | None = None
         self._split_role: str = SplitRole.TRAIN
         self._prev_equity: float | None = None
+        self._prev_realized: float | None = None
+        self._reward_spec: RewardSpec = RewardSpec()
+        self._trajectory: TrajectoryBuilder | None = None
 
     @property
     def state(self) -> EngineState | None:
@@ -169,9 +174,15 @@ class TradingGym:
         strategy_params: dict[str, Any] | None = None,
         entry_rules: dict[str, Any] | None = None,
         exit_rules: dict[str, Any] | None = None,
+        reward_spec: RewardSpec | dict[str, Any] | None = None,
     ) -> GymObservation:
         """Reset environment. Window may come from DatasetSplitManifest bounds."""
         self._split_role = str(split_role or SplitRole.TRAIN).upper()
+        self._reward_spec = (
+            reward_spec
+            if isinstance(reward_spec, RewardSpec)
+            else RewardSpec.from_dict(reward_spec)
+        )
         # Apply window onto run for prepare/load
         if start_ts:
             run.start_ts = start_ts
@@ -181,6 +192,7 @@ class TradingGym:
         meta["gym"] = True
         meta["split_role"] = self._split_role
         meta["gym_reset_at"] = utc_now()
+        meta["reward_spec"] = self._reward_spec.public_dict()
         run.metadata = meta
         run.bar_index = 0
         run.status = RunStatus.RUNNING.value
@@ -191,9 +203,15 @@ class TradingGym:
             entry_rules=entry_rules or {"kind": "hold"},
             exit_rules=exit_rules or {"kind": "hold"},
         )
+        self._trajectory = TrajectoryBuilder(
+            run_id=run.run_id,
+            split_role=self._split_role,
+            reward_spec=self._reward_spec.public_dict(),
+            input_fingerprint=str((run.metadata or {}).get("input_fingerprint") or ""),
+            metadata={"symbol": run.symbol, "timeframe": run.timeframe},
+        )
         # Advance to first bar so observation is non-empty
         if self._state.clock.index < 0 and self._state.clock.bar_count > 0:
-            # Don't trade yet — expose first bar by priming clock without fill path
             first = self._state.clock.advance()
             if first is not None:
                 run.bar_index = self._state.clock.index
@@ -203,6 +221,7 @@ class TradingGym:
                 run.equity = eq
                 run.cash = float(self._state.wallet.cash)
                 self._prev_equity = eq
+                self._prev_realized = float(self._state.wallet.realized_pnl)
         self.store.update_run(run)
         return self._observe()
 
@@ -249,10 +268,42 @@ class TradingGym:
                 self.engine._finalize_metrics(state)  # noqa: SLF001
 
         equity_now = float(run.equity)
-        reward = self._reward(equity_now)
+        realized_now = float(state.wallet.realized_pnl)
+        reward = compute_step_reward(
+            self._reward_spec,
+            prev_equity=self._prev_equity,
+            equity=equity_now,
+            prev_realized_pnl=self._prev_realized,
+            realized_pnl=realized_now,
+            done=done,
+            initial_cash=float(run.initial_cash),
+        )
         self._prev_equity = equity_now
+        self._prev_realized = realized_now
         self.store.update_run(run)
         obs = self._observe()
+        if self._trajectory is not None:
+            self._trajectory.add_step(
+                observation=obs.public_dict(),
+                action=action.public_dict(),
+                reward=reward,
+                done=done,
+                info={
+                    "bar_index": run.bar_index,
+                    "run_status": run.status,
+                },
+            )
+            self.store.add_event(
+                run.run_id,
+                kind="gym_step",
+                payload={
+                    "observation": obs.public_dict(),
+                    "action": action.public_dict(),
+                    "reward": reward,
+                    "done": done,
+                },
+                bar_index=run.bar_index,
+            )
         return GymStepResult(
             observation=obs,
             reward=reward,
@@ -277,6 +328,7 @@ class TradingGym:
         strategy_params: dict[str, Any] | None = None,
         entry_rules: dict[str, Any] | None = None,
         exit_rules: dict[str, Any] | None = None,
+        reward_spec: RewardSpec | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run a complete episode (worker path). ``policy`` is callable(obs)->action or None=HOLD."""
         obs = self.reset(
@@ -288,6 +340,7 @@ class TradingGym:
             strategy_params=strategy_params,
             entry_rules=entry_rules,
             exit_rules=exit_rules,
+            reward_spec=reward_spec,
         )
         steps = 0
         last: GymStepResult | None = None
@@ -302,15 +355,29 @@ class TradingGym:
             obs = last.observation
             if last.done:
                 break
+        artifact = None
+        if self._trajectory is not None:
+            sealed = self._trajectory.seal()
+            artifact = sealed.public_dict()
+            meta = dict(run.metadata or {})
+            meta["trajectory_id"] = sealed.trajectory_id
+            meta["trajectory_hash"] = sealed.trajectory_hash
+            run.metadata = meta
+            self.store.update_run(run)
         return {
             "run_id": run.run_id,
             "steps": steps,
             "done": bool(last.done if last else True),
             "observation": obs.public_dict(),
-            "reward": last.reward if last else self._reward(None),
+            "reward": last.reward if last else compute_step_reward(
+                self._reward_spec,
+                prev_equity=None,
+                equity=None,
+            ),
             "metrics": dict(run.metrics or {}),
             "status": run.status,
             "split_role": self._split_role,
+            "trajectory": artifact,
             "truth": {
                 "worker_owned_complete_episode": True,
                 "via_trading_gym": True,
@@ -341,25 +408,10 @@ class TradingGym:
             truth={"via_market_view": True, "no_future_bars": True},
         )
 
-    def _reward(self, equity_now: float | None) -> dict[str, Any]:
-        """Provisional equity-delta reward — full RewardSpec is P1C.
-
-        Labeled honestly so callers do not treat this as the canonical reward.
-        """
-        if equity_now is None or self._prev_equity is None:
-            return {
-                "value": None,
-                "status": "UNMEASURED",
-                "definition": "equity_delta_provisional",
-                "note": "canonical RewardSpec arrives in P1C",
-            }
-        delta = float(equity_now) - float(self._prev_equity)
-        return {
-            "value": delta,
-            "status": "MEASURED",
-            "definition": "equity_delta_provisional",
-            "note": "canonical RewardSpec arrives in P1C",
-        }
+    def seal_trajectory(self) -> Any:
+        if self._trajectory is None:
+            raise MarketSimError("GYM_NO_TRAJECTORY", "no trajectory builder", http_status=409)
+        return self._trajectory.seal()
 
     def _action_to_intent(self, action: GymAction, state: EngineState) -> OrderIntent | None:
         kind = action.kind.upper()
