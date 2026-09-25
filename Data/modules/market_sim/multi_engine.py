@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
+
+from Data.modules.common.hashing import sha256_file
 
 from .accounting import WalletBook, money
 from .causality import CausalityViolation, SimulationClock
@@ -16,7 +19,7 @@ from .ohlcv import load_ohlcv
 from .risk_guard import RiskGuard, RiskLimits
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
-from .types import FillStatus, OrderSide, RunStatus, SimFill
+from .types import FillStatus, MarketSimError, OrderSide, RunStatus, SimFill
 
 
 CancelCheck = Callable[[], bool]
@@ -62,7 +65,17 @@ class MultiAgentEngine:
         entry_rules: dict[str, Any] | None = None,
         exit_rules: dict[str, Any] | None = None,
         brain_dependencies: list[str] | None = None,
+        verify_data_hash: bool = True,
     ) -> MultiEngineState:
+        path = Path(bars_path)
+        if verify_data_hash and getattr(run, "data_hash", None):
+            file_hash = sha256_file(path)
+            if file_hash != run.data_hash:
+                raise MarketSimError(
+                    "DATA_HASH_MISMATCH",
+                    f"Run data_hash {run.data_hash[:16]}… does not match file {file_hash[:16]}…",
+                    http_status=409,
+                )
         bars = load_ohlcv(bars_path, start_ts=run.start_ts or None, end_ts=run.end_ts or None)
         clock = SimulationClock(bars=bars, index=-1)
         if run.bar_index > 0:

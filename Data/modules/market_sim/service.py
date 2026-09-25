@@ -622,6 +622,46 @@ class MarketSimControlPlane:
             },
         )
         self.store.create_run(run)
+        # T1: reproducibility / anti-leakage knowledge snapshot at run creation.
+        as_of = run.start_ts or source.start_ts or now
+        sealed = self.store.get_sealed_dataset_by_hash(source.content_hash)
+        dataset_id = sealed.dataset_id if sealed else source.source_id
+        dataset_version = str(sealed.version if sealed else (source.metadata or {}).get("dataset_version") or "1")
+        strategy_hash = None
+        if strategy_id and strategy_version is not None:
+            ver = self.store.get_strategy_version(strategy_id, strategy_version)
+            if ver is not None:
+                strategy_hash = ver.content_hash
+        from .knowledge_snapshot import build_knowledge_snapshot
+
+        snapshot = build_knowledge_snapshot(
+            snapshot_id=str(uuid.uuid4()),
+            run_id=run.run_id,
+            as_of=as_of,
+            market_dataset_id=dataset_id,
+            market_dataset_hash=source.content_hash,
+            market_dataset_version=dataset_version,
+            created_at=now,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            strategy_content_hash=strategy_hash,
+            risk_configuration={
+                "max_position_pct": max_position_pct,
+                "max_drawdown_pct": max_drawdown_pct,
+                "per_trade_risk_pct": per_trade_risk_pct,
+                "fee_bps": fee_bps,
+                "slippage_bps": slippage_bps,
+            },
+            random_seed=seed,
+            metadata={"fill_schedule": "next_bar_open"},
+        )
+        self.store.save_knowledge_snapshot(snapshot)
+        run.metadata = {
+            **(run.metadata or {}),
+            "knowledge_snapshot_id": snapshot.snapshot_id,
+            "knowledge_fingerprint": snapshot.content_fingerprint(),
+        }
+        self.store.update_run(run)
         self._emit_event("run.created", {"run_id": run.run_id, "data_hash": run.data_hash})
         return run.public_dict()
 

@@ -47,10 +47,21 @@ def _normalize_ts(raw: str) -> str:
     text = (raw or "").strip()
     if not text:
         raise ValueError("empty timestamp")
-    # Numeric epoch (seconds or ms)
+    # Compact calendar date YYYYMMDD (must precede numeric-epoch handling).
+    if len(text) == 8 and text.isdigit():
+        dt = datetime.strptime(text, "%Y%m%d").replace(tzinfo=timezone.utc)
+        return dt.isoformat(timespec="seconds")
+    # Compact datetime YYYYMMDDHHMMSS
+    if len(text) == 14 and text.isdigit():
+        dt = datetime.strptime(text, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        return dt.isoformat(timespec="seconds")
+    # Numeric epoch (seconds, ms, or microseconds)
     if text.replace(".", "", 1).isdigit():
         value = float(text)
-        if value > 1e12:
+        # Microseconds since epoch (~16 digits for modern dates)
+        if value >= 1e15:
+            value /= 1_000_000.0
+        elif value >= 1e12:  # milliseconds
             value /= 1000.0
         dt = datetime.fromtimestamp(value, tz=timezone.utc)
         return dt.isoformat(timespec="seconds")
@@ -123,6 +134,11 @@ def iter_ohlcv_csv(path: Path) -> Iterator[Bar]:
                     "INVALID_OHLCV",
                     f"Row {row_num}: timestamps not sorted ({prev_ts} -> {ts})",
                 )
+            if prev_ts is not None and ts == prev_ts:
+                raise MarketSimError(
+                    "INVALID_OHLCV",
+                    f"Row {row_num}: duplicate timestamp {ts}",
+                )
             prev_ts = ts
             yield Bar(ts=ts, open=o, high=h, low=l, close=c, volume=v)
 
@@ -191,6 +207,8 @@ def _load_parquet(path: Path) -> list[Bar]:
         ts = _normalize_ts(str(raw_ts))
         if prev is not None and ts < prev:
             raise MarketSimError("INVALID_OHLCV", f"Parquet row {i}: unsorted timestamps")
+        if prev is not None and ts == prev:
+            raise MarketSimError("INVALID_OHLCV", f"Parquet row {i}: duplicate timestamp {ts}")
         prev = ts
         bars.append(
             Bar(
@@ -262,3 +280,170 @@ def infer_symbol_timeframe(path: Path) -> tuple[str, str]:
             timeframe = "1D" if part.lower() in {"1d", "d1"} else part
             break
     return symbol, timeframe
+
+
+_TIMEFRAME_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+    "1D": 86400,
+    "1d": 86400,
+    "d1": 86400,
+    "D1": 86400,
+}
+
+
+def _parse_iso(ts: str) -> datetime:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def analyze_ohlcv_quality(
+    path: Path,
+    *,
+    timezone: str = "UTC",
+    adjustment_mode: str = "unspecified",
+    expected_timeframe: str | None = None,
+    outlier_return_pct: float = 35.0,
+) -> dict[str, Any]:
+    """Quality analysis for the import pipeline — never silently repairs data."""
+    path = Path(path)
+    errors: list[str] = []
+    warnings: list[str] = []
+    operations: list[dict[str, Any]] = [
+        {
+            "op": "analyze_ohlcv_quality",
+            "path": str(path),
+            "silent_repair": False,
+            "timezone": timezone,
+            "adjustment_mode": adjustment_mode,
+        }
+    ]
+    if not path.is_file():
+        return {
+            "schema_ok": False,
+            "errors": ["file not found"],
+            "warnings": warnings,
+            "operations": operations,
+            "duplicate_timestamps": 0,
+            "unordered_pairs": 0,
+            "known_gaps": [],
+            "outlier_bars": [],
+            "timezone": timezone,
+            "adjustment_mode": adjustment_mode,
+        }
+
+    # Re-scan raw CSV for duplicate/order stats even when load fails.
+    duplicate_timestamps = 0
+    unordered_pairs = 0
+    known_gaps: list[dict[str, Any]] = []
+    outlier_bars: list[dict[str, Any]] = []
+    schema_ok = True
+    bars: list[Bar] = []
+    try:
+        bars = load_ohlcv(path)
+    except MarketSimError as exc:
+        schema_ok = False
+        errors.append(exc.message)
+        # Best-effort gap/dupe scan via raw CSV when possible.
+        if path.suffix.lower() in {".csv", ".txt"}:
+            try:
+                raw_ts: list[str] = []
+                with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                    reader = csv.DictReader(handle)
+                    mapping = _map_header(list(reader.fieldnames or []))
+                    for row in reader:
+                        try:
+                            raw_ts.append(_normalize_ts(str(row[mapping["timestamp"]])))
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                for i in range(1, len(raw_ts)):
+                    if raw_ts[i] == raw_ts[i - 1]:
+                        duplicate_timestamps += 1
+                    elif raw_ts[i] < raw_ts[i - 1]:
+                        unordered_pairs += 1
+            except MarketSimError:
+                pass
+        return {
+            "schema_ok": schema_ok,
+            "errors": errors,
+            "warnings": warnings,
+            "operations": operations,
+            "duplicate_timestamps": duplicate_timestamps,
+            "unordered_pairs": unordered_pairs,
+            "known_gaps": known_gaps,
+            "outlier_bars": outlier_bars,
+            "timezone": timezone,
+            "adjustment_mode": adjustment_mode,
+        }
+
+    # Loaded successfully — still scan for gaps / outliers (duplicates already rejected).
+    tf = expected_timeframe
+    if tf is None:
+        _, tf = infer_symbol_timeframe(path)
+    step = _TIMEFRAME_SECONDS.get(str(tf), None)
+    if step and len(bars) >= 2:
+        for i in range(1, len(bars)):
+            prev = _parse_iso(bars[i - 1].ts)
+            cur = _parse_iso(bars[i].ts)
+            delta = int((cur - prev).total_seconds())
+            if delta > step * 1.5:
+                missing = max(0, int(round(delta / step)) - 1)
+                known_gaps.append(
+                    {
+                        "after_ts": bars[i - 1].ts,
+                        "before_ts": bars[i].ts,
+                        "expected_step_seconds": step,
+                        "actual_delta_seconds": delta,
+                        "estimated_missing_bars": missing,
+                    }
+                )
+    if known_gaps:
+        warnings.append(f"{len(known_gaps)} gap(s) detected; recorded, not repaired")
+
+    for i in range(1, len(bars)):
+        prev_c = bars[i - 1].close
+        if prev_c == 0:
+            continue
+        ret_pct = abs((bars[i].close - prev_c) / prev_c) * 100.0
+        if ret_pct >= outlier_return_pct:
+            outlier_bars.append(
+                {
+                    "ts": bars[i].ts,
+                    "return_pct": round(ret_pct, 4),
+                    "prev_close": prev_c,
+                    "close": bars[i].close,
+                }
+            )
+    if outlier_bars:
+        warnings.append(f"{len(outlier_bars)} outlier bar(s) flagged; not repaired")
+
+    if timezone.upper() != "UTC":
+        warnings.append(
+            f"timezone={timezone} recorded; bars are normalized to UTC on ingest"
+        )
+        operations.append(
+            {
+                "op": "timezone_normalization",
+                "declared": timezone,
+                "stored_as": "UTC",
+                "silent_repair": False,
+            }
+        )
+
+    return {
+        "schema_ok": True,
+        "errors": errors,
+        "warnings": warnings,
+        "operations": operations,
+        "duplicate_timestamps": 0,
+        "unordered_pairs": 0,
+        "known_gaps": known_gaps,
+        "outlier_bars": outlier_bars,
+        "timezone": timezone,
+        "adjustment_mode": adjustment_mode,
+        "bar_count": len(bars),
+        "start_ts": bars[0].ts if bars else None,
+        "end_ts": bars[-1].ts if bars else None,
+    }

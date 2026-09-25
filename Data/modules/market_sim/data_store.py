@@ -10,6 +10,7 @@ from typing import Any
 from Data.modules.common.hashing import sha256_file
 from Data.modules.common.paths import PathEscapeError, safe_join, safe_relpath
 
+from .dataset_pipeline import MarketDatasetPipeline
 from .ohlcv import infer_symbol_timeframe, validate_ohlcv_file
 from .store import MarketSimStore
 from .types import DataKind, MarketDataSource, MarketSimError, SourceStatus
@@ -27,6 +28,7 @@ class MarketDataStore:
     def __init__(self, store: MarketSimStore, markets_root: Path) -> None:
         self.store = store
         self.markets_root = Path(markets_root)
+        self.pipeline = MarketDatasetPipeline(self.markets_root, store)
 
     def ensure_root(self) -> Path:
         self.markets_root.mkdir(parents=True, exist_ok=True)
@@ -55,6 +57,12 @@ class MarketDataStore:
             if path.name.startswith("."):
                 continue
             try:
+                rel_parts = path.resolve().relative_to(self.markets_root.resolve()).parts
+            except ValueError:
+                continue
+            if rel_parts and rel_parts[0] == MarketDatasetPipeline.QUARANTINE_DIR:
+                continue
+            try:
                 rel = str(safe_relpath(self.markets_root.resolve(), path.resolve()))
             except PathEscapeError:
                 continue
@@ -71,6 +79,16 @@ class MarketDataStore:
         status = SourceStatus.READY.value if validation.ok else SourceStatus.INVALID.value
         existing = self.store.get_source_by_path(rel)
         source_id = existing.source_id if existing else str(uuid.uuid4())
+        # Refuse silent mutation of a sealed content hash via re-inspect.
+        if existing and existing.content_hash and existing.content_hash != validation.content_hash:
+            sealed = self.store.get_sealed_dataset_by_hash(existing.content_hash)
+            if sealed is not None:
+                from .dataset_pipeline import DatasetImmutableError
+
+                raise DatasetImmutableError(
+                    f"Source {source_id} content changed but hash {existing.content_hash[:12]}… "
+                    "is sealed; register a new dataset version instead"
+                )
         source = MarketDataSource(
             source_id=source_id,
             symbol=symbol,
@@ -94,6 +112,73 @@ class MarketDataStore:
         if register:
             self.store.upsert_source(source)
         return source
+
+    def import_and_validate(
+        self,
+        relative_path: str,
+        *,
+        seal: bool = False,
+        sealed_for: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        provider: str = "csv_local",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Run the canonical import pipeline (quarantine → validate → hash → optional seal)."""
+        source = self.inspect_path(relative_path, register=True)
+        if symbol or timeframe:
+            source.symbol = (symbol or source.symbol).upper()
+            source.timeframe = timeframe or source.timeframe
+            source.updated_at = utc_now()
+            self.store.upsert_source(source)
+        result = self.pipeline.import_file(
+            relative_path,
+            symbol=source.symbol,
+            timeframe=source.timeframe,
+            provider=provider,
+            seal=seal,
+            sealed_for=sealed_for,
+            source_id=source.source_id,
+            **kwargs,
+        )
+        if result.dataset is not None and not result.dataset.source_id:
+            result.dataset.source_id = source.source_id
+        return {
+            "source": source.public_dict(),
+            "import": result.public_dict(),
+        }
+
+    def seal_source(
+        self,
+        source_id: str,
+        *,
+        sealed_for: str | None = None,
+    ) -> dict[str, Any]:
+        source = self.get_source(source_id)
+        if source.status != SourceStatus.READY.value:
+            raise MarketSimError(
+                "SOURCE_NOT_READY",
+                f"Cannot seal source in status {source.status}",
+                http_status=409,
+            )
+        dataset = self.pipeline.seal_existing(
+            source_id=source.source_id,
+            content_hash=source.content_hash,
+            path=source.path,
+            symbol=source.symbol,
+            timeframe=source.timeframe,
+            start_ts=source.start_ts,
+            end_ts=source.end_ts,
+            bar_count=source.bar_count,
+            quality=dict(source.metadata or {}),
+            provenance={
+                "source_id": source.source_id,
+                "sealed_from": "MarketDataStore.seal_source",
+            },
+            provider=str((source.metadata or {}).get("provider_id") or "csv_local"),
+            sealed_for=sealed_for,
+        )
+        return dataset.public_dict()
 
     def register_file(
         self,
@@ -128,15 +213,18 @@ class MarketDataStore:
         exists = root.is_dir()
         sources = self.store.list_sources(limit=5000)
         ready = sum(1 for s in sources if s.status == SourceStatus.READY.value)
+        sealed = self.store.list_sealed_datasets(limit=5000)
         return {
             "markets_root": str(root),
             "configured": configured,
             "exists": exists,
             "sources_indexed": len(sources),
             "sources_ready": ready,
+            "sealed_datasets": len(sealed),
             "truth": {
                 "files_on_filesystem": True,
                 "db_holds_metadata_only": True,
+                "sealed_datasets_immutable": True,
             },
         }
 
