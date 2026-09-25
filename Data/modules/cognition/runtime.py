@@ -42,6 +42,7 @@ from .perception import PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .steering import SteerKind, classify_steer
 from .store import CognitionStore
+from .structured_state import StructuredReasoningState, structured_state_from_mapping
 from .task_model import TaskModel, TaskModelBuilder
 from .types import (
     BeliefCategory,
@@ -96,6 +97,8 @@ class CognitiveRunState:
     behavior_profile_version: str | None = None
     behavior_settings_hash: str | None = None
     behavior_source: str | None = None
+    # Public structured reasoning surface (no private CoT).
+    reasoning_state: StructuredReasoningState = field(default_factory=StructuredReasoningState)
 
     def public_status(self) -> dict[str, Any]:
         return {
@@ -133,6 +136,7 @@ class CognitiveRunState:
                 if self.decision and self.decision.capability_profile
                 else None
             ),
+            "reasoning_state": self.reasoning_state.public_dict(),
             "usage": self.usage.public_dict(),
             "plan": self.plan.public_dict() if self.plan else None,
             "observations": [o.public_dict() for o in self.observations[-12:]],
@@ -157,6 +161,7 @@ class CognitiveRunState:
                 "status_is_backend_backed": True,
                 "progress_not_fabricated_percent": True,
                 "shadow_does_not_own_final_response": True,
+                "reasoning_state_is_public_contract": True,
             },
         }
 
@@ -311,10 +316,26 @@ class CognitiveRuntime:
                 priority=0.4,
                 source_type=EpistemicType.HYPOTHESIS,
             )
+        # Seed public structured reasoning state (goal + unknowns — not private CoT).
+        state.reasoning_state.seed_from_goal(task.goal)
+        for u in task.unknowns:
+            state.reasoning_state.seed_from_goal(u, source="task_unknown")
+        for a in getattr(task, "assumptions", None) or []:
+            state.reasoning_state.add_claim(
+                a,
+                status="asserted",
+                confidence_band="weak",
+                source="task_assumption",
+            )
         self._runs[run_id] = state
         self._loops[run_id] = LoopDetector()
         self._persist_create(state)
         self._emit(state, "task_created", {"task": task.public_dict()})
+        self._emit(
+            state,
+            "reasoning_state",
+            state.reasoning_state.public_dict(),
+        )
         if run:
             return self.run(run_id, history=history)
         return state.public_status()
@@ -566,6 +587,10 @@ class CognitiveRuntime:
             experience=result.get("experience"),
             steering=list(checkpoint.get("steering") or []),
             trace_id=row.get("trace_id"),
+            reasoning_state=structured_state_from_mapping(
+                checkpoint.get("reasoning_state")
+                or result.get("reasoning_state")
+            ),
         )
         events = self.store.list_events(run_id)
         state.events = list(events)
@@ -1402,6 +1427,7 @@ class CognitiveRuntime:
                 # Public telemetry only — never private CoT.
                 inference_meta = result.get("inference_compute")
                 if isinstance(inference_meta, dict):
+                    state.reasoning_state.ingest_inference_compute(inference_meta)
                     self._emit(
                         state,
                         "inference_compute",
@@ -1418,6 +1444,11 @@ class CognitiveRuntime:
                             "ttc": inference_meta.get("ttc"),
                             "truth": inference_meta.get("truth"),
                         },
+                    )
+                    self._emit(
+                        state,
+                        "reasoning_state",
+                        state.reasoning_state.public_dict(),
                     )
             else:
                 text = result
@@ -1579,6 +1610,22 @@ class CognitiveRuntime:
             response_text=state.response_text,
         )
         state.completion = decision.public_dict()
+        # Close public open questions with the public answer preview (not CoT).
+        if state.response_text:
+            state.reasoning_state.answer_open_questions(state.response_text)
+            # Record a single public answer claim when we produced a response.
+            if not any(c.source == "model_public_answer" for c in state.reasoning_state.claims):
+                state.reasoning_state.add_claim(
+                    state.response_text,
+                    status="asserted",
+                    confidence_band=(
+                        "strong" if state.verification_passed is True else "moderate"
+                    ),
+                    source="model_public_answer",
+                )
+            if state.verification_passed is False:
+                state.reasoning_state.add_unresolved("verification_failed")
+                state.reasoning_state.add_critique("verification_engine_rejected_claims")
         # Transition to terminal if possible
         if state.status not in TERMINAL_STATUSES:
             try:
@@ -1709,6 +1756,7 @@ class CognitiveRuntime:
                 "steering": list(state.steering),
                 "usage": state.usage.public_dict(),
                 "cursor_iteration": state.usage.iterations,
+                "reasoning_state": state.reasoning_state.public_dict(),
             }
             result_json = {
                 "response_text": state.response_text,
@@ -1720,6 +1768,7 @@ class CognitiveRuntime:
                 "actions": checkpoint["actions"],
                 "decision": checkpoint["decision"],
                 "verification_passed": state.verification_passed,
+                "reasoning_state": checkpoint["reasoning_state"],
             }
             self.store.update_run(
                 state.run_id,

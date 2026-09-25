@@ -1,24 +1,24 @@
 # Frontier Reasoning — Completion Report
 
 **Generated:** 2026-09-25  
-**Phase covered:** F0 + F1 + F2 + F3 + F4  
+**Phase covered:** F0 + F1 + F2 + F3 + F4 + F5  
 **Overall program status:** NOT COMPLETE  
 
 ## Summary
 
-F4 executes test-time compute multi-candidate generate/select when native reasoning is unsupported. Gates **R02–R07, R27–R29 PASS**. Verifier still exits non-zero until remaining required gates PASS.
+F5 adds a schema-versioned public structured reasoning state with candidate summaries and persist/hydrate. Gates **R02–R07, R09, R27–R29 PASS**. Verifier still exits non-zero until remaining required gates PASS.
 
-## F4 deliverables
+## F5 deliverables
 
 | Change | Status |
 |---|---|
-| `TTCExecutor` fan-out | DONE |
-| Majority / longest public selection | DONE |
-| Clamp to remaining model calls | DONE |
-| Clear provider_hints on TTC path | DONE |
-| Runtime `model_calls_consumed` accounting | DONE |
-| F4 unit tests | DONE |
+| `StructuredReasoningState` public contract | DONE |
+| Candidate summaries from TTC | DONE |
+| Open questions / claims / evidence refs | DONE |
+| Persist + hydrate via checkpoint/result_json | DONE |
+| `public_status.reasoning_state` | DONE |
+| F5 unit tests | DONE |
 
 ## Next
 
-F5 — Structured reasoning state (public persistence / candidate summaries).
+F6 — Neural TaskModel / planner advisors.

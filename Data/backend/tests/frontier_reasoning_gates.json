@@ -2,8 +2,8 @@
   "program": "frontier_reasoning",
   "version": 1,
   "updated": "2026-09-25",
-  "active_phase": "F4",
-  "notes": "F4 TTC multi-candidate landed. R02–R07/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
+  "active_phase": "F5",
+  "notes": "F5 structured reasoning state landed. R02–R07/R09/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
   "f0_skeleton_checks": [
     {
       "id": "F0_AUDIT_DOC",
@@ -63,7 +63,7 @@
     {"id": "R06", "title": "Native reasoning adapter", "required": true, "status": "PASS", "phase": "F3", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f3_native", "evidence": "InferenceComputeController + provider maps; generic sends no unknown knobs"},
     {"id": "R07", "title": "TTC fallback", "required": true, "status": "PASS", "phase": "F4", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f4_ttc", "evidence": "TTCExecutor multi-candidate + majority/longest select; no unknown knobs"},
     {"id": "R08", "title": "Adaptive compute", "required": true, "status": "NOT_STARTED", "phase": "F2+", "check": "manual"},
-    {"id": "R09", "title": "Structured reasoning state", "required": true, "status": "NOT_STARTED", "phase": "F5", "check": "manual"},
+    {"id": "R09", "title": "Structured reasoning state", "required": true, "status": "PASS", "phase": "F5", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f5_structured", "evidence": "StructuredReasoningState public contract + persist/hydrate + candidate summaries"},
     {"id": "R10", "title": "Neural TaskModel", "required": true, "status": "NOT_STARTED", "phase": "F6", "check": "manual"},
     {"id": "R11", "title": "Neural planner", "required": true, "status": "NOT_STARTED", "phase": "F6", "check": "manual"},
     {"id": "R12", "title": "HypothesisBoard", "required": true, "status": "NOT_STARTED", "phase": "F8", "check": "manual"},
