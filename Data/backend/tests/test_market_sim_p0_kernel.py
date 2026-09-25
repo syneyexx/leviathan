@@ -815,3 +815,129 @@ class P0CInstrumentAndShortTests(unittest.TestCase):
         d = guard.evaluate_intent(intent, wallet=w, price=100.0)
         self.assertTrue(d.allowed, d.reason)
         self.assertGreater(d.sized_qty, 0)
+
+
+# ---------------------------------------------------------------------------
+# P0D — hashes, resume, leases, accounting invariants
+# ---------------------------------------------------------------------------
+
+
+class P0DHashTests(unittest.TestCase):
+    def test_run_input_fingerprint_stable(self) -> None:
+        from Data.modules.market_sim.hashes import run_input_fingerprint
+
+        a = run_input_fingerprint(
+            dataset_content_hash="abc",
+            strategy_content_hash="s1",
+            seed=42,
+            fee_bps=5.0,
+            slippage_bps=2.0,
+            execution_assumptions=["a"],
+            intrabar_path_policy="CONSERVATIVE",
+            risk_config={"max_position_pct": 25},
+            sizing_config={"kind": "risk_pct"},
+        )
+        b = run_input_fingerprint(
+            dataset_content_hash="abc",
+            strategy_content_hash="s1",
+            seed=42,
+            fee_bps=5.0,
+            slippage_bps=2.0,
+            execution_assumptions=["a"],
+            intrabar_path_policy="CONSERVATIVE",
+            risk_config={"max_position_pct": 25},
+            sizing_config={"kind": "risk_pct"},
+        )
+        c = run_input_fingerprint(
+            dataset_content_hash="abc",
+            strategy_content_hash="s1",
+            seed=43,
+            fee_bps=5.0,
+            slippage_bps=2.0,
+        )
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+
+    def test_checkpoint_hash_changes_with_state(self) -> None:
+        from Data.modules.market_sim.hashes import checkpoint_state_hash
+
+        h1 = checkpoint_state_hash(
+            run_id="r", bar_index=1, wallet_snapshot={"cash": "100"}
+        )
+        h2 = checkpoint_state_hash(
+            run_id="r", bar_index=2, wallet_snapshot={"cash": "100"}
+        )
+        h3 = checkpoint_state_hash(
+            run_id="r", bar_index=1, wallet_snapshot={"cash": "99"}
+        )
+        self.assertNotEqual(h1, h2)
+        self.assertNotEqual(h1, h3)
+
+    def test_same_input_same_trajectory(self) -> None:
+        from Data.modules.market_sim.hashes import trajectory_hash
+
+        ev = [{"bar_index": 0, "equity": 100}, {"bar_index": 1, "equity": 101}]
+        self.assertEqual(trajectory_hash(ev), trajectory_hash(list(ev)))
+
+
+class P0DLeaseTests(unittest.TestCase):
+    def test_heartbeat_blocks_foreign_claim(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from Data.backend.migrations import MigrationRunner
+        from Data.modules.market_sim.store import MarketSimStore, utc_now
+        from Data.modules.market_sim.types import SimRun
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "t.db"
+            MigrationRunner(db).apply_all()
+            store = MarketSimStore(db)
+            now = utc_now()
+            run = SimRun(
+                run_id="r-lease", status="QUEUED", source_id="s", strategy_id=None,
+                strategy_version=None, symbol="BTC", timeframe="1h",
+                start_ts="", end_ts="", data_hash="h", seed=1,
+                created_at=now, updated_at=now,
+            )
+            store.create_run(run)
+            claimed = store.claim_next_runnable()
+            self.assertIsNotNone(claimed)
+            self.assertTrue(store.heartbeat_run_lease("r-lease"))
+            self.assertFalse(store.heartbeat_run_lease("r-lease", worker_pid=999999))
+
+
+class P0DAccountingInvariantTests(unittest.TestCase):
+    def test_duplicate_tx_id_rejected(self) -> None:
+        from Data.modules.market_sim.accounting import WalletLedger, money
+
+        w = WalletLedger(wallet_id="w", owner_id="a", owner_kind="agent", cash=money(10_000))
+        w.apply_buy(qty=1, price=100, fee=0, tx_id="tx1")
+        with self.assertRaises(ValueError):
+            w.apply_buy(qty=1, price=100, fee=0, tx_id="tx1")
+
+    def test_randomized_accounting_invariants(self) -> None:
+        import random
+        from Data.modules.market_sim.accounting import WalletLedger, money
+
+        rng = random.Random(7)
+        failures = 0
+        for i in range(220):
+            w = WalletLedger(
+                wallet_id="w", owner_id="a", owner_kind="agent",
+                cash=money(rng.uniform(1_000, 50_000)),
+            )
+            try:
+                for j in range(rng.randint(1, 12)):
+                    px = rng.uniform(10, 200)
+                    if float(w.position_qty) <= 0 or rng.random() < 0.55:
+                        qty = min(rng.uniform(0.1, 5.0), float(w.available_cash) / px * 0.9)
+                        if qty > 0.01:
+                            w.apply_buy(qty=qty, price=px, fee=px * qty * 0.001, tx_id=f"{i}-{j}-b")
+                    else:
+                        qty = min(float(w.position_qty), rng.uniform(0.1, float(w.position_qty)))
+                        if qty > 0.01:
+                            w.apply_sell(qty=qty, price=px, fee=px * qty * 0.001, tx_id=f"{i}-{j}-s")
+                w.assert_invariants(rng.uniform(10, 200))
+            except Exception:
+                failures += 1
+        self.assertEqual(failures, 0)

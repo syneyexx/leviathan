@@ -122,9 +122,39 @@ class MultiAgentEngine:
                 aid = str(a.get("agent_id") or a.get("role"))
                 cash = float(a.get("initial_cash") if a.get("initial_cash") is not None else agent_cash)
                 book.ensure_agent(aid, initial_cash=cash, currency=currency)
-            # Shared book optional for tournament leaderboard baseline
             if game_mode == GAME_TOURNAMENT:
                 book.ensure_shared(initial_cash=run.initial_cash, currency=currency)
+
+        # P0D: resume from wallet_snapshot when bar_index > initial — no rewind to initial cash
+        if run.bar_index > 0:
+            snap = meta.get("wallet_snapshot") or meta.get("walletSnapshot") or {}
+            if isinstance(snap, dict) and snap:
+                for wid, payload in snap.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    # Match by agent_id key or wallet_id
+                    wallet = book.for_owner(str(wid)) or book.wallets.get(str(wid))
+                    if wallet is None and book.shared_wallet_id and wid in {"shared", book.shared_wallet_id}:
+                        wallet = book.wallets.get(book.shared_wallet_id)
+                    if wallet is None:
+                        continue
+                    if "cash" in payload:
+                        wallet.cash = money(payload["cash"])
+                    if "position_qty" in payload:
+                        wallet.position_qty = money(payload["position_qty"])
+                    if "avg_entry" in payload:
+                        wallet.avg_entry = money(payload["avg_entry"])
+                    if "realized_pnl" in payload:
+                        wallet.realized_pnl = money(payload["realized_pnl"])
+                    if "reserved_cash" in payload:
+                        wallet.reserved_cash = money(payload["reserved_cash"])
+                    if "peak_equity" in payload:
+                        wallet.peak_equity = money(payload["peak_equity"])
+            elif run.cash and game_mode == GAME_SHARED and book.shared_wallet_id:
+                w = book.wallets[book.shared_wallet_id]
+                w.cash = money(run.cash)
+                w.position_qty = money(run.position_qty)
+                w.realized_pnl = money(run.realized_pnl)
 
         sizing = SizingModel.from_dict(
             getattr(run, "sizing_model", None) or meta.get("sizing_model") or meta.get("sizingModel"),

@@ -14,6 +14,7 @@ from .accounting import WalletLedger, money
 from .causality import CausalityViolation, SimulationClock
 from .deliberation import DeliberationRuntime
 from .execution import NextBarFillModel, OrderIntent, make_intent
+from .hashes import checkpoint_state_hash, run_input_fingerprint, trajectory_hash
 from .instruments import infer_family, spec_for_symbol
 from .metrics import compute_metrics, resolve_periods_per_year
 from .ohlcv import load_ohlcv
@@ -199,6 +200,28 @@ class SimulationEngine:
         state._entry_rules = dict(entry_rules or {"kind": "ma_cross"})  # type: ignore[attr-defined]
         state._exit_rules = dict(exit_rules or {"kind": "ma_cross"})  # type: ignore[attr-defined]
         state._brain_deps = list(brain_dependencies or ["knowledge", "memory", "neuro"])  # type: ignore[attr-defined]
+        # Immutable input fingerprint
+        fp = run_input_fingerprint(
+            dataset_content_hash=run.data_hash,
+            strategy_content_hash=str((run.metadata or {}).get("strategy_content_hash") or run.strategy_id or ""),
+            seed=run.seed,
+            fee_bps=run.fee_bps,
+            slippage_bps=run.slippage_bps,
+            execution_assumptions=list(self.FILL_ASSUMPTIONS),
+            intrabar_path_policy=policy,
+            risk_config={
+                "max_position_pct": run.max_position_pct,
+                "max_drawdown_pct": run.max_drawdown_pct,
+                "per_trade_risk_pct": run.per_trade_risk_pct,
+            },
+            sizing_config=run.sizing_model,
+            instrument_spec_version=instrument.instrument_id,
+            code_version=str(meta.get("code_version") or ""),
+            reward_spec=meta.get("reward_spec") if isinstance(meta.get("reward_spec"), dict) else {},
+        )
+        meta["input_fingerprint"] = fp
+        run.metadata = meta
+        state._trajectory_events = []  # type: ignore[attr-defined]
         return state
 
     def step_once(self, state: EngineState) -> bool:
@@ -440,6 +463,48 @@ class SimulationEngine:
             "risk": "RiskGuard",
             "legacy_fill_model": False,
         }
+        wallet_snap = {
+            state.wallet.wallet_id: {
+                "cash": str(state.wallet.cash),
+                "position_qty": str(state.wallet.position_qty),
+                "avg_entry": str(state.wallet.avg_entry),
+                "realized_pnl": str(state.wallet.realized_pnl),
+                "reserved_cash": str(state.wallet.reserved_cash),
+                "peak_equity": str(state.wallet.peak_equity),
+            }
+        }
+        run.metadata["wallet_snapshot"] = wallet_snap
+        cp = checkpoint_state_hash(
+            run_id=run.run_id,
+            bar_index=state.clock.index,
+            wallet_snapshot=wallet_snap,
+            pending_intents=run.metadata["pending_intents"],
+            reserved_cash=state.wallet.reserved_cash,
+            metrics_state={"fills": len(state.fills)},
+        )
+        run.metadata["checkpoint_state_hash"] = cp
+        events = getattr(state, "_trajectory_events", None)
+        if events is not None:
+            events.append(
+                {
+                    "bar_index": state.clock.index,
+                    "equity": equity,
+                    "cash": float(state.wallet.cash),
+                    "position_qty": float(state.wallet.position_qty),
+                    "fills": len(state.fills),
+                    "checkpoint": cp,
+                }
+            )
+        try:
+            state.wallet.assert_invariants(bar.close)
+        except ValueError as exc:
+            self.store.add_event(
+                run.run_id,
+                kind="accounting_invariant_violation",
+                payload={"error": str(exc)},
+                bar_index=state.clock.index,
+            )
+            raise
         self.store.add_equity_point(
             run.run_id,
             state.clock.index,
@@ -535,5 +600,12 @@ class SimulationEngine:
         )
         run.metrics["fill_assumptions"] = list(self.FILL_ASSUMPTIONS)
         run.metrics["intrabar_path_policy"] = state.intrabar_path_policy
+        events = getattr(state, "_trajectory_events", []) or []
+        th = trajectory_hash(events)
+        run.metadata = dict(run.metadata or {})
+        run.metadata["trajectory_hash"] = th
+        run.metrics["input_fingerprint"] = run.metadata.get("input_fingerprint")
+        run.metrics["trajectory_hash"] = th
+        run.metrics["checkpoint_state_hash"] = run.metadata.get("checkpoint_state_hash")
         if state.run.status == RunStatus.COMPLETED.value:
             state.run.finished_at = utc_now()

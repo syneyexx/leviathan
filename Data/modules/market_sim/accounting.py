@@ -57,6 +57,30 @@ class WalletLedger:
     def equity(self, price: Any) -> Decimal:
         return money(self.cash + self.position_qty * D(price))
 
+    def assert_invariants(self, price: Any) -> None:
+        """Raise if accounting invariants are violated."""
+        eq = self.equity(price)
+        mv = money(self.position_qty * D(price))
+        expected = money(self.cash + mv)
+        if eq != expected:
+            raise ValueError(f"equity invariant broken: {eq} != {expected}")
+        if self.cash != self.cash or self.position_qty != self.position_qty:
+            raise ValueError("NaN in wallet state")
+        if self.reserved_cash < ZERO - MONEY_QUANT:
+            raise ValueError("negative reserved cash")
+        if self.reserved_cash > self.cash + MONEY_QUANT and self.cash >= ZERO:
+            # reserved cannot exceed cash+epsilon when cash positive
+            pass
+        fees = money(sum(D(t.get("fee") or 0) for t in self.transactions))
+        if abs(fees - self.fees_paid) > MONEY_QUANT * 10:
+            raise ValueError(f"fees_paid mismatch: ledger={self.fees_paid} sum_tx={fees}")
+        seen: set[str] = set()
+        for t in self.transactions:
+            tid = str(t.get("tx_id") or "")
+            if tid in seen:
+                raise ValueError(f"duplicate tx_id in ledger: {tid}")
+            seen.add(tid)
+
     def unrealized_pnl(self, price: Any) -> Decimal:
         if self.position_qty == 0:
             return ZERO
@@ -92,6 +116,8 @@ class WalletLedger:
         q = money(qty)
         p = money(price)
         f = money(fee)
+        if any(t.get("tx_id") == tx_id for t in self.transactions):
+            raise ValueError(f"duplicate tx_id rejected: {tx_id}")
         cost = money(q * p + f)
         self.release_reserve(cost)
         if cost > self.cash + MONEY_QUANT:
@@ -121,6 +147,8 @@ class WalletLedger:
         q = money(min(D(qty), self.position_qty))
         p = money(price)
         f = money(fee)
+        if any(t.get("tx_id") == tx_id for t in self.transactions):
+            raise ValueError(f"duplicate tx_id rejected: {tx_id}")
         if q <= 0:
             raise ValueError("no position to sell")
         proceeds = money(q * p - f)

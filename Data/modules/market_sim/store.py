@@ -487,10 +487,11 @@ class MarketSimStore:
         return [self._row_run(r) for r in rows]
 
     def claim_next_runnable(self) -> SimRun | None:
-        """Claim one QUEUED or RUNNING (without worker) run for the worker."""
+        """Claim one QUEUED or RUNNING (without fresh lease) run for the worker."""
         import os
 
         pid = os.getpid()
+        self.expire_stale_leases()
         with self.connect() as conn:
             row = conn.execute(
                 """
@@ -505,12 +506,99 @@ class MarketSimStore:
             if row is None:
                 return None
             run = self._row_run(row)
-            conn.execute(
-                "UPDATE market_sim_runs SET worker_pid=?, updated_at=? WHERE run_id=?",
-                (pid, utc_now(), run.run_id),
-            )
+            now = utc_now()
+            # Prefer lease_heartbeat_ts column when present
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+            if "lease_heartbeat_ts" in cols:
+                conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, lease_heartbeat_ts=?, updated_at=? WHERE run_id=?",
+                    (pid, now, now, run.run_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, updated_at=? WHERE run_id=?",
+                    (pid, now, run.run_id),
+                )
             run.worker_pid = pid
+            meta = dict(run.metadata or {})
+            meta["lease_heartbeat_ts"] = now
+            run.metadata = meta
             return run
+
+    def heartbeat_run_lease(self, run_id: str, *, worker_pid: int | None = None) -> bool:
+        """Fresh heartbeat while holding a run. Returns False if lease not held by this worker."""
+        import os
+
+        pid = worker_pid if worker_pid is not None else os.getpid()
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT worker_pid, metadata_json FROM market_sim_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            held = row["worker_pid"]
+            if held is not None and int(held) != int(pid):
+                return False
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+            meta = _loads(row["metadata_json"], {})
+            meta["lease_heartbeat_ts"] = now
+            if "lease_heartbeat_ts" in cols:
+                conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, lease_heartbeat_ts=?, metadata_json=?, updated_at=? WHERE run_id=?",
+                    (pid, now, json.dumps(meta), now, run_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, metadata_json=?, updated_at=? WHERE run_id=?",
+                    (pid, json.dumps(meta), now, run_id),
+                )
+        return True
+
+    def expire_stale_leases(self, *, stale_after_seconds: int = 120) -> int:
+        """Clear worker_pid on runs whose lease heartbeat is stale. Returns count expired."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(seconds=stale_after_seconds)).isoformat(timespec="seconds")
+        expired = 0
+        with self.connect() as conn:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+            rows = conn.execute(
+                """
+                SELECT run_id, worker_pid, metadata_json
+                FROM market_sim_runs
+                WHERE worker_pid IS NOT NULL
+                  AND status IN ('QUEUED', 'RUNNING', 'STEPPING', 'PAUSED')
+                """
+            ).fetchall()
+            for row in rows:
+                meta = _loads(row["metadata_json"], {})
+                hb = None
+                if "lease_heartbeat_ts" in cols:
+                    try:
+                        hb = row["lease_heartbeat_ts"]
+                    except (KeyError, IndexError):
+                        hb = None
+                hb = hb or meta.get("lease_heartbeat_ts")
+                if not hb:
+                    # No heartbeat yet — treat updated_at via metadata absence as stale only if old claim
+                    continue
+                if str(hb) < cutoff:
+                    meta.pop("lease_heartbeat_ts", None)
+                    if "lease_heartbeat_ts" in cols:
+                        conn.execute(
+                            "UPDATE market_sim_runs SET worker_pid=NULL, lease_heartbeat_ts=NULL, metadata_json=?, updated_at=? WHERE run_id=?",
+                            (json.dumps(meta), utc_now(), row["run_id"]),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE market_sim_runs SET worker_pid=NULL, metadata_json=?, updated_at=? WHERE run_id=?",
+                            (json.dumps(meta), utc_now(), row["run_id"]),
+                        )
+                    expired += 1
+        return expired
 
     def _row_run(self, row: sqlite3.Row) -> SimRun:
         meta = _loads(row["metadata_json"], {})

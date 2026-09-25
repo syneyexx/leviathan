@@ -3317,6 +3317,22 @@ def _m44_trading_causality_data_foundation(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m46_p0d_resume_hashes_leases(conn: sqlite3.Connection) -> None:
+    """P0D: run identity hashes + lease heartbeat columns."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+    alter = {
+        "input_fingerprint": "TEXT",
+        "trajectory_hash": "TEXT",
+        "checkpoint_state_hash": "TEXT",
+        "lease_heartbeat_ts": "TEXT",
+        "wallet_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+        "reward_spec_json": "TEXT NOT NULL DEFAULT '{}'",
+    }
+    for name, ddl in alter.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE market_sim_runs ADD COLUMN {name} {ddl}")
+
+
 def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
     """P0A: SimFill honesty fields + ClosedTrade / PositionEpisode table."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
@@ -3427,6 +3443,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=45,
         name="p0a_kernel_honesty",
         apply=_m45_p0a_kernel_honesty,
+    ),
+    Migration(
+        version=46,
+        name="p0d_resume_hashes_leases",
+        apply=_m46_p0d_resume_hashes_leases,
     ),
 )
 

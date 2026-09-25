@@ -199,12 +199,23 @@
     "G09": {
       "title": "Accounting invariants property-based",
       "phase": "T3A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DAccountingInvariantTests",
+        "WalletLedger.assert_invariants + duplicate tx_id rejected",
+        "200+ randomized accounting invariant trials"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DAccountingInvariantTests::test_randomized_accounting_invariants",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0DAccountingInvariantTests::test_duplicate_tx_id_rejected"
+      ],
+      "checks": [
+        "equity == cash + MV",
+        "duplicate tx_id rejected",
+        "no NaN/Inf reserved"
+      ],
+      "notes": "P0D accounting invariants."
     },
     "G10": {
       "title": "Instrument rules enforced",

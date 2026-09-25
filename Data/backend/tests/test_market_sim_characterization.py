@@ -312,7 +312,7 @@ class D5FillModelCharacterization(unittest.TestCase):
 
 
 class D6ResumeCharacterization(unittest.TestCase):
-    def test_d6_current_multi_prepare_resets_wallets_and_rewinds_clock(self) -> None:
+    def test_d6_multi_prepare_restores_wallet_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             engine = MultiAgentEngine(store)
@@ -335,7 +335,8 @@ class D6ResumeCharacterization(unittest.TestCase):
             state = engine.prepare(run, bars_path=str(FIXTURE))
             self.assertEqual(state.clock.index, 4)
             wallet = next(iter(state.book.wallets.values()))
-            self.assertEqual(float(wallet.cash), 100_000.0)
+            self.assertEqual(float(wallet.cash), 50_000.0)
+            self.assertEqual(float(wallet.position_qty), 1.0)
 
     def test_d6_current_claim_sets_real_worker_pid(self) -> None:
         import os
@@ -353,13 +354,34 @@ class D6ResumeCharacterization(unittest.TestCase):
             again = store.claim_next_runnable()
             self.assertIsNone(again)
 
-    @unittest.expectedFailure  # D6 — fixed in Phase T1/T5
-    def test_d6_desired_expired_lease_reclaimable(self) -> None:
+    def test_d6_lease_heartbeat_and_expire(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
-            self.assertTrue(
-                hasattr(store, "heartbeat_run_lease") or hasattr(store, "expire_stale_leases")
-            )
+            self.assertTrue(hasattr(store, "heartbeat_run_lease"))
+            self.assertTrue(hasattr(store, "expire_stale_leases"))
+            run = _run(run_id="lease-hb", status="QUEUED")
+            store.create_run(run)
+            claimed = store.claim_next_runnable()
+            assert claimed is not None
+            self.assertTrue(store.heartbeat_run_lease(claimed.run_id))
+            # Force stale heartbeat
+            with store.connect() as conn:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
+                if "lease_heartbeat_ts" in cols:
+                    conn.execute(
+                        "UPDATE market_sim_runs SET lease_heartbeat_ts=? WHERE run_id=?",
+                        ("2000-01-01T00:00:00+00:00", claimed.run_id),
+                    )
+                meta = dict(claimed.metadata or {})
+                meta["lease_heartbeat_ts"] = "2000-01-01T00:00:00+00:00"
+                conn.execute(
+                    "UPDATE market_sim_runs SET metadata_json=? WHERE run_id=?",
+                    (__import__("json").dumps(meta), claimed.run_id),
+                )
+            n = store.expire_stale_leases(stale_after_seconds=60)
+            self.assertGreaterEqual(n, 1)
+            reclaimed = store.claim_next_runnable()
+            self.assertIsNotNone(reclaimed)
 
 
 # ---------------------------------------------------------------------------
