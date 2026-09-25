@@ -133,7 +133,10 @@ class OpenAICompatibleAdapter:
                 message="Provider returned a model without an id",
                 provider_id=self.provider_id,
             )
-        # Never infer parameters/size/context from the name.
+        # Never infer parameters/size/context from the name — but classify obvious
+        # non-chat families so embeddings never silently serve Chat.
+        from Data.modules.models.capability_eligibility import apply_family_capability_inference
+
         caps = ModelCapabilities(
             chat=CapabilityState.UNVERIFIED,
             streaming=CapabilityState.UNVERIFIED
@@ -148,7 +151,7 @@ class OpenAICompatibleAdapter:
         )
         object_type = raw.get("object")
         owned_by = raw.get("owned_by")
-        return ModelDescriptor(
+        provisional = ModelDescriptor(
             id=f"{self.provider_id}:{model_id}",
             display_name=model_id,
             provider_id=self.provider_id,
@@ -172,6 +175,35 @@ class OpenAICompatibleAdapter:
             endpoint=self.endpoint,
             last_discovered_at=utc_now(),
             metadata={"provider_model_id": model_id, "raw_keys": sorted(raw.keys())},
+        )
+        caps, provenance = apply_family_capability_inference(caps, provisional)
+        meta = dict(provisional.metadata or {})
+        if provenance:
+            meta["capabilityProvenance"] = provenance
+        return ModelDescriptor(
+            id=provisional.id,
+            display_name=provisional.display_name,
+            provider_id=provisional.provider_id,
+            runtime_id=provisional.runtime_id,
+            source=provisional.source,
+            object_type=provisional.object_type,
+            architecture=provisional.architecture,
+            family=provisional.family,
+            parameter_count=provisional.parameter_count,
+            quantization=provisional.quantization,
+            format=provisional.format,
+            disk_size_bytes=provisional.disk_size_bytes,
+            context_window=provisional.context_window,
+            max_output_tokens=provisional.max_output_tokens,
+            capabilities=caps,
+            lifecycle_state=provisional.lifecycle_state,
+            health=provisional.health,
+            active=False,
+            loaded=None,
+            local_path=None,
+            endpoint=provisional.endpoint,
+            last_discovered_at=provisional.last_discovered_at,
+            metadata=meta,
         )
 
     async def discover(self) -> list[ModelDescriptor]:

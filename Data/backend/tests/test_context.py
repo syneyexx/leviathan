@@ -60,7 +60,7 @@ class ContextBuilderTests(unittest.TestCase):
         )
         self.assertLess(pack.knowledge_count, 20)
         self.assertTrue(any(name.startswith("knowledge") for name in pack.dropped) or pack.knowledge_count >= 1)
-        self.assertLessEqual(pack.token_estimate, pack.token_budget + 200)  # system assembly slack
+        self.assertLessEqual(pack.token_estimate, pack.token_budget + 250)  # system assembly slack (richer seed prompt)
 
     def test_dedupes_identical_knowledge_hashes(self) -> None:
         plan = ReasoningEngine().analyze("dup", has_knowledge=True)

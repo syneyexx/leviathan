@@ -771,13 +771,66 @@ class ModelControlPlane:
         preferred_role: str | None = None,
         required_capabilities: list[str] | None = None,
         agent_model_id: str | None = None,
+        prefer_reasoning: bool = False,
     ) -> dict[str, Any]:
-        target = self.resolve_target(
-            explicit_model_id=explicit_model_id,
-            preferred_role=preferred_role,
-            required_capabilities=required_capabilities,
-            agent_model_id=agent_model_id,
-        )
+        """Resolve a model for conversational generation.
+
+        Always requires the ``chat`` capability intrinsically — callers cannot
+        accidentally omit it. Extra requested capabilities are merged in.
+        When prefer_reasoning is True, prefer a reasoning-capable model if one
+        is healthy/eligible, but do not hard-require reasoning (keeps normal
+        chat available when only plain chat models exist).
+        """
+        required = {"chat"}
+        for cap in required_capabilities or ():
+            if cap:
+                required.add(str(cap))
+        role = preferred_role or "chat"
+        if prefer_reasoning and role in {None, "", "chat", "general", "General"}:
+            # Soft preference via role override / measured routing — still chat-required.
+            role = "reasoning" if self.router.get_config().role_overrides.get("reasoning") else "chat"
+        try:
+            target = self.resolve_target(
+                explicit_model_id=explicit_model_id,
+                preferred_role=role,
+                required_capabilities=sorted(required),
+                agent_model_id=agent_model_id,
+            )
+        except ModelControlError as exc:
+            # If reasoning role exhausted, fall back to plain chat (never drop chat).
+            if prefer_reasoning and role == "reasoning" and exc.code in {
+                "ROUTER_EXHAUSTED",
+                "NO_CHAT_MODEL_AVAILABLE",
+                "MODEL_NOT_FOUND",
+            }:
+                target = self.resolve_target(
+                    explicit_model_id=explicit_model_id,
+                    preferred_role="chat",
+                    required_capabilities=sorted(required),
+                    agent_model_id=agent_model_id,
+                )
+            else:
+                raise
+        # Soft prefer: if we resolved via chat role but a healthier reasoning model
+        # exists and prefer_reasoning is set, try to upgrade without failing.
+        if prefer_reasoning and not explicit_model_id:
+            try:
+                reasoning_ids = self.router.find_compatible(
+                    required_capabilities=["chat", "reasoning"]
+                )
+                if reasoning_ids and target.model.id not in reasoning_ids:
+                    upgraded = self.resolve_target(
+                        preferred_role="reasoning",
+                        required_capabilities=["chat"],
+                    )
+                    # Only accept upgrade when the model also satisfies reasoning soft-check
+                    from Data.modules.models.capability_eligibility import capability_satisfies_request
+
+                    decision = capability_satisfies_request(upgraded.model, "reasoning")
+                    if decision.satisfies or upgraded.model.id in reasoning_ids:
+                        target = upgraded
+            except ModelControlError:
+                pass
         return self._routed_dict(target)
 
     def resolve_settings_external_fallback(

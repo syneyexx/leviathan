@@ -272,19 +272,32 @@ class PerceptionService:
                 assessment = self.neuro_advisor.assess(query)
                 signals = list(getattr(assessment, "signals", ()) or ())[: budgets["neuro"]]
                 for sig in signals:
-                    label = getattr(sig, "label", None) or getattr(sig, "name", None) or str(sig)
+                    summary = (
+                        getattr(sig, "summary", None)
+                        or getattr(sig, "label", None)
+                        or getattr(sig, "name", None)
+                        or getattr(sig, "content", None)
+                    )
+                    if summary is None or (isinstance(summary, str) and not summary.strip()):
+                        kind = getattr(sig, "kind", None) or "advisory"
+                        summary = f"{kind} association"
+                    elif not isinstance(summary, str):
+                        summary = str(summary)
+                    # Never fall back to str(NeuroSignal) — that leaks dataclass repr.
+                    if "NeuroSignal(" in summary:
+                        summary = getattr(sig, "kind", None) or "advisory association"
                     items.append(
                         PerceptionItem(
                             item_id=str(uuid.uuid4()),
                             source_type=EpistemicType.NEURAL_ASSOCIATION,
-                            summary=f"[advisory neural] {label}",
+                            summary=f"[advisory neural] {summary}",
                             source_ref=getattr(sig, "signal_id", None),
                             trust=0.2,
                             confidence=float(getattr(sig, "strength", 0.3) or 0.3),
                             freshness="advisory",
                             authority="none",
                             verification_status="advisory_only",
-                            payload=sig.public_dict() if hasattr(sig, "public_dict") else {"label": label},
+                            payload=sig.public_dict() if hasattr(sig, "public_dict") else {"label": summary},
                         )
                     )
             except Exception as exc:  # noqa: BLE001

@@ -81,6 +81,12 @@ from Data.backend.routes.models import build_models_router
 from Data.modules.module_manager import ModuleContext, ModuleManager, ModuleManagerError
 from Data.modules.observations import ObservationStore
 from Data.modules.reasoning import ReasoningEngine
+from Data.modules.reasoning.engine import ReasoningPlan
+from Data.modules.reasoning.mode import (
+    apply_mode_to_plan,
+    resolve_effective_mode,
+    to_cognition_depth,
+)
 from Data.modules.run import EventType, RunState, RunStore
 from Data.modules.verification import (
     VerificationEngine,
@@ -1831,6 +1837,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     model_id: str | None = None
     preferred_role: str | None = None
+    reasoning_mode: str | None = None  # session override: auto|fast|standard|deep
     stream: bool = False
 
 
@@ -1878,6 +1885,8 @@ async def health() -> dict:
         "frontend": {
             "dist_ready": (FRONTEND_DIST / "index.html").is_file(),
             "dist_path": str(FRONTEND_DIST),
+            "source_root": str(FRONTEND_ROOT),
+            "build_hint": "Rebuild with `npm run build` in Data/frontend when UI drifts from source",
         },
         "config": live_settings().public_summary(),
 
@@ -2187,6 +2196,48 @@ async def chat(payload: ChatRequest, request: Request):
         if settings.reasoning_enabled
         else provisional
     )
+    # Resolve ONE effective reasoning mode for this turn (BehaviorProfile + session override).
+    reasoning_mode = resolve_effective_mode(
+        settings_default=behavior_profile.reasoning_mode_default,
+        session_override=payload.reasoning_mode,
+        plan=plan,
+        message=message,
+    )
+    plan = apply_mode_to_plan(plan, reasoning_mode)
+    # Tool-use style modulates retrieval willingness without granting authority.
+    tool_style = (behavior_profile.tool_use_style or "balanced").strip().lower()
+    if (
+        tool_style == "minimal"
+        and plan.use_knowledge
+        and plan.intent
+        not in {"project_knowledge", "research", "knowledge", "factual_question"}
+    ):
+        plan = ReasoningPlan(
+            intent=plan.intent,
+            complexity=plan.complexity,
+            use_knowledge=False,
+            steps=plan.steps,
+            use_deep_recall=False,
+            use_atlas=False,
+            economy=plan.economy,
+            retrieval_reason=f"{plan.retrieval_reason}|tool_style=minimal",
+            use_memory=plan.use_memory,
+            policy_version=plan.policy_version,
+        )
+    elif tool_style == "proactive" and has_knowledge and not plan.use_knowledge:
+        if plan.intent in {"question", "conversation", "analysis", "factual_question"}:
+            plan = ReasoningPlan(
+                intent=plan.intent,
+                complexity=plan.complexity,
+                use_knowledge=True,
+                steps=plan.steps,
+                use_deep_recall=plan.use_deep_recall,
+                use_atlas=plan.use_atlas,
+                economy=plan.economy,
+                retrieval_reason=f"{plan.retrieval_reason}|tool_style=proactive",
+                use_memory=plan.use_memory,
+                policy_version=plan.policy_version,
+            )
     runs.append_event(
         run.run_id,
         EventType.REASONING_COMPLETED,
@@ -2194,6 +2245,7 @@ async def chat(payload: ChatRequest, request: Request):
             **plan.public_summary(),
             "economy": economy.public_dict(),
             "behavior": behavior_snapshot.public_dict(include_prompt=False),
+            "reasoning_mode": reasoning_mode.public_dict(),
             "retrieval_gate": {
                 "use_knowledge": plan.use_knowledge,
                 "reason": getattr(plan, "retrieval_reason", ""),
@@ -2205,6 +2257,11 @@ async def chat(payload: ChatRequest, request: Request):
     )
 
     cognition_meta: dict | None = None
+    # FAST / greeting: keep cognition shadow so we do not over-orchestrate simple turns.
+    cognition_force_shadow = bool(
+        reasoning_mode.effective == "fast"
+        or plan.intent in {"greeting", "identity", "casual_conversation", "exact_output"}
+    )
     if settings.features.cognition_enabled:
         try:
             history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
@@ -2217,20 +2274,30 @@ async def chat(payload: ChatRequest, request: Request):
                 message,
                 conversation_id=conversation_id,
                 history=history,
-                has_knowledge=has_knowledge,
-                shadow=True if settings.features.cognition_shadow else False,
-                metadata={"chat_run_id": run.run_id},
-                user_requested_depth=live_settings().reasoning.default_mode,
+                has_knowledge=has_knowledge and reasoning_mode.allow_retrieval,
+                shadow=True
+                if (settings.features.cognition_shadow or cognition_force_shadow)
+                else False,
+                metadata={
+                    "chat_run_id": run.run_id,
+                    "behavior_system_prompt": behavior_snapshot.system_prompt,
+                    "behavior_hash": behavior_snapshot.settings_hash,
+                    "response_language": behavior_snapshot.language.response_language,
+                    "language_source": behavior_snapshot.language.source,
+                    "reasoning_mode": reasoning_mode.effective,
+                },
+                user_requested_depth=to_cognition_depth(reasoning_mode.effective),
                 run=True,
             )
             observability.emit(
                 "cognition",
-                "chat.shadow" if settings.features.cognition_shadow else "chat.active",
+                "chat.shadow" if (settings.features.cognition_shadow or cognition_force_shadow) else "chat.active",
                 payload={
                     "run_id": cognition_meta.get("run_id"),
                     "status": cognition_meta.get("status"),
                     "mode": cognition_meta.get("mode"),
                     "strategy": cognition_meta.get("strategy"),
+                    "reasoning_mode": reasoning_mode.effective,
                 },
             )
         except Exception as exc:  # noqa: BLE001 — cognition must not break chat
@@ -2441,17 +2508,25 @@ async def chat(payload: ChatRequest, request: Request):
 
         history_rows = db.get_messages(conversation_id, limit=live_settings().max_history_messages)
         history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
-        memory_hits = [
-            item.as_context_item()
-            for item in memory_store.search(
-                message,
-                limit=5,
-                conversation_id=conversation_id,
-                include_global=True,
-            )
-        ]
+        memory_hits = []
+        if (
+            behavior_profile.memory_enabled
+            and plan.use_memory
+            and reasoning_mode.effective != "fast"
+        ):
+            memory_hits = [
+                item.as_context_item()
+                for item in memory_store.search(
+                    message,
+                    limit=max(1, int(behavior_profile.memory_top_k or 5)),
+                    conversation_id=conversation_id,
+                    include_global=True,
+                )
+            ]
         knowledge_ids = [str(item.get("id") or "") for item in knowledge_hits if item.get("id")]
-        neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
+        neuro = NeuroAssessment(enabled=False, signals=(), notes=())
+        if reasoning_mode.effective != "fast":
+            neuro = neuro_advisor.assess(message, plan=plan, knowledge_ids=knowledge_ids)
         if neuro.enabled:
             observability.emit(
                 "neuro",
@@ -2459,13 +2534,9 @@ async def chat(payload: ChatRequest, request: Request):
                 payload={"signals": len(neuro.signals)},
             )
             for signal in neuro.signals:
-                neuro_context.append(
-                    {
-                        "id": signal.signal_id,
-                        "content": f"[{signal.kind} strength={signal.strength}] {signal.summary}",
-                        "status": "advisory",
-                    }
-                )
+                from Data.modules.context.advisory import normalize_neuro_item
+
+                neuro_context.append(normalize_neuro_item(signal))
             if settings.features.neuro_memory_tiers and neuro_memory.enabled:
                 try:
                     neuro_memory.write_working(
@@ -2612,6 +2683,7 @@ async def chat(payload: ChatRequest, request: Request):
             routed = model_plane.resolve_for_chat(
                 explicit_model_id=payload.model_id,
                 preferred_role=payload.preferred_role or "chat",
+                prefer_reasoning=bool(reasoning_mode.prefer_reasoning_model),
             )
             decision = routed["decision"]
             profile = routed["profile"]
@@ -2665,7 +2737,7 @@ async def chat(payload: ChatRequest, request: Request):
                     residency_lease_id, model_id=model_id_for_release
                 )
                 residency_lease_id = None
-            if exc.code in {"ROUTER_EXHAUSTED", "MODEL_NOT_FOUND"} and not payload.model_id:
+            if exc.code in {"ROUTER_EXHAUSTED", "NO_CHAT_MODEL_AVAILABLE", "MODEL_NOT_FOUND"} and not payload.model_id:
                 # Soft settings fallback still uses EXTERNAL residency + Gateway —
                 # never silent bypass of the Model Control Plane.
                 try:
@@ -2805,13 +2877,74 @@ async def chat(payload: ChatRequest, request: Request):
             residency_lease_id = None
 
     async def _finalize_chat(answer: str, model: str) -> dict:
+        from Data.modules.context.response_quality import check_response_quality
+
+        quality = check_response_quality(
+            answer,
+            expected_language=behavior_snapshot.language.response_language,
+        )
+        # Bounded one-shot revision for high-severity language/diagnostic issues.
+        # Language/diagnostic safety net applies even in FAST (max_generations=1).
+        allow_quality_revision = (
+            reasoning_mode.max_generations > 1
+            or any(i.type in {"language_mismatch", "diagnostic_leakage", "empty_answer"} for i in quality.issues)
+        )
+        if (
+            quality.should_revise
+            and not cognition_owns_response
+            and routed is not None
+            and quality.revision_instruction
+            and allow_quality_revision
+        ):
+            try:
+                revised_text, _revised_model = await llm.chat(
+                    history=[
+                        {"role": "user", "content": message},
+                        {"role": "assistant", "content": answer},
+                        {
+                            "role": "user",
+                            "content": quality.revision_instruction,
+                        },
+                    ],
+                    knowledge=[],
+                    plan=plan,
+                    behavior_profile_prompt=(
+                        f"{behavior_snapshot.system_prompt}\n\n{quality.revision_instruction}"
+                    ),
+                    model_id=routed["provider_model_id"],
+                    endpoint=routed["endpoint"],
+                    api_key=routed["api_key"],
+                    temperature=0.2,
+                    max_tokens=behavior_profile.max_output_tokens,
+                )
+                candidate = (revised_text or "").strip()
+                if candidate:
+                    recheck = check_response_quality(
+                        candidate,
+                        expected_language=behavior_snapshot.language.response_language,
+                    )
+                    if recheck.pass_ or not any(
+                        i.type in {"diagnostic_leakage", "language_mismatch", "empty_answer"}
+                        for i in recheck.issues
+                    ):
+                        answer = candidate
+                        quality = recheck
+            except Exception:  # noqa: BLE001 — revision failure keeps original
+                pass
+
         if call_id and routed is not None:
             model_plane.registry.touch_used(model_id_for_release)
         await _release_chat_inference()
         runs.append_event(
             run.run_id,
             EventType.MODEL_COMPLETED,
-            {"model": model, **(route_meta or {})},
+            {
+                "model": model,
+                **(route_meta or {}),
+                "quality": quality.public_dict(),
+                "reasoning_mode": reasoning_mode.public_dict(),
+                "language": behavior_snapshot.language.public_dict(),
+            },
         )
         assistant_message = db.add_message(conversation_id, "assistant", answer)
         observability.emit(
@@ -2825,6 +2958,8 @@ async def chat(payload: ChatRequest, request: Request):
                 "streamed": use_sse and not cognition_owns_response,
                 "streaming_degraded": streaming_degraded,
                 "cognition_owns_final_response": cognition_owns_response,
+                "response_language": behavior_snapshot.language.response_language,
+                "reasoning_mode": reasoning_mode.effective,
             },
         )
         completed = runs.transition(
@@ -2841,7 +2976,13 @@ async def chat(payload: ChatRequest, request: Request):
             "assistant_message": assistant_message,
             "model": model,
             "routing": route_meta,
-            "reasoning": plan.public_summary(),
+            "reasoning": {
+                **plan.public_summary(),
+                "mode": reasoning_mode.public_dict(),
+            },
+            "behavior": behavior_snapshot.public_dict(include_prompt=False),
+            "language": behavior_snapshot.language.public_dict(),
+            "quality": quality.public_dict(),
             "knowledge_sources": [
                 {
                     "id": item["id"],
@@ -2858,8 +2999,13 @@ async def chat(payload: ChatRequest, request: Request):
             "economy": economy.public_dict(),
             "why_sources": [{"id": item.get("id"), "kind": item.get("kind")} for item in why_hits],
             "memory_sources": [{"memory_id": item["memory_id"]} for item in memory_hits],
-            "neuro": neuro.public_dict(),
-            "cortex": cortex_report,
+            "neuro": neuro.public_dict() if behavior_profile.diagnostic_visibility else {
+                "enabled": neuro.enabled,
+                "signals": [],
+                "notes": ["diagnostic_visibility=false — raw signals withheld from chat payload"],
+                "truth": neuro.public_dict().get("truth", {}),
+            },
+            "cortex": cortex_report if behavior_profile.diagnostic_visibility else None,
             "cognition": cognition_meta,
             "streamed": use_sse and not cognition_owns_response,
             "truth": chat_truth(

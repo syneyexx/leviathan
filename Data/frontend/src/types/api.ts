@@ -18,6 +18,7 @@ export type ChatOptions = {
   conversationId?: string | null;
   modelId?: string | null;
   preferredRole?: string | null;
+  reasoningMode?: string | null;
   stream?: boolean;
 };
 
@@ -26,6 +27,19 @@ export type ReasoningSummary = {
   complexity: string;
   use_knowledge: boolean;
   steps: string[];
+  mode?: {
+    requested?: string;
+    effective?: string;
+    source?: string;
+    prefer_reasoning_model?: boolean;
+  };
+};
+
+export type LanguageDecisionMeta = {
+  mode?: string;
+  response_language?: string;
+  source?: string;
+  reason?: string;
 };
 
 export type KnowledgeSource = {
@@ -41,6 +55,12 @@ export type ChatResponse = {
   model: string;
   reasoning: ReasoningSummary;
   knowledge_sources: KnowledgeSource[];
+  language?: LanguageDecisionMeta;
+  behavior?: Record<string, unknown>;
+  quality?: {
+    pass?: boolean;
+    issues?: Array<{ type: string; severity: string; detail?: string }>;
+  };
   neuro?: unknown;
   cortex?: unknown;
   cognition?: CognitionRunStatus | { error?: string; truth?: Record<string, boolean> };
@@ -287,7 +307,7 @@ export type ApiErrorBody = {
   detail?: string | { msg: string }[] | { code?: string; message?: string; retryable?: boolean };
 };
 
-export type CapabilityState = "supported" | "unsupported" | "unknown" | "unverified";
+export type CapabilityState = "supported" | "unsupported" | "unknown" | "unverified" | "unmeasured";
 
 export type ModelCapabilities = {
   chat: CapabilityState;
