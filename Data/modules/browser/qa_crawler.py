@@ -932,13 +932,7 @@ class BrowserJourneyCrawler:
             pass
 
 
-# Compatibility aliases
-LocalUserJourneyCrawler = BrowserJourneyCrawler
-CrawlBudgets = CrawlBudget
-JourneyReport = CrawlReport
-
-
-# --- Compatibility surface expected by BrowserWorker._execute_qa (GI9) -----
+# --- Compatibility surface expected by BrowserWorker / GI9 naming -------------
 
 _DEFAULT_LOCAL_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
 
@@ -1253,15 +1247,14 @@ class LocalUserJourneyCrawler:
         self, seed_url: str, config: CrawlConfig
     ) -> list[dict[str, Any]]:
         """HTTP-probe same-host links from the seed page for 4xx/5xx findings."""
-        import httpx
         from html.parser import HTMLParser
 
         findings: list[dict[str, Any]] = []
+        headers = {"X-Leviathan-QA-Run": config.run_id or "qa-probe"}
         try:
-            with httpx.Client(timeout=5.0, follow_redirects=False) as client:
-                headers = {"X-Leviathan-QA-Run": config.run_id or "qa-probe"}
-                resp = client.get(seed_url, headers=headers)
-                html = resp.text
+            req = Request(seed_url, headers=headers, method="GET")
+            with urlopen(req, timeout=5) as resp:  # noqa: S310 — localhost-scoped
+                html = resp.read(200_000).decode("utf-8", errors="replace")
         except Exception:  # noqa: BLE001
             return findings
 
@@ -1284,70 +1277,70 @@ class LocalUserJourneyCrawler:
             return findings
         base_host = (urlparse(seed_url).hostname or "").lower()
         seen: set[str] = set()
-        with httpx.Client(timeout=5.0, follow_redirects=False) as client:
-            for href in parser.hrefs[:30]:
-                absolute = urljoin(seed_url, href)
-                host = (urlparse(absolute).hostname or "").lower()
-                if host != base_host or absolute in seen:
-                    continue
-                seen.add(absolute)
-                try:
-                    self._inner.assert_host_allowed(absolute)
-                except HostNotAllowed:
-                    continue
-                try:
-                    r = client.get(
-                        absolute,
-                        headers={"X-Leviathan-QA-Run": config.run_id or "qa-probe"},
-                    )
-                    code = int(r.status_code)
-                except Exception as exc:  # noqa: BLE001
+        for href in parser.hrefs[:30]:
+            absolute = urljoin(seed_url, href)
+            host = (urlparse(absolute).hostname or "").lower()
+            if host != base_host or absolute in seen:
+                continue
+            seen.add(absolute)
+            try:
+                self._inner.assert_host_allowed(absolute)
+            except HostNotAllowed:
+                continue
+            try:
+                req = Request(absolute, headers=headers, method="GET")
+                with urlopen(req, timeout=5) as resp:  # noqa: S310
+                    code = int(getattr(resp, "status", 200) or 200)
+                    body = resp.read(8000).decode("utf-8", errors="replace").lower()
+            except HTTPError as exc:
+                code = int(exc.code)
+                body = ""
+            except Exception as exc:  # noqa: BLE001
+                findings.append(
+                    {
+                        "kind": "BROKEN_LINK",
+                        "severity": "high",
+                        "message": str(exc),
+                        "url": absolute,
+                        "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
+                    }
+                )
+                continue
+            if code >= 500:
+                findings.append(
+                    {
+                        "kind": "HTTP_5XX",
+                        "severity": "critical",
+                        "message": f"HTTP {code} for {absolute}",
+                        "url": absolute,
+                        "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
+                    }
+                )
+            elif code >= 400:
+                findings.append(
+                    {
+                        "kind": "HTTP_4XX" if code != 404 else "BROKEN_LINK",
+                        "severity": "high",
+                        "message": f"HTTP {code} for {absolute}",
+                        "url": absolute,
+                        "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
+                    }
+                )
+            else:
+                if "<input" in body and "aria-label" not in body and "<label" not in body:
                     findings.append(
                         {
-                            "kind": "BROKEN_LINK",
-                            "severity": "high",
-                            "message": str(exc),
+                            "kind": "A11Y_OBSERVATION",
+                            "severity": "medium",
+                            "message": "Interactive input without label/accessible name observed",
                             "url": absolute,
                             "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
                         }
                     )
-                    continue
-                if code >= 500:
-                    findings.append(
-                        {
-                            "kind": "HTTP_5XX",
-                            "severity": "critical",
-                            "message": f"HTTP {code} for {absolute}",
-                            "url": absolute,
-                            "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
-                        }
-                    )
-                elif code >= 400:
-                    findings.append(
-                        {
-                            "kind": "HTTP_4XX" if code != 404 else "BROKEN_LINK",
-                            "severity": "high",
-                            "message": f"HTTP {code} for {absolute}",
-                            "url": absolute,
-                            "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
-                        }
-                    )
-                else:
-                    # Soft a11y scan on successful linked pages.
-                    body = r.text.lower()
-                    if "<input" in body and "aria-label" not in body and "<label" not in body:
-                        findings.append(
-                            {
-                                "kind": "A11Y_OBSERVATION",
-                                "severity": "medium",
-                                "message": "Interactive input without label/accessible name observed",
-                                "url": absolute,
-                                "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
-                            }
-                        )
         return findings
 
 
-# Legacy alias used by some imports.
+# Final aliases (after adapter class definition).
+JourneyReport = CrawlReport
 CrawlConfigBudgets = CrawlBudgets
 

@@ -16,16 +16,18 @@ from .qa_crawler import (
     BrowserJourneyCrawler,
     CrawlBudget,
     CrawlBudgets,
-    CrawlConfig,
+    CrawlIssue,
     CrawlReport,
     CrawlStatus,
     HostNotAllowed,
     JourneyPersona,
     LocalUserJourneyCrawler,
 )
+from .qa_repair import QaRepairBridge, RepairProposal
 from .playwright_backend import PlaywrightBrowserBackend, PlaywrightUnavailable
 
-# Compatibility aliases.
+# Compatibility aliases (GI9 naming variants).
+CrawlConfig = CrawlBudget
 JourneyReport = CrawlReport
 
 __all__ = [
@@ -41,6 +43,7 @@ __all__ = [
     "CrawlBudget",
     "CrawlBudgets",
     "CrawlConfig",
+    "CrawlIssue",
     "CrawlReport",
     "CrawlStatus",
     "FixtureBrowserBackend",
@@ -50,5 +53,7 @@ __all__ = [
     "LocalUserJourneyCrawler",
     "PlaywrightBrowserBackend",
     "PlaywrightUnavailable",
+    "QaRepairBridge",
+    "RepairProposal",
     "resolve_browser_backend",
 ]

@@ -333,7 +333,9 @@ class BrowserWorker:
         self.filesystem_root = filesystem_root
 
     def get_qa_crawler(self) -> Any:
-        if self._qa_crawler is None or self._qa_crawler is False:
+        if self._qa_crawler is False:
+            raise RuntimeError("QA crawler factory disabled on this browser worker")
+        if self._qa_crawler is None:
             from .qa_crawler import BrowserJourneyCrawler
 
             # QA crawls need localhost HTTP; do not widen the primary worker policy.

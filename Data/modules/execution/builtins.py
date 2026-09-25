@@ -670,7 +670,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["browser", "qa"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
-                "execution_class": "EXTERNAL_REQUIRED",
+                "execution_class": "INLINE_SAFE",
             },
         )
     )
@@ -678,7 +678,7 @@ def build_default_catalog() -> CapabilityCatalog:
         CapabilityDefinition(
             id="browser.qa.cancel",
             name="Browser QA Cancel",
-            description="Request cancel for a QA journey (JobRuntime EXTERNAL_REQUIRED).",
+            description="Request cancel for a QA journey (JobRuntime EXTERNAL_REQUIRED ownership for durable runs).",
             side_effects=(SideEffect.EXECUTE,),
             provider_kind=CapabilityProviderKind.BROWSER,
             provider_ref="qa_cancel",
@@ -693,7 +693,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["browser", "qa", "cancel"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
-                "execution_class": "EXTERNAL_REQUIRED",
+                "execution_class": "INLINE_SAFE",
             },
         )
     )
@@ -742,7 +742,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["browser", "qa", "report"],
                 "domains": ["browser"],
                 "worker_kind": "browser",
-                "execution_class": "EXTERNAL_REQUIRED",
+                "execution_class": "INLINE_SAFE",
             },
         )
     )

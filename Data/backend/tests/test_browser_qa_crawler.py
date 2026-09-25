@@ -31,6 +31,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
             <a href="/ok">OK page</a>
             <a href="/broken">Broken link</a>
             <a href="/loop">Loop</a>
+            <a href="/error500">Server error</a>
             <button id="boom" onclick="throw new Error('fixture-js-error')">Boom</button>
             <button id="modal" onclick="document.getElementById('dlg').style.display='block'">Open modal</button>
             <div id="dlg" style="display:none"><p>Modal</p><button id="close">Close</button></div>
