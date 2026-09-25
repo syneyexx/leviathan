@@ -35,6 +35,7 @@ class TradingKnowledgeSnapshot:
     evaluation_window: str = "RESEARCH"
     sealed_holdout_refs: list[dict[str, Any]] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
+    provenance_fingerprint: str = ""
     snapshot_hash: str = ""
     created_at: str = ""
 
@@ -45,6 +46,24 @@ class TradingKnowledgeSnapshot:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def seal(self) -> "TradingKnowledgeSnapshot":
+        if not self.provenance_fingerprint:
+            from .strategy_library import compute_provenance_fingerprint
+
+            self.provenance_fingerprint = compute_provenance_fingerprint(
+                market_dataset_hash=self.market_dataset_hash,
+                strategy_content_hash=str(
+                    (self.extra or {}).get("strategy_content_hash")
+                    or self.strategy_id
+                    or ""
+                ),
+                code_version=self.code_version,
+                feature_pipeline_version=self.feature_pipeline_version,
+                execution_model_version=self.execution_model_version,
+                cost_model={"cost_model_version": self.cost_model_version},
+                random_seed=self.random_seed,
+                strategy_version=self.strategy_version,
+                brain_policy_ref=self.brain_policy_ref,
+            )
         self.snapshot_hash = self.compute_hash()
         return self
 
@@ -57,6 +76,7 @@ class TradingKnowledgeSnapshot:
             "reproducible": True,
             "proves_no_future_access": True,
             "mutation_creates_new_snapshot": True,
+            "full_provenance_fingerprint": bool(self.provenance_fingerprint),
         }
         return data
 

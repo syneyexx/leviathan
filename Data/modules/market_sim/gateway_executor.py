@@ -81,6 +81,17 @@ class MarketSimModuleExecutor:
         if action == "strategy.archive":
             sid = str(arguments.get("strategy_id") or "")
             return {"strategy": svc.archive_strategy(sid)}
+        if action == "strategy.promote":
+            sid = str(arguments.get("strategy_id") or "")
+            return {
+                "strategy": svc.promote_strategy(
+                    sid,
+                    to_status=str(arguments.get("to_status") or arguments.get("toStatus") or ""),
+                    reason=str(arguments.get("reason") or ""),
+                    decided_by=str(arguments.get("decided_by") or arguments.get("decidedBy") or "operator"),
+                    evidence=arguments.get("evidence"),
+                )
+            }
         if action == "strategy.validate":
             return svc.validate_strategy_dsl(dict(arguments.get("dsl_spec") or arguments.get("dslSpec") or {}))
         if action == "data.register":

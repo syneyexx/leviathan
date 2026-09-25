@@ -311,6 +311,20 @@ def register_market_sim_module_capabilities(catalog: Any) -> None:
         idempotent=True,
     )
     _mod(
+        cap_id="market_sim.strategy.promote",
+        name="Promote Strategy",
+        description="Explicit promotion state transition (research→candidate→paper_ready→active).",
+        provider_ref="strategy.promote",
+        required=["strategy_id", "to_status"],
+        properties={
+            "strategy_id": {"type": "string"},
+            "to_status": {"type": "string"},
+            "reason": {"type": "string"},
+            "decided_by": {"type": "string"},
+            "evidence": {"type": "object"},
+        },
+    )
+    _mod(
         cap_id="market_sim.strategy.validate",
         name="Validate Strategy DSL",
         description="Validate a Strategy Spec DSL v2 document.",

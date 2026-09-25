@@ -644,22 +644,81 @@ class MarketSimControlPlane:
 
     def archive_strategy(self, strategy_id: str) -> dict[str, Any]:
         self._require_enabled()
+        return self.promote_strategy(strategy_id, to_status=StrategyStatus.ARCHIVED.value)
+
+    def promote_strategy(
+        self,
+        strategy_id: str,
+        *,
+        to_status: str,
+        reason: str = "",
+        decided_by: str = "operator",
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Explicit promotion state transition (G31) — never silent."""
+        from .strategy_library import assert_promotion_allowed
+
+        self._require_enabled()
         record = self.store.get_strategy(strategy_id)
         if record is None:
             raise MarketSimError("STRATEGY_NOT_FOUND", strategy_id, http_status=404)
-        record.status = StrategyStatus.ARCHIVED.value
-        record.updated_at = utc_now()
-        # Re-save head without new version by creating identical version bump skipped —
-        # update via version_strategy with same content would bump; use direct SQL via store.
-        current = self.store.get_strategy_version(strategy_id)
-        assert current is not None
-        # Soft archive: store update through version with same hash but status change
+        target = str(to_status or "").upper()
+        assert_promotion_allowed(record.status, target)
+        now = utc_now()
+        event = self.store.append_promotion_event(
+            {
+                "event_id": str(uuid.uuid4()),
+                "strategy_id": strategy_id,
+                "from_status": record.status,
+                "to_status": target,
+                "reason": reason or "",
+                "decided_by": decided_by,
+                "evidence": evidence or {},
+                "created_at": now,
+            }
+        )
+        record.status = target
+        record.updated_at = now
         with self.store.connect() as conn:
             conn.execute(
                 "UPDATE market_strategies SET status=?, updated_at=? WHERE strategy_id=?",
                 (record.status, record.updated_at, strategy_id),
             )
-        return record.public_dict()
+        payload = record.public_dict()
+        payload["promotion"] = event
+        return payload
+
+    def recall_strategy_memories(
+        self,
+        *,
+        strategy_id: str | None = None,
+        as_of_ts: str,
+        features: dict[str, Any] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        from .strategy_library import StrategyLibrary
+
+        self._require_enabled()
+        return StrategyLibrary(self.store).recall(
+            strategy_id=strategy_id,
+            as_of_ts=as_of_ts,
+            features=features,
+            limit=limit,
+        )
+
+    def list_strategy_lessons(
+        self,
+        *,
+        strategy_id: str | None = None,
+        as_of_ts: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        from .strategy_library import StrategyLibrary
+
+        self._require_enabled()
+        return StrategyLibrary(self.store).lessons(
+            strategy_id=strategy_id, as_of_ts=as_of_ts, limit=limit
+        )
 
     def list_strategies(self, *, limit: int = 200) -> list[dict[str, Any]]:
         self._require_enabled()

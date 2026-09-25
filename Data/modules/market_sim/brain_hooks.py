@@ -88,7 +88,16 @@ class BrainFacade:
         fw = firewall
         if fw is not None:
             boundary = fw.as_of
+        # G23: time-sensitive historical retrieval requires as_of — otherwise exclude.
         if not boundary:
+            if time_sensitive:
+                return BrainRetrieval(
+                    hits=[],
+                    miss=True,
+                    notes=[
+                        "brain excluded: as_of required for time-sensitive historical retrieval"
+                    ],
+                )
             return retrieval
         kept: list[dict[str, Any]] = []
         dropped = 0

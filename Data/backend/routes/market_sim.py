@@ -137,6 +137,13 @@ class ExperimentComplete(BaseModel):
     runIds: list[str] | None = None
 
 
+class StrategyPromoteRequest(BaseModel):
+    toStatus: str
+    reason: str | None = None
+    decidedBy: str | None = "operator"
+    evidence: dict[str, Any] | None = None
+
+
 class DemoRequest(BaseModel):
     family: str = Field(description="equity | crypto_spot")
     barsLimit: int = Field(120, ge=30, le=2000)
@@ -443,6 +450,61 @@ def build_market_sim_router(
             idempotency_key=f"market_sim:archive:{strategy_id}",
             fallback=lambda: {"strategy": service.archive_strategy(strategy_id)},
         )
+
+    @router.post("/api/market-sim/strategies/{strategy_id}/promote")
+    def promote_strategy(strategy_id: str, payload: StrategyPromoteRequest) -> dict:
+        return _mutate(
+            "market_sim.strategy.promote",
+            {
+                "strategy_id": strategy_id,
+                "to_status": payload.toStatus,
+                "reason": payload.reason,
+                "decided_by": payload.decidedBy,
+                "evidence": payload.evidence,
+            },
+            idempotency_key=f"market_sim:promote:{strategy_id}:{payload.toStatus}",
+            fallback=lambda: {
+                "strategy": service.promote_strategy(
+                    strategy_id,
+                    to_status=payload.toStatus,
+                    reason=payload.reason or "",
+                    decided_by=payload.decidedBy or "operator",
+                    evidence=payload.evidence,
+                )
+            },
+        )
+
+    @router.get("/api/market-sim/strategies/{strategy_id}/memories")
+    def recall_strategy_memories(
+        strategy_id: str,
+        as_of: str = Query(..., description="Causal recall boundary (ISO timestamp)"),
+        limit: int = Query(20, ge=1, le=200),
+    ) -> dict:
+        try:
+            return {
+                "memories": service.recall_strategy_memories(
+                    strategy_id=strategy_id, as_of_ts=as_of, limit=limit
+                ),
+                "as_of": as_of,
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/strategies/{strategy_id}/lessons")
+    def list_strategy_lessons(
+        strategy_id: str,
+        as_of: str = Query(..., description="Causal recall boundary (ISO timestamp)"),
+        limit: int = Query(20, ge=1, le=200),
+    ) -> dict:
+        try:
+            return {
+                "lessons": service.list_strategy_lessons(
+                    strategy_id=strategy_id, as_of_ts=as_of, limit=limit
+                ),
+                "as_of": as_of,
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
 
     # --- Runs ---
 

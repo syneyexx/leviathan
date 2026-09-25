@@ -89,7 +89,11 @@ class DeliberationRuntime:
                 f"market regime {role} price={bar.close} ts={bar.ts} "
                 f"position={position_qty}"
             )
-            brain = self.brain.retrieve(query, dependencies=brain_dependencies)
+            brain = self.brain.retrieve(
+                query,
+                dependencies=brain_dependencies,
+                as_of=bar.ts,
+            )
             if brain.miss:
                 brain_misses += 1
             else:
