@@ -22,21 +22,28 @@ class SettingsOverrideStore:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
+        from Data.modules.common.sqlite_policy import open_sqlite_connection
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, timeout=15, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
+        conn = open_sqlite_connection(self.path, set_wal=False)
         try:
             yield conn
             conn.commit()
         except Exception:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
             raise
         finally:
             conn.close()
 
+
     def ensure_schema(self) -> None:
+        from Data.modules.common.sqlite_policy import ensure_wal
+
         with self.connect() as conn:
+            ensure_wal(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS settings_overrides (
