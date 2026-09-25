@@ -3476,6 +3476,145 @@ def _m47_trading_research_campaigns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m48_trading_gym_scorecards(conn: sqlite3.Connection) -> None:
+    """T8: TradingGym episodes, scorecards, readiness, trajectories, sim-real gap."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gym_episode_specs (
+            episode_spec_id TEXT PRIMARY KEY,
+            source_id TEXT,
+            bars_path TEXT NOT NULL,
+            data_hash TEXT NOT NULL DEFAULT '',
+            curriculum_stage TEXT NOT NULL,
+            seed INTEGER NOT NULL DEFAULT 42,
+            start_index INTEGER NOT NULL DEFAULT 0,
+            end_index INTEGER,
+            initial_cash REAL NOT NULL DEFAULT 100000,
+            timeframe TEXT NOT NULL DEFAULT '1h',
+            symbol TEXT NOT NULL DEFAULT '',
+            randomization_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gym_episodes (
+            episode_id TEXT PRIMARY KEY,
+            episode_spec_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            curriculum_stage TEXT NOT NULL,
+            seed INTEGER NOT NULL DEFAULT 42,
+            steps INTEGER NOT NULL DEFAULT 0,
+            total_reward REAL NOT NULL DEFAULT 0,
+            equity_json TEXT NOT NULL DEFAULT '[]',
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            violations_json TEXT NOT NULL DEFAULT '{}',
+            trajectory_json TEXT NOT NULL DEFAULT '[]',
+            last_observation_json TEXT NOT NULL DEFAULT '{}',
+            data_hash TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gym_episodes_spec "
+        "ON gym_episodes(episode_spec_id, status, updated_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gym_curriculum_stages (
+            stage TEXT PRIMARY KEY,
+            stage_index INTEGER NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            requires_prior TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_scorecards (
+            scorecard_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            agent_version TEXT NOT NULL DEFAULT 'v1',
+            regime TEXT NOT NULL DEFAULT 'all',
+            year INTEGER,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            violations_json TEXT NOT NULL DEFAULT '{}',
+            token_cost INTEGER NOT NULL DEFAULT 0,
+            latency_ms REAL NOT NULL DEFAULT 0,
+            n_episodes INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_scorecards_agent "
+        "ON agent_scorecards(agent_id, agent_version, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_readiness (
+            agent_id TEXT PRIMARY KEY,
+            level TEXT NOT NULL,
+            measurement TEXT NOT NULL DEFAULT 'UNMEASURED',
+            reason TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_trajectories (
+            trajectory_id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            record_count INTEGER NOT NULL DEFAULT 0,
+            contamination_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sim_real_gap_reports (
+            report_id TEXT PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    # Seed curriculum catalog rows.
+    stages = [
+        ("trend", 0, "Trend-following friendly regimes", None),
+        ("mean_reversion", 1, "Mean-reversion friendly regimes", "trend"),
+        ("mixed", 2, "Alternating trend / mean-reversion", "mean_reversion"),
+        ("stress", 3, "High-cost stress regime", "mixed"),
+        ("randomized_costs", 4, "Domain-randomized fees/slippage/latency/spread", "stress"),
+        ("multi_asset", 5, "Multi-asset curriculum placeholder", "randomized_costs"),
+        ("adversarial", 6, "Adversarial cost/latency perturbation", "multi_asset"),
+    ]
+    for stage, idx, desc, prior in stages:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO gym_curriculum_stages(stage, stage_index, description, requires_prior)
+            VALUES (?, ?, ?, ?)
+            """,
+            (stage, idx, desc, prior),
+        )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3543,6 +3682,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=47,
         name="trading_research_campaigns",
         apply=_m47_trading_research_campaigns,
+    ),
+    Migration(
+        version=48,
+        name="trading_gym_scorecards",
+        apply=_m48_trading_gym_scorecards,
     ),
 )
 

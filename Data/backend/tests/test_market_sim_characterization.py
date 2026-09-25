@@ -893,8 +893,9 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         # T5 science layer adds migration 45.
         # T6 strategy library adds migration 46.
         # T7 research campaigns adds migration 47.
+        # T8 gym/scorecards adds migration 48.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 47)
+        self.assertGreaterEqual(head, 48)
         by_ver = {m.version: m.name for m in MIGRATIONS}
         self.assertEqual(by_ver[42], "resource_reservations_device_aware")
         self.assertEqual(by_ver[43], "trading_orchestra")
@@ -902,6 +903,7 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         self.assertEqual(by_ver[45], "trading_science_layer")
         self.assertEqual(by_ver[46], "trading_strategy_library")
         self.assertEqual(by_ver[47], "trading_research_campaigns")
+        self.assertEqual(by_ver[48], "trading_gym_scorecards")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 
@@ -1209,20 +1211,23 @@ class D28WeakTestsCharacterization(unittest.TestCase):
 
 
 class D29PerAgentEvalCharacterization(unittest.TestCase):
-    def test_d29_current_leaderboard_lacks_risk_metrics(self) -> None:
+    def test_d29_current_leaderboard_has_risk_metrics(self) -> None:
+        """T8 / G27: leaderboard includes Sharpe/drawdown + FDR penalty."""
         src = inspect.getsource(MultiAgentEngine._leaderboard)
         self.assertIn("equity", src)
         self.assertIn("realized_pnl", src)
         self.assertIn("fees_paid", src)
         self.assertIn("trades", src)
-        self.assertNotIn("sharpe", src.lower())
-        self.assertNotIn("drawdown", src.lower())
-        self.assertNotIn("confidence", src.lower())
+        self.assertIn("sharpe", src.lower())
+        self.assertIn("drawdown", src.lower())
+        self.assertIn("leaderboard_with_penalty", src)
 
-    @unittest.expectedFailure  # D29 — fixed in Phase T1A / T8D
-    def test_d29_desired_leaderboard_includes_sharpe(self) -> None:
+    def test_d29_leaderboard_includes_sharpe(self) -> None:
         src = inspect.getsource(MultiAgentEngine._leaderboard)
         self.assertIn("sharpe", src.lower())
+        self.assertIn("confidence", inspect.getsource(
+            __import__("Data.modules.market_sim.scorecards", fromlist=["enrich_leaderboard_row"]).enrich_leaderboard_row
+        ).lower())
 
 
 # ---------------------------------------------------------------------------

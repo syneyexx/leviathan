@@ -1548,6 +1548,296 @@ class MarketSimControlPlane:
         self._require_enabled()
         return ResearchCampaignController(self.store).cancel(campaign_id, now=utc_now())
 
+    # --- TradingGym / scorecards / readiness / export / gap (T8) ---
+
+    def _gym_sessions(self) -> dict[str, Any]:
+        sessions = getattr(self, "_gym_session_map", None)
+        if sessions is None:
+            sessions = {}
+            self._gym_session_map = sessions
+        return sessions
+
+    def create_gym_episode(
+        self,
+        *,
+        bars_path: str | None = None,
+        source_id: str | None = None,
+        curriculum_stage: str = "trend",
+        seed: int = 42,
+        start_index: int = 0,
+        end_index: int | None = None,
+        initial_cash: float = 100_000.0,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+    ) -> dict[str, Any]:
+        from .gym import (
+            can_enter_curriculum_stage,
+            load_gym_from_path,
+            new_episode_spec,
+        )
+
+        self._require_enabled()
+        dataset = None
+        if dataset_id and dataset_version:
+            dataset = self.store.get_dataset_version(dataset_id, dataset_version)
+            from .gym import assert_not_sealed_dataset
+
+            assert_not_sealed_dataset(dataset)
+
+        path = bars_path
+        symbol = ""
+        timeframe = "1h"
+        data_hash = ""
+        if source_id:
+            source = self.data.get_source(source_id)
+            path = str(self.data.markets_root / source.relative_path)
+            symbol = source.symbol or ""
+            timeframe = source.timeframe or "1h"
+            data_hash = source.content_hash or ""
+        if not path:
+            raise MarketSimError("GYM_BARS_REQUIRED", "bars_path or source_id required")
+
+        # Curriculum gating from prior completed episodes.
+        prior = None
+        eps = self.store.list_gym_episodes(limit=20)
+        completed_stages = {e["curriculum_stage"] for e in eps if e.get("status") == "completed"}
+        if completed_stages:
+            # Highest completed stage by catalog order.
+            from .gym import CURRICULUM_STAGES
+
+            for stage in reversed(CURRICULUM_STAGES):
+                if stage in completed_stages:
+                    prior = stage
+                    break
+        if not can_enter_curriculum_stage(prior, curriculum_stage):
+            raise MarketSimError(
+                "CURRICULUM_GATED",
+                f"Cannot enter stage {curriculum_stage!r} from prior {prior!r}",
+                http_status=409,
+            )
+
+        spec = new_episode_spec(
+            bars_path=path,
+            data_hash=data_hash,
+            source_id=source_id,
+            curriculum_stage=curriculum_stage,
+            seed=seed,
+            start_index=start_index,
+            end_index=end_index,
+            initial_cash=initial_cash,
+            timeframe=timeframe,
+            symbol=symbol,
+            created_at=utc_now(),
+            dataset=dataset,
+        )
+        self.store.save_gym_episode_spec(spec.public_dict())
+        gym = load_gym_from_path(spec, store=self.store)
+        obs = gym.reset()
+        self._gym_sessions()[gym.episode_id] = gym
+        return {
+            "episode": gym.episode_public_dict(),
+            "observation": obs.public_dict(),
+            "spec": spec.public_dict(),
+        }
+
+    def gym_step(self, episode_id: str, *, action: str) -> dict[str, Any]:
+        self._require_enabled()
+        gym = self._gym_sessions().get(episode_id)
+        if gym is None:
+            raise MarketSimError("GYM_EPISODE_NOT_ACTIVE", episode_id, http_status=404)
+        result = gym.step(action)
+        return {
+            "episode": gym.episode_public_dict(),
+            **result.public_dict(),
+        }
+
+    def get_gym_episode(self, episode_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        gym = self._gym_sessions().get(episode_id)
+        if gym is not None:
+            return gym.episode_public_dict()
+        row = self.store.get_gym_episode(episode_id)
+        if row is None:
+            raise MarketSimError("GYM_EPISODE_NOT_FOUND", episode_id, http_status=404)
+        return row
+
+    def list_gym_curriculum(self) -> list[dict[str, Any]]:
+        self._require_enabled()
+        rows = self.store.list_curriculum_stages()
+        if rows:
+            return rows
+        from .gym import curriculum_catalog
+
+        return curriculum_catalog()
+
+    def create_agent_scorecard(
+        self,
+        *,
+        agent_id: str,
+        equity: list[float],
+        agent_version: str = "v1",
+        regime: str = "all",
+        year: int | None = None,
+        violations: dict[str, int] | None = None,
+        token_cost: int = 0,
+        latency_ms: float = 0.0,
+        n_episodes: int = 1,
+        timeframe: str = "1h",
+    ) -> dict[str, Any]:
+        from .scorecards import build_agent_scorecard
+
+        self._require_enabled()
+        card = build_agent_scorecard(
+            agent_id=agent_id,
+            agent_version=agent_version,
+            equity=equity,
+            regime=regime,
+            year=year,
+            violations=violations,
+            token_cost=token_cost,
+            latency_ms=latency_ms,
+            n_episodes=n_episodes,
+            timeframe=timeframe,
+            created_at=utc_now(),
+        )
+        payload = card.public_dict()
+        self.store.save_agent_scorecard(payload)
+        return payload
+
+    def list_agent_scorecards(
+        self, *, agent_id: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_agent_scorecards(agent_id=agent_id, limit=limit)
+
+    def get_agent_readiness(self, agent_id: str) -> dict[str, Any]:
+        from .scorecards import readiness_public_dict
+
+        self._require_enabled()
+        row = self.store.get_agent_readiness(agent_id)
+        if row is not None:
+            return {**readiness_public_dict(
+                agent_id=agent_id,
+                level=row["level"],
+                measurement=row.get("measurement") or "UNMEASURED",
+                reason=row.get("reason") or "",
+                updated_at=row.get("updated_at") or "",
+            ), "evidence": row.get("evidence") or {}}
+        return readiness_public_dict(agent_id=agent_id, level="A0", measurement="UNMEASURED")
+
+    def set_agent_readiness(
+        self,
+        agent_id: str,
+        *,
+        level: str,
+        measurement: str = "UNMEASURED",
+        reason: str = "",
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        from .scorecards import can_advance_readiness, parse_readiness_level, readiness_public_dict
+
+        self._require_enabled()
+        current = self.store.get_agent_readiness(agent_id)
+        cur_level = (current or {}).get("level") or "A0"
+        decision = can_advance_readiness(
+            cur_level, level, evidence={"measurement": measurement, **(evidence or {})}
+        )
+        if not decision["allowed"]:
+            raise MarketSimError(
+                "READINESS_ADVANCE_BLOCKED",
+                ",".join(decision["reasons"]),
+                http_status=409,
+            )
+        parsed = parse_readiness_level(level)
+        now = utc_now()
+        saved = self.store.save_agent_readiness(
+            {
+                "agent_id": agent_id,
+                "level": parsed.value,
+                "measurement": measurement,
+                "reason": reason,
+                "evidence": evidence or {},
+                "updated_at": now,
+            }
+        )
+        return {
+            **readiness_public_dict(
+                agent_id=agent_id,
+                level=parsed.value,
+                measurement=measurement,
+                reason=reason,
+                updated_at=now,
+            ),
+            "evidence": saved.get("evidence") or {},
+            "decision": decision,
+        }
+
+    def export_gym_trajectory(
+        self,
+        episode_id: str,
+        *,
+        dest_path: str | None = None,
+        sealed_windows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        from pathlib import Path
+
+        from .trajectory_export import (
+            build_preference_pairs,
+            build_trajectory_records,
+            export_trajectories_jsonl,
+        )
+
+        self._require_enabled()
+        episode = self.get_gym_episode(episode_id)
+        if episode.get("status") != "completed":
+            raise MarketSimError(
+                "EPISODE_NOT_VERIFIED",
+                "Only completed episodes export verified trajectories",
+                http_status=409,
+            )
+        records = build_trajectory_records(episode, verified=True)
+        pairs = build_preference_pairs(records)
+        root = Path(dest_path) if dest_path else (self.data.markets_root.parent / "gym_exports")
+        dest = root / f"trajectory-{episode_id}.jsonl"
+        exported = export_trajectories_jsonl(
+            records, dest, sealed_windows=sealed_windows
+        )
+        traj_id = str(__import__("uuid").uuid4())
+        saved = {
+            "trajectory_id": traj_id,
+            "episode_id": episode_id,
+            "path": exported["path"],
+            "content_hash": exported["content_hash"],
+            "record_count": exported["record_count"],
+            "contamination": exported["contamination"],
+            "preference_pairs": len(pairs),
+            "created_at": utc_now(),
+            "truth": exported["truth"],
+        }
+        self.store.save_training_trajectory(saved)
+        return saved
+
+    def create_sim_real_gap_report(
+        self,
+        *,
+        sim_fills: list[dict[str, Any]],
+        paper_fills: list[dict[str, Any]],
+        calibration_source_ids: list[str] | None = None,
+        evaluation_source_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from .sim_real_gap import compute_sim_real_gap
+
+        self._require_enabled()
+        report = compute_sim_real_gap(
+            sim_fills=sim_fills,
+            paper_fills=paper_fills,
+            calibration_source_ids=calibration_source_ids,
+            evaluation_source_ids=evaluation_source_ids,
+            created_at=utc_now(),
+        )
+        self.store.save_sim_real_gap_report(report)
+        return report
+
     # --- Demo runners (equity + crypto) ---
 
     def run_market_demo(self, *, family: str, bars_limit: int = 120) -> dict[str, Any]:

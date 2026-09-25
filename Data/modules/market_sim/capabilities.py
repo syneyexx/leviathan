@@ -520,3 +520,89 @@ def register_market_sim_module_capabilities(catalog: Any) -> None:
         properties={"campaign_id": {"type": "string"}},
         idempotent=True,
     )
+    _mod(
+        cap_id="market_sim.gym.episode.create",
+        name="Create Gym Episode",
+        description="Create and reset a TradingGym episode (causal, sealed-unreachable).",
+        provider_ref="gym.episode.create",
+        properties={
+            "source_id": {"type": "string"},
+            "bars_path": {"type": "string"},
+            "curriculum_stage": {"type": "string"},
+            "seed": {"type": "integer"},
+            "start_index": {"type": "integer"},
+            "end_index": {"type": "integer"},
+            "initial_cash": {"type": "number"},
+            "dataset_id": {"type": "string"},
+            "dataset_version": {"type": "string"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.gym.episode.step",
+        name="Step Gym Episode",
+        description="Advance one TradingGym step with a validated action.",
+        provider_ref="gym.episode.step",
+        required=["episode_id", "action"],
+        properties={
+            "episode_id": {"type": "string"},
+            "action": {"type": "string"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.gym.scorecard.create",
+        name="Create Agent Scorecard",
+        description="Persist a per-agent scorecard with Sharpe/drawdown CIs.",
+        provider_ref="gym.scorecard.create",
+        required=["agent_id", "equity"],
+        properties={
+            "agent_id": {"type": "string"},
+            "equity": {"type": "array"},
+            "agent_version": {"type": "string"},
+            "regime": {"type": "string"},
+            "year": {"type": "integer"},
+            "violations": {"type": "object"},
+            "token_cost": {"type": "integer"},
+            "latency_ms": {"type": "number"},
+            "n_episodes": {"type": "integer"},
+            "timeframe": {"type": "string"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.gym.readiness.set",
+        name="Set Agent Readiness",
+        description="Advance/demote agent readiness on A0–A4 ladder (A5 blocked).",
+        provider_ref="gym.readiness.set",
+        required=["agent_id", "level"],
+        properties={
+            "agent_id": {"type": "string"},
+            "level": {"type": "string"},
+            "measurement": {"type": "string"},
+            "reason": {"type": "string"},
+            "evidence": {"type": "object"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.gym.export",
+        name="Export Gym Trajectory",
+        description="Export verified episode trajectories with sealed-window contamination scan.",
+        provider_ref="gym.export",
+        required=["episode_id"],
+        properties={
+            "episode_id": {"type": "string"},
+            "dest_path": {"type": "string"},
+            "sealed_windows": {"type": "array"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.gym.sim_real_gap",
+        name="Sim-to-Real Gap Report",
+        description="Compare paper vs simulator fills for gap foundation report.",
+        provider_ref="gym.sim_real_gap",
+        required=["sim_fills", "paper_fills"],
+        properties={
+            "sim_fills": {"type": "array"},
+            "paper_fills": {"type": "array"},
+            "calibration_source_ids": {"type": "array"},
+            "evaluation_source_ids": {"type": "array"},
+        },
+    )

@@ -224,6 +224,72 @@ class MarketSimModuleExecutor:
                     str(arguments.get("campaign_id") or arguments.get("campaignId") or "")
                 )
             }
+        if action == "gym.episode.create":
+            args = _snake_args(arguments)
+            return svc.create_gym_episode(
+                source_id=args.get("source_id"),
+                bars_path=args.get("bars_path"),
+                curriculum_stage=str(args.get("curriculum_stage") or "trend"),
+                seed=int(args.get("seed") or 42),
+                start_index=int(args.get("start_index") or 0),
+                end_index=args.get("end_index"),
+                initial_cash=float(args.get("initial_cash") or 100_000.0),
+                dataset_id=args.get("dataset_id"),
+                dataset_version=args.get("dataset_version"),
+            )
+        if action == "gym.episode.step":
+            return svc.gym_step(
+                str(arguments.get("episode_id") or arguments.get("episodeId") or ""),
+                action=str(arguments.get("action") or "HOLD"),
+            )
+        if action == "gym.scorecard.create":
+            args = _snake_args(arguments)
+            return {
+                "scorecard": svc.create_agent_scorecard(
+                    agent_id=str(args.get("agent_id") or ""),
+                    equity=list(args.get("equity") or []),
+                    agent_version=str(args.get("agent_version") or "v1"),
+                    regime=str(args.get("regime") or "all"),
+                    year=args.get("year"),
+                    violations=args.get("violations"),
+                    token_cost=int(args.get("token_cost") or 0),
+                    latency_ms=float(args.get("latency_ms") or 0.0),
+                    n_episodes=int(args.get("n_episodes") or 1),
+                    timeframe=str(args.get("timeframe") or "1h"),
+                )
+            }
+        if action == "gym.readiness.set":
+            args = _snake_args(arguments)
+            return {
+                "readiness": svc.set_agent_readiness(
+                    str(args.get("agent_id") or ""),
+                    level=str(args.get("level") or "A0"),
+                    measurement=str(args.get("measurement") or "UNMEASURED"),
+                    reason=str(args.get("reason") or ""),
+                    evidence=args.get("evidence"),
+                )
+            }
+        if action == "gym.export":
+            args = _snake_args(arguments)
+            return {
+                "export": svc.export_gym_trajectory(
+                    str(args.get("episode_id") or ""),
+                    dest_path=args.get("dest_path"),
+                    sealed_windows=args.get("sealed_windows"),
+                )
+            }
+        if action == "gym.sim_real_gap":
+            args = _snake_args(arguments)
+            return {
+                "report": svc.create_sim_real_gap_report(
+                    sim_fills=list(args.get("sim_fills") or arguments.get("simFills") or []),
+                    paper_fills=list(args.get("paper_fills") or arguments.get("paperFills") or []),
+                    calibration_source_ids=args.get("calibration_source_ids")
+                    or arguments.get("calibrationSourceIds"),
+                    evaluation_source_ids=args.get("evaluation_source_ids")
+                    or arguments.get("evaluationSourceIds"),
+                )
+            }
         raise MarketSimError(
             "UNKNOWN_MODULE_ACTION",
             f"Unsupported market_sim module action: {provider_ref}",
@@ -264,6 +330,25 @@ def _snake_args(arguments: dict[str, Any], *, skip: set[str] | None = None) -> d
         "campaignId": "campaign_id",
         "trialId": "trial_id",
         "nBars": "n_bars",
+        "barsPath": "bars_path",
+        "curriculumStage": "curriculum_stage",
+        "startIndex": "start_index",
+        "endIndex": "end_index",
+        "initialCash": "initial_cash",
+        "datasetId": "dataset_id",
+        "datasetVersion": "dataset_version",
+        "episodeId": "episode_id",
+        "agentId": "agent_id",
+        "agentVersion": "agent_version",
+        "tokenCost": "token_cost",
+        "latencyMs": "latency_ms",
+        "nEpisodes": "n_episodes",
+        "destPath": "dest_path",
+        "sealedWindows": "sealed_windows",
+        "simFills": "sim_fills",
+        "paperFills": "paper_fills",
+        "calibrationSourceIds": "calibration_source_ids",
+        "evaluationSourceIds": "evaluation_source_ids",
     }
     out: dict[str, Any] = {}
     for key, value in arguments.items():

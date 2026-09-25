@@ -262,6 +262,17 @@ class MultiAgentEngine:
                     )
                     state.pending_intents.append(flatten)
 
+        # 3b) Track per-agent equity curves for scorecards / leaderboard (T8 / G27).
+        agent_curves = getattr(state, "agent_equity_curves", None)
+        if agent_curves is None:
+            agent_curves = {}
+            state.agent_equity_curves = agent_curves  # type: ignore[attr-defined]
+        for wallet in state.book.wallets.values():
+            if wallet.owner_kind != "agent":
+                continue
+            curve = agent_curves.setdefault(wallet.owner_id, [])
+            curve.append(float(wallet.equity(bar.close)))
+
         # 3) Commit-reveal decision round (every N bars)
         should_decide = (
             bool(getattr(state, "_trading_agents", None))
@@ -677,20 +688,26 @@ class MultiAgentEngine:
             state.run.finished_at = utc_now()
 
     def _leaderboard(self, state: MultiEngineState) -> list[dict[str, Any]]:
+        """Per-agent leaderboard with Sharpe/drawdown + FDR multiple-testing penalty (G27)."""
+        from .scorecards import enrich_leaderboard_row, leaderboard_with_penalty
+
         price = state.clock.current_bar.close if state.clock.current_bar else 0.0
+        timeframe = str(getattr(state.run, "timeframe", None) or "1h")
+        curves = getattr(state, "agent_equity_curves", {}) or {}
         rows = []
         for w in state.book.wallets.values():
             if w.owner_kind != "agent":
                 continue
+            # enrich_leaderboard_row attaches sharpe / max_drawdown / confidence.
             rows.append(
-                {
-                    "agent_id": w.owner_id,
-                    "equity": float(w.equity(price)),
-                    "realized_pnl": float(w.realized_pnl),
-                    "fees_paid": float(w.fees_paid),
-                    "trades": len(w.transactions),
-                    "initial_comparable": True,
-                }
+                enrich_leaderboard_row(
+                    agent_id=w.owner_id,
+                    equity=float(w.equity(price)),
+                    realized_pnl=float(w.realized_pnl),
+                    fees_paid=float(w.fees_paid),
+                    trades=len(w.transactions),
+                    equity_curve=curves.get(w.owner_id) or [],
+                    timeframe=timeframe,
+                )
             )
-        rows.sort(key=lambda r: -r["equity"])
-        return rows
+        return leaderboard_with_penalty(rows)
