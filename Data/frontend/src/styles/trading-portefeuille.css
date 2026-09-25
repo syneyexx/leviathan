@@ -1,0 +1,640 @@
+/* Portefeuille content area — scoped to /trading/portefeuille (lv-portefeuille-*) */
+
+.lv-portefeuille-page {
+  --pf-cyan: #22d3ee;
+  --pf-emerald: #34d399;
+  --pf-crimson: #f87171;
+  --pf-gold: #e8c547;
+  --pf-panel: rgba(8, 14, 24, 0.92);
+  --pf-border: rgba(232, 197, 71, 0.22);
+  --pf-border-soft: rgba(148, 163, 184, 0.12);
+  --pf-glow: 0 0 24px rgba(34, 211, 238, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 14px 88px;
+  min-height: 0;
+  color: var(--lv-text-primary, #e8eef7);
+  background:
+    radial-gradient(1200px 480px at 12% -10%, rgba(34, 211, 238, 0.07), transparent 55%),
+    radial-gradient(900px 420px at 90% 0%, rgba(232, 197, 71, 0.05), transparent 50%),
+    linear-gradient(180deg, rgba(4, 8, 14, 0.4), rgba(2, 4, 8, 0.15));
+  animation: lv-pf-fade-in 0.45s ease-out both;
+}
+
+@keyframes lv-pf-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.lv-portefeuille-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lv-portefeuille-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lv-portefeuille-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.lv-portefeuille-title {
+  margin: 0;
+  font-family: "Cinzel", "Times New Roman", serif;
+  font-size: clamp(1.55rem, 2.2vw, 2.05rem);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #f4f7fb;
+  text-shadow: 0 0 18px rgba(34, 211, 238, 0.25);
+}
+
+.lv-portefeuille-kicker {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--pf-cyan);
+  opacity: 0.85;
+}
+
+.lv-portefeuille-quote {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: rgba(203, 213, 225, 0.72);
+}
+
+.lv-portefeuille-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lv-portefeuille-select,
+.lv-portefeuille-input {
+  background: rgba(5, 10, 18, 0.9);
+  border: 1px solid var(--pf-border-soft);
+  color: inherit;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  min-height: 32px;
+}
+
+.lv-portefeuille-btn {
+  border: 1px solid var(--pf-border);
+  background: rgba(12, 18, 28, 0.95);
+  color: var(--pf-gold);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+
+.lv-portefeuille-btn:hover:not(:disabled) {
+  border-color: var(--pf-cyan);
+  box-shadow: var(--pf-glow);
+  transform: translateY(-1px);
+}
+
+.lv-portefeuille-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lv-portefeuille-btn.is-primary {
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.22), rgba(34, 211, 238, 0.08));
+  border-color: rgba(34, 211, 238, 0.45);
+  color: #e0fbff;
+}
+
+.lv-portefeuille-btn.is-danger {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.lv-portefeuille-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--pf-border-soft);
+}
+
+.lv-portefeuille-badge.is-paper {
+  color: var(--pf-cyan);
+  border-color: rgba(34, 211, 238, 0.35);
+}
+
+.lv-portefeuille-badge.is-live-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pf-emerald);
+  box-shadow: 0 0 8px var(--pf-emerald);
+  animation: lv-pf-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes lv-pf-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.lv-portefeuille-kpis {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lv-portefeuille-kpi {
+  background: var(--pf-panel);
+  border: 1px solid var(--pf-border-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 68px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: border-color 0.2s ease;
+}
+
+.lv-portefeuille-kpi:hover {
+  border-color: rgba(34, 211, 238, 0.28);
+}
+
+.lv-portefeuille-kpi-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.lv-portefeuille-kpi-value {
+  font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.lv-portefeuille-kpi-sub {
+  font-size: 11px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.lv-portefeuille-kpi-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.lv-portefeuille-kpi-bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--pf-cyan), var(--pf-emerald));
+}
+
+.is-good { color: var(--pf-emerald); }
+.is-bad { color: var(--pf-crimson); }
+.is-muted { color: rgba(148, 163, 184, 0.75); }
+
+.lv-portefeuille-mid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.lv-portefeuille-panel {
+  background: var(--pf-panel);
+  border: 1px solid var(--pf-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--pf-glow);
+  min-width: 0;
+}
+
+.lv-portefeuille-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.lv-portefeuille-panel-title {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.lv-portefeuille-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.lv-portefeuille-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.9);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.lv-portefeuille-tab.is-active {
+  color: var(--pf-cyan);
+  border-color: rgba(34, 211, 238, 0.35);
+  background: rgba(34, 211, 238, 0.08);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.12);
+}
+
+.lv-portefeuille-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: rgba(203, 213, 225, 0.85);
+}
+
+.lv-portefeuille-stats strong {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  margin-left: 4px;
+}
+
+.lv-portefeuille-chart {
+  width: 100%;
+  height: 220px;
+  display: block;
+}
+
+.lv-portefeuille-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.9);
+  margin-top: 6px;
+}
+
+.lv-portefeuille-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 5px;
+}
+
+.lv-portefeuille-alloc-body {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) 140px;
+  gap: 10px;
+  align-items: start;
+}
+
+.lv-portefeuille-donut-center {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  text-align: center;
+}
+
+.lv-portefeuille-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.lv-portefeuille-table th {
+  text-align: left;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.8);
+  border-bottom: 1px solid var(--pf-border-soft);
+  padding: 5px 6px;
+  white-space: nowrap;
+}
+
+.lv-portefeuille-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  white-space: nowrap;
+}
+
+.lv-portefeuille-table tbody tr:hover {
+  background: rgba(34, 211, 238, 0.04);
+}
+
+.lv-portefeuille-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+
+.lv-portefeuille-chip.is-long {
+  color: var(--pf-emerald);
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.28);
+}
+
+.lv-portefeuille-chip.is-short {
+  color: var(--pf-crimson);
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
+.lv-portefeuille-chip.is-risk-low { color: var(--pf-emerald); background: rgba(52, 211, 153, 0.1); }
+.lv-portefeuille-chip.is-risk-medium { color: var(--pf-gold); background: rgba(232, 197, 71, 0.12); }
+.lv-portefeuille-chip.is-risk-high { color: var(--pf-crimson); background: rgba(248, 113, 113, 0.12); }
+
+.lv-portefeuille-positions-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.lv-portefeuille-positions-tools .lv-portefeuille-input {
+  flex: 1;
+  min-width: 140px;
+}
+
+.lv-portefeuille-risk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 10px;
+}
+
+.lv-portefeuille-risk-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.lv-portefeuille-metric-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.lv-portefeuille-metric-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(203, 213, 225, 0.85);
+}
+
+.lv-portefeuille-gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.lv-portefeuille-gauge-score {
+  font-family: "Cinzel", serif;
+  font-size: 28px;
+  color: var(--pf-emerald);
+  line-height: 1;
+}
+
+.lv-portefeuille-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.lv-portefeuille-bar-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 42px;
+  gap: 6px;
+  align-items: center;
+}
+
+.lv-portefeuille-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.lv-portefeuille-bar-track > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--pf-cyan), rgba(34, 211, 238, 0.4));
+}
+
+.lv-portefeuille-intel {
+  margin-top: 8px;
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  background: linear-gradient(135deg, rgba(10, 24, 40, 0.9), rgba(6, 12, 22, 0.95));
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.lv-portefeuille-intel-title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pf-cyan);
+  margin-bottom: 6px;
+}
+
+.lv-portefeuille-intel ul {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.lv-portefeuille-intel li.is-warn { color: #fde68a; }
+
+.lv-portefeuille-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 10px;
+}
+
+.lv-portefeuille-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.lv-portefeuille-empty,
+.lv-portefeuille-state {
+  border: 1px solid var(--pf-border);
+  border-radius: 12px;
+  padding: 36px 24px;
+  text-align: center;
+  background: var(--pf-panel);
+  box-shadow: var(--pf-glow);
+}
+
+.lv-portefeuille-empty h2,
+.lv-portefeuille-state h2 {
+  margin: 0 0 8px;
+  font-family: "Cinzel", serif;
+  letter-spacing: 0.08em;
+}
+
+.lv-portefeuille-empty p,
+.lv-portefeuille-state p {
+  margin: 0 0 16px;
+  color: rgba(203, 213, 225, 0.75);
+  font-size: 13px;
+}
+
+.lv-portefeuille-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+  padding: 16px;
+}
+
+.lv-portefeuille-modal {
+  width: min(480px, 100%);
+  background: #0b1220;
+  border: 1px solid var(--pf-border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.lv-portefeuille-modal h3 {
+  margin: 0 0 12px;
+  font-family: "Cinzel", serif;
+  letter-spacing: 0.06em;
+}
+
+.lv-portefeuille-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lv-portefeuille-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.lv-portefeuille-scroll {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.lv-portefeuille-exposure {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.lv-portefeuille-exposure li {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  color: rgba(203, 213, 225, 0.85);
+}
+
+.lv-portefeuille-rec {
+  border: 1px solid var(--pf-border-soft);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.lv-portefeuille-rec-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.lv-portefeuille-impact {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lv-portefeuille-impact.is-high { color: var(--pf-crimson); }
+.lv-portefeuille-impact.is-medium { color: var(--pf-gold); }
+.lv-portefeuille-impact.is-low { color: var(--pf-emerald); }
+
+@media (max-width: 1280px) {
+  .lv-portefeuille-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .lv-portefeuille-alloc-body {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+  .lv-portefeuille-alloc-body .lv-portefeuille-exposure {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 960px) {
+  .lv-portefeuille-mid,
+  .lv-portefeuille-risk-row,
+  .lv-portefeuille-bottom {
+    grid-template-columns: 1fr;
+  }
+  .lv-portefeuille-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .lv-portefeuille-risk-grid {
+    grid-template-columns: 1fr;
+  }
+}
