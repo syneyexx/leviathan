@@ -32,7 +32,22 @@ class CognitionSteerRequest(BaseModel):
     instruction: str = Field(..., min_length=1)
 
 
-def build_cognition_router(runtime: CognitiveRuntime) -> APIRouter:
+class CandidateGovernRequest(BaseModel):
+    operator: str = Field(..., min_length=1, max_length=120)
+    note: str = ""
+
+
+class CandidateIngestRequest(BaseModel):
+    operator: str = Field(..., min_length=1, max_length=120)
+    mixture_ref: str | None = None
+    note: str = ""
+
+
+def build_cognition_router(
+    runtime: CognitiveRuntime,
+    *,
+    candidate_lifecycle: Any | None = None,
+) -> APIRouter:
     router = APIRouter(tags=["cognition"])
 
     def _raise(exc: Exception) -> None:
@@ -40,6 +55,8 @@ def build_cognition_router(runtime: CognitiveRuntime) -> APIRouter:
             raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
         if isinstance(exc, KeyError):
             raise HTTPException(status_code=404, detail={"error": "NOT_FOUND", "message": str(exc)}) from exc
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=422, detail={"error": "INVALID", "message": str(exc)}) from exc
         raise
 
     @router.get("/api/cognition/health")
@@ -152,6 +169,92 @@ def build_cognition_router(runtime: CognitiveRuntime) -> APIRouter:
                 include_active_learning=include_active_learning,
             )
             return {"export": bundle}
+        except Exception as exc:  # noqa: BLE001
+            _raise(exc)
+            raise
+
+    @router.post("/api/cognition/training-candidates/sync")
+    def cognition_training_candidates_sync() -> dict:
+        """Wire export bundle into candidate lifecycle (pending only — not trained)."""
+        if candidate_lifecycle is None:
+            raise HTTPException(
+                status_code=501,
+                detail={"reason": "candidate_lifecycle_not_wired"},
+            )
+        try:
+            bundle = runtime.export_training_bundle()
+            created = candidate_lifecycle.accept_export_bundle(bundle)
+            return {
+                "created": [c.public_dict() for c in created],
+                "summary": candidate_lifecycle.public_summary(),
+                "truth": {
+                    "wired_from_cognition_trajectories": True,
+                    "auto_promote_forbidden": True,
+                    "sync_does_not_train": True,
+                },
+            }
+        except Exception as exc:  # noqa: BLE001
+            _raise(exc)
+            raise
+
+    @router.get("/api/cognition/training-candidates")
+    def cognition_training_candidates_list(
+        phase: str | None = None,
+        limit: int = 100,
+    ) -> dict:
+        if candidate_lifecycle is None:
+            raise HTTPException(
+                status_code=501,
+                detail={"reason": "candidate_lifecycle_not_wired"},
+            )
+        items = candidate_lifecycle.list_candidates(phase=phase, limit=limit)
+        return {
+            "candidates": [c.public_dict() for c in items],
+            "summary": candidate_lifecycle.public_summary(),
+        }
+
+    @router.post("/api/cognition/training-candidates/{candidate_id}/govern")
+    def cognition_training_candidate_govern(
+        candidate_id: str, payload: CandidateGovernRequest
+    ) -> dict:
+        if candidate_lifecycle is None:
+            raise HTTPException(
+                status_code=501,
+                detail={"reason": "candidate_lifecycle_not_wired"},
+            )
+        try:
+            cand = candidate_lifecycle.govern(
+                candidate_id, operator=payload.operator, note=payload.note
+            )
+            return {"candidate": cand.public_dict()}
+        except Exception as exc:  # noqa: BLE001
+            _raise(exc)
+            raise
+
+    @router.post("/api/cognition/training-candidates/{candidate_id}/ingest")
+    def cognition_training_candidate_ingest(
+        candidate_id: str, payload: CandidateIngestRequest
+    ) -> dict:
+        """Mark governed candidate mixture-ready — does not start training."""
+        if candidate_lifecycle is None:
+            raise HTTPException(
+                status_code=501,
+                detail={"reason": "candidate_lifecycle_not_wired"},
+            )
+        try:
+            cand = candidate_lifecycle.mark_ingested(
+                candidate_id,
+                operator=payload.operator,
+                mixture_ref=payload.mixture_ref,
+                note=payload.note,
+            )
+            return {
+                "candidate": cand.public_dict(),
+                "truth": {
+                    "ingested_is_not_trained": True,
+                    "auto_promote_forbidden": True,
+                },
+            }
         except Exception as exc:  # noqa: BLE001
             _raise(exc)
             raise

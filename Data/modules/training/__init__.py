@@ -2,6 +2,12 @@
 
 from .active_learning import ActiveLearningMiner, MinedCandidate
 from .artifacts import export_artifact, list_job_artifacts
+from .candidate_lifecycle import (
+    CandidatePhase,
+    CandidateSource,
+    CandidateTrainingLifecycle,
+    TrainingCandidateRecord,
+)
 from .capabilities import probe_training_capabilities, safe_import
 from .config import TrainingConfig
 from .dpo import DpoMicroTrainer, DpoPair, DpoRecipeTrainer, DpoTrainResult
@@ -61,6 +67,9 @@ __all__ = [
     "ACTIVE_DURABLE_STATUSES",
     "ActiveLearningMiner",
     "ArtifactRecord",
+    "CandidatePhase",
+    "CandidateSource",
+    "CandidateTrainingLifecycle",
     "ChallengerProposal",
     "CheckpointRecord",
     "DurableTrainingJob",
@@ -96,6 +105,7 @@ __all__ = [
     "SyntheticBatch",
     "SyntheticDataService",
     "TERMINAL_DURABLE_STATUSES",
+    "TrainingCandidateRecord",
     "TrainingCapabilities",
     "TrainingConfig",
     "TrainingError",

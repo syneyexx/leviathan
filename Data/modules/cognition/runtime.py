@@ -776,6 +776,20 @@ class CognitiveRuntime:
             },
         }
 
+    def sync_training_candidates(self, lifecycle: Any) -> dict[str, Any]:
+        """Push current export bundle into CandidateTrainingLifecycle (R23)."""
+        bundle = self.export_training_bundle()
+        created = lifecycle.accept_export_bundle(bundle)
+        return {
+            "created": [c.public_dict() for c in created],
+            "summary": lifecycle.public_summary(),
+            "truth": {
+                "wired_from_cognition_trajectories": True,
+                "auto_promote_forbidden": True,
+                "sync_does_not_train": True,
+            },
+        }
+
     # --- internals ---
 
     def _require(self, run_id: str, *, hydrate: bool = False) -> CognitiveRunState:
