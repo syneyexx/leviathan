@@ -93,6 +93,12 @@ class BrowserObservation:
     accessibility_tree: str
     screenshot_artifact_id: str | None = None
     mode: str = "dom"
+    # Bounded extras (Playwright / rich backends); empty for fixture/local_dom.
+    dom_summary: str = ""
+    interactive_elements: tuple[dict[str, Any], ...] = ()
+    viewport: dict[str, Any] | None = None
+    console_errors: tuple[str, ...] = ()
+    network_errors: tuple[str, ...] = ()
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +108,11 @@ class BrowserObservation:
             "accessibility_tree": self.accessibility_tree,
             "screenshot_artifact_id": self.screenshot_artifact_id,
             "mode": self.mode,
+            "dom_summary": self.dom_summary,
+            "interactive_elements": list(self.interactive_elements)[:80],
+            "viewport": self.viewport,
+            "console_errors": list(self.console_errors)[:40],
+            "network_errors": list(self.network_errors)[:40],
             "truth": {
                 "page_text_is_untrusted_context": True,
                 "observation_is_not_authority": True,
@@ -390,19 +401,30 @@ class BrowserWorker:
 
         artifact_id = None
         if action == BrowserAction.SCREENSHOT and self.artifact_store is not None:
-            payload = str(meta.get("screenshot_html") or meta.get("screenshot_svg") or "")
             producer = (
                 "browser.fixture"
                 if kind == BrowserBackendKind.FIXTURE
                 else f"browser.{kind.value if hasattr(kind, 'value') else kind}"
             )
+            png = meta.get("screenshot_png")
+            if isinstance(png, (bytes, bytearray)):
+                data = bytes(png)
+                filename = f"browser-{session.session_id[:8]}.png"
+                artifact_type = "browser_screenshot"
+            else:
+                payload = str(meta.get("screenshot_html") or meta.get("screenshot_svg") or "")
+                data = payload.encode("utf-8")
+                filename = (
+                    f"browser-{session.session_id[:8]}.html"
+                    if meta.get("screenshot_html")
+                    else f"browser-{session.session_id[:8]}.svg"
+                )
+                artifact_type = "browser_screenshot"
             record = self.artifact_store.create_from_bytes(
-                data=payload.encode("utf-8"),
-                artifact_type="browser_screenshot",
+                data=data,
+                artifact_type=artifact_type,
                 producer=producer,
-                filename=f"browser-{session.session_id[:8]}.html"
-                if meta.get("screenshot_html")
-                else f"browser-{session.session_id[:8]}.svg",
+                filename=filename,
                 run_id=run_id,
                 metadata={
                     "session_id": session.session_id,
@@ -422,6 +444,11 @@ class BrowserWorker:
                 accessibility_tree=observation.accessibility_tree,
                 screenshot_artifact_id=str(artifact_id) if artifact_id else None,
                 mode=observation.mode,
+                dom_summary=observation.dom_summary,
+                interactive_elements=observation.interactive_elements,
+                viewport=observation.viewport,
+                console_errors=observation.console_errors,
+                network_errors=observation.network_errors,
             )
 
         self._sessions[session.session_id] = session
@@ -453,7 +480,7 @@ class BrowserWorker:
             "metadata": {
                 k: v
                 for k, v in meta.items()
-                if k not in {"screenshot_svg", "screenshot_html"}
+                if k not in {"screenshot_svg", "screenshot_html", "screenshot_png"}
             },
             "truth": {
                 "no_fabricated_browser_results": True,
@@ -464,6 +491,9 @@ class BrowserWorker:
                 "side_effects_under_authorization": True,
                 "state_verification_required_for_completion": needs_verify
                 or action == BrowserAction.VERIFY_STATE,
+                "playwright_ready": bool(meta.get("ready"))
+                if kind == BrowserBackendKind.PLAYWRIGHT
+                else None,
             },
         }
 

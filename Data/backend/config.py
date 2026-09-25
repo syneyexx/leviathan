@@ -545,6 +545,8 @@ class ResearchIntegrationSettings:
     hf_token: str = ""
     web_search_endpoint: str | None = None
     web_search_api_key: str = ""
+    # Optional adapter: generic | searxng | brave (auto-detect from endpoint when empty)
+    web_search_provider: str = ""
     training_fixture: bool = False
     corpus_root: str = ""
     auto_promote_verified_knowledge: bool = True
@@ -841,6 +843,7 @@ class Settings:
                 "web_search_key_configured": bool(
                     self.research_integration.web_search_api_key.strip()
                 ),
+                "web_search_provider": self.research_integration.web_search_provider or None,
                 "training_fixture": self.research_integration.training_fixture,
                 "corpus_root": self.research_integration.corpus_root or None,
                 "auto_promote_verified_knowledge": (
@@ -1401,6 +1404,9 @@ class Settings:
                     (_env_raw("LEVIATHAN_WEB_SEARCH_ENDPOINT", "") or "").strip() or None
                 ),
                 web_search_api_key=(_env_raw("LEVIATHAN_WEB_SEARCH_API_KEY", "") or "").strip(),
+                web_search_provider=(
+                    (_env_raw("LEVIATHAN_WEB_SEARCH_PROVIDER", "") or "").strip().lower()
+                ),
                 training_fixture=_env_bool("LEVIATHAN_TRAINING_FIXTURE", False),
                 corpus_root=(_env_raw("LEVIATHAN_CORPUS_ROOT", "") or "").strip(),
                 auto_promote_verified_knowledge=_env_bool(

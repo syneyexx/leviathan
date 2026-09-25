@@ -72,6 +72,7 @@ _EXTERNAL_REQUIRED_PREFIXES: tuple[str, ...] = (
 KNOWN_INLINE_SAFE: frozenset[str] = frozenset(
     {
         "compute.numeric",
+        "system.inspect",
         "file.read",
         "file.inspect_csv",
         "file.write",

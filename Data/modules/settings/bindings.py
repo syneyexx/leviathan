@@ -272,12 +272,20 @@ def bind_default_consumers(
         if research_service is not None:
             if key == "network.allow_outbound":
                 research_service.allow_outbound = bool(value)
-            if key in {"web_search.endpoint", "web_search.api_key", "network.allow_outbound"}:
+            if key in {
+                "web_search.endpoint",
+                "web_search.api_key",
+                "web_search.provider",
+                "network.allow_outbound",
+            }:
                 if hasattr(research_service, "reconfigure_web"):
                     research_service.reconfigure_web(
                         allow_outbound=effective.network.allow_outbound,
                         search_endpoint=effective.research_integration.web_search_endpoint,
                         api_key=effective.research_integration.web_search_api_key,
+                        search_provider=getattr(
+                            effective.research_integration, "web_search_provider", None
+                        ),
                     )
             if key == "research.auto_promote_verified_knowledge" and hasattr(
                 research_service, "auto_promote_verified_knowledge"

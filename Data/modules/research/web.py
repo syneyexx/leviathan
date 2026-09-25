@@ -99,11 +99,28 @@ class UnconfiguredWebProvider:
         raise RuntimeError("Web research provider is not configured")
 
 
+def _detect_search_provider(endpoint: str | None, explicit: str | None) -> str:
+    """Resolve search adapter: generic | searxng | brave."""
+    raw = (explicit or "").strip().lower()
+    if raw in {"generic", "searxng", "brave", "json"}:
+        return "generic" if raw == "json" else raw
+    ep = (endpoint or "").lower()
+    if "searx" in ep:
+        return "searxng"
+    if "brave.com" in ep or "api.search.brave" in ep:
+        return "brave"
+    return "generic"
+
+
 class HttpWebProvider:
     """Minimal HTTP fetch provider with SSRF checks.
 
     Search is intentionally not faked: without a dedicated search API key/endpoint
     this provider only supports direct URL fetch of seed/discovered URLs.
+
+    Optional search adapters (generic JSON, SearxNG, Brave) are selected via
+    ``search_provider`` or auto-detected from the endpoint URL. Generic JSON
+    (``results`` / ``items``) remains the default path.
     """
 
     name = "http_fetch"
@@ -115,11 +132,15 @@ class HttpWebProvider:
         search_endpoint: str | None = None,
         api_key: str | None = None,
         user_agent: str = "LEVIATHAN-Research/1.0",
+        search_provider: str | None = None,
     ) -> None:
         self.allow_outbound = bool(allow_outbound)
         self.search_endpoint = (search_endpoint or "").strip() or None
         self.api_key = (api_key or "").strip() or None
         self.user_agent = user_agent
+        self.search_provider = _detect_search_provider(
+            self.search_endpoint, search_provider
+        )
 
     def configured(self) -> bool:
         # Direct URL fetch needs outbound only; search needs an endpoint too.
@@ -136,19 +157,33 @@ class HttpWebProvider:
                 "Web search endpoint is not configured; set a real search provider endpoint"
             )
         assert_safe_url(self.search_endpoint)
+        limit = max(1, min(int(limit), 20))
         headers = {"User-Agent": self.user_agent, "Accept": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        params = {"q": query, "limit": max(1, min(limit, 20))}
+        kind = self.search_provider
+        params: dict[str, Any]
+        if kind == "searxng":
+            params = {"q": query, "format": "json", "limit": limit}
+        elif kind == "brave":
+            # Brave Search API uses X-Subscription-Token when keyed.
+            if self.api_key:
+                headers["X-Subscription-Token"] = self.api_key
+                headers.pop("Authorization", None)
+            params = {"q": query, "count": limit}
+        else:
+            params = {"q": query, "limit": limit}
         with httpx.Client(timeout=20.0, follow_redirects=False) as client:
             response = client.get(self.search_endpoint, params=params, headers=headers)
             response.raise_for_status()
             payload = response.json()
-        items = payload.get("results") or payload.get("items") or []
+        items = _extract_search_items(payload, kind=kind)
         now = utc_now()
         out: list[WebSearchResult] = []
         for item in items[:limit]:
-            url = str(item.get("url") or item.get("link") or "").strip()
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or item.get("link") or item.get("href") or "").strip()
             if not url:
                 continue
             decision = validate_url_for_fetch(url)
@@ -156,10 +191,15 @@ class HttpWebProvider:
                 continue
             out.append(
                 WebSearchResult(
-                    title=str(item.get("title") or url),
+                    title=str(item.get("title") or item.get("name") or url),
                     url=url,
-                    snippet=str(item.get("snippet") or item.get("description") or ""),
-                    provider=self.name,
+                    snippet=str(
+                        item.get("snippet")
+                        or item.get("description")
+                        or item.get("content")
+                        or ""
+                    ),
+                    provider=f"{self.name}:{kind}",
                     retrieved_at=now,
                 )
             )
@@ -243,11 +283,26 @@ def _html_to_text(html: str) -> str:
     return text.strip()
 
 
+def _extract_search_items(payload: Any, *, kind: str) -> list[Any]:
+    """Normalize provider JSON into a list of result dicts. Never invents hits."""
+    if not isinstance(payload, dict):
+        return []
+    if kind == "brave":
+        web = payload.get("web") if isinstance(payload.get("web"), dict) else {}
+        items = web.get("results") if isinstance(web, dict) else None
+        if isinstance(items, list):
+            return items
+    # SearxNG + generic: results / items
+    items = payload.get("results") or payload.get("items") or []
+    return items if isinstance(items, list) else []
+
+
 def build_web_provider(
     *,
     allow_outbound: bool,
     search_endpoint: str | None = None,
     api_key: str | None = None,
+    search_provider: str | None = None,
 ) -> WebResearchProvider:
     if not allow_outbound and not search_endpoint:
         return UnconfiguredWebProvider()
@@ -255,6 +310,7 @@ def build_web_provider(
         allow_outbound=allow_outbound,
         search_endpoint=search_endpoint,
         api_key=api_key,
+        search_provider=search_provider,
     )
 
 

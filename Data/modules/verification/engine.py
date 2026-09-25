@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Any, Mapping, Protocol, Sequence
 
 from Data.modules.evidence.types import EvidenceKind, EvidenceRecord, EvidenceStatus
 
+from .claims import (
+    ClaimAssessment,
+    ClaimSupportStatus,
+    ClaimVerifier,
+    VerificationPool,
+)
 from .types import (
     RequirementResult,
     VerificationOutcome,
@@ -147,4 +153,164 @@ class VerificationEngine:
             description=f"File exists: {path}",
             evidence_kind=EvidenceKind.FILE_EXISTS.value,
             path=path,
+        )
+
+    def verify_claim_assessments(
+        self,
+        claims: Sequence[ClaimAssessment] | Sequence[Mapping[str, Any]],
+        *,
+        run_id: str | None = None,
+        job_id: str | None = None,
+        evidence: list[EvidenceRecord] | None = None,
+        tool_receipt_ids: Sequence[str] | None = None,
+        tool_receipts: Sequence[Any] | None = None,
+        source_refs: Sequence[str] | None = None,
+        artifact_ids: Sequence[str] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
+        fresh_source_refs: Sequence[str] | None = None,
+        model_verified_flags: Mapping[str, bool] | None = None,
+    ) -> VerificationReport:
+        """Evaluate claim assessments against the evidence pool.
+
+        Invariants:
+        - Invented evidence_refs (not in the pool) never produce PASSED.
+        - Critic/model ``verified=true`` flags are not verification.
+        - Claim CONFLICTED/UNSUPPORTED map to FAILED; UNMEASURED stays UNMEASURED.
+        """
+        pool_evidence = evidence
+        if pool_evidence is None:
+            pool_evidence = list(self.evidence_store.list(run_id=run_id, limit=500))
+            if job_id:
+                pool_evidence = [
+                    item
+                    for item in pool_evidence
+                    if item.job_id == job_id or item.job_id is None
+                ]
+
+        pool = VerificationPool.from_inputs(
+            evidence=pool_evidence,
+            tool_receipts=tool_receipts,
+            tool_receipt_ids=tool_receipt_ids,
+            source_refs=source_refs,
+            artifact_ids=artifact_ids,
+            telemetry=telemetry,
+            fresh_source_refs=fresh_source_refs,
+        )
+
+        normalized: list[ClaimAssessment] = []
+        proposed_evidence: dict[str, tuple[str, ...]] = {}
+        proposed_tools: dict[str, tuple[str, ...]] = {}
+        for raw in claims:
+            claim = self._coerce_claim(raw)
+            normalized.append(claim)
+            # Critic may supply refs on the claim itself — still validated against pool.
+            if claim.evidence_refs:
+                proposed_evidence[claim.claim_id] = claim.evidence_refs
+            if claim.tool_receipt_refs:
+                proposed_tools[claim.claim_id] = claim.tool_receipt_refs
+
+        verifier = ClaimVerifier()
+        assessed = verifier.verify(
+            normalized,
+            pool,
+            proposed_evidence_refs=proposed_evidence,
+            proposed_tool_receipt_refs=proposed_tools,
+            model_verified_flags=model_verified_flags,
+        )
+
+        results: list[RequirementResult] = []
+        for item in assessed:
+            outcome = self._claim_status_to_outcome(item.status)
+            # Extra hard rule: any rejected invented refs → never PASSED.
+            if item.reason == "invented_evidence_refs_rejected":
+                outcome = (
+                    VerificationOutcome.FAILED
+                    if item.contradiction_refs
+                    else VerificationOutcome.UNMEASURED
+                )
+            results.append(
+                RequirementResult(
+                    requirement_id=item.claim_id,
+                    outcome=outcome,
+                    matched_evidence_ids=tuple(
+                        ref for ref in item.evidence_refs if ref in pool.evidence_ids
+                    ),
+                    detail=item.reason or item.status.value,
+                )
+            )
+
+        if not results:
+            report_outcome = VerificationOutcome.UNMEASURED
+        elif any(r.outcome == VerificationOutcome.FAILED for r in results):
+            report_outcome = VerificationOutcome.FAILED
+        elif any(r.outcome == VerificationOutcome.UNMEASURED for r in results):
+            report_outcome = VerificationOutcome.UNMEASURED
+        elif all(r.outcome == VerificationOutcome.PASSED for r in results):
+            report_outcome = VerificationOutcome.PASSED
+        else:
+            report_outcome = VerificationOutcome.UNMEASURED
+
+        return VerificationReport(
+            report_id=str(uuid.uuid4()),
+            outcome=report_outcome,
+            created_at=utc_now(),
+            run_id=run_id,
+            job_id=job_id,
+            requirements=tuple(results),
+            metadata={
+                "evidence_considered": len(pool_evidence),
+                "claim_assessments": [a.public_dict() for a in assessed],
+                "truth": {
+                    "invented_evidence_refs_rejected": True,
+                    "model_verified_flag_is_not_verification": True,
+                    "unmeasured_is_not_passed": True,
+                },
+            },
+        )
+
+    @staticmethod
+    def _claim_status_to_outcome(status: ClaimSupportStatus) -> VerificationOutcome:
+        if status in {
+            ClaimSupportStatus.SUPPORTED,
+            ClaimSupportStatus.TOOL_VERIFIED,
+            ClaimSupportStatus.SOURCE_SUPPORTED,
+            ClaimSupportStatus.CORROBORATED,
+        }:
+            return VerificationOutcome.PASSED
+        if status in {
+            ClaimSupportStatus.CONFLICTED,
+            ClaimSupportStatus.UNSUPPORTED,
+        }:
+            return VerificationOutcome.FAILED
+        # UNMEASURED / INFERRED / MODEL_PRIOR / UNAVAILABLE → not PASSED
+        return VerificationOutcome.UNMEASURED
+
+    @staticmethod
+    def _coerce_claim(raw: ClaimAssessment | Mapping[str, Any]) -> ClaimAssessment:
+        if isinstance(raw, ClaimAssessment):
+            return raw
+        from .claims import ClaimKind
+
+        kind_raw = raw.get("claim_kind") or raw.get("kind") or ClaimKind.ORDINARY_FACTUAL
+        status_raw = raw.get("status") or ClaimSupportStatus.UNMEASURED
+        kind = kind_raw if isinstance(kind_raw, ClaimKind) else ClaimKind(str(kind_raw))
+        status = (
+            status_raw
+            if isinstance(status_raw, ClaimSupportStatus)
+            else ClaimSupportStatus(str(status_raw))
+        )
+        return ClaimAssessment(
+            claim_id=str(raw.get("claim_id") or f"claim:{uuid.uuid4().hex[:12]}"),
+            claim_text=str(raw.get("claim_text") or raw.get("text") or ""),
+            claim_kind=kind,
+            status=status,
+            source_refs=tuple(raw.get("source_refs") or ()),
+            tool_receipt_refs=tuple(raw.get("tool_receipt_refs") or ()),
+            evidence_refs=tuple(raw.get("evidence_refs") or ()),
+            artifact_refs=tuple(raw.get("artifact_refs") or ()),
+            freshness_requirement=raw.get("freshness_requirement"),
+            as_of=raw.get("as_of"),
+            confidence=raw.get("confidence"),
+            contradiction_refs=tuple(raw.get("contradiction_refs") or ()),
+            reason=raw.get("reason"),
         )

@@ -2545,6 +2545,22 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             consumer="ResearchService / HttpWebProvider",
             experimental=False,
         ),
+        SettingDefinition(
+            key="web_search.provider",
+            category="data_research",
+            label="Web search provider type",
+            description=(
+                "Optional search adapter: generic, searxng, or brave. "
+                "Empty = auto-detect from endpoint URL (generic JSON by default)."
+            ),
+            value_type=SettingType.STRING,
+            default="",
+            env_name="LEVIATHAN_WEB_SEARCH_PROVIDER",
+            path=("research_integration", "web_search_provider"),
+            apply_mode=ApplyMode.HOT,
+            consumer="ResearchService / HttpWebProvider",
+            experimental=False,
+        ),
         _b(
             "training_fixture",
             "data_research",

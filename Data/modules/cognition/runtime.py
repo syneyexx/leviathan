@@ -88,6 +88,7 @@ class CognitiveRunState:
     context_public: dict[str, Any] | None = None
     completion: dict[str, Any] | None = None
     experience: dict[str, Any] | None = None
+    factuality: dict[str, Any] | None = None
     steering: list[str] = field(default_factory=list)
     trace_id: str | None = None
 
@@ -116,6 +117,7 @@ class CognitiveRunState:
             "error": self.error,
             "verification_passed": self.verification_passed,
             "completion": self.completion,
+            "factuality": self.factuality,
             "response_preview": (self.response_text or "")[:400],
             # Full response only when this run owns the user-visible answer (not shadow).
             "response": None if self.shadow else self.response_text,
@@ -163,6 +165,7 @@ class CognitiveRuntime:
         model_caller: ModelCaller | None = None,
         neuro_advisor: Any | None = None,
         verification_engine: Any | None = None,
+        factuality_mode: str | None = "LIGHT",
         execution_gateway: Any | None = None,
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
@@ -198,6 +201,8 @@ class CognitiveRuntime:
         self.model_caller = model_caller
         self.neuro_advisor = neuro_advisor
         self.verification_engine = verification_engine
+        # Thin factuality hook — VerificationEngine owns claim checks; Cognition only applies.
+        self.factuality_mode = factuality_mode
         self.execution_gateway = execution_gateway
         self.observability = observability
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
@@ -1356,7 +1361,64 @@ class CognitiveRuntime:
             if state.usage.token_usage_source != "provider":
                 state.usage.token_usage_source = "estimate"
 
+    def _apply_factuality_gate(self, state: CognitiveRunState) -> None:
+        """Thin hook: qualify draft claims via Verification owners (no second engine)."""
+        if not state.response_text or not self.factuality_mode:
+            return
+        mode = str(self.factuality_mode).upper()
+        if mode in {"", "NONE", "FALSE", "0"}:
+            return
+        try:
+            from Data.modules.verification import FactualityGate, VerificationPool
+
+            evidence_ids = [
+                ref
+                for o in state.observations
+                for ref in o.evidence_refs
+            ]
+            tool_receipt_ids: list[str] = []
+            for o in state.observations:
+                payload = o.payload or {}
+                rid = payload.get("receipt_id") or (payload.get("result") or {}).get("receipt_id")
+                if rid:
+                    tool_receipt_ids.append(str(rid))
+                for ref in payload.get("tool_receipt_refs") or ():
+                    tool_receipt_ids.append(str(ref))
+
+            pool = VerificationPool.from_inputs(
+                evidence_ids=evidence_ids,
+                tool_receipt_ids=tool_receipt_ids,
+                telemetry=(state.context_public or {}).get("telemetry")
+                if isinstance(state.context_public, dict)
+                else None,
+            )
+            result = FactualityGate().apply(state.response_text, mode=mode, pool=pool)
+            if result.revised_text != state.response_text:
+                state.response_text = result.revised_text
+            state.factuality = result.public_dict()
+            self._emit(state, "factuality_gate", state.factuality)
+
+            # When VerificationEngine can assess claims, record invented-ref rejection.
+            if hasattr(self.verification_engine, "verify_claim_assessments") and result.assessments:
+                claim_report = self.verification_engine.verify_claim_assessments(
+                    result.assessments,
+                    run_id=state.run_id,
+                    tool_receipt_ids=tool_receipt_ids,
+                )
+                self._emit(
+                    state,
+                    "claim_assessment_report",
+                    claim_report.public_dict()
+                    if hasattr(claim_report, "public_dict")
+                    else {"outcome": str(getattr(claim_report, "outcome", None))},
+                )
+        except Exception as exc:  # noqa: BLE001
+            self._emit(state, "factuality_gate_error", {"error": str(exc)})
+
     def _verify(self, state: CognitiveRunState) -> bool:
+        # Factuality gate runs at the verification call site when a draft exists.
+        self._apply_factuality_gate(state)
+
         if self.verification_engine is None:
             # Without VerificationEngine, never claim verified.
             return False

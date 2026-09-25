@@ -987,6 +987,99 @@ def build_default_catalog() -> CapabilityCatalog:
             },
         )
     )
+    catalog.register(
+        CapabilityDefinition(
+            id="system.inspect",
+            name="System Inspect",
+            description=(
+                "Honest self-inspection of process state (version, model, cognition, "
+                "fleet, telemetry). Never invents brain percentage or model values."
+            ),
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="system_inspect",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "scope": {
+                        "type": "string",
+                        "description": "all or comma-separated section names",
+                    },
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=(),
+            metadata={
+                "tags": ["system", "inspect", "self", "cognition", "gi2"],
+                "domains": ["system", "cognition"],
+                "aliases": ["self_inspect", "whoami", "system_status"],
+                "worker_kind": "general",
+                "execution_class": "INLINE_SAFE",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="web.search",
+            name="Web Search",
+            description=(
+                "Search the web via configured WebResearchProvider. "
+                "Returns WEB_SEARCH_UNAVAILABLE when search is not configured — never fabricates."
+            ),
+            side_effects=(SideEffect.READ, SideEffect.NETWORK),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="web_search",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("network.outbound",),
+            metadata={
+                "tags": ["web", "search", "research", "gi7"],
+                "domains": ["web", "research"],
+                "aliases": ["search_web", "internet_search"],
+                "worker_kind": "research",
+                "execution_class": "EXTERNAL_PREFERRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="web.fetch",
+            name="Web Fetch",
+            description=(
+                "Fetch a URL via WebResearchProvider (SSRF-safe). "
+                "May work when search is unconfigured if outbound is allowed."
+            ),
+            side_effects=(SideEffect.READ, SideEffect.NETWORK),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="web_fetch",
+            input_schema={
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": {"type": "string"},
+                    "timeout_seconds": {"type": "number"},
+                    "max_bytes": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("network.outbound",),
+            metadata={
+                "tags": ["web", "fetch", "research", "gi7"],
+                "domains": ["web", "research"],
+                "aliases": ["fetch_url", "http_fetch"],
+                "worker_kind": "research",
+                "execution_class": "EXTERNAL_PREFERRED",
+            },
+        )
+    )
     _register_fabric_worker_capabilities(catalog)
     return catalog
 

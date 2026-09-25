@@ -23,6 +23,7 @@ from .runtime import AgentRuntime
 from .store import AgentFleetStore, utc_now
 from .system_inventory import SystemInventory, classify_fleet_agent
 from .types import AgentKind
+from .general_orchestra import general_intelligence_orchestra_seed
 
 
 class AgentFleetError(Exception):
@@ -102,6 +103,8 @@ _DEFAULT_SEED: list[dict[str, Any]] = [
             "truth": {"status_from_dataset_jobs": True},
         },
     },
+    # General Intelligence Orchestra specialists (CognitiveRuntime remains parent authority).
+    *general_intelligence_orchestra_seed(),
 ]
 
 DATASET_LEARNING_SYSTEM_KEY = "dataset_learning"
@@ -343,6 +346,22 @@ class AgentFleetService:
                 planner.orchestrator.member_agent_ids = members
                 planner.updated_at = utc_now()
                 self.store.update_definition(planner)
+        # Wire General Intelligence Orchestra membership from specialist systemKeys.
+        from .general_orchestra import GI_SPECIALIST_KEYS, GENERAL_INTELLIGENCE_ORCHESTRA_KEY
+
+        gi_orch = by_key.get(GENERAL_INTELLIGENCE_ORCHESTRA_KEY)
+        if gi_orch and gi_orch.orchestrator:
+            members = list(gi_orch.orchestrator.member_agent_ids or [])
+            changed = False
+            for key in GI_SPECIALIST_KEYS:
+                specialist = by_key.get(key)
+                if specialist and specialist.agent_id not in members:
+                    members.append(specialist.agent_id)
+                    changed = True
+            if changed:
+                gi_orch.orchestrator.member_agent_ids = members
+                gi_orch.updated_at = utc_now()
+                self.store.update_definition(gi_orch)
         return created
 
     def get_system_agent(self, system_key: str) -> AgentDefinition | None:
