@@ -669,8 +669,8 @@ export function SettingsPage() {
                           setSystemPrompt(persistedPrompt || systemPrompt);
                           setSystemPromptHash(persistedHash);
                           toast(`Behavior settings saved · hash ${persistedHash?.slice(0, 10) ?? "—"}`);
-                          setStatusLine("BehaviorProfile updated (live for next turn)");
-                          // Reload to confirm round-trip
+                          setStatusLine("Applied — active from next turn");
+                          // Confirm round-trip from backend (authority). No reload / new chat.
                           const verified = await api.getBehaviorProfile();
                           const verifiedPrompt = String(verified.profile?.system_prompt ?? "");
                           if (verifiedPrompt.trim() !== systemPrompt.trim()) {

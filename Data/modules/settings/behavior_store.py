@@ -96,6 +96,32 @@ class BehaviorProfileStore:
         """Return stored default profile or built-in seed default."""
         return self.get(self.DEFAULT_ID)
 
+    def fingerprint(self, profile_id: str | None = None) -> dict[str, str | None]:
+        """Persisted revision identity for hot-apply / cross-process freshness.
+
+        One SQLite read. Safe to call once per independent model operation.
+        """
+        profile = self.get(profile_id)
+        hashed = profile if profile.hash else profile.with_hash()
+        updated_at: str | None = None
+        try:
+            with self.connect() as conn:
+                row = conn.execute(
+                    "SELECT updated_at FROM behavior_profiles WHERE id = ?",
+                    (hashed.id,),
+                ).fetchone()
+                if row:
+                    updated_at = str(row["updated_at"])
+        except Exception:  # noqa: BLE001
+            updated_at = None
+        return {
+            "id": hashed.id,
+            "version": str(hashed.version),
+            "hash": hashed.hash,
+            "updated_at": updated_at,
+            "source": "behavior_store" if updated_at else "seed",
+        }
+
     def save(self, profile: BehaviorProfile, *, updated_by: str = "operator") -> BehaviorProfile:
         hashed = profile.with_hash()
         overlays = {

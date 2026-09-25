@@ -166,6 +166,7 @@ class CognitiveRuntime:
         execution_gateway: Any | None = None,
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
+        behavior_resolver: Any | None = None,
     ) -> None:
         self.enabled = enabled
         self.shadow_default = shadow
@@ -200,9 +201,60 @@ class CognitiveRuntime:
         self.execution_gateway = execution_gateway
         self.observability = observability
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
+        # Canonical BehaviorSettingsResolver — resolve current persisted profile
+        # at each new submit/operation. Do not cache identity on the runtime.
+        self.behavior_resolver = behavior_resolver
 
         self._runs: dict[str, CognitiveRunState] = {}
         self._loops: dict[str, LoopDetector] = {}
+
+    def _apply_current_behavior_snapshot(
+        self,
+        meta_payload: dict[str, Any],
+        *,
+        message: str,
+        history: list[dict[str, str]] | None,
+    ) -> None:
+        """Resolve current persisted BehaviorProfile into task metadata.
+
+        Conversation objects must never own reusable behavioral authority.
+        Rules:
+        - If the caller already supplied ``behavior_system_prompt`` for this
+          operation (e.g. Chat resolved once for the turn), keep it so the
+          whole turn shares one immutable snapshot.
+        - If missing, resolve the current persisted profile now (direct
+          cognition API / workers / incomplete callers).
+        - ``behavior_operation_pin`` keeps a long-running job's starting snapshot.
+        """
+        if meta_payload.get("behavior_operation_pin"):
+            return
+        if str(meta_payload.get("behavior_system_prompt") or "").strip():
+            # Provenance fill-only when caller already pinned this turn's prompt.
+            if not meta_payload.get("behavior_profile_hash") and meta_payload.get("behavior_hash"):
+                meta_payload["behavior_profile_hash"] = meta_payload.get("behavior_hash")
+            return
+        if self.behavior_resolver is None:
+            return
+        recent_user = [
+            str(m.get("content") or "")
+            for m in (history or [])
+            if m.get("role") == "user" and m.get("content")
+        ]
+        try:
+            snap = self.behavior_resolver.resolve(
+                latest_user_message=message,
+                recent_user_messages=recent_user[:-1] if recent_user else [],
+            )
+        except Exception:  # noqa: BLE001 — never fail cognition on behavior resolve
+            return
+        meta_payload["behavior_system_prompt"] = snap.system_prompt
+        meta_payload["behavior_hash"] = snap.settings_hash
+        meta_payload["behavior_profile_id"] = snap.profile.id
+        meta_payload["behavior_profile_version"] = snap.version
+        meta_payload["behavior_profile_hash"] = snap.settings_hash
+        if not meta_payload.get("response_language"):
+            meta_payload["response_language"] = snap.language.response_language
+            meta_payload["language_source"] = snap.language.source
 
     # --- public API ---
 
@@ -225,6 +277,14 @@ class CognitiveRuntime:
         meta_payload = dict(metadata or {})
         if user_requested_depth:
             meta_payload["user_requested_depth"] = str(user_requested_depth)
+        # Fresh BehaviorSnapshot per independent cognition operation.
+        # Long-running jobs may set behavior_operation_pin=True to keep a
+        # caller-supplied snapshot for the duration of one logical execution.
+        self._apply_current_behavior_snapshot(
+            meta_payload,
+            message=message,
+            history=history,
+        )
         task = self.task_builder.build(
             message,
             has_knowledge=has_knowledge,
