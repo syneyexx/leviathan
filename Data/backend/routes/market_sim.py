@@ -1,12 +1,19 @@
-"""FastAPI routes for market simulation control plane."""
+"""FastAPI routes for market simulation control plane.
+
+Side-effecting mutations dispatch through ExecutionGateway + capability_catalog
+(T4A / G37). Read endpoints still call the control plane directly.
+"""
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from Data.modules.execution import CapabilityRequest, CapabilityStatus, ExecutionGateway
+from Data.modules.execution.catalog import CapabilityCatalog
 from Data.modules.market_sim import MarketSimControlPlane, MarketSimError
 
 
@@ -133,8 +140,75 @@ class DemoRequest(BaseModel):
     barsLimit: int = Field(120, ge=30, le=2000)
 
 
-def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
+def build_market_sim_router(
+    service: MarketSimControlPlane,
+    *,
+    gateway: ExecutionGateway | None = None,
+    capability_catalog: CapabilityCatalog | None = None,
+) -> APIRouter:
     router = APIRouter(tags=["market-sim"])
+    # Keep catalog reference for D16 / G37 evidence even when gateway carries it.
+    _catalog = capability_catalog or (gateway.catalog if gateway is not None else None)
+
+    def _mutate(
+        capability_id: str,
+        arguments: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+        run_id: str | None = None,
+        fallback: Any | None = None,
+    ) -> dict:
+        """Dispatch a side-effect via ExecutionGateway when bound."""
+        if gateway is None:
+            if fallback is not None:
+                return fallback() if callable(fallback) else fallback
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "GATEWAY_UNBOUND",
+                    "message": "ExecutionGateway not bound for market_sim mutations",
+                },
+            )
+        if _catalog is not None and _catalog.get(capability_id) is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "CAPABILITY_MISSING", "capability_id": capability_id},
+            )
+        result = gateway.execute(
+            CapabilityRequest(
+                capability_id=capability_id,
+                arguments=arguments,
+                requested_by="api.market_sim",
+                run_id=run_id,
+                request_id=str(uuid.uuid4()),
+                idempotency_key=idempotency_key or f"market_sim:{capability_id}:{uuid.uuid4().hex[:12]}",
+            )
+        )
+        if result.status == CapabilityStatus.REJECTED:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "GATEWAY_REJECTED",
+                    "capability_id": capability_id,
+                    "reason": (result.telemetry or {}).get("reason"),
+                    "error": result.error,
+                },
+            )
+        if result.status != CapabilityStatus.COMPLETED:
+            # Module executor packs MarketSimError into telemetry.code
+            code = (result.telemetry or {}).get("code") or "MUTATION_FAILED"
+            http_status = int((result.telemetry or {}).get("http_status") or 500)
+            raise HTTPException(
+                status_code=http_status,
+                detail={"code": code, "message": result.error or "mutation failed"},
+            )
+        output = result.output if isinstance(result.output, dict) else {"result": result.output}
+        if isinstance(output, dict) and "output" in output and len(output) <= 4:
+            # unwrap MarketSimModuleExecutor envelope
+            inner = output.get("output")
+            if isinstance(inner, dict):
+                return inner
+        return output if isinstance(output, dict) else {"result": output}
 
     @router.get("/api/market-sim/status")
     def status() -> dict:
@@ -159,37 +233,48 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/data/scan")
     def scan_data() -> dict:
-        try:
-            sources = service.scan_market_data()
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
-        return {"sources": sources}
+        return _mutate(
+            "market_sim.data.scan",
+            {},
+            idempotency_key=f"market_sim:data.scan:{uuid.uuid4().hex[:8]}",
+            fallback=lambda: {"sources": service.scan_market_data()},
+        )
 
     @router.post("/api/market-sim/data/register")
     def register_data(payload: RegisterDataRequest) -> dict:
-        try:
-            source = service.register_market_data(
-                payload.path,
-                symbol=payload.symbol,
-                timeframe=payload.timeframe,
-            )
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
-        return {"source": source}
+        args = {"path": payload.path, "symbol": payload.symbol, "timeframe": payload.timeframe}
+        return _mutate(
+            "market_sim.data.register",
+            args,
+            fallback=lambda: {
+                "source": service.register_market_data(
+                    payload.path, symbol=payload.symbol, timeframe=payload.timeframe
+                )
+            },
+        )
 
     @router.post("/api/market-sim/data/import")
     def import_dataset(payload: ImportDatasetRequest) -> dict:
-        try:
-            return service.import_market_dataset(
+        args = {
+            "path": payload.path,
+            "symbol": payload.symbol,
+            "timeframe": payload.timeframe,
+            "seal": payload.seal,
+            "role": payload.role,
+            "provider": payload.provider,
+        }
+        return _mutate(
+            "market_sim.data.import",
+            args,
+            fallback=lambda: service.import_market_dataset(
                 payload.path,
                 symbol=payload.symbol,
                 timeframe=payload.timeframe,
                 seal=payload.seal,
                 role=payload.role,
                 provider=payload.provider,
-            )
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+            ),
+        )
 
     @router.get("/api/market-sim/datasets")
     def list_datasets(
@@ -210,10 +295,14 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
     @router.post("/api/market-sim/datasets/{dataset_id}/{version}/seal")
     def seal_dataset(dataset_id: str, version: str, payload: SealDatasetRequest | None = None) -> dict:
         body = payload or SealDatasetRequest()
-        try:
-            return {"dataset": service.seal_market_dataset(dataset_id, version, role=body.role)}
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.dataset.seal",
+            {"dataset_id": dataset_id, "version": version, "role": body.role},
+            idempotency_key=f"market_sim:seal:{dataset_id}:{version}:{body.role}",
+            fallback=lambda: {
+                "dataset": service.seal_market_dataset(dataset_id, version, role=body.role)
+            },
+        )
 
     @router.get("/api/market-sim/data/{source_id}")
     def get_data(source_id: str) -> dict:
@@ -233,8 +322,24 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/strategies")
     def create_strategy(payload: StrategyCreate) -> dict:
-        try:
-            return service.create_strategy(
+        args = {
+            "name": payload.name,
+            "description": payload.description,
+            "tags": payload.tags,
+            "parameters": payload.parameters,
+            "entry_rules": payload.entryRules,
+            "exit_rules": payload.exitRules,
+            "risk_rules": payload.riskRules,
+            "required_timeframes": payload.requiredTimeframes,
+            "brain_dependencies": payload.brainDependencies,
+            "changelog": payload.changelog,
+            "dsl_spec": payload.dslSpec,
+            "family": payload.family,
+        }
+        return _mutate(
+            "market_sim.strategy.create",
+            args,
+            fallback=lambda: service.create_strategy(
                 name=payload.name,
                 description=payload.description,
                 tags=payload.tags,
@@ -247,16 +352,17 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                 changelog=payload.changelog,
                 dsl_spec=payload.dslSpec,
                 family=payload.family,
-            )
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+            ),
+        )
 
     @router.post("/api/market-sim/strategies/validate")
     def validate_strategy(payload: StrategyValidateRequest) -> dict:
-        try:
-            return service.validate_strategy_dsl(payload.dslSpec)
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.strategy.validate",
+            {"dsl_spec": payload.dslSpec},
+            idempotency_key=f"market_sim:validate:{uuid.uuid4().hex[:10]}",
+            fallback=lambda: service.validate_strategy_dsl(payload.dslSpec),
+        )
 
     @router.get("/api/market-sim/strategies/families")
     def list_strategy_families() -> dict:
@@ -285,8 +391,24 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/strategies/{strategy_id}/versions")
     def version_strategy(strategy_id: str, payload: StrategyVersionRequest) -> dict:
-        try:
-            return service.version_strategy(
+        args = {
+            "strategy_id": strategy_id,
+            "parameters": payload.parameters,
+            "entry_rules": payload.entryRules,
+            "exit_rules": payload.exitRules,
+            "risk_rules": payload.riskRules,
+            "required_timeframes": payload.requiredTimeframes,
+            "brain_dependencies": payload.brainDependencies,
+            "changelog": payload.changelog,
+            "name": payload.name,
+            "description": payload.description,
+            "tags": payload.tags,
+            "dsl_spec": payload.dslSpec,
+        }
+        return _mutate(
+            "market_sim.strategy.version",
+            args,
+            fallback=lambda: service.version_strategy(
                 strategy_id,
                 parameters=payload.parameters,
                 entry_rules=payload.entryRules,
@@ -299,24 +421,26 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                 description=payload.description,
                 tags=payload.tags,
                 dsl_spec=payload.dslSpec,
-            )
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+            ),
+        )
 
     @router.post("/api/market-sim/strategies/{strategy_id}/fork")
     def fork_strategy(strategy_id: str, payload: StrategyForkRequest | None = None) -> dict:
         body = payload or StrategyForkRequest()
-        try:
-            return service.fork_strategy(strategy_id, name=body.name)
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.strategy.fork",
+            {"strategy_id": strategy_id, "name": body.name},
+            fallback=lambda: service.fork_strategy(strategy_id, name=body.name),
+        )
 
     @router.post("/api/market-sim/strategies/{strategy_id}/archive")
     def archive_strategy(strategy_id: str) -> dict:
-        try:
-            return {"strategy": service.archive_strategy(strategy_id)}
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.strategy.archive",
+            {"strategy_id": strategy_id},
+            idempotency_key=f"market_sim:archive:{strategy_id}",
+            fallback=lambda: {"strategy": service.archive_strategy(strategy_id)},
+        )
 
     # --- Runs ---
 
@@ -332,30 +456,52 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/runs")
     def create_run(payload: RunCreate) -> dict:
-        try:
-            run = service.create_run(
-                source_id=payload.sourceId,
-                strategy_id=payload.strategyId,
-                strategy_version=payload.strategyVersion,
-                start_ts=payload.startTs,
-                end_ts=payload.endTs,
-                seed=payload.seed,
-                speed=payload.speed,
-                initial_cash=payload.initialCash,
-                fee_bps=payload.feeBps,
-                slippage_bps=payload.slippageBps,
-                max_position_pct=payload.maxPositionPct,
-                max_drawdown_pct=payload.maxDrawdownPct,
-                per_trade_risk_pct=payload.perTradeRiskPct,
-                agents=payload.agents,
-                deliberation_every_n=payload.deliberationEveryN,
-                stochastic_slippage=payload.stochasticSlippage,
-                game_mode=payload.gameMode,
-                metadata=payload.metadata,
-            )
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
-        return {"run": run}
+        args = {
+            "source_id": payload.sourceId,
+            "strategy_id": payload.strategyId,
+            "strategy_version": payload.strategyVersion,
+            "start_ts": payload.startTs,
+            "end_ts": payload.endTs,
+            "seed": payload.seed,
+            "speed": payload.speed,
+            "initial_cash": payload.initialCash,
+            "fee_bps": payload.feeBps,
+            "slippage_bps": payload.slippageBps,
+            "max_position_pct": payload.maxPositionPct,
+            "max_drawdown_pct": payload.maxDrawdownPct,
+            "per_trade_risk_pct": payload.perTradeRiskPct,
+            "agents": payload.agents,
+            "deliberation_every_n": payload.deliberationEveryN,
+            "stochastic_slippage": payload.stochasticSlippage,
+            "game_mode": payload.gameMode,
+            "metadata": payload.metadata,
+        }
+        return _mutate(
+            "market_sim.run.create",
+            args,
+            fallback=lambda: {
+                "run": service.create_run(
+                    source_id=payload.sourceId,
+                    strategy_id=payload.strategyId,
+                    strategy_version=payload.strategyVersion,
+                    start_ts=payload.startTs,
+                    end_ts=payload.endTs,
+                    seed=payload.seed,
+                    speed=payload.speed,
+                    initial_cash=payload.initialCash,
+                    fee_bps=payload.feeBps,
+                    slippage_bps=payload.slippageBps,
+                    max_position_pct=payload.maxPositionPct,
+                    max_drawdown_pct=payload.maxDrawdownPct,
+                    per_trade_risk_pct=payload.perTradeRiskPct,
+                    agents=payload.agents,
+                    deliberation_every_n=payload.deliberationEveryN,
+                    stochastic_slippage=payload.stochasticSlippage,
+                    game_mode=payload.gameMode,
+                    metadata=payload.metadata,
+                )
+            },
+        )
 
     @router.get("/api/market-sim/runs/{run_id}")
     def get_run(run_id: str) -> dict:
@@ -373,31 +519,42 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/runs/{run_id}/start")
     def start_run(run_id: str) -> dict:
-        try:
-            return {"run": service.start_run(run_id)}
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.run.start",
+            {"run_id": run_id},
+            run_id=run_id,
+            idempotency_key=f"market_sim:run.start:{run_id}",
+            fallback=lambda: {"run": service.start_run(run_id)},
+        )
 
     @router.post("/api/market-sim/runs/{run_id}/pause")
     def pause_run(run_id: str) -> dict:
-        try:
-            return {"run": service.pause_run(run_id)}
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.run.pause",
+            {"run_id": run_id},
+            run_id=run_id,
+            idempotency_key=f"market_sim:run.pause:{run_id}",
+            fallback=lambda: {"run": service.pause_run(run_id)},
+        )
 
     @router.post("/api/market-sim/runs/{run_id}/step")
     def step_run(run_id: str) -> dict:
-        try:
-            return {"run": service.step_run(run_id)}
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.run.step",
+            {"run_id": run_id},
+            run_id=run_id,
+            fallback=lambda: {"run": service.step_run(run_id)},
+        )
 
     @router.post("/api/market-sim/runs/{run_id}/stop")
     def stop_run(run_id: str) -> dict:
-        try:
-            return {"run": service.stop_run(run_id)}
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.run.stop",
+            {"run_id": run_id},
+            run_id=run_id,
+            idempotency_key=f"market_sim:run.stop:{run_id}",
+            fallback=lambda: {"run": service.stop_run(run_id)},
+        )
 
     @router.get("/api/market-sim/runs/{run_id}/live")
     def live_state(
@@ -455,8 +612,18 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/paper/sessions")
     def create_paper(payload: PaperSessionCreate) -> dict:
-        try:
-            return {
+        args = {
+            "symbol": payload.symbol,
+            "strategy_id": payload.strategyId,
+            "strategy_version": payload.strategyVersion,
+            "broker_id": payload.brokerId,
+            "provider_id": payload.providerId,
+            "initial_cash": payload.initialCash,
+        }
+        return _mutate(
+            "market_sim.paper.session.start",
+            args,
+            fallback=lambda: {
                 "session": service.start_paper_session(
                     symbol=payload.symbol,
                     strategy_id=payload.strategyId,
@@ -465,9 +632,8 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                     provider_id=payload.providerId,
                     initial_cash=payload.initialCash,
                 )
-            }
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+            },
+        )
 
     @router.get("/api/market-sim/paper/sessions/{session_id}")
     def get_paper(session_id: str) -> dict:
@@ -478,22 +644,33 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/paper/sessions/{session_id}/orders")
     def paper_order(session_id: str, payload: PaperOrderRequest) -> dict:
-        try:
-            return service.paper_place_order(
+        args = {
+            "session_id": session_id,
+            "side": payload.side,
+            "qty": payload.qty,
+            "client_order_id": payload.clientOrderId,
+        }
+        idem = payload.clientOrderId or f"market_sim:paper.order:{session_id}:{uuid.uuid4().hex[:10]}"
+        return _mutate(
+            "market_sim.paper.order.place",
+            args,
+            idempotency_key=f"market_sim:paper.order:{idem}",
+            fallback=lambda: service.paper_place_order(
                 session_id,
                 side=payload.side,
                 qty=payload.qty,
                 client_order_id=payload.clientOrderId,
-            )
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+            ),
+        )
 
     @router.post("/api/market-sim/paper/sessions/{session_id}/kill-switch")
     def paper_kill(session_id: str, armed: bool = True) -> dict:
-        try:
-            return {"session": service.paper_kill_switch(session_id, armed=armed)}
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.paper.kill_switch",
+            {"session_id": session_id, "armed": armed},
+            idempotency_key=f"market_sim:paper.kill:{session_id}:{armed}",
+            fallback=lambda: {"session": service.paper_kill_switch(session_id, armed=armed)},
+        )
 
     # --- Experiments ---
 
@@ -506,8 +683,19 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
 
     @router.post("/api/market-sim/experiments")
     def propose_experiment(payload: ExperimentPropose) -> dict:
-        try:
-            return {
+        args = {
+            "strategy_id": payload.strategyId,
+            "hypothesis": payload.hypothesis,
+            "proposer_agent_id": payload.proposerAgentId,
+            "source_id": payload.sourceId,
+            "acceptance_criteria": payload.acceptanceCriteria,
+            "seed": payload.seed,
+            "config": payload.config,
+        }
+        return _mutate(
+            "market_sim.experiment.propose",
+            args,
+            fallback=lambda: {
                 "trial": service.propose_experiment(
                     strategy_id=payload.strategyId,
                     hypothesis=payload.hypothesis,
@@ -517,29 +705,37 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                     seed=payload.seed,
                     config=payload.config,
                 )
-            }
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+            },
+        )
 
     @router.post("/api/market-sim/experiments/{trial_id}/complete")
     def complete_experiment(trial_id: str, payload: ExperimentComplete) -> dict:
-        try:
-            return {
+        return _mutate(
+            "market_sim.experiment.complete",
+            {
+                "trial_id": trial_id,
+                "metrics": payload.metrics,
+                "strategy_version": payload.strategyVersion,
+            },
+            idempotency_key=f"market_sim:experiment.complete:{trial_id}",
+            fallback=lambda: {
                 "trial": service.complete_experiment(
                     trial_id,
                     metrics=payload.metrics,
                     strategy_version=payload.strategyVersion,
                 )
-            }
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+            },
+        )
 
     @router.post("/api/market-sim/demos/run")
     def run_demo(payload: DemoRequest) -> dict:
-        try:
-            return service.run_market_demo(family=payload.family, bars_limit=payload.barsLimit)
-        except MarketSimError as exc:
-            raise_market_sim_error(exc)
+        return _mutate(
+            "market_sim.demo.run",
+            {"family": payload.family, "bars_limit": payload.barsLimit},
+            fallback=lambda: service.run_market_demo(
+                family=payload.family, bars_limit=payload.barsLimit
+            ),
+        )
 
     @router.get("/api/market-sim/live-trading")
     def live_trading_status() -> dict:

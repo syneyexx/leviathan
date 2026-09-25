@@ -50,7 +50,16 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
 
         advanced = False
         if simulation_id and hasattr(plane.worker, "process_run"):
-            advanced = bool(plane.worker.process_run(simulation_id))
+            # Bind JobStore so heartbeats refresh the claim lease (T4B / G38).
+            if hasattr(plane.worker, "bind_job_store") and ctx.get("job_store") is not None:
+                plane.worker.bind_job_store(ctx["job_store"])
+            advanced = bool(
+                plane.worker.process_run(
+                    simulation_id,
+                    job_id=getattr(job, "job_id", None),
+                    worker_id=str(ctx.get("worker_id") or f"market-sim-{job.job_id}"),
+                )
+            )
         elif hasattr(plane.worker, "process_next"):
             advanced = bool(plane.worker.process_next())
 

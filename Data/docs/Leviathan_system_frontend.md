@@ -375,6 +375,8 @@ T2 backend: simulation rounds persist deterministic `MarketState` (regime/trend/
 
 T3 backend: Strategy Spec DSL v2 (`/api/market-sim/strategies` with `dslSpec`/`family`, `/strategies/validate`, `/strategies/families/{family}/template`). Declarative sandboxed specs only — UI must not offer free-form code strategies.
 
+T4 backend: side-effect routes go through ExecutionGateway (no private bypass). Simulation advance defaults to JobStore leases. Paper Alpaca credentials via SecretsBroker.
+
 ---
 
 # 14. Media Control UI

@@ -603,6 +603,8 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **T3 (Strategy Spec DSL v2):** Strategies are declarative documents (features, regime filters, entry/exit conditions, sizing, risk, cooldowns) compiled to a sandboxed AST — no `eval`/`exec`/imports. Family templates cover trend/MA/momentum/mean-reversion/breakout/vol-breakout/range/RS/MTF/event-filtered/custom. Legacy `ma_cross` / `mean_reversion` remain supported and lift into DSL v2. Validate + family-template APIs reject invalid specs before simulation. Immutable version lineage stores content hashes + nested DSL specs.
 
+**T4 (control-plane integration):** Market-sim mutations dispatch through `ExecutionGateway` + capability catalog (MODULE provider). Default run advance path uses JobStore leases + heartbeats (`BEGIN IMMEDIATE` claim). Alpaca paper credentials resolve via `SecretsBroker` (`env:` refs). Observability emits under `trading` category. Trial ledger persists `strategy_version`; acceptance metrics align with `compute_metrics`; rolling walk-forward windows available.
+
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
 Machine gate state lives in `Data/backend/tests/trading_gates.json`; `scripts/verify_trading_100.py` is the verifier.

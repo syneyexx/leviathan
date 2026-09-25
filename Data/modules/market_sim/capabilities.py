@@ -165,3 +165,278 @@ def build_market_capabilities(
             "ohlcv_is_not_orderbook": True,
         },
     }
+
+
+def register_market_sim_module_capabilities(catalog: Any) -> None:
+    """Register paper/sim mutation capabilities (MODULE provider → control plane).
+
+    These are operator-surface mutations for research/paper only. Gateway policy
+    treats ``approval_mode=receipt_only`` as auto-allowed (receipt still recorded).
+    """
+    from Data.modules.function_runtime.types import SideEffect
+    from Data.modules.execution.types import CapabilityDefinition, CapabilityProviderKind
+
+    def _mod(
+        *,
+        cap_id: str,
+        name: str,
+        description: str,
+        provider_ref: str,
+        required: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        idempotent: bool = False,
+    ) -> None:
+        props = dict(properties or {})
+        catalog.register(
+            CapabilityDefinition(
+                id=cap_id,
+                name=name,
+                description=description,
+                side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+                provider_kind=CapabilityProviderKind.MODULE,
+                provider_ref=provider_ref,
+                input_schema={
+                    "type": "object",
+                    "required": list(required or []),
+                    "properties": props,
+                },
+                output_schema={"type": "object"},
+                required_permissions=("process.execute",),
+                metadata={
+                    "tags": ["market_sim", "trading", "paper"],
+                    "domains": ["market_sim", "trading"],
+                    "approval_mode": "receipt_only",
+                    "paper_sim_only": True,
+                    "idempotent": idempotent,
+                },
+            )
+        )
+
+    _mod(
+        cap_id="market_sim.run.start",
+        name="Start Market Sim Run",
+        description="Start or resume a paper/historical simulation run.",
+        provider_ref="run.start",
+        required=["run_id"],
+        properties={"run_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.run.pause",
+        name="Pause Market Sim Run",
+        description="Pause an active simulation run.",
+        provider_ref="run.pause",
+        required=["run_id"],
+        properties={"run_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.run.step",
+        name="Step Market Sim Run",
+        description="Advance one bar on a simulation run.",
+        provider_ref="run.step",
+        required=["run_id"],
+        properties={"run_id": {"type": "string"}},
+    )
+    _mod(
+        cap_id="market_sim.run.stop",
+        name="Stop Market Sim Run",
+        description="Stop a simulation run.",
+        provider_ref="run.stop",
+        required=["run_id"],
+        properties={"run_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.run.create",
+        name="Create Market Sim Run",
+        description="Create a queued simulation run.",
+        provider_ref="run.create",
+        required=["source_id"],
+        properties={
+            "source_id": {"type": "string"},
+            "strategy_id": {"type": "string"},
+            "strategy_version": {"type": "integer"},
+            "seed": {"type": "integer"},
+            "initial_cash": {"type": "number"},
+            "agents": {"type": "array"},
+            "game_mode": {"type": "string"},
+            "metadata": {"type": "object"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.strategy.create",
+        name="Create Strategy",
+        description="Create a versioned strategy (legacy or DSL v2).",
+        provider_ref="strategy.create",
+        required=["name"],
+        properties={
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "parameters": {"type": "object"},
+            "entry_rules": {"type": "object"},
+            "dsl_spec": {"type": "object"},
+            "family": {"type": "string"},
+            "tags": {"type": "array"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.strategy.version",
+        name="Version Strategy",
+        description="Append an immutable strategy version.",
+        provider_ref="strategy.version",
+        required=["strategy_id"],
+        properties={
+            "strategy_id": {"type": "string"},
+            "parameters": {"type": "object"},
+            "dsl_spec": {"type": "object"},
+            "changelog": {"type": "string"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.strategy.fork",
+        name="Fork Strategy",
+        description="Fork a strategy into a new lineage.",
+        provider_ref="strategy.fork",
+        required=["strategy_id"],
+        properties={"strategy_id": {"type": "string"}, "name": {"type": "string"}},
+    )
+    _mod(
+        cap_id="market_sim.strategy.archive",
+        name="Archive Strategy",
+        description="Archive a strategy record.",
+        provider_ref="strategy.archive",
+        required=["strategy_id"],
+        properties={"strategy_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.strategy.validate",
+        name="Validate Strategy DSL",
+        description="Validate a Strategy Spec DSL v2 document.",
+        provider_ref="strategy.validate",
+        required=["dsl_spec"],
+        properties={"dsl_spec": {"type": "object"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.data.scan",
+        name="Scan Market Data",
+        description="Scan markets_root and register sources.",
+        provider_ref="data.scan",
+        properties={},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.data.register",
+        name="Register Market Data",
+        description="Register a market data file under markets_root.",
+        provider_ref="data.register",
+        required=["path"],
+        properties={
+            "path": {"type": "string"},
+            "symbol": {"type": "string"},
+            "timeframe": {"type": "string"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.data.import",
+        name="Import Market Dataset",
+        description="Import and optionally seal a market dataset version.",
+        provider_ref="data.import",
+        required=["path"],
+        properties={
+            "path": {"type": "string"},
+            "symbol": {"type": "string"},
+            "timeframe": {"type": "string"},
+            "seal": {"type": "boolean"},
+            "role": {"type": "string"},
+            "provider": {"type": "string"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.dataset.seal",
+        name="Seal Market Dataset",
+        description="Seal an immutable market dataset version.",
+        provider_ref="dataset.seal",
+        required=["dataset_id", "version"],
+        properties={
+            "dataset_id": {"type": "string"},
+            "version": {"type": "string"},
+            "role": {"type": "string"},
+        },
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.paper.session.start",
+        name="Start Paper Session",
+        description="Start a live-paper trading session (no real money).",
+        provider_ref="paper.session.start",
+        required=["symbol"],
+        properties={
+            "symbol": {"type": "string"},
+            "strategy_id": {"type": "string"},
+            "strategy_version": {"type": "integer"},
+            "broker_id": {"type": "string"},
+            "provider_id": {"type": "string"},
+            "initial_cash": {"type": "number"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.paper.order.place",
+        name="Place Paper Order",
+        description="Place a paper order on an active session.",
+        provider_ref="paper.order.place",
+        required=["session_id", "side", "qty"],
+        properties={
+            "session_id": {"type": "string"},
+            "side": {"type": "string"},
+            "qty": {"type": "number"},
+            "client_order_id": {"type": "string"},
+        },
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.paper.kill_switch",
+        name="Paper Kill Switch",
+        description="Arm or disarm the paper session kill switch.",
+        provider_ref="paper.kill_switch",
+        required=["session_id"],
+        properties={"session_id": {"type": "string"}, "armed": {"type": "boolean"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.experiment.propose",
+        name="Propose Experiment",
+        description="Propose a strategy research trial.",
+        provider_ref="experiment.propose",
+        required=["strategy_id", "hypothesis", "proposer_agent_id", "source_id"],
+        properties={
+            "strategy_id": {"type": "string"},
+            "hypothesis": {"type": "string"},
+            "proposer_agent_id": {"type": "string"},
+            "source_id": {"type": "string"},
+            "seed": {"type": "integer"},
+            "acceptance_criteria": {"type": "object"},
+            "config": {"type": "object"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.experiment.complete",
+        name="Complete Experiment",
+        description="Complete a research trial with metrics.",
+        provider_ref="experiment.complete",
+        required=["trial_id", "metrics"],
+        properties={
+            "trial_id": {"type": "string"},
+            "metrics": {"type": "object"},
+            "strategy_version": {"type": "integer"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.demo.run",
+        name="Run Market Demo",
+        description="Run a short seeded market simulation demo.",
+        provider_ref="demo.run",
+        properties={"family": {"type": "string"}, "bars_limit": {"type": "integer"}},
+    )

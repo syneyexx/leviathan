@@ -573,12 +573,28 @@
     "G37": {
       "title": "Capabilities via Gateway",
       "phase": "T4A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/routes/market_sim.py",
+        "Data/modules/market_sim/gateway_executor.py",
+        "Data/modules/market_sim/capabilities.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T4A: market_sim mutations dispatch via ExecutionGateway + MODULE catalog (approval_mode=receipt_only for paper/sim).",
       "related_defects": [
         "D16"
       ]
@@ -586,12 +602,27 @@
     "G38": {
       "title": "JobStore leases; no double-claim",
       "phase": "T4B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/store.py",
+        "Data/modules/market_sim/worker.py",
+        "Data/modules/workers/entrypoints/market_sim.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T4B: claim_next_runnable uses BEGIN IMMEDIATE; worker heartbeats JobStore leases on durable advance jobs.",
       "related_defects": [
         "D25",
         "D26"
@@ -600,26 +631,51 @@
     "G39": {
       "title": "Persistence hot path + migrations",
       "phase": "T4D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization",
+        "Data/modules/market_sim/store.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T4D slice: migration head consistent; atomic claim transaction. Full streaming OHLCV (D8) deferred.",
       "related_defects": [
-        "D8",
         "D21"
       ]
     },
     "G40": {
       "title": "Settings + SecretsBroker",
       "phase": "T4C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/paper_broker.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::SecretsBrokerAlpacaTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::SecretsBrokerAlpacaTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::SecretsBrokerAlpacaTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T4C: Alpaca paper credentials resolve via SecretsBroker env: refs (no raw os.environ retention on broker).",
       "related_defects": [
         "D19"
       ]
@@ -717,32 +773,69 @@
     "G49": {
       "title": "Observability trading category",
       "phase": "T4D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::ObservabilityTradingCategoryTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::ObservabilityTradingCategoryTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::ObservabilityTradingCategoryTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T4D: control plane emits under category=trading (subsystem=market_sim)."
     },
     "G50": {
       "title": "Backup/restore trading tables",
       "phase": "T4D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T4D: BackupService create/restore round-trip preserves market_experiments."
     },
     "G51": {
       "title": "Interactive-priority isolation",
       "phase": "T4B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/service.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T4B: enqueue_advance uses latency_class=background so sim work cannot claim interactive slots.",
       "related_defects": [
         "D26"
       ]
@@ -750,12 +843,25 @@
     "G52": {
       "title": "Mutation idempotency",
       "phase": "T4B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/backend/routes/market_sim.py",
+        "Data/modules/market_sim/service.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::GatewayMutationTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T4B: Gateway mutations carry idempotency_key; enqueue_advance keys by run generation."
     },
     "G53": {
       "title": "Full provenance fingerprint",
@@ -770,12 +876,25 @@
     "G54": {
       "title": "Disaster recovery temp-target",
       "phase": "T4D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/backup/service.py",
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::BackupTradingTablesTests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T4D: BackupService.restore writes .restore-tmp then atomic replace."
     },
     "G55": {
       "title": "Data provenance/licensing state",
@@ -816,12 +935,25 @@
     "G58": {
       "title": "Operational telemetry truthful",
       "phase": "T4D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/worker.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t4_control_plane.py::JobStoreLeaseTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T4D: status.truth.default_path_jobstore_lease / worker.telemetry.lease_model reflect JobStore when bound."
     },
     "G59": {
       "title": "Typed frontend contracts",

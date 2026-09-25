@@ -530,7 +530,6 @@ class D11CallerMetricsCharacterization(unittest.TestCase):
         passed, reason = evaluate_acceptance(fake, {"min_trades": 5, "beat_benchmark": True})
         self.assertTrue(passed, reason)
 
-    @unittest.expectedFailure  # D11 — fixed in Phase T4
     def test_d11_desired_acceptance_requires_run_derived_metrics(self) -> None:
         sig = inspect.signature(evaluate_acceptance)
         params = list(sig.parameters)
@@ -544,6 +543,8 @@ class D11CallerMetricsCharacterization(unittest.TestCase):
 
 class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
     def test_d12_current_real_metrics_fail_acceptance_by_key_mismatch(self) -> None:
+        # Historical characterization of the pre-T4 mismatch — kept as documentation
+        # that total_return (not total_return_pct) is the compute_metrics key.
         equity = [100.0, 110.0, 120.0]
         fills = [
             {"side": "BUY", "qty": 1, "price": 100, "fee": 0},
@@ -553,11 +554,7 @@ class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
         self.assertIn("total_return", m)
         self.assertNotIn("total_return_pct", m)
         self.assertNotIn("trade_count", m)
-        passed, reason = evaluate_acceptance(m, {"min_trades": 1, "max_drawdown_pct": 50.0})
-        self.assertFalse(passed)
-        self.assertIn("insufficient trades", reason)
 
-    @unittest.expectedFailure  # D12 — fixed in Phase T4
     def test_d12_desired_acceptance_reads_compute_metrics_shape(self) -> None:
         equity = [100.0, 110.0, 120.0]
         fills = [
@@ -587,7 +584,6 @@ class D13WalkForwardCharacterization(unittest.TestCase):
         self.assertIn("test", split)
         self.assertNotIn("windows", split)
 
-    @unittest.expectedFailure  # D13 — fixed in Phase T4
     def test_d13_desired_rolling_windows(self) -> None:
         split = walk_forward_splits(100, window=20, step=10)  # type: ignore[call-arg]
         self.assertIn("windows", split)
@@ -601,6 +597,7 @@ class D13WalkForwardCharacterization(unittest.TestCase):
 
 class D14TrialLedgerCharacterization(unittest.TestCase):
     def test_d14_current_upsert_drops_strategy_version(self) -> None:
+        # Pre-T4 defect: version was dropped. Post-T4: version is persisted.
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             trial = {
@@ -630,15 +627,13 @@ class D14TrialLedgerCharacterization(unittest.TestCase):
             trial2["finished_at"] = utc_now()
             store.save_experiment(trial2)
             loaded = store.list_experiments(strategy_id="s1")[0]
-            self.assertNotEqual(int(loaded.get("strategy_version") or 0), 2)
+            self.assertEqual(int(loaded.get("strategy_version") or 0), 2)
 
     def test_d14_current_upsert_sql_omits_strategy_version(self) -> None:
         src = inspect.getsource(MarketSimStore.save_experiment)
-        # ON CONFLICT update list must not include strategy_version today.
         conflict = src.split("ON CONFLICT", 1)[1]
-        self.assertNotIn("strategy_version=excluded.strategy_version", conflict)
+        self.assertIn("strategy_version=excluded.strategy_version", conflict)
 
-    @unittest.expectedFailure  # D14 — fixed in Phase T4
     def test_d14_desired_append_only_or_version_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
@@ -693,12 +688,12 @@ class D16GatewayCharacterization(unittest.TestCase):
         self.assertIn("Binance reachability only affects live quote freshness", src)
 
     def test_d16_current_routes_bypass_gateway(self) -> None:
+        # T4A: routes now dispatch via ExecutionGateway (no private bypass).
         routes_path = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
         src = routes_path.read_text(encoding="utf-8")
-        self.assertNotIn("ExecutionGateway", src)
-        self.assertNotIn("capability_catalog", src)
+        self.assertIn("ExecutionGateway", src)
+        self.assertIn("capability_catalog", src)
 
-    @unittest.expectedFailure  # D16 — fixed in Phase T4A (mutation routes via Gateway)
     def test_d16_desired_side_effect_routes_dispatch_via_gateway(self) -> None:
         routes_path = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
         src = routes_path.read_text(encoding="utf-8")
@@ -780,11 +775,10 @@ class D19SecretsCharacterization(unittest.TestCase):
         import Data.modules.market_sim.paper_broker as pb
 
         text = Path(pb.__file__).read_text(encoding="utf-8")
-        self.assertIn("os.environ", text)
+        # T4C: credentials resolve via SecretsBroker (env: refs), not raw os.environ reads.
+        self.assertIn("SecretsBroker", text)
         self.assertIn("LEVIATHAN_ALPACA_PAPER", text)
-        # HTTP path is ProviderExecutionClient when job_runtime is bound,
-        # but credentials still come from env — not SecretsBroker.
-        self.assertNotIn("SecretsBroker", text)
+        self.assertIn("env:LEVIATHAN_ALPACA_PAPER", text)
 
     def test_d19_current_live_guard_reads_env(self) -> None:
         import Data.modules.market_sim.trading_live_guard as lg
@@ -802,7 +796,6 @@ class D19SecretsCharacterization(unittest.TestCase):
         self.assertIn("urllib", text)
         self.assertNotIn("SecretsBroker", text)
 
-    @unittest.expectedFailure  # D19 — fixed in Phase T4C
     def test_d19_desired_alpaca_uses_secrets_broker(self) -> None:
         import Data.modules.market_sim.paper_broker as pb
 
@@ -1014,8 +1007,9 @@ class D24InstrumentsCharacterization(unittest.TestCase):
 
 class D25WorkerClaimCharacterization(unittest.TestCase):
     def test_d25_current_claim_has_no_begin_immediate(self) -> None:
+        # T4B: claim now uses BEGIN IMMEDIATE for exclusive ownership.
         src = inspect.getsource(MarketSimStore.claim_next_runnable)
-        self.assertNotIn("BEGIN IMMEDIATE", src)
+        self.assertIn("BEGIN IMMEDIATE", src)
         self.assertIn("worker_pid", src)
         self.assertIn("SELECT", src)
         self.assertIn("UPDATE", src)
@@ -1032,7 +1026,6 @@ class D25WorkerClaimCharacterization(unittest.TestCase):
         self.assertIn("from_settings", text)
         self.assertIn("start_background", text)
 
-    @unittest.expectedFailure  # D25 — fixed in Phase T4B
     def test_d25_desired_claim_uses_immediate_transaction(self) -> None:
         src = inspect.getsource(MarketSimStore.claim_next_runnable)
         self.assertIn("BEGIN IMMEDIATE", src)
@@ -1063,7 +1056,6 @@ class D26JobRuntimeCharacterization(unittest.TestCase):
         src = inspect.getsource(worker_mod.MarketSimWorker.process_run)
         self.assertIn("worker_pid", src)
 
-    @unittest.expectedFailure  # D26 — fixed in Phase T4B (default path)
     def test_d26_desired_default_path_is_jobstore_lease(self) -> None:
         from Data.modules.market_sim import worker as worker_mod
 
