@@ -586,8 +586,9 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 - market/data models: `ohlcv.py`, `data_store.py`, `dataset_pipeline.py`, `instruments.py`, providers;
 - causality / epistemic time: `causality.py` (`SimulationClock`, `MarketView`), `epistemic.py` (`EpistemicFirewall`, `available_at <= as_of`);
+- market state / features (T2): `features.py` (deterministic OHLCV indicator library + provenance), `market_state.py` (`MarketState`, `MultiTimeframeView`, causal higher-TF aggregation);
 - reproducibility: `knowledge_snapshot.py` (`TradingKnowledgeSnapshot` persisted per run);
-- engine: `engine.py`, `multi_engine.py`, `fill_model.py`, `execution.py` (prepare verifies `data_hash`);
+- engine: `engine.py`, `multi_engine.py`, `fill_model.py`, `execution.py` (prepare verifies `data_hash`; multi-agent rounds attach `MarketState`);
 - accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
 - strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py`;
 - multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py` (as_of / firewall filtering);
@@ -595,7 +596,9 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 - service/store/worker/types/capabilities;
 - `orchestra/` — trading-only orchestration on the existing Agent Fleet and Model Control Plane.
 
-**T1 (causality + data foundation):** historical agents observe markets through `MarketView`; information sources must respect `available_at <= simulation as_of`; sealed market dataset versions are content-addressed and immutable (corrections create a new version); every run stores a `TradingKnowledgeSnapshot`. Live broker/real-money execution remains blocked.
+**T1 (causality + data foundation):** historical agents observe markets through `MarketView`; information sources must respect `available_at <= simulation as_of`; sealed market dataset versions are content-addressed and immutable (corrections create a new version); every run stores a `TradingKnowledgeSnapshot`.
+
+**T2 (market state + features):** `FeatureEngine` computes causal SMA/EMA/RSI/ATR/ADX/Bollinger/z-score/ROC/realized-vol/Donchian/VWAP/volume/breakout/slope/drawdown/correlation/beta/relative-strength with measured/insufficient/not-implemented status and provenance. `MarketState` packages deterministic price/trend/momentum/volatility/volume/structure/regime fields (neural interpretation excluded). Multi-timeframe views synthesize higher TFs from visible base bars only. OHLCV never claims order-book imbalance. Live broker/real-money execution remains blocked.
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

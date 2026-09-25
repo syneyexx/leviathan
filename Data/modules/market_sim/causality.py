@@ -161,34 +161,44 @@ class MarketView:
             return []
         return [self.clock.bars[i] for i in range(self.clock.index + 1)]
 
-    def feature(self, name: str, *, window: int | None = None) -> object:
-        """Placeholder hook for deterministic features (expanded in T2).
+    def feature(self, name: str, *, window: int | None = None, period: int | None = None) -> object:
+        """Deterministic causal feature (delegates to FeatureEngine in T2).
 
-        T1 only exposes causal closes / returns so strategies cannot reach future
-        bars while computing primitives.
+        Legacy aliases: ``close``, ``closes``, ``return`` remain supported.
         """
-        key = f"{name}:{window}"
+        p = period if period is not None else window
+        key = f"{name}:{p}"
         if key in self._feature_cache:
             return self._feature_cache[key]
         if name == "close":
-            value = self.current().close
+            value: object = self.current().close
         elif name == "closes":
-            if window is None or window < 1:
-                raise ValueError("closes feature requires window >= 1")
-            value = self.closes(window)
-        elif name == "return":
-            lookback = window or 2
-            closes = self.closes(lookback)
-            if len(closes) < 2 or closes[0] == 0:
-                value = 0.0
-            else:
-                value = (closes[-1] - closes[0]) / closes[0]
+            if p is None or p < 1:
+                raise ValueError("closes feature requires window/period >= 1")
+            value = self.closes(int(p))
         else:
-            raise CausalityViolation(
-                f"Unknown MarketView feature {name!r} — expanded feature engine is T2"
-            )
+            from .features import FeatureEngine
+
+            if self.as_of is None:
+                self.violations += 1
+                raise CausalityViolation("No feature before clock starts")
+            # Use all visible bars so indicators have full causal history.
+            bars = self.visible_bars()
+            engine = FeatureEngine()
+            feat_name = "return" if name == "return" else name
+            result = engine.compute(bars, feat_name, as_of=self.as_of, period=p)
+            if name == "return" and result.value is not None:
+                value = result.value
+            else:
+                value = result
         self._feature_cache[key] = value
         return value
+
+    def market_state(self, **kwargs: object):
+        """Build a deterministic MarketState from this causal view."""
+        from .market_state import build_market_state
+
+        return build_market_state(self, **kwargs)  # type: ignore[arg-type]
 
     def public_dict(self) -> dict:
         cur = self.clock.current_bar

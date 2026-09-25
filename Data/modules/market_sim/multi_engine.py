@@ -10,10 +10,11 @@ from typing import Any, Callable
 from Data.modules.common.hashing import sha256_file
 
 from .accounting import WalletBook, money
-from .causality import CausalityViolation, SimulationClock
+from .causality import CausalityViolation, MarketView, SimulationClock
 from .commit_reveal import CommitRevealProtocol
 from .execution import NextBarFillModel, OrderIntent
 from .experiments import StrategyMemoryIndex, market_features_from_closes
+from .market_state import build_market_state
 from .metrics import compute_metrics
 from .ohlcv import load_ohlcv
 from .risk_guard import RiskGuard, RiskLimits
@@ -315,6 +316,28 @@ class MultiAgentEngine:
                 positions[aid] = float(w.position_qty)
 
         features = market_features_from_closes(state.clock.closes(min(64, state.clock.index + 1)))
+        market_view = MarketView(
+            clock=state.clock,
+            instrument=str(run.symbol or ""),
+            timeframe=str(run.timeframe or ""),
+        )
+        market_state = None
+        try:
+            market_state = build_market_state(
+                market_view,
+                venue=str((run.metadata or {}).get("venue") or ""),
+                asset_class=str((run.metadata or {}).get("instrument_family") or ""),
+                portfolio={
+                    "cash": float(run.cash),
+                    "equity": float(run.equity),
+                    "positions": positions,
+                },
+                lookback=min(120, state.clock.index + 1),
+            )
+            # Prefer deterministic MarketState summary for memory / regime matching.
+            features = {**features, **market_state.summary_features()}
+        except Exception:  # noqa: BLE001 — never break the bar loop on feature warm-up
+            market_state = None
 
         def memory_lookup(agent_id: str, role: str, ts: str) -> list[dict[str, Any]]:
             hits = state.memory.search(as_of_ts=ts, features=features, limit=3)
@@ -397,7 +420,12 @@ class MultiAgentEngine:
                 strategy_version=run.strategy_version,
                 decision_scope="shared" if state.game_mode == GAME_SHARED else "individual",
                 retrieved_memories=memories,
-                metadata={"features": features, "parameters_used": signal.parameters_used},
+                metadata={
+                    "features": features,
+                    "parameters_used": signal.parameters_used,
+                    "market_state_as_of": market_state.as_of if market_state else None,
+                    "regime": (market_state.regime if market_state else None),
+                },
             )
             decision.intent.run_id = run.run_id
             from .types import DeliberationMessage
@@ -493,6 +521,7 @@ class MultiAgentEngine:
             payload={
                 "bar_index": state.clock.index,
                 "features": features,
+                "market_state": market_state.public_dict() if market_state else None,
                 "decision_count": len(revealed),
                 "pending_intents": len(state.pending_intents),
             },

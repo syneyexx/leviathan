@@ -26,7 +26,7 @@ class TradingKnowledgeSnapshot:
     model_version: str | None = None
     agent_definitions: list[dict[str, Any]] = field(default_factory=list)
     news_cutoff: str | None = None
-    feature_pipeline_version: str = "market_features-1"
+    feature_pipeline_version: str = "market_features-2"
     execution_model_version: str = "next_bar_open-1"
     cost_model_version: str = "fee_slippage_bps-1"
     risk_configuration: dict[str, Any] = field(default_factory=dict)
