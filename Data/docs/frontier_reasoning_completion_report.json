@@ -1,6 +1,6 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-25T07:52:55Z",
+  "generated_at": "2026-09-25T07:58:41Z",
   "phase": "F0",
   "exit_code": 0,
   "definition_of_done": true,
@@ -125,8 +125,8 @@
       "id": "R09",
       "title": "Structured reasoning state",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f5_structured;structured_reasoning_state_contract_ok",
       "phase": "F5",
       "kind": "program_gate"
     },

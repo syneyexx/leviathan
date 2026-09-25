@@ -191,6 +191,29 @@ def _ttc_scan() -> tuple[str, str]:
     return "PASS", "ttc_multi_candidate_wired"
 
 
+def _structured_state_scan() -> tuple[str, str]:
+    """R09 structural: public structured reasoning state persist contract."""
+    path = ROOT / "Data" / "modules" / "cognition" / "structured_state.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    if not path.is_file():
+        return "FAIL", "missing:structured_state.py"
+    text = path.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    if "class StructuredReasoningState" not in text:
+        return "FAIL", "missing_StructuredReasoningState"
+    if "candidate_summaries" not in text:
+        return "FAIL", "missing_candidate_summaries"
+    if "persistable_public_contract" not in text:
+        return "FAIL", "missing_persistable_public_contract_flag"
+    if "no_private_cot" not in text:
+        return "FAIL", "missing_no_private_cot_flag"
+    if "reasoning_state" not in rt or "structured_state_from_mapping" not in rt:
+        return "FAIL", "runtime_missing_reasoning_state_wire"
+    if 'checkpoint["reasoning_state"]' not in rt:
+        return "FAIL", "persist_missing_reasoning_state_in_result_json"
+    return "PASS", "structured_reasoning_state_contract_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -331,6 +354,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st7, ev7
                     else:
                         evidence = f"{evidence};{ev7}"
+                if status == "PASS" and gid == "R09":
+                    st9, ev9 = _structured_state_scan()
+                    if st9 != "PASS":
+                        status, evidence = st9, ev9
+                    else:
+                        evidence = f"{evidence};{ev9}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

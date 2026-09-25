@@ -20,6 +20,14 @@ from .inference_compute import (
     InferenceComputeResult,
 )
 from .ttc import TTCCandidate, TTCExecutor, TTCSelection, select_ttc_candidate
+from .structured_state import (
+    CandidateSummary,
+    EvidenceRef,
+    OpenQuestion,
+    PublicClaim,
+    StructuredReasoningState,
+    structured_state_from_mapping,
+)
 from .meta_controller import MetaController, MetaDecision
 from .model_adapter import build_control_plane_model_caller
 from .neural_compute import (
@@ -62,6 +70,7 @@ __all__ = [
     "BeliefItem",
     "BeliefState",
     "BeliefStatus",
+    "CandidateSummary",
     "CapabilityBroker",
     "CapabilityShortlist",
     "ClampReason",
@@ -90,6 +99,7 @@ __all__ = [
     "DomainCognitiveStrategy",
     "DomainUnderstandResult",
     "EpistemicType",
+    "EvidenceRef",
     "ExperienceAdmissionPolicy",
     "ExperienceStore",
     "FailureCategory",
@@ -103,11 +113,13 @@ __all__ = [
     "MetaDecision",
     "NativeEffort",
     "NeuralComputeBudget",
+    "OpenQuestion",
     "PerceptionItem",
     "PerceptionService",
     "PerceptionSnapshot",
     "PlanStep",
     "ProceduralMemoryHint",
+    "PublicClaim",
     "ReasoningCapabilityProfile",
     "ReasoningMode",
     "ReasoningStrategy",
@@ -115,6 +127,7 @@ __all__ = [
     "SteerClassification",
     "SteerKind",
     "StrategyRegistry",
+    "StructuredReasoningState",
     "TTCCandidate",
     "TTCExecutor",
     "TTCSelection",
@@ -133,4 +146,5 @@ __all__ = [
     "resolve_reasoning_capability_profile",
     "select_ttc_candidate",
     "should_blind_retry",
+    "structured_state_from_mapping",
 ]
