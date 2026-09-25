@@ -71,6 +71,23 @@ def build_observability_router(
             },
         }
 
+    @router.get("/api/observability/cognition-compute")
+    def cognition_compute() -> dict:
+        """Two-axis cognition compute snapshot (orchestration + neural)."""
+        snap = observability.snapshot()
+        compute = snap.get("cognition_compute")
+        if not isinstance(compute, dict):
+            compute = {
+                "orchestration": {},
+                "neural": {},
+                "truth": {
+                    "two_axis_compute_observability": True,
+                    "unmeasured_fields_remain_null": True,
+                    "no_private_cot": True,
+                },
+            }
+        return {"cognition_compute": compute}
+
     @router.get("/api/events/stream")
     async def stream_events(
         request: Request,

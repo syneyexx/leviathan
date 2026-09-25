@@ -478,13 +478,19 @@ export function SettingsPage() {
                   </label>
                   <label>
                     Reasoning default
-                    <input
+                    <select
                       className="lv-input"
                       value={behaviorDraft.reasoning_mode_default}
                       onChange={(e) =>
                         setBehaviorDraft((d) => ({ ...d, reasoning_mode_default: e.target.value }))
                       }
-                    />
+                    >
+                      <option value="adaptive">Auto / Adaptive</option>
+                      <option value="fast">Fast</option>
+                      <option value="standard">Standard</option>
+                      <option value="deep">Deep</option>
+                      <option value="maximum">Maximum</option>
+                    </select>
                   </label>
                   <label>
                     Tool style

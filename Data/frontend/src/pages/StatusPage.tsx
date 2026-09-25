@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import type {
+  CognitionComputeSnapshot,
   HealthResponse,
   MasterGateReport,
   NeuroResidualStatus,
@@ -19,6 +20,7 @@ type LoadState = {
   residual: NeuroResidualStatus | null;
   recipes: TrainingRecipe[];
   soak: SoakReport | null;
+  cognitionCompute: CognitionComputeSnapshot | null;
   error: string | null;
 };
 
@@ -31,6 +33,7 @@ export function StatusPage() {
     residual: null,
     recipes: [],
     soak: null,
+    cognitionCompute: null,
     error: null,
   });
 
@@ -38,14 +41,16 @@ export function StatusPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [health, release, security, master, residual, recipes] = await Promise.all([
-          api.health(),
-          api.releaseGates(),
-          api.securityAudit(),
-          api.masterGates(),
-          api.neuroResidual(),
-          api.listTrainingRecipes(),
-        ]);
+        const [health, release, security, master, residual, recipes, cognitionCompute] =
+          await Promise.all([
+            api.health(),
+            api.releaseGates(),
+            api.securityAudit(),
+            api.masterGates(),
+            api.neuroResidual(),
+            api.listTrainingRecipes(),
+            api.cognitionCompute().catch(() => ({ cognition_compute: null })),
+          ]);
         if (cancelled) return;
         setState((prev) => ({
           ...prev,
@@ -55,6 +60,7 @@ export function StatusPage() {
           master: master.report,
           residual,
           recipes: recipes.recipes,
+          cognitionCompute: cognitionCompute.cognition_compute,
           error: null,
         }));
       } catch (err) {
@@ -120,6 +126,70 @@ export function StatusPage() {
               </div>
             </div>
           ) : null}
+        </section>
+
+        <section className="lv-panel lv-card" style={{ marginBottom: "1rem" }}>
+          <div className="lv-card-head">
+            <div className="lv-section-label">Cognition compute (two-axis)</div>
+            <span className="lv-online-count">
+              {state.cognitionCompute?.truth?.two_axis_compute_observability
+                ? "orchestration + neural"
+                : "waiting"}
+            </span>
+          </div>
+          {state.cognitionCompute ? (
+            <>
+              <div className="lv-world-stats">
+                <div className="lv-world-stat">
+                  <span>Orch mode</span>
+                  <strong>
+                    {state.cognitionCompute.orchestration?.effective_mode ??
+                      state.cognitionCompute.orchestration?.mode ??
+                      "—"}
+                  </strong>
+                </div>
+                <div className="lv-world-stat">
+                  <span>Requested</span>
+                  <strong>{state.cognitionCompute.orchestration?.requested_mode ?? "—"}</strong>
+                </div>
+                <div className="lv-world-stat">
+                  <span>Clamp</span>
+                  <strong>{state.cognitionCompute.orchestration?.clamp_reason ?? "—"}</strong>
+                </div>
+                <div className="lv-world-stat">
+                  <span>Strategy</span>
+                  <strong>{state.cognitionCompute.orchestration?.strategy ?? "—"}</strong>
+                </div>
+                <div className="lv-world-stat">
+                  <span>Native effort</span>
+                  <strong>{state.cognitionCompute.neural?.native_effort ?? "—"}</strong>
+                </div>
+                <div className="lv-world-stat">
+                  <span>Max reasoning tokens</span>
+                  <strong>
+                    {state.cognitionCompute.neural?.max_reasoning_tokens ?? "—"}
+                  </strong>
+                </div>
+                <div className="lv-world-stat">
+                  <span>Candidates</span>
+                  <strong>{state.cognitionCompute.neural?.candidate_count ?? "—"}</strong>
+                </div>
+                <div className="lv-world-stat">
+                  <span>Expected gain</span>
+                  <strong>
+                    {state.cognitionCompute.neural?.expected_gain != null
+                      ? state.cognitionCompute.neural.expected_gain.toFixed(3)
+                      : "—"}
+                  </strong>
+                </div>
+              </div>
+              <p className="lv-muted">
+                Unmeasured fields stay null. No private CoT. Neural signal ≠ authority.
+              </p>
+            </>
+          ) : (
+            <p className="lv-muted">Cognition compute snapshot unavailable.</p>
+          )}
         </section>
 
         <section className="lv-grid-2">

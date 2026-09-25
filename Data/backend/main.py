@@ -95,7 +95,9 @@ from Data.modules.schedules import (
 from Data.modules.observability import (
     ObservabilityHub,
     SystemTelemetrySampler,
+    attach_cognition_compute_provider,
     build_default_operator_registry,
+    cognition_compute_snapshot,
 )
 from Data.modules.metrics import MetricsCollector, TimeSeriesStore
 from Data.backend.routes.observability import build_observability_router
@@ -975,6 +977,10 @@ cognition_runtime = CognitiveRuntime(
     job_runtime=job_runtime,
     externalize_deep=True,
 )
+attach_cognition_compute_provider(
+    observability,
+    lambda: cognition_compute_snapshot(runtime=cognition_runtime),
+)
 register_specialist_handlers(
     cognition_delegation,
     coding_service=coding_service,
@@ -1767,6 +1773,8 @@ class ChatRequest(BaseModel):
     model_id: str | None = None
     preferred_role: str | None = None
     stream: bool = False
+    # Session override for cognition depth (AUTO/ADAPTIVE/FAST/STANDARD/DEEP/MAXIMUM).
+    reasoning_mode: str | None = Field(default=None, max_length=32)
 
 
 class KnowledgeWrite(BaseModel):
@@ -2155,7 +2163,10 @@ async def chat(payload: ChatRequest, request: Request):
                 has_knowledge=has_knowledge,
                 shadow=True if settings.features.cognition_shadow else False,
                 metadata={"chat_run_id": run.run_id},
-                user_requested_depth=live_settings().reasoning.default_mode,
+                user_requested_depth=(
+                    (payload.reasoning_mode or "").strip()
+                    or live_settings().reasoning.default_mode
+                ),
                 behavior_profile_prompt=behavior_snapshot.system_prompt,
                 behavior_profile_id=getattr(behavior_profile, "id", None),
                 behavior_profile_version=str(
@@ -2175,7 +2186,13 @@ async def chat(payload: ChatRequest, request: Request):
                     "run_id": cognition_meta.get("run_id"),
                     "status": cognition_meta.get("status"),
                     "mode": cognition_meta.get("mode"),
+                    "requested_mode": cognition_meta.get("requested_mode"),
+                    "effective_mode": cognition_meta.get("effective_mode"),
                     "strategy": cognition_meta.get("strategy"),
+                    "neural_budgets": cognition_meta.get("neural_budgets"),
+                    "expected_gain": cognition_meta.get("expected_gain"),
+                    "neural_adaptation": cognition_meta.get("neural_adaptation"),
+                    "clamp_reason": cognition_meta.get("clamp_reason"),
                 },
             )
         except Exception as exc:  # noqa: BLE001 — cognition must not break chat

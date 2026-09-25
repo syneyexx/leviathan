@@ -2,8 +2,8 @@
   "program": "frontier_reasoning",
   "version": 1,
   "updated": "2026-09-25",
-  "active_phase": "F16",
-  "notes": "F16 frontier evaluation/ablation landed. R02–R15/R17–R24/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
+  "active_phase": "F17",
+  "notes": "F17 frontend reasoning controls + two-axis cognition compute observability landed. R02–R15/R17–R27/R28–R29 PASS evidence. Remaining open: R01/R16/R30. Distinct from trading frontier_program.",
   "f0_skeleton_checks": [
     {
       "id": "F0_AUDIT_DOC",
@@ -79,8 +79,8 @@
     {"id": "R22", "title": "Training export", "required": true, "status": "PASS", "phase": "F14", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f14_training_export", "evidence": "PublicCognitiveTrajectory + TrajectoryExportBridge; no private CoT; export≠train"},
     {"id": "R23", "title": "Candidate training lifecycle", "required": true, "status": "PASS", "phase": "F15", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f15_candidate_lifecycle", "evidence": "CandidateTrainingLifecycle pending→governed→ingested from cognition export; never auto-promotes"},
     {"id": "R24", "title": "Evaluation/ablation", "required": true, "status": "PASS", "phase": "F16", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f16_evaluation", "evidence": "frontier_reasoning suite + frontier ablations; UNMEASURED≠PASS"},
-    {"id": "R25", "title": "Frontend reasoning controls", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
-    {"id": "R26", "title": "Observability", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
+    {"id": "R25", "title": "Frontend reasoning controls", "required": true, "status": "PASS", "phase": "F17", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f17_frontend_obs.ReasoningDepthControlTests", "evidence": "Chat/Cognition AUTO–MAXIMUM selector + reasoning_mode wire"},
+    {"id": "R26", "title": "Observability", "required": true, "status": "PASS", "phase": "F17", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f17_frontend_obs.CognitionComputeObservabilityTests", "evidence": "cognition_compute two-axis snapshot + Status/Performance panels"},
     {"id": "R27", "title": "Resource pressure", "required": true, "status": "PASS", "phase": "F2+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests", "evidence": "requested MAXIMUM → effective DEEP under GPU_RESOURCE_PRESSURE"},
     {"id": "R28", "title": "Security", "required": true, "status": "PASS", "phase": "F1+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests", "evidence": "prompt-injection + role-marker + RAG/tool/memory authority tests"},
     {"id": "R29", "title": "No hidden CoT leakage", "required": true, "status": "PASS", "phase": "F3+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f3_native", "evidence": "strip_private_reasoning_fields + normalize_result public channel only"},

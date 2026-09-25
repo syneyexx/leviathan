@@ -14,6 +14,7 @@ import type {
   ApiErrorBody,
   BackupManifest,
   ChatResponse,
+  CognitionComputeSnapshot,
   CognitionHealth,
   CognitionRunStatus,
   Conversation,
@@ -350,6 +351,7 @@ export const api = {
         ...(options.modelId ? { model_id: options.modelId } : {}),
         ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
         ...(options.stream != null ? { stream: options.stream } : {}),
+        ...(options.reasoningMode ? { reasoning_mode: options.reasoningMode } : {}),
       }),
     });
   },
@@ -383,6 +385,7 @@ export const api = {
         stream: true,
         ...(options.modelId ? { model_id: options.modelId } : {}),
         ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
+        ...(options.reasoningMode ? { reasoning_mode: options.reasoningMode } : {}),
       }),
       signal: fetchInit?.signal,
     });
@@ -2251,6 +2254,8 @@ export const api = {
     shadow?: boolean | null;
     constraints?: string[];
     run?: boolean;
+    user_requested_depth?: string | null;
+    reasoning_mode?: string | null;
   }): Promise<CognitionRunStatus> {
     return request("/api/cognition/submit", {
       method: "POST",
@@ -2283,6 +2288,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ instruction }),
     });
+  },
+
+  /** Two-axis cognition compute snapshot (orchestration + neural). Never private CoT. */
+  cognitionCompute(): Promise<{ cognition_compute: CognitionComputeSnapshot }> {
+    return request("/api/observability/cognition-compute");
   },
 
   getSettings(): Promise<SettingsSnapshot> {

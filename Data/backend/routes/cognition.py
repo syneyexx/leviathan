@@ -19,6 +19,9 @@ class CognitionSubmitRequest(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     run: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Operator / UI requested depth: AUTO|ADAPTIVE|FAST|STANDARD|DEEP|MAXIMUM
+    user_requested_depth: str | None = Field(default=None, max_length=32)
+    reasoning_mode: str | None = Field(default=None, max_length=32)
     # Optional: pass the same effective BehaviorProfile snapshot Chat uses.
     # When omitted, CognitiveRuntime resolves via Settings behavior_resolver.
     behavior_profile_prompt: str | None = None
@@ -74,6 +77,10 @@ def build_cognition_router(
                 shadow=payload.shadow,
                 constraints=payload.constraints,
                 metadata=payload.metadata,
+                user_requested_depth=(
+                    (payload.user_requested_depth or payload.reasoning_mode or "").strip()
+                    or None
+                ),
                 behavior_profile_prompt=payload.behavior_profile_prompt,
                 behavior_profile_id=payload.behavior_profile_id,
                 behavior_profile_version=payload.behavior_profile_version,
