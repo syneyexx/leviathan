@@ -1252,9 +1252,9 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests"
       ],
-      "notes": "Frontier Program F1",
+      "notes": "Frontier Program F1; T7: TRADING maps to AgentKind.TRADING and is refused by generic AgentRuntime (TRADING_EXECUTOR_REQUIRED) unless TradingMissionExecutor is registered.",
       "assertions": [
-        "_execution_kind(TRADING) raises TRADING_EXECUTOR_REQUIRED",
+        "_execution_kind(TRADING) \u2192 AgentKind.TRADING; AgentRuntime refuses TRADING_EXECUTOR_REQUIRED",
         "TRADING member outside trade orchestra \u2192 TRADING_MEMBER_ISOLATION",
         "trade orchestra with non-trading member \u2192 422",
         "Mandate.cannot_enable_live immutable; A5 does not parse"
