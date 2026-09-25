@@ -156,6 +156,10 @@ export function SimulatiePage() {
   const [strategyId, setStrategyId] = useState("");
   const [seed, setSeed] = useState(42);
   const [speed, setSpeed] = useState(1);
+  const [initialCash, setInitialCash] = useState(100_000);
+  const [engine, setEngine] = useState<"single" | "multi">("single");
+  const [decisionCadence, setDecisionCadence] = useState("every_n_bars");
+  const [deliberationEveryN, setDeliberationEveryN] = useState(5);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [consoleTab, setConsoleTab] = useState<ConsoleTab>("activity");
@@ -284,49 +288,56 @@ export function SimulatiePage() {
     setBusy(true);
     setError(null);
     try {
+      const multiAgents =
+        engine === "multi"
+          ? [
+              {
+                agent_id: "agent-trend",
+                role: "trend",
+                label: "Trend",
+                parameters: { fast_ma: 8, slow_ma: 21, lookback: 30 },
+                initial_cash: initialCash / 2,
+                authority: { may_order: true },
+              },
+              {
+                agent_id: "agent-mean",
+                role: "mean_reversion",
+                label: "Mean reversion",
+                parameters: { lookback: 20, entry_z: -1.2, exit_z: 0.2 },
+                entry_rules: { kind: "mean_reversion", entry_z: -1.2 },
+                exit_rules: { kind: "mean_reversion", exit_z: 0.2 },
+                initial_cash: initialCash / 2,
+                authority: { may_order: true },
+              },
+              {
+                agent_id: "agent-risk",
+                role: "risk_officer",
+                label: "Risk Officer",
+                authority: { may_order: false, may_veto: true, veto_is_binding: true },
+                initial_cash: 0,
+              },
+            ]
+          : [];
       const { run: created } = await api.createMarketSimRun({
         sourceId,
         strategyId: strategyId || undefined,
         seed,
         speed,
-        deliberationEveryN: 3,
-        gameMode: "individual_competition",
-        metadata: { multi_agent: true, commit_reveal: true, multi_wallet: true },
-        agents: [
-          {
-            agent_id: "agent-alpha",
-            role: "market_analyst",
-            label: "Alpha (trend)",
-            parameters: { fast_ma: 8, slow_ma: 21, lookback: 30 },
-            initial_cash: 50000,
-            authority: { may_order: true },
-          },
-          {
-            agent_id: "agent-beta",
-            role: "strategy_researcher",
-            label: "Beta (mean-reversion)",
-            parameters: { lookback: 20, entry_z: -1.2, exit_z: 0.2 },
-            entry_rules: { kind: "mean_reversion", entry_z: -1.2 },
-            exit_rules: { kind: "mean_reversion", exit_z: 0.2 },
-            initial_cash: 50000,
-            authority: { may_order: true },
-          },
-          {
-            agent_id: "agent-risk",
-            role: "risk_agent",
-            label: "Risk Officer",
-            authority: { may_order: false, may_veto: true, veto_is_binding: true },
-            initial_cash: 0,
-          },
-          {
-            agent_id: "agent-orch",
-            role: "trading_orchestrator",
-            label: "Orchestrator",
-            authority: { manages_task: true, may_order: false },
-            initial_cash: 0,
-          },
-        ],
+        initialCash,
+        deliberationEveryN: engine === "multi" ? deliberationEveryN : 5,
+        decisionCadence: engine === "multi" ? decisionCadence : "off",
+        gameMode: engine === "multi" ? "individual_competition" : undefined,
+        metadata: {
+          multi_agent: engine === "multi",
+          commit_reveal: engine === "multi",
+          multi_wallet: engine === "multi",
+          engine,
+          decision_cadence: engine === "multi" ? decisionCadence : "off",
+        },
+        agents: multiAgents,
       });
+      setRun(created);
+      setLive(null);
       setSelectedId(created.run_id);
       await api.startMarketSimRun(created.run_id);
       await refreshMeta();
@@ -434,6 +445,41 @@ export function SimulatiePage() {
               disabled={!enabled || busy}
             />
           </label>
+          <label>
+            Initial cash
+            <input
+              type="number"
+              value={initialCash}
+              onChange={(e) => setInitialCash(Number(e.target.value) || 100_000)}
+              disabled={!enabled || busy}
+            />
+          </label>
+          <label>
+            Engine
+            <select
+              value={engine}
+              onChange={(e) => setEngine(e.target.value === "multi" ? "multi" : "single")}
+              disabled={!enabled || busy}
+            >
+              <option value="single">Single strategy</option>
+              <option value="multi">Multi-agent</option>
+            </select>
+          </label>
+          {engine === "multi" ? (
+            <label>
+              Decision cadence
+              <select
+                value={decisionCadence}
+                onChange={(e) => setDecisionCadence(e.target.value)}
+                disabled={!enabled || busy}
+              >
+                <option value="every_n_bars">Every N bars</option>
+                <option value="daily_close">Daily close</option>
+                <option value="hourly">Hourly</option>
+                <option value="event_driven">Event driven</option>
+              </select>
+            </label>
+          ) : null}
           <div className="ts-speed-row" aria-label="Simulation speed">
             {[1, 2, 5].map((s) => (
               <button
@@ -452,7 +498,7 @@ export function SimulatiePage() {
             Scan / seed data
           </button>
           <button type="button" className="ts-run-btn" disabled={!enabled || busy} onClick={() => void onCreate()}>
-            New multi-agent run
+            {engine === "multi" ? "New multi-agent run" : "New strategy run"}
           </button>
           <button
             type="button"

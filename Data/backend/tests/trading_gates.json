@@ -1072,26 +1072,55 @@
     },
     "G41": {
       "title": "Trading Center pages real data",
-      "phase": "T10A",
-      "status": "NOT_STARTED",
+      "phase": "T10A/P4C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "SimulatiePage / PaperTradingPage / StrategieenPage call real /api/market-sim routes",
+        "No hardcoded agent-alpha default roster; engine single|multi explicit",
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization",
+        "PaperTradingPage uses api.listPaperSessions / createPaperSession / capabilities"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4C: TradingCenter uses real backend state (D27)",
       "related_defects": [
         "D27"
       ]
     },
     "G42": {
       "title": "Run configuration UI complete",
-      "phase": "T10A",
-      "status": "NOT_STARTED",
+      "phase": "T10A/P4C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "SimulatiePage exposes initialCash, engine, decisionCadence, seed, speed",
+        "Default engine=single (empty agents); multi-agent opt-in",
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4C: run builder options (D27)",
       "related_defects": [
         "D27"
       ]

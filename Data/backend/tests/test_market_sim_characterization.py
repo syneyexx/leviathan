@@ -1140,7 +1140,7 @@ class D26JobRuntimeCharacterization(unittest.TestCase):
 
 
 class D27FrontendGapsCharacterization(unittest.TestCase):
-    def test_d27_current_simulatie_hardcodes_four_agents(self) -> None:
+    def test_d27_simulatie_exposes_run_builder_options(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]
             / "frontend"
@@ -1150,13 +1150,11 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
             / "SimulatiePage.tsx"
         )
         text = page.read_text(encoding="utf-8")
-        self.assertIn("agent-alpha", text)
-        self.assertIn("agent-beta", text)
-        self.assertIn("agent-risk", text)
-        self.assertIn("agent-orch", text)
-        self.assertIn('gameMode: "individual_competition"', text)
-        self.assertIn("useState(42)", text)
-        self.assertIn("seed,", text)
+        self.assertIn("initialCash", text)
+        self.assertIn("engine", text)
+        self.assertNotIn("agent-alpha", text)
+        self.assertIn("decisionCadence", text)
+        self.assertIn('useState<"single" | "multi">("single")', text)
 
     def test_d27_current_live_state_oldest_first_limits(self) -> None:
         from Data.modules.market_sim import service as svc_mod
@@ -1182,7 +1180,6 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
         text = page.read_text(encoding="utf-8")
         self.assertIn(".slice(-60)", text)
 
-    @unittest.expectedFailure  # D27 — fixed in Phase T10A
     def test_d27_desired_simulatie_exposes_run_builder_options(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]

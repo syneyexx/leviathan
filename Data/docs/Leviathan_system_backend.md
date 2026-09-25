@@ -671,7 +671,9 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **P4A (PaperForwardRunner + isolated paper + RiskGuard):** `LocalPaperBroker.wallet_for_session` isolates cash per paper session (D18). `PaperForwardRunner` + `paper_forward_step` / `paper_place_order` run every paper order through canonical `RiskGuard` (G32/G34 PASS). Live money remains BLOCKED.
 
-**P4B (sim-to-paper gap + Gateway + leases — CURRENT):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
+**P4B (sim-to-paper gap + Gateway + leases):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
+
+**P4C (TradingCenter frontend real backend — CURRENT):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
