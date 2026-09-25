@@ -30,6 +30,40 @@ def get_bound_web_provider() -> WebResearchProvider | None:
     return _BOUND_PROVIDER
 
 
+def _ensure_provider() -> WebResearchProvider | None:
+    """Return bound provider, or build from Settings when running in a worker."""
+    global _BOUND_PROVIDER, _ALLOW_OUTBOUND
+    if _BOUND_PROVIDER is not None:
+        return _BOUND_PROVIDER
+    # Avoid silently rebuilding from env in unit tests / unbound API paths.
+    import os
+
+    if not os.environ.get("LEVIATHAN_WORKER_ID"):
+        return None
+    try:
+        from Data.backend.config import Settings
+        from Data.modules.research.web import build_web_provider
+
+        settings = Settings.from_env()
+        allow = bool(settings.network.allow_outbound)
+        endpoint = settings.research_integration.web_search_endpoint
+        api_key = settings.research_integration.web_search_api_key
+        search_provider = getattr(
+            settings.research_integration, "web_search_provider", None
+        )
+        provider = build_web_provider(
+            allow_outbound=allow,
+            search_endpoint=endpoint,
+            api_key=api_key,
+            search_provider=search_provider,
+        )
+        _BOUND_PROVIDER = provider
+        _ALLOW_OUTBOUND = allow
+        return provider
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def execute_web_search(query: str, *, limit: int = 5) -> dict[str, Any]:
     """Search via bound provider. Honest WEB_SEARCH_UNAVAILABLE when not configured."""
     q = (query or "").strip()
@@ -41,7 +75,7 @@ def execute_web_search(query: str, *, limit: int = 5) -> dict[str, Any]:
             "results": [],
             "truth": {"fabricated": False},
         }
-    provider = _BOUND_PROVIDER
+    provider = _ensure_provider()
     if provider is None:
         return {
             "status": "UNAVAILABLE",
@@ -125,7 +159,7 @@ def execute_web_fetch(
             "error": "url is required",
             "truth": {"fabricated": False},
         }
-    provider = _BOUND_PROVIDER
+    provider = _ensure_provider()
     if provider is None:
         return {
             "status": "UNAVAILABLE",

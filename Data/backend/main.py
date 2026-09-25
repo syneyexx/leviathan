@@ -1418,6 +1418,195 @@ brain_facade = BrainQueryFacade(
     max_edges=500,
 )
 
+# ---- GI2 system.inspect + GI7 web.search/web.fetch binding ------------------
+from Data.modules.cognition.system_inspect import (  # noqa: E402
+    SystemInspectService,
+    bind_system_inspect_service,
+)
+from Data.modules.research.web_capabilities import bind_web_provider  # noqa: E402
+
+
+def _application_commit() -> str | None:
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        if result.returncode == 0:
+            return (result.stdout or "").strip() or None
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _active_model_id() -> str | None:
+    try:
+        cards = model_plane.status_cards()
+        return cards.get("activeModel")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _model_role_backend() -> dict[str, Any]:
+    try:
+        active = model_plane.store.get_active_model_id()
+        if not active:
+            return {"role": None, "backend": None}
+        desc = None
+        for m in model_plane.registry.list_descriptors():
+            if m.id == active:
+                desc = m
+                break
+        role = getattr(desc, "preferred_role", None) if desc else None
+        backend = None
+        if desc is not None:
+            backend = getattr(desc, "backend_kind", None) or getattr(
+                desc, "provider_id", None
+            )
+        return {"role": role, "backend": backend, "model_id": active}
+    except Exception:  # noqa: BLE001
+        return {"role": None, "backend": None}
+
+
+def _context_window() -> int | None:
+    try:
+        active = model_plane.store.get_active_model_id()
+        if not active:
+            return None
+        for m in model_plane.registry.list_descriptors():
+            if m.id == active:
+                return getattr(m, "context_window", None)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _fleet_snapshot() -> dict[str, Any]:
+    from Data.modules.agents.fleet_types import ACTIVE_MISSION_STATUSES, AgentHealth
+
+    agents = agent_fleet.list_agents(include_archived=False)
+    live_health = {AgentHealth.IDLE, AgentHealth.BUSY}
+    active_agents = [a for a in agents if getattr(a, "health", None) in live_health]
+    missions = agent_fleet_store.list_missions(limit=200)
+    active_missions = []
+    for m in missions:
+        status = getattr(m, "status", None)
+        status_val = status.value if hasattr(status, "value") else str(status or "")
+        if status_val in ACTIVE_MISSION_STATUSES:
+            active_missions.append(m)
+    return {
+        "active_agents": len(active_agents),
+        "active_missions": len(active_missions),
+        "agents": len(agents),
+        "missions": len(missions),
+    }
+
+
+def _jobs_summary() -> dict[str, Any]:
+    queued = len(job_runtime.list(state=JobState.QUEUED, limit=500))
+    return {
+        "queued": queued,
+        "telemetry": dict(getattr(job_runtime, "telemetry", {}) or {}),
+    }
+
+
+def _tool_calls_summary() -> dict[str, Any]:
+    return {
+        "gateway": dict(getattr(execution_gateway, "telemetry", {}) or {}),
+        "function_runtime": dict(getattr(function_runtime, "telemetry", {}) or {}),
+    }
+
+
+def _web_usage_summary() -> dict[str, Any]:
+    provider = getattr(research_service, "web", None)
+    search_ready = False
+    if provider is not None and hasattr(provider, "search_configured"):
+        try:
+            search_ready = bool(provider.search_configured())
+        except Exception:  # noqa: BLE001
+            search_ready = False
+    return {
+        "provider": getattr(provider, "name", None),
+        "allow_outbound": bool(getattr(research_service, "allow_outbound", False)),
+        "search_configured": search_ready,
+        "configured": bool(provider.configured()) if provider is not None else False,
+    }
+
+
+def _knowledge_counts() -> dict[str, Any]:
+    docs = knowledge.list_documents(limit=10_000)
+    return {"count": len(docs), "turn_hits": None}
+
+
+def _memory_counts() -> dict[str, Any]:
+    items = memory_store.list(limit=10_000)
+    return {"count": len(items), "turn_hits": None}
+
+
+def _evidence_counts() -> dict[str, Any]:
+    items = evidence_store.list(limit=10_000)
+    return {"count": len(items), "turn_hits": None}
+
+
+def _brain_status() -> dict[str, Any]:
+    # Brain is a query facade — expose readiness + document hit counts, never a %.
+    try:
+        docs = knowledge.list_documents(limit=10_000)
+        hits = len(docs)
+    except Exception:  # noqa: BLE001
+        hits = None
+    return {
+        "status": "ready",
+        "hits": hits,
+    }
+
+
+def _application_version() -> str:
+    # FastAPI app is constructed later; fall back to the known release label.
+    try:
+        return str(getattr(globals().get("app"), "version", None) or "0.73.0-wave9-flywheel")
+    except Exception:  # noqa: BLE001
+        return "0.73.0-wave9-flywheel"
+
+
+system_inspect_service = SystemInspectService(
+    application_version_provider=_application_version,
+    application_commit_provider=_application_commit,
+    active_model_provider=_active_model_id,
+    model_role_backend_provider=_model_role_backend,
+    context_window_provider=_context_window,
+    cognition_runtime_provider=lambda: cognition_runtime,
+    behavior_profile_provider=lambda: behavior_store,
+    brain_status_provider=_brain_status,
+    knowledge_count_provider=_knowledge_counts,
+    memory_count_provider=_memory_counts,
+    evidence_count_provider=_evidence_counts,
+    verification_outcome_provider=lambda: {
+        "engine": "VerificationEngine",
+        "wired": verification_engine is not None,
+    },
+    agent_fleet_provider=_fleet_snapshot,
+    worker_pools_provider=None,  # API process: pools owned by WorkerSupervisor when externalized
+    jobs_provider=_jobs_summary,
+    tool_calls_provider=_tool_calls_summary,
+    web_usage_provider=_web_usage_summary,
+    context_budget_provider=None,  # turn-scoped; filled when turn context is available
+    telemetry_provider=lambda: system_telemetry_sampler.latest_public(),
+    turn_context_provider=None,
+)
+bind_system_inspect_service(system_inspect_service)
+bind_web_provider(
+    research_service.web,
+    allow_outbound=bool(getattr(research_service, "allow_outbound", False)),
+    allow_web=True,
+)
+
 
 def live_settings():
     """Effective settings after Settings Control Plane overrides."""
