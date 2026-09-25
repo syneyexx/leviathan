@@ -111,6 +111,36 @@ def _handle_research_campaign(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _handle_scan_batch(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.scan_batch — batch source scan / bounded provider refresh on worker."""
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    payload = dict(args.get("payload") or {})
+    symbols = args.get("symbols") or payload.get("symbols")
+    provider_id = str(args.get("provider_id") or payload.get("provider_id") or "binance_public")
+    timeframe = str(args.get("timeframe") or payload.get("timeframe") or "1m")
+    limit = int(args.get("limit") or payload.get("limit") or 100)
+    try:
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        result = plane.scan_batch(
+            symbols=list(symbols) if symbols else None,
+            provider_id=provider_id,
+            timeframe=timeframe,
+            limit=limit,
+        )
+        result["executed_via"] = "market_sim_worker"
+        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        return {"error": str(exc)}
+
+
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.states import JobState
     from Data.modules.market_sim.types import RunStatus, TERMINAL_RUN_STATUSES
@@ -122,6 +152,8 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         return _handle_gym_episode(ctx, job)
     if cap == "market_sim.research_campaign":
         return _handle_research_campaign(ctx, job)
+    if cap == "market_sim.scan_batch":
+        return _handle_scan_batch(ctx, job)
 
     args = dict(getattr(job, "arguments", None) or {})
     simulation_id = str(args.get("simulation_id") or args.get("run_id") or "")

@@ -1,5 +1,5 @@
-"""Binance public market-data provider (re-export for explicit imports)."""
+"""Re-export Binance public provider."""
 
-from . import BinancePublicProvider
+from Data.modules.market_sim.providers import BinancePublicProvider
 
 __all__ = ["BinancePublicProvider"]

@@ -108,6 +108,27 @@ class PaperOrderRequest(BaseModel):
     clientOrderId: str | None = None
 
 
+class FeedStartRequest(BaseModel):
+    providerId: str = "binance_public"
+    symbols: list[str] = Field(min_length=1)
+    streamKinds: list[str] | None = None
+    restartPolicy: str = "MANUAL"
+    captureMode: str = "OFF"
+    staleAfterSeconds: float = 30.0
+    gapRecoveryEnabled: bool = True
+    maxRuntimeSeconds: float = 3600.0
+    feedId: str | None = None
+    licenseNote: str = ""
+    metadata: dict[str, Any] | None = None
+
+
+class ScanBatchRequest(BaseModel):
+    symbols: list[str] | None = None
+    providerId: str = "binance_public"
+    timeframe: str = "1m"
+    limit: int = Field(100, ge=1, le=2000)
+
+
 class ExperimentPropose(BaseModel):
     strategyId: str
     hypothesis: str
@@ -621,5 +642,75 @@ def build_market_sim_router(
     @router.get("/api/market-sim/live-trading")
     def live_trading_status() -> dict:
         return service.live_guard.public_status()
+
+    # --- Realtime market feeds ---
+
+    @router.get("/api/market-sim/feeds")
+    def list_feeds() -> dict:
+        try:
+            return {"feeds": service.list_feeds()}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/feeds")
+    def start_feed(payload: FeedStartRequest) -> dict:
+        try:
+            return {
+                "feed": service.start_feed(
+                    provider_id=payload.providerId,
+                    symbols=payload.symbols,
+                    stream_kinds=payload.streamKinds,
+                    restart_policy=payload.restartPolicy,
+                    capture_mode=payload.captureMode,
+                    stale_after_seconds=payload.staleAfterSeconds,
+                    gap_recovery_enabled=payload.gapRecoveryEnabled,
+                    max_runtime_seconds=payload.maxRuntimeSeconds,
+                    feed_id=payload.feedId,
+                    license_note=payload.licenseNote,
+                    metadata=payload.metadata,
+                )
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/feeds/{feed_id}")
+    def get_feed(feed_id: str) -> dict:
+        try:
+            return {"feed": service.get_feed(feed_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/feeds/{feed_id}/stop")
+    def stop_feed(feed_id: str) -> dict:
+        try:
+            return {"feed": service.stop_feed(feed_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/feeds/{feed_id}/snapshot")
+    def feed_snapshot(feed_id: str) -> dict:
+        try:
+            return service.feed_snapshot(feed_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/feeds/{feed_id}/metrics")
+    def feed_metrics(feed_id: str) -> dict:
+        try:
+            return service.feed_metrics(feed_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/scan-batch")
+    def scan_batch(payload: ScanBatchRequest) -> dict:
+        try:
+            return service.scan_batch(
+                symbols=payload.symbols,
+                provider_id=payload.providerId,
+                timeframe=payload.timeframe,
+                limit=payload.limit,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
 
     return router

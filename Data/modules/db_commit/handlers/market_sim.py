@@ -23,6 +23,16 @@ def handlers() -> list[FunctionHandler]:
             fn=_commit_trajectory,
             required_payload_keys=("run_id",),
         ),
+        FunctionHandler(
+            operation="market_sim.commit_feed_checkpoint",
+            fn=_commit_feed_checkpoint,
+            required_payload_keys=("feed_id",),
+        ),
+        FunctionHandler(
+            operation="market_sim.commit_feed_latency_rollups",
+            fn=_commit_feed_latency_rollups,
+            required_payload_keys=("feed_id", "rollups"),
+        ),
     ]
 
 
@@ -207,4 +217,76 @@ def _commit_trajectory(
         producer_job_id=intent.source_job_id,
         trace_id=intent.trace_id,
         result={"run_id": run_id, "trajectory": True},
+    )
+
+
+def _commit_feed_checkpoint(
+    intent: CommitIntent,
+    payload: dict[str, Any],
+    db_path: Path,
+    settings: Any,
+) -> CommitReceipt:
+    """Batch metadata checkpoint for a live feed — never per-tick rows."""
+    del settings
+    feed_id = str(payload["feed_id"])
+    snapshot = dict(payload.get("snapshot") or payload.get("checkpoint") or {})
+    metrics = dict(payload.get("metrics") or {})
+    session = dict(payload.get("session") or {})
+
+    from Data.modules.market_sim.feed.store import MarketFeedStore
+
+    store = MarketFeedStore(db_path)
+    store.ensure_schema()
+    if session:
+        session.setdefault("feed_id", feed_id)
+        store.upsert_session(session)
+    receipt = store.write_checkpoint(feed_id, snapshot=snapshot, metrics=metrics)
+    return CommitReceipt(
+        commit_id=intent.commit_id,
+        idempotency_key=intent.idempotency_key,
+        domain="market_sim",
+        operation=intent.operation,
+        status=CommitReceiptStatus.APPLIED.value,
+        entity_type="market_feed_session",
+        entity_id=feed_id,
+        payload_hash=intent.payload_hash,
+        applied_at=utc_now(),
+        record_count=1,
+        producer_job_id=intent.source_job_id,
+        trace_id=intent.trace_id,
+        batch_index=intent.batch_index,
+        batch_count=intent.batch_count,
+        result={"feed_id": feed_id, "written_at": receipt.get("written_at"), "batch_metadata_only": True},
+    )
+
+
+def _commit_feed_latency_rollups(
+    intent: CommitIntent,
+    payload: dict[str, Any],
+    db_path: Path,
+    settings: Any,
+) -> CommitReceipt:
+    del settings
+    feed_id = str(payload["feed_id"])
+    rollups = list(payload.get("rollups") or [])
+
+    from Data.modules.market_sim.feed.store import MarketFeedStore
+
+    store = MarketFeedStore(db_path)
+    store.ensure_schema()
+    applied = store.write_latency_rollups(feed_id, rollups)
+    return CommitReceipt(
+        commit_id=intent.commit_id,
+        idempotency_key=intent.idempotency_key,
+        domain="market_sim",
+        operation=intent.operation,
+        status=CommitReceiptStatus.APPLIED.value,
+        entity_type="market_feed_session",
+        entity_id=feed_id,
+        payload_hash=intent.payload_hash,
+        applied_at=utc_now(),
+        record_count=applied,
+        producer_job_id=intent.source_job_id,
+        trace_id=intent.trace_id,
+        result={"feed_id": feed_id, "rollups": applied},
     )

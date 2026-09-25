@@ -90,9 +90,24 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         description=(
             "External provider / SaaS I/O — remote LLM HTTP, search APIs, "
             "bounded market/HF metadata fetches, Alpaca paper trading "
-            "(not bulk dataset or model downloads)"
+            "(not bulk dataset or model downloads; not long-lived market streams)"
         ),
         max_count=8,
+    ),
+    "market_feed": PoolDefinition(
+        pool_id="market_feed",
+        entrypoint="Data.modules.workers.entrypoints.market_feed",
+        default_count=1,
+        job_kinds=(
+            "provider.market.stream",
+            "provider.market.stream.stop",
+        ),
+        resource_classes=("NETWORK_BOUND", "CPU_LIGHT"),
+        description=(
+            "Long-lived public market data streams (Binance combined kline/trade) — "
+            "never order/trading endpoints; checkpoints are CONTROL-sized"
+        ),
+        max_count=4,
     ),
     "model_download": PoolDefinition(
         pool_id="model_download",

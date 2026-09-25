@@ -91,6 +91,19 @@ class MarketSimControlPlane:
             multi_engine=self.multi_engine,
         )
         self._gym_sessions: dict[str, Any] = {}
+        from .feed.runtime import FeedRuntime
+        from .feed.store import MarketFeedStore
+
+        self.feed_store = MarketFeedStore(store.db_path)
+        try:
+            self.feed_store.ensure_schema()
+        except Exception:  # noqa: BLE001
+            pass
+        self.feed_runtime = FeedRuntime(
+            emit=self._emit_feed_event,
+            signal=self._emit_feed_signal,
+            capture_root=Path(data.markets_root) / "_feed_capture",
+        )
 
     @classmethod
     def from_settings(
@@ -143,6 +156,17 @@ class MarketSimControlPlane:
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
+
+    def _emit_feed_event(self, kind: str, payload: dict[str, Any]) -> None:
+        if self._emit:
+            try:
+                self._emit(kind, payload)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _emit_feed_signal(self, kind: str, payload: dict[str, Any]) -> None:
+        # Soft signal path — observability only from control plane.
+        self._emit_feed_event(kind, payload)
 
     def bind_dataset_service(self, dataset_service: Any) -> None:
         """Optional DatasetService for trajectory export bridge (P1C)."""
@@ -1465,6 +1489,13 @@ class MarketSimControlPlane:
             raise MarketSimError("KILL_SWITCH", "Paper session kill switch armed", http_status=409)
         if session.get("status") != "active":
             raise MarketSimError("SESSION_NOT_ACTIVE", session.get("status") or "")
+        allowed, feed_code = self._feed_allows_new_risk(session=session)
+        if not allowed:
+            raise MarketSimError(
+                feed_code,
+                f"Paper order blocked — feed health does not allow new risk ({feed_code})",
+                http_status=409,
+            )
         broker = self._paper_broker(session["broker_id"])
         quote = (session.get("metadata") or {}).get("last_quote") or {}
         price = quote.get("price")
@@ -1545,6 +1576,19 @@ class MarketSimControlPlane:
         session = self.paper_session_state(session_id)
         if session.get("kill_switch"):
             raise MarketSimError("KILL_SWITCH", "Paper session kill switch armed", http_status=409)
+        allowed, feed_code = self._feed_allows_new_risk(session=session)
+        if not allowed:
+            return {
+                "forward": (session.get("metadata") or {}).get("paper_forward") or {},
+                "result": {
+                    "allowed": False,
+                    "action": "HOLD",
+                    "blocked": True,
+                    "code": feed_code,
+                    "reason": f"Feed health blocks new risk ({feed_code})",
+                },
+                "session": session,
+            }
         broker = self._paper_broker(session["broker_id"])
         quote = (session.get("metadata") or {}).get("last_quote") or {}
         price = quote.get("price")
@@ -1596,6 +1640,278 @@ class MarketSimControlPlane:
     def list_paper_sessions(self) -> list[dict[str, Any]]:
         self._require_enabled()
         return self.store.list_paper_sessions()
+
+    # --- Realtime market feeds ---
+
+    def list_feeds(self) -> list[dict[str, Any]]:
+        self._require_enabled()
+        live = {f["feed_id"]: f for f in self.feed_runtime.list_feeds()}
+        for row in self.feed_store.list_sessions():
+            live.setdefault(row["feed_id"], row)
+        return list(live.values())
+
+    def get_feed(self, feed_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        try:
+            session = self.feed_runtime.get(feed_id)
+            return session.sub.public_dict()
+        except MarketSimError:
+            row = self.feed_store.get_session(feed_id)
+            if row is None:
+                raise MarketSimError("FEED_NOT_FOUND", feed_id, http_status=404)
+            return row
+
+    def feed_snapshot(self, feed_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        try:
+            return self.feed_runtime.snapshot(feed_id)
+        except MarketSimError:
+            row = self.feed_store.get_session(feed_id)
+            if row is None:
+                raise
+            return {"subscription": row, "health": {"status": row.get("status")}, "symbols": {}}
+
+    def feed_metrics(self, feed_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        try:
+            session = self.feed_runtime.get(feed_id)
+            return {
+                "feed_id": feed_id,
+                "metrics": session.metrics.public_dict(),
+                "health": session.health(),
+            }
+        except MarketSimError:
+            cps = self.feed_store.list_checkpoints(feed_id, limit=1)
+            if not cps:
+                raise
+            return {
+                "feed_id": feed_id,
+                "metrics": cps[0].get("metrics") or {},
+                "checkpoint": cps[0],
+            }
+
+    def start_feed(
+        self,
+        *,
+        provider_id: str = "binance_public",
+        symbols: list[str],
+        stream_kinds: list[str] | None = None,
+        restart_policy: str = "MANUAL",
+        capture_mode: str = "OFF",
+        stale_after_seconds: float = 30.0,
+        gap_recovery_enabled: bool = True,
+        max_runtime_seconds: float = 3600.0,
+        feed_id: str | None = None,
+        license_note: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        if not symbols:
+            raise MarketSimError("INVALID_REQUEST", "symbols required", http_status=400)
+        session = self.feed_runtime.create_subscription(
+            provider_id=provider_id,
+            symbols=symbols,
+            stream_kinds=stream_kinds,
+            restart_policy=restart_policy,
+            capture_mode=capture_mode,
+            stale_after_seconds=stale_after_seconds,
+            gap_recovery_enabled=gap_recovery_enabled,
+            feed_id=feed_id,
+            license_note=license_note,
+            metadata=metadata,
+        )
+        sub = session.sub
+        self.feed_store.upsert_session({**sub.public_dict(), "checkpoint": {}})
+
+        from Data.modules.provider_io.errors import ProviderError, ProviderErrorCode
+        from Data.modules.provider_io.facade import ProviderExecutionClient
+        from Data.modules.provider_io.readiness import provider_io_workers_ready
+        from .feed.types import FeedConnectionState
+
+        payload = {
+            "feed_id": sub.feed_id,
+            "connection_id": sub.connection_id,
+            "provider_id": provider_id,
+            "symbols": list(sub.symbols),
+            "stream_kinds": list(sub.stream_kinds),
+            "gap_recovery_enabled": gap_recovery_enabled,
+            "max_runtime_seconds": float(max_runtime_seconds),
+            "db_path": str(self.store.db_path),
+            "stale_after_seconds": stale_after_seconds,
+        }
+
+        if self._runners_externalized():
+            if self.job_runtime is None:
+                session.set_status(FeedConnectionState.FAILED, error="job_runtime not bound")
+                raise MarketSimError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                    "job_runtime not bound; refusing Control Plane WebSocket fallback",
+                    http_status=503,
+                )
+            db_path = getattr(getattr(self.job_runtime, "store", None), "path", None)
+            if not provider_io_workers_ready(db_path) and not self._market_feed_pool_ready(db_path):
+                session.set_status(
+                    FeedConnectionState.FAILED,
+                    error="market_feed workers unavailable",
+                )
+                raise MarketSimError(
+                    ProviderErrorCode.PROVIDER_EXECUTION_UNAVAILABLE.value,
+                    "market_feed/provider_io workers unavailable; refusing Control Plane WS fallback",
+                    http_status=503,
+                )
+            client = ProviderExecutionClient(self.job_runtime)
+            try:
+                job = client.submit(
+                    provider=provider_id,
+                    capability="market.stream",
+                    payload=payload,
+                    credential_ref="none",
+                    streaming=True,
+                    latency_class="background",
+                    requested_by="market_sim_service",
+                    deadline_seconds=float(max_runtime_seconds),
+                    metadata={"feed_id": sub.feed_id},
+                )
+            except ProviderError as exc:
+                session.set_status(FeedConnectionState.FAILED, error=str(exc))
+                raise MarketSimError(
+                    exc.code.value,
+                    str(exc),
+                    http_status=503 if exc.retryable else 502,
+                ) from exc
+            sub.job_id = getattr(job, "job_id", None)
+            session.set_status(FeedConnectionState.CONNECTING)
+            self.feed_store.upsert_session({**sub.public_dict(), "checkpoint": {}})
+            return {
+                **sub.public_dict(),
+                "job_id": sub.job_id,
+                "executed_via": "market_feed",
+            }
+
+        # Non-externalized / tests: in-process fake ingest only — no real WS from FastAPI.
+        session.set_status(FeedConnectionState.LIVE)
+        self.feed_store.upsert_session({**sub.public_dict(), "checkpoint": {}})
+        return {
+            **sub.public_dict(),
+            "executed_via": "inprocess_fake_ingest",
+            "truth": {
+                "no_control_plane_websocket": True,
+                "market_data_only": True,
+                "live_money": "BLOCKED",
+            },
+        }
+
+    def _market_feed_pool_ready(self, db_path: Any) -> bool:
+        del db_path
+        try:
+            from Data.modules.workers.pools import POOL_CATALOG
+
+            return "market_feed" in POOL_CATALOG
+        except Exception:  # noqa: BLE001
+            return False
+
+    def stop_feed(self, feed_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        from Data.modules.provider_io.facade import ProviderExecutionClient
+        from .feed.types import FeedConnectionState
+
+        try:
+            session = self.feed_runtime.get(feed_id)
+        except MarketSimError:
+            row = self.feed_store.get_session(feed_id)
+            if row is None:
+                raise
+            row["status"] = FeedConnectionState.STOPPED.value
+            row["updated_at"] = utc_now()
+            self.feed_store.upsert_session(row)
+            return row
+
+        job_id = session.sub.job_id
+        if self._runners_externalized() and self.job_runtime is not None:
+            client = ProviderExecutionClient(self.job_runtime)
+            try:
+                client.submit(
+                    provider=session.sub.provider_id,
+                    capability="market.stream.stop",
+                    payload={"feed_id": feed_id, "job_id": job_id},
+                    credential_ref="none",
+                    latency_class="interactive",
+                    requested_by="market_sim_service",
+                    deadline_seconds=30.0,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            if job_id and hasattr(self.job_runtime, "cancel"):
+                try:
+                    self.job_runtime.cancel(job_id)
+                except Exception:  # noqa: BLE001
+                    pass
+        out = self.feed_runtime.stop(feed_id)
+        try:
+            checkpoint = self.feed_runtime.durable_checkpoint(feed_id)
+        except MarketSimError:
+            checkpoint = {}
+        self.feed_store.upsert_session({**out, "checkpoint": checkpoint})
+        return out
+
+    def scan_batch(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        provider_id: str = "binance_public",
+        timeframe: str = "1m",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Batch scan local market sources and optionally refresh via provider import."""
+        self._require_enabled()
+        scanned = self.scan_market_data() if hasattr(self, "scan_market_data") else []
+        results: list[dict[str, Any]] = []
+        syms = [s.upper() for s in (symbols or [])]
+        for source in scanned if isinstance(scanned, list) else []:
+            pub = source if isinstance(source, dict) else (
+                source.public_dict() if hasattr(source, "public_dict") else dict(source)
+            )
+            if isinstance(pub, dict):
+                if syms and str(pub.get("symbol") or "").upper() not in syms:
+                    continue
+                results.append(pub)
+        imports: list[dict[str, Any]] = []
+        for sym in syms[:8]:
+            try:
+                imports.append(
+                    self.import_provider_data(
+                        provider_id=provider_id,
+                        symbol=sym,
+                        timeframe=timeframe,
+                        limit=min(int(limit), 500),
+                    )
+                )
+            except MarketSimError as exc:
+                imports.append({"symbol": sym, "error": exc.public_dict()})
+        return {
+            "sources": results,
+            "imports": imports,
+            "provider_id": provider_id,
+            "timeframe": timeframe,
+            "executed_via": "market_sim.scan_batch",
+        }
+
+    def _feed_allows_new_risk(self, *, session: dict[str, Any] | None = None) -> tuple[bool, str]:
+        meta = dict((session or {}).get("metadata") or {})
+        feed_id = meta.get("feed_id") or (session or {}).get("feed_id")
+        if not feed_id:
+            return True, ""
+        try:
+            feed_session = self.feed_runtime.get(str(feed_id))
+        except MarketSimError:
+            return False, "MARKET_FEED_STALE"
+        feed_session.check_stale()
+        if not feed_session.allows_new_risk():
+            health = feed_session.health()
+            if health.get("gap_unresolved"):
+                return False, "MARKET_FEED_GAP"
+            return False, "MARKET_FEED_STALE"
+        return True, ""
 
     # --- Experiments / learning ---
 
