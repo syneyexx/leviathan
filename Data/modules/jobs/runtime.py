@@ -28,6 +28,9 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "schedule.tick",
         "knowledge.prepare",
         "knowledge.commit",
+        "knowledge.ingest_scan",
+        "knowledge.ingest_document",
+        "knowledge.ingest_path",
         "embedding.batch",
         "rerank.batch",
         "evaluation.run",
@@ -45,6 +48,8 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "provider.hf.list",
         "model_download.start",
         "mcp.call",
+        "research.fetch_url",
+        "research.report.generate",
     }
 )
 

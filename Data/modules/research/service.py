@@ -678,9 +678,8 @@ class ResearchService:
         ``background=True`` (API) enqueues durable execution and returns QUEUED.
         ``background=False`` runs in-process for tests / legacy sync callers.
 
-        QUEUED/RESEARCHING/... remain idempotent here — they must NOT start a
-        competing coordinator. External workers that own a ``research.advance``
-        lease must call :meth:`execute_queued_run` instead.
+        When external workers are enabled, ``background=False`` is coerced to enqueue
+        unless this process is already a worker (``LEVIATHAN_WORKER_ID`` set).
         """
         project = self.get_project(project_id)
         if project.status in ACTIVE_STATUSES:
@@ -688,6 +687,11 @@ class ResearchService:
             return project
         if background:
             return self.enqueue_run(project_id)
+        if self._runners_externalized():
+            import os
+
+            if not os.environ.get("LEVIATHAN_WORKER_ID"):
+                return self.enqueue_run(project_id)
         self.runner.run(project_id)
         project = self.get_project(project_id)
         self._maybe_promote_knowledge(project)
@@ -1087,6 +1091,11 @@ class ResearchService:
         self.store.add_event(project_id, "round_started", "Resume requested")
         if background:
             return self.enqueue_run(project_id, resume=True)
+        if self._runners_externalized():
+            import os
+
+            if not os.environ.get("LEVIATHAN_WORKER_ID"):
+                return self.enqueue_run(project_id, resume=True)
         self.runner.run(project_id, resume=True)
         project = self.get_project(project_id)
         self._maybe_promote_knowledge(project)
@@ -1114,6 +1123,13 @@ class ResearchService:
             return self.enqueue_run(
                 project_id, deepen=True, extra_rounds=max(1, int(extra_rounds))
             )
+        if self._runners_externalized():
+            import os
+
+            if not os.environ.get("LEVIATHAN_WORKER_ID"):
+                return self.enqueue_run(
+                    project_id, deepen=True, extra_rounds=max(1, int(extra_rounds))
+                )
         self.runner.run(
             project_id, deepen=True, extra_rounds=max(1, int(extra_rounds))
         )
@@ -1224,8 +1240,8 @@ class ResearchService:
             is_archive = result.get("source_type") == "archive"
             runner = getattr(self.source_ingestion.settings, "runner", "inprocess")
             source_id = str(result.get("source_id") or "")
-            # Process when in-process. Prefer JobStore claim; fall back to direct pipeline.
-            # Do not start a competing background thread in this request (race on claim).
+            # Domain runner owns drain policy: inprocess may claim in-request for tests;
+            # external SI never parses in the API process.
             if runner == "inprocess" and not result.get("idempotent"):
                 if self.source_ingestion.jobs is not None:
                     self.source_ingestion.process_next()
@@ -1240,12 +1256,15 @@ class ResearchService:
             progress = self.source_ingestion.get_status(source_id)
             text_chars = 0
             page_count = None
-            if source and source.snapshot_path:
+            if source and source.snapshot_path and runner == "inprocess":
                 try:
                     text_chars = len(Path(source.snapshot_path).read_text(encoding="utf-8"))
                 except OSError:
                     text_chars = 0
                 page_count = (source.provenance or {}).get("page_count")
+            elif source:
+                page_count = (source.provenance or {}).get("page_count")
+                text_chars = int((source.provenance or {}).get("extracted_chars") or 0)
 
             # Backward-compatible honesty for single-file uploads: raise on hard failures
             # the way UploadIngestor historically did (archives use aggregate status instead).
@@ -1297,7 +1316,14 @@ class ResearchService:
                 "progress": progress.public_dict(),
             }
 
-        # Legacy fallback (UploadIngestor) if SI unavailable
+        # Legacy fallback (UploadIngestor) if SI unavailable — never when externalized.
+        if self._runners_externalized():
+            raise ResearchError(
+                "SOURCE_INGESTION_UNAVAILABLE",
+                "Source ingestion worker path required; synchronous PDF parse fallback disabled",
+                http_status=503,
+                details={"filename": filename},
+            )
         source, text = self.uploads.from_upload_stream(
             project.project_id,
             filename=filename,
@@ -1401,18 +1427,55 @@ class ResearchService:
         source = self.store.get_source(source_id)
         if source is None or source.project_id != project_id:
             raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
+        si_runner = (
+            getattr(self.source_ingestion.settings, "runner", "inprocess")
+            if self.source_ingestion is not None
+            else None
+        )
+        prefer_enqueue = self._runners_externalized() and si_runner != "inprocess"
         if self.source_ingestion is not None:
             meta = source.metadata or {}
             if meta.get("is_container") or (source.provenance or {}).get("is_archive"):
+                if prefer_enqueue:
+                    return self.source_ingestion.enqueue_brain_retry(source_id)
                 return self.source_ingestion.retry_brain(source_id)
+            if prefer_enqueue:
+                return self.source_ingestion.enqueue_brain_retry(source_id)
+            # inprocess SI / tests: worker-owned path still available via retry_brain
+            return self.source_ingestion.retry_brain(source_id)
+        if prefer_enqueue and self.job_runtime is not None:
+            return self._enqueue_source_brain_retry(project_id, source_id)
         return self.retry_brain_sync(project_id, source_id)
+
+    def _enqueue_source_brain_retry(self, project_id: str, source_id: str) -> dict[str, Any]:
+        job = self.job_runtime.enqueue(
+            capability_id="source_ingestion.brain_retry",
+            arguments={"source_id": source_id, "project_id": project_id},
+            requested_by="api.research.brain_retry",
+            domain="source_ingestion",
+            domain_entity_type="source",
+            domain_entity_id=source_id,
+            worker_pool="source_ingestion",
+            resource_class="CPU_HEAVY",
+            latency_class="background",
+            idempotency_key=f"source_ingestion:brain_retry:{source_id}",
+            metadata={"human_title": source_id, "filename": (self.store.get_source(source_id) or type("X", (), {"title": source_id})).title},
+        )
+        return {
+            "queued": True,
+            "job_id": job.job_id,
+            "job": job.public_dict(),
+            "source_id": source_id,
+            "status": "QUEUED",
+        }
 
     def add_url_source(self, project_id: str, url: str) -> dict[str, Any]:
         project = self.get_project(project_id)
         cleaned = (url or "").strip()
         if not cleaned:
             raise ResearchError("VALIDATION_ERROR", "url is required", http_status=422)
-        decision = validate_url_for_fetch(cleaned)
+        # Control-plane SSRF shape check (no remote HTTP wait). Full DNS on worker.
+        decision = validate_url_for_fetch(cleaned, resolve_dns=not self._runners_externalized())
         if not decision.allowed:
             raise ResearchError(
                 "URL_BLOCKED",
@@ -1420,13 +1483,76 @@ class ResearchService:
                 http_status=400,
                 details={"url": cleaned, "reason": decision.reason},
             )
+        if self._runners_externalized() and self.job_runtime is not None:
+            return self._enqueue_url_fetch(project_id, cleaned)
+        return self._fetch_url_source_inline(project_id, cleaned)
+
+    def _enqueue_url_fetch(self, project_id: str, url: str) -> dict[str, Any]:
+        from .types import BrainStatus, ParseStatus, ResearchSource, SourceType
+        from .store import utc_now
+        import uuid as _uuid
+
+        source_id = str(_uuid.uuid4())
+        pending = ResearchSource(
+            source_id=source_id,
+            project_id=project_id,
+            source_type=SourceType.WEB_PAGE,
+            original_uri=url,
+            canonical_uri=url,
+            title=url,
+            fetched_at=None,
+            content_hash=None,
+            mime_type="text/html",
+            snapshot_path=None,
+            parse_status=ParseStatus.PENDING,
+            parser=None,
+            brain_status=BrainStatus.PENDING,
+            provenance={"url": url, "pending_fetch": True},
+            metadata={"url": url, "fetch_status": "PENDING"},
+            created_at=utc_now(),
+        )
+        stored = self.store.upsert_source(pending)
+        job = self.job_runtime.enqueue(
+            capability_id="research.fetch_url",
+            arguments={
+                "action": "fetch_url",
+                "project_id": project_id,
+                "url": url,
+                "source_id": stored.source_id,
+            },
+            requested_by="api.research.add_url",
+            domain="research",
+            domain_entity_type="source",
+            domain_entity_id=stored.source_id,
+            worker_pool="research",
+            resource_class="NETWORK_BOUND",
+            latency_class="interactive",
+            idempotency_key=f"research:fetch_url:{project_id}:{stored.source_id}",
+            metadata={"human_title": url, "topic": url, "filename": url},
+        )
+        self.store.add_event(
+            project_id,
+            "source_fetch_queued",
+            url,
+            {"source_id": stored.source_id, "job_id": job.job_id, "url": url},
+        )
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "job_id": job.job_id,
+            "source": stored.public_dict(),
+            "status": "PENDING",
+            "truth": {"executed_via": "research_worker", "fetch_deferred": True},
+        }
+
+    def _fetch_url_source_inline(self, project_id: str, cleaned: str) -> dict[str, Any]:
+        project = self.get_project(project_id)
         reason = web_unavailable_reason(
             allow_web=True,
             allow_outbound=self.allow_outbound,
             provider=self.web,
         )
         if reason:
-            # Still record seed so research can attempt later if web becomes available.
             seeds = list(project.seed_sources)
             if cleaned not in seeds:
                 seeds.append(cleaned)
@@ -1462,6 +1588,18 @@ class ResearchService:
             {"source_id": synced.source_id, "url": cleaned},
         )
         return {"source": synced.public_dict()}
+
+    def execute_fetch_url(
+        self,
+        project_id: str,
+        url: str,
+        *,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Worker-owned URL fetch + Brain sync."""
+        result = self._fetch_url_source_inline(project_id, url)
+        # If a pending placeholder exists, prefer returning the synced source.
+        return result
 
     def connect_dataset(
         self,
@@ -1517,6 +1655,16 @@ class ResearchService:
         source = self.store.get_source(source_id)
         if source is None or source.project_id != project_id:
             raise ResearchError("SOURCE_NOT_FOUND", "Unknown source", http_status=404)
+        si_runner = (
+            getattr(self.source_ingestion.settings, "runner", "inprocess")
+            if self.source_ingestion is not None
+            else None
+        )
+        prefer_enqueue = self._runners_externalized() and si_runner != "inprocess"
+        if prefer_enqueue and self.job_runtime is not None:
+            if self.source_ingestion is not None:
+                return self.source_ingestion.enqueue_brain_retry(source_id)
+            return self._enqueue_source_brain_retry(project_id, source_id)
         synced = self.brain.retry_brain_sync(source_id)
         return {"source": synced.public_dict()}
 
@@ -1562,6 +1710,35 @@ class ResearchService:
         return report
 
     def regenerate_report(self, project_id: str):
+        project = self.get_project(project_id)
+        if self._runners_externalized() and self.job_runtime is not None:
+            job = self.job_runtime.enqueue(
+                capability_id="research.report.generate",
+                arguments={"action": "regenerate_report", "project_id": project_id},
+                requested_by="api.research.regenerate_report",
+                domain="research",
+                domain_entity_type="project",
+                domain_entity_id=project_id,
+                worker_pool="research",
+                resource_class="CPU_HEAVY",
+                latency_class="interactive",
+                idempotency_key=f"research:report:{project_id}:{project.updated_at or project.created_at}",
+                metadata={
+                    "human_title": project.topic or project.title or project_id,
+                    "topic": project.topic or project.title,
+                },
+            )
+            return {
+                "queued": True,
+                "job": job.public_dict(),
+                "job_id": job.job_id,
+                "project_id": project_id,
+                "status": "QUEUED",
+                "truth": {"executed_via": "research_worker"},
+            }
+        return self._regenerate_report_inline(project_id)
+
+    def _regenerate_report_inline(self, project_id: str):
         project = self.get_project(project_id)
         report = self.reports.generate(project)
         self.store.add_event(

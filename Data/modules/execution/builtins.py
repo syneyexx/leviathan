@@ -1103,6 +1103,36 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["research", "verify"],
     )
     _ext(
+        cap_id="research.fetch_url",
+        name="Fetch Research URL Source",
+        description="Fetch/parse a URL source and sync to Brain (research worker; not API).",
+        side_effects=(SideEffect.NETWORK, SideEffect.WRITE),
+        worker_kind="research",
+        required_args=["project_id", "url"],
+        properties={
+            "project_id": {"type": "string"},
+            "url": {"type": "string"},
+            "source_id": {"type": "string"},
+            "action": {"type": "string"},
+        },
+        permissions=("knowledge.write",),
+        tags=["research", "url", "fetch"],
+    )
+    _ext(
+        cap_id="research.report.generate",
+        name="Generate Research Report",
+        description="Regenerate research report + optional Brain sync (research worker).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="research",
+        required_args=["project_id"],
+        properties={
+            "project_id": {"type": "string"},
+            "action": {"type": "string"},
+        },
+        permissions=("process.execute", "knowledge.write"),
+        tags=["research", "report"],
+    )
+    _ext(
         cap_id="dataset.process",
         name="Process Dataset Job",
         description="Execute one durable dataset domain job (dataset worker pool).",
@@ -1145,12 +1175,18 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
     _ext(
         cap_id="knowledge.prepare",
         name="Prepare Knowledge Artifact",
-        description="Chunk, embed-prep, and extract entities for a knowledge artifact.",
+        description="Chunk, embed-prep, backfill, or finish staged knowledge documents (worker pool).",
         side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
         worker_kind="knowledge_prepare",
         properties={
             "artifact_id": {"type": "string"},
             "document_id": {"type": "string"},
+            "action": {"type": "string"},
+            "title": {"type": "string"},
+            "content": {"type": "string"},
+            "source": {"type": "string"},
+            "path": {"type": "string"},
+            "limit": {"type": "integer"},
         },
         permissions=("knowledge.write",),
         tags=["knowledge", "prepare"],

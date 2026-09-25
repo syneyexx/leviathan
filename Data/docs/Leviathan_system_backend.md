@@ -482,6 +482,19 @@ Labels come from allowlisted metadata (topic/filename/dataset name); secrets and
 
 When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
 
+### Knowledge / Research control-plane rules (W3–W4)
+
+- Public `POST /api/knowledge` stages content (`INDEXING`) and enqueues `knowledge.prepare`; chunking/embedding run on `knowledge_prepare` workers.
+- `KnowledgeStore.initialize()` is **schema-only**. Legacy content backfill is a resumable `knowledge.prepare` (`action=backfill`) job (`KNOWLEDGE_BACKFILL_PENDING`).
+- ModelData / neuro absorb scans enqueue `knowledge.ingest_scan` on the prepare pool.
+- Research URL add validates SSRF shape in API, creates `PENDING` source, enqueues `research.fetch_url`.
+- Report regeneration enqueues `research.report.generate`.
+- Brain retry enqueues `source_ingestion.brain_retry` (no sync `upsert_document` on the API thread).
+- When externalized, missing Source Ingestion returns `SOURCE_INGESTION_UNAVAILABLE` — never legacy `UploadIngestor` PDF parse in FastAPI.
+- Cognition research delegation uses `background=True` / durable enqueue (WAITING), not sync deep research on the chat thread.
+- Training cancel returns promptly (`wait_seconds=0`); log reads use bounded tail I/O.
+- Artifact hash verification streams from disk.
+
 ---
 
 # 14. Agents, coding and research

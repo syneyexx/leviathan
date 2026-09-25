@@ -205,9 +205,10 @@ def build_research_handler(research_service: Any) -> Callable[[DelegateRequest],
 
         if run_now:
             try:
-                # Synchronous run through the real ResearchService (not a fake path).
+                # Synchronous run through ResearchService — prefer durable enqueue when
+                # external workers are enabled (never block cognition on deep Research).
                 if hasattr(research_service, "run") and callable(research_service.run):
-                    project = research_service.run(project.project_id, background=False)
+                    project = research_service.run(project.project_id, background=True)
                 project = research_service.get_project(project.project_id)
                 st = getattr(getattr(project, "status", None), "value", str(getattr(project, "status", "")))
                 if st == "completed":
@@ -215,6 +216,16 @@ def build_research_handler(research_service: Any) -> Callable[[DelegateRequest],
                 elif st in {"failed", "cancelled"}:
                     status = "FAILED" if st == "failed" else "PARTIAL"
                     unresolved.append(f"research_{st}")
+                elif st in {"queued", "researching", "synthesizing", "planned", "draft"}:
+                    status = "WAITING"
+                    unresolved.append("research_external_pending")
+                    observations.append(
+                        {
+                            "kind": "research_queued",
+                            "project_id": project.project_id,
+                            "status": st,
+                        }
+                    )
                 else:
                     status = "PARTIAL"
                     unresolved.append("research_incomplete")

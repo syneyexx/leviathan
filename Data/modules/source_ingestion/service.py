@@ -33,6 +33,33 @@ from .types import (
 )
 
 
+class _PeekReplayStream:
+    """Replay a peek buffer then continue reading the underlying stream (no full-file copy)."""
+
+    def __init__(self, head: bytes, rest: BinaryIO) -> None:
+        self._head = head or b""
+        self._rest = rest
+        self._offset = 0
+
+    def read(self, size: int = -1) -> bytes:
+        if size == 0:
+            return b""
+        if self._offset < len(self._head):
+            if size is None or size < 0:
+                out = self._head[self._offset :]
+                self._offset = len(self._head)
+                more = self._rest.read() or b""
+                return out + more
+            take = min(size, len(self._head) - self._offset)
+            out = self._head[self._offset : self._offset + take]
+            self._offset += take
+            if take < size:
+                more = self._rest.read(size - take) or b""
+                return out + more
+            return out
+        return self._rest.read() if size is None or size < 0 else (self._rest.read(size) or b"")
+
+
 class SourceIngestionService:
     """Facade used by Research (and future callers) for durable source ingestion."""
 
@@ -133,22 +160,15 @@ class SourceIngestionService:
             )
 
         safe_name = sanitize_filename(filename)
-        # Peek first chunk for detection without loading whole file
-        peek = stream.read(8192)
+        # Peek first chunk for detection without loading whole file into memory.
+        peek = stream.read(8192) or b""
         if hasattr(stream, "seek"):
             try:
                 stream.seek(0)
             except Exception:  # noqa: BLE001
-                # Rebuild a combined stream from peek + rest
-                import io
-
-                rest = stream.read()
-                stream = io.BytesIO(peek + rest)
+                stream = _PeekReplayStream(peek, stream)
         else:
-            import io
-
-            rest = stream.read()
-            stream = io.BytesIO(peek + rest)
+            stream = _PeekReplayStream(peek, stream)
 
         detection = detect_source_type(
             filename=safe_name,
@@ -375,6 +395,49 @@ class SourceIngestionService:
             "job_id": job_id,
             "status": IngestionPhase.QUEUED.value,
             "progress": self.get_status(source_id).public_dict(),
+        }
+
+    def enqueue_brain_retry(self, source_id: str) -> dict[str, Any]:
+        """Enqueue durable brain retry — never sync upsert from API."""
+        container = self.ingestion.get_container(source_id)
+        project_id = str((container or {}).get("project_id") or "")
+        if not project_id:
+            source = self.research.get_source(source_id)
+            if source is None:
+                raise ResearchError("SOURCE_NOT_FOUND", source_id, http_status=404)
+            project_id = source.project_id
+        if self.jobs is None:
+            raise ResearchError(
+                "SOURCE_INGESTION_UNAVAILABLE",
+                "JobRuntime not bound for brain retry",
+                http_status=503,
+            )
+        job = self.jobs.enqueue(
+            capability_id=CAPABILITY_BRAIN_RETRY,
+            arguments={"source_id": source_id, "project_id": project_id},
+            requested_by="source_ingestion.brain_retry",
+            idempotency_key=f"source_ingestion:brain_retry:{source_id}",
+            metadata={
+                "source_id": source_id,
+                "project_id": project_id,
+                "human_title": ((self.research.get_source(source_id) or type("X", (), {"title": source_id})).title),
+                "filename": ((self.research.get_source(source_id) or type("X", (), {"title": source_id})).title),
+            },
+            latency_class="background",
+            domain="source_ingestion",
+            domain_entity_type="source",
+            domain_entity_id=source_id,
+            worker_pool="source_ingestion",
+            resource_class="CPU_HEAVY",
+        )
+        self._wake.set()
+        return {
+            "queued": True,
+            "job_id": job.job_id,
+            "job": job.public_dict(),
+            "source_id": source_id,
+            "status": "QUEUED",
+            "truth": {"executed_via": "source_ingestion_worker"},
         }
 
     def retry_brain(self, source_id: str) -> dict[str, Any]:

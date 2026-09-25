@@ -358,6 +358,8 @@ def build_research_router(service: ResearchService) -> APIRouter:
             report = service.regenerate_report(project_id)
         except ResearchError as exc:
             raise_research_error(exc)
+        if isinstance(report, dict) and report.get("queued"):
+            return report
         return {"report": report.public_dict()}
 
     @router.get("/api/research/{project_id}/export")

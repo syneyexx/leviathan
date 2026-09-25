@@ -20,6 +20,17 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 class ArtifactStore:
     """Metadata in SQLite; content on disk under a configured artifacts root."""
 
@@ -146,8 +157,7 @@ class ArtifactStore:
         record = self.get(artifact_id)
         if not record:
             raise KeyError(artifact_id)
-        data = Path(record.path).read_bytes()
-        ok = sha256_bytes(data) == record.content_hash
+        ok = sha256_file(Path(record.path)) == record.content_hash
         status = "verified" if ok else "hash_mismatch"
         with self.connect() as conn:
             conn.execute(
