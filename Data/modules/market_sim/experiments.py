@@ -60,18 +60,70 @@ class ExperimentTrial:
 
 
 def walk_forward_splits(
-    start_ts: str,
-    end_ts: str,
-    bars: list[Any],
+    start_ts: str | int,
+    end_ts: str | int | None = None,
+    bars: list[Any] | None = None,
     *,
     design_frac: float = 0.5,
     validation_frac: float = 0.25,
+    window: int | None = None,
+    step: int | None = None,
+    train_size: int | None = None,
+    test_size: int | None = None,
+    purge_bars: int = 0,
 ) -> dict[str, Any]:
-    """Chronological design / validation / holdout test — no shuffling."""
+    """Chronological design / validation / holdout — or rolling windows.
+
+    Legacy: walk_forward_splits(start_ts, end_ts, bars).
+    Rolling: walk_forward_splits(n_bars, window=20, step=10) or
+             walk_forward_splits(bars, train_size=..., test_size=...).
+    """
+    # Rolling overload: first arg is bar count or bar list
+    if window is not None or train_size is not None or (
+        isinstance(start_ts, int) and end_ts is None and bars is None
+    ):
+        from .wfa import walk_forward_plan
+
+        if isinstance(start_ts, list):
+            series = start_ts
+        elif isinstance(start_ts, int):
+            from datetime import datetime, timedelta, timezone
+
+            from .types import Bar
+
+            dt0 = datetime(2020, 1, 1, tzinfo=timezone.utc)
+            series = [
+                Bar(
+                    ts=(dt0 + timedelta(hours=i)).isoformat(timespec="seconds"),
+                    open=1.0,
+                    high=1.0,
+                    low=1.0,
+                    close=1.0,
+                    volume=1.0,
+                )
+                for i in range(int(start_ts))
+            ]
+        else:
+            series = list(bars or [])
+        ts = int(train_size or window or max(10, len(series) // 3))
+        te = int(test_size or step or max(5, ts // 4))
+        st = int(step or te)
+        return walk_forward_plan(
+            series,
+            mode="rolling",
+            train_size=ts,
+            test_size=te,
+            step=st,
+            purge_bars=purge_bars,
+        )
+
+    bars = list(bars or [])
+    start_ts_s = str(start_ts)
+    end_ts_s = str(end_ts or "")
     n = len(bars)
     if n < 30:
         return {
-            "design": {"start_ts": start_ts, "end_ts": end_ts, "bar_count": n},
+            "design": {"start_ts": start_ts_s, "end_ts": end_ts_s, "bar_count": n},
             "validation": None,
             "test": None,
             "warning": "insufficient bars for walk-forward; single window only",

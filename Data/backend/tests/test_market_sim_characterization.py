@@ -604,8 +604,7 @@ class D13WalkForwardCharacterization(unittest.TestCase):
         self.assertIn("test", split)
         self.assertNotIn("windows", split)
 
-    @unittest.expectedFailure  # D13 — fixed in Phase T4
-    def test_d13_desired_rolling_windows(self) -> None:
+    def test_d13_rolling_windows(self) -> None:
         split = walk_forward_splits(100, window=20, step=10)  # type: ignore[call-arg]
         self.assertIn("windows", split)
         self.assertGreaterEqual(len(split["windows"]), 2)
@@ -617,7 +616,7 @@ class D13WalkForwardCharacterization(unittest.TestCase):
 
 
 class D14TrialLedgerCharacterization(unittest.TestCase):
-    def test_d14_current_upsert_drops_strategy_version(self) -> None:
+    def test_d14_upsert_persists_strategy_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             trial = {
@@ -647,21 +646,56 @@ class D14TrialLedgerCharacterization(unittest.TestCase):
             trial2["finished_at"] = utc_now()
             store.save_experiment(trial2)
             loaded = store.list_experiments(strategy_id="s1")[0]
-            self.assertNotEqual(int(loaded.get("strategy_version") or 0), 2)
+            self.assertEqual(int(loaded.get("strategy_version") or 0), 2)
 
-    def test_d14_current_upsert_sql_omits_strategy_version(self) -> None:
+    def test_d14_upsert_sql_includes_strategy_version(self) -> None:
         src = inspect.getsource(MarketSimStore.save_experiment)
-        # ON CONFLICT update list must not include strategy_version today.
         conflict = src.split("ON CONFLICT", 1)[1]
-        self.assertNotIn("strategy_version=excluded.strategy_version", conflict)
+        self.assertIn("strategy_version=excluded.strategy_version", conflict)
 
-    @unittest.expectedFailure  # D14 — fixed in Phase T4
-    def test_d14_desired_append_only_or_version_persisted(self) -> None:
+    def test_d14_append_only_trial_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
-            self.assertTrue(
-                hasattr(store, "append_trial") or hasattr(store, "count_trials")
+            self.assertTrue(hasattr(store, "append_trial"))
+            self.assertTrue(hasattr(store, "count_trials"))
+            t1 = store.append_trial(
+                {
+                    "trial_id": "t-append-1",
+                    "strategy_id": "s1",
+                    "strategy_version": 1,
+                    "hypothesis": "h1",
+                    "proposer_agent_id": "human",
+                    "data_hash": "h",
+                    "fingerprint": "fp-a1",
+                    "status": "proposed",
+                    "config": {},
+                    "split": {},
+                    "results": {},
+                    "acceptance_criteria": {},
+                    "seed": 1,
+                    "created_at": utc_now(),
+                }
             )
+            t2 = store.append_trial(
+                {
+                    "trial_id": "t-append-1",  # collide → new id
+                    "strategy_id": "s1",
+                    "strategy_version": 2,
+                    "hypothesis": "h2",
+                    "proposer_agent_id": "human",
+                    "data_hash": "h",
+                    "fingerprint": "fp-a2",
+                    "status": "proposed",
+                    "config": {},
+                    "split": {},
+                    "results": {},
+                    "acceptance_criteria": {},
+                    "seed": 2,
+                    "created_at": utc_now(),
+                }
+            )
+            self.assertNotEqual(t1["trial_id"], t2["trial_id"])
+            self.assertEqual(store.count_trials(strategy_id="s1"), 2)
 
 
 # ---------------------------------------------------------------------------

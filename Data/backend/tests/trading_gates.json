@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4.1",
-  "phase": "P1C",
+  "phase": "P2A",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "P1C: RewardSpec + TrajectoryArtifact + DatasetService bridge; G26/G29 PASS",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p1_gym.py -q"
+      "result": "P2A: Strategy Spec DSL v2 (breakout/rsi/feature_compare/regime_filter); G15 PASS",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p2_strategies.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -377,27 +377,32 @@
     },
     "G15": {
       "title": "Strategy Spec v2 + feature library",
-      "phase": "T2/T3D",
-      "status": "IN_PROGRESS",
+      "phase": "T2/T3D/P2A",
+      "status": "PASS",
       "required": true,
       "evidence": [
         "Data/modules/market_sim/features.py",
         "Data/modules/market_sim/market_state.py",
-        "Data/backend/tests/test_market_sim_t2_market_state.py"
+        "Data/modules/market_sim/strategy_dsl.py::StrategySpecV2",
+        "Data/backend/tests/test_market_sim_t2_market_state.py",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests",
+        "DSL kinds: breakout, rsi, feature_compare, ma_cross, mean_reversion + regime_filter"
       ],
       "test_node_ids": [
-        "Data/backend/tests/test_market_sim_t2_market_state.py"
+        "Data/backend/tests/test_market_sim_t2_market_state.py",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests"
       ],
       "checks": [
         {
           "kind": "pytest",
           "node_ids": [
-            "Data/backend/tests/test_market_sim_t2_market_state.py"
+            "Data/backend/tests/test_market_sim_t2_market_state.py",
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests"
           ],
           "timeout_sec": 180
         }
       ],
-      "notes": "T2: FeatureEngine + MarketState + MultiTimeframeView implemented and tested. Strategy Spec DSL v2 remains T3."
+      "notes": "P2A: Strategy Spec DSL v2 over FeatureEngine; legacy ma_cross/mean_reversion preserved"
     },
     "G16": {
       "title": "Code strategy sandbox escape suite",
@@ -453,56 +458,90 @@
     },
     "G19": {
       "title": "Global append-only Trial Ledger",
-      "phase": "T5A",
-      "status": "NOT_STARTED",
+      "phase": "T5A/P2B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/store.py::append_trial / count_trials",
+        "save_experiment persists strategy_version on upsert",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_append_trial_ledger",
+        "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_append_trial_ledger",
+        "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2B: append-only trial ledger + strategy_version persistence (D14 fixed)",
       "related_defects": [
         "D14"
       ]
     },
     "G20": {
       "title": "WFA/purged CV/CPCV/robustness suite",
-      "phase": "T5B/T5C",
-      "status": "NOT_STARTED",
+      "phase": "T5B/T5C/P2B",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/wfa.py::rolling_wfa_windows / walk_forward_plan",
+        "walk_forward_splits rolling overload (window/step)",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
+        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization",
+        "CPCV / full robustness suite not yet complete"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
+        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2B: rolling WFA + purge gap. CPCV/combinatorial remains later.",
       "related_defects": [
         "D13"
       ]
     },
     "G21": {
       "title": "Acceptance from run IDs; sealed single-use",
-      "phase": "T5A/T5C/P1A",
-      "status": "IN_PROGRESS",
+      "phase": "T5A/T5C/P1A/P2B",
+      "status": "PASS",
       "required": true,
       "evidence": [
         "Data/modules/market_sim/sealed_attempts.py::SealedAttemptBinder",
+        "Data/modules/market_sim/wfa.py::evaluate_acceptance_from_run",
         "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
-        "First exposure binds sealed_attempt_id + run_id",
-        "Crash resume same attempt/run; checkpoint rewind refused",
-        "COMPLETED = SEALED_ALREADY_CONSUMED (single-use)",
-        "Full acceptance-from-run-IDs (evaluate_acceptance wiring) remains P2"
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids",
+        "Acceptance reads run.metrics (kernel); never request payload"
       ],
       "test_node_ids": [
-        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests"
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids"
       ],
       "checks": [
         {
           "kind": "pytest",
           "node_ids": [
-            "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests"
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids"
           ],
           "timeout_sec": 120
         }
       ],
-      "notes": "P1A: SEALED attempt semantics foundation. Acceptance-from-run-IDs completes in P2.",
+      "notes": "P1A sealed attempts + P2B acceptance-from-run-IDs",
       "related_defects": [
         "D11",
         "D12"

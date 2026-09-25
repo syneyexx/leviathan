@@ -177,5 +177,90 @@ class P2AStrategyDslTests(unittest.TestCase):
         self.assertEqual(dsl.parameters_used.get("kind"), "feature_compare")
 
 
+class P2BTrialLedgerAndWfaTests(unittest.TestCase):
+    def test_rolling_wfa_windows(self) -> None:
+        from Data.modules.market_sim.wfa import rolling_wfa_windows, walk_forward_plan
+
+        bars = _bars_trend(100)
+        windows = rolling_wfa_windows(bars, train_size=30, test_size=10, step=10, purge_bars=2)
+        self.assertGreaterEqual(len(windows), 2)
+        self.assertLess(windows[0].train_end_index, windows[0].test_start_index)
+        plan = walk_forward_plan(bars, mode="rolling", train_size=30, test_size=10, step=10)
+        self.assertEqual(plan["mode"], "rolling")
+        self.assertIn("windows", plan)
+
+    def test_acceptance_from_run_ids(self) -> None:
+        from Data.modules.market_sim.wfa import evaluate_acceptance_from_run
+
+        run = {
+            "run_id": "r-accept",
+            "metrics": {
+                "trade_count": {"value": 10, "status": "MEASURED"},
+                "total_return": {"value": 0.05, "status": "MEASURED"},
+                "max_drawdown": {"value": 0.08, "status": "MEASURED"},
+            },
+            "metadata": {},
+        }
+        result = evaluate_acceptance_from_run(
+            run,
+            criteria={"min_trades": 5, "max_drawdown_pct": 25.0, "min_total_return_pct": 0.0},
+            sealed_attempt_id="sa-1",
+        )
+        self.assertTrue(result.passed)
+        self.assertEqual(result.run_id, "r-accept")
+        self.assertEqual(result.sealed_attempt_id, "sa-1")
+        self.assertTrue(result.public_dict()["truth"]["acceptance_from_run_metrics"])
+
+    def test_append_trial_ledger(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from Data.backend.migrations import MigrationRunner
+        from Data.modules.market_sim.store import MarketSimStore, utc_now
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "leviathan.db"
+            MigrationRunner(db).apply_all()
+            store = MarketSimStore(db)
+            a = store.append_trial(
+                {
+                    "trial_id": "same",
+                    "strategy_id": "strat",
+                    "strategy_version": 1,
+                    "hypothesis": "a",
+                    "proposer_agent_id": "x",
+                    "data_hash": "h",
+                    "fingerprint": "f1",
+                    "status": "proposed",
+                    "config": {},
+                    "split": {},
+                    "results": {},
+                    "acceptance_criteria": {},
+                    "seed": 1,
+                    "created_at": utc_now(),
+                }
+            )
+            b = store.append_trial(
+                {
+                    "trial_id": "same",
+                    "strategy_id": "strat",
+                    "strategy_version": 2,
+                    "hypothesis": "b",
+                    "proposer_agent_id": "x",
+                    "data_hash": "h",
+                    "fingerprint": "f2",
+                    "status": "proposed",
+                    "config": {},
+                    "split": {},
+                    "results": {},
+                    "acceptance_criteria": {},
+                    "seed": 2,
+                    "created_at": utc_now(),
+                }
+            )
+            self.assertNotEqual(a["trial_id"], b["trial_id"])
+            self.assertEqual(store.count_trials(), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

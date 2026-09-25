@@ -657,7 +657,11 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **P1B (TradingGym + API + worker):** `TradingGym` (`gym.py`) provides causal `reset`/`step` with observations via `MarketView` (G26 PASS). Interactive episodes may step in the control plane; **complete** episodes are `EXTERNAL_REQUIRED` (`market_sim.gym_episode`) on the market_sim worker — FastAPI refuses sync fallback with `TRADING_WORKER_UNAVAILABLE`. Routes under `/api/market-sim/gym/episodes`.
 
-**P1C (trajectory + RewardSpec + dataset bridge — CURRENT):** Canonical `RewardSpec` (`reward.py`) computes kernel-derived step rewards (`equity_delta`, `log_return`, `realized_pnl_delta`, sparse `episode_total_return`); unknown defs stay UNMEASURED. `TrajectoryBuilder` / `TrajectoryArtifact` (`trajectory.py`) seal content-addressed gym step streams; `dataset_bridge.export_trajectory_to_dataset` writes JSONL under markets `.artifacts` and registers via DatasetService when bound (honest `FILE_ONLY` otherwise). G29 PASS.
+**P1C (trajectory + RewardSpec + dataset bridge):** Canonical `RewardSpec` (`reward.py`) computes kernel-derived step rewards (`equity_delta`, `log_return`, `realized_pnl_delta`, sparse `episode_total_return`); unknown defs stay UNMEASURED. `TrajectoryBuilder` / `TrajectoryArtifact` (`trajectory.py`) seal content-addressed gym step streams; `dataset_bridge.export_trajectory_to_dataset` writes JSONL under markets `.artifacts` and registers via DatasetService when bound (honest `FILE_ONLY` otherwise). G29 PASS.
+
+**P2A (Strategy DSL v2):** `strategy_dsl.py` defines `StrategySpecV2` over `FeatureEngine` — kinds `breakout`, `rsi`, `feature_compare`, plus legacy `ma_cross` / `mean_reversion`, with `regime_filter` gating entries fail-closed. `evaluate_strategy` dispatches v2 kinds; no arbitrary code execution. G15 PASS.
+
+**P2B (Trial Ledger + WFA + sealed acceptance — CURRENT):** Append-only `append_trial` / `count_trials`; `save_experiment` persists `strategy_version` (D14). `wfa.py` rolling WFA windows with purge gap; `walk_forward_splits` rolling overload (D13). `evaluate_acceptance_from_run` reads kernel `run.metrics` only (G21 PASS). G19 PASS; G20 IN_PROGRESS (CPCV later).
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

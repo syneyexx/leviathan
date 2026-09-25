@@ -1022,8 +1022,11 @@ class MarketSimStore:
                     acceptance_json, rejection_reason, seed, created_at, finished_at, metadata_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(trial_id) DO UPDATE SET
+                    strategy_version=excluded.strategy_version,
                     status=excluded.status,
                     results_json=excluded.results_json,
+                    split_json=excluded.split_json,
+                    acceptance_json=excluded.acceptance_json,
                     rejection_reason=excluded.rejection_reason,
                     finished_at=excluded.finished_at,
                     metadata_json=excluded.metadata_json
@@ -1049,6 +1052,47 @@ class MarketSimStore:
                 ),
             )
         return trial
+
+    def append_trial(self, trial: dict[str, Any]) -> dict[str, Any]:
+        """Append-only Trial Ledger entry — never overwrites prior trial_id rows.
+
+        Uses a new trial_id when colliding so the global ledger remains append-only.
+        """
+        import uuid as _uuid
+
+        payload = dict(trial)
+        existing = None
+        tid = str(payload.get("trial_id") or "")
+        if tid:
+            with self.connect() as conn:
+                row = conn.execute(
+                    "SELECT trial_id FROM market_experiments WHERE trial_id=?",
+                    (tid,),
+                ).fetchone()
+            if row:
+                payload["trial_id"] = str(_uuid.uuid4())
+                meta = dict(payload.get("metadata") or {})
+                meta["supersedes_trial_id"] = tid
+                meta["append_only"] = True
+                payload["metadata"] = meta
+        else:
+            payload["trial_id"] = str(_uuid.uuid4())
+        meta = dict(payload.get("metadata") or {})
+        meta.setdefault("append_only", True)
+        meta.setdefault("ledger", "global_trial_ledger")
+        payload["metadata"] = meta
+        return self.save_experiment(payload)
+
+    def count_trials(self, *, strategy_id: str | None = None) -> int:
+        with self.connect() as conn:
+            if strategy_id:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM market_experiments WHERE strategy_id=?",
+                    (strategy_id,),
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) AS c FROM market_experiments").fetchone()
+        return int(row["c"] if row else 0)
 
     def list_experiments(self, *, strategy_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as conn:
