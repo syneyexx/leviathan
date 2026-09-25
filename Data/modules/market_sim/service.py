@@ -92,6 +92,7 @@ class MarketSimControlPlane:
 
         self.risk_engine = RiskEngineV2(store=store)
         self._paper_forward = None
+        self._shadow_live = None
         self._audit_events: list[dict[str, Any]] = []
         self._bars_per_slice = 50
         self.default_initial_cash = 100_000.0
@@ -660,15 +661,15 @@ class MarketSimControlPlane:
         decided_by: str = "operator",
         evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Explicit promotion state transition (G31) — never silent."""
-        from .strategy_library import assert_promotion_allowed
+        """Explicit promotion/degradation state transition (G31 / T15) — never silent."""
+        from .lifecycle import assert_lifecycle_transition
 
         self._require_enabled()
         record = self.store.get_strategy(strategy_id)
         if record is None:
             raise MarketSimError("STRATEGY_NOT_FOUND", strategy_id, http_status=404)
         target = str(to_status or "").upper()
-        assert_promotion_allowed(record.status, target)
+        assert_lifecycle_transition(record.status, target)
         now = utc_now()
         event = self.store.append_promotion_event(
             {
@@ -1246,6 +1247,12 @@ class MarketSimControlPlane:
             broker.wallet.peak_equity = money(initial_cash)
             wallet_public = broker.account().get("wallet") if hasattr(broker, "account") else {}
 
+        # T14 — never label paper as ambiguous "LIVE"; distinguish local vs broker paper.
+        bid = str(broker_id or "").lower()
+        if bid in {"local_paper", "paper", "replay"}:
+            execution_mode = "LOCAL PAPER"
+        else:
+            execution_mode = "BROKER PAPER"
         session = {
             "session_id": session_id,
             "status": "active",
@@ -1258,8 +1265,11 @@ class MarketSimControlPlane:
             "feed_status": feed_status,
             "wallet": wallet_public,
             "orders": [],
+            "execution_mode": execution_mode,
+            "mode": execution_mode,
             "metadata": {
                 "mode": "live_paper",
+                "execution_mode": execution_mode,
                 "regime_match": match,
                 "last_quote": quote,
                 "feed_latency_ms": latency,
@@ -1269,6 +1279,8 @@ class MarketSimControlPlane:
                     "not_historical_backtest": True,
                     "paper_never_auto_approves_live": True,
                     "per_session_wallet": True,
+                    "live_money_blocked": True,
+                    "same_kernel_as_shadow": True,
                 },
             },
             "created_at": now,
@@ -1584,6 +1596,98 @@ class MarketSimControlPlane:
             if stored:
                 events = stored
         return verify_audit_chain(events)
+
+    def _shadow_live_runner(self) -> Any:
+        if self._shadow_live is None:
+            from .shadow_live import ShadowLiveRunner
+
+            self._shadow_live = ShadowLiveRunner(self)
+        return self._shadow_live
+
+    def start_shadow_live(
+        self,
+        *,
+        symbol: str,
+        provider_id: str = "binance_public",
+        strategy_id: str | None = None,
+        strategy_version: int | None = None,
+    ) -> dict[str, Any]:
+        """T13 — Shadow Live: observe current market, decide, NO broker order."""
+        self._require_enabled()
+        return self._shadow_live_runner().start(
+            symbol=symbol,
+            now=utc_now(),
+            provider_id=provider_id,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+        )
+
+    def shadow_live_decide(
+        self,
+        session_id: str,
+        *,
+        side: str,
+        qty: float,
+        rationale: str = "",
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self._shadow_live_runner().decide(
+            session_id, side=side, qty=qty, now=utc_now(), rationale=rationale
+        )
+
+    def shadow_live_attach_outcome(
+        self,
+        session_id: str,
+        decision_id: str,
+        *,
+        realized_price: float,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self._shadow_live_runner().attach_outcome(
+            session_id,
+            decision_id,
+            realized_price=realized_price,
+            now=utc_now(),
+            detail=detail,
+        )
+
+    def get_shadow_live(self, session_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self._shadow_live_runner().get(session_id)
+
+    def compute_strategy_drift(
+        self,
+        *,
+        expected_returns: list[float],
+        actual_returns: list[float],
+        band: float = 0.05,
+    ) -> dict[str, Any]:
+        """T15 — paper/shadow vs historical expectation drift."""
+        from .lifecycle import compute_performance_drift
+
+        self._require_enabled()
+        return compute_performance_drift(
+            expected_returns=expected_returns,
+            actual_returns=actual_returns,
+            band=band,
+        )
+
+    def export_trading_training_bridge(
+        self,
+        decisions: list[dict[str, Any]] | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """T16 — export verified trading trajectories into VerifiedExperience."""
+        from .training_bridge import export_verified_trading_trajectories
+
+        self._require_enabled()
+        items = list(decisions or [])
+        if session_id and not items:
+            session = self.get_shadow_live(session_id)
+            items = list(session.get("decisions") or [])
+        return export_verified_trading_trajectories(items)
 
     def security_posture(self) -> dict[str, Any]:
         """G48 — live flag off by default; TradingStub/LiveBroker refuse."""

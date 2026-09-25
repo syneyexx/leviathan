@@ -377,6 +377,8 @@ T3 backend: Strategy Spec DSL v2 (`/api/market-sim/strategies` with `dslSpec`/`f
 
 T4 backend: side-effect routes go through ExecutionGateway (no private bypass). Simulation advance defaults to JobStore leases. Paper Alpaca credentials via SecretsBroker.
 
+T13–T17: Paper page labels modes explicitly (SHADOW / LOCAL PAPER / BROKER PAPER); real money stays BLOCKED. Shadow Live start/decide + training-bridge export are available from PaperTradingPage via typed client methods (`startShadowLive`, `shadowLiveDecide`, `exportTradingTrainingBridge`) and the trading action matrix. UI must not imply live-money readiness.
+
 ---
 
 # 14. Media Control UI

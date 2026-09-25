@@ -218,6 +218,45 @@ class MarketSimModuleExecutor:
                     approval_id=args.get("approval_id"),
                 )
             }
+        if action == "shadow.start":
+            args = _snake_args(arguments)
+            return {
+                "session": svc.start_shadow_live(
+                    symbol=str(args.get("symbol") or ""),
+                    provider_id=str(args.get("provider_id") or "binance_public"),
+                    strategy_id=args.get("strategy_id"),
+                    strategy_version=args.get("strategy_version"),
+                )
+            }
+        if action == "shadow.decide":
+            args = _snake_args(arguments)
+            return svc.shadow_live_decide(
+                str(args.get("session_id") or ""),
+                side=str(args.get("side") or ""),
+                qty=float(args.get("qty") or 0),
+            )
+        if action == "shadow.outcome":
+            args = _snake_args(arguments)
+            return svc.shadow_live_attach_outcome(
+                str(args.get("session_id") or ""),
+                str(args.get("decision_id") or ""),
+                realized_price=float(args.get("realized_price") or 0),
+            )
+        if action == "strategy.drift":
+            args = _snake_args(arguments)
+            return {
+                "drift": svc.compute_strategy_drift(
+                    expected_returns=list(args.get("expected_returns") or []),
+                    actual_returns=list(args.get("actual_returns") or []),
+                    band=float(args.get("band") or 0.05),
+                )
+            }
+        if action == "training.export":
+            args = _snake_args(arguments)
+            return svc.export_trading_training_bridge(
+                args.get("decisions"),
+                session_id=args.get("session_id"),
+            )
         if action == "experiment.propose":
             return {
                 "trial": svc.propose_experiment(

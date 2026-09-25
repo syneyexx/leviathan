@@ -3615,6 +3615,44 @@ def _m48_trading_gym_scorecards(conn: sqlite3.Connection) -> None:
         )
 
 
+
+
+def _m50_trading_shadow_lifecycle(conn: sqlite3.Connection) -> None:
+    """T13–T15: shadow live sessions/decisions + lifecycle degradation support."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shadow_live_sessions (
+            session_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            feed_status TEXT NOT NULL DEFAULT '',
+            decisions_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shadow_live_decisions (
+            decision_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            outcome_attached_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shadow_decisions_session "
+        "ON shadow_live_decisions(session_id, created_at)"
+    )
+
+
 def _m49_trading_paper_risk_audit(conn: sqlite3.Connection) -> None:
     """T9: paper forward runners, risk kill state, reconciliation, hash-chained audit."""
     conn.execute(
@@ -3774,6 +3812,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=49,
         name="trading_paper_risk_audit",
         apply=_m49_trading_paper_risk_audit,
+    ),
+    Migration(
+        version=50,
+        name="trading_shadow_lifecycle",
+        apply=_m50_trading_shadow_lifecycle,
     ),
 )
 

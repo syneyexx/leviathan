@@ -2168,6 +2168,53 @@ export const api = {
     return request("/api/market-sim/security-posture");
   },
 
+  startShadowLive(payload: {
+    symbol: string;
+    strategyId?: string;
+    strategyVersion?: number;
+    providerId?: string;
+  }): Promise<{ session: Record<string, unknown> }> {
+    return request("/api/market-sim/shadow/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getShadowLive(sessionId: string): Promise<{ session: Record<string, unknown> }> {
+    return request(`/api/market-sim/shadow/sessions/${encodeURIComponent(sessionId)}`);
+  },
+
+  shadowLiveDecide(
+    sessionId: string,
+    payload: { side: string; qty: number },
+  ): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/shadow/sessions/${encodeURIComponent(sessionId)}/decide`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  shadowLiveAttachOutcome(
+    sessionId: string,
+    decisionId: string,
+    realizedPrice: number,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/api/market-sim/shadow/sessions/${encodeURIComponent(sessionId)}/outcomes/${encodeURIComponent(decisionId)}`,
+      { method: "POST", body: JSON.stringify({ realizedPrice }) },
+    );
+  },
+
+  exportTradingTrainingBridge(payload?: {
+    sessionId?: string;
+    decisions?: Array<Record<string, unknown>>;
+  }): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/training-bridge/export", {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
+
   marketSimLiveTradingStatus(): Promise<Record<string, unknown>> {
     return request("/api/market-sim/live-trading");
   },

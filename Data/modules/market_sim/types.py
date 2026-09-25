@@ -58,6 +58,8 @@ class StrategyStatus(str, Enum):
     CANDIDATE = "CANDIDATE"
     PAPER_READY = "PAPER_READY"
     ACTIVE = "ACTIVE"
+    DEGRADED = "DEGRADED"
+    REVIEW = "REVIEW"
     REJECTED = "REJECTED"
     ARCHIVED = "ARCHIVED"
 

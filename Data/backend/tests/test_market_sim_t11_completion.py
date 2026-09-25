@@ -49,11 +49,15 @@ class CompletionReportTests(unittest.TestCase):
         self.assertIn("Evidence", text)
         self.assertIn("DEFERRED", text)
 
-    def test_gates_phase_is_t11(self) -> None:
+    def test_gates_phase_is_t11_or_later(self) -> None:
         manifest = json.loads(GATES.read_text(encoding="utf-8"))
-        self.assertEqual(manifest.get("phase"), "T11")
+        phase = str(manifest.get("phase") or "")
+        self.assertIn(phase, {"T11", "T18"}, f"unexpected phase {phase}")
         for gid in ("G43", "G44", "G45", "G47", "G60"):
             self.assertEqual(manifest["gates"][gid]["status"], "PASS", gid)
+        if phase == "T18":
+            for gid in ("G67", "G68", "G69", "G70", "G71", "G72"):
+                self.assertEqual(manifest["gates"][gid]["status"], "PASS", gid)
 
 
 class CharacterizationRegressionTests(unittest.TestCase):
@@ -96,7 +100,7 @@ class WindowsPathTests(unittest.TestCase):
 
 class MigrationPostureTests(unittest.TestCase):
     def test_migration_head_documented(self) -> None:
-        self.assertGreaterEqual(MIGRATIONS[-1].version, 49)
+        self.assertGreaterEqual(MIGRATIONS[-1].version, 50)
         # Compatibility posture: migrations are append-only numbered sequence.
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, sorted(versions))

@@ -619,6 +619,18 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **T11 (Master Program closeout):** `scripts/verify_trading_100.py` + CI step + completion report (`Data/docs/trading_master_program_completion.md`). Cross-platform path helpers for Windows-style worker/sandbox paths. Characterization regressions flipped where delivered; residual deep kernel/data gates marked **DEFERRED** (not claimed PASS). Migration compatibility posture documented.
 
+**T13 (Shadow Live):** `shadow_live.py` — observe current market quotes, form intended orders, persist decisions with `no_broker_order` truth. Distinct from paper fills and historical backtests. Outcomes attach later for measurement. Gateway capabilities `market_sim.shadow.*`. Migration 50 (`shadow_live_sessions` / `shadow_live_decisions`).
+
+**T14 (Live Paper labels):** Paper sessions use the same kernel/reconcile path as T9 and expose explicit `LOCAL PAPER` / `BROKER PAPER` execution modes — never ambiguous “LIVE”. `live_money_blocked` truth on every paper session; real-money remains BLOCKED.
+
+**T15 (Promotion / degradation + drift):** Lifecycle extends G31 with `DEGRADED` / `REVIEW`. `compute_performance_drift` is sample-size honest (`UNMEASURED` under n&lt;5; no fake significance). Explicit `promote_strategy` transitions only.
+
+**T16 (Training bridge):** `training_bridge.py` maps measured shadow/paper decisions into existing `VerifiedExperience` / ExperienceStore. Unverified outcomes are skipped. No TradingTrainer2; no raw private chain-of-thought. SFT-shaped export lines only.
+
+**T17 (Trading Center UI):** Paper page labels SHADOW / LOCAL PAPER / BROKER PAPER / BLOCKED; shadow start/decide + training-bridge export wired via typed `api.client` and action matrix.
+
+**T18 (Hardening):** Gates G67–G72 PASS; D21 migration head ≥50; canonical docs updated; live money still BLOCKED. Residual deep market-data/kernel gates remain DEFERRED.
+
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
 Machine gate state lives in `Data/backend/tests/trading_gates.json`; `scripts/verify_trading_100.py` is the verifier.

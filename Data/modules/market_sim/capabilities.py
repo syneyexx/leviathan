@@ -504,6 +504,65 @@ def register_market_sim_module_capabilities(catalog: Any) -> None:
         },
     )
     _mod(
+        cap_id="market_sim.shadow.start",
+        name="Start Shadow Live Session",
+        description="Observe current market and record decisions without broker orders (T13).",
+        provider_ref="shadow.start",
+        required=["symbol"],
+        properties={
+            "symbol": {"type": "string"},
+            "provider_id": {"type": "string"},
+            "strategy_id": {"type": "string"},
+            "strategy_version": {"type": "integer"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.shadow.decide",
+        name="Shadow Live Decide",
+        description="Record a shadow decision (no broker submit).",
+        provider_ref="shadow.decide",
+        required=["session_id", "side", "qty"],
+        properties={
+            "session_id": {"type": "string"},
+            "side": {"type": "string"},
+            "qty": {"type": "number"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.shadow.outcome",
+        name="Attach Shadow Outcome",
+        description="Attach later realized market outcome to a shadow decision.",
+        provider_ref="shadow.outcome",
+        required=["session_id", "decision_id", "realized_price"],
+        properties={
+            "session_id": {"type": "string"},
+            "decision_id": {"type": "string"},
+            "realized_price": {"type": "number"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.strategy.drift",
+        name="Strategy Performance Drift",
+        description="Compare paper/shadow returns vs historical expectation (T15).",
+        provider_ref="strategy.drift",
+        required=["expected_returns", "actual_returns"],
+        properties={
+            "expected_returns": {"type": "array"},
+            "actual_returns": {"type": "array"},
+            "band": {"type": "number"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.training.export",
+        name="Export Trading Training Bridge",
+        description="Export verified trading trajectories into VerifiedExperience (T16).",
+        provider_ref="training.export",
+        properties={
+            "session_id": {"type": "string"},
+            "decisions": {"type": "array"},
+        },
+    )
+    _mod(
         cap_id="market_sim.experiment.propose",
         name="Propose Experiment",
         description="Propose a strategy research trial.",

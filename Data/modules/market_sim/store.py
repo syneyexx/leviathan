@@ -2135,3 +2135,79 @@ class MarketSimStore:
                 (run_id, limit),
             ).fetchall()
         return [_loads(r["payload_json"], {}) for r in rows]
+
+    # --- T13 shadow live ---
+
+    def save_shadow_live_session(self, session: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO shadow_live_sessions(
+                    session_id, status, symbol, provider_id, strategy_id, strategy_version,
+                    feed_status, decisions_json, created_at, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    status=excluded.status,
+                    feed_status=excluded.feed_status,
+                    decisions_json=excluded.decisions_json,
+                    updated_at=excluded.updated_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    session["session_id"],
+                    session["status"],
+                    session["symbol"],
+                    session["provider_id"],
+                    session.get("strategy_id"),
+                    session.get("strategy_version"),
+                    session.get("feed_status") or "",
+                    json.dumps(session.get("decisions") or []),
+                    session.get("created_at") or utc_now(),
+                    session.get("updated_at") or utc_now(),
+                    json.dumps(session.get("metadata") or {}),
+                ),
+            )
+        return session
+
+    def get_shadow_live_session(self, session_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM shadow_live_sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row["session_id"],
+            "status": row["status"],
+            "symbol": row["symbol"],
+            "provider_id": row["provider_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": row["strategy_version"],
+            "feed_status": row["feed_status"],
+            "decisions": _loads(row["decisions_json"], []),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def save_shadow_decision(self, decision: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO shadow_live_decisions(
+                    decision_id, session_id, payload_json, created_at, outcome_attached_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(decision_id) DO UPDATE SET
+                    payload_json=excluded.payload_json,
+                    outcome_attached_at=excluded.outcome_attached_at
+                """,
+                (
+                    decision["decision_id"],
+                    decision["session_id"],
+                    json.dumps(decision),
+                    decision.get("decision_ts") or utc_now(),
+                    decision.get("outcome_attached_at"),
+                ),
+            )
+        return decision
