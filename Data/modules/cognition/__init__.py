@@ -40,6 +40,13 @@ from .experience import (
     evaluate_active_learning_triggers,
     wilson_interval,
 )
+from .trajectory_export import (
+    PublicCognitiveTrajectory,
+    TrajectoryExportBridge,
+    build_trajectory_from_experience,
+    build_trajectory_from_run_snapshot,
+    scrub_private_fields,
+)
 from .hypotheses import ConfidenceBand, Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band, hypothesis_board_from_mapping
 from .inference_compute import (
     InferenceComputeController,
@@ -172,6 +179,7 @@ __all__ = [
     "PlanStep",
     "ProceduralMemoryHint",
     "PublicClaim",
+    "PublicCognitiveTrajectory",
     "ReasoningCapabilityProfile",
     "ReasoningMode",
     "ReasoningStrategy",
@@ -187,6 +195,7 @@ __all__ = [
     "TaskModel",
     "TaskModelAdvice",
     "TaskModelBuilder",
+    "TrajectoryExportBridge",
     "VerifiedExperience",
     "WorkingMemory",
     "WorkingMemoryItem",
@@ -194,6 +203,8 @@ __all__ = [
     "apply_capability_to_budget",
     "apply_task_advice",
     "build_control_plane_model_caller",
+    "build_trajectory_from_experience",
+    "build_trajectory_from_run_snapshot",
     "calibrate_expected_gain",
     "classify_failure",
     "classify_steer",
@@ -204,6 +215,7 @@ __all__ = [
     "neural_budget_for_mode",
     "register_specialist_handlers",
     "resolve_reasoning_capability_profile",
+    "scrub_private_fields",
     "select_ttc_candidate",
     "should_blind_retry",
     "structured_state_from_mapping",

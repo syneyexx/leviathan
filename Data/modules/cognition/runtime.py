@@ -743,6 +743,39 @@ class CognitiveRuntime:
             },
         }
 
+    def export_training_bundle(
+        self,
+        *,
+        include_excluded: bool = False,
+        include_active_learning: bool = True,
+    ) -> dict[str, Any]:
+        """Export public cognitive trajectories for governed training ingestion (R22).
+
+        Never starts training or promotes models.
+        """
+        if hasattr(self.experience_store, "export_training_bundle"):
+            return self.experience_store.export_training_bundle(
+                include_excluded=include_excluded,
+                include_active_learning=include_active_learning,
+            )
+        return {
+            "schema_version": "1",
+            "trajectory_count": 0,
+            "sft_records": [],
+            "preference_seeds": [],
+            "active_learning": [],
+            "ingestion": {
+                "status": "exported_not_ingested",
+                "auto_promote_forbidden": True,
+                "requires_human_or_policy_approval": True,
+            },
+            "truth": {
+                "structured_trajectory_bridge": True,
+                "auto_promote_forbidden": True,
+                "export_is_not_training": True,
+            },
+        }
+
     # --- internals ---
 
     def _require(self, run_id: str, *, hydrate: bool = False) -> CognitiveRunState:
@@ -2335,6 +2368,16 @@ class CognitiveRuntime:
             admitted = self.experience_store.admit(exp)
             state.experience = admitted.public_dict()
             self._emit(state, "experience_admitted" if admitted.admitted else "experience_rejected", state.experience)
+            if hasattr(self.experience_store, "record_trajectory_from_run"):
+                snap = {
+                    **state.public_status(),
+                    "response_text": None if state.shadow else state.response_text,
+                    "response": None if state.shadow else state.response_text,
+                }
+                traj = self.experience_store.record_trajectory_from_run(
+                    snap, experience=admitted
+                )
+                self._emit(state, "trajectory_exported", traj.public_dict())
 
         # Active-learning candidates from full trigger set — never auto-train.
         if self.experience_learning and hasattr(
