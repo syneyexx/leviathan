@@ -409,6 +409,18 @@ class MarketSimSettings:
     markets_root: Path
     bars_per_slice: int = 50
     default_initial_cash: float = 100_000.0
+    default_portfolio_id: str = ""
+    default_broker_mode: str = "local_paper"
+    default_provider_id: str = "binance_public"
+    default_benchmark: str = "BTCUSDT"
+    paper_fee_bps: float = 5.0
+    paper_slippage_bps: float = 2.0
+    shorting_enabled: bool = False
+    max_leverage: float = 1.0
+    cash_reserve_pct: float = 10.0
+    decision_cadence_seconds: int = 60
+    default_orchestra_id: str = ""
+    auto_resume_paper: bool = False
 
 
 @dataclass(frozen=True)
@@ -773,6 +785,18 @@ class Settings:
                 "markets_root_configured": bool(str(self.market_sim.markets_root).strip()),
                 "bars_per_slice": self.market_sim.bars_per_slice,
                 "default_initial_cash": self.market_sim.default_initial_cash,
+                "default_portfolio_id": self.market_sim.default_portfolio_id,
+                "default_broker_mode": self.market_sim.default_broker_mode,
+                "default_provider_id": self.market_sim.default_provider_id,
+                "default_benchmark": self.market_sim.default_benchmark,
+                "paper_fee_bps": self.market_sim.paper_fee_bps,
+                "paper_slippage_bps": self.market_sim.paper_slippage_bps,
+                "shorting_enabled": self.market_sim.shorting_enabled,
+                "max_leverage": self.market_sim.max_leverage,
+                "cash_reserve_pct": self.market_sim.cash_reserve_pct,
+                "decision_cadence_seconds": self.market_sim.decision_cadence_seconds,
+                "default_orchestra_id": self.market_sim.default_orchestra_id,
+                "auto_resume_paper": self.market_sim.auto_resume_paper,
             },
             "neuro_runtime": {
                 "residual_kind": self.neuro_runtime.residual_kind,
@@ -1175,6 +1199,39 @@ class Settings:
                 default_initial_cash=_env_float(
                     "LEVIATHAN_MARKET_SIM_INITIAL_CASH", 100_000.0, minimum=1.0
                 ),
+                default_portfolio_id=(
+                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_PORTFOLIO", "") or ""
+                ).strip(),
+                default_broker_mode=(
+                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_BROKER", "local_paper") or "local_paper"
+                ).strip(),
+                default_provider_id=(
+                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_PROVIDER", "binance_public")
+                    or "binance_public"
+                ).strip(),
+                default_benchmark=(
+                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_BENCHMARK", "BTCUSDT") or "BTCUSDT"
+                ).strip(),
+                paper_fee_bps=_env_float(
+                    "LEVIATHAN_MARKET_SIM_PAPER_FEE_BPS", 5.0, minimum=0.0, maximum=500.0
+                ),
+                paper_slippage_bps=_env_float(
+                    "LEVIATHAN_MARKET_SIM_PAPER_SLIPPAGE_BPS", 2.0, minimum=0.0, maximum=500.0
+                ),
+                shorting_enabled=_env_bool("LEVIATHAN_MARKET_SIM_SHORTING", False),
+                max_leverage=_env_float(
+                    "LEVIATHAN_MARKET_SIM_MAX_LEVERAGE", 1.0, minimum=0.1, maximum=10.0
+                ),
+                cash_reserve_pct=_env_float(
+                    "LEVIATHAN_MARKET_SIM_CASH_RESERVE_PCT", 10.0, minimum=0.0, maximum=90.0
+                ),
+                decision_cadence_seconds=_env_int(
+                    "LEVIATHAN_MARKET_SIM_DECISION_CADENCE", 60, minimum=5, maximum=3600
+                ),
+                default_orchestra_id=(
+                    _env_raw("LEVIATHAN_MARKET_SIM_DEFAULT_ORCHESTRA", "") or ""
+                ).strip(),
+                auto_resume_paper=_env_bool("LEVIATHAN_MARKET_SIM_AUTO_RESUME", False),
             ),
             neuro_runtime=NeuroRuntimeSettings(
                 residual_kind=(
