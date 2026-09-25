@@ -1218,6 +1218,81 @@ class MarketSimStore:
             for r in rows
         ]
 
+    def append_promotion_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Append-only strategy promotion ledger event (G31)."""
+        event_id = event.get("event_id") or str(uuid.uuid4())
+        created_at = event.get("created_at") or utc_now()
+        with self.connect() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO market_strategy_promotions(
+                        event_id, strategy_id, from_status, to_status, reason,
+                        decided_by, evidence_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        event["strategy_id"],
+                        event.get("from_status") or "",
+                        event.get("to_status") or "",
+                        event.get("reason") or "",
+                        event.get("decided_by") or "operator",
+                        json.dumps(event.get("evidence") or {}),
+                        created_at,
+                    ),
+                )
+            except sqlite3.OperationalError:
+                return {
+                    **event,
+                    "event_id": event_id,
+                    "created_at": created_at,
+                    "persisted": False,
+                }
+        return {
+            "event_id": event_id,
+            "strategy_id": event["strategy_id"],
+            "from_status": event.get("from_status") or "",
+            "to_status": event.get("to_status") or "",
+            "reason": event.get("reason") or "",
+            "decided_by": event.get("decided_by") or "operator",
+            "evidence": event.get("evidence") or {},
+            "created_at": created_at,
+            "persisted": True,
+        }
+
+    def list_promotion_events(
+        self, *, strategy_id: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                if strategy_id:
+                    rows = conn.execute(
+                        "SELECT * FROM market_strategy_promotions WHERE strategy_id=? "
+                        "ORDER BY created_at ASC LIMIT ?",
+                        (strategy_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM market_strategy_promotions ORDER BY created_at ASC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [
+            {
+                "event_id": r["event_id"],
+                "strategy_id": r["strategy_id"],
+                "from_status": r["from_status"],
+                "to_status": r["to_status"],
+                "reason": r["reason"],
+                "decided_by": r["decided_by"],
+                "evidence": _loads(r["evidence_json"], {}),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
     def list_events(self, run_id: str, *, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         with self.connect() as conn:
             if kind:

@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T5",
+  "phase": "T6",
   "frozen_at": "2026-09-25",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T5 science layer: metrics v2, trial ledger, purged CV/CPCV, sealed acceptance, FDR",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t5_science.py Data/backend/tests/test_market_sim_characterization.py -q"
+      "result": "T6 strategy library + causal memory + promotion + provenance fingerprint",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t6_strategy_library.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -468,12 +468,27 @@
     "G22": {
       "title": "Strategy Library persist/recall/lessons",
       "phase": "T6A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/strategy_library.py",
+        "Data/modules/market_sim/multi_engine.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::StrategyLibraryTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::StrategyLibraryTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t6_strategy_library.py::StrategyLibraryTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T6A: StrategyLibrary persist/recall/lessons with available_at<=as_of; MultiAgentEngine.prepare hydrates from store.",
       "related_defects": [
         "D15"
       ]
@@ -481,12 +496,27 @@
     "G23": {
       "title": "Brain/Memory as_of or excluded",
       "phase": "T6B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/brain_hooks.py",
+        "Data/modules/market_sim/deliberation.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::BrainAsOfTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::BrainAsOfTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t6_strategy_library.py::BrainAsOfTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T6B: time-sensitive BrainFacade.retrieve requires as_of or excludes hits; deliberation passes bar.ts.",
       "related_defects": [
         "D22"
       ]
@@ -567,12 +597,27 @@
     "G31": {
       "title": "Promotion state machine",
       "phase": "T6C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/strategy_library.py",
+        "Data/modules/market_sim/service.py",
+        "Data/backend/migrations.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::PromotionStateMachineTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::PromotionStateMachineTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t6_strategy_library.py::PromotionStateMachineTests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T6C: explicit DRAFT/RESEARCH/CANDIDATE/PAPER_READY/ACTIVE/REJECTED/ARCHIVED transitions; append-only promotion ledger."
     },
     "G32": {
       "title": "PaperForwardRunner autonomous loop",
@@ -943,12 +988,26 @@
     "G53": {
       "title": "Full provenance fingerprint",
       "phase": "T6C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/strategy_library.py",
+        "Data/modules/market_sim/knowledge_snapshot.py",
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::ProvenanceFingerprintTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t6_strategy_library.py::ProvenanceFingerprintTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t6_strategy_library.py::ProvenanceFingerprintTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T6C: compute_provenance_fingerprint over dataset/strategy/code/seed; sealed into TradingKnowledgeSnapshot."
     },
     "G54": {
       "title": "Disaster recovery temp-target",

@@ -607,6 +607,8 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **T5 (science layer):** Metrics v2 annualize from run timeframe and derive win rate / profit factor from fill `realized_delta` with bootstrap CIs (`metrics.py`). Global append-only `market_trial_ledger` records trial events; acceptance requires run IDs and seals each run single-use (`market_acceptance_seals`). Walk-forward suite adds purged CV, combinatorial purged CV, and cross-window robustness. FDR (Benjamini–Hochberg) + power helpers live in `science.py`. Migration 45.
 
+**T6 (strategy library + memory):** `strategy_library.py` persists/recalls lessons with `available_at <= as_of`; `MultiAgentEngine.prepare` hydrates durable memories. Time-sensitive Brain retrieval requires `as_of` or is excluded; deliberation passes bar timestamps. Explicit promotion state machine (RESEARCH→CANDIDATE→PAPER_READY→ACTIVE) with append-only promotion ledger. Knowledge snapshots seal a full provenance fingerprint. Migration 46.
+
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
 Machine gate state lives in `Data/backend/tests/trading_gates.json`; `scripts/verify_trading_100.py` is the verifier.

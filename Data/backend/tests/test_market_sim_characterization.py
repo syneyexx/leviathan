@@ -652,11 +652,28 @@ class D14TrialLedgerCharacterization(unittest.TestCase):
 
 
 class D15MemoryCharacterization(unittest.TestCase):
-    def test_d15_current_multi_prepare_memory_empty(self) -> None:
+    def test_d15_prepare_hydrates_from_store(self) -> None:
+        # T6 / G22: MultiAgentEngine.prepare loads durable strategy memories.
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
+            store.save_strategy_memory(
+                {
+                    "memory_id": "m1",
+                    "strategy_id": "s-hydrate",
+                    "strategy_version": 1,
+                    "features": {"trend": "up"},
+                    "applicability": {"trends": ["up"]},
+                    "outcome_summary": "worked",
+                    "trial_id": None,
+                    "available_at": "2020-01-01T00:00:00+00:00",
+                    "created_at": utc_now(),
+                    "rejected": False,
+                    "metadata": {},
+                }
+            )
             engine = MultiAgentEngine(store)
             run = _run(
+                strategy_id="s-hydrate",
                 agents=[
                     {
                         "agent_id": "a1",
@@ -666,16 +683,19 @@ class D15MemoryCharacterization(unittest.TestCase):
                 ],
             )
             state = engine.prepare(run, bars_path=str(FIXTURE))
-            self.assertEqual(len(state.memory._entries), 0)
+            self.assertGreaterEqual(len(state.memory._entries), 1)
 
-    def test_d15_current_prepare_does_not_hydrate(self) -> None:
+    def test_d15_prepare_calls_list_strategy_memories(self) -> None:
         src = inspect.getsource(MultiAgentEngine.prepare)
-        self.assertNotIn("list_strategy_memories", src)
+        self.assertIn("hydrate_for_run", src)
+        from Data.modules.market_sim.strategy_library import StrategyLibrary
 
-    @unittest.expectedFailure  # D15 — fixed in Phase T7
+        lib_src = inspect.getsource(StrategyLibrary.hydrate_for_run)
+        self.assertIn("list_strategy_memories", lib_src)
+
     def test_d15_desired_prepare_hydrates_from_store(self) -> None:
         src = inspect.getsource(MultiAgentEngine.prepare)
-        self.assertIn("list_strategy_memories", src)
+        self.assertIn("hydrate_for_run", src)
 
 
 # ---------------------------------------------------------------------------
@@ -863,13 +883,15 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         # After Frontier Program F1 (trade orchestras): head is 43+.
         # T1 causality/data foundation adds migration 44.
         # T5 science layer adds migration 45.
+        # T6 strategy library adds migration 46.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 45)
+        self.assertGreaterEqual(head, 46)
         by_ver = {m.version: m.name for m in MIGRATIONS}
         self.assertEqual(by_ver[42], "resource_reservations_device_aware")
         self.assertEqual(by_ver[43], "trading_orchestra")
         self.assertEqual(by_ver[44], "trading_causality_data_foundation")
         self.assertEqual(by_ver[45], "trading_science_layer")
+        self.assertEqual(by_ver[46], "trading_strategy_library")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 
@@ -926,7 +948,12 @@ class D22BrainAsOfCharacterization(unittest.TestCase):
         out = facade.retrieve("q", dependencies=["memory"], as_of="2024-06-01T00:00:00+00:00")
         self.assertEqual([h["id"] for h in out.hits], ["old"])
         self.assertTrue(any("as_of filter dropped 1" in n for n in out.notes))
-        unfiltered = facade.retrieve("q", dependencies=["memory"])
+        # T6 / G23: without as_of, time-sensitive brain is excluded (not unfiltered).
+        excluded = facade.retrieve("q", dependencies=["memory"])
+        self.assertEqual(len(excluded.hits), 0)
+        self.assertTrue(any("as_of required" in n for n in excluded.notes))
+        # Explicit opt-out of time sensitivity still returns all hits.
+        unfiltered = facade.retrieve("q", dependencies=["memory"], time_sensitive=False)
         self.assertEqual(len(unfiltered.hits), 2)
 
 

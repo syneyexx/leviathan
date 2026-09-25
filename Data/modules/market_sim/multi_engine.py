@@ -144,6 +144,16 @@ class MultiAgentEngine:
             ),
             game_mode=game_mode,
         )
+        # T6 / G22: hydrate strategy memory from durable store (causal as_of = run start).
+        from .strategy_library import StrategyLibrary
+
+        lib = StrategyLibrary(self.store)
+        as_of_hydrate = str(run.start_ts or "") or None
+        state.memory = lib.hydrate_for_run(
+            strategy_id=getattr(run, "strategy_id", None),
+            as_of_ts=as_of_hydrate,
+            limit=500,
+        )
         state._bh_shares = bh_shares  # type: ignore[attr-defined]
         state._strategy_params = dict(strategy_params or {"fast_ma": 10, "slow_ma": 30})  # type: ignore[attr-defined]
         state._entry_rules = dict(entry_rules or {"kind": "ma_cross"})  # type: ignore[attr-defined]

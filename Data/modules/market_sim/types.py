@@ -54,7 +54,11 @@ class SourceStatus(str, Enum):
 
 class StrategyStatus(str, Enum):
     DRAFT = "DRAFT"
+    RESEARCH = "RESEARCH"
+    CANDIDATE = "CANDIDATE"
+    PAPER_READY = "PAPER_READY"
     ACTIVE = "ACTIVE"
+    REJECTED = "REJECTED"
     ARCHIVED = "ARCHIVED"
 
 

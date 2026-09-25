@@ -3399,6 +3399,46 @@ def _m45_trading_science_layer(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m46_trading_strategy_library(conn: sqlite3.Connection) -> None:
+    """T6: strategy promotion ledger (append-only)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_strategy_promotions (
+            event_id TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
+            from_status TEXT NOT NULL,
+            to_status TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            decided_by TEXT NOT NULL DEFAULT 'operator',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_strategy_promotions_strategy "
+        "ON market_strategy_promotions(strategy_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_strategy_promotions_no_update
+        BEFORE UPDATE ON market_strategy_promotions
+        BEGIN
+            SELECT RAISE(ABORT, 'market_strategy_promotions is append-only');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_strategy_promotions_no_delete
+        BEFORE DELETE ON market_strategy_promotions
+        BEGIN
+            SELECT RAISE(ABORT, 'market_strategy_promotions is append-only');
+        END
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3456,6 +3496,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=45,
         name="trading_science_layer",
         apply=_m45_trading_science_layer,
+    ),
+    Migration(
+        version=46,
+        name="trading_strategy_library",
+        apply=_m46_trading_strategy_library,
     ),
 )
 
