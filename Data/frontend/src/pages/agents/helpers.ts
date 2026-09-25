@@ -540,27 +540,28 @@ export function teamBucketForAgent(agent: AgentDefinition): TeamBucket {
   const systemKey = String(
     agent.systemKey || (agent.metadata as { systemKey?: string } | undefined)?.systemKey || "",
   ).toLowerCase();
-  const blob = [kind, role, name, systemKey, tags.join(" ")].join(" ");
+  const blob = [role, name, systemKey, tags.join(" ")].join(" ");
 
-  if (kind === "research" || blob.includes("research") || systemKey === "research") return "Research";
+  // Kind is authoritative when it maps cleanly.
+  if (kind === "research" || systemKey === "research") return "Research";
+  if (kind === "coding" || systemKey === "coding") return "Development";
+  if (kind === "trading") return "Trading";
+  if (kind === "orchestrator" || systemKey === "planner") return "Planning";
   if (
-    kind === "coding" ||
-    blob.includes("coding") ||
-    blob.includes("development") ||
-    systemKey === "coding"
-  ) {
-    return "Development";
-  }
-  if (kind === "trading" || blob.includes("trading") || blob.includes("trade")) return "Trading";
-  if (kind === "orchestrator" || blob.includes("plan") || systemKey === "planner") return "Planning";
-  if (
-    blob.includes("risk") ||
-    blob.includes("critic") ||
-    blob.includes("guard") ||
-    systemKey === "critic"
+    systemKey === "critic" ||
+    name.includes("critic") ||
+    name.includes("risk") ||
+    tags.includes("risk") ||
+    tags.includes("critic")
   ) {
     return "Risk";
   }
+
+  if (blob.includes("research")) return "Research";
+  if (blob.includes("coding") || blob.includes("development")) return "Development";
+  if (blob.includes("trading") || blob.includes("trade")) return "Trading";
+  if (blob.includes("plan")) return "Planning";
+  if (blob.includes("risk") || blob.includes("critic") || blob.includes("guard")) return "Risk";
   if (blob.includes("memory")) return "Memory";
   if (blob.includes("evaluat") || tags.includes("qa") || tags.includes("review")) return "Evaluation";
   if (blob.includes("vision") || blob.includes("media") || blob.includes("image")) return "Vision";

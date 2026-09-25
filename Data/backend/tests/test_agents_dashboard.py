@@ -16,26 +16,34 @@ from Data.modules.agents.fleet_types import (
     AgentMission,
     MissionStatus,
 )
+from Data.modules.execution import ExecutionGateway, build_default_catalog
 from Data.modules.agents.runtime import AgentRuntime
 from Data.modules.agents.store import AgentFleetStore
 from Data.modules.agents.system_inventory import SystemInventory
-from Data.modules.execution.gateway import ExecutionGateway
 from Data.modules.workers.pools import POOL_CATALOG
 from Data.modules.workers.registry import WorkerRegistry
 
 
 def _agent(**kwargs) -> AgentDefinition:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    kind = kwargs.get("kind", AgentDefinitionKind.RESEARCH)
+    default_tags = []
+    if kind == AgentDefinitionKind.RESEARCH:
+        default_tags = ["research"]
+    elif kind == AgentDefinitionKind.CODING:
+        default_tags = ["code"]
+    elif kind == AgentDefinitionKind.TRADING:
+        default_tags = ["trading"]
     base = dict(
         agent_id="agent_x",
         name="X",
-        kind=AgentDefinitionKind.RESEARCH,
+        kind=kind,
         description="",
-        role="Research",
+        role="Specialist",
         enabled=True,
         archived=False,
         capabilities=[],
-        tags=["research"],
+        tags=default_tags,
         memory_policy="default",
         health=AgentHealth.IDLE,
         created_at=now,
@@ -43,6 +51,15 @@ def _agent(**kwargs) -> AgentDefinition:
         metadata={},
     )
     base.update(kwargs)
+    if "kind" in kwargs and "tags" not in kwargs:
+        # Recompute default tags when kind overridden without tags
+        k = kwargs["kind"]
+        if k == AgentDefinitionKind.CODING:
+            base["tags"] = ["code"]
+        elif k == AgentDefinitionKind.TRADING:
+            base["tags"] = ["trading"]
+        elif k == AgentDefinitionKind.RESEARCH:
+            base["tags"] = ["research"]
     return AgentDefinition(**base)
 
 
@@ -213,7 +230,7 @@ class FleetStartPauseTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "t.db"
             store = AgentFleetStore(db)
-            gateway = ExecutionGateway()
+            gateway = ExecutionGateway(catalog=build_default_catalog())
             runtime = AgentRuntime(gateway=gateway, agents_enabled=True)
             fleet = AgentFleetService(store, runtime, system_inventory=SystemInventory())
             fleet.initialize(seed_defaults=True)

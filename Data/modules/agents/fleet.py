@@ -1374,7 +1374,7 @@ class AgentFleetService:
             if agent.enabled:
                 skipped.append({"agentId": agent.agent_id, "reason": "already_enabled"})
                 continue
-            self.enable_agent(agent.agent_id)
+            self.set_enabled(agent.agent_id, True)
             changed.append(agent.agent_id)
         return {
             "changed": changed,
@@ -1394,7 +1394,7 @@ class AgentFleetService:
             if not agent.enabled:
                 skipped.append({"agentId": agent.agent_id, "reason": "already_disabled"})
                 continue
-            self.disable_agent(agent.agent_id)
+            self.set_enabled(agent.agent_id, False)
             changed.append(agent.agent_id)
         return {
             "changed": changed,

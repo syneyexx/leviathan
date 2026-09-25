@@ -57,7 +57,7 @@ def _percentile(sorted_vals: list[float], p: float) -> float | None:
 
 def team_bucket_for_agent(agent: AgentDefinition) -> str:
     """Deterministic team/domain grouping for distribution charts."""
-    kind = str(agent.kind or "").lower()
+    kind = str(getattr(agent.kind, "value", agent.kind) or "").lower()
     role = str(agent.role or "").lower()
     name = str(agent.name or "").lower()
     tags = {str(t).lower() for t in (agent.tags or [])}
@@ -66,17 +66,29 @@ def team_bucket_for_agent(agent: AgentDefinition) -> str:
         or (agent.metadata or {}).get("systemKey")
         or ""
     ).lower()
-    blob = " ".join([kind, role, name, system_key, " ".join(sorted(tags))])
+    blob = " ".join([role, name, system_key, " ".join(sorted(tags))])
 
-    if kind == "research" or "research" in blob or system_key == "research":
+    # Kind is authoritative when it maps cleanly.
+    if kind == "research" or system_key == "research":
         return "Research"
-    if kind == "coding" or "coding" in blob or "development" in blob or system_key == "coding":
+    if kind == "coding" or system_key == "coding":
         return "Development"
-    if kind == "trading" or "trading" in blob or "trade" in blob:
+    if kind == "trading":
         return "Trading"
-    if kind == "orchestrator" or "plan" in blob or system_key == "planner":
+    if kind == "orchestrator" or system_key == "planner":
         return "Planning"
-    if "risk" in blob or "critic" in blob or "guard" in blob or system_key == "critic":
+    if system_key == "critic" or "critic" in name or "risk" in name or "risk" in tags or "critic" in tags:
+        return "Risk"
+
+    if "research" in blob:
+        return "Research"
+    if "coding" in blob or "development" in blob:
+        return "Development"
+    if "trading" in blob or "trade" in blob:
+        return "Trading"
+    if "plan" in blob:
+        return "Planning"
+    if "risk" in blob or "critic" in blob or "guard" in blob:
         return "Risk"
     if "memory" in blob:
         return "Memory"
