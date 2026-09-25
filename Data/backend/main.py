@@ -1328,7 +1328,13 @@ def _assess_product_truth_report():
     elif browser_kind_val == "local_dom":
         browser_capable = True
     elif browser_kind_val == "playwright":
-        browser_capable = False
+        # Package alone is not READY — probe Chromium launch/navigate/observe.
+        readiness = getattr(browser_worker.backend, "readiness", None)
+        if callable(readiness):
+            info = readiness()
+            browser_capable = bool(info.get("ready"))
+        else:
+            browser_capable = False
 
     model_cards = model_plane.status_cards()
     # Media/voice services are real entry points but fixture/stub backends are not production.
@@ -5981,6 +5987,172 @@ def browser_request(payload: BrowserRequest) -> dict:
             "fixture_is_not_chromium": True,
         },
     }
+
+
+class BrowserQaCrawlRequest(BaseModel):
+    seed_url: str = Field(min_length=1, max_length=2000)
+    persona: str = "DESKTOP_MOUSE"
+    seed: int = 42
+    budgets: dict | None = None
+    allow_destructive_test_actions: bool = False
+    allowed_hosts: list[str] | None = None
+    auth_secret_ref: str | None = None
+    auth_lease_id: str | None = None
+    journey_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    approval_id: str | None = None
+    via_job: bool = True
+
+
+class BrowserQaJourneyRef(BaseModel):
+    journey_id: str = Field(min_length=1, max_length=120)
+    seed: int | None = None
+    approval_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    via_job: bool = False
+
+
+def _browser_qa_via_gateway(
+    *,
+    capability_id: str,
+    arguments: dict,
+    approval_id: str | None,
+    run_id: str | None,
+    trace_id: str | None,
+    via_job: bool,
+) -> dict:
+    if not settings.features.capability_world:
+        raise HTTPException(status_code=501, detail="capability_world disabled")
+    if via_job:
+        job = job_runtime.enqueue(
+            capability_id=capability_id,
+            arguments=arguments,
+            run_id=run_id,
+            approval_id=approval_id,
+            requested_by="api.browser.qa",
+            trace_id=trace_id,
+            metadata={"browser_qa": capability_id},
+        )
+        return {
+            "job": job.public_dict(),
+            "capability_id": capability_id,
+            "truth": {
+                "requires_capability_gateway": True,
+                "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+                "routed_via_job": True,
+            },
+        }
+    result = execution_gateway.execute(
+        CapabilityRequest(
+            capability_id=capability_id,
+            arguments=arguments,
+            approval_id=approval_id,
+            run_id=run_id,
+            requested_by="api.browser.qa",
+            trace_id=trace_id,
+        )
+    )
+    status_code = 200
+    if result.status == CapabilityStatus.REJECTED:
+        reason = (result.telemetry or {}).get("reason")
+        status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+    elif result.status == CapabilityStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {
+        "result": result.public_dict(),
+        "capability_id": capability_id,
+        "truth": {
+            "requires_capability_gateway": True,
+            "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+            "localhost_scoped_by_default": True,
+            "no_stealth_anti_bot": True,
+        },
+    }
+
+
+@app.post("/api/browser/qa/crawl")
+def browser_qa_crawl(payload: BrowserQaCrawlRequest) -> dict:
+    arguments: dict = {
+        "seed_url": payload.seed_url,
+        "persona": payload.persona,
+        "seed": payload.seed,
+        "allow_destructive_test_actions": payload.allow_destructive_test_actions,
+    }
+    if payload.budgets is not None:
+        arguments["budgets"] = payload.budgets
+    if payload.allowed_hosts is not None:
+        arguments["allowed_hosts"] = payload.allowed_hosts
+    if payload.auth_secret_ref is not None:
+        arguments["auth_secret_ref"] = payload.auth_secret_ref
+    if payload.auth_lease_id is not None:
+        arguments["auth_lease_id"] = payload.auth_lease_id
+    if payload.journey_id is not None:
+        arguments["journey_id"] = payload.journey_id
+    return _browser_qa_via_gateway(
+        capability_id="browser.qa.crawl",
+        arguments=arguments,
+        approval_id=payload.approval_id,
+        run_id=payload.run_id,
+        trace_id=payload.trace_id,
+        via_job=payload.via_job,
+    )
+
+
+@app.get("/api/browser/qa/{journey_id}/status")
+def browser_qa_status(journey_id: str) -> dict:
+    return _browser_qa_via_gateway(
+        capability_id="browser.qa.status",
+        arguments={"journey_id": journey_id},
+        approval_id=None,
+        run_id=None,
+        trace_id=None,
+        via_job=False,
+    )
+
+
+@app.post("/api/browser/qa/{journey_id}/cancel")
+def browser_qa_cancel(journey_id: str, payload: BrowserQaJourneyRef | None = None) -> dict:
+    body = payload or BrowserQaJourneyRef(journey_id=journey_id)
+    return _browser_qa_via_gateway(
+        capability_id="browser.qa.cancel",
+        arguments={"journey_id": journey_id},
+        approval_id=body.approval_id,
+        run_id=body.run_id,
+        trace_id=body.trace_id,
+        via_job=body.via_job,
+    )
+
+
+@app.post("/api/browser/qa/{journey_id}/replay")
+def browser_qa_replay(journey_id: str, payload: BrowserQaJourneyRef | None = None) -> dict:
+    body = payload or BrowserQaJourneyRef(journey_id=journey_id)
+    arguments: dict = {"journey_id": journey_id}
+    if body.seed is not None:
+        arguments["seed"] = body.seed
+    return _browser_qa_via_gateway(
+        capability_id="browser.qa.replay",
+        arguments=arguments,
+        approval_id=body.approval_id,
+        run_id=body.run_id,
+        trace_id=body.trace_id,
+        via_job=body.via_job,
+    )
+
+
+@app.get("/api/browser/qa/{journey_id}/report")
+def browser_qa_report(journey_id: str) -> dict:
+    return _browser_qa_via_gateway(
+        capability_id="browser.qa.report",
+        arguments={"journey_id": journey_id},
+        approval_id=None,
+        run_id=None,
+        trace_id=None,
+        via_job=False,
+    )
 
 
 @app.get("/api/capabilities/receipts/recent")

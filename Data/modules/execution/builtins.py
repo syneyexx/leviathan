@@ -610,6 +610,142 @@ def build_default_catalog() -> CapabilityCatalog:
             metadata={"tags": ["browser"], "domains": ["browser"], "worker_kind": "browser"},
         )
     )
+    # GI9/GI10 — localhost QA journey crawler
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.qa.crawl",
+            name="Browser QA Crawl",
+            description=(
+                "Run a localhost-scoped normal-user journey crawl "
+                "(EXTERNAL_REQUIRED — JobRuntime cancel/checkpoint/resume)."
+            ),
+            side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="qa_crawl",
+            input_schema={
+                "type": "object",
+                "required": ["seed_url"],
+                "properties": {
+                    "seed_url": {"type": "string"},
+                    "persona": {"type": "string"},
+                    "budgets": {"type": "object"},
+                    "seed": {"type": "integer"},
+                    "allow_destructive_test_actions": {"type": "boolean"},
+                    "allowed_hosts": {"type": "array"},
+                    "auth_secret_ref": {"type": "string"},
+                    "auth_lease_id": {"type": "string"},
+                    "journey_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "trace_id": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.qa", "browser.interact"),
+            metadata={
+                "tags": ["browser", "qa", "crawl"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+                "execution_class": "EXTERNAL_REQUIRED",
+                "localhost_scoped_by_default": True,
+                "no_stealth_anti_bot": True,
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.qa.status",
+            name="Browser QA Status",
+            description="Status for a QA journey crawl (JobRuntime EXTERNAL_REQUIRED ownership).",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="qa_status",
+            input_schema={
+                "type": "object",
+                "required": ["journey_id"],
+                "properties": {"journey_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.qa",),
+            metadata={
+                "tags": ["browser", "qa"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.qa.cancel",
+            name="Browser QA Cancel",
+            description="Request cancel for a QA journey (JobRuntime EXTERNAL_REQUIRED).",
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="qa_cancel",
+            input_schema={
+                "type": "object",
+                "required": ["journey_id"],
+                "properties": {"journey_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.qa",),
+            metadata={
+                "tags": ["browser", "qa", "cancel"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.qa.replay",
+            name="Browser QA Replay",
+            description="Replay a prior QA journey with seeded timing jitter.",
+            side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE, SideEffect.WRITE),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="qa_replay",
+            input_schema={
+                "type": "object",
+                "required": ["journey_id"],
+                "properties": {
+                    "journey_id": {"type": "string"},
+                    "seed": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.qa", "browser.interact"),
+            metadata={
+                "tags": ["browser", "qa", "replay"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="browser.qa.report",
+            name="Browser QA Report",
+            description="Fetch structured QA journey report + artifact refs.",
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.BROWSER,
+            provider_ref="qa_report",
+            input_schema={
+                "type": "object",
+                "required": ["journey_id"],
+                "properties": {"journey_id": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            required_permissions=("browser.qa",),
+            metadata={
+                "tags": ["browser", "qa", "report"],
+                "domains": ["browser"],
+                "worker_kind": "browser",
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
+        )
+    )
     # Wave 7 — media capabilities (fixture MediaService via ExecutionGateway).
     catalog.register(
         CapabilityDefinition(
@@ -982,6 +1118,36 @@ def build_default_catalog() -> CapabilityCatalog:
             metadata={
                 "tags": ["compute", "tier0", "deterministic"],
                 "domains": ["compute"],
+                "worker_kind": "general",
+                "execution_class": "INLINE_SAFE",
+                "aliases": ["math.calculate", "calculator"],
+            },
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="math.calculate",
+            name="Math Calculate",
+            description=(
+                "Safe AST numeric expression evaluator (no eval). "
+                "Alias path for deterministic arithmetic via compute.numeric."
+            ),
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="math_calculate",
+            input_schema={
+                "type": "object",
+                "required": ["expression"],
+                "properties": {
+                    "expression": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=(),
+            metadata={
+                "tags": ["math", "compute", "tier0", "deterministic", "gi6"],
+                "domains": ["compute"],
+                "aliases": ["calculate", "calc"],
                 "worker_kind": "general",
                 "execution_class": "INLINE_SAFE",
             },

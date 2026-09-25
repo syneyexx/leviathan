@@ -317,6 +317,26 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
     )
     registry.register(
         FunctionDefinition(
+            id="math_calculate",
+            name="Math Calculate",
+            version="1.0.0",
+            description="Safe AST numeric expression evaluator (GI6).",
+            entrypoint="Data.functions.math_calculate:run",
+            input_schema={
+                "type": "object",
+                "required": ["expression"],
+                "properties": {"expression": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=False,
+            timeout_seconds=5.0,
+            ram_expectation_mb=16,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
             id="system_inspect",
             name="System Inspect",
             version="1.0.0",

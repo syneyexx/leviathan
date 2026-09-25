@@ -561,6 +561,31 @@ class ResearchIntegrationSettings:
 
 
 @dataclass(frozen=True)
+class AssistantSettings:
+    """Technical assistant orchestration knobs (not BehaviorProfile content policy)."""
+
+    auto_web: bool = True
+    auto_tools: bool = True
+    auto_delegation: bool = True
+    auto_verification: bool = True
+    max_tool_calls: int = 20
+    max_model_calls: int = 12
+    max_specialists: int = 4
+    factuality_mode: str = "LIGHT"
+
+
+@dataclass(frozen=True)
+class BrowserQaSettings:
+    """Localhost human-journey QA crawler knobs."""
+
+    enabled: bool = True
+    allowed_hosts: str = "localhost,127.0.0.1,::1"
+    max_pages: int = 50
+    max_actions: int = 200
+    allow_destructive_test_actions: bool = False
+
+
+@dataclass(frozen=True)
 class Settings:
     """Canonical LEVIATHAN settings.
 
@@ -595,6 +620,8 @@ class Settings:
     backup: BackupSettings
     chaos: ChaosSettings
     research_integration: ResearchIntegrationSettings
+    assistant: AssistantSettings
+    browser_qa: BrowserQaSettings
     managed_serving: ManagedServingSettings
     database_path: Path
 
@@ -1433,6 +1460,40 @@ class Settings:
                     (_env_raw("LEVIATHAN_SOURCE_INGESTION_RUNNER", "inprocess") or "inprocess")
                     .strip()
                     .lower()
+                ),
+            ),
+            assistant=AssistantSettings(
+                auto_web=_env_bool("LEVIATHAN_ASSISTANT_AUTO_WEB", True),
+                auto_tools=_env_bool("LEVIATHAN_ASSISTANT_AUTO_TOOLS", True),
+                auto_delegation=_env_bool("LEVIATHAN_ASSISTANT_AUTO_DELEGATION", True),
+                auto_verification=_env_bool("LEVIATHAN_ASSISTANT_AUTO_VERIFICATION", True),
+                max_tool_calls=_env_int(
+                    "LEVIATHAN_ASSISTANT_MAX_TOOL_CALLS", 20, minimum=0, maximum=200
+                ),
+                max_model_calls=_env_int(
+                    "LEVIATHAN_ASSISTANT_MAX_MODEL_CALLS", 12, minimum=1, maximum=100
+                ),
+                max_specialists=_env_int(
+                    "LEVIATHAN_ASSISTANT_MAX_SPECIALISTS", 4, minimum=0, maximum=16
+                ),
+                factuality_mode=(
+                    (_env_raw("LEVIATHAN_ASSISTANT_FACTUALITY_MODE", "LIGHT") or "LIGHT")
+                    .strip()
+                    .upper()
+                ),
+            ),
+            browser_qa=BrowserQaSettings(
+                enabled=_env_bool("LEVIATHAN_BROWSER_QA_ENABLED", True),
+                allowed_hosts=(
+                    _env_raw("LEVIATHAN_BROWSER_QA_ALLOWED_HOSTS", "localhost,127.0.0.1,::1")
+                    or "localhost,127.0.0.1,::1"
+                ).strip(),
+                max_pages=_env_int("LEVIATHAN_BROWSER_QA_MAX_PAGES", 50, minimum=1, maximum=500),
+                max_actions=_env_int(
+                    "LEVIATHAN_BROWSER_QA_MAX_ACTIONS", 200, minimum=1, maximum=5000
+                ),
+                allow_destructive_test_actions=_env_bool(
+                    "LEVIATHAN_BROWSER_QA_ALLOW_DESTRUCTIVE", False
                 ),
             ),
             database_path=database_path,

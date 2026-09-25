@@ -59,6 +59,11 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "mcp.call",
         "research.fetch_url",
         "research.report.generate",
+        "browser.qa.crawl",
+        "browser.qa.status",
+        "browser.qa.cancel",
+        "browser.qa.replay",
+        "browser.qa.report",
     }
 )
 

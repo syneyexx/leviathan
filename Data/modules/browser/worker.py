@@ -310,6 +310,7 @@ class BrowserWorker:
         allow_network: bool = False,
         allow_uploads: bool = True,
         filesystem_root: str | None = None,
+        qa_crawler: Any | None = None,
     ) -> None:
         if backend is not None:
             self.backend = backend
@@ -326,6 +327,36 @@ class BrowserWorker:
             self.backend = FixtureBrowserBackend()
         self.artifact_store = artifact_store
         self._sessions: dict[str, BrowserSession] = {}
+        self._qa_crawler = qa_crawler
+        self.allow_network = allow_network
+        self.allow_uploads = allow_uploads
+        self.filesystem_root = filesystem_root
+
+    def get_qa_crawler(self) -> Any:
+        if self._qa_crawler is None or self._qa_crawler is False:
+            from .qa_crawler import LocalUserJourneyCrawler
+
+            # QA crawls need localhost HTTP; do not widen the primary worker policy.
+            qa_worker = BrowserWorker(
+                backend_kind=(
+                    self.backend.kind.value
+                    if hasattr(self.backend, "kind")
+                    else "local_dom"
+                ),
+                artifact_store=self.artifact_store,
+                allow_network=True,
+                allow_uploads=self.allow_uploads,
+                filesystem_root=self.filesystem_root,
+            )
+            # Child worker must not recursively spawn another crawler factory.
+            qa_worker._qa_crawler = "pending"
+            crawler = LocalUserJourneyCrawler(
+                worker=qa_worker,
+                artifact_store=self.artifact_store,
+            )
+            qa_worker._qa_crawler = crawler
+            self._qa_crawler = crawler
+        return self._qa_crawler
 
     def get_session(self, session_id: str) -> BrowserSession | None:
         return self._sessions.get(session_id)
@@ -342,6 +373,17 @@ class BrowserWorker:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         args = dict(arguments or {})
+        # QA crawl control-plane actions (GI9/GI10) — not BrowserAction enum members.
+        action_key = action.value if isinstance(action, BrowserAction) else str(action)
+        if action_key.upper() in {
+            "QA_CRAWL",
+            "QA_STATUS",
+            "QA_CANCEL",
+            "QA_REPLAY",
+            "QA_REPORT",
+        } or action_key.lower().startswith("qa_"):
+            return self._execute_qa(action_key, args, run_id=run_id, request_id=request_id)
+
         if isinstance(action, str):
             action = BrowserAction(action.upper())
         session_id = str(args.pop("session_id", "") or "") or None
@@ -497,6 +539,104 @@ class BrowserWorker:
             },
         }
 
+    def _execute_qa(
+        self,
+        action_key: str,
+        args: dict[str, Any],
+        *,
+        run_id: str | None,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        from .qa_crawler import CrawlBudgets, CrawlConfig, JourneyPersona, LocalUserJourneyCrawler
+
+        crawler = self.get_qa_crawler()
+        key = action_key.upper().replace("BROWSER.QA.", "").replace("QA.", "")
+        if key in {"QA_CRAWL", "CRAWL"}:
+            persona_raw = str(args.get("persona") or JourneyPersona.DESKTOP_MOUSE.value)
+            try:
+                persona = JourneyPersona(persona_raw.upper())
+            except ValueError:
+                persona = JourneyPersona.DESKTOP_MOUSE
+            budgets_raw = dict(args.get("budgets") or {})
+            budgets = CrawlBudgets(
+                max_pages=int(budgets_raw.get("max_pages", 40)),
+                max_actions=int(budgets_raw.get("max_actions", 120)),
+                max_depth=int(budgets_raw.get("max_depth", 6)),
+                max_wall_time_s=float(budgets_raw.get("max_wall_time_s", 90)),
+                max_forms=int(budgets_raw.get("max_forms", 12)),
+                jitter_min_ms=int(budgets_raw.get("jitter_min_ms", 100)),
+                jitter_max_ms=int(budgets_raw.get("jitter_max_ms", 700)),
+            )
+            hosts = args.get("allowed_hosts")
+            from .qa_crawler import _DEFAULT_LOCAL_HOSTS
+
+            config = CrawlConfig(
+                seed_url=str(args.get("seed_url") or args.get("url") or ""),
+                persona=persona,
+                allowed_hosts=frozenset(hosts) if hosts else _DEFAULT_LOCAL_HOSTS,
+                budgets=budgets,
+                allow_destructive_test_actions=bool(
+                    args.get("allow_destructive_test_actions", False)
+                ),
+                seed=int(args.get("seed", 42)),
+                auth_secret_ref=args.get("auth_secret_ref"),
+                auth_lease_id=args.get("auth_lease_id"),
+                run_id=run_id or args.get("run_id"),
+                trace_id=request_id or args.get("trace_id"),
+                journey_id=args.get("journey_id"),
+            )
+            if not config.seed_url:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": "browser.qa.crawl requires seed_url",
+                    "action": "QA_CRAWL",
+                }
+            report = crawler.run(config)
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_CRAWL",
+                "report": report,
+                "journey_id": report.get("journey_id"),
+                "detail": f"QA crawl {report.get('status')}",
+                "truth": report.get("truth") or {},
+            }
+        if key in {"QA_STATUS", "STATUS"}:
+            journey_id = str(args.get("journey_id") or "")
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_STATUS",
+                **crawler.status(journey_id),
+            }
+        if key in {"QA_CANCEL", "CANCEL"}:
+            journey_id = str(args.get("journey_id") or "")
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_CANCEL",
+                **crawler.request_cancel(journey_id),
+            }
+        if key in {"QA_REPLAY", "REPLAY"}:
+            journey_id = str(args.get("journey_id") or "")
+            report = crawler.replay(journey_id, seed=args.get("seed"))
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_REPLAY",
+                "report": report,
+                "journey_id": report.get("journey_id"),
+                "detail": f"QA replay {report.get('status')}",
+            }
+        if key in {"QA_REPORT", "REPORT"}:
+            journey_id = str(args.get("journey_id") or "")
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_REPORT",
+                **crawler.report(journey_id),
+            }
+        return {
+            "status": BrowserJobStatus.UNSUPPORTED.value,
+            "error": f"Unknown QA action: {action_key}",
+            "action": action_key,
+        }
+
     # Backward-compatible stub-shaped API used by older tests.
     def request(self, *, action: BrowserAction, url: str | None = None) -> BrowserJob:
         result = self.execute(action=action, arguments={"url": url} if url else {})
@@ -511,6 +651,11 @@ class BrowserWorker:
                 accessibility_tree=raw.get("accessibility_tree") or "",
                 screenshot_artifact_id=raw.get("screenshot_artifact_id"),
                 mode=raw.get("mode") or "dom",
+                dom_summary=str(raw.get("dom_summary") or ""),
+                interactive_elements=tuple(raw.get("interactive_elements") or ()),
+                viewport=raw.get("viewport"),
+                console_errors=tuple(raw.get("console_errors") or ()),
+                network_errors=tuple(raw.get("network_errors") or ()),
             )
         return BrowserJob(
             job_id=str(uuid.uuid4()),

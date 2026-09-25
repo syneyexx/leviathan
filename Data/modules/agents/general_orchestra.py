@@ -139,6 +139,19 @@ def general_intelligence_orchestra_seed() -> list[dict[str, Any]]:
     return [*specialists, orchestra]
 
 
+# Preferred capability (or orchestration action) per GI specialist systemKey.
+# None → orchestration action rather than a single capability id.
+GI_SPECIALIST_ACTIONS: dict[str, dict[str, str | None]] = {
+    "gi_knowledge": {"action": "RETRIEVE", "capability_id": None},
+    "gi_web_research": {"action": "INVOKE_CAPABILITY", "capability_id": "web.search"},
+    "gi_tool": {"action": "SEARCH_CAPABILITY", "capability_id": None},
+    "gi_fact_verifier": {"action": "VERIFY", "capability_id": None},
+    "gi_critic": {"action": "CRITIC", "capability_id": None},
+    "gi_system_inspector": {"action": "INVOKE_CAPABILITY", "capability_id": "system.inspect"},
+    "gi_synthesis": {"action": "MODEL_CALL", "capability_id": None},
+}
+
+
 def select_gi_specialists(task_public: dict[str, Any], *, max_specialists: int = 4) -> list[str]:
     """Pick specialist systemKeys from a TaskModel.public_dict() — bounded."""
     selected: list[str] = []
@@ -178,4 +191,21 @@ def select_gi_specialists(task_public: dict[str, Any], *, max_specialists: int =
             out.append(key)
         if len(out) >= max(0, int(max_specialists)):
             break
+    return out
+
+
+def gi_specialist_capability(system_key: str) -> str | None:
+    """Return preferred capability_id for a GI specialist, if any."""
+    spec = GI_SPECIALIST_ACTIONS.get(system_key) or {}
+    cap = spec.get("capability_id")
+    return str(cap) if cap else None
+
+
+def gi_preferred_capabilities(specialist_keys: list[str] | tuple[str, ...]) -> list[str]:
+    """Ordered unique capability ids implied by selected GI specialists."""
+    out: list[str] = []
+    for key in specialist_keys:
+        cap = gi_specialist_capability(key)
+        if cap and cap not in out:
+            out.append(cap)
     return out

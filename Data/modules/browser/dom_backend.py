@@ -157,6 +157,57 @@ def _a11y_tree(root: _DomNode) -> str:
     return "\n".join(lines)
 
 
+def _interactive_elements(root: _DomNode) -> list[dict[str, Any]]:
+    """Bounded interactive element summary for QA crawlers / observations."""
+    out: list[dict[str, Any]] = []
+    nodes = root.find_all(
+        lambda n: n.tag in {"a", "button", "input", "textarea", "select"}
+        or n.attrs.get("role") in {"button", "link", "tab"}
+        or n.attrs.get("tabindex") is not None
+    )
+    for i, node in enumerate(nodes[:80]):
+        out.append(
+            {
+                "index": i,
+                "tag": node.tag,
+                "type": node.attrs.get("type", ""),
+                "id": node.attrs.get("id", ""),
+                "name": node.attrs.get("name", ""),
+                "role": node.attrs.get("role", ""),
+                "ariaLabel": node.attrs.get("aria-label", ""),
+                "text": node.text()[:80],
+                "href": node.attrs.get("href", ""),
+                "placeholder": node.attrs.get("placeholder", ""),
+                "disabled": node.attrs.get("disabled") is not None,
+                "visible": True,
+            }
+        )
+    return out
+
+
+def _observation_from_dom(
+    session: BrowserSession,
+    root: _DomNode,
+    *,
+    mode: str = "dom",
+) -> BrowserObservation:
+    interactive = _interactive_elements(root)
+    dom_summary = (
+        f"title={session.title!r} url={session.url!r} "
+        f"interactive={len(interactive)} text_chars={len(session.dom_text)}"
+    )[:2000]
+    return BrowserObservation(
+        url=session.url,
+        title=session.title,
+        dom_text=session.dom_text,
+        accessibility_tree=session.accessibility_tree,
+        mode=mode,
+        dom_summary=dom_summary,
+        interactive_elements=tuple(interactive),
+        viewport=session.metadata.get("viewport"),
+    )
+
+
 class LocalDomBrowserBackend:
     """Real local HTML DOM browser — not a fixture, not Chromium."""
 
@@ -209,12 +260,7 @@ class LocalDomBrowserBackend:
             session.updated_at = _utc_now()
             session.metadata["navigations"] = int(session.metadata.get("navigations", 0)) + 1
             session.metadata["backend"] = self.kind.value
-            obs = BrowserObservation(
-                url=final_url,
-                title=title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if session.url is None and action not in {BrowserAction.WAIT}:
@@ -230,12 +276,7 @@ class LocalDomBrowserBackend:
             session.accessibility_tree = _a11y_tree(root)
             session.last_action = action.value
             session.updated_at = _utc_now()
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if action == BrowserAction.SCREENSHOT:
@@ -253,19 +294,29 @@ class LocalDomBrowserBackend:
             meta["screenshot_kind"] = "html_dom_snapshot"
             session.last_action = action.value
             session.updated_at = _utc_now()
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-                mode="dom_snapshot",
-            )
+            obs = _observation_from_dom(session, root, mode="dom_snapshot")
             return session, obs, meta
 
         if action == BrowserAction.CLICK:
             assert root is not None
-            target = str(arguments.get("selector") or arguments.get("target") or "")
+            target = str(
+                arguments.get("selector")
+                or arguments.get("target")
+                or ""
+            )
+            if not target and arguments.get("text"):
+                target = f"text={arguments['text']}"
+            if not target and arguments.get("role"):
+                # Approximate role match via tag
+                role = str(arguments["role"]).lower()
+                role_to_tag = {"button": "button", "link": "a", "textbox": "input"}
+                target = role_to_tag.get(role, role)
             nodes = root.find_all(lambda n: _match_selector(n, target)) if target else []
+            if not nodes and arguments.get("text"):
+                needle = str(arguments["text"]).lower()
+                nodes = root.find_all(
+                    lambda n: n.tag in {"a", "button", "input"} and needle in n.text().lower()
+                )
             if not nodes:
                 raise ValueError(f"CLICK target not found: {target!r}")
             node = nodes[0]
@@ -287,12 +338,7 @@ class LocalDomBrowserBackend:
             meta["target"] = target
             meta["state_verified"] = False
             meta["requires_verify_state"] = True
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if action == BrowserAction.TYPE:
@@ -315,12 +361,7 @@ class LocalDomBrowserBackend:
             meta["text_len"] = len(text)
             meta["state_verified"] = False
             meta["requires_verify_state"] = True
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if action == BrowserAction.FORM_FILL:
@@ -342,12 +383,7 @@ class LocalDomBrowserBackend:
             session.updated_at = _utc_now()
             meta["filled_fields"] = filled
             meta["requires_verify_state"] = True
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if action == BrowserAction.DOWNLOAD:
@@ -372,12 +408,7 @@ class LocalDomBrowserBackend:
             session.last_action = action.value
             session.updated_at = _utc_now()
             meta["download"] = record
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if action == BrowserAction.UPLOAD:
@@ -414,12 +445,7 @@ class LocalDomBrowserBackend:
             session.updated_at = _utc_now()
             meta["upload"] = record
             meta["requires_verify_state"] = True
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if action == BrowserAction.VERIFY_STATE:
@@ -447,23 +473,26 @@ class LocalDomBrowserBackend:
             meta["verification_results"] = results
             if not all_ok:
                 meta["verification_failed"] = True
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            obs = _observation_from_dom(session, root)
             return session, obs, meta
 
         if action in {BrowserAction.SCROLL, BrowserAction.WAIT, BrowserAction.KEYPRESS}:
             session.last_action = action.value
             session.updated_at = _utc_now()
-            obs = BrowserObservation(
-                url=session.url,
-                title=session.title,
-                dom_text=session.dom_text,
-                accessibility_tree=session.accessibility_tree,
-            )
+            if root is not None:
+                session.dom_text = root.text()
+                session.accessibility_tree = _a11y_tree(root)
+                obs = _observation_from_dom(session, root)
+            else:
+                obs = BrowserObservation(
+                    url=session.url,
+                    title=session.title,
+                    dom_text=session.dom_text,
+                    accessibility_tree=session.accessibility_tree,
+                )
+            if action in {BrowserAction.KEYPRESS}:
+                meta["requires_verify_state"] = True
+                meta["state_verified"] = False
             return session, obs, meta
 
         raise ValueError(f"Unsupported browser action: {action}")

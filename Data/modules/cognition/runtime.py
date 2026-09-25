@@ -122,6 +122,31 @@ class CognitiveRunState:
             # Full response only when this run owns the user-visible answer (not shadow).
             "response": None if self.shadow else self.response_text,
             "response_ownership": "none" if self.shadow else ("cognition" if self.response_text else "none"),
+            "execution_class": getattr(self.task, "execution_class", None),
+            "verification_mode": getattr(self.task, "verification_mode", None),
+            "gi_specialists": list(
+                (self.task.metadata or {}).get("gi_specialists")
+                or getattr(self.task, "candidate_specialists", None)
+                or []
+            ),
+            "behavior_hash": (self.task.metadata or {}).get("behavior_hash")
+            or (self.task.metadata or {}).get("behavior_profile_hash"),
+            "behavior_profile_id": (self.task.metadata or {}).get("behavior_profile_id"),
+            "context_budget": (
+                (self.context_public or {}).get("pack", {}).get("token_estimate")
+                if isinstance(self.context_public, dict)
+                else None
+            )
+            or (
+                (self.decision.budgets.max_context_tokens if self.decision else None)
+            ),
+            "retrieval_hits": self._retrieval_hit_counts(),
+            "tools_invoked": [
+                str((o.payload or {}).get("capability_id") or "")
+                for o in self.observations
+                if o.kind == CognitiveObservationKind.TOOL_RESULT
+                and (o.payload or {}).get("capability_id")
+            ],
             "active_agents": [
                 o.payload.get("agent_kind")
                 for o in self.observations
@@ -133,6 +158,16 @@ class CognitiveRunState:
                 "progress_not_fabricated_percent": True,
                 "shadow_does_not_own_final_response": True,
             },
+        }
+
+    def _retrieval_hit_counts(self) -> dict[str, int]:
+        if not self.perception:
+            return {"brain": 0, "memory": 0, "evidence": 0, "knowledge": 0}
+        return {
+            "brain": len(self.perception.by_type(EpistemicType.KNOWLEDGE_SOURCE)),
+            "knowledge": len(self.perception.by_type(EpistemicType.KNOWLEDGE_SOURCE)),
+            "memory": len(self.perception.by_type(EpistemicType.EXACT_FACT)),
+            "evidence": len(self.perception.by_type(EpistemicType.EVIDENCE)),
         }
 
 
@@ -297,6 +332,8 @@ class CognitiveRuntime:
             constraints=constraints,
             metadata=meta_payload,
         )
+        # GI12: select bounded specialists for MULTI_DOMAIN / COMPLEX (not every request).
+        self._assign_gi_specialists(task)
         run_id = str(uuid.uuid4())
         task.run_id = run_id
         state = CognitiveRunState(
@@ -327,6 +364,8 @@ class CognitiveRuntime:
                 priority=0.4,
                 source_type=EpistemicType.HYPOTHESIS,
             )
+        for key in list((task.metadata or {}).get("gi_specialists") or []):
+            state.working_memory.upsert("gi_specialist", str(key), priority=0.5)
         self._runs[run_id] = state
         self._loops[run_id] = LoopDetector()
         self._persist_create(state)
@@ -334,6 +373,35 @@ class CognitiveRuntime:
         if run:
             return self.run(run_id, history=history)
         return state.public_status()
+
+    def _assign_gi_specialists(self, task: TaskModel) -> None:
+        """Select GI orchestra specialists for complex/multi-domain work."""
+        from Data.modules.agents.general_orchestra import select_gi_specialists
+
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        if execution_class == "DIRECT":
+            task.metadata["gi_specialists"] = []
+            return
+        selected = select_gi_specialists(task.public_dict(), max_specialists=4)
+        # Always record on MULTI_DOMAIN / COMPLEX_REASONING even if heuristics empty.
+        if execution_class in {"MULTI_DOMAIN", "COMPLEX_REASONING", "WORK"} and not selected:
+            selected = ["gi_synthesis"]
+            if getattr(task, "requires_research", False) or getattr(
+                task, "requires_current_information", False
+            ):
+                selected.insert(0, "gi_web_research")
+        task.metadata["gi_specialists"] = list(selected)
+        if selected:
+            # Prefer GI keys as candidate specialists for telemetry / routing.
+            merged = list(dict.fromkeys([*selected, *list(task.candidate_specialists or [])]))
+            task.candidate_specialists = merged
+            task.needs_specialists = True
+
+    # --- public API continued ---
+
+    def run_placeholder_keep_order(self) -> None:
+        """Placeholder removed — keep structure for patch targeting."""
+        return None
 
     def run(self, run_id: str, *, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         state = self._require(run_id)
