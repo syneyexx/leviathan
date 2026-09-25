@@ -1,0 +1,89 @@
+{
+  "program": "frontier_reasoning",
+  "version": 1,
+  "updated": "2026-09-25",
+  "active_phase": "F0",
+  "notes": "F0 audit only. R01-R30 must not PASS without executed evidence. Distinct from trading frontier_program.",
+  "f0_skeleton_checks": [
+    {
+      "id": "F0_AUDIT_DOC",
+      "required": true,
+      "status": "PASS",
+      "check": "file_exists",
+      "path": "Data/docs/frontier_reasoning_f0_audit.md"
+    },
+    {
+      "id": "F0_PROGRAM_STATE",
+      "required": true,
+      "status": "PASS",
+      "check": "file_exists",
+      "path": "Data/docs/frontier_reasoning_program_state.md"
+    },
+    {
+      "id": "F0_COMPLETION_REPORT",
+      "required": true,
+      "status": "PASS",
+      "check": "file_exists",
+      "path": "Data/docs/frontier_reasoning_completion_report.md"
+    },
+    {
+      "id": "F0_VERIFIER",
+      "required": true,
+      "status": "PASS",
+      "check": "file_exists",
+      "path": "scripts/verify_frontier_reasoning.py"
+    },
+    {
+      "id": "F0_NO_FORBIDDEN_RUNTIME",
+      "required": true,
+      "status": "PASS",
+      "check": "forbidden_symbols_absent",
+      "symbols": [
+        "class CognitionV2",
+        "class FrontierRuntime",
+        "class ReasoningRuntime2",
+        "class BrainV2",
+        "class RAGV2",
+        "class MemoryV2",
+        "class NeuroV2",
+        "class ToolRuntime2",
+        "class AgentRuntime2",
+        "class WorkerQueue2",
+        "class ModelRouter2",
+        "class TrainingRuntime2"
+      ]
+    }
+  ],
+  "gates": [
+    {"id": "R01", "title": "Canonical CognitiveRuntime", "required": true, "status": "NOT_STARTED", "phase": "F0+", "check": "manual"},
+    {"id": "R02", "title": "Context authority separation", "required": true, "status": "NOT_STARTED", "phase": "F1", "check": "manual"},
+    {"id": "R03", "title": "BehaviorProfile identity", "required": true, "status": "NOT_STARTED", "phase": "F1", "check": "manual"},
+    {"id": "R04", "title": "Two-axis compute", "required": true, "status": "NOT_STARTED", "phase": "F2", "check": "manual"},
+    {"id": "R05", "title": "Reasoning capability profile", "required": true, "status": "NOT_STARTED", "phase": "F2", "check": "manual"},
+    {"id": "R06", "title": "Native reasoning adapter", "required": true, "status": "NOT_STARTED", "phase": "F3", "check": "manual"},
+    {"id": "R07", "title": "TTC fallback", "required": true, "status": "NOT_STARTED", "phase": "F4", "check": "manual"},
+    {"id": "R08", "title": "Adaptive compute", "required": true, "status": "NOT_STARTED", "phase": "F2+", "check": "manual"},
+    {"id": "R09", "title": "Structured reasoning state", "required": true, "status": "NOT_STARTED", "phase": "F5", "check": "manual"},
+    {"id": "R10", "title": "Neural TaskModel", "required": true, "status": "NOT_STARTED", "phase": "F6", "check": "manual"},
+    {"id": "R11", "title": "Neural planner", "required": true, "status": "NOT_STARTED", "phase": "F6", "check": "manual"},
+    {"id": "R12", "title": "HypothesisBoard", "required": true, "status": "NOT_STARTED", "phase": "F8", "check": "manual"},
+    {"id": "R13", "title": "Critic mesh", "required": true, "status": "NOT_STARTED", "phase": "F8", "check": "manual"},
+    {"id": "R14", "title": "Independent verification", "required": true, "status": "NOT_STARTED", "phase": "F9", "check": "manual"},
+    {"id": "R15", "title": "CapabilityState", "required": true, "status": "NOT_STARTED", "phase": "F10", "check": "manual"},
+    {"id": "R16", "title": "Iterative tools", "required": true, "status": "NOT_STARTED", "phase": "F4+", "check": "manual"},
+    {"id": "R17", "title": "Async workers", "required": true, "status": "NOT_STARTED", "phase": "F11", "check": "manual"},
+    {"id": "R18", "title": "Steering", "required": true, "status": "NOT_STARTED", "phase": "F12", "check": "manual"},
+    {"id": "R19", "title": "Restart/resume", "required": true, "status": "NOT_STARTED", "phase": "F12", "check": "manual"},
+    {"id": "R20", "title": "Experience v2", "required": true, "status": "NOT_STARTED", "phase": "F13", "check": "manual"},
+    {"id": "R21", "title": "Active learning", "required": true, "status": "NOT_STARTED", "phase": "F13", "check": "manual"},
+    {"id": "R22", "title": "Training export", "required": true, "status": "NOT_STARTED", "phase": "F14", "check": "manual"},
+    {"id": "R23", "title": "Candidate training lifecycle", "required": true, "status": "NOT_STARTED", "phase": "F15", "check": "manual"},
+    {"id": "R24", "title": "Evaluation/ablation", "required": true, "status": "NOT_STARTED", "phase": "F16", "check": "manual"},
+    {"id": "R25", "title": "Frontend reasoning controls", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
+    {"id": "R26", "title": "Observability", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
+    {"id": "R27", "title": "Resource pressure", "required": true, "status": "NOT_STARTED", "phase": "F2+", "check": "manual"},
+    {"id": "R28", "title": "Security", "required": true, "status": "NOT_STARTED", "phase": "F1+", "check": "manual"},
+    {"id": "R29", "title": "No hidden CoT leakage", "required": true, "status": "NOT_STARTED", "phase": "F3+", "check": "manual"},
+    {"id": "R30", "title": "Tests/typecheck/lint/build", "required": true, "status": "NOT_STARTED", "phase": "F18", "check": "manual"}
+  ]
+}

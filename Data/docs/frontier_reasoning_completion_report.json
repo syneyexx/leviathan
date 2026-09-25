@@ -1,0 +1,328 @@
+{
+  "program": "frontier_reasoning",
+  "generated_at": "2026-09-25T07:23:38Z",
+  "phase": "F0",
+  "exit_code": 0,
+  "definition_of_done": true,
+  "skeleton": [
+    {
+      "id": "F0_AUDIT_DOC",
+      "required": true,
+      "status": "PASS",
+      "evidence": "exists:Data/docs/frontier_reasoning_f0_audit.md",
+      "kind": "f0_skeleton"
+    },
+    {
+      "id": "F0_PROGRAM_STATE",
+      "required": true,
+      "status": "PASS",
+      "evidence": "exists:Data/docs/frontier_reasoning_program_state.md",
+      "kind": "f0_skeleton"
+    },
+    {
+      "id": "F0_COMPLETION_REPORT",
+      "required": true,
+      "status": "PASS",
+      "evidence": "exists:Data/docs/frontier_reasoning_completion_report.md",
+      "kind": "f0_skeleton"
+    },
+    {
+      "id": "F0_VERIFIER",
+      "required": true,
+      "status": "PASS",
+      "evidence": "exists:scripts/verify_frontier_reasoning.py",
+      "kind": "f0_skeleton"
+    },
+    {
+      "id": "F0_NO_FORBIDDEN_RUNTIME",
+      "required": true,
+      "status": "PASS",
+      "evidence": "no_forbidden_runtime_classes",
+      "kind": "f0_skeleton"
+    },
+    {
+      "id": "F0_PRESERVATION_OWNERS",
+      "required": true,
+      "status": "PASS",
+      "evidence": "owners_present:25",
+      "kind": "f0_skeleton"
+    }
+  ],
+  "gates": [
+    {
+      "id": "R01",
+      "title": "Canonical CognitiveRuntime",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F0+",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R02",
+      "title": "Context authority separation",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F1",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R03",
+      "title": "BehaviorProfile identity",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F1",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R04",
+      "title": "Two-axis compute",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F2",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R05",
+      "title": "Reasoning capability profile",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F2",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R06",
+      "title": "Native reasoning adapter",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F3",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R07",
+      "title": "TTC fallback",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F4",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R08",
+      "title": "Adaptive compute",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F2+",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R09",
+      "title": "Structured reasoning state",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F5",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R10",
+      "title": "Neural TaskModel",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F6",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R11",
+      "title": "Neural planner",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F6",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R12",
+      "title": "HypothesisBoard",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F8",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R13",
+      "title": "Critic mesh",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F8",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R14",
+      "title": "Independent verification",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F9",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R15",
+      "title": "CapabilityState",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F10",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R16",
+      "title": "Iterative tools",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F4+",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R17",
+      "title": "Async workers",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F11",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R18",
+      "title": "Steering",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F12",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R19",
+      "title": "Restart/resume",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F12",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R20",
+      "title": "Experience v2",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F13",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R21",
+      "title": "Active learning",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F13",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R22",
+      "title": "Training export",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F14",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R23",
+      "title": "Candidate training lifecycle",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F15",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R24",
+      "title": "Evaluation/ablation",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F16",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R25",
+      "title": "Frontend reasoning controls",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F17",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R26",
+      "title": "Observability",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F17",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R27",
+      "title": "Resource pressure",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F2+",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R28",
+      "title": "Security",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F1+",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R29",
+      "title": "No hidden CoT leakage",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F3+",
+      "kind": "program_gate"
+    },
+    {
+      "id": "R30",
+      "title": "Tests/typecheck/lint/build",
+      "required": true,
+      "status": "NOT_STARTED",
+      "evidence": "\u2014",
+      "phase": "F18",
+      "kind": "program_gate"
+    }
+  ],
+  "truth": {
+    "f0_skeleton_pass_is_not_program_done": true,
+    "unmeasured_is_not_passed": true,
+    "required_gate_not_pass_exits_nonzero": true
+  }
+}
