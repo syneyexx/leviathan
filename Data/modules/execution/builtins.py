@@ -1281,6 +1281,16 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "gym", "episode"],
     )
     _ext(
+        cap_id="market_sim.research_campaign",
+        name="Run Research Campaign",
+        description="Execute/resume a durable ResearchCampaign on the market_sim worker (EXTERNAL_REQUIRED).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="market_sim",
+        properties={"campaign_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "research", "campaign"],
+    )
+    _ext(
         cap_id="market_sim.news.poll",
         name="Poll Market News Feeds",
         description="Fetch registered news feeds (via provider_io) and store items with a causal available_at.",

@@ -612,13 +612,29 @@
     },
     "G23": {
       "title": "Brain/Memory as_of or excluded",
-      "phase": "T6B",
-      "status": "NOT_STARTED",
+      "phase": "T6B/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "BrainFacade.retrieve(as_of=...) drops hits newer than decision time",
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_brain_as_of_gate_evidence",
+        "StrategyMemory list_strategy_memories(as_of_ts) causal filter"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_brain_as_of_gate_evidence"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: causal Brain/Memory as_of (D22)",
       "related_defects": [
         "D22"
       ]
@@ -662,13 +678,28 @@
     },
     "G25": {
       "title": "ResearchCampaign durable/resumable",
-      "phase": "T7B",
-      "status": "NOT_STARTED",
+      "phase": "T7B/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/research_campaign.py + migration 48 market_sim_research_campaigns",
+        "checkpoint_iteration resume; never rewind from zero",
+        "EXTERNAL_REQUIRED via market_sim.research_campaign worker; TRADING_WORKER_UNAVAILABLE without JobRuntime",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P3B: durable ResearchCampaign + worker ownership"
     },
     "G26": {
       "title": "TradingGym causal reset/step",
@@ -699,23 +730,57 @@
     },
     "G27": {
       "title": "Agent scorecards + leaderboard penalty",
-      "phase": "T8D",
-      "status": "NOT_STARTED",
+      "phase": "T8D/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/scorecards.py::build_scorecard / rank_scorecards / compute_penalty",
+        "Penalty for causality_violations, risk_vetoes, drawdown",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: kernel-derived scorecards with violation penalties"
     },
     "G28": {
       "title": "Readiness ladder A0\u2013A4; A5 blocked",
-      "phase": "T8D",
-      "status": "NOT_STARTED",
+      "phase": "T8D/P3B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/readiness.py::readiness_ladder / normalize_autonomy",
+        "A5 / LIVE raise A5_IMPOSSIBLE; ceiling A4 autonomous paper",
+        "Data/modules/market_sim/promotion.py::evaluate_promotion never enables live",
+        "LiveTradingGuard remains BLOCKED",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P3B: A0\u2013A4 ladder; A5 impossible; promotion kernel-gated"
     },
     "G29": {
       "title": "Trajectory export via Datasets/Training",

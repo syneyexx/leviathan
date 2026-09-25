@@ -70,6 +70,47 @@ def _handle_gym_episode(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _handle_research_campaign(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.research_campaign — durable/resumable ResearchCampaign on worker."""
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    campaign_id = str(args.get("campaign_id") or "")
+    try:
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        if not campaign_id:
+            raise ValueError("campaign_id required for research_campaign")
+        camp = plane.get_research_campaign(campaign_id)
+        name = camp.get("name") or campaign_id[:8]
+        it = camp.get("checkpoint_iteration") or 0
+        mx = camp.get("max_iterations") or 0
+        print(
+            f"[WORKER:market_sim] ResearchCampaign '{name}' iteratie {it}/{mx} gestart",
+            flush=True,
+        )
+        result = plane.run_research_campaign_on_worker(campaign_id)
+        result["executed_via"] = "market_sim_worker"
+        print(
+            f"[WORKER:market_sim] ResearchCampaign '{name}' voltooid — "
+            f"iters={result.get('checkpoint_iteration')}",
+            flush=True,
+        )
+        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[WORKER:market_sim] ResearchCampaign '{campaign_id[:8] if campaign_id else '?'}' "
+            f"MISLUKT — {exc}",
+            flush=True,
+        )
+        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        return {"error": str(exc)}
+
+
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.states import JobState
     from Data.modules.market_sim.types import RunStatus, TERMINAL_RUN_STATUSES
@@ -79,6 +120,8 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         return _handle_news_poll(ctx, job)
     if cap == "market_sim.gym_episode":
         return _handle_gym_episode(ctx, job)
+    if cap == "market_sim.research_campaign":
+        return _handle_research_campaign(ctx, job)
 
     args = dict(getattr(job, "arguments", None) or {})
     simulation_id = str(args.get("simulation_id") or args.get("run_id") or "")

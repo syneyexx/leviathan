@@ -1601,3 +1601,111 @@ class MarketSimStore:
             "failure_reason": row["failure_reason"] or "",
             "metadata": _loads(row["metadata_json"], {}),
         }
+
+    # --- Research campaigns (P3B) ---
+
+    def upsert_research_campaign(self, campaign: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_research_campaigns(
+                    campaign_id, name, strategy_id, strategy_version, source_id, status,
+                    max_iterations, checkpoint_iteration, current_iteration, seed,
+                    hypothesis, acceptance_criteria_json, trial_ids_json, results_json,
+                    scorecard_json, promotion_json, autonomy_ceiling, as_of, job_id,
+                    error, created_at, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(campaign_id) DO UPDATE SET
+                    name=excluded.name,
+                    status=excluded.status,
+                    max_iterations=excluded.max_iterations,
+                    checkpoint_iteration=excluded.checkpoint_iteration,
+                    current_iteration=excluded.current_iteration,
+                    hypothesis=excluded.hypothesis,
+                    acceptance_criteria_json=excluded.acceptance_criteria_json,
+                    trial_ids_json=excluded.trial_ids_json,
+                    results_json=excluded.results_json,
+                    scorecard_json=excluded.scorecard_json,
+                    promotion_json=excluded.promotion_json,
+                    autonomy_ceiling=excluded.autonomy_ceiling,
+                    as_of=excluded.as_of,
+                    job_id=excluded.job_id,
+                    error=excluded.error,
+                    updated_at=excluded.updated_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    campaign["campaign_id"],
+                    campaign.get("name") or "",
+                    campaign["strategy_id"],
+                    int(campaign["strategy_version"]),
+                    campaign["source_id"],
+                    campaign.get("status") or "CREATED",
+                    int(campaign.get("max_iterations") or 10),
+                    int(campaign.get("checkpoint_iteration") or 0),
+                    int(campaign.get("current_iteration") or 0),
+                    int(campaign.get("seed") or 42),
+                    campaign.get("hypothesis") or "",
+                    json.dumps(campaign.get("acceptance_criteria") or {}),
+                    json.dumps(campaign.get("trial_ids") or []),
+                    json.dumps(campaign.get("results") or {}),
+                    json.dumps(campaign.get("scorecard") or {}),
+                    json.dumps(campaign.get("promotion") or {}),
+                    campaign.get("autonomy_ceiling") or "A2",
+                    campaign.get("as_of") or "",
+                    campaign.get("job_id"),
+                    campaign.get("error") or "",
+                    campaign.get("created_at") or utc_now(),
+                    campaign.get("updated_at") or utc_now(),
+                    json.dumps(campaign.get("metadata") or {}),
+                ),
+            )
+        return campaign
+
+    def get_research_campaign(self, campaign_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sim_research_campaigns WHERE campaign_id=?",
+                (campaign_id,),
+            ).fetchone()
+        return self._row_research_campaign(row)
+
+    def list_research_campaigns(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_research_campaigns
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._row_research_campaign(r) for r in rows if r]
+
+    def _row_research_campaign(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "campaign_id": row["campaign_id"],
+            "name": row["name"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": int(row["strategy_version"]),
+            "source_id": row["source_id"],
+            "status": row["status"],
+            "max_iterations": int(row["max_iterations"]),
+            "checkpoint_iteration": int(row["checkpoint_iteration"]),
+            "current_iteration": int(row["current_iteration"]),
+            "seed": int(row["seed"]),
+            "hypothesis": row["hypothesis"] or "",
+            "acceptance_criteria": _loads(row["acceptance_criteria_json"], {}),
+            "trial_ids": _loads(row["trial_ids_json"], []),
+            "results": _loads(row["results_json"], {}),
+            "scorecard": _loads(row["scorecard_json"], {}),
+            "promotion": _loads(row["promotion_json"], {}),
+            "autonomy_ceiling": row["autonomy_ceiling"] or "A2",
+            "as_of": row["as_of"] or "",
+            "job_id": row["job_id"],
+            "error": row["error"] or "",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }

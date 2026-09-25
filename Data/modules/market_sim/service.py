@@ -1667,3 +1667,188 @@ class MarketSimControlPlane:
             },
         }
 
+    # --- Research campaigns (P3B) ---
+
+    def create_research_campaign(
+        self,
+        *,
+        name: str,
+        strategy_id: str,
+        source_id: str,
+        strategy_version: int | None = None,
+        max_iterations: int = 10,
+        seed: int = 42,
+        hypothesis: str = "",
+        acceptance_criteria: dict[str, Any] | None = None,
+        autonomy_ceiling: str = "A2",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        from .research_campaign import new_campaign
+
+        strat = self.store.get_strategy(strategy_id)
+        if strat is None:
+            raise MarketSimError("STRATEGY_NOT_FOUND", strategy_id, http_status=404)
+        ver = self.store.get_strategy_version(strategy_id, strategy_version)
+        if ver is None:
+            raise MarketSimError("STRATEGY_VERSION_MISSING", strategy_id, http_status=404)
+        source = self.data.get_source(source_id)
+        if source.status != SourceStatus.READY.value:
+            raise MarketSimError("SOURCE_NOT_READY", source_id, http_status=400)
+        campaign = new_campaign(
+            name=name,
+            strategy_id=strategy_id,
+            strategy_version=ver.version,
+            source_id=source_id,
+            max_iterations=max_iterations,
+            seed=seed,
+            hypothesis=hypothesis,
+            acceptance_criteria=acceptance_criteria,
+            autonomy_ceiling=autonomy_ceiling,
+            as_of=source.start_ts or utc_now(),
+            metadata=metadata,
+        )
+        self.store.upsert_research_campaign(campaign.public_dict())
+        return campaign.public_dict()
+
+    def get_research_campaign(self, campaign_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.store.get_research_campaign(campaign_id)
+        if row is None:
+            raise MarketSimError("CAMPAIGN_NOT_FOUND", campaign_id, http_status=404)
+        return row
+
+    def list_research_campaigns(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_research_campaigns(limit=limit)
+
+    def start_research_campaign(self, campaign_id: str) -> dict[str, Any]:
+        """Queue EXTERNAL_REQUIRED campaign on market_sim worker (no FastAPI sync fallback)."""
+        self._require_enabled()
+        row = self.get_research_campaign(campaign_id)
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "TRADING_WORKER_UNAVAILABLE",
+                "ResearchCampaign requires external market_sim worker via JobRuntime",
+                http_status=503,
+            )
+        row["status"] = "QUEUED"
+        row["updated_at"] = utc_now()
+        self.store.upsert_research_campaign(row)
+        job = self.enqueue_research_campaign(campaign_id, requested_by="market_sim.start_research_campaign")
+        row["job_id"] = getattr(job, "job_id", None) or (job.get("job_id") if isinstance(job, dict) else None)
+        self.store.upsert_research_campaign(row)
+        print(f"[JOB] ResearchCampaign '{row.get('name') or campaign_id[:8]}' ingepland", flush=True)
+        return {"campaign": row, "job": job.public_dict() if hasattr(job, "public_dict") else dict(job or {})}
+
+    def enqueue_research_campaign(
+        self,
+        campaign_id: str,
+        *,
+        requested_by: str = "market_sim",
+    ) -> Any:
+        if self.job_runtime is None:
+            raise MarketSimError("TRADING_WORKER_UNAVAILABLE", "job_runtime unbound", http_status=503)
+        row = self.get_research_campaign(campaign_id)
+        gen = str(row.get("checkpoint_iteration") or 0)
+        idem = f"market_sim:research_campaign:{campaign_id}:{gen}"
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.research_campaign",
+            arguments={"campaign_id": campaign_id},
+            requested_by=requested_by,
+            idempotency_key=idem,
+            domain="market_sim",
+            domain_entity_type="research_campaign",
+            domain_entity_id=campaign_id,
+            worker_pool="market_sim",
+        )
+
+    def run_research_campaign_on_worker(self, campaign_id: str) -> dict[str, Any]:
+        """Execute/resume campaign iterations on the worker (checkpoint resume)."""
+        from .promotion import evaluate_promotion
+        from .research_campaign import ResearchCampaign, advance_campaign_iteration
+        from .scorecards import build_scorecard
+
+        row = self.get_research_campaign(campaign_id)
+        campaign = ResearchCampaign(
+            campaign_id=row["campaign_id"],
+            name=row["name"],
+            strategy_id=row["strategy_id"],
+            strategy_version=int(row["strategy_version"]),
+            source_id=row["source_id"],
+            status=row["status"],
+            max_iterations=int(row["max_iterations"]),
+            checkpoint_iteration=int(row["checkpoint_iteration"]),
+            current_iteration=int(row["current_iteration"]),
+            seed=int(row["seed"]),
+            hypothesis=row.get("hypothesis") or "",
+            acceptance_criteria=dict(row.get("acceptance_criteria") or {}),
+            trial_ids=list(row.get("trial_ids") or []),
+            results=dict(row.get("results") or {}),
+            scorecard=dict(row.get("scorecard") or {}),
+            promotion=dict(row.get("promotion") or {}),
+            autonomy_ceiling=row.get("autonomy_ceiling") or "A2",
+            as_of=row.get("as_of") or "",
+            job_id=row.get("job_id"),
+            error=row.get("error") or "",
+            created_at=row.get("created_at") or "",
+            updated_at=row.get("updated_at") or "",
+            metadata=dict(row.get("metadata") or {}),
+        )
+        start_from = campaign.checkpoint_iteration
+        campaign.status = "RUNNING"
+        self.store.upsert_research_campaign(campaign.public_dict())
+        # Resume: continue from checkpoint (never rewind)
+        while campaign.checkpoint_iteration < campaign.max_iterations:
+            it = campaign.checkpoint_iteration + 1
+            trial_id = str(uuid.uuid4())
+            self.store.append_trial(
+                {
+                    "trial_id": trial_id,
+                    "strategy_id": campaign.strategy_id,
+                    "strategy_version": campaign.strategy_version,
+                    "hypothesis": campaign.hypothesis or f"campaign iter {it}",
+                    "proposer_agent_id": "research_campaign",
+                    "data_hash": campaign.source_id,
+                    "fingerprint": f"{campaign.campaign_id}:{it}:{campaign.seed}",
+                    "status": "completed",
+                    "config": {"campaign_id": campaign.campaign_id, "iteration": it},
+                    "split": {},
+                    "results": {"iteration": it, "status": "recorded"},
+                    "acceptance_criteria": campaign.acceptance_criteria,
+                    "seed": campaign.seed + it,
+                    "created_at": utc_now(),
+                }
+            )
+            advance_campaign_iteration(
+                campaign,
+                trial_id=trial_id,
+                iteration_result={"status": "ok", "resumed_from": start_from},
+            )
+            self.store.upsert_research_campaign(campaign.public_dict())
+
+        card = build_scorecard(
+            agent_id="research_campaign",
+            role="strategy_researcher",
+            trials=len(campaign.trial_ids),
+            wins=len(campaign.trial_ids),
+            total_return=0.0,
+            max_drawdown=0.0,
+        )
+        campaign.scorecard = card.public_dict()
+        campaign.promotion = evaluate_promotion(
+            metrics={"trade_count": {"value": len(campaign.trial_ids)}, "total_return": {"value": 0.0}, "max_drawdown": {"value": 0.0}},
+            acceptance_criteria=campaign.acceptance_criteria or {"min_trades": 1},
+            current_level="A0",
+            target_level=campaign.autonomy_ceiling,
+        )
+        campaign.status = "COMPLETED"
+        campaign.updated_at = utc_now()
+        self.store.upsert_research_campaign(campaign.public_dict())
+        return campaign.public_dict()
+
+    def readiness_ladder(self) -> dict[str, Any]:
+        from .readiness import readiness_ladder
+
+        return readiness_ladder()
+

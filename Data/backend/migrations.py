@@ -3391,6 +3391,43 @@ def _m47_p1a_splits_sealed_attempts(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE market_sim_runs ADD COLUMN split_manifest_id TEXT")
 
 
+def _m48_p3b_research_campaigns(conn: sqlite3.Connection) -> None:
+    """P3B: durable ResearchCampaign table for resumable research loops."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_research_campaigns (
+            campaign_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            strategy_version INTEGER NOT NULL,
+            source_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            max_iterations INTEGER NOT NULL DEFAULT 10,
+            checkpoint_iteration INTEGER NOT NULL DEFAULT 0,
+            current_iteration INTEGER NOT NULL DEFAULT 0,
+            seed INTEGER NOT NULL DEFAULT 42,
+            hypothesis TEXT NOT NULL DEFAULT '',
+            acceptance_criteria_json TEXT NOT NULL DEFAULT '{}',
+            trial_ids_json TEXT NOT NULL DEFAULT '[]',
+            results_json TEXT NOT NULL DEFAULT '{}',
+            scorecard_json TEXT NOT NULL DEFAULT '{}',
+            promotion_json TEXT NOT NULL DEFAULT '{}',
+            autonomy_ceiling TEXT NOT NULL DEFAULT 'A2',
+            as_of TEXT NOT NULL DEFAULT '',
+            job_id TEXT,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_research_campaigns_status "
+        "ON market_sim_research_campaigns(status, updated_at)"
+    )
+
+
 def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
     """P0A: SimFill honesty fields + ClosedTrade / PositionEpisode table."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
@@ -3511,6 +3548,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=47,
         name="p1a_splits_sealed_attempts",
         apply=_m47_p1a_splits_sealed_attempts,
+    ),
+    Migration(
+        version=48,
+        name="p3b_research_campaigns",
+        apply=_m48_p3b_research_campaigns,
     ),
 )
 
