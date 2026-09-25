@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from Data.modules.market_sim.causality import SimulationClock
+from Data.modules.market_sim.service import MarketSimControlPlane
+from Data.modules.market_sim.store import MarketSimStore, utc_now
 from Data.modules.market_sim.strategy_dsl import (
     DSL_V2_VERSION,
     evaluate_dsl_v2,
@@ -260,6 +264,111 @@ class P2BTrialLedgerAndWfaTests(unittest.TestCase):
             )
             self.assertNotEqual(a["trial_id"], b["trial_id"])
             self.assertEqual(store.count_trials(), 2)
+
+
+class P2CSandboxLineageMemoryTests(unittest.TestCase):
+    def test_python_strategy_feature_gated(self) -> None:
+        from Data.modules.market_sim.code_strategy import (
+            assert_not_python_strategy,
+            python_strategy_capability,
+        )
+        from Data.modules.market_sim.types import MarketSimError
+
+        cap = python_strategy_capability()
+        self.assertEqual(cap["availability"], "NOT_AVAILABLE")
+        self.assertEqual(cap["status"], "FEATURE_GATED")
+        with self.assertRaises(MarketSimError) as ctx:
+            assert_not_python_strategy({"kind": "python", "source": "print(1)"})
+        self.assertEqual(ctx.exception.code, "PYTHON_STRATEGY_NOT_AVAILABLE")
+
+    def _plane(self, tmp: str) -> MarketSimControlPlane:
+        from Data.modules.market_sim.data_store import MarketDataStore
+
+        root = Path(tmp)
+        store = MarketSimStore(root / "leviathan.db")
+        store.initialize()
+        data = MarketDataStore(store, root / "markets")
+        return MarketSimControlPlane(store=store, data=data, enabled=True)
+
+    def test_create_strategy_rejects_python(self) -> None:
+        from Data.modules.market_sim.types import MarketSimError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plane = self._plane(tmp)
+            with self.assertRaises(MarketSimError) as ctx:
+                plane.create_strategy(
+                    name="py",
+                    entry_rules={"kind": "python", "source": "x=1"},
+                )
+            self.assertEqual(ctx.exception.code, "PYTHON_STRATEGY_NOT_AVAILABLE")
+
+    def test_strategy_lineage_metadata(self) -> None:
+        from Data.modules.market_sim.strategy_lineage import attach_lineage_metadata, lineage_chain
+
+        meta = attach_lineage_metadata(
+            parent_version=1,
+            parent_content_hash="abc",
+            changelog="v2",
+        )
+        self.assertTrue(meta["immutable"])
+        self.assertEqual(meta["parent_version"], 1)
+        self.assertTrue(meta["lineage"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plane = self._plane(tmp)
+            created = plane.create_strategy(name="lineage")
+            sid = created["strategy"]["strategy_id"]
+            v2 = plane.version_strategy(
+                sid,
+                parameters={"fast_ma": 5, "slow_ma": 20},
+                changelog="tighten",
+            )
+            self.assertTrue(v2["version"]["metadata"]["immutable"])
+            self.assertEqual(v2["version"]["metadata"]["parent_version"], 1)
+            chain = lineage_chain(plane.store, sid)
+            self.assertEqual(len(chain), 2)
+            self.assertEqual(chain[0]["version"], 1)
+            self.assertEqual(chain[1]["version"], 2)
+
+    def test_strategy_memory_as_of_causal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MarketSimStore(Path(tmp) / "m.db")
+            store.initialize()
+            store.save_strategy_memory(
+                {
+                    "memory_id": "early",
+                    "strategy_id": "s1",
+                    "strategy_version": 1,
+                    "features": {},
+                    "applicability": {},
+                    "outcome_summary": "early",
+                    "trial_id": None,
+                    "available_at": "2020-01-01T00:00:00+00:00",
+                    "created_at": utc_now(),
+                    "rejected": False,
+                }
+            )
+            store.save_strategy_memory(
+                {
+                    "memory_id": "future",
+                    "strategy_id": "s1",
+                    "strategy_version": 1,
+                    "features": {},
+                    "applicability": {},
+                    "outcome_summary": "future",
+                    "trial_id": None,
+                    "available_at": "2030-01-01T00:00:00+00:00",
+                    "created_at": utc_now(),
+                    "rejected": False,
+                }
+            )
+            rows = store.list_strategy_memories(
+                strategy_id="s1",
+                as_of_ts="2024-01-01T00:00:00+00:00",
+            )
+            ids = {r["memory_id"] for r in rows}
+            self.assertIn("early", ids)
+            self.assertNotIn("future", ids)
 
 
 if __name__ == "__main__":

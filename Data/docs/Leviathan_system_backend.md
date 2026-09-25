@@ -661,7 +661,9 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **P2A (Strategy DSL v2):** `strategy_dsl.py` defines `StrategySpecV2` over `FeatureEngine` — kinds `breakout`, `rsi`, `feature_compare`, plus legacy `ma_cross` / `mean_reversion`, with `regime_filter` gating entries fail-closed. `evaluate_strategy` dispatches v2 kinds; no arbitrary code execution. G15 PASS.
 
-**P2B (Trial Ledger + WFA + sealed acceptance — CURRENT):** Append-only `append_trial` / `count_trials`; `save_experiment` persists `strategy_version` (D14). `wfa.py` rolling WFA windows with purge gap; `walk_forward_splits` rolling overload (D13). `evaluate_acceptance_from_run` reads kernel `run.metrics` only (G21 PASS). G19 PASS; G20 IN_PROGRESS (CPCV later).
+**P2B (Trial Ledger + WFA + sealed acceptance):** Append-only `append_trial` / `count_trials`; `save_experiment` persists `strategy_version` (D14). `wfa.py` rolling WFA windows with purge gap; `walk_forward_splits` rolling overload (D13). `evaluate_acceptance_from_run` reads kernel `run.metrics` only (G21 PASS). G19 PASS; G20 IN_PROGRESS (CPCV later).
+
+**P2C (sandbox + lineage + StrategyMemory — CURRENT):** Python code strategies are `FEATURE_GATED` / `NOT_AVAILABLE` (`code_strategy.py`) until an IsolationSandbox escape suite PASSes — AST filtering alone is insufficient; create/version reject `kind=python`. Immutable lineage via `strategy_lineage.py` (`parent_version`, `parent_content_hash`, `immutable`) on create/version (G17 PASS). `MultiAgentEngine.prepare` hydrates durable StrategyMemory from `list_strategy_memories(as_of_ts=run.start)` (G22 PASS, D15). G16 remains FEATURE_GATED (honest).
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

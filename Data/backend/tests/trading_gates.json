@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "program": "Master Program v4.1",
-  "phase": "P2A",
+  "phase": "P2B",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "P2A: Strategy Spec DSL v2 (breakout/rsi/feature_compare/regime_filter); G15 PASS",
+      "result": "P2B: Trial Ledger append-only + rolling WFA + acceptance-from-run; G15/G19/G21 PASS; G20 IN_PROGRESS",
       "command": "python3 -m pytest Data/backend/tests/test_market_sim_p2_strategies.py -q"
     }
   },
@@ -406,24 +406,57 @@
     },
     "G16": {
       "title": "Code strategy sandbox escape suite",
-      "phase": "T3E",
-      "status": "NOT_STARTED",
+      "phase": "T3E/P2C",
+      "status": "FEATURE_GATED",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/code_strategy.py::python_strategy_capability / evaluate_python_strategy",
+        "create_strategy / version_strategy call assert_not_python_strategy",
+        "Availability = NOT_AVAILABLE until IsolationSandbox escape suite PASSes",
+        "AST filtering alone insufficient; DSL v2 remains supported path",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_python_strategy_feature_gated",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_create_strategy_rejects_python"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_python_strategy_feature_gated",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_create_strategy_rejects_python"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_python_strategy_feature_gated"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2C: honest FEATURE_GATED / NOT_AVAILABLE. Do not claim PASS without escape suite.",
       "related_defects": []
     },
     "G17": {
       "title": "Immutable strategy versions + lineage",
-      "phase": "T3D",
-      "status": "NOT_STARTED",
+      "phase": "T3D/P2C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/strategy_lineage.py::attach_lineage_metadata / lineage_chain / assert_version_immutable",
+        "create_strategy + version_strategy attach parent_version / parent_content_hash / immutable",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P2C: lineage metadata on every version; content-addressed immutability",
+      "related_defects": []
     },
     "G18": {
       "title": "Metrics v2 ledger-derived + bootstrap CIs",
@@ -549,13 +582,30 @@
     },
     "G22": {
       "title": "Strategy Library persist/recall/lessons",
-      "phase": "T6A",
-      "status": "NOT_STARTED",
+      "phase": "T6A/P2C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "MarketSimStore.save_strategy_memory / list_strategy_memories(as_of_ts)",
+        "MultiAgentEngine.prepare hydrates StrategyMemory via list_strategy_memories with causal as_of",
+        "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
+            "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P2C: durable StrategyMemory hydrate on prepare; as_of causal filter (D15)",
       "related_defects": [
         "D15"
       ]

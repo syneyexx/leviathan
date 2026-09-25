@@ -426,6 +426,9 @@ class MarketSimControlPlane:
         changelog: str = "initial",
     ) -> dict[str, Any]:
         self._require_enabled()
+        from .code_strategy import assert_not_python_strategy
+        from .strategy_lineage import attach_lineage_metadata
+
         now = utc_now()
         parameters = dict(parameters or {"fast_ma": 10, "slow_ma": 30, "lookback": 30})
         entry_rules = dict(entry_rules or {"kind": "ma_cross"})
@@ -433,6 +436,7 @@ class MarketSimControlPlane:
         risk_rules = dict(risk_rules or {"max_position_pct": 25})
         required_timeframes = list(required_timeframes or ["1h"])
         brain_dependencies = list(brain_dependencies or ["knowledge", "memory", "neuro"])
+        assert_not_python_strategy(entry_rules)
         content_hash = strategy_content_hash(
             parameters=parameters,
             entry_rules=entry_rules,
@@ -466,6 +470,11 @@ class MarketSimControlPlane:
             brain_dependencies=brain_dependencies,
             created_at=now,
             changelog=changelog,
+            metadata=attach_lineage_metadata(
+                parent_version=None,
+                parent_content_hash=None,
+                changelog=changelog,
+            ),
         )
         self.store.create_strategy(record, version)
         self._emit_event("strategy.created", {"strategy_id": strategy_id})
@@ -506,6 +515,10 @@ class MarketSimControlPlane:
         brain_dependencies = list(
             brain_dependencies if brain_dependencies is not None else current.brain_dependencies
         )
+        from .code_strategy import assert_not_python_strategy
+        from .strategy_lineage import attach_lineage_metadata
+
+        assert_not_python_strategy(entry_rules)
         content_hash = strategy_content_hash(
             parameters=parameters,
             entry_rules=entry_rules,
@@ -529,6 +542,11 @@ class MarketSimControlPlane:
             brain_dependencies=brain_dependencies,
             created_at=now,
             changelog=changelog or f"v{new_version_num}",
+            metadata=attach_lineage_metadata(
+                parent_version=current.version,
+                parent_content_hash=current.content_hash,
+                changelog=changelog or f"v{new_version_num}",
+            ),
         )
         record.current_version = new_version_num
         record.content_hash = content_hash

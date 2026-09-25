@@ -209,6 +209,34 @@ class MultiAgentEngine:
         state._brain_deps = list(brain_dependencies or [])  # type: ignore[attr-defined]
         state._trading_agents = trading_agents  # type: ignore[attr-defined]
         state._all_agents = agents  # type: ignore[attr-defined]
+
+        # P2C: hydrate durable StrategyMemory from store (causal as_of = run start)
+        from .experiments import StrategyMemoryEntry
+
+        as_of = run.start_ts or run.created_at or ""
+        try:
+            rows = self.store.list_strategy_memories(
+                strategy_id=run.strategy_id,
+                as_of_ts=as_of or None,
+                limit=100,
+            )
+        except Exception:  # noqa: BLE001
+            rows = []
+        for row in rows:
+            state.memory.add(
+                StrategyMemoryEntry(
+                    memory_id=str(row.get("memory_id") or ""),
+                    strategy_id=str(row.get("strategy_id") or ""),
+                    strategy_version=int(row.get("strategy_version") or 0),
+                    features=dict(row.get("features") or {}),
+                    applicability=dict(row.get("applicability") or {}),
+                    outcome_summary=str(row.get("outcome_summary") or ""),
+                    trial_id=row.get("trial_id"),
+                    created_at=str(row.get("created_at") or ""),
+                    available_at=str(row.get("available_at") or ""),
+                    rejected=bool(row.get("rejected")),
+                )
+            )
         return state
 
     def step_once(self, state: MultiEngineState) -> bool:

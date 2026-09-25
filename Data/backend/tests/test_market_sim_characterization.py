@@ -704,11 +704,26 @@ class D14TrialLedgerCharacterization(unittest.TestCase):
 
 
 class D15MemoryCharacterization(unittest.TestCase):
-    def test_d15_current_multi_prepare_memory_empty(self) -> None:
+    def test_d15_prepare_hydrates_from_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
+            store.save_strategy_memory(
+                {
+                    "memory_id": "mem-1",
+                    "strategy_id": "s-mem",
+                    "strategy_version": 1,
+                    "features": {"trend": "up"},
+                    "applicability": {},
+                    "outcome_summary": "worked in trend",
+                    "trial_id": None,
+                    "available_at": "2020-01-01T00:00:00+00:00",
+                    "created_at": utc_now(),
+                    "rejected": False,
+                }
+            )
             engine = MultiAgentEngine(store)
             run = _run(
+                strategy_id="s-mem",
                 agents=[
                     {
                         "agent_id": "a1",
@@ -717,15 +732,11 @@ class D15MemoryCharacterization(unittest.TestCase):
                     }
                 ],
             )
+            run.start_ts = "2024-01-01T00:00:00+00:00"
             state = engine.prepare(run, bars_path=str(FIXTURE))
-            self.assertEqual(len(state.memory._entries), 0)
+            self.assertGreaterEqual(len(state.memory._entries), 1)
 
-    def test_d15_current_prepare_does_not_hydrate(self) -> None:
-        src = inspect.getsource(MultiAgentEngine.prepare)
-        self.assertNotIn("list_strategy_memories", src)
-
-    @unittest.expectedFailure  # D15 — fixed in Phase T7
-    def test_d15_desired_prepare_hydrates_from_store(self) -> None:
+    def test_d15_prepare_source_lists_strategy_memories(self) -> None:
         src = inspect.getsource(MultiAgentEngine.prepare)
         self.assertIn("list_strategy_memories", src)
 
