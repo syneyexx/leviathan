@@ -72,5 +72,6 @@ class VerificationReport:
                 "unmeasured_is_not_passed": True,
                 "model_output_is_not_evidence": True,
                 "dispatch_is_not_completion": True,
+                "research_and_file_receipts_supported": True,
             },
         }
