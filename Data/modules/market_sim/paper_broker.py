@@ -119,6 +119,7 @@ class PaperBroker(ABC):
         qty: float,
         client_order_id: str,
         price_hint: float | None = None,
+        session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> PaperOrder: ...
 
@@ -130,7 +131,11 @@ class PaperBroker(ABC):
 
 
 class LocalPaperBroker(PaperBroker):
-    """Local simulated fills against a live quote price — not exchange-matched."""
+    """Local simulated fills against a live quote price — not exchange-matched.
+
+    T9 / G32 / D18: wallets are per-session (isolated). ``self.wallet`` remains
+    a legacy default only for account() when no session is bound.
+    """
 
     broker_id = "local_paper"
 
@@ -138,13 +143,28 @@ class LocalPaperBroker(PaperBroker):
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
         self._orders: dict[str, PaperOrder] = {}
+        self._by_client: dict[str, str] = {}
+        self.sessions: dict[str, WalletLedger] = {}
         self.wallet = WalletLedger(
-            wallet_id="wal-paper",
+            wallet_id="wal-paper-legacy",
             owner_id="paper",
             owner_kind="paper",
             cash=money(100_000),
             currency="USD",
         )
+
+    def wallet_for_session(
+        self, session_id: str, *, initial_cash: float = 100_000.0
+    ) -> WalletLedger:
+        if session_id not in self.sessions:
+            self.sessions[session_id] = WalletLedger(
+                wallet_id=f"wal-paper-{session_id[:12]}",
+                owner_id=session_id,
+                owner_kind="paper",
+                cash=money(initial_cash),
+                currency="USD",
+            )
+        return self.sessions[session_id]
 
     def place(
         self,
@@ -154,11 +174,15 @@ class LocalPaperBroker(PaperBroker):
         qty: float,
         client_order_id: str,
         price_hint: float | None = None,
+        session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> PaperOrder:
         # Idempotent by client_order_id
+        if client_order_id in self._by_client:
+            return self._orders[self._by_client[client_order_id]]
         for existing in self._orders.values():
             if existing.client_order_id == client_order_id:
+                self._by_client[client_order_id] = existing.order_id
                 return existing
         now = utc_now()
         order = PaperOrder(
@@ -177,18 +201,24 @@ class LocalPaperBroker(PaperBroker):
             order.reject_reason = "no quote — refuse blind fill"
             order.updated_at = utc_now()
             self._orders[order.order_id] = order
+            self._by_client[client_order_id] = order.order_id
             return order
 
+        wallet = (
+            self.wallet_for_session(session_id)
+            if session_id
+            else self.wallet
+        )
         slip = self.slippage_bps / 10_000.0
         px = price_hint * (1 + slip) if order.side == "BUY" else price_hint * (1 - slip)
         fee = abs(qty * px) * (self.fee_bps / 10_000.0)
         try:
             if order.side == "BUY":
-                self.wallet.apply_buy(
+                wallet.apply_buy(
                     qty=qty, price=px, fee=fee, tx_id=order.order_id, meta={"symbol": symbol}
                 )
             else:
-                self.wallet.apply_sell(
+                wallet.apply_sell(
                     qty=qty, price=px, fee=fee, tx_id=order.order_id, meta={"symbol": symbol}
                 )
             order.status = "filled"
@@ -200,6 +230,7 @@ class LocalPaperBroker(PaperBroker):
             order.reject_reason = str(exc)
         order.updated_at = utc_now()
         self._orders[order.order_id] = order
+        self._by_client[client_order_id] = order.order_id
         return order
 
     def reconcile(self, order: PaperOrder) -> PaperOrder:
@@ -211,12 +242,17 @@ class LocalPaperBroker(PaperBroker):
             current.updated_at = utc_now()
         return current
 
-    def account(self) -> dict[str, Any]:
+    def account(self, *, session_id: str | None = None) -> dict[str, Any]:
+        wallet = self.wallet_for_session(session_id) if session_id else self.wallet
         return {
             "broker_id": self.broker_id,
-            "wallet": self.wallet.public_dict(),
+            "wallet": wallet.public_dict(),
             "open_orders": [o.public_dict() for o in self._orders.values() if o.status == "submitted"],
-            "truth": {"paper_only": True, "local_simulation": True},
+            "truth": {
+                "paper_only": True,
+                "local_simulation": True,
+                "per_session_wallets": True,
+            },
         }
 
 
@@ -353,9 +389,10 @@ class AlpacaPaperBroker(PaperBroker):
         qty: float,
         client_order_id: str,
         price_hint: float | None = None,
+        session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> PaperOrder:
-        del price_hint  # market orders — price hint unused
+        del price_hint, session_id  # market orders — price hint unused; session tracked in metadata
         for existing in self._orders.values():
             if existing.client_order_id == client_order_id:
                 return existing

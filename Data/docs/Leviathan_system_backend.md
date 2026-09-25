@@ -613,6 +613,8 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **T8 (TradingGym + scorecards):** `TradingGym` provides deterministic causal `reset`/`step` on the same SimulationClock/MarketView kernel with curriculum stages, domain randomization (fees/slippage/latency/spread), episode ledger, and sealed-window unreachability. Per-agent scorecards expose Sharpe/drawdown/bootstrap CIs + violation counts; multi-agent leaderboards apply Benjamini–Hochberg multiple-testing penalty. Readiness ladder A0–A4 is policy-enforced (UNMEASURED blocks advance; A5/live blocked). Verified trajectories export to JSONL with contamination scan; sim-to-real gap report foundation compares paper vs sim fills. Migration 48.
 
+**T9 (paper forward + risk + brokers + audit):** Per-session paper wallets and `PaperForwardRunner` (start/pause/resume/tick, idempotent client order ids). `RiskEngineV2` sits on every paper order path with global/per-strategy kill switches (human reset) and approval-gated limit loosening. `BrokerAdapter` + `ReplayBroker`; `LiveBroker` is honest UNSUPPORTED. Shadow-ledger reconciliation, drift-vs-backtest bands, and feed watchdog. Hash-chained audit ledger (intent→risk→broker→fill→reconcile) with tamper detection. Live feature flag off by default (G48). Migration 49.
+
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
 Machine gate state lives in `Data/backend/tests/trading_gates.json`; `scripts/verify_trading_100.py` is the verifier.
