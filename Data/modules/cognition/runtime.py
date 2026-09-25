@@ -104,6 +104,17 @@ class CognitiveRunState:
             "status": self.status.value,
             "stage": self.status.value,
             "mode": self.decision.mode.value if self.decision else None,
+            "requested_mode": (
+                self.decision.requested_mode.value
+                if self.decision and self.decision.requested_mode
+                else (self.decision.mode.value if self.decision else None)
+            ),
+            "effective_mode": (
+                self.decision.effective_mode.value
+                if self.decision and self.decision.effective_mode
+                else (self.decision.mode.value if self.decision else None)
+            ),
+            "clamp_reason": self.decision.clamp_reason if self.decision else None,
             "strategy": self.decision.strategy.value if self.decision else None,
             "goal": self.task.goal,
             "domain": self.task.domain,
@@ -112,6 +123,16 @@ class CognitiveRunState:
             "working_memory_count": len(self.working_memory.items),
             "working_memory_saturation": self.working_memory.saturation(),
             "budgets": self.decision.budgets.public_dict() if self.decision else None,
+            "neural_budgets": (
+                self.decision.neural_budgets.public_dict()
+                if self.decision and self.decision.neural_budgets
+                else None
+            ),
+            "capability_profile": (
+                self.decision.capability_profile.public_dict()
+                if self.decision and self.decision.capability_profile
+                else None
+            ),
             "usage": self.usage.public_dict(),
             "plan": self.plan.public_dict() if self.plan else None,
             "observations": [o.public_dict() for o in self.observations[-12:]],
@@ -662,6 +683,12 @@ class CognitiveRuntime:
             done = sum(1 for s in state.plan.steps if s.status in {"DONE", "COMPLETED"})
             plan_progress = done / len(state.plan.steps)
         previous_mode = state.decision.mode if state.decision else None
+        policy = getattr(self.meta, "policy", None)
+        override = None
+        if policy is not None:
+            raw_override = getattr(policy, "reasoning_capability_override", None)
+            if isinstance(raw_override, dict) and raw_override:
+                override = dict(raw_override)
         return self.meta.decide(
             state.task,
             uncertainty=state.beliefs.uncertainty() if self.belief_enabled else state.task.initial_uncertainty,
@@ -676,6 +703,7 @@ class CognitiveRuntime:
             plan_progress=plan_progress,
             tool_failures=tool_failures,
             repeated_actions=0,
+            settings_capability_override=override,
         )
 
     def _budgets_remaining(self, state: CognitiveRunState) -> dict[str, int]:

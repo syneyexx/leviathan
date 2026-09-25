@@ -16,6 +16,15 @@ from .experience import ExperienceAdmissionPolicy, ExperienceStore, ProceduralMe
 from .hypotheses import ConfidenceBand, Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band
 from .meta_controller import MetaController, MetaDecision
 from .model_adapter import build_control_plane_model_caller
+from .neural_compute import (
+    ClampReason,
+    NativeEffort,
+    NeuralComputeBudget,
+    ReasoningCapabilityProfile,
+    apply_capability_to_budget,
+    neural_budget_for_mode,
+    resolve_reasoning_capability_profile,
+)
 from .perception import PerceptionItem, PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .runtime import CognitiveRunState, CognitiveRuntime
@@ -49,6 +58,7 @@ __all__ = [
     "BeliefStatus",
     "CapabilityBroker",
     "CapabilityShortlist",
+    "ClampReason",
     "CognitionError",
     "CognitionFeatureDisabled",
     "CognitionStore",
@@ -82,11 +92,14 @@ __all__ = [
     "HypothesisStatus",
     "MetaController",
     "MetaDecision",
+    "NativeEffort",
+    "NeuralComputeBudget",
     "PerceptionItem",
     "PerceptionService",
     "PerceptionSnapshot",
     "PlanStep",
     "ProceduralMemoryHint",
+    "ReasoningCapabilityProfile",
     "ReasoningMode",
     "ReasoningStrategy",
     "RiskClass",
@@ -98,10 +111,13 @@ __all__ = [
     "VerifiedExperience",
     "WorkingMemory",
     "WorkingMemoryItem",
+    "apply_capability_to_budget",
     "build_control_plane_model_caller",
     "classify_failure",
     "classify_steer",
     "confidence_to_band",
+    "neural_budget_for_mode",
     "register_specialist_handlers",
+    "resolve_reasoning_capability_profile",
     "should_blind_retry",
 ]

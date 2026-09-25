@@ -1,9 +1,9 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-25T07:31:27Z",
+  "generated_at": "2026-09-25T07:39:43Z",
   "phase": "F0",
-  "exit_code": 0,
-  "definition_of_done": true,
+  "exit_code": 1,
+  "definition_of_done": false,
   "skeleton": [
     {
       "id": "F0_AUDIT_DOC",
@@ -54,7 +54,7 @@
       "title": "Canonical CognitiveRuntime",
       "required": true,
       "status": "IN_PROGRESS",
-      "evidence": "CognitiveRuntime remains sole orch owner; preserved in F1",
+      "evidence": "CognitiveRuntime remains sole orch owner; preserved in F1/F2",
       "phase": "F0+",
       "kind": "program_gate"
     },
@@ -80,8 +80,8 @@
       "id": "R04",
       "title": "Two-axis compute",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests;neural_compute_types_ok",
       "phase": "F2",
       "kind": "program_gate"
     },
@@ -89,8 +89,8 @@
       "id": "R05",
       "title": "Reasoning capability profile",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f2_two_axis.CapabilityProfileTests;neural_compute_types_ok",
       "phase": "F2",
       "kind": "program_gate"
     },
@@ -287,8 +287,8 @@
       "id": "R27",
       "title": "Resource pressure",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests;neural_compute_types_ok",
       "phase": "F2+",
       "kind": "program_gate"
     },
