@@ -90,6 +90,8 @@ class ProviderExecutionClient:
             "provider.chat.complete",
             "provider.chat.stream",
             "provider.market.fetch",
+            "provider.market.stream",
+            "provider.market.stream.stop",
             "provider.alpaca.paper",
             "provider.hf.list",
         }
@@ -103,7 +105,7 @@ class ProviderExecutionClient:
             if capability.startswith("provider.")
             else capability,
             "payload": dict(payload or {}),
-            "streaming": streaming,
+            "streaming": streaming or cap_id == "provider.market.stream",
             "credential_ref": credential_ref,
             "correlation_id": correlation_id,
             "principal_ref": principal_ref,

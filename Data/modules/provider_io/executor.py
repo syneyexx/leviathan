@@ -11,6 +11,7 @@ from Data.modules.provider_io.adapters.alpaca_paper import AlpacaPaperAdapter
 from Data.modules.provider_io.adapters.generic_http import GenericHttpAdapter
 from Data.modules.provider_io.adapters.huggingface_meta import HuggingFaceMetaAdapter
 from Data.modules.provider_io.adapters.market_data import MarketDataAdapter
+from Data.modules.provider_io.adapters.market_stream import MarketStreamAdapter
 from Data.modules.provider_io.adapters.openai_compatible import OpenAICompatibleAdapter
 from Data.modules.provider_io.clients import ProviderClientPool
 from Data.modules.provider_io.credentials import (
@@ -123,6 +124,8 @@ class ProviderIoExecutor:
             "chat.stream": OpenAICompatibleAdapter(),
             "openai_compatible": OpenAICompatibleAdapter(),
             "market.fetch": MarketDataAdapter(),
+            "market.stream": MarketStreamAdapter(),
+            "market.stream.stop": MarketStreamAdapter(),
             "alpaca.paper": AlpacaPaperAdapter(),
             "hf.list": HuggingFaceMetaAdapter(),
             "huggingface.list": HuggingFaceMetaAdapter(),
@@ -163,6 +166,13 @@ class ProviderIoExecutor:
             else getattr(job, "timeout_seconds", None)
             or self.settings.total_deadline_seconds
         )
+        # Long-lived market streams use payload max_runtime_seconds as the wall clock.
+        if request.capability == "market.stream":
+            payload_runtime = request.payload.get("max_runtime_seconds")
+            if payload_runtime is not None:
+                deadline = max(deadline, float(payload_runtime))
+            elif request.deadline_seconds is None and getattr(job, "timeout_seconds", None) is None:
+                deadline = max(deadline, 3600.0)
         budget = DeadlineBudget(total_seconds=max(1.0, deadline))
 
         adapter = self._adapters.get(request.capability)
@@ -240,15 +250,37 @@ class ProviderIoExecutor:
 
             heartbeat()
             try:
-                result = adapter.execute(
-                    request,
-                    clients=self.clients,
-                    credential=credential,
-                    policy=self.policy,
-                    budget=budget,
-                    stream_store=self.stream_store if request.streaming else None,
-                    cancel_check=cancel_check,
-                )
+                emit_cb = None
+                if callable(ctx.get("emit")):
+                    emit_cb = ctx.get("emit")
+                elif callable(args.get("emit")):
+                    emit_cb = args.get("emit")
+                execute_kwargs: dict[str, Any] = {
+                    "clients": self.clients,
+                    "credential": credential,
+                    "policy": self.policy,
+                    "budget": budget,
+                    "stream_store": self.stream_store if request.streaming else None,
+                    "cancel_check": cancel_check,
+                }
+                # Market stream adapter accepts optional emit/ingest/ctx.
+                if request.capability in {"market.stream", "market.stream.stop"}:
+                    store_path = getattr(store, "path", None)
+                    execute_kwargs["emit"] = emit_cb
+                    execute_kwargs["ingest"] = ctx.get("ingest") or request.payload.get(
+                        "ingest_callback"
+                    )
+                    execute_kwargs["ctx"] = {
+                        **{k: v for k, v in ctx.items() if k != "job_store"},
+                        "db_path": str(
+                            store_path
+                            or os.environ.get("LEVIATHAN_DB_PATH")
+                            or self.stream_store.db_path
+                            or ""
+                        ),
+                        "emit": emit_cb,
+                    }
+                result = adapter.execute(request, **execute_kwargs)
                 result.worker_pid = os.getpid()
                 result.timing = {
                     **dict(result.timing or {}),

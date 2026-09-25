@@ -1315,6 +1315,23 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "news", "trading"],
     )
     _ext(
+        cap_id="market_sim.scan_batch",
+        name="Market Sim Scan Batch",
+        description="Batch-scan market data sources / symbols on the market_sim worker.",
+        side_effects=(SideEffect.READ, SideEffect.EXECUTE),
+        worker_kind="market_sim",
+        properties={
+            "symbols": {"type": "array"},
+            "provider_id": {"type": "string"},
+            "timeframe": {"type": "string"},
+            "limit": {"type": "integer"},
+            "payload": {"type": "object"},
+        },
+        permissions=("process.execute", "filesystem.read"),
+        tags=["market_sim", "scan", "batch"],
+        domains=["market_sim"],
+    )
+    _ext(
         cap_id="backup.create",
         name="Create Backup",
         description="Create a durable backup snapshot.",
@@ -1451,6 +1468,49 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         permissions=("network.outbound", "filesystem.write"),
         tags=["provider", "market", "ohlcv"],
         domains=["provider_io", "market_sim"],
+    )
+    _ext(
+        cap_id="provider.market.stream",
+        name="Provider Market Stream",
+        description=(
+            "Long-lived Binance public combined market stream (kline/trade) via market_feed "
+            "workers — market data only, never order/trading endpoints."
+        ),
+        side_effects=(SideEffect.NETWORK, SideEffect.EXECUTE),
+        worker_kind="market_feed",
+        required_args=["provider"],
+        properties={
+            "provider": {"type": "string"},
+            "provider_id": {"type": "string"},
+            "symbols": {"type": "array"},
+            "stream_kinds": {"type": "array"},
+            "feed_id": {"type": "string"},
+            "connection_id": {"type": "string"},
+            "max_runtime_seconds": {"type": "number"},
+            "gap_recovery_enabled": {"type": "boolean"},
+            "payload": {"type": "object"},
+        },
+        permissions=("network.outbound", "process.execute"),
+        tags=["provider", "market", "stream", "websocket"],
+        domains=["provider_io", "market_sim"],
+        extra_meta={"idempotent": False, "streaming": True},
+    )
+    _ext(
+        cap_id="provider.market.stream.stop",
+        name="Provider Market Stream Stop",
+        description="Request stop of a long-lived market.stream job (market_feed workers).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="market_feed",
+        properties={
+            "provider": {"type": "string"},
+            "feed_id": {"type": "string"},
+            "job_id": {"type": "string"},
+            "payload": {"type": "object"},
+        },
+        permissions=("process.execute",),
+        tags=["provider", "market", "stream", "stop"],
+        domains=["provider_io", "market_sim"],
+        extra_meta={"idempotent": True},
     )
     _ext(
         cap_id="provider.hf.list",

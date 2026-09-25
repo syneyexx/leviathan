@@ -995,41 +995,47 @@ class D22BrainAsOfCharacterization(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# D23 — Providers: no pagination / urllib / unlabeled adjustment
+# D23 — Providers: pagination / urllib / unlabeled adjustment
 # ---------------------------------------------------------------------------
 
 
 class D23ProvidersCharacterization(unittest.TestCase):
-    def test_d23_current_binance_caps_at_1000_no_pagination(self) -> None:
+    def test_d23_current_binance_paginates_beyond_1000(self) -> None:
+        """Pagination exists: PAGE_SIZE ceiling with multi-page fetch loop."""
         import Data.modules.market_sim.providers as providers
 
         text = Path(providers.__file__).read_text(encoding="utf-8")
-        self.assertIn("min(max(limit, 1), 1000)", text)
-        # No pagination loop in the Binance historical fetch body.
+        self.assertIn("PAGE_SIZE", text)
         binance_src = inspect.getsource(providers.BinancePublicProvider)
         self.assertIn("1000", binance_src)
-        self.assertNotIn("while True", binance_src)
+        self.assertTrue(
+            "while True" in binance_src
+            or "while len(collected)" in binance_src
+            or "pagination" in binance_src.lower()
+        )
 
     def test_d23_current_binance_quote_is_last_price_only(self) -> None:
         from Data.modules.market_sim.providers import BinancePublicProvider
 
         src = inspect.getsource(BinancePublicProvider.fetch_quote)
         self.assertIn("ticker/price", src)
-        self.assertNotIn("bid", src.lower())
-        self.assertNotIn("ask", src.lower())
+        self.assertIn("last_price_only", src)
+        self.assertIn("not_bid_ask", src)
+        # Quote payload does not populate bid/ask fields (truth marks not_bid_ask).
+        self.assertNotIn('"bid"', src)
+        self.assertNotIn('"ask"', src)
 
     def test_d23_current_csv_local_takes_first_glob(self) -> None:
         from Data.modules.market_sim.providers import CsvLocalProvider
 
         src = inspect.getsource(CsvLocalProvider)
-        self.assertIn("candidates[0]", src)
+        self.assertTrue("candidates[0]" in src or "sorted(candidates)[0]" in src)
 
-    @unittest.expectedFailure  # D23 — fixed in Phase T2D
     def test_d23_desired_binance_paginates_beyond_1000(self) -> None:
         from Data.modules.market_sim.providers import BinancePublicProvider
 
         src = inspect.getsource(BinancePublicProvider)
-        self.assertTrue("while True" in src or "pagination" in src.lower())
+        self.assertTrue("while True" in src or "pagination" in src.lower() or "while len(collected)" in src)
 
 
 # ---------------------------------------------------------------------------

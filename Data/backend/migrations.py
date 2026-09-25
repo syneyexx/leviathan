@@ -3610,6 +3610,70 @@ def _m50_agent_signal_fabric(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
 
 
+def _m51_market_feed_fabric(conn: sqlite3.Connection) -> None:
+    """Realtime market feed fabric — sessions, coalesced checkpoints, latency rollups."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_feed_sessions (
+            feed_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            symbols_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'DISCONNECTED',
+            restart_policy TEXT NOT NULL DEFAULT 'MANUAL',
+            connection_id TEXT NOT NULL DEFAULT '',
+            job_id TEXT,
+            capture_mode TEXT NOT NULL DEFAULT 'OFF',
+            stale_after_seconds REAL NOT NULL DEFAULT 30.0,
+            license_state TEXT NOT NULL DEFAULT 'PUBLIC_TERMS_APPLY',
+            license_note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            checkpoint_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_feed_checkpoints (
+            feed_id TEXT NOT NULL,
+            written_at TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL DEFAULT '{}',
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (feed_id, written_at)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_feed_latency_rollups (
+            feed_id TEXT NOT NULL,
+            window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL,
+            sample_count INTEGER NOT NULL DEFAULT 0,
+            p50_ms REAL,
+            p95_ms REAL,
+            p99_ms REAL,
+            mean_ms REAL,
+            max_ms REAL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (feed_id, window_start)
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_market_feed_sessions_status "
+        "ON market_feed_sessions(status)",
+        "CREATE INDEX IF NOT EXISTS idx_market_feed_sessions_updated "
+        "ON market_feed_sessions(updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_market_feed_checkpoints_feed "
+        "ON market_feed_checkpoints(feed_id, written_at)",
+        "CREATE INDEX IF NOT EXISTS idx_market_feed_latency_feed "
+        "ON market_feed_latency_rollups(feed_id, window_start)",
+    ):
+        conn.execute(ddl)
+
+
 def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
     """P0A: SimFill honesty fields + ClosedTrade / PositionEpisode table."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
@@ -3745,6 +3809,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=50,
         name="agent_signal_fabric",
         apply=_m50_agent_signal_fabric,
+    ),
+    Migration(
+        version=51,
+        name="market_feed_fabric",
+        apply=_m51_market_feed_fabric,
     ),
 )
 

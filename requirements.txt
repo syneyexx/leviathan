@@ -9,6 +9,7 @@ huggingface_hub>=0.26.0,<2
 pyarrow>=17.0.0,<26
 ijson>=3.2.0,<4
 pypdf>=5.0.0,<7
+websockets>=13.0,<16
 
 python-docx>=1.1.0,<2
 openpyxl>=3.1.0,<4
