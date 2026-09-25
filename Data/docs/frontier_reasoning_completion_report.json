@@ -1,6 +1,6 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-25T07:58:41Z",
+  "generated_at": "2026-09-25T08:04:05Z",
   "phase": "F0",
   "exit_code": 0,
   "definition_of_done": true,
@@ -134,8 +134,8 @@
       "id": "R10",
       "title": "Neural TaskModel",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f6_neural_advisors.TaskAdviceValidationTests;neural_advisors_validated_non_owning",
       "phase": "F6",
       "kind": "program_gate"
     },
@@ -143,8 +143,8 @@
       "id": "R11",
       "title": "Neural planner",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f6_neural_advisors.PlanAdviceValidationTests;neural_advisors_validated_non_owning",
       "phase": "F6",
       "kind": "program_gate"
     },
