@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "description": "Minimal golden next-bar fill reference for D28/T11 characterization",
+  "fills": [
+    {
+      "decision_bar_index": 5,
+      "eligible_bar_index": 6,
+      "side": "BUY",
+      "qty": 1.0,
+      "fill_open": 101.0,
+      "expected_filled": true,
+      "same_bar_must_reject": true
+    },
+    {
+      "decision_bar_index": 10,
+      "eligible_bar_index": 11,
+      "side": "SELL",
+      "qty": 1.0,
+      "fill_open": 99.5,
+      "expected_filled": true,
+      "same_bar_must_reject": true
+    }
+  ]
+}

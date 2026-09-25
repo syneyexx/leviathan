@@ -617,6 +617,8 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **T10 (Trading Center UI):** Run builder exposes `initialCash` + `engine`; multi-agent presets come from backend (no UI-hardcoded agent ids). Live equity/fills/messages use recent-tail store loaders. Frontend action matrix maps every Trading Center operator action to typed `api.client` methods (paper forward, risk, audit, security posture included). D27 closed.
 
+**T11 (Master Program closeout):** `scripts/verify_trading_100.py` + CI step + completion report (`Data/docs/trading_master_program_completion.md`). Cross-platform path helpers for Windows-style worker/sandbox paths. Characterization regressions flipped where delivered; residual deep kernel/data gates marked **DEFERRED** (not claimed PASS). Migration compatibility posture documented.
+
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 
 Machine gate state lives in `Data/backend/tests/trading_gates.json`; `scripts/verify_trading_100.py` is the verifier.

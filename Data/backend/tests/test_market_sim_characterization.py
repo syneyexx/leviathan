@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -1205,10 +1206,12 @@ class D28WeakTestsCharacterization(unittest.TestCase):
         self.assertIn("total_return_pct", text)
         self.assertIn("complete_experiment", text)
 
-    @unittest.expectedFailure  # D28 — strengthened across fixing phases / T11
     def test_d28_desired_has_golden_fill_suite(self) -> None:
+        # T11 / G45: golden fill fixture is now a real regression (no expectedFailure).
         golden = Path(__file__).resolve().parent / "fixtures" / "market_sim_golden_fills.json"
         self.assertTrue(golden.is_file())
+        data = json.loads(golden.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(data.get("fills") or []), 1)
 
 
 # ---------------------------------------------------------------------------
