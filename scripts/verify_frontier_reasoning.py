@@ -260,6 +260,50 @@ def _adaptive_compute_scan() -> tuple[str, str]:
     return "PASS", "adaptive_compute_neural_axis_ok"
 
 
+def _hypothesis_board_scan() -> tuple[str, str]:
+    """R12 structural: HypothesisBoard deep-branched and wired into runtime."""
+    path = ROOT / "Data" / "modules" / "cognition" / "hypotheses.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    if not path.is_file():
+        return "FAIL", "missing:hypotheses.py"
+    text = path.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    if "class HypothesisBoard" not in text:
+        return "FAIL", "missing_HypothesisBoard"
+    if "def branch" not in text:
+        return "FAIL", "missing_hypothesis_branch"
+    if "hypothesis_board_is_public" not in text:
+        return "FAIL", "missing_public_board_truth"
+    if "deep_branched" not in text:
+        return "FAIL", "missing_deep_branched_flag"
+    if "hypothesis_board" not in rt or "hypothesis_board_from_mapping" not in rt:
+        return "FAIL", "runtime_missing_hypothesis_board_wire"
+    if 'checkpoint["hypothesis_board"]' not in rt:
+        return "FAIL", "persist_missing_hypothesis_board"
+    return "PASS", "hypothesis_board_deep_branched_wired"
+
+
+def _critic_mesh_scan() -> tuple[str, str]:
+    """R13 structural: named domain CriticMesh replaces monolithic critic."""
+    path = ROOT / "Data" / "modules" / "cognition" / "critic_mesh.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    if not path.is_file():
+        return "FAIL", "missing:critic_mesh.py"
+    text = path.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    if "class CriticMesh" not in text:
+        return "FAIL", "missing_CriticMesh"
+    if "EvidenceCoverageCritic" not in text or "RiskGateCritic" not in text:
+        return "FAIL", "missing_named_domain_critics"
+    if "critic_mesh_is_named_domain_critics" not in text:
+        return "FAIL", "missing_named_mesh_truth"
+    if "self.critic_mesh" not in rt or "CriticMesh" not in rt:
+        return "FAIL", "runtime_missing_critic_mesh"
+    if "_critic_context" not in rt:
+        return "FAIL", "runtime_missing_critic_context"
+    return "PASS", "critic_mesh_named_domain_wired"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -418,6 +462,18 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st8, ev8
                     else:
                         evidence = f"{evidence};{ev8}"
+                if status == "PASS" and gid == "R12":
+                    st12, ev12 = _hypothesis_board_scan()
+                    if st12 != "PASS":
+                        status, evidence = st12, ev12
+                    else:
+                        evidence = f"{evidence};{ev12}"
+                if status == "PASS" and gid == "R13":
+                    st13, ev13 = _critic_mesh_scan()
+                    if st13 != "PASS":
+                        status, evidence = st13, ev13
+                    else:
+                        evidence = f"{evidence};{ev13}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

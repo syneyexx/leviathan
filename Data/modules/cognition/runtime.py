@@ -16,6 +16,7 @@ from .belief_state import BeliefState
 from .capability_broker import CapabilityBroker
 from .completion import CompletionEngine
 from .context_v3 import ContextBuilderV3
+from .critic_mesh import CriticMesh, CriticMeshReport
 from .delegation import DelegateRequest, DelegateResult, DelegationService
 from .errors import (
     CognitionCancelled,
@@ -36,6 +37,7 @@ from .hydration import (
     usage_from_dict,
     working_memory_from_dict,
 )
+from .hypotheses import HypothesisBoard, HypothesisStatus, hypothesis_board_from_mapping
 from .loop_detection import LoopDetector
 from .meta_controller import MetaController, MetaDecision
 from .perception import PerceptionService, PerceptionSnapshot
@@ -99,6 +101,10 @@ class CognitiveRunState:
     behavior_source: str | None = None
     # Public structured reasoning surface (no private CoT).
     reasoning_state: StructuredReasoningState = field(default_factory=StructuredReasoningState)
+    # Run-owned public hypothesis set (deep-branched; not private CoT).
+    hypothesis_board: HypothesisBoard = field(default_factory=HypothesisBoard)
+    # Last named-domain critic mesh report (public signals only).
+    last_critic_report: dict[str, Any] | None = None
 
     def public_status(self) -> dict[str, Any]:
         return {
@@ -139,6 +145,8 @@ class CognitiveRunState:
             "expected_gain": self.decision.expected_gain if self.decision else None,
             "neural_adaptation": self.decision.neural_adaptation if self.decision else None,
             "reasoning_state": self.reasoning_state.public_dict(),
+            "hypothesis_board": self.hypothesis_board.public_dict(),
+            "critic_report": self.last_critic_report,
             "usage": self.usage.public_dict(),
             "plan": self.plan.public_dict() if self.plan else None,
             "observations": [o.public_dict() for o in self.observations[-12:]],
@@ -164,6 +172,8 @@ class CognitiveRunState:
                 "progress_not_fabricated_percent": True,
                 "shadow_does_not_own_final_response": True,
                 "reasoning_state_is_public_contract": True,
+                "hypothesis_board_is_public": True,
+                "critic_mesh_is_named_domain_critics": True,
             },
         }
 
@@ -237,6 +247,8 @@ class CognitiveRuntime:
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
         # Settings Control Plane — same BehaviorProfile plane as Chat.
         self.behavior_resolver = behavior_resolver
+        # Named domain critic mesh (public critique signals, not private CoT).
+        self.critic_mesh = CriticMesh()
 
         self._runs: dict[str, CognitiveRunState] = {}
         self._loops: dict[str, LoopDetector] = {}
@@ -367,6 +379,12 @@ class CognitiveRuntime:
                 state.reasoning_state.notes.append(
                     "task_advice_rejected=" + ",".join(map(str, advice_meta.get("rejected_fields") or []))
                 )
+        # Seed public HypothesisBoard from task assumptions / unknowns (deep-branchable).
+        seeded = state.hypothesis_board.seed_from_task(
+            assumptions=getattr(task, "assumptions", None) or [],
+            unknowns=task.unknowns,
+            domain=task.domain or "general",
+        )
         self._runs[run_id] = state
         self._loops[run_id] = LoopDetector()
         self._persist_create(state)
@@ -376,6 +394,8 @@ class CognitiveRuntime:
             "reasoning_state",
             state.reasoning_state.public_dict(),
         )
+        if seeded:
+            self._emit(state, "hypothesis_board", state.hypothesis_board.public_dict())
         if run:
             return self.run(run_id, history=history)
         return state.public_status()
@@ -633,6 +653,19 @@ class CognitiveRuntime:
                 checkpoint.get("reasoning_state")
                 or result.get("reasoning_state")
             ),
+            hypothesis_board=hypothesis_board_from_mapping(
+                checkpoint.get("hypothesis_board")
+                or result.get("hypothesis_board")
+            ),
+            last_critic_report=(
+                dict(checkpoint["critic_report"])
+                if isinstance(checkpoint.get("critic_report"), dict)
+                else (
+                    dict(result["critic_report"])
+                    if isinstance(result.get("critic_report"), dict)
+                    else None
+                )
+            ),
         )
         events = self.store.list_events(run_id)
         state.events = list(events)
@@ -876,6 +909,22 @@ class CognitiveRuntime:
                 state.observations.append(obs)
                 state.working_memory.add_observation(obs.summary, source_type=obs.source_type)
                 self._emit(state, "observation_added", obs.public_dict())
+                # Link observation evidence into the public hypothesis board.
+                touched = state.hypothesis_board.apply_observation_evidence(
+                    observation_id=obs.observation_id,
+                    summary=obs.summary or "",
+                    success=obs.success,
+                    evidence_refs=list(obs.evidence_refs or []),
+                )
+                if touched:
+                    self._emit(
+                        state,
+                        "hypothesis_board",
+                        {
+                            **state.hypothesis_board.public_dict(),
+                            "touched_ids": touched,
+                        },
+                    )
                 # Advance plan step if action referenced one.
                 step_id = (action.arguments or {}).get("step_id")
                 if step_id and state.plan is not None:
@@ -1297,6 +1346,32 @@ class CognitiveRuntime:
                     status=BeliefStatus.INFERRED,
                 )
                 self._emit(state, "belief_added", {"proposition": text[:200]})
+            if action.arguments.get("purpose") == "hypothesis" and text:
+                parent_id = action.arguments.get("parent_hypothesis_id")
+                if parent_id:
+                    hyp = state.hypothesis_board.branch(
+                        str(parent_id),
+                        text[:500],
+                        prior_plausibility=0.5,
+                        domain=state.task.domain or "general",
+                        metadata={"source": "model_hypothesis"},
+                    )
+                else:
+                    hyp = state.hypothesis_board.add(
+                        text[:500],
+                        prior_plausibility=0.5,
+                        domain=state.task.domain or "general",
+                        metadata={"source": "model_hypothesis"},
+                    )
+                if hyp is not None:
+                    self._emit(
+                        state,
+                        "hypothesis_board",
+                        {
+                            **state.hypothesis_board.public_dict(),
+                            "added_id": hyp.hypothesis_id,
+                        },
+                    )
             return CognitiveObservation(
                 kind=CognitiveObservationKind.MODEL_RESULT,
                 observation_id=str(uuid.uuid4()),
@@ -1612,25 +1687,71 @@ class CognitiveRuntime:
 
     def _process_critic(self, state: CognitiveRunState) -> dict[str, Any]:
         self._transition(state, CognitiveRunStatus.CRITIQUING)
-        recommend = "continue"
-        reason = "ok"
-        # Repeated failures
-        fail_obs = [o for o in state.observations if o.success is False]
-        if len(fail_obs) >= 2:
-            recommend = "replan"
-            reason = "repeated failures"
-        elif state.plan and state.plan.stale:
-            recommend = "replan"
-            reason = "stale plan"
-        elif self.belief_enabled and state.beliefs.uncertainty() > 0.75:
-            recommend = "retrieve"
-            reason = "high uncertainty"
-        elif state.working_memory.saturation() > 0.9:
-            recommend = "compact"
-            reason = "working memory saturated"
-        out = {"recommend": recommend, "reason": reason}
+        ctx = self._critic_context(state)
+        report: CriticMeshReport = self.critic_mesh.evaluate(ctx)
+        out = report.public_dict()
+        state.last_critic_report = out
+        # Mirror mesh findings into public structured critiques (not private CoT).
+        for finding in report.findings:
+            state.reasoning_state.add_critique(
+                f"{finding.critic_id}:{finding.finding}"
+            )
+        self._emit(state, "critic_mesh", out)
         self._transition(state, CognitiveRunStatus.REASONING)
         return out
+
+    def _critic_context(self, state: CognitiveRunState) -> dict[str, Any]:
+        evidence_items = 0
+        if state.perception:
+            evidence_items = len(state.perception.by_type(EpistemicType.EVIDENCE)) + len(
+                state.perception.by_type(EpistemicType.KNOWLEDGE_SOURCE)
+            )
+        coverage = min(1.0, evidence_items / 5.0)
+        contradictions = len(state.beliefs.contradiction_pairs) if self.belief_enabled else 0
+        density = min(1.0, contradictions / 3.0)
+        plan_progress = 0.0
+        if state.plan and state.plan.steps:
+            done = sum(1 for s in state.plan.steps if s.status in {"DONE", "COMPLETED"})
+            plan_progress = done / len(state.plan.steps)
+        unresolved = sum(
+            1
+            for h in state.hypothesis_board.items.values()
+            if h.current_status == HypothesisStatus.UNRESOLVED
+        )
+        fail_obs = sum(1 for o in state.observations if o.success is False)
+        risk = getattr(state.task, "risk_class", None)
+        risk_s = str(getattr(risk, "value", risk) or "LOW")
+        side_effects = list(getattr(state.task, "side_effect_expectations", None) or [])
+        return {
+            "evidence_coverage": coverage,
+            "contradiction_density": density,
+            "requires_research": bool(getattr(state.task, "requires_research", False)),
+            "requires_current_information": bool(
+                getattr(state.task, "requires_current_information", False)
+            ),
+            "open_hypothesis_count": len(state.hypothesis_board.open_items()),
+            "unresolved_hypothesis_count": unresolved,
+            "risk_class": risk_s,
+            "verification_passed": state.verification_passed,
+            "has_side_effects": bool(side_effects)
+            or any(
+                a.kind
+                in {
+                    CognitiveActionKind.INVOKE_CAPABILITY,
+                    CognitiveActionKind.DELEGATE_AGENT,
+                }
+                for a in state.actions
+            ),
+            "success_criteria_count": len(state.task.success_criteria or []),
+            "has_response": bool(state.response_text),
+            "plan_progress": plan_progress,
+            "failure_observation_count": fail_obs,
+            "working_memory_saturation": state.working_memory.saturation(),
+            "plan_stale": bool(state.plan and state.plan.stale),
+            "belief_uncertainty": (
+                state.beliefs.uncertainty() if self.belief_enabled else 0.0
+            ),
+        }
 
     def _finalize(
         self,
@@ -1799,6 +1920,8 @@ class CognitiveRuntime:
                 "usage": state.usage.public_dict(),
                 "cursor_iteration": state.usage.iterations,
                 "reasoning_state": state.reasoning_state.public_dict(),
+                "hypothesis_board": state.hypothesis_board.public_dict(),
+                "critic_report": state.last_critic_report,
             }
             result_json = {
                 "response_text": state.response_text,
@@ -1811,6 +1934,8 @@ class CognitiveRuntime:
                 "decision": checkpoint["decision"],
                 "verification_passed": state.verification_passed,
                 "reasoning_state": checkpoint["reasoning_state"],
+                "hypothesis_board": checkpoint["hypothesis_board"],
+                "critic_report": checkpoint["critic_report"],
             }
             self.store.update_run(
                 state.run_id,
