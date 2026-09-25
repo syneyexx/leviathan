@@ -239,6 +239,19 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                     st2, ev2 = _anti_fold_scan()
                     if st2 != "PASS":
                         status, evidence = st2, ev2
+                if status == "PASS" and gid in {"R04", "R05", "R27"}:
+                    # Structural presence of two-axis types.
+                    neural_path = ROOT / "Data" / "modules" / "cognition" / "neural_compute.py"
+                    if not neural_path.is_file():
+                        status, evidence = "FAIL", "missing:neural_compute.py"
+                    else:
+                        text = neural_path.read_text(encoding="utf-8")
+                        if "class NeuralComputeBudget" not in text or "class ReasoningCapabilityProfile" not in text:
+                            status, evidence = "FAIL", "missing_two_axis_types"
+                        elif "never_guess_capability_from_model_name_alone" not in text:
+                            status, evidence = "FAIL", "missing_no_name_guess_invariant"
+                        else:
+                            evidence = f"{evidence};neural_compute_types_ok"
         elif declared == "PASS" and evidence in {"", "—", "None", "null"}:
             status, evidence = "FAIL", "PASS_without_evidence"
         elif declared == "PASS":

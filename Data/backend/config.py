@@ -139,6 +139,22 @@ def _reasoning_budget_kwargs(prefix: str, defaults: dict[str, float | int]) -> d
     return out
 
 
+def _neural_budget_kwargs(prefix: str, defaults: dict[str, float | int | str]) -> dict[str, float | int | str]:
+    """Load LEVIATHAN_REASONING_{PREFIX}_NEURAL_* fields from env."""
+    env_prefix = f"LEVIATHAN_REASONING_{prefix.upper()}_NEURAL_"
+    out: dict[str, float | int | str] = {}
+    for field, default in defaults.items():
+        env_name = env_prefix + field.upper()
+        key = f"{prefix}_neural_{field}"
+        if isinstance(default, str):
+            out[key] = (_env_raw(env_name, default) or default).strip()
+        elif isinstance(default, float):
+            out[key] = _env_float(env_name, float(default), minimum=0.0)
+        else:
+            out[key] = _env_int(env_name, int(default), minimum=0)
+    return out
+
+
 _REASONING_BUDGET_DEFAULTS: dict[str, dict[str, float | int]] = {
     "fast": {
         "max_wall_time_seconds": 30.0,
@@ -183,6 +199,65 @@ _REASONING_BUDGET_DEFAULTS: dict[str, dict[str, float | int]] = {
         "max_agent_delegations": 3,
         "max_iterations": 12,
         "max_context_tokens": 12000,
+    },
+}
+
+_NEURAL_BUDGET_DEFAULTS: dict[str, dict[str, float | int | str]] = {
+    "fast": {
+        "native_effort": "LOW",
+        "max_reasoning_tokens": 1024,
+        "candidate_count": 1,
+        "max_parallel_candidates": 1,
+        "branch_width": 1,
+        "branch_depth": 1,
+        "self_consistency_samples": 1,
+        "reflection_passes": 0,
+        "critic_calls": 0,
+        "verifier_calls": 0,
+        "repair_passes": 0,
+        "diversity_temperature": 0.0,
+    },
+    "standard": {
+        "native_effort": "MEDIUM",
+        "max_reasoning_tokens": 4096,
+        "candidate_count": 1,
+        "max_parallel_candidates": 1,
+        "branch_width": 1,
+        "branch_depth": 1,
+        "self_consistency_samples": 1,
+        "reflection_passes": 0,
+        "critic_calls": 0,
+        "verifier_calls": 1,
+        "repair_passes": 0,
+        "diversity_temperature": 0.15,
+    },
+    "deep": {
+        "native_effort": "HIGH",
+        "max_reasoning_tokens": 8192,
+        "candidate_count": 3,
+        "max_parallel_candidates": 2,
+        "branch_width": 3,
+        "branch_depth": 2,
+        "self_consistency_samples": 3,
+        "reflection_passes": 1,
+        "critic_calls": 2,
+        "verifier_calls": 2,
+        "repair_passes": 1,
+        "diversity_temperature": 0.35,
+    },
+    "maximum": {
+        "native_effort": "MAXIMUM",
+        "max_reasoning_tokens": 16384,
+        "candidate_count": 6,
+        "max_parallel_candidates": 4,
+        "branch_width": 4,
+        "branch_depth": 3,
+        "self_consistency_samples": 5,
+        "reflection_passes": 2,
+        "critic_calls": 3,
+        "verifier_calls": 3,
+        "repair_passes": 2,
+        "diversity_temperature": 0.45,
     },
 }
 
@@ -265,6 +340,9 @@ class ReasoningSettings:
     minimum_evidence_coverage: float = 0.35
     uncertainty_deep_threshold: float = 0.75
     contradiction_replan_threshold: float = 0.3
+    minimum_information_gain: float = 0.1
+    resource_clamp_pressure_threshold: float = 0.8
+    verification_escalation: bool = True
     max_replans_global: int = 4
     max_retries_global: int = 3
     require_verification_for_high_risk: bool = True
@@ -306,6 +384,60 @@ class ReasoningSettings:
     maximum_max_agent_delegations: int = 3
     maximum_max_iterations: int = 12
     maximum_max_context_tokens: int = 12000
+    # Neural inference compute axis (flat — Settings Control Plane)
+    fast_neural_native_effort: str = "LOW"
+    fast_neural_max_reasoning_tokens: int = 1024
+    fast_neural_candidate_count: int = 1
+    fast_neural_max_parallel_candidates: int = 1
+    fast_neural_branch_width: int = 1
+    fast_neural_branch_depth: int = 1
+    fast_neural_self_consistency_samples: int = 1
+    fast_neural_reflection_passes: int = 0
+    fast_neural_critic_calls: int = 0
+    fast_neural_verifier_calls: int = 0
+    fast_neural_repair_passes: int = 0
+    fast_neural_diversity_temperature: float = 0.0
+    standard_neural_native_effort: str = "MEDIUM"
+    standard_neural_max_reasoning_tokens: int = 4096
+    standard_neural_candidate_count: int = 1
+    standard_neural_max_parallel_candidates: int = 1
+    standard_neural_branch_width: int = 1
+    standard_neural_branch_depth: int = 1
+    standard_neural_self_consistency_samples: int = 1
+    standard_neural_reflection_passes: int = 0
+    standard_neural_critic_calls: int = 0
+    standard_neural_verifier_calls: int = 1
+    standard_neural_repair_passes: int = 0
+    standard_neural_diversity_temperature: float = 0.15
+    deep_neural_native_effort: str = "HIGH"
+    deep_neural_max_reasoning_tokens: int = 8192
+    deep_neural_candidate_count: int = 3
+    deep_neural_max_parallel_candidates: int = 2
+    deep_neural_branch_width: int = 3
+    deep_neural_branch_depth: int = 2
+    deep_neural_self_consistency_samples: int = 3
+    deep_neural_reflection_passes: int = 1
+    deep_neural_critic_calls: int = 2
+    deep_neural_verifier_calls: int = 2
+    deep_neural_repair_passes: int = 1
+    deep_neural_diversity_temperature: float = 0.35
+    maximum_neural_native_effort: str = "MAXIMUM"
+    maximum_neural_max_reasoning_tokens: int = 16384
+    maximum_neural_candidate_count: int = 6
+    maximum_neural_max_parallel_candidates: int = 4
+    maximum_neural_branch_width: int = 4
+    maximum_neural_branch_depth: int = 3
+    maximum_neural_self_consistency_samples: int = 5
+    maximum_neural_reflection_passes: int = 2
+    maximum_neural_critic_calls: int = 3
+    maximum_neural_verifier_calls: int = 3
+    maximum_neural_repair_passes: int = 2
+    maximum_neural_diversity_temperature: float = 0.45
+    # Capability override (never invent support; apply must be True)
+    reasoning_capability_override_apply: bool = False
+    reasoning_capability_override_supports_native: bool = False
+    reasoning_capability_override_provider_family: str = "generic"
+    reasoning_capability_override_efforts: str = ""
 
 
 @dataclass(frozen=True)
@@ -646,6 +778,9 @@ class Settings:
                 "minimum_evidence_coverage": self.reasoning.minimum_evidence_coverage,
                 "uncertainty_deep_threshold": self.reasoning.uncertainty_deep_threshold,
                 "contradiction_replan_threshold": self.reasoning.contradiction_replan_threshold,
+                "minimum_information_gain": self.reasoning.minimum_information_gain,
+                "resource_clamp_pressure_threshold": self.reasoning.resource_clamp_pressure_threshold,
+                "verification_escalation": self.reasoning.verification_escalation,
                 "max_replans_global": self.reasoning.max_replans_global,
                 "max_retries_global": self.reasoning.max_retries_global,
                 "require_verification_for_high_risk": self.reasoning.require_verification_for_high_risk,
@@ -686,6 +821,25 @@ class Settings:
                 "maximum_max_agent_delegations": self.reasoning.maximum_max_agent_delegations,
                 "maximum_max_iterations": self.reasoning.maximum_max_iterations,
                 "maximum_max_context_tokens": self.reasoning.maximum_max_context_tokens,
+                **{
+                    f"{profile}_neural_{field}": getattr(
+                        self.reasoning, f"{profile}_neural_{field}"
+                    )
+                    for profile, fields in _NEURAL_BUDGET_DEFAULTS.items()
+                    for field in fields
+                },
+                "reasoning_capability_override_apply": (
+                    self.reasoning.reasoning_capability_override_apply
+                ),
+                "reasoning_capability_override_supports_native": (
+                    self.reasoning.reasoning_capability_override_supports_native
+                ),
+                "reasoning_capability_override_provider_family": (
+                    self.reasoning.reasoning_capability_override_provider_family
+                ),
+                "reasoning_capability_override_efforts": (
+                    self.reasoning.reasoning_capability_override_efforts
+                ),
             },
             "verification": {
                 "factual_grounding": self.verification.factual_grounding,
@@ -1055,6 +1209,21 @@ class Settings:
                     minimum=0.0,
                     maximum=1.0,
                 ),
+                minimum_information_gain=_env_float(
+                    "LEVIATHAN_REASONING_MINIMUM_INFORMATION_GAIN",
+                    0.1,
+                    minimum=0.0,
+                    maximum=1.0,
+                ),
+                resource_clamp_pressure_threshold=_env_float(
+                    "LEVIATHAN_REASONING_RESOURCE_CLAMP_PRESSURE_THRESHOLD",
+                    0.8,
+                    minimum=0.0,
+                    maximum=1.0,
+                ),
+                verification_escalation=_env_bool(
+                    "LEVIATHAN_REASONING_VERIFICATION_ESCALATION", True
+                ),
                 max_replans_global=_env_int(
                     "LEVIATHAN_REASONING_MAX_REPLANS_GLOBAL", 4, minimum=0, maximum=64
                 ),
@@ -1067,10 +1236,30 @@ class Settings:
                 require_grounding_for_knowledge_tasks=_env_bool(
                     "LEVIATHAN_REASONING_REQUIRE_GROUNDING_FOR_KNOWLEDGE_TASKS", True
                 ),
+                reasoning_capability_override_apply=_env_bool(
+                    "LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_APPLY", False
+                ),
+                reasoning_capability_override_supports_native=_env_bool(
+                    "LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_SUPPORTS_NATIVE", False
+                ),
+                reasoning_capability_override_provider_family=(
+                    _env_raw(
+                        "LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_PROVIDER_FAMILY", "generic"
+                    )
+                    or "generic"
+                ).strip(),
+                reasoning_capability_override_efforts=(
+                    _env_raw("LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_EFFORTS", "") or ""
+                ).strip(),
                 **{  # type: ignore[arg-type]
                     k: v
                     for profile, defaults in _REASONING_BUDGET_DEFAULTS.items()
                     for k, v in _reasoning_budget_kwargs(profile, defaults).items()
+                },
+                **{  # type: ignore[arg-type]
+                    k: v
+                    for profile, defaults in _NEURAL_BUDGET_DEFAULTS.items()
+                    for k, v in _neural_budget_kwargs(profile, defaults).items()
                 },
             ),
             verification=VerificationSettings(

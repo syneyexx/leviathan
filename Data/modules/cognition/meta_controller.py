@@ -1,6 +1,10 @@
 """MetaController — allocates real cognitive budgets (not cosmetic modes).
 
 Supports continuous re-decision and adaptive escalation/de-escalation.
+
+Two compute axes:
+  - Orchestration compute → CognitiveBudgets
+  - Neural inference compute → NeuralComputeBudget
 """
 
 from __future__ import annotations
@@ -10,6 +14,14 @@ from typing import Any
 
 from Data.modules.intelligence.policy import ReasoningPolicy
 
+from .neural_compute import (
+    ClampReason,
+    NeuralComputeBudget,
+    ReasoningCapabilityProfile,
+    apply_capability_to_budget,
+    neural_budget_for_mode,
+    resolve_reasoning_capability_profile,
+)
 from .task_model import TaskModel
 from .types import CognitiveBudgets, ReasoningMode, ReasoningStrategy, RiskClass
 
@@ -22,19 +34,38 @@ class MetaDecision:
     value_scores: dict[str, float]
     notes: tuple[str, ...]
     escalation: str | None = None  # escalated | deescalated | None
+    # Two-axis / requested vs effective
+    requested_mode: ReasoningMode | None = None
+    effective_mode: ReasoningMode | None = None
+    clamp_reason: str | None = None
+    neural_budgets: NeuralComputeBudget | None = None
+    capability_profile: ReasoningCapabilityProfile | None = None
 
     def public_dict(self) -> dict[str, Any]:
+        requested = self.requested_mode or self.mode
+        effective = self.effective_mode or self.mode
         return {
             "mode": self.mode.value,
+            "requested_mode": requested.value,
+            "effective_mode": effective.value,
+            "clamp_reason": self.clamp_reason,
             "strategy": self.strategy.value,
             "budgets": self.budgets.public_dict(),
+            "orchestration_budgets": self.budgets.public_dict(),
+            "neural_budgets": self.neural_budgets.public_dict() if self.neural_budgets else None,
+            "capability_profile": (
+                self.capability_profile.public_dict() if self.capability_profile else None
+            ),
             "value_scores": dict(self.value_scores),
             "notes": list(self.notes),
             "escalation": self.escalation,
             "truth": {
                 "modes_control_real_budgets": True,
+                "two_axis_compute": True,
+                "orchestration_axis_separate_from_neural_axis": True,
                 "more_agents_is_not_automatically_better": True,
                 "adaptive_can_escalate_and_deescalate": True,
+                "requested_may_differ_from_effective_under_pressure": requested != effective,
             },
         }
 
@@ -111,12 +142,18 @@ class MetaController:
         plan_progress: float = 0.0,
         tool_failures: int = 0,
         repeated_actions: int = 0,
+        capability_profile: ReasoningCapabilityProfile | None = None,
+        provider_adapter: Any | None = None,
+        model_metadata: dict[str, Any] | None = None,
+        settings_capability_override: dict[str, Any] | None = None,
+        provider_family: str | None = None,
     ) -> MetaDecision:
         unc = task.initial_uncertainty if uncertainty is None else max(0.0, min(1.0, uncertainty))
         notes: list[str] = []
         escalation: str | None = None
 
-        mode = self._mode(task, unc, user_requested_depth, resource_pressure)
+        requested_mode = self._requested_mode(task, unc, user_requested_depth)
+        mode = self._mode(task, unc, user_requested_depth, resource_pressure=0.0)
         # Adaptive escalation / de-escalation during a run.
         if previous_mode is not None and (
             not user_requested_depth
@@ -137,8 +174,41 @@ class MetaController:
             )
             notes.extend(esc_notes)
 
+        # Resource clamps — requested may stay high while effective drops.
+        mode, clamp_reason, clamp_notes = self._clamp_mode(
+            requested=requested_mode,
+            proposed=mode,
+            resource_pressure=resource_pressure,
+            user_forced=bool(
+                user_requested_depth
+                and str(user_requested_depth).strip().lower()
+                not in {"", "adaptive", "adadaptive"}
+            ),
+        )
+        notes.extend(clamp_notes)
+        effective_mode = mode
+
         strategy = self._strategy(task, unc, evidence_coverage, contradiction_density)
         budgets = self._budgets(mode, task, resource_pressure)
+
+        profile = capability_profile or resolve_reasoning_capability_profile(
+            provider_adapter=provider_adapter,
+            model_metadata=model_metadata,
+            settings_override=settings_capability_override,
+            provider_family=provider_family,
+        )
+        neural = neural_budget_for_mode(
+            mode,
+            policy_budgets=getattr(self.policy, "mode_neural_budgets", None) if self.policy else None,
+        )
+        neural = apply_capability_to_budget(neural, profile)
+        if resource_pressure >= self._resource_clamp_threshold():
+            neural = neural.clamped(
+                max_candidates=max(1, neural.candidate_count // 2),
+                max_parallel=1,
+            )
+            notes.append("neural axis clamped under resource pressure")
+
         values = self._value_scores(
             task,
             unc,
@@ -194,6 +264,12 @@ class MetaController:
             }:
                 values["retrieve"] = max(values.get("retrieve", 0.0), 0.55)
 
+        notes.append(
+            f"two-axis: orch_calls={budgets.max_model_calls} "
+            f"neural_effort={neural.native_effort.value} "
+            f"candidates={neural.candidate_count}"
+        )
+
         return MetaDecision(
             mode=mode,
             strategy=strategy,
@@ -201,7 +277,78 @@ class MetaController:
             value_scores=values,
             notes=tuple(notes),
             escalation=escalation,
+            requested_mode=requested_mode,
+            effective_mode=effective_mode,
+            clamp_reason=clamp_reason.value if clamp_reason != ClampReason.NONE else None,
+            neural_budgets=neural,
+            capability_profile=profile,
         )
+
+    def _resource_clamp_threshold(self) -> float:
+        if self.policy is not None and hasattr(self.policy, "resource_clamp_pressure_threshold"):
+            try:
+                return float(self.policy.resource_clamp_pressure_threshold)
+            except (TypeError, ValueError):
+                pass
+        return 0.8
+
+    def _requested_mode(
+        self,
+        task: TaskModel,
+        uncertainty: float,
+        user_depth: str | None,
+    ) -> ReasoningMode:
+        """Mode the operator/user asked for before resource clamps."""
+        if user_depth:
+            mapping = {m.value.lower(): m for m in ReasoningMode}
+            forced = mapping.get(user_depth.strip().lower())
+            if forced and forced != ReasoningMode.ADAPTIVE:
+                return forced
+            if forced == ReasoningMode.ADAPTIVE:
+                return self._mode(task, uncertainty, None, resource_pressure=0.0)
+        return self._mode(task, uncertainty, None, resource_pressure=0.0)
+
+    def _clamp_mode(
+        self,
+        *,
+        requested: ReasoningMode,
+        proposed: ReasoningMode,
+        resource_pressure: float,
+        user_forced: bool,
+    ) -> tuple[ReasoningMode, ClampReason, list[str]]:
+        notes: list[str] = []
+        threshold = self._resource_clamp_threshold()
+        mode = proposed
+        reason = ClampReason.NONE
+        if resource_pressure >= threshold:
+            if mode == ReasoningMode.MAXIMUM:
+                mode = ReasoningMode.DEEP
+                reason = (
+                    ClampReason.GPU_RESOURCE_PRESSURE
+                    if resource_pressure >= 0.9
+                    else ClampReason.RESOURCE_PRESSURE
+                )
+                notes.append(
+                    f"requested={requested.value} effective={mode.value} reason={reason.value}"
+                )
+            elif mode == ReasoningMode.DEEP and resource_pressure >= 0.9:
+                mode = ReasoningMode.STANDARD
+                reason = ClampReason.GPU_RESOURCE_PRESSURE
+                notes.append(
+                    f"requested={requested.value} effective={mode.value} reason={reason.value}"
+                )
+            elif user_forced and requested in {ReasoningMode.DEEP, ReasoningMode.MAXIMUM}:
+                # Preserve honesty when _mode already demoted under pressure.
+                if mode != requested:
+                    reason = (
+                        ClampReason.GPU_RESOURCE_PRESSURE
+                        if resource_pressure >= 0.9
+                        else ClampReason.RESOURCE_PRESSURE
+                    )
+                    notes.append(
+                        f"requested={requested.value} effective={mode.value} reason={reason.value}"
+                    )
+        return mode, reason, notes
 
     def estimate_value_of_action(
         self,

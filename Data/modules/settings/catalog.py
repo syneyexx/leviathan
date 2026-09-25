@@ -154,6 +154,117 @@ def _reasoning_budget_catalog() -> list[SettingDefinition]:
     return out
 
 
+def _neural_budget_catalog() -> list[SettingDefinition]:
+    """Neural inference compute axis presets (two-axis reasoning)."""
+    profiles: tuple[tuple[str, dict[str, float | int | str]], ...] = (
+        (
+            "fast",
+            {
+                "native_effort": "LOW",
+                "max_reasoning_tokens": 1024,
+                "candidate_count": 1,
+                "max_parallel_candidates": 1,
+                "branch_width": 1,
+                "branch_depth": 1,
+                "self_consistency_samples": 1,
+                "reflection_passes": 0,
+                "critic_calls": 0,
+                "verifier_calls": 0,
+                "repair_passes": 0,
+                "diversity_temperature": 0.0,
+            },
+        ),
+        (
+            "standard",
+            {
+                "native_effort": "MEDIUM",
+                "max_reasoning_tokens": 4096,
+                "candidate_count": 1,
+                "max_parallel_candidates": 1,
+                "branch_width": 1,
+                "branch_depth": 1,
+                "self_consistency_samples": 1,
+                "reflection_passes": 0,
+                "critic_calls": 0,
+                "verifier_calls": 1,
+                "repair_passes": 0,
+                "diversity_temperature": 0.15,
+            },
+        ),
+        (
+            "deep",
+            {
+                "native_effort": "HIGH",
+                "max_reasoning_tokens": 8192,
+                "candidate_count": 3,
+                "max_parallel_candidates": 2,
+                "branch_width": 3,
+                "branch_depth": 2,
+                "self_consistency_samples": 3,
+                "reflection_passes": 1,
+                "critic_calls": 2,
+                "verifier_calls": 2,
+                "repair_passes": 1,
+                "diversity_temperature": 0.35,
+            },
+        ),
+        (
+            "maximum",
+            {
+                "native_effort": "MAXIMUM",
+                "max_reasoning_tokens": 16384,
+                "candidate_count": 6,
+                "max_parallel_candidates": 4,
+                "branch_width": 4,
+                "branch_depth": 3,
+                "self_consistency_samples": 5,
+                "reflection_passes": 2,
+                "critic_calls": 3,
+                "verifier_calls": 3,
+                "repair_passes": 2,
+                "diversity_temperature": 0.45,
+            },
+        ),
+    )
+    out: list[SettingDefinition] = []
+    for profile, fields in profiles:
+        for field, default in fields.items():
+            key = f"reasoning.{profile}_neural_{field}"
+            env = f"LEVIATHAN_REASONING_{profile.upper()}_NEURAL_{field.upper()}"
+            label = f"{profile.capitalize()} neural {field.replace('_', ' ')}"
+            if isinstance(default, str):
+                value_type = SettingType.STRING
+            elif isinstance(default, float):
+                value_type = SettingType.FLOAT
+            else:
+                value_type = SettingType.INTEGER
+            out.append(
+                SettingDefinition(
+                    key=key,
+                    category="reasoning",
+                    label=label,
+                    description=(
+                        f"Neural inference compute for {profile} mode: {field}. "
+                        "Not a provider payload — LEVIATHAN semantic budget."
+                    ),
+                    value_type=value_type,
+                    default=default,
+                    env_name=env,
+                    path=("reasoning", f"{profile}_neural_{field}"),
+                    min_value=None if isinstance(default, str) else 0.0,
+                    max_value=(
+                        None
+                        if isinstance(default, str)
+                        else (2.0 if field == "diversity_temperature" else 200_000)
+                    ),
+                    apply_mode=ApplyMode.HOT,
+                    consumer="MetaController",
+                    experimental=False,
+                )
+            )
+    return out
+
+
 def build_catalog() -> tuple[SettingDefinition, ...]:
     """Return the full operator settings catalog (unique keys)."""
     defs: list[SettingDefinition] = [
@@ -564,6 +675,107 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             path=("reasoning", "contradiction_replan_threshold"),
             min_value=0.0,
             max_value=1.0,
+            apply_mode=ApplyMode.HOT,
+            consumer="MetaController",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="reasoning.minimum_information_gain",
+            category="reasoning",
+            label="Minimum information gain",
+            description="Adaptive de-escalation when recent information gain falls below this.",
+            value_type=SettingType.FLOAT,
+            default=0.1,
+            env_name="LEVIATHAN_REASONING_MINIMUM_INFORMATION_GAIN",
+            path=("reasoning", "minimum_information_gain"),
+            min_value=0.0,
+            max_value=1.0,
+            apply_mode=ApplyMode.HOT,
+            consumer="MetaController",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="reasoning.resource_clamp_pressure_threshold",
+            category="reasoning",
+            label="Resource clamp pressure threshold",
+            description=(
+                "When pressure exceeds this, requested MAXIMUM/DEEP may clamp to a cheaper "
+                "effective mode (honest requested≠effective)."
+            ),
+            value_type=SettingType.FLOAT,
+            default=0.8,
+            env_name="LEVIATHAN_REASONING_RESOURCE_CLAMP_PRESSURE_THRESHOLD",
+            path=("reasoning", "resource_clamp_pressure_threshold"),
+            min_value=0.0,
+            max_value=1.0,
+            apply_mode=ApplyMode.HOT,
+            consumer="MetaController",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="reasoning.verification_escalation",
+            category="reasoning",
+            label="Verification escalation",
+            description="Allow verification failures to justify deeper compute.",
+            value_type=SettingType.BOOLEAN,
+            default=True,
+            env_name="LEVIATHAN_REASONING_VERIFICATION_ESCALATION",
+            path=("reasoning", "verification_escalation"),
+            apply_mode=ApplyMode.HOT,
+            consumer="MetaController",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="reasoning.reasoning_capability_override_apply",
+            category="reasoning",
+            label="Apply capability override",
+            description=(
+                "When true, Settings override ReasoningCapabilityProfile. "
+                "Never invent support — operator must opt in."
+            ),
+            value_type=SettingType.BOOLEAN,
+            default=False,
+            env_name="LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_APPLY",
+            path=("reasoning", "reasoning_capability_override_apply"),
+            apply_mode=ApplyMode.HOT,
+            consumer="MetaController",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="reasoning.reasoning_capability_override_supports_native",
+            category="reasoning",
+            label="Override: supports native reasoning",
+            description="Settings override — only used when apply is true.",
+            value_type=SettingType.BOOLEAN,
+            default=False,
+            env_name="LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_SUPPORTS_NATIVE",
+            path=("reasoning", "reasoning_capability_override_supports_native"),
+            apply_mode=ApplyMode.HOT,
+            consumer="MetaController",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="reasoning.reasoning_capability_override_provider_family",
+            category="reasoning",
+            label="Override: provider family",
+            description="Settings override provider family (generic|openai_compatible|…).",
+            value_type=SettingType.STRING,
+            default="generic",
+            env_name="LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_PROVIDER_FAMILY",
+            path=("reasoning", "reasoning_capability_override_provider_family"),
+            apply_mode=ApplyMode.HOT,
+            consumer="MetaController",
+            experimental=False,
+        ),
+        SettingDefinition(
+            key="reasoning.reasoning_capability_override_efforts",
+            category="reasoning",
+            label="Override: supported efforts",
+            description="Comma-separated efforts (LOW,MEDIUM,HIGH) when override apply is true.",
+            value_type=SettingType.STRING,
+            default="",
+            env_name="LEVIATHAN_REASONING_CAPABILITY_OVERRIDE_EFFORTS",
+            path=("reasoning", "reasoning_capability_override_efforts"),
             apply_mode=ApplyMode.HOT,
             consumer="MetaController",
             experimental=False,
@@ -2255,6 +2467,7 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
         ),
     ]
     defs.extend(_reasoning_budget_catalog())
+    defs.extend(_neural_budget_catalog())
 
     keys = [d.key for d in defs]
     if len(keys) != len(set(keys)):
