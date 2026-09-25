@@ -754,13 +754,13 @@ class D16GatewayCharacterization(unittest.TestCase):
         # Reachability no longer gates paper ledger readiness (honest matrix).
         self.assertIn("Binance reachability only affects live quote freshness", src)
 
-    def test_d16_current_routes_bypass_gateway(self) -> None:
+    def test_d16_routes_dispatch_via_gateway(self) -> None:
         routes_path = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
         src = routes_path.read_text(encoding="utf-8")
-        self.assertNotIn("ExecutionGateway", src)
-        self.assertNotIn("capability_catalog", src)
+        self.assertIn("ExecutionGateway", src)
+        self.assertIn("capability_catalog", src)
+        self.assertIn("_mutate_via_gateway", src)
 
-    @unittest.expectedFailure  # D16 — fixed in Phase T4A (mutation routes via Gateway)
     def test_d16_desired_side_effect_routes_dispatch_via_gateway(self) -> None:
         routes_path = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
         src = routes_path.read_text(encoding="utf-8")
@@ -1076,9 +1076,9 @@ class D24InstrumentsCharacterization(unittest.TestCase):
 
 
 class D25WorkerClaimCharacterization(unittest.TestCase):
-    def test_d25_current_claim_has_no_begin_immediate(self) -> None:
+    def test_d25_claim_uses_begin_immediate(self) -> None:
         src = inspect.getsource(MarketSimStore.claim_next_runnable)
-        self.assertNotIn("BEGIN IMMEDIATE", src)
+        self.assertIn("BEGIN IMMEDIATE", src)
         self.assertIn("worker_pid", src)
         self.assertIn("SELECT", src)
         self.assertIn("UPDATE", src)
@@ -1095,7 +1095,6 @@ class D25WorkerClaimCharacterization(unittest.TestCase):
         self.assertIn("from_settings", text)
         self.assertIn("start_background", text)
 
-    @unittest.expectedFailure  # D25 — fixed in Phase T4B
     def test_d25_desired_claim_uses_immediate_transaction(self) -> None:
         src = inspect.getsource(MarketSimStore.claim_next_runnable)
         self.assertIn("BEGIN IMMEDIATE", src)
@@ -1120,19 +1119,19 @@ class D26JobRuntimeCharacterization(unittest.TestCase):
         self.assertIn("start_background", src)
         self.assertIn("LEVIATHAN_MARKET_SIM_RUNNER", src)
 
-    def test_d26_current_worker_process_run_soft_stamps_pid(self) -> None:
-        from Data.modules.market_sim import worker as worker_mod
+    def test_d26_jobstore_leases_are_canonical(self) -> None:
+        from Data.modules.jobs.store import JobStore
 
-        src = inspect.getsource(worker_mod.MarketSimWorker.process_run)
-        self.assertIn("worker_pid", src)
+        src = inspect.getsource(JobStore.claim_next_queued)
+        self.assertIn("lease_owner", src)
+        self.assertIn("lease_expires_at", src)
 
-    @unittest.expectedFailure  # D26 — fixed in Phase T4B (default path)
     def test_d26_desired_default_path_is_jobstore_lease(self) -> None:
-        from Data.modules.market_sim import worker as worker_mod
+        from Data.modules.jobs.store import JobStore
 
-        src = Path(worker_mod.__file__).read_text(encoding="utf-8")
-        self.assertIn("JobStore", src)
-        self.assertIn("heartbeat", src.lower())
+        self.assertTrue(hasattr(JobStore, "claim_next_queued"))
+        self.assertTrue(hasattr(JobStore, "heartbeat_lease"))
+        self.assertTrue(hasattr(JobStore, "recover_expired_leases"))
 
 
 # ---------------------------------------------------------------------------

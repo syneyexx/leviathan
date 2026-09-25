@@ -488,12 +488,18 @@ class MarketSimStore:
         return [self._row_run(r) for r in rows]
 
     def claim_next_runnable(self) -> SimRun | None:
-        """Claim one QUEUED or RUNNING (without fresh lease) run for the worker."""
+        """Claim one QUEUED or RUNNING (without fresh lease) run for the worker.
+
+        Uses BEGIN IMMEDIATE so two workers cannot double-claim the same run.
+        """
         import os
 
         pid = os.getpid()
         self.expire_stale_leases()
-        with self.connect() as conn:
+        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT * FROM market_sim_runs
@@ -505,26 +511,41 @@ class MarketSimStore:
                 """
             ).fetchone()
             if row is None:
+                conn.rollback()
                 return None
             run = self._row_run(row)
             now = utc_now()
-            # Prefer lease_heartbeat_ts column when present
             cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_runs)").fetchall()}
             if "lease_heartbeat_ts" in cols:
-                conn.execute(
-                    "UPDATE market_sim_runs SET worker_pid=?, lease_heartbeat_ts=?, updated_at=? WHERE run_id=?",
-                    (pid, now, now, run.run_id),
+                cur = conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, lease_heartbeat_ts=?, updated_at=? "
+                    "WHERE run_id=? AND (worker_pid IS NULL OR worker_pid=? OR status='STEPPING')",
+                    (pid, now, now, run.run_id, pid),
                 )
             else:
-                conn.execute(
-                    "UPDATE market_sim_runs SET worker_pid=?, updated_at=? WHERE run_id=?",
-                    (pid, now, run.run_id),
+                cur = conn.execute(
+                    "UPDATE market_sim_runs SET worker_pid=?, updated_at=? "
+                    "WHERE run_id=? AND (worker_pid IS NULL OR worker_pid=? OR status='STEPPING')",
+                    (pid, now, run.run_id, pid),
                 )
-            run.worker_pid = pid
+            if cur.rowcount == 0:
+                conn.rollback()
+                return None
             meta = dict(run.metadata or {})
             meta["lease_heartbeat_ts"] = now
+            conn.execute(
+                "UPDATE market_sim_runs SET metadata_json=? WHERE run_id=?",
+                (json.dumps(meta), run.run_id),
+            )
+            conn.commit()
+            run.worker_pid = pid
             run.metadata = meta
             return run
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def heartbeat_run_lease(self, run_id: str, *, worker_pid: int | None = None) -> bool:
         """Fresh heartbeat while holding a run. Returns False if lease not held by this worker."""

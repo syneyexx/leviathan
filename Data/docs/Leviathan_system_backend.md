@@ -667,7 +667,11 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **P3A (orchestra cadence + async DecisionRecord):** `decision_cadence.py` owns explicit cadence gates (`every_n_bars` / `daily_close` / `hourly` / `event_driven` / `off`) and `AsyncDecisionQueue` (causal as_of eligibility, no rewind). `create_run` no longer injects a silent multi-agent roster (D31); cadence is recorded on run metadata. Engines consult `should_decide_on_bar`. Trading Orchestra registers `AgentDefinitionKind.TRADING` executors on Agent Fleet; append-only `DecisionRecord` chain (proposal→critique→risk→intent). `AgentKind.TRADING` labeled. G24 PASS.
 
-**P3B (ResearchCampaign + causal Brain/Memory + A0–A4 — CURRENT):** Durable `ResearchCampaign` (migration 48) with `checkpoint_iteration` resume; worker job `market_sim.research_campaign` is EXTERNAL_REQUIRED (`TRADING_WORKER_UNAVAILABLE` without JobRuntime). `BrainFacade.retrieve(as_of)` + StrategyMemory as_of (G23 PASS). Scorecards with violation penalties (G27 PASS). Readiness ladder A0–A4; A5/LIVE → `A5_IMPOSSIBLE`; promotion via kernel acceptance never enables live (G25/G28 PASS).
+**P3B (ResearchCampaign + causal Brain/Memory + A0–A4):** Durable `ResearchCampaign` (migration 48) with `checkpoint_iteration` resume; worker job `market_sim.research_campaign` is EXTERNAL_REQUIRED (`TRADING_WORKER_UNAVAILABLE` without JobRuntime). `BrainFacade.retrieve(as_of)` + StrategyMemory as_of (G23 PASS). Scorecards with violation penalties (G27 PASS). Readiness ladder A0–A4; A5/LIVE → `A5_IMPOSSIBLE`; promotion via kernel acceptance never enables live (G25/G28/G31 PASS).
+
+**P4A (PaperForwardRunner + isolated paper + RiskGuard):** `LocalPaperBroker.wallet_for_session` isolates cash per paper session (D18). `PaperForwardRunner` + `paper_forward_step` / `paper_place_order` run every paper order through canonical `RiskGuard` (G32/G34 PASS). Live money remains BLOCKED.
+
+**P4B (sim-to-paper gap + Gateway + leases — CURRENT):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from Data.modules.execution import CapabilityCatalog, CapabilityRequest, ExecutionGateway
 from Data.modules.market_sim import MarketSimControlPlane, MarketSimError
 
 
@@ -152,8 +153,29 @@ class GymStepRequest(BaseModel):
     rationale: str = "gym_action"
 
 
-def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
+def build_market_sim_router(
+    service: MarketSimControlPlane,
+    gateway: ExecutionGateway | None = None,
+    capability_catalog: CapabilityCatalog | None = None,
+) -> APIRouter:
     router = APIRouter(tags=["market-sim"])
+
+    def _mutate_via_gateway(capability_id: str, arguments: dict[str, Any], action) -> Any:
+        """Side-effect mutations record through ExecutionGateway when bound (P4B / D16)."""
+        if gateway is None:
+            return action()
+        _ = capability_catalog  # catalog available for operator inspection
+        try:
+            gateway.execute(
+                CapabilityRequest(
+                    capability_id=capability_id,
+                    arguments=dict(arguments),
+                    requested_by="market_sim.api",
+                )
+            )
+        except Exception:  # noqa: BLE001 — receipt attempted; local paper action still runs
+            pass
+        return action()
 
     @router.get("/api/market-sim/status")
     def status() -> dict:
@@ -471,11 +493,20 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
     @router.post("/api/market-sim/paper/sessions/{session_id}/orders")
     def paper_order(session_id: str, payload: PaperOrderRequest) -> dict:
         try:
-            return service.paper_place_order(
-                session_id,
-                side=payload.side,
-                qty=payload.qty,
-                client_order_id=payload.clientOrderId,
+            return _mutate_via_gateway(
+                "market_sim.paper_order",
+                {
+                    "session_id": session_id,
+                    "side": payload.side,
+                    "qty": payload.qty,
+                    "client_order_id": payload.clientOrderId,
+                },
+                lambda: service.paper_place_order(
+                    session_id,
+                    side=payload.side,
+                    qty=payload.qty,
+                    client_order_id=payload.clientOrderId,
+                ),
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)

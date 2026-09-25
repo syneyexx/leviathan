@@ -1291,6 +1291,20 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "research", "campaign"],
     )
     _ext(
+        cap_id="market_sim.paper_order",
+        name="Place Paper Order",
+        description="Place a paper (non-live) order via MarketSimControlPlane + RiskGuard.",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={
+            "session_id": {"type": "string"},
+            "side": {"type": "string"},
+            "qty": {"type": "number"},
+        },
+        permissions=("process.execute",),
+        tags=["market_sim", "paper", "order"],
+    )
+    _ext(
         cap_id="market_sim.news.poll",
         name="Poll Market News Feeds",
         description="Fetch registered news feeds (via provider_io) and store items with a causal available_at.",

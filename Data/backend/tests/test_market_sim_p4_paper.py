@@ -99,5 +99,42 @@ class P4APaperIsolationTests(unittest.TestCase):
             self.assertTrue(out["forward"]["truth"]["paper_only"])
 
 
+class P4BGatewayGapLeaseTests(unittest.TestCase):
+    def test_sim_to_paper_gap_measured(self) -> None:
+        from Data.modules.market_sim.sim_to_paper_gap import measure_sim_to_paper_gap
+
+        gap = measure_sim_to_paper_gap(
+            symbol="BTCUSDT",
+            sim_fills=[{"price": 100.0}, {"price": 102.0}],
+            paper_fills=[{"price": 100.5}],
+        )
+        self.assertEqual(gap.status, "MEASURED")
+        self.assertEqual(gap.fill_count_delta, -1)
+        self.assertIsNotNone(gap.price_gap_bps)
+
+    def test_live_broker_unsupported(self) -> None:
+        from Data.modules.market_sim.broker_adapter import LiveBrokerAdapter, resolve_broker_adapter
+        from Data.modules.market_sim.types import MarketSimError
+
+        status = LiveBrokerAdapter().public_status()
+        self.assertEqual(status["availability"], "UNSUPPORTED")
+        with self.assertRaises(MarketSimError) as ctx:
+            resolve_broker_adapter("live")
+        self.assertEqual(ctx.exception.code, "LIVE_BROKER_UNSUPPORTED")
+
+    def test_routes_import_gateway(self) -> None:
+        src = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
+        text = src.read_text(encoding="utf-8")
+        self.assertIn("ExecutionGateway", text)
+        self.assertIn("capability_catalog", text)
+
+    def test_claim_begin_immediate(self) -> None:
+        import inspect
+
+        from Data.modules.market_sim.store import MarketSimStore
+
+        self.assertIn("BEGIN IMMEDIATE", inspect.getsource(MarketSimStore.claim_next_runnable))
+
+
 if __name__ == "__main__":
     unittest.main()

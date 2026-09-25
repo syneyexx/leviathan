@@ -876,13 +876,27 @@
     },
     "G33": {
       "title": "Reconciliation + drift + watchdog",
-      "phase": "T9C",
-      "status": "NOT_STARTED",
+      "phase": "T9C/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap",
+        "Gap status MEASURED/UNMEASURED honest; no fabricated precision",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: sim-to-paper gap measurement foundation"
     },
     "G34": {
       "title": "Risk Engine v2 on every order path",
@@ -915,13 +929,28 @@
     },
     "G35": {
       "title": "BrokerAdapter; LiveBroker UNSUPPORTED",
-      "phase": "T9C",
-      "status": "NOT_STARTED",
+      "phase": "T9C/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/broker_adapter.py::LiveBrokerAdapter / resolve_broker_adapter",
+        "LIVE_BROKER_UNSUPPORTED for live/real/production ids",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported",
+        "LiveTradingGuard remains BLOCKED"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: live broker explicitly UNSUPPORTED",
       "related_defects": [
         "D19",
         "D20"
@@ -939,26 +968,61 @@
     },
     "G37": {
       "title": "Capabilities via Gateway",
-      "phase": "T4A",
-      "status": "NOT_STARTED",
+      "phase": "T4A/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "build_market_sim_router binds ExecutionGateway + capability_catalog",
+        "paper_order mutations via _mutate_via_gateway",
+        "main.py wires gateway into market_sim router",
+        "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_routes_import_gateway"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_routes_import_gateway"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: mutation routes via ExecutionGateway (D16)",
       "related_defects": [
         "D16"
       ]
     },
     "G38": {
       "title": "JobStore leases; no double-claim",
-      "phase": "T4B",
-      "status": "NOT_STARTED",
+      "phase": "T4B/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "JobStore.claim_next_queued atomic claim+lease",
+        "MarketSimStore.claim_next_runnable uses BEGIN IMMEDIATE (D25)",
+        "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization",
+        "Data/backend/tests/test_market_sim_characterization.py::D26JobRuntimeCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_claim_begin_immediate"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization",
+        "Data/backend/tests/test_market_sim_characterization.py::D26JobRuntimeCharacterization",
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_claim_begin_immediate"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "P4B: JobStore leases + BEGIN IMMEDIATE claim (D25/D26)",
       "related_defects": [
         "D25",
         "D26"
@@ -966,13 +1030,28 @@
     },
     "G39": {
       "title": "Persistence hot path + migrations",
-      "phase": "T4D",
-      "status": "NOT_STARTED",
+      "phase": "T4D/P4B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Single leviathan.db; MigrationRunner contiguous versions through 48",
+        "Data/backend/tests/test_migrations.py",
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_migrations.py",
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_migrations.py"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "Canonical SQLite + contiguous migrations",
       "related_defects": [
         "D8",
         "D21"
