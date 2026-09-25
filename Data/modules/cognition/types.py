@@ -27,6 +27,7 @@ class CognitiveRunStatus(str, Enum):
     PERCEIVING = "PERCEIVING"
     REASONING = "REASONING"
     WAITING_APPROVAL = "WAITING_APPROVAL"
+    WAITING_WORKER = "WAITING_WORKER"
     EXECUTING = "EXECUTING"
     OBSERVING = "OBSERVING"
     CRITIQUING = "CRITIQUING"
@@ -81,7 +82,9 @@ ALLOWED_TRANSITIONS: dict[CognitiveRunStatus, frozenset[CognitiveRunStatus]] = {
     CognitiveRunStatus.REASONING: frozenset(
         {
             CognitiveRunStatus.EXECUTING,
+            CognitiveRunStatus.PERCEIVING,
             CognitiveRunStatus.WAITING_APPROVAL,
+            CognitiveRunStatus.WAITING_WORKER,
             CognitiveRunStatus.REPLANNING,
             CognitiveRunStatus.VERIFYING,
             CognitiveRunStatus.CRITIQUING,
@@ -100,6 +103,26 @@ ALLOWED_TRANSITIONS: dict[CognitiveRunStatus, frozenset[CognitiveRunStatus]] = {
             CognitiveRunStatus.CANCELLED,
             CognitiveRunStatus.BLOCKED,
             CognitiveRunStatus.FAILED,
+        }
+    ),
+    CognitiveRunStatus.WAITING_WORKER: frozenset(
+        {
+            CognitiveRunStatus.REASONING,
+            CognitiveRunStatus.EXECUTING,
+            CognitiveRunStatus.OBSERVING,
+            CognitiveRunStatus.CRITIQUING,
+            CognitiveRunStatus.VERIFYING,
+            CognitiveRunStatus.REPLANNING,
+            CognitiveRunStatus.WAITING_WORKER,
+            CognitiveRunStatus.WAITING_APPROVAL,
+            CognitiveRunStatus.CANCELLED,
+            CognitiveRunStatus.FAILED,
+            CognitiveRunStatus.TIMEOUT,
+            CognitiveRunStatus.RESOURCE_EXHAUSTED,
+            CognitiveRunStatus.COMPLETED_VERIFIED,
+            CognitiveRunStatus.COMPLETED_UNVERIFIED,
+            CognitiveRunStatus.PARTIAL,
+            CognitiveRunStatus.BLOCKED,
         }
     ),
     CognitiveRunStatus.EXECUTING: frozenset(

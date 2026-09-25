@@ -10,6 +10,12 @@ from .adaptive_compute import (
     adapt_neural_budget,
     calibrate_expected_gain,
 )
+from .advance import (
+    AdvanceJobResult,
+    COGNITION_ADVANCE_CAPABILITY,
+    enqueue_cognition_advance,
+    should_externalize_advance,
+)
 from .belief_state import BeliefItem, BeliefState
 from .capability_broker import CapabilityBroker, CapabilityShortlist
 from .capability_state import (
@@ -89,10 +95,12 @@ from .types import (
 from .working_memory import WorkingMemory, WorkingMemoryItem
 
 __all__ = [
+    "AdvanceJobResult",
     "BeliefCategory",
     "BeliefItem",
     "BeliefState",
     "BeliefStatus",
+    "COGNITION_ADVANCE_CAPABILITY",
     "CandidateSummary",
     "CapabilityBroker",
     "CapabilityShortlist",
@@ -188,6 +196,8 @@ __all__ = [
     "hypothesis_board_from_mapping",
     "derive_capability_state",
     "capability_state_from_mapping",
+    "enqueue_cognition_advance",
+    "should_externalize_advance",
     "validate_plan_advice",
     "validate_task_advice",
 ]
