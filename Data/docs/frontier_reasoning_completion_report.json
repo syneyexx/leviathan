@@ -1,6 +1,6 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-25T07:23:38Z",
+  "generated_at": "2026-09-25T07:31:27Z",
   "phase": "F0",
   "exit_code": 0,
   "definition_of_done": true,
@@ -53,8 +53,8 @@
       "id": "R01",
       "title": "Canonical CognitiveRuntime",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "IN_PROGRESS",
+      "evidence": "CognitiveRuntime remains sole orch owner; preserved in F1",
       "phase": "F0+",
       "kind": "program_gate"
     },
@@ -62,8 +62,8 @@
       "id": "R02",
       "title": "Context authority separation",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests;context_v3_authority_serialization_ok",
       "phase": "F1",
       "kind": "program_gate"
     },
@@ -71,8 +71,8 @@
       "id": "R03",
       "title": "BehaviorProfile identity",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f1_context.CognitionBehaviorIdentityTests;behavior_profile_wired_chat_and_cognition",
       "phase": "F1",
       "kind": "program_gate"
     },
@@ -296,8 +296,8 @@
       "id": "R28",
       "title": "Security",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests",
       "phase": "F1+",
       "kind": "program_gate"
     },

@@ -966,6 +966,7 @@ cognition_runtime = CognitiveRuntime(
     execution_gateway=execution_gateway,
     observability=observability,
     resource_pressure_fn=lambda: 0.0,
+    behavior_resolver=behavior_resolver,
 )
 register_specialist_handlers(
     cognition_delegation,
@@ -2143,6 +2144,16 @@ async def chat(payload: ChatRequest, request: Request):
                 shadow=True if settings.features.cognition_shadow else False,
                 metadata={"chat_run_id": run.run_id},
                 user_requested_depth=live_settings().reasoning.default_mode,
+                behavior_profile_prompt=behavior_snapshot.system_prompt,
+                behavior_profile_id=getattr(behavior_profile, "id", None),
+                behavior_profile_version=str(
+                    getattr(behavior_snapshot, "version", None)
+                    or getattr(behavior_profile, "version", "")
+                    or ""
+                )
+                or None,
+                behavior_settings_hash=getattr(behavior_snapshot, "settings_hash", None),
+                behavior_source=getattr(behavior_snapshot, "source", None) or "chat",
                 run=True,
             )
             observability.emit(

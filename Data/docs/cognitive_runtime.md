@@ -73,18 +73,33 @@ Python: `CognitiveRuntime.submit/run/cancel/steer/status/events/resume`.
 - **BeliefState** — epistemic items with support/contradiction (not CoT).
 - **WorkingMemory** — bounded workspace (distinct from Neuro tier-0 buffer and exact Memory).
 - **PerceptionSnapshot** — typed provenance-aware retrieval.
-- **Context Builder V3** — trust-labeled sections + token budgets.
+- **Context Builder V3** — trust-labeled sections with **authority separation**:
+  SYSTEM (BehaviorProfile + runtime contract) / TRUSTED CONTROL (task, criteria, plan, capabilities) /
+  CONVERSATION / UNTRUSTED REFERENCE (Brain, Memory, tools, neuro). Uses the same
+  `serialize_reference_block` path as chat `ContextBuilder`.
 - **MetaController** — real budget allocation (FAST/STANDARD/DEEP/…).
 - **VerifiedExperience** — learning candidates only after admission policy.
 
 ## Chat integration
 
-When cognition is enabled, `/api/chat` submits a cognitive run:
+When cognition is enabled, `/api/chat` submits a cognitive run with the **same**
+effective BehaviorProfile snapshot as the chat turn (no independent cognition identity).
 
 - **Shadow (default recommended migration):** structured plan/meta recorded; chat answer path unchanged.
 - **Active (`COGNITION_SHADOW=false`):** cognitive loop may run with model caller when wired; still cannot bypass Gateway/Approvals.
 
 Cognition failure never fails chat (caught and reported under `cognition` metadata).
+
+Identity path:
+
+```text
+Settings / BehaviorProfile
+  → BehaviorSettingsResolver effective snapshot
+  → CognitiveRuntime.submit(behavior_profile_prompt=…)
+  → ContextBuilderV3
+```
+
+Seed system prompt is only the first-install/default when no effective profile is available.
 
 ## Persistence (migration v19)
 

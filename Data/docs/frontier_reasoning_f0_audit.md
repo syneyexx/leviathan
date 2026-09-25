@@ -313,8 +313,8 @@ Absent: `InferenceComputeController` inside CognitiveRuntime for native vs TTC f
 | ID | Gap | Target gate | Severity |
 |---|---|---|---|
 | G01 | CognitiveRuntime canonical path often SHADOW; chat still owns deep inline enrichment | R01 | High |
-| G02 | ContextBuilderV3 folds untrusted data into system_prompt | R02 | Critical |
-| G03 | Cognition uses seed prompt, not effective BehaviorProfile | R03 | Critical |
+| G02 | ContextBuilderV3 folds untrusted data into system_prompt | R02 | **FIXED in F1** |
+| G03 | Cognition uses seed prompt, not effective BehaviorProfile | R03 | **FIXED in F1** |
 | G04 | No NeuralComputeBudget / two-axis modes | R04 | High |
 | G05 | No ReasoningCapabilityProfile resolution | R05 | High |
 | G06 | No provider-native reasoning adapters | R06 | High |
