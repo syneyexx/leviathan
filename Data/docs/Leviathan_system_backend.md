@@ -584,16 +584,18 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 `Data/modules/market_sim/` is the current trading research/simulation owner. It includes:
 
-- market/data models: `ohlcv.py`, `data_store.py`, `instruments.py`, providers;
-- engine: `engine.py`, `multi_engine.py`, `causality.py`, `fill_model.py`, `execution.py`;
+- market/data models: `ohlcv.py`, `data_store.py`, `dataset_pipeline.py`, `instruments.py`, providers;
+- causality / epistemic time: `causality.py` (`SimulationClock`, `MarketView`), `epistemic.py` (`EpistemicFirewall`, `available_at <= as_of`);
+- reproducibility: `knowledge_snapshot.py` (`TradingKnowledgeSnapshot` persisted per run);
+- engine: `engine.py`, `multi_engine.py`, `fill_model.py`, `execution.py` (prepare verifies `data_hash`);
 - accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
 - strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py`;
-- multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py`;
+- multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py` (as_of / firewall filtering);
 - paper path: `paper_broker.py`;
 - service/store/worker/types/capabilities;
 - `orchestra/` — trading-only orchestration on the existing Agent Fleet and Model Control Plane.
 
-Current safe supported posture is simulation/paper research. Live broker/real-money execution is deliberately guarded and must not be inferred from the presence of UI/routes.
+**T1 (causality + data foundation):** historical agents observe markets through `MarketView`; information sources must respect `available_at <= simulation as_of`; sealed market dataset versions are content-addressed and immutable (corrections create a new version); every run stores a `TradingKnowledgeSnapshot`. Live broker/real-money execution remains blocked.
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

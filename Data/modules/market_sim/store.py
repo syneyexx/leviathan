@@ -984,3 +984,189 @@ class MarketSimStore:
             }
             for r in rows
         ]
+
+    # --- Sealed market datasets + knowledge snapshots (T1) ---
+
+    def upsert_dataset_version(self, dataset: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_dataset_versions(
+                    dataset_id, version, source_id, symbol, timeframe, venue,
+                    instrument_family, provider, timezone, start_ts, end_ts,
+                    bar_count, content_hash, adjustment_mode, quality_state,
+                    quality_json, provenance_json, known_gaps_json, sealed,
+                    sealed_at, path, parent_version, role, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset_id, version) DO UPDATE SET
+                    source_id=excluded.source_id,
+                    symbol=excluded.symbol,
+                    timeframe=excluded.timeframe,
+                    venue=excluded.venue,
+                    instrument_family=excluded.instrument_family,
+                    provider=excluded.provider,
+                    timezone=excluded.timezone,
+                    start_ts=excluded.start_ts,
+                    end_ts=excluded.end_ts,
+                    bar_count=excluded.bar_count,
+                    content_hash=excluded.content_hash,
+                    adjustment_mode=excluded.adjustment_mode,
+                    quality_state=excluded.quality_state,
+                    quality_json=excluded.quality_json,
+                    provenance_json=excluded.provenance_json,
+                    known_gaps_json=excluded.known_gaps_json,
+                    sealed=excluded.sealed,
+                    sealed_at=excluded.sealed_at,
+                    path=excluded.path,
+                    parent_version=excluded.parent_version,
+                    role=excluded.role,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    dataset["dataset_id"],
+                    dataset["version"],
+                    dataset.get("source_id"),
+                    dataset["symbol"],
+                    dataset["timeframe"],
+                    dataset.get("venue") or "",
+                    dataset.get("instrument_family") or "",
+                    dataset.get("provider") or "csv_local",
+                    dataset.get("timezone") or "UTC",
+                    dataset["start_ts"],
+                    dataset["end_ts"],
+                    int(dataset.get("bar_count") or 0),
+                    dataset["content_hash"],
+                    dataset.get("adjustment_mode") or "as_traded",
+                    dataset.get("quality_state") or "READY",
+                    json.dumps(dataset.get("quality") or {}),
+                    json.dumps(dataset.get("provenance") or {}),
+                    json.dumps(dataset.get("known_gaps") or []),
+                    1 if dataset.get("sealed") else 0,
+                    dataset.get("sealed_at"),
+                    dataset["path"],
+                    dataset.get("parent_version"),
+                    dataset.get("role") or "RESEARCH",
+                    dataset.get("created_at") or utc_now(),
+                    json.dumps(dataset.get("metadata") or {}),
+                ),
+            )
+        return dataset
+
+    def get_dataset_version(self, dataset_id: str, version: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_dataset_versions WHERE dataset_id=? AND version=?",
+                (dataset_id, version),
+            ).fetchone()
+        return self._row_dataset(row) if row else None
+
+    def get_dataset_by_hash(self, content_hash: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_dataset_versions WHERE content_hash=? ORDER BY created_at DESC LIMIT 1",
+                (content_hash,),
+            ).fetchone()
+        return self._row_dataset(row) if row else None
+
+    def list_dataset_versions(
+        self,
+        *,
+        dataset_id: str | None = None,
+        symbol: str | None = None,
+        sealed: bool | None = None,
+        role: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            sql = "SELECT * FROM market_dataset_versions WHERE 1=1"
+            params: list[Any] = []
+            if dataset_id:
+                sql += " AND dataset_id=?"
+                params.append(dataset_id)
+            if symbol:
+                sql += " AND symbol=?"
+                params.append(symbol.upper())
+            if sealed is not None:
+                sql += " AND sealed=?"
+                params.append(1 if sealed else 0)
+            if role:
+                sql += " AND role=?"
+                params.append(role)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row_dataset(r) for r in rows]
+
+    def _row_dataset(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "dataset_id": row["dataset_id"],
+            "version": row["version"],
+            "source_id": row["source_id"],
+            "symbol": row["symbol"],
+            "timeframe": row["timeframe"],
+            "venue": row["venue"],
+            "instrument_family": row["instrument_family"],
+            "provider": row["provider"],
+            "timezone": row["timezone"],
+            "start_ts": row["start_ts"],
+            "end_ts": row["end_ts"],
+            "bar_count": row["bar_count"],
+            "content_hash": row["content_hash"],
+            "adjustment_mode": row["adjustment_mode"],
+            "quality_state": row["quality_state"],
+            "quality": _loads(row["quality_json"], {}),
+            "provenance": _loads(row["provenance_json"], {}),
+            "known_gaps": _loads(row["known_gaps_json"], []),
+            "sealed": bool(row["sealed"]),
+            "sealed_at": row["sealed_at"],
+            "path": row["path"],
+            "parent_version": row["parent_version"],
+            "role": row["role"],
+            "created_at": row["created_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def save_knowledge_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        snapshot_id = snapshot.get("snapshot_id") or str(uuid.uuid4())
+        created = snapshot.get("created_at") or utc_now()
+        payload = dict(snapshot)
+        payload["snapshot_id"] = snapshot_id
+        payload["created_at"] = created
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_knowledge_snapshots(
+                    snapshot_id, run_id, as_of, snapshot_hash, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    payload["run_id"],
+                    payload["as_of"],
+                    payload.get("snapshot_hash") or "",
+                    json.dumps(payload),
+                    created,
+                ),
+            )
+        return payload
+
+    def get_knowledge_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_knowledge_snapshots WHERE snapshot_id=?",
+                (snapshot_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return _loads(row["payload_json"], {})
+
+    def list_knowledge_snapshots(self, run_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload_json FROM market_knowledge_snapshots
+                WHERE run_id=? ORDER BY created_at DESC LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
+        return [_loads(r["payload_json"], {}) for r in rows]

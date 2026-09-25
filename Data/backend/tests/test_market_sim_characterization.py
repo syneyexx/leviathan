@@ -42,6 +42,7 @@ from Data.modules.trading.stub import TradingStub
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "market_data" / "BTCUSDT_1h.csv"
+FIXTURE_HASH = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
 
 
 def _bars(n: int = 10) -> list[Bar]:
@@ -66,7 +67,7 @@ def _run(**kwargs: object) -> SimRun:
         timeframe="1h",
         start_ts="",
         end_ts="",
-        data_hash="deadbeef",
+        data_hash=FIXTURE_HASH,
         seed=42,
         initial_cash=100_000.0,
         cash=100_000.0,
@@ -332,7 +333,9 @@ class D6ResumeCharacterization(unittest.TestCase):
             wallet = next(iter(state.book.wallets.values()))
             self.assertEqual(float(wallet.cash), 100_000.0)
 
-    def test_d6_current_claim_sets_worker_pid_without_lease_expiry(self) -> None:
+    def test_d6_current_claim_sets_real_worker_pid(self) -> None:
+        import os
+
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             run = _run(run_id="lease-1", status="QUEUED")
@@ -340,7 +343,7 @@ class D6ResumeCharacterization(unittest.TestCase):
             claimed = store.claim_next_runnable()
             self.assertIsNotNone(claimed)
             assert claimed is not None
-            self.assertEqual(claimed.worker_pid, 1)
+            self.assertEqual(claimed.worker_pid, os.getpid())
             claimed.status = "RUNNING"
             store.update_run(claimed)
             again = store.claim_next_runnable()
@@ -361,17 +364,17 @@ class D6ResumeCharacterization(unittest.TestCase):
 
 
 class D7DataHashCharacterization(unittest.TestCase):
-    def test_d7_current_prepare_ignores_data_hash_mismatch(self) -> None:
+    def test_d7_prepare_refuses_hash_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             engine = SimulationEngine(store)
             run = _run(data_hash="definitely-not-the-file-hash", bar_index=0)
-            state = engine.prepare(run, bars_path=str(FIXTURE))
-            self.assertGreater(len(state.clock.bars), 0)
-            file_hash = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
-            self.assertNotEqual(run.data_hash, file_hash)
+            from Data.modules.market_sim.types import MarketSimError
 
-    @unittest.expectedFailure  # D7 — fixed in Phase T1
+            with self.assertRaises(MarketSimError) as ctx:
+                engine.prepare(run, bars_path=str(FIXTURE))
+            self.assertEqual(ctx.exception.code, "DATA_HASH_MISMATCH")
+
     def test_d7_desired_prepare_refuses_hash_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
@@ -428,11 +431,11 @@ class D8PersistenceCharacterization(unittest.TestCase):
 
 
 class D9IngestCharacterization(unittest.TestCase):
-    def test_d9_current_yyyymmdd_misparsed_as_epoch(self) -> None:
+    def test_d9_yyyymmdd_parses_as_calendar_date(self) -> None:
         ts = _normalize_ts("20240115")
-        self.assertTrue(ts.startswith("1970-"))
+        self.assertTrue(ts.startswith("2024-01-15"))
 
-    def test_d9_current_duplicate_timestamps_accepted(self) -> None:
+    def test_d9_duplicate_timestamps_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "dup.csv"
             path.write_text(
@@ -442,17 +445,14 @@ class D9IngestCharacterization(unittest.TestCase):
                 encoding="utf-8",
             )
             result = validate_ohlcv_file(path)
-            self.assertTrue(result.ok)
+            self.assertFalse(result.ok)
+            self.assertIn("duplicate", (result.error or "").lower())
 
-    def test_d9_current_microsecond_epoch_not_handled(self) -> None:
+    def test_d9_microsecond_epoch_handled(self) -> None:
         us = "1704067200000000"  # 2024-01-01 approx in microseconds
-        try:
-            ts = _normalize_ts(us)
-        except (ValueError, OverflowError, OSError):
-            # Overflow/out-of-range is itself proof microseconds are not handled.
-            return
+        ts = _normalize_ts(us)
         year = int(ts[:4])
-        self.assertNotEqual(year, 2024)
+        self.assertEqual(year, 2024)
 
     def test_d9_current_ohlc_inconsistency_invalidates_whole_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -466,7 +466,6 @@ class D9IngestCharacterization(unittest.TestCase):
             result = validate_ohlcv_file(path)
             self.assertFalse(result.ok)
 
-    @unittest.expectedFailure  # D9 — fixed in Phase T2
     def test_d9_desired_yyyymmdd_parses_as_calendar_date(self) -> None:
         ts = _normalize_ts("20240115")
         self.assertTrue(ts.startswith("2024-01-15"))
@@ -479,6 +478,7 @@ class D9IngestCharacterization(unittest.TestCase):
 
 class D10ClockCharacterization(unittest.TestCase):
     def test_d10_current_future_bars_reachable_via_public_bars(self) -> None:
+        # Engine internals still hold the full series; agents must use MarketView.
         bars = _bars(5)
         clock = SimulationClock(bars=bars)
         clock.advance()
@@ -489,19 +489,29 @@ class D10ClockCharacterization(unittest.TestCase):
         with self.assertRaises(CausalityViolation):
             clock.observe(4)
 
-    def test_d10_current_assert_no_future_is_lexicographic(self) -> None:
-        src = inspect.getsource(assert_no_future)
-        self.assertIn("ts > clock_ts", src)
-        from Data.modules.market_sim.types import CausalityViolation
+    def test_d10_assert_no_future_is_datetime_aware(self) -> None:
+        from Data.modules.market_sim.types import CausalityViolation, MarketSimError
 
         with self.assertRaises(CausalityViolation):
+            assert_no_future(
+                ["2024-01-02T00:00:00+00:00"], "2024-01-01T00:00:00+00:00"
+            )
+        with self.assertRaises(MarketSimError):
             assert_no_future(["9"], "2024-01-01T00:00:00+00:00")
 
-    @unittest.expectedFailure  # D10 — fixed in Phase T1
     def test_d10_desired_bounded_market_view_hides_future(self) -> None:
         from Data.modules.market_sim import causality as causality_mod
 
         self.assertTrue(hasattr(causality_mod, "MarketView"))
+        bars = _bars(5)
+        clock = SimulationClock(bars=bars)
+        clock.advance()
+        view = causality_mod.MarketView(clock=clock)
+        self.assertEqual(len(view.visible_bars()), 1)
+        from Data.modules.market_sim.types import CausalityViolation
+
+        with self.assertRaises(CausalityViolation):
+            view.observe(4)
 
 
 # ---------------------------------------------------------------------------
@@ -675,12 +685,12 @@ class D15MemoryCharacterization(unittest.TestCase):
 
 
 class D16GatewayCharacterization(unittest.TestCase):
-    def test_d16_current_crypto_paper_available_both_branches(self) -> None:
+    def test_d16_current_crypto_paper_available_when_feature_enabled(self) -> None:
         src = inspect.getsource(build_market_capabilities)
-        self.assertIn(
-            'crypto_paper = "AVAILABLE" if binance_reachable else "AVAILABLE"',
-            src,
-        )
+        self.assertIn('crypto_paper = "AVAILABLE"', src)
+        self.assertIn("local_paper", src)
+        # Reachability no longer gates paper ledger readiness (honest matrix).
+        self.assertIn("Binance reachability only affects live quote freshness", src)
 
     def test_d16_current_routes_bypass_gateway(self) -> None:
         routes_path = Path(__file__).resolve().parents[1] / "routes" / "market_sim.py"
@@ -854,12 +864,13 @@ class D20ProductSurfaceCharacterization(unittest.TestCase):
 class D21MigrationHeadCharacterization(unittest.TestCase):
     def test_d21_current_real_head_tracks_migrations(self) -> None:
         # After Frontier Program F1 (trade orchestras): head is 43+.
-        # Characterize against live MIGRATIONS rather than a frozen constant.
+        # T1 causality/data foundation adds migration 44.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 43)
+        self.assertGreaterEqual(head, 44)
         by_ver = {m.version: m.name for m in MIGRATIONS}
         self.assertEqual(by_ver[42], "resource_reservations_device_aware")
         self.assertEqual(by_ver[43], "trading_orchestra")
+        self.assertEqual(by_ver[44], "trading_causality_data_foundation")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 
@@ -1009,9 +1020,10 @@ class D25WorkerClaimCharacterization(unittest.TestCase):
         self.assertIn("SELECT", src)
         self.assertIn("UPDATE", src)
 
-    def test_d25_current_claim_stamps_hardcoded_pid_one(self) -> None:
+    def test_d25_current_claim_stamps_os_getpid(self) -> None:
         src = inspect.getsource(MarketSimStore.claim_next_runnable)
-        self.assertIn("run.worker_pid = 1", src)
+        self.assertIn("os.getpid()", src)
+        self.assertIn("run.worker_pid = pid", src)
 
     def test_d25_current_script_worker_exists_as_alternate_plane(self) -> None:
         script = Path(__file__).resolve().parents[3] / "scripts" / "market_sim_worker.py"
@@ -1080,8 +1092,9 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
         self.assertIn("agent-beta", text)
         self.assertIn("agent-risk", text)
         self.assertIn("agent-orch", text)
-        self.assertIn("gameMode: \"individual_competition\"", text)
-        self.assertIn("seed: 42", text)
+        self.assertIn('gameMode: "individual_competition"', text)
+        self.assertIn("useState(42)", text)
+        self.assertIn("seed,", text)
 
     def test_d27_current_live_state_oldest_first_limits(self) -> None:
         from Data.modules.market_sim import service as svc_mod
@@ -1095,7 +1108,7 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
         self.assertIn("ASC", fill_src)
         self.assertIn("ASC", eq_src)
 
-    def test_d27_current_ui_slices_last_40_of_oldest_window(self) -> None:
+    def test_d27_current_ui_slices_recent_window(self) -> None:
         page = (
             Path(__file__).resolve().parents[2]
             / "frontend"
@@ -1105,7 +1118,7 @@ class D27FrontendGapsCharacterization(unittest.TestCase):
             / "SimulatiePage.tsx"
         )
         text = page.read_text(encoding="utf-8")
-        self.assertIn(".slice(-40)", text)
+        self.assertIn(".slice(-60)", text)
 
     @unittest.expectedFailure  # D27 — fixed in Phase T10A
     def test_d27_desired_simulatie_exposes_run_builder_options(self) -> None:

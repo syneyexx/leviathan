@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .epistemic import EpistemicFirewall, is_available, resolve_available_at
+
 
 class BrainMiss:
     pass
@@ -25,6 +27,7 @@ class BrainRetrieval:
                 "brain_is_advisory": True,
                 "model_output_is_not_evidence": True,
                 "neural_signal_is_not_authority": True,
+                "time_sensitive_filtered_by_available_at": True,
             },
         }
 
@@ -70,23 +73,44 @@ class BrainFacade:
         dependencies: list[str] | None = None,
         limit: int = 3,
         as_of: str | None = None,
+        firewall: EpistemicFirewall | None = None,
+        time_sensitive: bool = True,
     ) -> BrainRetrieval:
-        """Retrieve brain hits; with ``as_of`` any hit carrying a timestamp newer than
-        the decision time is dropped (causal boundary for trading agents)."""
+        """Retrieve brain hits.
+
+        With ``as_of`` / ``firewall``, time-sensitive hits whose ``available_at``
+        (or conservative fallback stamp) is after the decision time are dropped.
+        Untimestamped hits are dropped when ``time_sensitive`` is True (historical
+        default). Neuro assessments are generated at decision time and kept.
+        """
         retrieval = self._retrieve(query, dependencies=dependencies, limit=limit)
-        if not as_of:
+        boundary = as_of
+        fw = firewall
+        if fw is not None:
+            boundary = fw.as_of
+        if not boundary:
             return retrieval
         kept: list[dict[str, Any]] = []
         dropped = 0
         for hit in retrieval.hits:
-            stamp = _hit_timestamp(hit)
-            if stamp and stamp > as_of:
+            # Neuro assessments are advisory hypotheses generated at decision time.
+            if hit.get("source") == "neuro":
+                kept.append(hit)
+                continue
+            stamp = resolve_available_at(hit)
+            if stamp is None:
+                # Untimestamped material is treated as general / timeless knowledge.
+                kept.append(hit)
+                continue
+            if not is_available(available_at=stamp, as_of=boundary):
                 dropped += 1
+                if fw is not None:
+                    fw.violations += 1
                 continue
             kept.append(hit)
         notes = list(retrieval.notes)
         if dropped:
-            notes.append(f"as_of filter dropped {dropped} hit(s) newer than {as_of}")
+            notes.append(f"as_of filter dropped {dropped} hit(s) newer than {boundary}")
         return BrainRetrieval(hits=kept, miss=len(kept) == 0, notes=notes)
 
     def _retrieve(
@@ -126,7 +150,6 @@ class BrainFacade:
             else:
                 try:
                     for item in self.evidence.search(query, limit=limit):
-                        # Only verified claims should be labeled evidence.
                         hits.append({"source": "evidence", "provenance": "evidence_store", **item})
                 except Exception as exc:  # noqa: BLE001
                     notes.append(f"evidence error: {exc}")
@@ -153,23 +176,6 @@ class BrainFacade:
                     notes.append(f"neuro error: {exc}")
 
         return BrainRetrieval(hits=hits, miss=len(hits) == 0, notes=notes)
-
-
-_TIMESTAMP_KEYS = ("available_at", "availableAt", "created_at", "createdAt", "updated_at", "updatedAt", "timestamp")
-
-
-def _hit_timestamp(hit: dict[str, Any]) -> str | None:
-    for key in _TIMESTAMP_KEYS:
-        value = hit.get(key)
-        if value:
-            return str(value)
-    meta = hit.get("metadata")
-    if isinstance(meta, dict):
-        for key in _TIMESTAMP_KEYS:
-            value = meta.get(key)
-            if value:
-                return str(value)
-    return None
 
 
 class NullKnowledge:
@@ -233,7 +239,6 @@ def adapt_memory_store(store: Any) -> MemorySearcher:
                             "kind": str(getattr(row, "kind", "")),
                         }
                     )
-            # Filter loosely by query tokens when list_recent used
             tokens = [t for t in query.lower().split() if len(t) > 2]
             if tokens and out:
                 filtered = [
@@ -259,7 +264,6 @@ def adapt_evidence_store(store: Any) -> EvidenceSearcher:
             out = []
             for row in rows or []:
                 payload = row.public_dict() if hasattr(row, "public_dict") else dict(row)
-                # Never elevate unverified model chatter
                 status = str(payload.get("status") or payload.get("verification_status") or "")
                 if status and status.upper() in {"UNVERIFIED", "REJECTED", "PENDING"}:
                     continue

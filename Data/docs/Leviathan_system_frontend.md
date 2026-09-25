@@ -369,6 +369,8 @@ Training UI must show real training jobs, recipes, readiness, candidate versions
 
 This UI sits on the existing `MarketSimControlPlane` and trading-orchestra backend. It must not imply live-money readiness or profitability. Paper/simulation state is distinct from live broker state.
 
+T1 backend additions consumed by TradingCenter (no mock data): sealed/versioned market datasets (`/api/market-sim/datasets`, `/api/market-sim/data/import`), run knowledge snapshots (`/api/market-sim/runs/{id}/knowledge-snapshot`), and causal `MarketView` / epistemic `as_of` boundaries on historical runs.
+
 ---
 
 # 14. Media Control UI

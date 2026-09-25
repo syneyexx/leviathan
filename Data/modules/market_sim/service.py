@@ -29,6 +29,7 @@ from .experiments import (
     walk_forward_splits,
 )
 from .instruments import infer_family, spec_for_symbol
+from .knowledge_snapshot import build_knowledge_snapshot
 from .multi_engine import MultiAgentEngine
 from .paper_broker import LocalPaperBroker, PaperSession, build_paper_broker, utc_now as paper_utc
 from .providers import default_registry
@@ -622,8 +623,92 @@ class MarketSimControlPlane:
             },
         )
         self.store.create_run(run)
+        # T1 reproducibility snapshot — proves as_of / dataset / strategy bindings.
+        snap = build_knowledge_snapshot(
+            run_id=run.run_id,
+            as_of=run.start_ts or source.start_ts or now,
+            market_dataset_id=(source.metadata or {}).get("dataset_id") or source.source_id,
+            market_dataset_hash=source.content_hash,
+            market_dataset_version=str((source.metadata or {}).get("dataset_version") or "1"),
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            random_seed=seed,
+            risk_configuration={
+                "max_position_pct": max_position_pct,
+                "max_drawdown_pct": max_drawdown_pct,
+                "per_trade_risk_pct": per_trade_risk_pct,
+                "fee_bps": fee_bps,
+                "slippage_bps": slippage_bps,
+            },
+            agents=list(agent_list or []),
+            evaluation_window="RESEARCH",
+            news_cutoff=run.start_ts or source.start_ts or now,
+            memory_cutoff=run.start_ts or source.start_ts or now,
+            created_at=now,
+            source_path=source.path,
+            symbol=source.symbol,
+            timeframe=source.timeframe,
+        )
+        self.store.save_knowledge_snapshot(snap.public_dict())
+        run.metadata = {
+            **dict(run.metadata or {}),
+            "knowledge_snapshot_hash": snap.snapshot_hash,
+        }
+        self.store.update_run(run)
         self._emit_event("run.created", {"run_id": run.run_id, "data_hash": run.data_hash})
         return run.public_dict()
+
+    def import_market_dataset(
+        self,
+        path: str,
+        *,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        seal: bool = False,
+        role: str = "RESEARCH",
+        provider: str = "csv_local",
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        result = self.data.import_and_validate(
+            path,
+            symbol=symbol,
+            timeframe=timeframe,
+            seal=seal,
+            role=role,
+            provider=provider,
+        )
+        self._emit_event(
+            "market_data.imported",
+            {
+                "dataset_id": (result.get("dataset") or {}).get("dataset_id"),
+                "sealed": seal,
+            },
+        )
+        return result
+
+    def seal_market_dataset(self, dataset_id: str, version: str, *, role: str = "SEALED_TEST") -> dict[str, Any]:
+        self._require_enabled()
+        sealed = self.data.seal_dataset(dataset_id, version, role=role)
+        self._emit_event("market_data.sealed", {"dataset_id": dataset_id, "version": version, "role": role})
+        return sealed
+
+    def list_market_datasets(
+        self,
+        *,
+        symbol: str | None = None,
+        sealed: bool | None = None,
+        role: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_dataset_versions(
+            symbol=symbol, sealed=sealed, role=role, limit=limit
+        )
+
+    def get_run_knowledge_snapshots(self, run_id: str) -> list[dict[str, Any]]:
+        self._require_enabled()
+        self._get_run(run_id)  # validates existence
+        return self.store.list_knowledge_snapshots(run_id)
 
     def start_run(self, run_id: str) -> dict[str, Any]:
         self._require_enabled()

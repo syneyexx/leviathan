@@ -151,15 +151,20 @@ class OrchestraTestBase(unittest.TestCase):
 
 class MigrationAndSchemaTests(OrchestraTestBase):
     def test_migration_43_tables_and_append_only_triggers(self) -> None:
-        self.assertEqual(MIGRATIONS[-1].version, 43)
-        self.assertEqual(MIGRATIONS[-1].name, "trading_orchestra")
+        by_ver = {m.version: m.name for m in MIGRATIONS}
+        self.assertEqual(by_ver[43], "trading_orchestra")
+        self.assertGreaterEqual(MIGRATIONS[-1].version, 44)
+        self.assertEqual(by_ver[44], "trading_causality_data_foundation")
         conn = sqlite3.connect(self.db)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for t in ("market_news_feeds", "market_news_items", "market_news_signals", "market_decisions"):
             self.assertIn(t, tables)
+        self.assertIn("market_dataset_versions", tables)
+        self.assertIn("market_knowledge_snapshots", tables)
         triggers = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
         self.assertIn("trg_market_decisions_no_update", triggers)
         self.assertIn("trg_market_decisions_no_delete", triggers)
+        self.assertIn("trg_market_dataset_versions_sealed_no_update", triggers)
         conn.close()
 
     def test_g65_decisions_are_append_only(self) -> None:
