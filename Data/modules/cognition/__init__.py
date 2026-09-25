@@ -5,6 +5,11 @@ Model Control Plane remains model authority. Verification remains completion
 validation authority for evidence-backed claims.
 """
 
+from .adaptive_compute import (
+    ExpectedGainEstimate,
+    adapt_neural_budget,
+    calibrate_expected_gain,
+)
 from .belief_state import BeliefItem, BeliefState
 from .capability_broker import CapabilityBroker, CapabilityShortlist
 from .completion import CompletionDecision, CompletionEngine, CriterionResult
@@ -110,6 +115,7 @@ __all__ = [
     "DomainUnderstandResult",
     "EpistemicType",
     "EvidenceRef",
+    "ExpectedGainEstimate",
     "ExperienceAdmissionPolicy",
     "ExperienceStore",
     "FailureCategory",
@@ -150,9 +156,11 @@ __all__ = [
     "VerifiedExperience",
     "WorkingMemory",
     "WorkingMemoryItem",
+    "adapt_neural_budget",
     "apply_capability_to_budget",
     "apply_task_advice",
     "build_control_plane_model_caller",
+    "calibrate_expected_gain",
     "classify_failure",
     "classify_steer",
     "confidence_to_band",

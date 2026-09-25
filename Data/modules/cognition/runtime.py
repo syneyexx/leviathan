@@ -136,6 +136,8 @@ class CognitiveRunState:
                 if self.decision and self.decision.capability_profile
                 else None
             ),
+            "expected_gain": self.decision.expected_gain if self.decision else None,
+            "neural_adaptation": self.decision.neural_adaptation if self.decision else None,
             "reasoning_state": self.reasoning_state.public_dict(),
             "usage": self.usage.public_dict(),
             "plan": self.plan.public_dict() if self.plan else None,

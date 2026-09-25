@@ -239,6 +239,27 @@ def _neural_advisor_scan() -> tuple[str, str]:
     return "PASS", "neural_advisors_validated_non_owning"
 
 
+def _adaptive_compute_scan() -> tuple[str, str]:
+    """R08 structural: expected_gain calibration adapts neural axis."""
+    path = ROOT / "Data" / "modules" / "cognition" / "adaptive_compute.py"
+    meta = ROOT / "Data" / "modules" / "cognition" / "meta_controller.py"
+    if not path.is_file():
+        return "FAIL", "missing:adaptive_compute.py"
+    text = path.read_text(encoding="utf-8")
+    meta_text = meta.read_text(encoding="utf-8") if meta.is_file() else ""
+    if "def calibrate_expected_gain" not in text:
+        return "FAIL", "missing_calibrate_expected_gain"
+    if "def adapt_neural_budget" not in text:
+        return "FAIL", "missing_adapt_neural_budget"
+    if "calibrated_for_neural_axis" not in text:
+        return "FAIL", "missing_neural_axis_calibration_flag"
+    if "calibrate_expected_gain" not in meta_text or "adapt_neural_budget" not in meta_text:
+        return "FAIL", "meta_controller_missing_adaptive_wire"
+    if "neural_axis_adapts_on_expected_gain" not in meta_text:
+        return "FAIL", "missing_meta_decision_adaptive_truth"
+    return "PASS", "adaptive_compute_neural_axis_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -391,6 +412,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = stA, evA
                     else:
                         evidence = f"{evidence};{evA}"
+                if status == "PASS" and gid == "R08":
+                    st8, ev8 = _adaptive_compute_scan()
+                    if st8 != "PASS":
+                        status, evidence = st8, ev8
+                    else:
+                        evidence = f"{evidence};{ev8}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

@@ -14,6 +14,11 @@ from typing import Any
 
 from Data.modules.intelligence.policy import ReasoningPolicy
 
+from .adaptive_compute import (
+    ExpectedGainEstimate,
+    adapt_neural_budget,
+    calibrate_expected_gain,
+)
 from .neural_compute import (
     ClampReason,
     NeuralComputeBudget,
@@ -40,6 +45,10 @@ class MetaDecision:
     clamp_reason: str | None = None
     neural_budgets: NeuralComputeBudget | None = None
     capability_profile: ReasoningCapabilityProfile | None = None
+    # Adaptive neural-axis calibration (R08)
+    expected_gain: float | None = None
+    expected_gain_detail: ExpectedGainEstimate | None = None
+    neural_adaptation: str | None = None  # escalated | deescalated | held | clamped
 
     def public_dict(self) -> dict[str, Any]:
         requested = self.requested_mode or self.mode
@@ -56,6 +65,11 @@ class MetaDecision:
             "capability_profile": (
                 self.capability_profile.public_dict() if self.capability_profile else None
             ),
+            "expected_gain": self.expected_gain,
+            "expected_gain_detail": (
+                self.expected_gain_detail.public_dict() if self.expected_gain_detail else None
+            ),
+            "neural_adaptation": self.neural_adaptation,
             "value_scores": dict(self.value_scores),
             "notes": list(self.notes),
             "escalation": self.escalation,
@@ -65,6 +79,7 @@ class MetaDecision:
                 "orchestration_axis_separate_from_neural_axis": True,
                 "more_agents_is_not_automatically_better": True,
                 "adaptive_can_escalate_and_deescalate": True,
+                "neural_axis_adapts_on_expected_gain": True,
                 "requested_may_differ_from_effective_under_pressure": requested != effective,
             },
         }
@@ -202,12 +217,27 @@ class MetaController:
             policy_budgets=getattr(self.policy, "mode_neural_budgets", None) if self.policy else None,
         )
         neural = apply_capability_to_budget(neural, profile)
-        if resource_pressure >= self._resource_clamp_threshold():
-            neural = neural.clamped(
-                max_candidates=max(1, neural.candidate_count // 2),
-                max_parallel=1,
-            )
-            notes.append("neural axis clamped under resource pressure")
+
+        gain = calibrate_expected_gain(
+            uncertainty=unc,
+            evidence_coverage=evidence_coverage,
+            contradiction_density=contradiction_density,
+            information_gain_recent=information_gain_recent,
+            plan_progress=plan_progress,
+            requires_current_information=bool(
+                getattr(task, "requires_current_information", False)
+            ),
+            requires_research=bool(getattr(task, "requires_research", False)),
+            tool_failures=tool_failures,
+        )
+        neural, neural_adaptation, neural_adapt_notes = adapt_neural_budget(
+            neural,
+            gain=gain,
+            resource_pressure=resource_pressure,
+            mode=mode,
+            clamp_threshold=self._resource_clamp_threshold(),
+        )
+        notes.extend(neural_adapt_notes)
 
         values = self._value_scores(
             task,
@@ -217,6 +247,7 @@ class MetaController:
             plan_progress=plan_progress,
             information_gain_recent=information_gain_recent,
         )
+        values["expected_gain"] = gain.total
 
         if task.task_type == "simple_chat":
             notes.append("simple request — keep FAST path")
@@ -267,7 +298,8 @@ class MetaController:
         notes.append(
             f"two-axis: orch_calls={budgets.max_model_calls} "
             f"neural_effort={neural.native_effort.value} "
-            f"candidates={neural.candidate_count}"
+            f"candidates={neural.candidate_count} "
+            f"expected_gain={gain.total} neural_adapt={neural_adaptation}"
         )
 
         return MetaDecision(
@@ -282,6 +314,9 @@ class MetaController:
             clamp_reason=clamp_reason.value if clamp_reason != ClampReason.NONE else None,
             neural_budgets=neural,
             capability_profile=profile,
+            expected_gain=gain.total,
+            expected_gain_detail=gain,
+            neural_adaptation=neural_adaptation,
         )
 
     def _resource_clamp_threshold(self) -> float:
