@@ -2301,7 +2301,18 @@ class CognitiveRuntime:
             CognitiveRunStatus.COMPLETED_UNVERIFIED,
             CognitiveRunStatus.PARTIAL,
             CognitiveRunStatus.FAILED,
+            CognitiveRunStatus.TIMEOUT,
+            CognitiveRunStatus.RESOURCE_EXHAUSTED,
         }:
+            mode_s = None
+            neural_effort = None
+            expected_gain = None
+            if state.decision is not None:
+                mode_s = state.decision.mode.value if state.decision.mode else None
+                expected_gain = state.decision.expected_gain
+                nb = state.decision.neural_budgets
+                if nb is not None and getattr(nb, "native_effort", None) is not None:
+                    neural_effort = nb.native_effort.value
             exp = self.experience_store.build_from_run(
                 task=state.task,
                 status=decision.status,
@@ -2317,51 +2328,91 @@ class CognitiveRuntime:
                 ),
                 resource_usage=state.usage.public_dict(),
                 failures=[o.error for o in state.observations if o.error],
+                mode=mode_s,
+                neural_effort=neural_effort,
+                expected_gain=expected_gain,
             )
             admitted = self.experience_store.admit(exp)
             state.experience = admitted.public_dict()
             self._emit(state, "experience_admitted" if admitted.admitted else "experience_rejected", state.experience)
 
-        # Active-learning candidates on high uncertainty or verification failure — never auto-train.
+        # Active-learning candidates from full trigger set — never auto-train.
+        if self.experience_learning and hasattr(
+            self.experience_store, "capture_active_learning_from_context"
+        ):
+            al_ctx = self._active_learning_context(
+                state,
+                decision_status=decision.status,
+                budget_exhausted=budget_exhausted,
+                timed_out=timed_out,
+            )
+            captured = self.experience_store.capture_active_learning_from_context(
+                al_ctx,
+                run_id=state.run_id,
+                task_id=state.task.task_id,
+                domain=state.task.domain,
+                goal=state.task.goal,
+            )
+            for candidate in captured:
+                self._emit(state, "active_learning_candidate", candidate)
+
+        self._persist_update(state, final=True)
+
+    def _active_learning_context(
+        self,
+        state: CognitiveRunState,
+        *,
+        decision_status: CognitiveRunStatus,
+        budget_exhausted: bool = False,
+        timed_out: bool = False,
+    ) -> dict[str, Any]:
+        """Public run snapshot for active-learning trigger evaluation (no private CoT)."""
+        critic_ctx = self._critic_context(state)
         uncertainty = (
             state.beliefs.uncertainty()
             if self.belief_enabled
             else float(getattr(state.task, "initial_uncertainty", 0.5) or 0.5)
         )
-        verification_failed = state.verification_passed is False
-        high_uncertainty = uncertainty >= 0.75
-        if verification_failed or high_uncertainty or decision.status == CognitiveRunStatus.FAILED:
-            reason = (
-                "verification_failed"
-                if verification_failed
-                else "run_failed"
-                if decision.status == CognitiveRunStatus.FAILED
-                else "high_uncertainty"
+        capability_blocks = sum(
+            1
+            for ev in state.events
+            if ev.get("event_type") == "capability_state_blocked"
+        )
+        if capability_blocks == 0:
+            capability_blocks = sum(
+                1
+                for o in state.observations
+                if o.error and str(o.error).startswith("COGNITION_CAPABILITY_")
             )
-            candidate = {
-                "run_id": state.run_id,
-                "task_id": state.task.task_id,
-                "domain": state.task.domain,
-                "goal": state.task.goal[:300],
-                "status": decision.status.value,
-                "uncertainty": uncertainty,
-                "verification_status": (
-                    "FAILED"
-                    if verification_failed
-                    else "PASSED"
-                    if state.verification_passed is True
-                    else "UNMEASURED"
-                ),
-                "reason": reason,
-                "kind": "failure" if verification_failed or decision.status == CognitiveRunStatus.FAILED else "uncertainty",
-                "auto_promote_forbidden": True,
-                "requires_human_or_policy_approval": True,
-            }
-            if hasattr(self.experience_store, "record_active_learning_candidate"):
-                candidate = self.experience_store.record_active_learning_candidate(candidate)
-            self._emit(state, "active_learning_candidate", candidate)
-
-        self._persist_update(state, final=True)
+        user_corrections = sum(
+            1
+            for c in (state.task.constraints or [])
+            if str(c).startswith("correction:")
+        )
+        if user_corrections == 0:
+            user_corrections = sum(
+                1
+                for crit in state.reasoning_state.critique_notes
+                if str(crit).startswith("user_correction:")
+            )
+        open_unresolved = int(critic_ctx.get("unresolved_hypothesis_count") or 0) + int(
+            critic_ctx.get("open_hypothesis_count") or 0
+        )
+        return {
+            "uncertainty": uncertainty,
+            "verification_passed": state.verification_passed,
+            "status": decision_status.value,
+            "contradiction_density": float(critic_ctx.get("contradiction_density") or 0.0),
+            "evidence_coverage": float(critic_ctx.get("evidence_coverage") or 0.0),
+            "requires_research": bool(critic_ctx.get("requires_research")),
+            "budget_exhausted": budget_exhausted
+            or decision_status == CognitiveRunStatus.RESOURCE_EXHAUSTED,
+            "critic_replan_count": int(state.usage.critic_passes) + int(state.usage.replans),
+            "user_correction_count": user_corrections,
+            "capability_block_count": capability_blocks,
+            "open_unresolved_hypothesis_count": open_unresolved,
+            "timed_out": timed_out or decision_status == CognitiveRunStatus.TIMEOUT,
+        }
 
     def _emit(self, state: CognitiveRunState, event_type: str, payload: dict[str, Any]) -> None:
         event = {
