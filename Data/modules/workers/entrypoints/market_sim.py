@@ -32,12 +32,53 @@ def _handle_news_poll(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _handle_gym_episode(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.gym_episode — complete TradingGym episode on the worker."""
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    simulation_id = str(args.get("simulation_id") or args.get("run_id") or "")
+    try:
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        if not simulation_id:
+            raise ValueError("simulation_id required for gym_episode")
+        # Terminal observability — worker gestart
+        print(
+            f"[WORKER:market_sim] Trading Gym '{simulation_id[:8]}' gestart",
+            flush=True,
+        )
+        result = plane.run_gym_episode_on_worker(simulation_id)
+        result["executed_via"] = "market_sim_worker"
+        print(
+            f"[WORKER:market_sim] Trading Gym '{simulation_id[:8]}' voltooid — "
+            f"steps={result.get('steps')}",
+            flush=True,
+        )
+        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[WORKER:market_sim] Trading Gym '{simulation_id[:8] if simulation_id else '?'}' "
+            f"MISLUKT — {exc}",
+            flush=True,
+        )
+        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        return {"error": str(exc)}
+
+
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.states import JobState
     from Data.modules.market_sim.types import RunStatus, TERMINAL_RUN_STATUSES
 
-    if str(getattr(job, "capability_id", "") or "") == "market_sim.news.poll":
+    cap = str(getattr(job, "capability_id", "") or "")
+    if cap == "market_sim.news.poll":
         return _handle_news_poll(ctx, job)
+    if cap == "market_sim.gym_episode":
+        return _handle_gym_episode(ctx, job)
 
     args = dict(getattr(job, "arguments", None) or {})
     simulation_id = str(args.get("simulation_id") or args.get("run_id") or "")

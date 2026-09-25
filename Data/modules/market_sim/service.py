@@ -91,6 +91,7 @@ class MarketSimControlPlane:
             bars_per_slice=self._bars_per_slice,
             multi_engine=self.multi_engine,
         )
+        self._gym_sessions: dict[str, Any] = {}
 
     @classmethod
     def from_settings(
@@ -774,6 +775,246 @@ class MarketSimControlPlane:
             sealed_attempt_id=sealed_attempt_id,
         )
         return attempt.public_dict()
+
+    def create_gym_episode(
+        self,
+        *,
+        source_id: str,
+        strategy_id: str | None = None,
+        strategy_version: int | None = None,
+        split_role: str = "TRAIN",
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        seed: int = 42,
+        initial_cash: float = 100_000.0,
+        mode: str = "interactive",
+        fee_bps: float = 5.0,
+        slippage_bps: float = 2.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a TradingGym episode (SimRun with gym metadata).
+
+        mode=interactive → caller may gym_reset/gym_step in control plane.
+        mode=complete → must be started via start_gym_episode (worker-owned).
+        """
+        self._require_enabled()
+        from .gym import TradingGym, resolve_split_window
+        from .split_manifest import SplitRole
+
+        role = str(split_role or SplitRole.TRAIN).upper()
+        start_ts = end_ts = None
+        manifest = None
+        if dataset_id and dataset_version:
+            manifest = self.store.get_split_manifest(
+                dataset_id=dataset_id, dataset_version=dataset_version
+            )
+            start_ts, end_ts = resolve_split_window(manifest, role)
+            if role == SplitRole.SEALED and (not manifest or not manifest.get("frozen")):
+                raise MarketSimError(
+                    "SPLIT_NOT_FROZEN",
+                    "SEALED gym episode requires frozen DatasetSplitManifest",
+                    http_status=409,
+                )
+
+        created = self.create_run(
+            source_id=source_id,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            seed=seed,
+            initial_cash=initial_cash,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+            agents=[],  # single-agent gym
+            metadata={
+                **dict(metadata or {}),
+                "gym": True,
+                "gym_mode": str(mode or "interactive"),
+                "split_role": role,
+                "dataset_id": dataset_id,
+                "dataset_version": dataset_version,
+                "split_manifest_id": (manifest or {}).get("manifest_id") if manifest else None,
+                "engine": "gym",
+            },
+        )
+        run_id = created["run_id"]
+        if str(mode).lower() == "interactive":
+            run = self._get_run(run_id)
+            gym = TradingGym(self.store, self.engine)
+            bars_path = self._resolve_bars_path(run)
+            strat = self._resolve_strategy_payload(run)
+            obs = gym.reset(
+                run,
+                bars_path=bars_path,
+                split_role=role,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                strategy_params=strat.get("parameters"),
+                entry_rules=strat.get("entry_rules"),
+                exit_rules=strat.get("exit_rules"),
+            )
+            self._gym_sessions[run_id] = gym
+            return {
+                "episode": run.public_dict(),
+                "observation": obs.public_dict(),
+                "mode": "interactive",
+                "truth": {
+                    "via_trading_gym": True,
+                    "worker_owned_complete_episode": False,
+                },
+            }
+        return {
+            "episode": created,
+            "observation": None,
+            "mode": "complete",
+            "truth": {
+                "via_trading_gym": True,
+                "worker_owned_complete_episode": True,
+                "start_required": True,
+            },
+        }
+
+    def gym_step(self, run_id: str, action: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Interactive single-step (control-plane STEPPING). Not for complete episodes."""
+        self._require_enabled()
+        from .gym import GymAction, TradingGym
+
+        run = self._get_run(run_id)
+        meta = dict(run.metadata or {})
+        if not meta.get("gym"):
+            raise MarketSimError("NOT_A_GYM_EPISODE", run_id, http_status=400)
+        if str(meta.get("gym_mode") or "") == "complete" and run.status in {
+            RunStatus.QUEUED.value,
+            RunStatus.RUNNING.value,
+            RunStatus.COMPLETED.value,
+        }:
+            raise MarketSimError(
+                "GYM_COMPLETE_WORKER_OWNED",
+                "complete episodes advance on market_sim worker; use get_run / results",
+                http_status=409,
+            )
+        gym = self._gym_sessions.get(run_id)
+        if gym is None:
+            gym = TradingGym(self.store, self.engine)
+            bars_path = self._resolve_bars_path(run)
+            strat = self._resolve_strategy_payload(run)
+            gym.reset(
+                run,
+                bars_path=bars_path,
+                split_role=str(meta.get("split_role") or "TRAIN"),
+                start_ts=run.start_ts or None,
+                end_ts=run.end_ts or None,
+                strategy_params=strat.get("parameters"),
+                entry_rules=strat.get("entry_rules"),
+                exit_rules=strat.get("exit_rules"),
+            )
+            self._gym_sessions[run_id] = gym
+        result = gym.step(GymAction.from_dict(action))
+        if result.done:
+            self._gym_sessions.pop(run_id, None)
+        return result.public_dict()
+
+    def start_gym_episode(self, run_id: str) -> dict[str, Any]:
+        """Queue a complete gym episode onto the market_sim worker (EXTERNAL_REQUIRED)."""
+        self._require_enabled()
+        run = self._get_run(run_id)
+        meta = dict(run.metadata or {})
+        if not meta.get("gym"):
+            raise MarketSimError("NOT_A_GYM_EPISODE", run_id, http_status=400)
+        if run.status in TERMINAL_RUN_STATUSES:
+            raise MarketSimError("RUN_TERMINAL", f"Run already {run.status}")
+        meta["gym_mode"] = "complete"
+        run.metadata = meta
+        run.status = RunStatus.QUEUED.value
+        run.cancel_requested = False
+        run.error = None
+        self.store.update_run(run)
+
+        if self._runners_externalized():
+            if self.job_runtime is None:
+                run.status = RunStatus.CREATED.value
+                self.store.update_run(run)
+                raise MarketSimError(
+                    "TRADING_WORKER_UNAVAILABLE",
+                    "complete gym episodes require market_sim worker / job_runtime; "
+                    "refusing synchronous FastAPI fallback",
+                    http_status=503,
+                )
+            job = self.enqueue_gym_episode(run.run_id, requested_by="market_sim.start_gym_episode")
+            payload = run.public_dict()
+            payload["job_id"] = getattr(job, "job_id", None)
+            payload["execution"] = "EXTERNAL_REQUIRED"
+            return payload
+
+        # Non-externalized (dev/test): wake in-process worker — still not sync in request.
+        self.worker.wake()
+        out = run.public_dict()
+        out["execution"] = "in_process_worker"
+        return out
+
+    def enqueue_gym_episode(
+        self,
+        simulation_id: str,
+        *,
+        parent_job_id: str | None = None,
+        requested_by: str = "market_sim_service",
+    ) -> Any:
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "TRADING_WORKER_UNAVAILABLE",
+                "job_runtime not bound",
+                http_status=503,
+            )
+        run = self.store.get_run(simulation_id)
+        if run is None:
+            raise MarketSimError("RUN_NOT_FOUND", simulation_id, http_status=404)
+        gen = f"gym:{run.status}:{getattr(run, 'bar_index', None) or 0}:{run.updated_at or run.created_at}"
+        idem = f"market_sim:gym_episode:{simulation_id}:{gen}"
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.gym_episode",
+            arguments={"simulation_id": simulation_id},
+            requested_by=requested_by,
+            idempotency_key=idem,
+            domain="market_sim",
+            domain_entity_type="market_sim_run",
+            domain_entity_id=simulation_id,
+            worker_pool="market_sim",
+            parent_job_id=parent_job_id,
+            root_job_id=parent_job_id,
+            latency_class="background",
+            metadata={"simulation_id": simulation_id, "generation": gen, "gym": True},
+        )
+
+    def run_gym_episode_on_worker(self, run_id: str) -> dict[str, Any]:
+        """Execute a complete gym episode (called only from market_sim worker)."""
+        from .gym import TradingGym
+
+        run = self._get_run(run_id)
+        meta = dict(run.metadata or {})
+        if not meta.get("gym"):
+            raise MarketSimError("NOT_A_GYM_EPISODE", run_id, http_status=400)
+        gym = TradingGym(self.store, self.engine)
+        strat = self._resolve_strategy_payload(run)
+        bars_path = self._resolve_bars_path(run)
+        result = gym.run_episode(
+            run,
+            bars_path=bars_path,
+            split_role=str(meta.get("split_role") or "TRAIN"),
+            start_ts=run.start_ts or None,
+            end_ts=run.end_ts or None,
+            strategy_params=strat.get("parameters"),
+            entry_rules=strat.get("entry_rules") or {"kind": "hold"},
+            exit_rules=strat.get("exit_rules") or {"kind": "hold"},
+            # Default policy: hold — strategy-driven gym uses engine path via advance.
+            policy=None,
+        )
+        self.store.add_event(
+            run_id,
+            kind="gym_episode_finished",
+            payload={"steps": result.get("steps"), "status": result.get("status")},
+        )
+        return result
 
     def list_market_datasets(
         self,

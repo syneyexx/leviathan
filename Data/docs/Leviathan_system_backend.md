@@ -653,7 +653,9 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 **P0C (risk/sizing/instruments):** `RiskGuard.on_bar_timestamp` resets `orders_today` on UTC day change. Explicit `SizingModel` on `SimRun.sizingModel`. Instrument lot/tick/min_notional. Shorts require `ShortMarginPolicy`. G10 PASS.
 
-**P1A (streaming + splits + SEALED attempts — CURRENT):** Canonical `iter_ohlcv` / `stream_ohlcv` stream CSV/Parquet without materializing the series (G01). `DatasetSplitManifest` (`split_manifest.py`) builds chronological TRAIN/VAL/SEALED windows with optional `embargo_bars`; sealing a dataset freezes the manifest (G06). `SealedAttemptBinder` binds `sealed_attempt_id` + `run_id` on first SEALED exposure; crash/resume keeps the same attempt and checkpoint (never rewind); COMPLETED is single-use (`SEALED_ALREADY_CONSUMED`). Migration 47. G13/G21 IN_PROGRESS (absolute 5y soak + acceptance-from-run-IDs remain later).
+**P1A (streaming + splits + SEALED attempts):** Canonical `iter_ohlcv` / `stream_ohlcv` stream CSV/Parquet without materializing the series (G01). `DatasetSplitManifest` (`split_manifest.py`) builds chronological TRAIN/VAL/SEALED windows with optional `embargo_bars`; sealing a dataset freezes the manifest (G06). `SealedAttemptBinder` binds `sealed_attempt_id` + `run_id` on first SEALED exposure; crash/resume keeps the same attempt and checkpoint (never rewind); COMPLETED is single-use (`SEALED_ALREADY_CONSUMED`). Migration 47. G13/G21 IN_PROGRESS (absolute 5y soak + acceptance-from-run-IDs remain later).
+
+**P1B (TradingGym + API + worker — CURRENT):** `TradingGym` (`gym.py`) provides causal `reset`/`step` with observations via `MarketView` (G26 PASS). Interactive episodes may step in the control plane; **complete** episodes are `EXTERNAL_REQUIRED` (`market_sim.gym_episode`) on the market_sim worker — FastAPI refuses sync fallback with `TRADING_WORKER_UNAVAILABLE`. Routes under `/api/market-sim/gym/episodes`. Provisional equity-delta reward is labeled until P1C RewardSpec.
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

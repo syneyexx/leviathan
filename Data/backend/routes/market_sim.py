@@ -126,6 +126,31 @@ class DemoRequest(BaseModel):
     barsLimit: int = Field(120, ge=30, le=2000)
 
 
+class GymEpisodeCreate(BaseModel):
+    sourceId: str
+    strategyId: str | None = None
+    strategyVersion: int | None = None
+    splitRole: str = "TRAIN"
+    datasetId: str | None = None
+    datasetVersion: str | None = None
+    seed: int = 42
+    initialCash: float = 100_000.0
+    mode: str = "interactive"
+    feeBps: float = 5.0
+    slippageBps: float = 2.0
+    metadata: dict[str, Any] | None = None
+
+
+class GymStepRequest(BaseModel):
+    kind: str = "HOLD"
+    qty: float | None = None
+    orderType: str | None = None
+    limitPrice: float | None = None
+    stopPrice: float | None = None
+    timeInForce: str | None = None
+    rationale: str = "gym_action"
+
+
 def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
     router = APIRouter(tags=["market-sim"])
 
@@ -503,6 +528,53 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
     def run_demo(payload: DemoRequest) -> dict:
         try:
             return service.run_market_demo(family=payload.family, bars_limit=payload.barsLimit)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    # --- TradingGym (P1B) ---
+
+    @router.post("/api/market-sim/gym/episodes")
+    def create_gym_episode(payload: GymEpisodeCreate) -> dict:
+        try:
+            return service.create_gym_episode(
+                source_id=payload.sourceId,
+                strategy_id=payload.strategyId,
+                strategy_version=payload.strategyVersion,
+                split_role=payload.splitRole,
+                dataset_id=payload.datasetId,
+                dataset_version=payload.datasetVersion,
+                seed=payload.seed,
+                initial_cash=payload.initialCash,
+                mode=payload.mode,
+                fee_bps=payload.feeBps,
+                slippage_bps=payload.slippageBps,
+                metadata=payload.metadata,
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/episodes/{run_id}/step")
+    def gym_step(run_id: str, payload: GymStepRequest) -> dict:
+        try:
+            return service.gym_step(
+                run_id,
+                {
+                    "kind": payload.kind,
+                    "qty": payload.qty,
+                    "order_type": payload.orderType,
+                    "limit_price": payload.limitPrice,
+                    "stop_price": payload.stopPrice,
+                    "time_in_force": payload.timeInForce,
+                    "rationale": payload.rationale,
+                },
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/gym/episodes/{run_id}/start")
+    def start_gym_episode(run_id: str) -> dict:
+        try:
+            return {"episode": service.start_gym_episode(run_id)}
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

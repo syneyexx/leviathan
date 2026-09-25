@@ -361,5 +361,131 @@ class P1ABuildFromIterTests(unittest.TestCase):
             self.assertIsNotNone(manifest.sealed)
 
 
+# ---------------------------------------------------------------------------
+# P1B — TradingGym + worker ownership
+# ---------------------------------------------------------------------------
+
+
+class P1BTradingGymTests(unittest.TestCase):
+    def test_reset_step_causal_no_future(self) -> None:
+        from Data.modules.market_sim.gym import GymAction, GymActionKind, TradingGym
+        from Data.modules.market_sim.types import RunStatus, SimRun
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bars.csv"
+            _write_csv(path, 40)
+            store = _store(tmp)
+            now = "2024-01-01T00:00:00+00:00"
+            run = SimRun(
+                run_id="gym-1",
+                status=RunStatus.CREATED.value,
+                source_id="src",
+                strategy_id=None,
+                strategy_version=None,
+                symbol="BTCUSDT",
+                timeframe="1m",
+                start_ts="",
+                end_ts="",
+                data_hash="",
+                seed=1,
+                created_at=now,
+                updated_at=now,
+            )
+            store.create_run(run)
+            gym = TradingGym(store)
+            obs = gym.reset(
+                run,
+                bars_path=str(path),
+                entry_rules={"kind": "hold"},
+                exit_rules={"kind": "hold"},
+            )
+            self.assertGreaterEqual(obs.visible_bar_count, 1)
+            self.assertEqual(obs.bar_index, 0)
+            # Poison-future: MarketView must not expose bar beyond index
+            from Data.modules.market_sim.causality import MarketView, CausalityViolation
+
+            assert gym.state is not None
+            view = MarketView(clock=gym.state.clock)
+            with self.assertRaises(CausalityViolation):
+                view.observe(obs.bar_index + 5)
+
+            step = gym.step(GymAction(kind=GymActionKind.HOLD))
+            self.assertFalse(step.done)
+            self.assertEqual(step.observation.bar_index, 1)
+            self.assertIn("definition", step.reward)
+            self.assertEqual(step.observation.truth["via_market_view"], True)
+
+    def test_complete_episode_worker_path_and_unavailable(self) -> None:
+        from Data.modules.market_sim import MarketSimControlPlane
+        from Data.modules.market_sim.data_store import MarketDataStore
+        from Data.modules.market_sim.types import SourceStatus
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "markets"
+            root.mkdir()
+            src_path = root / "BTCUSDT_1m.csv"
+            _write_csv(src_path, 35)
+            store = _store(tmp)
+            data = MarketDataStore(store, root)
+            registered = data.register_file("BTCUSDT_1m.csv", symbol="BTCUSDT", timeframe="1m")
+            self.assertEqual(registered.status, SourceStatus.READY.value)
+
+            svc = MarketSimControlPlane(
+                store=store,
+                data=data,
+                enabled=True,
+                job_runtime=None,
+            )
+            # Force externalized path without job_runtime → TRADING_WORKER_UNAVAILABLE
+            svc._runners_externalized = lambda: True  # type: ignore[method-assign]
+
+            created = svc.create_gym_episode(
+                source_id=registered.source_id,
+                mode="complete",
+                split_role="TRAIN",
+            )
+            self.assertEqual(created["mode"], "complete")
+            run_id = created["episode"]["run_id"]
+            with self.assertRaises(MarketSimError) as ctx:
+                svc.start_gym_episode(run_id)
+            self.assertEqual(ctx.exception.code, "TRADING_WORKER_UNAVAILABLE")
+
+            # Non-externalized: in-process worker can complete
+            svc._runners_externalized = lambda: False  # type: ignore[method-assign]
+            started = svc.start_gym_episode(run_id)
+            self.assertEqual(started["execution"], "in_process_worker")
+            # Drive the worker
+            svc.worker.process_run(run_id)
+            finished = store.get_run(run_id)
+            assert finished is not None
+            self.assertIn(finished.status, {"COMPLETED", "FAILED"})
+            events = store.list_events(run_id, kind="gym_episode_finished")
+            self.assertGreaterEqual(len(events), 1)
+
+    def test_interactive_gym_via_control_plane(self) -> None:
+        from Data.modules.market_sim import MarketSimControlPlane
+        from Data.modules.market_sim.data_store import MarketDataStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "markets"
+            root.mkdir()
+            src_path = root / "BTCUSDT_1m.csv"
+            _write_csv(src_path, 25)
+            store = _store(tmp)
+            data = MarketDataStore(store, root)
+            registered = data.register_file("BTCUSDT_1m.csv", symbol="BTCUSDT", timeframe="1m")
+            svc = MarketSimControlPlane(store=store, data=data, enabled=True)
+            created = svc.create_gym_episode(
+                source_id=registered.source_id,
+                mode="interactive",
+            )
+            self.assertIsNotNone(created["observation"])
+            run_id = created["episode"]["run_id"]
+            stepped = svc.gym_step(run_id, {"kind": "HOLD"})
+            self.assertIn("observation", stepped)
+            self.assertIn("reward", stepped)
+            self.assertEqual(stepped["observation"]["bar_index"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

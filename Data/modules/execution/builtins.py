@@ -1271,6 +1271,16 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "advance"],
     )
     _ext(
+        cap_id="market_sim.gym_episode",
+        name="Run TradingGym Episode",
+        description="Execute a complete TradingGym episode on the market_sim worker (EXTERNAL_REQUIRED).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="market_sim",
+        properties={"simulation_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "gym", "episode"],
+    )
+    _ext(
         cap_id="market_sim.news.poll",
         name="Poll Market News Feeds",
         description="Fetch registered news feeds (via provider_io) and store items with a causal available_at.",

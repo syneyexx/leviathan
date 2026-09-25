@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4.1",
-  "phase": "P1A",
+  "phase": "P1B",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "P1A in progress after P0 complete: streaming OHLCV + split manifests + SEALED attempts",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p1_gym.py Data/backend/tests/test_market_sim_p0_kernel.py -q"
+      "result": "P1A+P1B: streaming/splits/SEALED + TradingGym causal reset/step + worker ownership",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p1_gym.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -559,13 +559,30 @@
     },
     "G26": {
       "title": "TradingGym causal reset/step",
-      "phase": "T8A/T8B",
-      "status": "NOT_STARTED",
+      "phase": "T8A/T8B/P1B",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/gym.py::TradingGym",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests",
+        "reset/step observations via MarketView (no future bars)",
+        "complete episodes EXTERNAL_REQUIRED via market_sim.gym_episode worker",
+        "TRADING_WORKER_UNAVAILABLE when externalized without job_runtime (no FastAPI sync fallback)",
+        "API: POST /api/market-sim/gym/episodes[+ /step /start]"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "P1B: TradingGym + API + worker ownership. RewardSpec remains provisional until P1C."
     },
     "G27": {
       "title": "Agent scorecards + leaderboard penalty",
