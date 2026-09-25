@@ -1,139 +1,243 @@
 # LEVIATHAN
 
-**A local-first AI control plane for models, agents, knowledge, research, coding, training, tools and durable execution.**
+**Local-first AI control plane, cognitive runtime and operator platform.**
 
-LEVIATHAN is an actively developed AI system built around a Python control plane, a React/TypeScript operator interface, local persistence, explicit capability boundaries, and honest runtime state.
+LEVIATHAN is a private AI system built around one coherent runtime rather than a collection of disconnected assistants. It combines model routing, cognitive orchestration, Brain/RAG, durable memory, Neuro/Cortex advisory signals, tools and approvals, specialist agents, external workers, evidence/verification, datasets, training/evaluation, research, coding and market simulation behind a React operator interface.
 
-The project is designed to become a single environment in which local models, tools, datasets, research workflows, coding agents, training jobs and future specialized workers can be managed through shared infrastructure instead of separate one-off systems.
+> Runtime code and tests are the source of truth. Feature availability depends on configuration, provider support and hardware. This README intentionally avoids claiming unavailable integrations or unverified model quality.
 
-> **Project status:** active development. Several core subsystems are already real and wired end-to-end; other product surfaces are still experimental, visual-only, or intentionally stubbed. This README distinguishes between them.
+## Canonical documentation
 
----
+`Data/docs/` is intentionally kept small. There are two system references:
 
-## What LEVIATHAN is today
+- **[Backend architecture & file map](Data/docs/Leviathan_system_backend.md)** — every backend system, canonical owner, runtime flow and where to find it.
+- **[Frontend architecture & file map](Data/docs/Leviathan_system_frontend.md)** — routes, pages, API/client structure, components and frontend files.
 
-At its current stage, LEVIATHAN includes a real local application stack with:
-
-- **FastAPI control plane** for APIs, lifecycle and service composition
-- **React 19 + TypeScript + Vite** frontend
-- **SQLite persistence** with versioned migrations
-- **OpenAI-compatible model runtime** designed for local endpoints such as LM Studio
-- **Model Control Plane** with providers, discovery, profiles, routing, gateway state and capability probing
-- **Persistent chat** with reasoning metadata, Knowledge retrieval and model routing
-- **Knowledge V2** with documents, chunks, provenance, ingest state and lexical retrieval
-- **Datasets subsystem** for local upload/import, Hugging Face materialization, validation, transforms, splits, export and Knowledge indexing
-- **Training subsystem** with hardware/preflight inspection, durable jobs, LoRA/QLoRA worker paths, metrics, checkpoints, recovery, evaluation and trained-artifact registration
-- **Research subsystem** with persistent projects, local retrieval, optional web research, sources, evidence, claims, conflicts and report export
-- **Coding Agent** with isolated workspace rules, background execution, capability-driven file operations, test execution, patches and approval-gated writes
-- **Execution Gateway** and capability catalog for controlled side effects
-- **Approvals and policy** for privileged operations
-- **Durable Jobs, Runs, Observations, Artifacts, Evidence and Verification**
-- **Memory** as a separate controlled persistence domain
-- **Workflows and schedules** built on shared runtime primitives
-- **Agent runtime** and multi-agent coordination foundations
-- **Neuro Layer** experiments for advisory signals, cortex/critic interfaces, memory tiers and optional residual-runtime adapters
-- **Universal Module Manager** with optional subprocess isolation
-- **Backup, metrics, security posture, release gates and resilience helpers**
-
-The guiding rule is simple: **the UI should reflect backend truth**. LEVIATHAN avoids presenting unavailable providers, fake telemetry, fabricated research sources or simulated completion as real success.
+Machine gate/program state lives next to tests/scripts rather than as extra architecture documents.
 
 ---
 
-## Current product surfaces
+## What LEVIATHAN contains today
 
-### Fully wired / operational foundations
+### Cognitive runtime
 
-| Area | Current state |
-|---|---|
-| Chat | Persistent conversations, Knowledge context, reasoning metadata and real model calls |
-| Models | Provider management, discovery, profiles, routing, gateway, probes, test inference |
-| Datasets | Import, materialize, inspect, prepare, transform, split, export, Knowledge indexing |
-| Model Training | Preflight, hardware planning, durable jobs, LoRA/QLoRA paths, checkpoints, evaluation |
-| Research | Projects, plans, local evidence pipeline, optional web provider, reports and exports |
-| Coding Agent | Persistent sessions, workspace tools, patches, tests, approvals and verification loop |
-| Knowledge | Durable documents/chunks, ingest, provenance and retrieval |
-| Execution | Capabilities, gateway, policy, approvals, jobs, effects and observations |
-| Evidence / Verification | Artifact/file/observation evidence and evidence-based verification |
-| Memory | Controlled durable memory with search and context integration |
-| Workflows / Schedules | Durable workflow execution and scheduled triggers |
+LEVIATHAN's canonical reasoning/orchestration owner is `CognitiveRuntime`. It works with:
 
-### Foundations present, still evolving
+- `TaskModel`;
+- Perception;
+- `BeliefState`;
+- `WorkingMemory`;
+- `MetaController`;
+- `CognitivePlanner`;
+- `ActionSelector`;
+- capability discovery/execution;
+- agent delegation;
+- verification/completion;
+- durable experience/persistence.
 
-- Agent orchestration and multi-agent specialization
-- Neuro/cortex/critic experiments
-- Module subprocess isolation
-- Evaluation and release-gate infrastructure
-- Runtime metrics and operator status surfaces
-- Tool/plugin catalog integration
+The older `ReasoningEngine` remains a lightweight intent/complexity/retrieval compatibility layer; it is not a second cognitive runtime.
 
-### Not yet production-complete
+Current reasoning modes are **FAST, STANDARD, DEEP, MAXIMUM and ADAPTIVE**, with real orchestration budgets for model calls, tools, agents, retrieval, critics, iterations, context and time.
 
-Some visible areas are currently shells, prototypes, honest stubs, or partially wired operator surfaces. In particular, the repository does **not** currently claim production-ready:
+### Brain / RAG / knowledge
 
-- browser automation runtime
-- media publishing/automation runtime
-- voice runtime
-- native/C++ execution runtime
-- live trading execution
-- full trading simulation stack
-- full MCP network client/runtime
-- managed llama.cpp runtime
-- production GPU residual hooks
-- production authentication / internet-facing deployment perimeter
-- chat token streaming over SSE
-- cloud backup/sync or production APM
+The knowledge stack includes:
 
-If a capability is unavailable, the intended behavior is to report it as unavailable rather than fabricate success.
+- one `BrainAccessFacade`;
+- document/chunk storage with provenance;
+- lexical+dense hybrid retrieval;
+- staged retrieval;
+- embeddings/reranking where configured;
+- Atlas;
+- Deep Recall;
+- Why Library;
+- knowledge assimilation/indexing.
 
----
+Brain/RAG is retained as a core subsystem. Retrieved content is data/evidence, not automatic system authority.
 
-## Architecture
+### Memory
+
+Durable scoped memory is separate from:
+
+- conversation history;
+- cognition WorkingMemory;
+- Brain/Knowledge documents;
+- VerifiedExperience.
+
+This separation is intentional and is preserved by the active reasoning program.
+
+### Neuro / Cortex
+
+Neuro remains part of LEVIATHAN. The current stack includes advisory neural associations, Cortex planning/runtime, process criticism, memory tiers and residual-adapter boundaries. Neuro can influence retrieval, hypotheses and strategy, but neural association is not treated as an exact fact or permission grant.
+
+### Model Control Plane
+
+Models are managed through one Model Control Plane with:
+
+- registry and profiles;
+- provider discovery;
+- routing;
+- inference sessions;
+- residency/resource management;
+- capability probing;
+- downloads/import;
+- managed runtime boundaries;
+- OpenAI-compatible inference transport.
+
+Supported provider adapters/boundaries include LM Studio, Ollama, OpenAI-compatible backends and local-serving boundaries present in the repository. Actual availability is discovered/reported rather than assumed.
+
+### Tools and side effects
+
+The canonical side-effect boundary is `ExecutionGateway`.
+
+It combines:
+
+- `CapabilityCatalog`;
+- FunctionRuntime;
+- approvals/policy;
+- observations;
+- capability receipts;
+- file/workspace operations;
+- coding tests/Git helpers;
+- knowledge/artifact capabilities;
+- MCP;
+- browser/media/voice paths when enabled.
+
+A model saying it executed something is not proof that it ran.
+
+### Agents, Coding and Research
+
+LEVIATHAN includes:
+
+- AgentRuntime / AgentFleet;
+- DAG multi-agent coordination and blackboard;
+- CodingControlPlane with workspace/tool/test/patch/verification flows;
+- ResearchService with local retrieval, uploads, source quality, claim/evidence/conflict tracking and optional web/provider access.
+
+Cognition can delegate to specialists while remaining the parent orchestration authority.
+
+### Jobs and external workers
+
+Long/heavy work can run outside the main API process through `JobRuntime` and the external worker system. Worker families cover areas such as coding, research, datasets, source ingestion, embeddings, reranking, evaluation, training control, market simulation, provider I/O, MCP, workflows, scheduler and maintenance.
+
+The main process is the **control plane**; workers are the **execution plane**.
+
+### Evidence and verification
+
+LEVIATHAN tracks observations, evidence, execution receipts and verification reports. Core truth rule:
 
 ```text
-                         LEVIATHAN
-                             │
-                  React / TypeScript UI
-                             │
-                        typed API
-                             │
-                     FastAPI control plane
-                             │
-       ┌─────────────────────┼─────────────────────┐
-       │                     │                     │
-       ▼                     ▼                     ▼
-   Model System         Execution Layer       Data / Intelligence
-       │                     │                     │
- Registry / Router      Capabilities           Knowledge
- Gateway / Profiles     Policy / Approvals      Memory
- Providers              Jobs / Observations     Datasets
-       │                Evidence / Verify        Research
-       │                     │                  Training
-       └─────────────────────┴─────────────────────┘
-                             │
-                         SQLite +
-                     filesystem artifacts
+model output != observation
+request != authority
+execution request != successful side effect
+model says done != verified completion
 ```
 
-LEVIATHAN intentionally keeps important concerns separate:
+### Datasets and training
+
+The dataset stack supports ingest, validation, quality checks, canonicalization, dedupe, PII/contamination handling, shards/splits/mixtures, indexing and export.
+
+The training stack contains SFT/preference/DPO-oriented infrastructure, active-learning and synthetic-data components, lineage/integrity/model registration, worker boundaries and explicit candidate promotion/rollback controls. Training availability still depends on the configured backend/hardware; LEVIATHAN does not silently replace the active model after one successful run.
+
+### Evaluation and release truth
+
+Evaluation has a durable harness/platform, scorecards, paired evaluation and ablations. `UNMEASURED` is not converted into PASS. Release/promotion decisions are intended to consume measured evidence.
+
+### MCP, plugins and runtime modules
+
+LEVIATHAN includes a universal MCP bridge, plugin registry and ModuleManager. MCP tools synchronize into the same capability world and still execute through the canonical gateway/authority path.
+
+### Market Simulation / TradingCenter
+
+LEVIATHAN contains a causal market-simulation and paper-trading environment with strategies, market-data handling, accounting/risk, experiment metrics, trading-only orchestras/agents and Brain/Memory/Neuro hooks.
+
+**No profitability claim is made. Live broker/real-money execution remains deliberately guarded; simulation/paper research is the safe supported posture.**
+
+### Operator frontend
+
+The React/TypeScript/Vite UI currently exposes major surfaces for:
+
+- Chat;
+- Coding;
+- Tasks;
+- Models;
+- Agents;
+- Training;
+- Dataset Management / Offline Datasets;
+- Analytics;
+- Research;
+- Brain;
+- Memory;
+- Knowledge Library;
+- Evidence Vault;
+- TradingCenter;
+- Media Control;
+- Tools;
+- MCP;
+- Workflows;
+- Performance/runtime;
+- Settings.
+
+See the [frontend reference](Data/docs/Leviathan_system_frontend.md) for the route and file map.
+
+---
+
+## Architecture at a glance
 
 ```text
-model output        != evidence
-request             != authority
-dispatch            != completion
-persisted status    != current runtime truth
-unmeasured          != passed
+                              +--------------------+
+                              |   React Frontend   |
+                              +---------+----------+
+                                        |
+                                        v
++--------------------------------------------------------------------------------+
+|                           FastAPI Control Plane                                |
+|                                                                                |
+|  Settings/Behavior  ->  CognitiveRuntime  ->  Model Control Plane              |
+|                            |        |                 |                        |
+|                            |        |                 v                        |
+|                            |        |          Model providers/runtime          |
+|                            |        |                                          |
+|                            |        +--> CapabilityBroker -> ExecutionGateway   |
+|                            |                              -> approvals/receipts  |
+|                            |                                                   |
+|                            +--> Brain/RAG ----+                                 |
+|                            +--> Memory        |                                 |
+|                            +--> Evidence      +--> Perception/BeliefState       |
+|                            +--> Neuro/Cortex  |                                 |
+|                            +--> Agents -------+                                 |
+|                                                                                |
+|  Jobs / Workflows / Research / Coding / Dataset / Training / MarketSim         |
+|                 |                                                              |
+|                 v                                                              |
+|          External Worker Pools                                                 |
+|                                                                                |
+|  Central SQLite metadata + artifacts + observations + verification             |
++--------------------------------------------------------------------------------+
 ```
 
-### Core design principles
+---
 
-- **Python-first:** orchestration, APIs, reasoning, persistence and intelligence systems live primarily in Python.
-- **Local-first:** the default runtime binds to loopback and works with local model endpoints.
-- **Single control plane:** models, tools, jobs, approvals, evidence and state should not each invent a separate runtime.
-- **One persistence architecture:** durable domain state is kept in the central SQLite architecture plus registered filesystem artifacts.
-- **Capability-driven execution:** privileged work flows through explicit capability, policy and approval boundaries.
-- **Truthful failure:** offline or unsupported functionality stays offline or unsupported in the UI/API.
-- **Modular growth:** large domains live under `Data/modules/`; small cold-path helpers live under `Data/functions/`.
-- **External-worker direction:** heavy, crash-prone or specialized workloads are intended to move behind supervised worker/runtime boundaries instead of bloating the core process.
+## Frontier Reasoning + Inference-Time Compute program
+
+LEVIATHAN is being upgraded **in place**. The program explicitly preserves the existing CognitiveRuntime, Brain/RAG, Memory, Neuro/Cortex, Model Control Plane, tools, agents, workers, Settings, Training and Evaluation systems.
+
+The target combines two axes:
+
+```text
+Reasoning depth
+  = orchestration compute
+  + neural inference-time compute
+```
+
+Target work includes provider-native reasoning effort, a local-model test-time-compute fallback, candidate/hypothesis search, critics, stronger verification, capability self-awareness, async cognition, verified experience aggregation and post-training bridges.
+
+**Current-main truth at this README snapshot:** the F0 baseline/audit machinery is merged. F1–F18 are active implementation phases and must not be treated as implemented until their gates/tests pass.
+
+Machine state:
+
+- `Data/backend/tests/frontier_reasoning_gates.json`
+- `scripts/verify_frontier_reasoning.py`
 
 ---
 
@@ -142,356 +246,113 @@ unmeasured          != passed
 ```text
 LEVIATHAN/
 ├── Data/
-│   ├── backend/          # FastAPI control plane, config, DB, migrations, routes, tests
-│   ├── frontend/         # React + TypeScript + Vite operator UI
-│   ├── modules/          # Stateful/domain subsystems
-│   ├── functions/        # On-demand reusable execution functions
-│   └── docs/             # Architecture, build history and operator documentation
-├── .env.example
+│   ├── backend/        # FastAPI, config, SQLite, migrations, routes, tests
+│   ├── frontend/       # React + TypeScript + Vite operator UI
+│   ├── modules/        # canonical domain/control-plane modules
+│   ├── functions/      # cold-path FunctionRuntime functions
+│   └── docs/           # exactly two canonical system references
+├── scripts/            # worker/verification/operational helpers
+├── leviathan.py        # launcher helper
 ├── requirements.txt
+├── .env.example
 ├── installer.bat
-├── run_leviathan.bat
-├── leviathan.py
-└── README.md
+└── run_leviathan.bat
 ```
 
-Important documentation:
-
-- [`Data/docs/buildplan.md`](Data/docs/buildplan.md) — chronological implementation record
-- [`Data/docs/leviathan_system.md`](Data/docs/leviathan_system.md) — current architecture and runtime truth
-- [`Data/docs/cursor.md`](Data/docs/cursor.md) — repository ownership map
-- [`Data/docs/models_datasets_training_research.md`](Data/docs/models_datasets_training_research.md) — operational guide for those subsystems
-- [`Data/docs/neuro_layer_architecture.md`](Data/docs/neuro_layer_architecture.md) — Neuro Layer architecture and limitations
-
----
-
-## Technology stack
-
-### Backend
-
-- Python 3.11+
-- FastAPI
-- Uvicorn
-- Pydantic
-- HTTPX
-- SQLite
-- python-dotenv
-
-### Frontend
-
-- React 19
-- TypeScript 5
-- Vite 7
-- React Router
-- Vitest
-- oxlint
-
-### Optional ML / training environment
-
-Training support can use optional packages such as:
-
-- PyTorch
-- Transformers
-- Datasets
-- Accelerate
-- PEFT
-- bitsandbytes
-- Safetensors
-- Tokenizers
-- PyArrow
-
-These are intentionally not required for the lightweight core API to start. Training capability detection reports missing requirements instead of crashing the entire application.
+Detailed ownership/file locations: [backend system reference](Data/docs/Leviathan_system_backend.md).
 
 ---
 
 ## Quick start
 
-### Requirements
-
-- **Python 3.11+**
-- **Node.js 20+**
-- A local OpenAI-compatible model server is recommended for chat/model features
-
-LM Studio works with the default local endpoint configuration.
-
 ### Windows
 
-The easiest setup path is:
-
 ```text
-1. Run installer.bat
-2. Configure .env if needed
-3. Run run_leviathan.bat
-4. Open http://127.0.0.1:8765/
+1. Clone/open the repository.
+2. Configure `.env` if non-default model/network/storage settings are needed.
+3. Install Python dependencies.
+4. Install frontend dependencies under `Data/frontend`.
+5. Build the frontend.
+6. Start LEVIATHAN with the repository launcher/batch flow.
 ```
 
-`installer.bat` creates the Python virtual environment, installs core Python packages, installs frontend dependencies, builds the frontend, creates local data directories and creates `.env` from `.env.example` when needed.
-
-### Manual setup
-
-```bash
-python -m venv .venv
-```
-
-Activate the virtual environment.
-
-**Windows:**
-
-```bat
-.venv\Scripts\activate
-```
-
-**Linux/macOS:**
-
-```bash
-source .venv/bin/activate
-```
-
-Install the backend:
-
-```bash
-pip install -r requirements.txt
-```
-
-Create your environment file:
-
-```bash
-cp .env.example .env
-```
-
-On Windows CMD:
-
-```bat
-copy .env.example .env
-```
-
-Install and build the frontend:
+Typical frontend development commands:
 
 ```bash
 cd Data/frontend
 npm install
-npm run build
-cd ../..
-```
-
-Start LEVIATHAN:
-
-```bash
-python -m uvicorn Data.backend.main:app --host 127.0.0.1 --port 8765
-```
-
-Open:
-
-- Application: `http://127.0.0.1:8765/`
-- Chat: `http://127.0.0.1:8765/chat`
-- Models: `http://127.0.0.1:8765/models`
-- Datasets: `http://127.0.0.1:8765/datasets`
-- Training: `http://127.0.0.1:8765/training`
-- Research: `http://127.0.0.1:8765/research`
-- Coding Agent: `http://127.0.0.1:8765/coding`
-- API documentation: `http://127.0.0.1:8765/docs`
-
----
-
-## Model configuration
-
-Default OpenAI-compatible endpoint:
-
-```text
-http://127.0.0.1:1234/v1
-```
-
-The endpoint and model can be configured through `.env`.
-
-Typical configuration:
-
-```env
-LEVIATHAN_LLM_BASE_URL=http://127.0.0.1:1234/v1
-LEVIATHAN_LLM_MODEL=
-LEVIATHAN_LLM_API_KEY=not-needed
-```
-
-If no model is pinned, LEVIATHAN can discover models from the configured provider.
-
-The Models control plane also supports provider records and adapters for local/OpenAI-compatible runtimes. Provider capabilities determine which lifecycle operations are actually offered.
-
----
-
-## Datasets, training and research
-
-### Datasets
-
-Supported core local formats currently include:
-
-```text
-.jsonl  .ndjson  .json  .csv  .tsv  .txt  .md
-```
-
-Datasets can be imported from local files/paths and supported Hugging Face sources. Raw imports are treated as immutable; transforms create derived versions with lineage.
-
-### Training
-
-The training flow is designed around:
-
-```text
-hardware inspection
-    → preflight
-    → planning
-    → durable job
-    → worker process
-    → metrics/checkpoints
-    → evaluation
-    → trained artifact registration
-```
-
-LoRA and QLoRA paths exist, but actual GPU training remains dependent on the local CUDA/ML environment. LEVIATHAN does not treat an unavailable CUDA runtime as successful training.
-
-### Research
-
-Research can run against local Knowledge and dataset indexes without internet access.
-
-Optional web research requires an explicitly configured outbound network policy and search provider. Sources are stored with provenance and feed an evidence ledger; contradictions are preserved instead of silently discarded.
-
-Reports can be exported as Markdown, HTML and JSON evidence bundles.
-
----
-
-## Coding Agent
-
-The Coding Agent is a persistent operator-controlled coding loop rather than a separate unrestricted shell.
-
-Current design includes:
-
-- dedicated workspace confinement
-- persistent coding sessions and turns
-- background execution
-- file listing/search/read/write/patch/delete capabilities
-- Git status/diff support
-- test execution
-- patch records
-- approval-gated writes and execution
-- verification integration
-- low-temperature coding model profile
-
-Coding capabilities use the same central execution and approval infrastructure as the rest of LEVIATHAN.
-
----
-
-## Safety and trust boundaries
-
-LEVIATHAN is currently a **local operator application**, not a hardened public multi-user service.
-
-Important properties:
-
-- default server bind is loopback
-- side effects can be policy/approval gated
-- Knowledge is treated as context data, not system authority
-- model output is not automatically evidence
-- secrets should stay in `.env` / server-side configuration
-- research web fetching includes SSRF-oriented restrictions
-- training workers use explicit subprocess arguments rather than shell command concatenation
-- destructive or privileged operations are intended to flow through shared control-plane boundaries
-
-### Important deployment warning
-
-**Do not expose the current development server directly to an untrusted network or the public internet.** The project is local-first and does not currently claim a production-grade authentication/perimeter layer.
-
----
-
-## Development
-
-### Backend tests
-
-```bash
-python -m pytest Data/backend/tests
-```
-
-The repository contains regression tests across configuration, persistence, models, datasets, training, research, coding, capabilities, approvals, jobs, evidence, memory, agents, workflows, isolation and other core infrastructure.
-
-### Frontend checks
-
-```bash
-cd Data/frontend
-npm run typecheck
-npm run lint
-npm run test
-npm run build
-```
-
-### Frontend development server
-
-Run the backend:
-
-```bash
-python -m uvicorn Data.backend.main:app --host 127.0.0.1 --port 8765
-```
-
-Then in another terminal:
-
-```bash
-cd Data/frontend
 npm run dev
 ```
 
-Vite proxies `/api` to the backend.
+Typical production frontend build:
+
+```bash
+cd Data/frontend
+npm run build
+```
+
+Backend configuration is documented in `.env.example` and the backend reference. Model availability depends on the configured provider/runtime.
 
 ---
 
-## Development status and roadmap
+## Tests
 
-LEVIATHAN is being built incrementally. The current focus is not to make every menu item appear complete, but to turn each domain into a real subsystem with durable state, explicit contracts, tests and truthful failure semantics.
+Backend:
 
-Near- and medium-term directions include:
+```bash
+python -m pytest Data/backend/tests -q
+```
 
-- supervised **external-first workers** for heavy/specialized execution
-- deeper multi-agent orchestration
-- richer Coding Agent execution/review flows
-- browser automation as an isolated runtime
-- real MCP client/server integration
-- production media automation
-- market simulation and trading infrastructure
-- stronger vector/embedding backends
-- managed native/model runtimes
-- richer evaluation and observability
-- streaming model transports
-- stronger release/security hardening
+Frontend:
 
-For the most accurate technical progress log, see [`Data/docs/buildplan.md`](Data/docs/buildplan.md).
+```bash
+cd Data/frontend
+npm test
+npm run typecheck
+npm run lint
+npm run build
+```
 
----
+Frontier Reasoning verifier:
 
-## Philosophy
+```bash
+python scripts/verify_frontier_reasoning.py
+```
 
-LEVIATHAN is built around a few invariants:
+Trading verifier:
 
-> **Capability is not authority.**
->
-> **Model output is not evidence.**
->
-> **Dispatch is not completion.**
->
-> **Unmeasured is not passed.**
->
-> **The control plane should remain the source of truth.**
+```bash
+python scripts/verify_trading_100.py
+```
 
-The objective is not merely to build another chat UI. The long-term goal is a coherent local AI operating environment in which models, agents, tools, knowledge, datasets, training, research and specialized workers can cooperate without giving up observability, ownership or control.
+Verification harnesses intentionally return non-success while required program gates are still open; an unfinished program is not reported as complete.
 
 ---
 
-## Contributing
+## Runtime truth and limitations
 
-The repository is public and under active development. If you are exploring or contributing, start with:
+LEVIATHAN is designed to report capability state honestly.
 
-1. `Data/docs/leviathan_system.md`
-2. `Data/docs/buildplan.md`
-3. `Data/docs/cursor.md`
-4. the owning module under `Data/modules/`
-5. the related tests under `Data/backend/tests/`
+Examples:
 
-Please keep changes scoped, preserve existing contracts where possible, add tests for meaningful behavior, and avoid reporting unverified functionality as complete.
+- outbound network permission does not automatically mean web search is configured;
+- generating code does not require permission to execute it;
+- an available tool is not necessarily authorized for a side effect;
+- a fixture/stub is not a production integration;
+- a model response is not an execution receipt;
+- a training recipe existing is not proof a GPU training run completed;
+- market simulation does not imply profitable or production-ready live trading.
+
+These distinctions are architectural invariants, not UI wording choices.
 
 ---
 
-## License
+## Documentation contribution rule
 
-No project license is currently declared in the repository. Public source visibility alone does not grant reuse, modification or redistribution rights. Add a license before treating the project as open-source software in the legal sense.
+Do not add another architecture/program Markdown file under `Data/docs`.
+
+- Backend/runtime changes → update `Data/docs/Leviathan_system_backend.md`.
+- Frontend/routes/UI changes → update `Data/docs/Leviathan_system_frontend.md`.
+- Machine gate state → keep it in `Data/backend/tests/*.json` and verification scripts.
+
+This keeps GitHub documentation discoverable while code/tests remain the implementation truth.

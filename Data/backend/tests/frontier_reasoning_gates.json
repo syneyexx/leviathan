@@ -1,30 +1,23 @@
 {
   "program": "frontier_reasoning",
-  "version": 1,
+  "version": 2,
   "updated": "2026-09-25",
   "active_phase": "F0",
-  "notes": "F0 audit only. R01-R30 must not PASS without executed evidence. Distinct from trading frontier_program.",
+  "notes": "F0 baseline is consolidated into the two canonical Data/docs system references. R01-R30 must not PASS without executed evidence.",
   "f0_skeleton_checks": [
     {
-      "id": "F0_AUDIT_DOC",
+      "id": "F0_BACKEND_SYSTEM_DOC",
       "required": true,
       "status": "PASS",
       "check": "file_exists",
-      "path": "Data/docs/frontier_reasoning_f0_audit.md"
+      "path": "Data/docs/Leviathan_system_backend.md"
     },
     {
-      "id": "F0_PROGRAM_STATE",
+      "id": "F0_FRONTEND_SYSTEM_DOC",
       "required": true,
       "status": "PASS",
       "check": "file_exists",
-      "path": "Data/docs/frontier_reasoning_program_state.md"
-    },
-    {
-      "id": "F0_COMPLETION_REPORT",
-      "required": true,
-      "status": "PASS",
-      "check": "file_exists",
-      "path": "Data/docs/frontier_reasoning_completion_report.md"
+      "path": "Data/docs/Leviathan_system_frontend.md"
     },
     {
       "id": "F0_VERIFIER",

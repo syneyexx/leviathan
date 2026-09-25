@@ -1,6 +1,6 @@
 """Trade Orchestras & Trade Agents — trading-only agents on the existing Agent Fleet.
 
-Ownership (see Data/docs/frontier_program.md §3):
+Canonical architecture reference: Data/docs/Leviathan_system_backend.md.
 
 - Agent definitions/missions: Agent Fleet (no second fleet). This package registers a
   kind executor for ``AgentDefinitionKind.TRADING`` and claims orchestrators whose role is
