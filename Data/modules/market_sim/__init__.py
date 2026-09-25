@@ -6,6 +6,13 @@ from .data_store import MarketDataStore
 from .deliberation import DeliberationResult, DeliberationRuntime
 from .engine import SimulationEngine
 from .epistemic import EpistemicFirewall, EvaluationWindow
+from .strategy_dsl import (
+    DSL_VERSION,
+    CompiledStrategy,
+    STRATEGY_FAMILIES,
+    compile_strategy_dsl,
+    family_template,
+)
 from .features import FEATURE_PIPELINE_VERSION, FeatureEngine, FeatureValue
 from .knowledge_snapshot import TradingKnowledgeSnapshot
 from .market_state import MarketState, MultiTimeframeView, build_market_state
@@ -27,6 +34,8 @@ __all__ = [
     "BrainFacade",
     "BrainRetrieval",
     "CausalityViolation",
+    "CompiledStrategy",
+    "DSL_VERSION",
     "DeliberationResult",
     "DeliberationRuntime",
     "EpistemicFirewall",
@@ -44,9 +53,12 @@ __all__ = [
     "MultiAgentEngine",
     "MultiTimeframeView",
     "RunStatus",
+    "STRATEGY_FAMILIES",
     "SimulationClock",
     "SimulationEngine",
     "TERMINAL_RUN_STATUSES",
     "TradingKnowledgeSnapshot",
     "build_market_state",
+    "compile_strategy_dsl",
+    "family_template",
 ]

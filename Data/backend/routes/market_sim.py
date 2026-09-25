@@ -44,6 +44,12 @@ class StrategyCreate(BaseModel):
     requiredTimeframes: list[str] | None = None
     brainDependencies: list[str] | None = None
     changelog: str = "initial"
+    dslSpec: dict[str, Any] | None = None
+    family: str | None = None
+
+
+class StrategyValidateRequest(BaseModel):
+    dslSpec: dict[str, Any]
 
 
 class StrategyVersionRequest(BaseModel):
@@ -57,6 +63,7 @@ class StrategyVersionRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     tags: list[str] | None = None
+    dslSpec: dict[str, Any] | None = None
 
 
 class StrategyForkRequest(BaseModel):
@@ -238,7 +245,34 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                 required_timeframes=payload.requiredTimeframes,
                 brain_dependencies=payload.brainDependencies,
                 changelog=payload.changelog,
+                dsl_spec=payload.dslSpec,
+                family=payload.family,
             )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/strategies/validate")
+    def validate_strategy(payload: StrategyValidateRequest) -> dict:
+        try:
+            return service.validate_strategy_dsl(payload.dslSpec)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/strategies/families")
+    def list_strategy_families() -> dict:
+        try:
+            return service.list_strategy_families()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/strategies/families/{family}/template")
+    def strategy_family_template(
+        family: str,
+        symbol: str = Query("BTCUSDT"),
+        timeframe: str = Query("1h"),
+    ) -> dict:
+        try:
+            return service.strategy_family_template(family, symbol=symbol, timeframe=timeframe)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
@@ -264,6 +298,7 @@ def build_market_sim_router(service: MarketSimControlPlane) -> APIRouter:
                 name=payload.name,
                 description=payload.description,
                 tags=payload.tags,
+                dsl_spec=payload.dslSpec,
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)
