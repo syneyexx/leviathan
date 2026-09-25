@@ -424,13 +424,15 @@ def register_market_sim_module_capabilities(catalog: Any) -> None:
     _mod(
         cap_id="market_sim.experiment.complete",
         name="Complete Experiment",
-        description="Complete a research trial with metrics.",
+        description="Complete a research trial from sealed run-derived metrics (single-use).",
         provider_ref="experiment.complete",
-        required=["trial_id", "metrics"],
+        required=["trial_id"],
         properties={
             "trial_id": {"type": "string"},
             "metrics": {"type": "object"},
             "strategy_version": {"type": "integer"},
+            "run_id": {"type": "string"},
+            "run_ids": {"type": "array", "items": {"type": "string"}},
         },
     )
     _mod(

@@ -94,13 +94,13 @@ class D1AnnualizationCharacterization(unittest.TestCase):
         sig = inspect.signature(compute_metrics)
         self.assertEqual(sig.parameters["periods_per_year"].default, 252.0)
 
-    def test_d1_current_engines_omit_periods_per_year(self) -> None:
+    def test_d1_engines_pass_periods_per_year(self) -> None:
+        # T5 / G18: engines annualize from run timeframe.
         engine_src = inspect.getsource(SimulationEngine._finalize_metrics)
         multi_src = inspect.getsource(MultiAgentEngine._finalize_metrics)
-        self.assertNotIn("periods_per_year", engine_src)
-        self.assertNotIn("periods_per_year", multi_src)
+        self.assertIn("periods_per_year", engine_src)
+        self.assertIn("periods_per_year", multi_src)
 
-    @unittest.expectedFailure  # D1 — fixed in Phase T1
     def test_d1_desired_engines_pass_timeframe_annualization(self) -> None:
         engine_src = inspect.getsource(SimulationEngine._finalize_metrics)
         multi_src = inspect.getsource(MultiAgentEngine._finalize_metrics)
@@ -114,7 +114,8 @@ class D1AnnualizationCharacterization(unittest.TestCase):
 
 
 class D2WinRateCharacterization(unittest.TestCase):
-    def test_d2_current_simfill_omits_realized_delta(self) -> None:
+    def test_d2_simfill_carries_realized_delta(self) -> None:
+        # T5 / G18: SimFill public_dict exposes realized_delta for ledger metrics.
         fill = SimFill(
             fill_id="f1",
             run_id="r",
@@ -129,17 +130,18 @@ class D2WinRateCharacterization(unittest.TestCase):
             rationale="",
             status="FILLED",
             created_at=utc_now(),
+            realized_delta=1.5,
         )
-        self.assertNotIn("realized_delta", fill.public_dict())
+        self.assertIn("realized_delta", fill.public_dict())
+        self.assertEqual(fill.public_dict()["realized_delta"], 1.5)
 
     def test_d2_current_metrics_unmeasured_without_realized_delta(self) -> None:
         equity = [100.0, 101.0, 102.0]
         fills = [{"side": "SELL", "qty": 1, "price": 101, "fee": 0.1}]
-        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0)
+        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0, bootstrap=False)
         self.assertEqual(m["win_rate"]["status"], MetricStatus.UNMEASURED.value)
         self.assertEqual(m["profit_factor"]["status"], MetricStatus.UNMEASURED.value)
 
-    @unittest.expectedFailure  # D2 — fixed in Phase T1
     def test_d2_desired_simfill_carries_realized_delta(self) -> None:
         fill = SimFill(
             fill_id="f1",
@@ -155,6 +157,7 @@ class D2WinRateCharacterization(unittest.TestCase):
             rationale="",
             status="FILLED",
             created_at=utc_now(),
+            realized_delta=9.9,
         )
         self.assertIn("realized_delta", fill.public_dict())
 
@@ -520,7 +523,8 @@ class D10ClockCharacterization(unittest.TestCase):
 
 
 class D11CallerMetricsCharacterization(unittest.TestCase):
-    def test_d11_current_evaluate_acceptance_trusts_caller_dict(self) -> None:
+    def test_d11_acceptance_rejects_caller_dict_without_run_ids(self) -> None:
+        # T5 / G21: fabricated metrics alone cannot pass acceptance.
         fake = {
             "trade_count": 100,
             "total_return_pct": 50.0,
@@ -528,7 +532,8 @@ class D11CallerMetricsCharacterization(unittest.TestCase):
             "excess_return_pct": 10.0,
         }
         passed, reason = evaluate_acceptance(fake, {"min_trades": 5, "beat_benchmark": True})
-        self.assertTrue(passed, reason)
+        self.assertFalse(passed)
+        self.assertIn("run-derived", reason)
 
     def test_d11_desired_acceptance_requires_run_derived_metrics(self) -> None:
         sig = inspect.signature(evaluate_acceptance)
@@ -542,18 +547,17 @@ class D11CallerMetricsCharacterization(unittest.TestCase):
 
 
 class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
-    def test_d12_current_real_metrics_fail_acceptance_by_key_mismatch(self) -> None:
-        # Historical characterization of the pre-T4 mismatch — kept as documentation
-        # that total_return (not total_return_pct) is the compute_metrics key.
+    def test_d12_compute_metrics_keys_align_with_acceptance(self) -> None:
+        # T5 / G21: compute_metrics exposes trade_count + total_return; acceptance reads them.
         equity = [100.0, 110.0, 120.0]
         fills = [
             {"side": "BUY", "qty": 1, "price": 100, "fee": 0},
             {"side": "SELL", "qty": 1, "price": 120, "fee": 0, "realized_delta": 20},
         ]
-        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0)
+        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0, bootstrap=False)
         self.assertIn("total_return", m)
+        self.assertIn("trade_count", m)
         self.assertNotIn("total_return_pct", m)
-        self.assertNotIn("trade_count", m)
 
     def test_d12_desired_acceptance_reads_compute_metrics_shape(self) -> None:
         equity = [100.0, 110.0, 120.0]
@@ -561,11 +565,11 @@ class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
             {"side": "BUY", "qty": 1, "price": 100, "fee": 0},
             {"side": "SELL", "qty": 1, "price": 120, "fee": 0, "realized_delta": 20},
         ]
-        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0)
-        m_with_trades = {**m, "trade_count": {"status": "MEASURED", "value": 1}}
+        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0, bootstrap=False)
         passed, _reason = evaluate_acceptance(
-            m_with_trades,
+            m,
             {"min_trades": 1, "max_drawdown_pct": 50.0, "min_total_return_pct": 0.0},
+            run_id="char-d12",
         )
         self.assertTrue(passed)
 
@@ -858,12 +862,14 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
     def test_d21_current_real_head_tracks_migrations(self) -> None:
         # After Frontier Program F1 (trade orchestras): head is 43+.
         # T1 causality/data foundation adds migration 44.
+        # T5 science layer adds migration 45.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 44)
+        self.assertGreaterEqual(head, 45)
         by_ver = {m.version: m.name for m in MIGRATIONS}
         self.assertEqual(by_ver[42], "resource_reservations_device_aware")
         self.assertEqual(by_ver[43], "trading_orchestra")
         self.assertEqual(by_ver[44], "trading_causality_data_foundation")
+        self.assertEqual(by_ver[45], "trading_science_layer")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 

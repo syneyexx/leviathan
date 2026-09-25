@@ -3317,6 +3317,87 @@ def _m44_trading_causality_data_foundation(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m45_trading_science_layer(conn: sqlite3.Connection) -> None:
+    """T5: fill ledger realized_delta + append-only trial ledger + acceptance seals."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
+    if "realized_delta" not in cols:
+        conn.execute("ALTER TABLE market_sim_fills ADD COLUMN realized_delta REAL")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_trial_ledger (
+            event_id TEXT PRIMARY KEY,
+            trial_id TEXT NOT NULL,
+            strategy_id TEXT NOT NULL DEFAULT '',
+            strategy_version INTEGER,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_trial_ledger_trial "
+        "ON market_trial_ledger(trial_id, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_trial_ledger_strategy "
+        "ON market_trial_ledger(strategy_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_trial_ledger_no_update
+        BEFORE UPDATE ON market_trial_ledger
+        BEGIN
+            SELECT RAISE(ABORT, 'market_trial_ledger is append-only');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_trial_ledger_no_delete
+        BEFORE DELETE ON market_trial_ledger
+        BEGIN
+            SELECT RAISE(ABORT, 'market_trial_ledger is append-only');
+        END
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_acceptance_seals (
+            seal_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL UNIQUE,
+            trial_id TEXT NOT NULL,
+            sealed_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_acceptance_seals_trial "
+        "ON market_acceptance_seals(trial_id, sealed_at)"
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_acceptance_seals_no_update
+        BEFORE UPDATE ON market_acceptance_seals
+        BEGIN
+            SELECT RAISE(ABORT, 'market_acceptance_seals is append-only / single-use');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_acceptance_seals_no_delete
+        BEFORE DELETE ON market_acceptance_seals
+        BEGIN
+            SELECT RAISE(ABORT, 'market_acceptance_seals is append-only / single-use');
+        END
+        """
+    )
+
 
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
@@ -3370,6 +3451,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=44,
         name="trading_causality_data_foundation",
         apply=_m44_trading_causality_data_foundation,
+    ),
+    Migration(
+        version=45,
+        name="trading_science_layer",
+        apply=_m45_trading_science_layer,
     ),
 )
 

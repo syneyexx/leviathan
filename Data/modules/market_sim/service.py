@@ -1280,16 +1280,55 @@ class MarketSimControlPlane:
         self,
         trial_id: str,
         *,
-        metrics: dict[str, Any],
+        metrics: dict[str, Any] | None = None,
         strategy_version: int | None = None,
+        run_id: str | None = None,
+        run_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
         trials = self.store.list_experiments(limit=500)
         trial = next((t for t in trials if t["trial_id"] == trial_id), None)
         if trial is None:
             raise MarketSimError("TRIAL_NOT_FOUND", trial_id, http_status=404)
-        passed, reason = evaluate_acceptance(metrics, trial.get("acceptance_criteria") or {})
-        trial["results"] = metrics
+
+        ids: list[str] = []
+        seen: set[str] = set()
+        for candidate in ([str(run_id)] if run_id else []) + [str(r) for r in (run_ids or []) if r]:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                ids.append(candidate)
+        if not ids:
+            raise MarketSimError(
+                "ACCEPTANCE_REQUIRES_RUN_IDS",
+                "complete_experiment requires run_id/run_ids for sealed evidence",
+                http_status=400,
+            )
+
+        # Prefer run-derived metrics over caller-supplied fabrications (G21 / D11).
+        run_metrics = self._metrics_from_runs(ids)
+        effective = dict(run_metrics)
+        if metrics:
+            # Caller may annotate extras (features) but core measured keys come from runs.
+            for k, v in metrics.items():
+                if k not in effective:
+                    effective[k] = v
+
+        try:
+            seals = self.store.seal_acceptance_runs(ids, trial_id=trial_id)
+        except ValueError as exc:
+            raise MarketSimError("ACCEPTANCE_SEAL_REUSED", str(exc), http_status=409) from exc
+
+        passed, reason = evaluate_acceptance(
+            effective,
+            trial.get("acceptance_criteria") or {},
+            run_ids=ids,
+            require_run_ids=True,
+        )
+        trial["results"] = {
+            **effective,
+            "acceptance_run_ids": ids,
+            "acceptance_seals": seals,
+        }
         trial["strategy_version"] = strategy_version
         trial["finished_at"] = utc_now()
         if passed:
@@ -1305,7 +1344,7 @@ class MarketSimControlPlane:
                 "memory_id": str(uuid.uuid4()),
                 "strategy_id": trial["strategy_id"],
                 "strategy_version": strategy_version or 0,
-                "features": (metrics.get("features") or {}),
+                "features": (effective.get("features") or {}),
                 "applicability": (trial.get("config") or {}).get("applicability") or {},
                 "outcome_summary": reason if not passed else "accepted on holdout",
                 "trial_id": trial_id,
@@ -1315,6 +1354,47 @@ class MarketSimControlPlane:
             }
         )
         return trial
+
+    def _metrics_from_runs(self, run_ids: list[str]) -> dict[str, Any]:
+        """Load sealed-evidence metrics from completed simulation runs."""
+        if not run_ids:
+            raise MarketSimError("ACCEPTANCE_REQUIRES_RUN_IDS", "empty run_ids", http_status=400)
+        merged: dict[str, Any] = {"runs": [], "trade_count": {"status": "MEASURED", "value": 0}}
+        trades = 0
+        returns: list[float] = []
+        drawdowns: list[float] = []
+        for rid in run_ids:
+            run = self.store.get_run(rid)
+            if run is None:
+                raise MarketSimError("RUN_NOT_FOUND", rid, http_status=404)
+            m = dict(run.metrics or {})
+            merged["runs"].append({"run_id": rid, "status": run.status, "metrics": m})
+            tc = m.get("trade_count")
+            if isinstance(tc, dict):
+                trades += int(tc.get("value") or 0)
+            tr = m.get("total_return")
+            if isinstance(tr, dict) and tr.get("value") is not None:
+                returns.append(float(tr["value"]))
+            dd = m.get("max_drawdown")
+            if isinstance(dd, dict) and dd.get("value") is not None:
+                drawdowns.append(float(dd["value"]))
+            # Carry first run's detailed metrics as base; overwrite with aggregates below.
+            for k, v in m.items():
+                if k not in merged:
+                    merged[k] = v
+        merged["trade_count"] = {"status": "MEASURED", "value": trades}
+        if returns:
+            mean_ret = sum(returns) / len(returns)
+            merged["total_return"] = {"status": "MEASURED", "value": mean_ret}
+        if drawdowns:
+            merged["max_drawdown"] = {"status": "MEASURED", "value": max(drawdowns)}
+        if len(run_ids) == 1 and merged["runs"][0]["metrics"]:
+            # Single-run: use that run's metrics verbatim (still tagged with run id).
+            base = dict(merged["runs"][0]["metrics"])
+            base["trade_count"] = merged["trade_count"]
+            base["runs"] = merged["runs"]
+            return base
+        return merged
 
     def list_experiments(self, *, strategy_id: str | None = None) -> list[dict[str, Any]]:
         self._require_enabled()

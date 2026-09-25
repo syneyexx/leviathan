@@ -144,22 +144,210 @@ def walk_forward_splits(
     }
 
 
+def purged_cv_splits(
+    n_bars: int,
+    *,
+    n_folds: int = 5,
+    purge: int = 5,
+    embargo: int = 5,
+) -> dict[str, Any]:
+    """Purged K-fold CV over a chronological bar index (G20 / Lopez de Prado).
+
+    Test folds are contiguous blocks. Train excludes a purge gap around the
+    test block plus an embargo after the test end to limit leakage.
+    """
+    n = int(n_bars)
+    k = max(2, int(n_folds))
+    purge_n = max(0, int(purge))
+    embargo_n = max(0, int(embargo))
+    if n < k * 4:
+        return {
+            "folds": [],
+            "warning": "insufficient bars for purged CV",
+            "bar_count": n,
+            "n_folds": k,
+        }
+    fold_size = n // k
+    folds: list[dict[str, Any]] = []
+    for i in range(k):
+        test_start = i * fold_size
+        test_end = (i + 1) * fold_size - 1 if i < k - 1 else n - 1
+        left_cut = max(0, test_start - purge_n)
+        right_cut = min(n - 1, test_end + purge_n + embargo_n)
+        train_idx = [j for j in range(n) if j < left_cut or j > right_cut]
+        test_idx = list(range(test_start, test_end + 1))
+        folds.append(
+            {
+                "fold": i,
+                "train_indices": train_idx,
+                "test_indices": test_idx,
+                "purge": purge_n,
+                "embargo": embargo_n,
+                "train_count": len(train_idx),
+                "test_count": len(test_idx),
+            }
+        )
+    return {
+        "folds": folds,
+        "n_folds": k,
+        "bar_count": n,
+        "purge": purge_n,
+        "embargo": embargo_n,
+        "truth": {
+            "chronological_only": True,
+            "no_shuffle": True,
+            "purged": True,
+            "embargoed": True,
+        },
+    }
+
+
+def cpcv_splits(
+    n_bars: int,
+    *,
+    n_groups: int = 6,
+    n_test_groups: int = 2,
+    purge: int = 5,
+    embargo: int = 5,
+) -> dict[str, Any]:
+    """Combinatorial Purged Cross-Validation paths (G20).
+
+    Splits the timeline into ``n_groups`` contiguous groups and enumerates
+    combinations of ``n_test_groups`` as the test set; remaining groups form
+    train after purge/embargo around each test group.
+    """
+    from itertools import combinations
+
+    n = int(n_bars)
+    g = max(3, int(n_groups))
+    t = max(1, min(int(n_test_groups), g - 1))
+    purge_n = max(0, int(purge))
+    embargo_n = max(0, int(embargo))
+    if n < g * 3:
+        return {
+            "paths": [],
+            "warning": "insufficient bars for CPCV",
+            "bar_count": n,
+            "n_groups": g,
+        }
+    group_size = n // g
+    groups: list[list[int]] = []
+    for i in range(g):
+        start = i * group_size
+        end = (i + 1) * group_size - 1 if i < g - 1 else n - 1
+        groups.append(list(range(start, end + 1)))
+
+    paths: list[dict[str, Any]] = []
+    for test_combo in combinations(range(g), t):
+        test_set: set[int] = set()
+        blocked: set[int] = set()
+        for gi in test_combo:
+            idxs = groups[gi]
+            test_set.update(idxs)
+            lo = max(0, idxs[0] - purge_n)
+            hi = min(n - 1, idxs[-1] + purge_n + embargo_n)
+            blocked.update(range(lo, hi + 1))
+        train_idx = [j for j in range(n) if j not in blocked]
+        test_idx = sorted(test_set)
+        paths.append(
+            {
+                "test_groups": list(test_combo),
+                "train_indices": train_idx,
+                "test_indices": test_idx,
+                "train_count": len(train_idx),
+                "test_count": len(test_idx),
+            }
+        )
+    return {
+        "paths": paths,
+        "n_groups": g,
+        "n_test_groups": t,
+        "n_paths": len(paths),
+        "bar_count": n,
+        "purge": purge_n,
+        "embargo": embargo_n,
+        "truth": {
+            "chronological_only": True,
+            "combinatorial_purged_cv": True,
+            "no_shuffle": True,
+        },
+    }
+
+
+def robustness_report(
+    window_metrics: list[dict[str, Any]],
+    *,
+    key: str = "total_return",
+) -> dict[str, Any]:
+    """Summarize stability of a metric across WFA/CV windows (G20)."""
+
+    def _val(m: dict[str, Any]) -> float | None:
+        raw = m.get(key)
+        if isinstance(raw, dict):
+            if raw.get("status") == MetricStatus.UNMEASURED.value:
+                return None
+            if raw.get("value") is None:
+                return None
+            return float(raw["value"])
+        if raw is None:
+            return None
+        return float(raw)
+
+    values = [v for v in (_val(m) for m in window_metrics) if v is not None]
+    if len(values) < 2:
+        return {
+            "status": MetricStatus.UNMEASURED.value,
+            "value": None,
+            "reason": "need >=2 measured windows",
+            "n_windows": len(window_metrics),
+            "n_measured": len(values),
+        }
+    mean = sum(values) / len(values)
+    var = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    std = var ** 0.5
+    positives = sum(1 for v in values if v > 0)
+    return {
+        "status": MetricStatus.MEASURED.value,
+        "key": key,
+        "n_windows": len(window_metrics),
+        "n_measured": len(values),
+        "mean": mean,
+        "std": std,
+        "min": min(values),
+        "max": max(values),
+        "positive_share": positives / len(values),
+        "stable": std <= abs(mean) + 1e-12 if mean != 0 else std == 0,
+        "truth": {"cross_window_only": True, "not_a_live_guarantee": True},
+    }
+
+
 def evaluate_acceptance(
     metrics: dict[str, Any],
     criteria: dict[str, Any],
     *,
     run_id: str | None = None,
     run_ids: list[str] | None = None,
+    require_run_ids: bool = True,
 ) -> tuple[bool, str]:
     """Return (passed, reason). Conservative defaults.
 
     Accepts both hand-typed percent keys (``total_return_pct``) and
     ``compute_metrics`` shapes (``total_return`` as fraction status/value).
 
-    When ``run_id`` / ``run_ids`` is provided, metrics are treated as
-    run-derived evidence (T4/T5 sealing hook — callers must supply the ids).
+    G21: by default requires ``run_id`` / ``run_ids`` so caller-fabricated
+    metrics alone cannot pass acceptance. Pass ``require_run_ids=False`` only
+    for offline unit checks of the numeric criteria themselves.
     """
-    _ = run_id, run_ids  # reserved for run-sealed evidence path
+    ids: list[str] = []
+    seen: set[str] = set()
+    for candidate in ([str(run_id)] if run_id else []) + [str(r) for r in (run_ids or []) if r]:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            ids.append(candidate)
+
+    if require_run_ids and not ids:
+        return False, "acceptance requires run-derived evidence (run_id/run_ids)"
+
     min_trades = int(criteria.get("min_trades", 5))
     max_dd = float(criteria.get("max_drawdown_pct", 25.0))
     min_return = float(criteria.get("min_total_return_pct", 0.0))
@@ -211,7 +399,8 @@ def evaluate_acceptance(
         return False, f"return {total_return:.2f}% below minimum {min_return}%"
     if require_beat_benchmark and vs_bench <= 0:
         return False, "did not beat buy-and-hold benchmark after costs"
-    return True, "acceptance criteria met on held-out split"
+    evidence = f" on runs {ids}" if ids else ""
+    return True, f"acceptance criteria met on held-out split{evidence}"
 
 
 def trial_fingerprint(trial: ExperimentTrial) -> str:

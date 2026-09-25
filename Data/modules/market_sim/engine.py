@@ -182,6 +182,7 @@ class SimulationEngine:
                     rationale=intent.rationale,
                     status=FillStatus.FILLED.value,
                     created_at=utc_now(),
+                    realized_delta=float(realized_delta),
                 )
                 self.store.add_fill(record)
                 state.fills.append(record)
@@ -190,7 +191,6 @@ class SimulationEngine:
                     kind="fill",
                     payload={
                         **record.public_dict(),
-                        "realized_delta": realized_delta,
                         "fill_price_source": "next_bar_open",
                         "decision_bar_index": intent.decision_bar_index,
                         "observed_execution": False,
@@ -346,6 +346,8 @@ class SimulationEngine:
         return state
 
     def _finalize_metrics(self, state: EngineState) -> None:
+        from .metrics import periods_per_year_for_timeframe
+
         run = state.run
         equity = list(state.portfolio.equity_curve) or [run.initial_cash]
         fill_payloads = [f.public_dict() for f in state.fills]
@@ -359,6 +361,7 @@ class SimulationEngine:
             if state.deliberation_rounds
             else None
         )
+        periods_per_year = periods_per_year_for_timeframe(run.timeframe)
         run.metrics = compute_metrics(
             equity=equity,
             fills=fill_payloads,
@@ -369,6 +372,8 @@ class SimulationEngine:
             brain_misses=run.brain_misses,
             agreement_rate=agreement,
             veto_rate=veto_rate,
+            periods_per_year=periods_per_year,
+            timeframe=run.timeframe,
         )
         run.metrics["fill_assumptions"] = list(self.FILL_ASSUMPTIONS)
         if state.run.status == RunStatus.COMPLETED.value:

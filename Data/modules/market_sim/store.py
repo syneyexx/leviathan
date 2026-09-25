@@ -577,29 +577,56 @@ class MarketSimStore:
 
     def add_fill(self, fill: SimFill) -> SimFill:
         with self.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO market_sim_fills(
-                    fill_id, run_id, bar_index, ts, side, qty, price, fee, slippage,
-                    agent_id, rationale, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    fill.fill_id,
-                    fill.run_id,
-                    fill.bar_index,
-                    fill.ts,
-                    fill.side,
-                    fill.qty,
-                    fill.price,
-                    fill.fee,
-                    fill.slippage,
-                    fill.agent_id,
-                    fill.rationale,
-                    fill.status,
-                    fill.created_at,
-                ),
-            )
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
+            if "realized_delta" in cols:
+                conn.execute(
+                    """
+                    INSERT INTO market_sim_fills(
+                        fill_id, run_id, bar_index, ts, side, qty, price, fee, slippage,
+                        agent_id, rationale, status, created_at, realized_delta
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        fill.fill_id,
+                        fill.run_id,
+                        fill.bar_index,
+                        fill.ts,
+                        fill.side,
+                        fill.qty,
+                        fill.price,
+                        fill.fee,
+                        fill.slippage,
+                        fill.agent_id,
+                        fill.rationale,
+                        fill.status,
+                        fill.created_at,
+                        fill.realized_delta,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO market_sim_fills(
+                        fill_id, run_id, bar_index, ts, side, qty, price, fee, slippage,
+                        agent_id, rationale, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        fill.fill_id,
+                        fill.run_id,
+                        fill.bar_index,
+                        fill.ts,
+                        fill.side,
+                        fill.qty,
+                        fill.price,
+                        fill.fee,
+                        fill.slippage,
+                        fill.agent_id,
+                        fill.rationale,
+                        fill.status,
+                        fill.created_at,
+                    ),
+                )
         return fill
 
     def list_fills(self, run_id: str, *, limit: int = 500) -> list[SimFill]:
@@ -617,6 +644,8 @@ class MarketSimStore:
                 """,
                 (run_id, limit),
             ).fetchall()
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
+        has_rd = "realized_delta" in cols
         return [
             SimFill(
                 fill_id=r["fill_id"],
@@ -632,6 +661,11 @@ class MarketSimStore:
                 rationale=r["rationale"],
                 status=r["status"],
                 created_at=r["created_at"],
+                realized_delta=(
+                    float(r["realized_delta"])
+                    if has_rd and r["realized_delta"] is not None
+                    else None
+                ),
             )
             for r in rows
         ]
@@ -831,6 +865,10 @@ class MarketSimStore:
 
     def save_experiment(self, trial: dict[str, Any]) -> dict[str, Any]:
         with self.connect() as conn:
+            prior = conn.execute(
+                "SELECT status FROM market_experiments WHERE trial_id=?",
+                (trial["trial_id"],),
+            ).fetchone()
             conn.execute(
                 """
                 INSERT INTO market_experiments(
@@ -866,6 +904,26 @@ class MarketSimStore:
                     json.dumps(trial.get("metadata") or {}),
                 ),
             )
+        # Global append-only ledger event (G19) — never mutates prior rows.
+        event_kind = "trial_upserted" if prior is not None else "trial_created"
+        if prior is not None and str(prior["status"]) != str(trial.get("status")):
+            event_kind = f"status:{prior['status']}->{trial.get('status')}"
+        self.append_trial_event(
+            {
+                "event_id": str(uuid.uuid4()),
+                "trial_id": trial["trial_id"],
+                "strategy_id": trial["strategy_id"],
+                "strategy_version": trial.get("strategy_version"),
+                "kind": event_kind,
+                "status": trial.get("status"),
+                "payload": {
+                    "results": trial.get("results") or {},
+                    "rejection_reason": trial.get("rejection_reason") or "",
+                    "fingerprint": trial.get("fingerprint") or "",
+                },
+                "created_at": utc_now(),
+            }
+        )
         return trial
 
     def append_trial(self, trial: dict[str, Any]) -> dict[str, Any]:
@@ -882,6 +940,88 @@ class MarketSimStore:
             raise ValueError(f"trial already exists: {existing} (append-only ledger)")
         return self.save_experiment(trial)
 
+    def append_trial_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Append one immutable trial-ledger event (G19)."""
+        event_id = event.get("event_id") or str(uuid.uuid4())
+        created_at = event.get("created_at") or utc_now()
+        with self.connect() as conn:
+            # Table may be absent on pre-migration DBs — create lazily via initialize path.
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO market_trial_ledger(
+                        event_id, trial_id, strategy_id, strategy_version, kind, status,
+                        payload_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        event["trial_id"],
+                        event.get("strategy_id") or "",
+                        event.get("strategy_version"),
+                        event.get("kind") or "event",
+                        event.get("status") or "",
+                        json.dumps(event.get("payload") or {}),
+                        created_at,
+                    ),
+                )
+            except sqlite3.OperationalError:
+                # Pre-migration 45 databases: ledger optional until migrate.
+                return {**event, "event_id": event_id, "created_at": created_at, "persisted": False}
+        return {
+            "event_id": event_id,
+            "trial_id": event["trial_id"],
+            "strategy_id": event.get("strategy_id") or "",
+            "strategy_version": event.get("strategy_version"),
+            "kind": event.get("kind") or "event",
+            "status": event.get("status") or "",
+            "payload": event.get("payload") or {},
+            "created_at": created_at,
+            "persisted": True,
+        }
+
+    def list_trial_events(
+        self,
+        *,
+        trial_id: str | None = None,
+        strategy_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                if trial_id:
+                    rows = conn.execute(
+                        "SELECT * FROM market_trial_ledger WHERE trial_id=? "
+                        "ORDER BY created_at ASC LIMIT ?",
+                        (trial_id, limit),
+                    ).fetchall()
+                elif strategy_id:
+                    rows = conn.execute(
+                        "SELECT * FROM market_trial_ledger WHERE strategy_id=? "
+                        "ORDER BY created_at ASC LIMIT ?",
+                        (strategy_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM market_trial_ledger ORDER BY created_at ASC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [
+            {
+                "event_id": r["event_id"],
+                "trial_id": r["trial_id"],
+                "strategy_id": r["strategy_id"],
+                "strategy_version": r["strategy_version"],
+                "kind": r["kind"],
+                "status": r["status"],
+                "payload": _loads(r["payload_json"], {}),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
     def count_trials(self, *, strategy_id: str | None = None) -> int:
         with self.connect() as conn:
             if strategy_id:
@@ -892,6 +1032,85 @@ class MarketSimStore:
             else:
                 row = conn.execute("SELECT COUNT(*) AS n FROM market_experiments").fetchone()
         return int(row["n"] if row else 0)
+
+    def seal_acceptance_runs(
+        self,
+        run_ids: list[str],
+        *,
+        trial_id: str,
+        sealed_at: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Mark run IDs as single-use acceptance evidence (G21). Refuses reuse."""
+        if not run_ids:
+            raise ValueError("seal_acceptance_runs requires at least one run_id")
+        now = sealed_at or utc_now()
+        sealed: list[dict[str, Any]] = []
+        with self.connect() as conn:
+            for rid in run_ids:
+                existing = conn.execute(
+                    "SELECT seal_id, trial_id FROM market_acceptance_seals WHERE run_id=?",
+                    (rid,),
+                ).fetchone()
+                if existing is not None:
+                    raise ValueError(
+                        f"run {rid} already sealed for trial {existing['trial_id']} (single-use)"
+                    )
+                seal_id = str(uuid.uuid4())
+                conn.execute(
+                    """
+                    INSERT INTO market_acceptance_seals(
+                        seal_id, run_id, trial_id, sealed_at, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (seal_id, rid, trial_id, now, json.dumps({})),
+                )
+                sealed.append(
+                    {
+                        "seal_id": seal_id,
+                        "run_id": rid,
+                        "trial_id": trial_id,
+                        "sealed_at": now,
+                    }
+                )
+        return sealed
+
+    def is_acceptance_run_sealed(self, run_id: str) -> bool:
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM market_acceptance_seals WHERE run_id=? LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return False
+        return row is not None
+
+    def list_acceptance_seals(self, *, trial_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                if trial_id:
+                    rows = conn.execute(
+                        "SELECT * FROM market_acceptance_seals WHERE trial_id=? "
+                        "ORDER BY sealed_at DESC LIMIT ?",
+                        (trial_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM market_acceptance_seals ORDER BY sealed_at DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [
+            {
+                "seal_id": r["seal_id"],
+                "run_id": r["run_id"],
+                "trial_id": r["trial_id"],
+                "sealed_at": r["sealed_at"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
 
     def list_experiments(self, *, strategy_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as conn:

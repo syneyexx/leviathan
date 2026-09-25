@@ -268,8 +268,12 @@ class MultiAgentDemoTests(unittest.TestCase):
             )
             done = plane.complete_experiment(
                 trial["trial_id"],
-                metrics={"trade_count": 2, "total_return_pct": {"value": 1.0, "status": "MEASURED"},
-                         "max_drawdown_pct": {"value": 5.0, "status": "MEASURED"}},
+                run_id=run_id,
+                metrics={
+                    "trade_count": 2,
+                    "total_return_pct": {"value": 1.0, "status": "MEASURED"},
+                    "max_drawdown_pct": {"value": 5.0, "status": "MEASURED"},
+                },
             )
             self.assertEqual(done["status"], "rejected")
             mems = plane.store.list_strategy_memories(strategy_id=strategy_id)
@@ -309,6 +313,7 @@ class AcceptanceHelperTests(unittest.TestCase):
         ok, reason = evaluate_acceptance(
             {"trade_count": 1, "total_return_pct": 50, "max_drawdown_pct": 1},
             {"min_trades": 5},
+            run_id="unit-check",
         )
         self.assertFalse(ok)
         self.assertIn("insufficient trades", reason)
