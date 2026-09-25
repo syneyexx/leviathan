@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "program": "Master Program v4.1",
-  "phase": "P1B",
+  "phase": "P1C",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "P1A+P1B: streaming/splits/SEALED + TradingGym causal reset/step + worker ownership",
+      "result": "P1C: RewardSpec + TrajectoryArtifact + DatasetService bridge; G26/G29 PASS",
       "command": "python3 -m pytest Data/backend/tests/test_market_sim_p1_gym.py -q"
     }
   },
@@ -582,7 +582,7 @@
           "timeout_sec": 180
         }
       ],
-      "notes": "P1B: TradingGym + API + worker ownership. RewardSpec remains provisional until P1C."
+      "notes": "P1B: TradingGym + API + worker ownership. RewardSpec completed in P1C."
     },
     "G27": {
       "title": "Agent scorecards + leaderboard penalty",
@@ -606,13 +606,30 @@
     },
     "G29": {
       "title": "Trajectory export via Datasets/Training",
-      "phase": "T8C/T8D",
-      "status": "NOT_STARTED",
+      "phase": "T8C/T8D/P1C",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/reward.py::RewardSpec + compute_step_reward",
+        "Data/modules/market_sim/trajectory.py::TrajectoryArtifact / TrajectoryBuilder",
+        "Data/modules/market_sim/dataset_bridge.py::export_trajectory_to_dataset",
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests",
+        "JSONL trajectory export; DatasetService bridge when bound (FILE_ONLY honest otherwise)",
+        "API: POST /api/market-sim/gym/episodes/{id}/export-trajectory"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "P1C: kernel RewardSpec + content-addressed trajectory JSONL + DatasetService bridge"
     },
     "G30": {
       "title": "Sim-to-real gap report",
