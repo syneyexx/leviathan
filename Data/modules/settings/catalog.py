@@ -2101,6 +2101,16 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
             consumer="AgentRuntime",
         ),
         _b(
+            "features.signal_fabric_enabled",
+            "agents_coding",
+            "Agent Signal Fabric",
+            "Enable LEVIATHAN Signal Fabric (agent coordination). Requires Agents for mission side-effects.",
+            default=True,
+            env="LEVIATHAN_FEATURE_SIGNAL_FABRIC",
+            path=("features", "signal_fabric_enabled"),
+            consumer="SignalFabricService",
+        ),
+        _b(
             "features.coding_enabled",
             "agents_coding",
             "Coding Agent",

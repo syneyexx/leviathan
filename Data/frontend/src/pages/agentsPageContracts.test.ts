@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentDefinition, AgentMission, CapabilityListItem } from "../types/api";
+import type { AgentDefinition, AgentMission, AgentSignal, CapabilityListItem } from "../types/api";
 import {
   agentEntityType,
   agentOrigin,
@@ -16,6 +16,7 @@ import {
   networkEdgesFromAgents,
   validateEditorDraft,
 } from "./agents/helpers";
+import { formatSignalConfidence, matchesSignalFilter } from "./agents/signalHelpers";
 
 function agent(partial: Partial<AgentDefinition> & Pick<AgentDefinition, "agentId" | "name">): AgentDefinition {
   return {
@@ -316,5 +317,44 @@ describe("agents page helpers", () => {
     expect(healthLabel(agent({ agentId: "a", name: "A", health: "error" }))).toBe("Error");
     expect(healthLabel(agent({ agentId: "a", name: "A", archived: true }))).toBe("Archived");
     expect(healthLabel(agent({ agentId: "a", name: "A", health: "unknown" }))).toBe("Unknown");
+  });
+});
+
+function signal(partial: Partial<AgentSignal> & Pick<AgentSignal, "signalId" | "signalType">): AgentSignal {
+  return {
+    senderType: "AGENT",
+    senderId: "a1",
+    recipientType: "AGENT",
+    recipientId: "a2",
+    priority: "NORMAL",
+    subject: "s",
+    payload: {},
+    artifactRefs: [],
+    evidenceRefs: [],
+    requiresAck: false,
+    hopCount: 0,
+    maxHops: 8,
+    status: "ROUTED",
+    createdAt: "2026-01-01T12:00:00Z",
+    updatedAt: "2026-01-01T12:00:00Z",
+    ...partial,
+  };
+}
+
+describe("signal helpers", () => {
+  it("filters signal feed categories", () => {
+    const handoff = signal({ signalId: "1", signalType: "TASK_HANDOFF" });
+    const block = signal({ signalId: "2", signalType: "BLOCK" });
+    const finding = signal({ signalId: "3", signalType: "FINDING" });
+    expect(matchesSignalFilter(handoff, "ALL")).toBe(true);
+    expect(matchesSignalFilter(handoff, "HANDOFFS")).toBe(true);
+    expect(matchesSignalFilter(handoff, "BLOCKS")).toBe(false);
+    expect(matchesSignalFilter(block, "BLOCKS")).toBe(true);
+    expect(matchesSignalFilter(finding, "KNOWLEDGE")).toBe(true);
+  });
+
+  it("formats confidence honestly", () => {
+    expect(formatSignalConfidence(0.94)).toBe("94%");
+    expect(formatSignalConfidence(null)).toBeNull();
   });
 });

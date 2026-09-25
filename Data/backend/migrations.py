@@ -3479,6 +3479,137 @@ def _m49_db_commit_receipts(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _m50_agent_signal_fabric(conn: sqlite3.Connection) -> None:
+    """LEVIATHAN Signal Fabric — durable signals, deliveries, subscriptions, dead letters, dedupe."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_signals (
+            signal_id TEXT PRIMARY KEY,
+            signal_type TEXT NOT NULL,
+            sender_type TEXT NOT NULL,
+            sender_id TEXT NOT NULL,
+            recipient_type TEXT NOT NULL,
+            recipient_id TEXT NOT NULL,
+            mission_id TEXT,
+            run_id TEXT,
+            trace_id TEXT,
+            parent_signal_id TEXT,
+            correlation_id TEXT,
+            priority TEXT NOT NULL DEFAULT 'NORMAL',
+            subject TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            artifact_refs_json TEXT NOT NULL DEFAULT '[]',
+            evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL,
+            requires_ack INTEGER NOT NULL DEFAULT 0,
+            expires_at TEXT,
+            idempotency_key TEXT,
+            hop_count INTEGER NOT NULL DEFAULT 0,
+            max_hops INTEGER NOT NULL DEFAULT 8,
+            status TEXT NOT NULL DEFAULT 'CREATED',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_signal_deliveries (
+            delivery_id TEXT PRIMARY KEY,
+            signal_id TEXT NOT NULL,
+            recipient_type TEXT NOT NULL,
+            recipient_id TEXT NOT NULL,
+            resolved_agent_id TEXT,
+            state TEXT NOT NULL DEFAULT 'PENDING',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 5,
+            next_attempt_at TEXT,
+            claimed_by TEXT,
+            claimed_at TEXT,
+            lease_expires_at TEXT,
+            delivered_at TEXT,
+            acknowledged_at TEXT,
+            consumed_at TEXT,
+            ack_consumer TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(signal_id) REFERENCES agent_signals(signal_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_signal_subscriptions (
+            subscription_id TEXT PRIMARY KEY,
+            subscriber_type TEXT NOT NULL,
+            subscriber_id TEXT NOT NULL,
+            signal_type TEXT,
+            role TEXT,
+            capability TEXT,
+            mission_id TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_signal_dead_letters (
+            dead_letter_id TEXT PRIMARY KEY,
+            signal_id TEXT NOT NULL,
+            delivery_id TEXT,
+            recipient_type TEXT,
+            recipient_id TEXT,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            first_failure_at TEXT,
+            last_failure_at TEXT,
+            reason TEXT NOT NULL DEFAULT '',
+            retryable INTEGER NOT NULL DEFAULT 1,
+            signal_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            retried_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_signal_dedupe (
+            dedupe_key TEXT PRIMARY KEY,
+            signal_id TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'signal',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_created ON agent_signals(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_type ON agent_signals(signal_type)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_mission ON agent_signals(mission_id)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_run ON agent_signals(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_trace ON agent_signals(trace_id)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_sender ON agent_signals(sender_id)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_recipient ON agent_signals(recipient_id)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signals_correlation ON agent_signals(correlation_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_signals_idempotency "
+        "ON agent_signals(idempotency_key) WHERE idempotency_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signal_deliveries_state "
+        "ON agent_signal_deliveries(state, next_attempt_at)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signal_deliveries_recipient "
+        "ON agent_signal_deliveries(recipient_id, state)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signal_deliveries_signal "
+        "ON agent_signal_deliveries(signal_id)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_signal_dead_letters_created "
+        "ON agent_signal_dead_letters(created_at)",
+    ):
+        conn.execute(ddl)
+
+
 def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
     """P0A: SimFill honesty fields + ClosedTrade / PositionEpisode table."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
@@ -3609,6 +3740,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=49,
         name="db_commit_receipts",
         apply=_m49_db_commit_receipts,
+    ),
+    Migration(
+        version=50,
+        name="agent_signal_fabric",
+        apply=_m50_agent_signal_fabric,
     ),
 )
 

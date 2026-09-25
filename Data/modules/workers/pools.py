@@ -144,6 +144,15 @@ POOL_CATALOG: dict[str, PoolDefinition] = {
         resource_classes=("CPU_LIGHT", "MODEL_INFERENCE"),
         description="Long-running agent missions",
     ),
+    "agent_signals": PoolDefinition(
+        pool_id="agent_signals",
+        entrypoint="Data.modules.workers.entrypoints.agent_signals",
+        default_count=1,
+        job_kinds=("agent_signal.",),
+        resource_classes=("CPU_LIGHT",),
+        description="LEVIATHAN Signal Fabric delivery / retry / housekeeping",
+        max_count=4,
+    ),
     "knowledge_prepare": PoolDefinition(
         pool_id="knowledge_prepare",
         entrypoint="Data.modules.workers.entrypoints.knowledge_prepare",

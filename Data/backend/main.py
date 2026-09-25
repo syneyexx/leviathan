@@ -26,6 +26,7 @@ from Data.modules.agents import (
     MultiAgentCoordinator,
     SystemInventory,
 )
+from Data.modules.agents.signals import SignalFabricService, SignalStore
 from Data.modules.analytics import AnalyticsService
 from Data.modules.approvals import (
     DEFAULT_AUTHORITY_PROFILE,
@@ -37,6 +38,7 @@ from Data.modules.approvals import (
 from Data.modules.coding import CodingControlPlane
 from Data.backend.routes.coding import build_coding_router
 from Data.backend.routes.agents import build_agents_router
+from Data.backend.routes.agent_signals import build_signals_router
 from Data.backend.routes.analytics import build_analytics_router
 from Data.modules.market_sim import MarketSimControlPlane
 from Data.backend.routes.market_sim import build_market_sim_router
@@ -285,6 +287,24 @@ agent_fleet = AgentFleetService(
     system_inventory=system_inventory,
     job_runtime=job_runtime,
 )
+signal_store = SignalStore(settings.database_path)
+signal_fabric = SignalFabricService(
+    signal_store,
+    fleet=agent_fleet,
+    job_runtime=job_runtime,
+    enabled=bool(
+        getattr(settings.features, "signal_fabric_enabled", True)
+        and settings.features.agents_enabled
+    ),
+)
+try:
+    from Data.modules.memory import MemoryStore as _MemoryStore
+
+    _mem = _MemoryStore(settings.database_path)
+    _mem.initialize()
+    signal_fabric.bind_memory_store(_mem)
+except Exception:  # noqa: BLE001
+    pass
 analytics_service = AnalyticsService(settings.database_path)
 workflow_store = WorkflowStore(settings.database_path)
 workflow_runtime = WorkflowRuntime(workflow_store, execution_gateway, job_runtime=job_runtime)
@@ -1554,6 +1574,10 @@ async def lifespan(_: FastAPI):
     training_service.reconcile()
     agent_fleet.initialize(seed_defaults=True)
     agent_fleet.reconcile()
+    signal_fabric.initialize()
+    signal_fabric.bind_fleet(agent_fleet)
+    agent_fleet.bind_signal_fabric(signal_fabric)
+    multi_agents.bind_signal_fabric(signal_fabric)
     # Trading agents/orchestras live on the same fleet (visible on the Agents page);
     # the trading executor claims kind=trading and role=trade_orchestra missions.
     trading_orchestra_service.bind_fleet(agent_fleet)
@@ -1712,6 +1736,7 @@ app.include_router(build_datasets_router(dataset_service))
 app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
+app.include_router(build_signals_router(signal_fabric))
 app.include_router(build_agents_router(agent_fleet))
 app.include_router(build_analytics_router(analytics_service))
 app.include_router(build_system_telemetry_router(system_telemetry_sampler))

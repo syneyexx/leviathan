@@ -60,6 +60,7 @@ _EXTERNAL_REQUIRED_PREFIXES: tuple[str, ...] = (
     "maintenance.",
     "market_sim.",
     "agent.",
+    "agent_signal.",
     "workflow.",
     "provider.",
     "mcp.call",

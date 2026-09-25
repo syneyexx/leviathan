@@ -84,7 +84,7 @@ class LifespanExternalizeGuards(unittest.TestCase):
         marker = "externalize = bool(worker_settings.enabled and worker_settings.externalize_api_runners)"
         self.assertIn(marker, text)
         idx = text.index(marker)
-        window = text[idx : idx + 2500]
+        window = text[idx : idx + 4500]
         self.assertIn("if externalize:", window)
         # Positive: recover always runs; heavy starts only in else.
         self.assertIn("research_service.recover()", text)

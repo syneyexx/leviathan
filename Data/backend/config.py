@@ -340,6 +340,7 @@ class FeatureFlags:
     module_manager_subprocess: bool
     agents_enabled: bool
     coding_enabled: bool
+    signal_fabric_enabled: bool
     mcp_enabled: bool
     mcp_stdio: bool
     mcp_http: bool
@@ -729,6 +730,7 @@ class Settings:
                 "module_manager_subprocess": self.features.module_manager_subprocess,
                 "agents_enabled": self.features.agents_enabled,
                 "coding_enabled": self.features.coding_enabled,
+                "signal_fabric_enabled": self.features.signal_fabric_enabled,
                 "mcp_enabled": self.features.mcp_enabled,
                 "mcp_stdio": self.features.mcp_stdio,
                 "mcp_http": self.features.mcp_http,
@@ -1121,6 +1123,7 @@ class Settings:
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
                 agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
                 coding_enabled=coding_enabled,
+                signal_fabric_enabled=_env_bool("LEVIATHAN_FEATURE_SIGNAL_FABRIC", True),
                 mcp_enabled=mcp_enabled,
                 mcp_stdio=mcp_stdio,
                 mcp_http=mcp_http,
