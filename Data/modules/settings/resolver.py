@@ -240,7 +240,14 @@ def resolve_language(
 
 
 class BehaviorSettingsResolver:
-    """Resolve persistent BehaviorProfile into an immutable per-turn snapshot."""
+    """Resolve persistent BehaviorProfile into an immutable per-turn snapshot.
+
+    Caching is only an object-identity optimization. Every ``resolve()`` /
+    ``get_profile()`` re-reads the store fingerprint so a Settings mutation in
+    this process or another process (worker) is observed on the next operation
+    without restart. In-flight callers keep their already-returned
+    BehaviorSnapshot (immutable).
+    """
 
     def __init__(self, behavior_store: Any | None = None) -> None:
         self._store = behavior_store
@@ -259,7 +266,31 @@ class BehaviorSettingsResolver:
             self._cache_hash = None
             self._cache_profile = None
 
+    def store_fingerprint(self) -> dict[str, str | None]:
+        """Cheap persisted revision identity for cross-process freshness checks."""
+        if self._store is None:
+            hashed = DEFAULT_BEHAVIOR_PROFILE if DEFAULT_BEHAVIOR_PROFILE.hash else DEFAULT_BEHAVIOR_PROFILE.with_hash()
+            return {
+                "id": hashed.id,
+                "version": str(hashed.version),
+                "hash": hashed.hash,
+                "source": "seed",
+            }
+        if hasattr(self._store, "fingerprint"):
+            fp = self._store.fingerprint()
+            if isinstance(fp, dict):
+                return fp
+        profile = self._store.get_effective()
+        hashed = profile if getattr(profile, "hash", None) else profile.with_hash()
+        return {
+            "id": hashed.id,
+            "version": str(hashed.version),
+            "hash": hashed.hash,
+            "source": "behavior_store",
+        }
+
     def get_profile(self) -> BehaviorProfile:
+        """Load the current persisted BehaviorProfile (one DB read per call)."""
         with self._lock:
             if self._store is None:
                 return DEFAULT_BEHAVIOR_PROFILE
@@ -267,6 +298,8 @@ class BehaviorSettingsResolver:
             if not isinstance(profile, BehaviorProfile):
                 return DEFAULT_BEHAVIOR_PROFILE
             hashed = profile if profile.hash else profile.with_hash()
+            # Defensive: never keep a memory object whose hash no longer matches
+            # the persisted profile (missed on_change, other-process write, etc.).
             if self._cache_hash == hashed.hash and self._cache_profile is not None:
                 return self._cache_profile
             self._cache_hash = hashed.hash
@@ -280,6 +313,7 @@ class BehaviorSettingsResolver:
         recent_user_messages: list[str] | None = None,
         overlays: list[str] | None = None,
     ) -> BehaviorSnapshot:
+        """Create a NEW immutable BehaviorSnapshot for one independent operation."""
         profile = self.get_profile()
         language = resolve_language(
             profile,
@@ -303,6 +337,12 @@ class BehaviorSettingsResolver:
             parts.extend(o.strip() for o in overlays if o and o.strip())
         if language.mode == "custom" and profile.language_custom_policy.strip():
             parts.append(f"Language policy: {profile.language_custom_policy.strip()}")
+        # Current BehaviorSnapshot outranks conversation history for identity.
+        parts.append(
+            "AUTHORITY: The current BehaviorProfile identity above is authoritative for this turn. "
+            "Prior assistant messages in conversation history may reflect older behavior settings "
+            "and must not override this identity."
+        )
         # Language instruction last so it wins over English-internal configuration.
         parts.append(language.instruction())
         system_prompt = "\n\n".join(p for p in parts if p and str(p).strip())

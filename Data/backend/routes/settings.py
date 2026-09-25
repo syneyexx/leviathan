@@ -131,15 +131,45 @@ def build_settings_router(plane: SettingsControlPlane) -> APIRouter:
     return router
 
 
-def build_behavior_router(behavior_store: Any) -> APIRouter:
+def build_behavior_router(behavior_store: Any, observability: Any | None = None) -> APIRouter:
     """BehaviorProfile routes — behavior is not authority.
 
     Models are defined at module scope so FastAPI treats them as JSON bodies.
     Nested local classes were incorrectly bound as required query params,
     producing opaque ``Field required`` / ``query.payload`` 422s.
+
+    Mutations persist to BehaviorProfileStore and invalidate effective-behavior
+    caches via store.on_change listeners. Hot-apply: next independent turn
+    resolves the new profile — no restart, refresh, or new chat required.
     """
 
     router = APIRouter(tags=["settings", "behavior"])
+
+    def _emit_behavior_updated(
+        *,
+        old_hash: str | None,
+        profile: Any,
+        updated_by: str,
+        changed_fields: list[str],
+    ) -> None:
+        if observability is None:
+            return
+        try:
+            observability.emit(
+                "settings",
+                "behavior.updated",
+                payload={
+                    "profile_id": getattr(profile, "id", None),
+                    "old_hash": old_hash,
+                    "new_hash": getattr(profile, "hash", None),
+                    "version": str(getattr(profile, "version", "") or ""),
+                    "updated_by": updated_by,
+                    "changed_fields": list(changed_fields),
+                    # Never include full system_prompt contents.
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     @router.get("/api/settings/behavior-profile")
     def get_behavior_profile() -> dict:
@@ -151,18 +181,33 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
                 "does_not_bypass_execution_gateway": True,
                 "does_not_bypass_approvals": True,
                 "settings_are_sole_identity_authority": True,
+                "hot_applies_next_turn": True,
             },
         }
 
     @router.put("/api/settings/behavior-profile/system-prompt")
     def put_system_prompt(payload: BehaviorPromptPatch = Body(...)) -> dict:
+        prior = behavior_store.get_effective()
+        old_hash = prior.hash or prior.compute_hash()
         profile = behavior_store.update_system_prompt(payload.system_prompt)
+        _emit_behavior_updated(
+            old_hash=old_hash,
+            profile=profile,
+            updated_by="operator",
+            changed_fields=["system_prompt"],
+        )
+        effective = behavior_store.public_effective(include_prompt=True)
         return {
             "profile": profile.public_dict(include_prompt=True),
-            "effective": behavior_store.public_effective(include_prompt=True),
+            "effective": effective,
+            "hash": profile.hash,
+            "version": profile.version,
+            "updated_at": effective.get("updated_at"),
             "truth": {
                 "behavior_is_not_authority": True,
                 "permissions_unchanged": True,
+                "applies_without_restart": True,
+                "hot_applies_next_turn": True,
             },
         }
 
@@ -176,26 +221,51 @@ def build_behavior_router(behavior_store: Any) -> APIRouter:
                     "expected": {"values": {"system_prompt": "...", "...": "..."}},
                 },
             )
+        prior = behavior_store.get_effective()
+        old_hash = prior.hash or prior.compute_hash()
         try:
             profile = behavior_store.patch(payload.values)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        _emit_behavior_updated(
+            old_hash=old_hash,
+            profile=profile,
+            updated_by="operator",
+            changed_fields=sorted(str(k) for k in payload.values.keys()),
+        )
+        effective = behavior_store.public_effective(include_prompt=True)
         return {
             "profile": profile.public_dict(include_prompt=True),
-            "effective": behavior_store.public_effective(include_prompt=True),
+            "effective": effective,
+            "hash": profile.hash,
+            "version": profile.version,
+            "updated_at": effective.get("updated_at"),
             "truth": {
                 "behavior_is_not_authority": True,
                 "permissions_unchanged": True,
                 "applies_without_restart": True,
+                "hot_applies_next_turn": True,
             },
         }
 
     @router.post("/api/settings/behavior-profile/reset")
     def reset_behavior_profile() -> dict:
+        prior = behavior_store.get_effective()
+        old_hash = prior.hash or prior.compute_hash()
         profile = behavior_store.reset_to_default()
+        _emit_behavior_updated(
+            old_hash=old_hash,
+            profile=profile,
+            updated_by="operator:reset",
+            changed_fields=["reset"],
+        )
+        effective = behavior_store.public_effective(include_prompt=True)
         return {
             "profile": profile.public_dict(include_prompt=True),
-            "effective": behavior_store.public_effective(include_prompt=True),
+            "effective": effective,
+            "hash": profile.hash,
+            "version": profile.version,
+            "updated_at": effective.get("updated_at"),
         }
 
     @router.post("/api/settings/behavior-profile/preview")

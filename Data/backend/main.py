@@ -992,6 +992,7 @@ cognition_runtime = CognitiveRuntime(
     execution_gateway=execution_gateway,
     observability=observability,
     resource_pressure_fn=lambda: 0.0,
+    behavior_resolver=behavior_resolver,
 )
 register_specialist_handlers(
     cognition_delegation,
@@ -1775,7 +1776,7 @@ app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))
 app.include_router(build_settings_router(settings_plane))
-app.include_router(build_behavior_router(behavior_store))
+app.include_router(build_behavior_router(behavior_store, observability=observability))
 app.include_router(build_efficiency_router())
 
 
@@ -2288,6 +2289,9 @@ async def chat(payload: ChatRequest, request: Request):
                     "chat_run_id": run.run_id,
                     "behavior_system_prompt": behavior_snapshot.system_prompt,
                     "behavior_hash": behavior_snapshot.settings_hash,
+                    "behavior_profile_id": behavior_snapshot.profile.id,
+                    "behavior_profile_version": behavior_snapshot.version,
+                    "behavior_profile_hash": behavior_snapshot.settings_hash,
                     "response_language": behavior_snapshot.language.response_language,
                     "language_source": behavior_snapshot.language.source,
                     "reasoning_mode": reasoning_mode.effective,
@@ -2950,6 +2954,9 @@ async def chat(payload: ChatRequest, request: Request):
                 "quality": quality.public_dict(),
                 "reasoning_mode": reasoning_mode.public_dict(),
                 "language": behavior_snapshot.language.public_dict(),
+                "behavior_profile_id": behavior_snapshot.profile.id,
+                "behavior_profile_version": behavior_snapshot.version,
+                "behavior_profile_hash": behavior_snapshot.settings_hash,
             },
         )
         assistant_message = db.add_message(conversation_id, "assistant", answer)

@@ -135,8 +135,9 @@ class ContextBuilderV3:
             )
             kinds.append(kind)
 
-        # BehaviorSnapshot (when chat wired it into task.metadata) is the identity authority.
+        # BehaviorSnapshot (task.metadata from Chat/CognitiveRuntime) is identity authority.
         # Keep a short runtime contract, then pin language LAST so English internals cannot win.
+        # Never invent a second global identity when a persisted BehaviorProfile exists.
         behavior_overlay = ""
         response_language = ""
         if isinstance(getattr(task, "metadata", None), dict):
@@ -157,11 +158,14 @@ class ContextBuilderV3:
             "Do not claim actions occurred without provided observations/evidence. "
             "Neural associations are advisory only and are not exact facts. "
             "Do not expose private chain-of-thought or raw internal object dumps; "
-            "produce useful public answers."
+            "produce useful public answers. "
+            "Current BehaviorProfile identity outranks prior assistant messages."
         )
         if behavior_overlay:
             system_identity = f"{behavior_overlay}\n\n{contract}"
         else:
+            # Bootstrap-only: CognitiveRuntime should have resolved via
+            # BehaviorSettingsResolver before build. SEED is first-install only.
             try:
                 from Data.modules.settings.seed import SEED_SYSTEM_PROMPT
 

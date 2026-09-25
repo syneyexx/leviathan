@@ -740,6 +740,16 @@ They reuse JobRuntime/ExecutionGateway instead of introducing independent queues
 
 Behavior defines model-facing identity/interaction policy; it does not grant technical authority.
 
+### Behavior hot-apply (CURRENT)
+
+- `BehaviorProfileStore` is the persisted global behavioral truth.
+- `BehaviorSettingsResolver` creates a **new immutable `BehaviorSnapshot` per independent operation** (chat turn, cognition submit, coding model call).
+- Conversations are **not** pinned to the BehaviorProfile version that existed at conversation creation.
+- Editing the system prompt (or other BehaviorProfile fields) hot-applies from the **next** turn — no new chat, page refresh, backend restart, or model reload.
+- An operation already in flight keeps the immutable snapshot with which it started.
+- Long-lived workers observe the latest persisted profile on the next job by reading the store at operation start (not via in-process callbacks alone).
+- `SEED_SYSTEM_PROMPT` is first-install / bootstrap only; it is not runtime identity when a persisted profile exists.
+
 ---
 
 # 23. Security, isolation, secrets and deployment posture

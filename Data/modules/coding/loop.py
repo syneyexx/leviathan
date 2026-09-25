@@ -573,11 +573,23 @@ class CodingLoop:
         return self.store.update_session(session.session_id, metadata=meta)
 
     def _behavior_prompt(self) -> str:
+        """Current global LEVIATHAN identity from persisted BehaviorProfile.
+
+        Reads the store on every coding model call so Settings mutations
+        hot-apply to the next coding operation without restart. Domain overlay
+        is applied separately by ContextBuilder (mode=coding).
+        """
         if self.behavior_store is not None:
             try:
-                return self.behavior_store.get_effective().composed_system_prompt()
+                from Data.modules.settings.resolver import BehaviorSettingsResolver
+
+                snap = BehaviorSettingsResolver(self.behavior_store).resolve()
+                return snap.profile.composed_system_prompt()
             except Exception:  # noqa: BLE001
-                pass
+                try:
+                    return self.behavior_store.get_effective().composed_system_prompt()
+                except Exception:  # noqa: BLE001
+                    pass
         try:
             from Data.modules.settings.seed import SEED_SYSTEM_PROMPT
 
