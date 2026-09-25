@@ -49,7 +49,7 @@ from .loop_detection import LoopDetector
 from .meta_controller import MetaController, MetaDecision
 from .perception import PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
-from .steering import SteerKind, classify_steer
+from .steering import InvalidationScope, SteerKind, classify_steer
 from .store import CognitionStore
 from .structured_state import StructuredReasoningState, structured_state_from_mapping
 from .task_model import TaskModel, TaskModelBuilder
@@ -512,12 +512,14 @@ class CognitiveRuntime:
         return state.public_status()
 
     def steer(self, run_id: str, instruction: str) -> dict[str, Any]:
-        state = self._require(run_id)
+        state = self._require(run_id, hydrate=True)
         text = (instruction or "").strip()
         if not text:
             return state.public_status()
         classified = classify_steer(text)
         state.steering.append(text)
+        scope = classified.invalidation
+
         # Preserve existing constraints unless goal replacement explicitly supersedes one.
         if classified.kind == SteerKind.STATUS_REQUEST:
             self._emit(state, "user_steering", classified.public_dict())
@@ -525,21 +527,41 @@ class CognitiveRuntime:
                 **state.public_status(),
                 "steering_classification": classified.public_dict(),
             }
+
         if classified.kind == SteerKind.GOAL_REPLACEMENT and classified.replaces_goal:
             state.task.goal = text[:240]
             state.working_memory.set_goal(state.task.goal)
+            if scope.open_hypotheses:
+                # Park open hypotheses as unresolved notes — do not invent facts.
+                for hyp in list(state.hypothesis_board.open_items()):
+                    hyp.metadata = {
+                        **dict(hyp.metadata or {}),
+                        "superseded_by_goal_steer": True,
+                    }
+                state.reasoning_state.add_unresolved("goal_replaced_by_steer")
         elif classified.kind == SteerKind.NEW_CONSTRAINT:
             state.task.constraints.append(text)
-            state.working_memory.upsert("constraint", text, priority=0.95, verified=True)
+            if hasattr(state.working_memory, "pin_constraints"):
+                state.working_memory.pin_constraints([text])
+            else:
+                state.working_memory.upsert("constraint", text, priority=0.95, verified=True)
         elif classified.kind == SteerKind.CORRECTION:
             state.task.constraints.append(f"correction:{text}")
             state.working_memory.upsert("constraint", f"correction:{text}", priority=0.9)
+            state.reasoning_state.add_critique(f"user_correction:{text[:160]}")
+        elif classified.kind == SteerKind.CLARIFICATION:
+            state.working_memory.upsert("question", text, priority=0.7)
+            state.reasoning_state.seed_from_goal(text, source="user_clarification")
         else:
             state.task.constraints.append(f"steer:{text}")
             state.working_memory.upsert("constraint", text, priority=0.88)
-        if state.plan is not None and classified.kind != SteerKind.STATUS_REQUEST:
-            self.planner.mark_stale(state.plan, reason=f"user_steer:{classified.kind.value}:{text[:80]}")
-        self._emit(state, "user_steering", classified.public_dict())
+
+        applied = self._apply_steer_invalidation(state, scope, classified)
+        self._emit(
+            state,
+            "user_steering",
+            {**classified.public_dict(), "applied_invalidation": applied},
+        )
         state.observations.append(
             CognitiveObservation(
                 kind=CognitiveObservationKind.USER_STEERING,
@@ -547,13 +569,68 @@ class CognitiveRuntime:
                 summary=text,
                 source_type=EpistemicType.USER_STATEMENT,
                 success=True,
-                payload=classified.public_dict(),
+                payload={**classified.public_dict(), "applied_invalidation": applied},
             )
         )
+        self._persist_update(state)
         return {
             **state.public_status(),
             "steering_classification": classified.public_dict(),
+            "applied_invalidation": applied,
         }
+
+    def _apply_steer_invalidation(
+        self,
+        state: CognitiveRunState,
+        scope: InvalidationScope,
+        classified: Any,
+    ) -> dict[str, Any]:
+        """Apply scoped invalidation — never a blind full reset."""
+        applied: dict[str, Any] = {"scopes": scope.public_dict()}
+        if scope.plan and state.plan is not None:
+            self.planner.mark_stale(
+                state.plan,
+                reason=f"user_steer:{classified.kind.value}:{classified.text[:80]}",
+            )
+            applied["plan_stale"] = True
+        if scope.current_action and state.plan is not None:
+            # Only reopen in-flight / ready steps — completed steps stay done.
+            # PlanStep is frozen; rebuild list.
+            reset = 0
+            new_steps = []
+            for step in state.plan.steps:
+                if step.status in {"READY", "RUNNING", "IN_PROGRESS", "PENDING", ""}:
+                    from dataclasses import replace as _dc_replace
+
+                    new_steps.append(_dc_replace(step, status="READY"))
+                    reset += 1
+                else:
+                    new_steps.append(step)
+            state.plan.steps = new_steps
+            applied["plan_steps_reset"] = reset
+        if scope.response_draft and state.response_text:
+            # Drop unverified draft; keep as observation preview only.
+            applied["response_draft_cleared"] = True
+            applied["prior_response_preview"] = state.response_text[:200]
+            state.response_text = None
+        if scope.pending_worker and state.pending_advance_job_id:
+            applied["pending_worker_superseded"] = state.pending_advance_job_id
+            state.pending_advance_job_id = None
+            # Cursor bump so next enqueue_advance uses a fresh idempotency key.
+            state.usage.iterations = int(state.usage.iterations or 0) + 1
+            if state.status == CognitiveRunStatus.WAITING_WORKER:
+                try:
+                    self._transition(state, CognitiveRunStatus.REASONING)
+                except CognitionTransitionInvalid:
+                    state.status = CognitiveRunStatus.REASONING
+        if scope.open_hypotheses:
+            applied["open_hypotheses_marked"] = len(state.hypothesis_board.open_items())
+        applied["truth"] = {
+            "invalidation_is_scoped": True,
+            "not_blind_full_reset": True,
+            "constraints_preserved": not scope.constraints,
+        }
+        return applied
 
     def status(self, run_id: str) -> dict[str, Any]:
         return self._require(run_id).public_status()
@@ -571,13 +648,67 @@ class CognitiveRuntime:
         state = self._require(run_id, hydrate=True)
         if state.status in TERMINAL_STATUSES and state.status != CognitiveRunStatus.BLOCKED:
             return state.public_status()
+        prior = state.status
         if state.status == CognitiveRunStatus.WAITING_APPROVAL:
             self._transition(state, CognitiveRunStatus.REASONING)
         elif state.status == CognitiveRunStatus.BLOCKED:
             # Reopen blocked as replanning only when explicitly resumed.
             state.status = CognitiveRunStatus.REPLANNING
-        self._emit(state, "resumed", {"from": state.status.value, "hydrated": True})
+        elif state.status == CognitiveRunStatus.WAITING_WORKER:
+            # Restart-safe: re-enqueue durable advance if no pending job, else continue.
+            self._emit(
+                state,
+                "resumed",
+                {
+                    "from": prior.value,
+                    "hydrated": True,
+                    "waiting_worker": True,
+                    "pending_advance_job_id": state.pending_advance_job_id,
+                    "truth": {"restart_safe_waiting_worker": True},
+                },
+            )
+            if self.job_runtime is not None:
+                if not state.pending_advance_job_id or not self._advance_job_still_active(
+                    state.pending_advance_job_id
+                ):
+                    return self.enqueue_advance(run_id, max_iterations=1)
+                # Job still queued/running — leave WAITING_WORKER.
+                self._persist_update(state)
+                return state.public_status()
+            # No job runtime — advance inline bounded batch.
+            return self.advance_external(run_id, max_iterations=1, requeue=False, history=history)
+
+        self._emit(state, "resumed", {"from": prior.value, "hydrated": True})
+        # Interrupted-by-restart REASONING with externalize → prefer durable advance.
+        from .advance import should_externalize_advance
+
+        if (
+            should_externalize_advance(
+                mode=state.decision.mode.value if state.decision and state.decision.mode else "DEEP",
+                externalize_deep=self.externalize_deep,
+                job_runtime_bound=self.job_runtime is not None,
+            )
+            and state.decision
+            and state.decision.mode
+            and state.decision.mode.value in {"DEEP", "MAXIMUM"}
+        ):
+            return self.enqueue_advance(run_id, max_iterations=1)
         return self.run(run_id, history=history)
+
+    def _advance_job_still_active(self, job_id: str) -> bool:
+        if self.job_runtime is None:
+            return False
+        store = getattr(self.job_runtime, "store", None)
+        if store is None or not hasattr(store, "get"):
+            return False
+        try:
+            job = store.get(job_id)
+        except Exception:  # noqa: BLE001
+            return False
+        if job is None:
+            return False
+        state = str(getattr(getattr(job, "state", None), "value", getattr(job, "state", "")) or "")
+        return state.upper() in {"QUEUED", "PENDING", "LEASED", "RUNNING", "RETRY"}
 
     def hydrate(self, run_id: str) -> dict[str, Any]:
         """Load durable cognitive state into the in-process runtime (U122)."""

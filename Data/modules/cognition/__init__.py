@@ -72,7 +72,7 @@ from .perception import PerceptionItem, PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .runtime import CognitiveRunState, CognitiveRuntime
 from .specialists import register_specialist_handlers
-from .steering import SteerClassification, SteerKind, classify_steer
+from .steering import InvalidationScope, SteerClassification, SteerKind, classify_steer, invalidation_scope_for
 from .failure import FailureCategory, classify_failure, should_blind_retry
 from .store import CognitionStore
 from .task_model import TaskModel, TaskModelBuilder
@@ -165,6 +165,7 @@ __all__ = [
     "ReasoningMode",
     "ReasoningStrategy",
     "RiskClass",
+    "InvalidationScope",
     "SteerClassification",
     "SteerKind",
     "StrategyRegistry",
@@ -185,6 +186,7 @@ __all__ = [
     "calibrate_expected_gain",
     "classify_failure",
     "classify_steer",
+    "invalidation_scope_for",
     "confidence_to_band",
     "merge_plan_advice",
     "neural_budget_for_mode",
