@@ -21,6 +21,8 @@ _CANONICAL_KEYS = (
     "isolation",
     "risk_tier",
     "docs_url",
+    "execution_class",
+    "workload_class",
 )
 
 
@@ -63,6 +65,14 @@ def normalize_capability_metadata(
     isolation = str(raw.pop("isolation", "") or "") or None
     risk_tier = str(raw.pop("risk_tier", "") or "standard")
     docs_url = str(raw.pop("docs_url", "") or "") or None
+    # Workload classification (W2) — authoritative hint for control-plane vs worker.
+    raw_execution = raw.pop("execution_class", None)
+    raw_workload = raw.pop("workload_class", None)
+    execution_class = _normalize_execution_class(
+        raw_execution if raw_execution is not None else raw_workload,
+        capability_id=capability_id,
+        worker_kind=worker_kind,
+    )
 
     # Soft domain inference from capability id prefix.
     if not domains and "." in capability_id:
@@ -80,6 +90,7 @@ def normalize_capability_metadata(
         "isolation": isolation,
         "risk_tier": risk_tier,
         "docs_url": docs_url,
+        "execution_class": execution_class,
         "search_text": " ".join(
             filter(
                 None,
@@ -90,6 +101,7 @@ def normalize_capability_metadata(
                     " ".join(tags),
                     " ".join(domains),
                     " ".join(aliases),
+                    execution_class or "",
                 ],
             )
         ).lower(),
@@ -97,8 +109,25 @@ def normalize_capability_metadata(
         "truth": {
             "metadata_is_not_authorization": True,
             "discoverable_is_not_approved": True,
+            "execution_class_is_not_authorization": True,
         },
     }
+
+
+def _normalize_execution_class(
+    value: Any,
+    *,
+    capability_id: str = "",
+    worker_kind: str | None = None,
+) -> str:
+    from .workload import classify_capability
+
+    meta: dict[str, Any] = {}
+    if value is not None and str(value).strip():
+        meta["execution_class"] = value
+    if worker_kind:
+        meta["worker_kind"] = worker_kind
+    return classify_capability(capability_id, metadata=meta).value
 
 
 def _as_str_tuple(value: Any) -> tuple[str, ...]:

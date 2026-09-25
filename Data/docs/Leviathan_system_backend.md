@@ -442,11 +442,58 @@ BehaviorProfile is **not** AuthorityProfile. Side effects that require approval 
 - `bootstrap.py`, `process.py`, `supervisor.py`, `loop.py`;
 - `registry.py`, `pools.py`, `protocol.py`, `settings.py`;
 - `admission.py`, `sqlite_support.py`;
+- `events.py` — centralized worker terminal observability (`WorkerEventEmitter`);
 - `entrypoints/` for domain-specific processes.
 
 Current entrypoint families include agents, backup, coding, dataset, document AI, embeddings, evaluation, general jobs, knowledge prepare/commit, maintenance, market simulation, MCP execution, model downloads, provider I/O, reranking, research, scheduler, source ingestion, telemetry, training control and workflows.
 
 Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/CPU/GPU work should be externalized through JobRuntime/workers when practical.
+
+### Control Plane vs Execution Plane
+
+| Plane | Owns | Must not own |
+| --- | --- | --- |
+| Control Plane (API/main) | routing, validation, auth/policy, job enqueue/cancel/status, SSE, lightweight metadata | PDF/archive parse, bulk embedding, research runs, dataset transforms, training, evaluation suites, unbounded network fetch |
+| Execution Plane (WorkerSupervisor pools) | durable job claim/execute for heavy work | control-plane routing / approvals |
+
+### Workload classification (`Data/modules/execution/workload.py`)
+
+Capabilities declare an `execution_class` in metadata:
+
+- `INLINE_SAFE` — small/bounded; may run in API
+- `EXTERNAL_PREFERRED` — prefer workers when available
+- `EXTERNAL_REQUIRED` — must not run heavy implementation in API when `LEVIATHAN_WORKERS_EXTERNALIZE_API=true`
+
+`ExecutionGateway` rejects inline API execution of `EXTERNAL_REQUIRED` with `worker_required` (honest `WORKER_UNAVAILABLE` / enqueue path). Worker processes (`LEVIATHAN_WORKER_ID`) and explicit developer mode (`LEVIATHAN_WORKERS_EXTERNALIZE_API=false`) remain exempt. Classification never bypasses authorization.
+
+### Terminal observability
+
+Worker lifecycle uses one emitter → human terminal lines + structured logs:
+
+- `[LEVIATHAN] Control Plane gestart`
+- `[JOB] Research '…' ingepland — job ab12cd34` (enqueue; not yet started)
+- `[WORKER] research pool gestart — 2 workers` (after processes are owned)
+- `[WORKER:research-1] Research '…' gestart` (after claim/begin)
+- completion/failure with duration and safe error codes
+
+Labels come from allowlisted metadata (topic/filename/dataset name); secrets and document bodies are never printed.
+
+### Fallback policy
+
+When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
+
+### Knowledge / Research control-plane rules (W3–W4)
+
+- Public `POST /api/knowledge` stages content (`INDEXING`) and enqueues `knowledge.prepare`; chunking/embedding run on `knowledge_prepare` workers.
+- `KnowledgeStore.initialize()` is **schema-only**. Legacy content backfill is a resumable `knowledge.prepare` (`action=backfill`) job (`KNOWLEDGE_BACKFILL_PENDING`).
+- ModelData / neuro absorb scans enqueue `knowledge.ingest_scan` on the prepare pool.
+- Research URL add validates SSRF shape in API, creates `PENDING` source, enqueues `research.fetch_url`.
+- Report regeneration enqueues `research.report.generate`.
+- Brain retry enqueues `source_ingestion.brain_retry` (no sync `upsert_document` on the API thread).
+- When externalized, missing Source Ingestion returns `SOURCE_INGESTION_UNAVAILABLE` — never legacy `UploadIngestor` PDF parse in FastAPI.
+- Cognition research delegation uses `background=True` / durable enqueue (WAITING), not sync deep research on the chat thread.
+- Training cancel returns promptly (`wait_seconds=0`); log reads use bounded tail I/O.
+- Artifact hash verification streams from disk.
 
 ---
 

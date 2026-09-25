@@ -1439,7 +1439,7 @@ async def lifespan(_: FastAPI):
         message="Settings control plane started",
     )
     db.initialize()
-    knowledge.initialize()
+    knowledge.initialize()  # schema only — no corpus backfill
     atlas_store.initialize()
     why_library.initialize()
     deep_recall_service.initialize()
@@ -1447,6 +1447,53 @@ async def lifespan(_: FastAPI):
     artifacts.initialize()
     approval_store.initialize()
     job_store.initialize()
+    try:
+        pending_backfill = int(knowledge.count_pending_content_backfill())
+    except Exception:  # noqa: BLE001
+        pending_backfill = 0
+    if pending_backfill > 0 and _evaluation_externalize():
+        try:
+            bf_job = job_runtime.enqueue(
+                capability_id="knowledge.prepare",
+                arguments={"action": "backfill", "limit": 50},
+                requested_by="api.startup",
+                domain="knowledge",
+                domain_entity_type="knowledge_backfill",
+                domain_entity_id="startup",
+                worker_pool="knowledge_prepare",
+                resource_class="CPU_HEAVY",
+                latency_class="background",
+                idempotency_key="knowledge:backfill:startup",
+                metadata={
+                    "human_title": "legacy content backfill",
+                    "pending": pending_backfill,
+                    "status": "KNOWLEDGE_BACKFILL_PENDING",
+                },
+            )
+            observability.emit(
+                "knowledge",
+                "backfill.enqueued",
+                payload={
+                    "pending": pending_backfill,
+                    "job_id": bf_job.job_id,
+                    "status": "KNOWLEDGE_BACKFILL_PENDING",
+                },
+                level="info",
+            )
+        except Exception as exc:  # noqa: BLE001
+            observability.emit(
+                "knowledge",
+                "backfill.enqueue_failed",
+                payload={"pending": pending_backfill, "error": str(exc)[:300]},
+                level="warning",
+            )
+    elif pending_backfill > 0:
+        observability.emit(
+            "knowledge",
+            "backfill.pending",
+            payload={"pending": pending_backfill, "status": "KNOWLEDGE_BACKFILL_PENDING"},
+            level="info",
+        )
     observation_store.initialize()
     evidence_store.initialize()
     capability_receipts.initialize()
@@ -3132,11 +3179,48 @@ def list_knowledge() -> dict:
 
 @app.post("/api/knowledge")
 def write_knowledge(payload: KnowledgeWrite) -> dict:
+    title = payload.title.strip()
+    content = payload.content.strip()
+    source = payload.source.strip()
+    if _evaluation_externalize():
+        staged = knowledge.stage_document(
+            document_id=payload.id,
+            title=title,
+            content=content,
+            source=source,
+        )
+        job = job_runtime.enqueue(
+            capability_id="knowledge.prepare",
+            arguments={
+                "action": "prepare",
+                "document_id": staged.document_id,
+            },
+            requested_by="api.knowledge.write",
+            domain="knowledge",
+            domain_entity_type="document",
+            domain_entity_id=staged.document_id,
+            worker_pool="knowledge_prepare",
+            resource_class="CPU_HEAVY",
+            latency_class="interactive",
+            idempotency_key=f"knowledge:prepare:{staged.document_id}:{staged.content_hash or 'x'}",
+            metadata={
+                "human_title": title,
+                "document_id": staged.document_id,
+                "filename": title,
+            },
+        )
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "document": staged.public_dict(),
+            "status": "INDEXING",
+            "truth": {"executed_via": "knowledge_prepare_worker", "chunking_deferred": True},
+        }
     document = knowledge.upsert_document(
         document_id=payload.id,
-        title=payload.title.strip(),
-        content=payload.content.strip(),
-        source=payload.source.strip(),
+        title=title,
+        content=content,
+        source=source,
     )
     return {"document": document.public_dict()}
 
@@ -3344,6 +3428,31 @@ class KnowledgeIngestPath(BaseModel):
 def ingest_knowledge_path(payload: KnowledgeIngestPath) -> dict:
     try:
         resolved = knowledge.resolve_under_data_root(payload.path.strip())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if _evaluation_externalize():
+        job = job_runtime.enqueue(
+            capability_id="knowledge.prepare",
+            arguments={"action": "ingest_path", "path": str(resolved)},
+            requested_by="api.knowledge.ingest_path",
+            domain="knowledge",
+            domain_entity_type="path",
+            domain_entity_id=str(resolved),
+            worker_pool="knowledge_prepare",
+            resource_class="IO_HEAVY",
+            latency_class="background",
+            idempotency_key=f"knowledge:ingest_path:{resolved}",
+            metadata={"human_title": resolved.name, "filename": resolved.name, "path": str(resolved)},
+        )
+        return {
+            "queued": True,
+            "job": job.public_dict(),
+            "path": str(resolved),
+            "truth": {"executed_via": "knowledge_prepare_worker"},
+        }
+    try:
         record = knowledge.ingest_file(resolved)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -3390,6 +3499,7 @@ def ingest_knowledge_scan(limit: int = 50) -> dict:
     safe_limit = min(max(limit, 1), 500)
     if _evaluation_externalize():
         return _enqueue_ingest_scan(safe_limit, requested_by="api.knowledge.ingest_scan")
+    # Developer/testing mode only — never silent fallback when externalization is on.
     try:
         docs = knowledge.scan_data_root(limit=safe_limit)
     except ValueError as exc:
@@ -3428,6 +3538,29 @@ class FunctionExecuteRequest(BaseModel):
 def execute_function(function_id: str, payload: FunctionExecuteRequest) -> dict:
     if function_id not in function_registry:
         raise HTTPException(status_code=404, detail="Function not found")
+    # Map FunctionRuntime ids to catalog capabilities when present (e.g. pdf_parser → file.parse_pdf).
+    capability_aliases = {
+        "pdf_parser": "file.parse_pdf",
+        "text_file_read": "file.read",
+        "csv_inspector": "file.inspect_csv",
+        "text_file_write": "file.write",
+    }
+    capability_id = capability_aliases.get(function_id, function_id)
+    from Data.modules.execution.workload import api_may_execute_inline, is_external_required
+
+    if is_external_required(capability_id) and not api_may_execute_inline(capability_id):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "WORKER_UNAVAILABLE",
+                "reason": "worker_required",
+                "capability_id": capability_id,
+                "function_id": function_id,
+                "message": (
+                    f"{capability_id} is EXTERNAL_REQUIRED and must run on an external worker"
+                ),
+            },
+        )
     result = function_runtime.execute(function_id, payload.arguments)
     status_code = 200
     if result.status == FunctionCallStatus.REJECTED:
@@ -4758,13 +4891,17 @@ def invoke_plugin(plugin_id: str, payload: PluginInvokeRequest) -> dict:
 
 
 def _evaluation_externalize() -> bool:
+    """Prefer external workers; fail closed toward externalization on probe errors."""
+    import os
+
     try:
         from Data.modules.workers.settings import load_worker_settings
 
         wsettings = load_worker_settings()
         return bool(wsettings.enabled and wsettings.externalize_api_runners)
     except Exception:  # noqa: BLE001
-        return False
+        raw = (os.environ.get("LEVIATHAN_WORKERS_EXTERNALIZE_API") or "1").strip().lower()
+        return raw in {"1", "true", "yes", "on"}
 
 
 def _enqueue_evaluation_suite(suite_id: str, *, arguments: dict | None = None) -> dict:

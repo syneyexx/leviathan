@@ -69,6 +69,11 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["filesystem", "pdf"],
+                "domains": ["filesystem"],
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
         )
     )
     catalog.register(
@@ -926,6 +931,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["ingestion", "research", "archive"],
                 "domains": ["source_ingestion"],
                 "worker_kind": "source_ingestion",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -951,6 +957,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["ingestion", "brain", "retry"],
                 "domains": ["source_ingestion"],
                 "worker_kind": "source_ingestion",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -976,6 +983,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["compute", "tier0", "deterministic"],
                 "domains": ["compute"],
                 "worker_kind": "general",
+                "execution_class": "INLINE_SAFE",
             },
         )
     )
@@ -1005,6 +1013,7 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
             "tags": tags or [worker_kind, cap_id.split(".", 1)[-1]],
             "domains": domains or [cap_id.split(".", 1)[0]],
             "worker_kind": worker_kind,
+            "execution_class": "EXTERNAL_REQUIRED",
             "idempotent": True,
             "cacheable": False,
         }
@@ -1094,6 +1103,36 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["research", "verify"],
     )
     _ext(
+        cap_id="research.fetch_url",
+        name="Fetch Research URL Source",
+        description="Fetch/parse a URL source and sync to Brain (research worker; not API).",
+        side_effects=(SideEffect.NETWORK, SideEffect.WRITE),
+        worker_kind="research",
+        required_args=["project_id", "url"],
+        properties={
+            "project_id": {"type": "string"},
+            "url": {"type": "string"},
+            "source_id": {"type": "string"},
+            "action": {"type": "string"},
+        },
+        permissions=("knowledge.write",),
+        tags=["research", "url", "fetch"],
+    )
+    _ext(
+        cap_id="research.report.generate",
+        name="Generate Research Report",
+        description="Regenerate research report + optional Brain sync (research worker).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="research",
+        required_args=["project_id"],
+        properties={
+            "project_id": {"type": "string"},
+            "action": {"type": "string"},
+        },
+        permissions=("process.execute", "knowledge.write"),
+        tags=["research", "report"],
+    )
+    _ext(
         cap_id="dataset.process",
         name="Process Dataset Job",
         description="Execute one durable dataset domain job (dataset worker pool).",
@@ -1136,12 +1175,18 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
     _ext(
         cap_id="knowledge.prepare",
         name="Prepare Knowledge Artifact",
-        description="Chunk, embed-prep, and extract entities for a knowledge artifact.",
+        description="Chunk, embed-prep, backfill, or finish staged knowledge documents (worker pool).",
         side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
         worker_kind="knowledge_prepare",
         properties={
             "artifact_id": {"type": "string"},
             "document_id": {"type": "string"},
+            "action": {"type": "string"},
+            "title": {"type": "string"},
+            "content": {"type": "string"},
+            "source": {"type": "string"},
+            "path": {"type": "string"},
+            "limit": {"type": "integer"},
         },
         permissions=("knowledge.write",),
         tags=["knowledge", "prepare"],

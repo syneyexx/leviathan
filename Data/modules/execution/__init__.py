@@ -20,6 +20,15 @@ from .types import (
     CapabilityResult,
     CapabilityStatus,
 )
+from .workload import (
+    ExecutionWorkloadClass,
+    api_may_execute_inline,
+    classify_capability,
+    execution_class_metadata,
+    externalize_api_enabled,
+    is_external_required,
+    running_in_worker_process,
+)
 
 __all__ = [
     "METADATA_SCHEMA_VERSION",
@@ -33,14 +42,21 @@ __all__ = [
     "CapabilityStatus",
     "EffectRecord",
     "ExecutionGateway",
+    "ExecutionWorkloadClass",
     "FrontierCapabilityManifest",
     "GatewayRejection",
     "ManifestAvailability",
     "ManifestEntry",
     "SideEffect",
+    "api_may_execute_inline",
     "build_default_catalog",
     "build_frontier_manifest",
     "build_receipt_from_result",
+    "classify_capability",
+    "execution_class_metadata",
+    "externalize_api_enabled",
+    "is_external_required",
     "normalize_capability_metadata",
+    "running_in_worker_process",
     "schema_hash",
 ]

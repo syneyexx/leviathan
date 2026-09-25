@@ -43,6 +43,12 @@ def run_api(*, host: str | None = None, port: int | None = None) -> int:
     os.environ.setdefault("LEVIATHAN_WORKERS_EXTERNALIZE_API", "1")
     os.environ.setdefault("LEVIATHAN_DATASET_JOBS_RUNNER", "external")
     os.environ.setdefault("LEVIATHAN_SOURCE_INGESTION_RUNNER", "external")
+    try:
+        from Data.modules.workers.events import get_worker_event_emitter
+
+        get_worker_event_emitter().control_plane_started()
+    except Exception:  # noqa: BLE001
+        print("[LEVIATHAN] Control Plane gestart", flush=True)
     uvicorn.run("Data.backend.main:app", host=h, port=p, reload=False)
     return 0
 

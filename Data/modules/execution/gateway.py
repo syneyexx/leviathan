@@ -265,6 +265,22 @@ class ExecutionGateway:
                 authority_decision="rejected_unavailable",
             )
 
+        # W2: EXTERNAL_REQUIRED must not execute heavy work inline in the API process.
+        try:
+            self._enforce_external_workload(definition, request)
+        except GatewayRejection as exc:
+            return self._reject(
+                request_id,
+                definition.id,
+                str(exc),
+                reason=exc.reason,
+                started=started,
+                definition=definition,
+                approval_id=request.approval_id,
+                request=request,
+                authority_decision=f"rejected_{exc.reason}",
+            )
+
         try:
             self._enforce_policy(definition, request)
             authority_decision = "allowed" if not request.approval_id else "allowed_with_approval"
@@ -394,6 +410,42 @@ class ExecutionGateway:
             requested_by=request.requested_by,
             trace_id=request.trace_id,
             idempotency_key=request.idempotency_key,
+        )
+
+    def _enforce_external_workload(
+        self, definition: CapabilityDefinition, request: CapabilityRequest
+    ) -> None:
+        """Refuse inline API execution of EXTERNAL_REQUIRED capabilities.
+
+        Workers (``LEVIATHAN_WORKER_ID`` set) and developer mode
+        (``LEVIATHAN_WORKERS_EXTERNALIZE_API=false``) are exempt.
+        Authorization/approval still apply independently.
+        """
+        from .workload import (
+            ExecutionWorkloadClass,
+            api_may_execute_inline,
+            classify_capability,
+        )
+
+        meta = definition.normalized_metadata()
+        cls = classify_capability(
+            definition.id,
+            metadata=meta,
+            provider_kind=definition.provider_kind.value,
+        )
+        if cls != ExecutionWorkloadClass.EXTERNAL_REQUIRED:
+            return
+        if api_may_execute_inline(
+            definition.id,
+            metadata=meta,
+            provider_kind=definition.provider_kind.value,
+        ):
+            return
+        raise GatewayRejection(
+            f"Capability {definition.id!r} is EXTERNAL_REQUIRED and must run on an "
+            f"external worker (WORKER_UNAVAILABLE / enqueue via JobRuntime). "
+            f"requested_by={request.requested_by!r}",
+            reason="worker_required",
         )
 
     def _enforce_policy(self, definition: CapabilityDefinition, request: CapabilityRequest) -> None:

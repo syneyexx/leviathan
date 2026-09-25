@@ -43,6 +43,16 @@ class TrainingError(Exception):
         return {"error": self.message, "details": self.details}
 
 
+def _tail_text_file(path: Path, *, max_bytes: int = 64_000) -> str:
+    """Read only the trailing ``max_bytes`` of a potentially huge log file."""
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        if size > max_bytes:
+            handle.seek(max(0, size - max_bytes))
+        data = handle.read(max_bytes)
+    return data.decode("utf-8", errors="replace")
+
+
 class TrainingService:
     """Facade over durable training store + subprocess workers."""
 
@@ -321,7 +331,12 @@ class TrainingService:
     def list_jobs(self, *, status: str | None = None, limit: int = 100) -> list[DurableTrainingJob]:
         return self.store.list_jobs(status=status, limit=limit)
 
-    def cancel_job(self, job_id: str, *, wait_seconds: float = 10.0) -> DurableTrainingJob:
+    def cancel_job(self, job_id: str, *, wait_seconds: float = 0.0) -> DurableTrainingJob:
+        """Request cancellation and return promptly.
+
+        ``wait_seconds`` retained for compatibility but defaults to 0 — API must not
+        block waiting for a trainer process to die. Supervisor/worker finalize CANCELLING.
+        """
         job = self.store.get_job(job_id)
         if job is None:
             raise TrainingError("Training job not found", http_status=404)
@@ -332,7 +347,8 @@ class TrainingService:
         events_path = self.corpus.training_logs / job_id / "events.jsonl"
         TrainingEventLog(events_path).emit("cancel_requested")
 
-        deadline = time.time() + max(0.0, wait_seconds)
+        # Optional brief reconcile for tests; production API uses wait_seconds=0.
+        deadline = time.time() + max(0.0, float(wait_seconds or 0.0))
         while time.time() < deadline:
             current = self.store.get_job(job_id)
             if current is None:
@@ -397,10 +413,7 @@ class TrainingService:
         text = ""
         path = job.log_path
         if path and Path(path).exists():
-            data = Path(path).read_bytes()
-            if len(data) > max_bytes:
-                data = data[-max_bytes:]
-            text = data.decode("utf-8", errors="replace")
+            text = _tail_text_file(Path(path), max_bytes=max(1024, int(max_bytes)))
         events_path = self.corpus.training_logs / job_id / "events.jsonl"
         events = TrainingEventLog(events_path).read(limit=200)
         return {

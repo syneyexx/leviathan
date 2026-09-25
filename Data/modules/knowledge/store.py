@@ -72,8 +72,214 @@ class KnowledgeStore:
             conn.close()
 
     def initialize(self) -> None:
+        """Schema/migrations only — never chunk or embed a legacy corpus at startup."""
         with self.connect() as conn:
             self._ensure_schema(conn)
+
+    def initialize_schema(self) -> None:
+        """Alias for :meth:`initialize` — DDL only."""
+        self.initialize()
+
+    def count_pending_content_backfill(self) -> int:
+        """Documents READY with content but zero chunks (legacy V1 shape)."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM knowledge_documents d
+                WHERE COALESCE(d.status, 'READY') = 'READY'
+                  AND LENGTH(TRIM(COALESCE(d.content, ''))) > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM knowledge_chunks c WHERE c.document_id = d.id
+                  )
+                """
+            ).fetchone()
+            return int(row["c"] if row else 0)
+
+    def backfill_content(self, *, limit: int = 50) -> dict[str, Any]:
+        """Resumable content backfill — chunk (+ embed) legacy docs lacking chunks.
+
+        Safe to call from a knowledge_prepare worker. Idempotent per document.
+        """
+        safe_limit = min(max(int(limit), 1), 500)
+        processed: list[str] = []
+        errors: list[dict[str, str]] = []
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            # Hash-only fixes (no chunk work) — cheap, keep inline with backfill job.
+            missing_hash = conn.execute(
+                """
+                SELECT id, content FROM knowledge_documents
+                WHERE content_hash IS NULL OR content_hash = ''
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+            for row in missing_hash:
+                content = row["content"] or ""
+                conn.execute(
+                    "UPDATE knowledge_documents SET content_hash = ?, "
+                    "parser = COALESCE(parser, 'plain_text'), "
+                    "ingest_version = COALESCE(ingest_version, 1) WHERE id = ?",
+                    (content_sha256(content), row["id"]),
+                )
+            rows = conn.execute(
+                """
+                SELECT d.id, d.title, d.content, d.source, d.content_hash,
+                       d.original_path, d.source_mtime, d.status
+                FROM knowledge_documents d
+                WHERE COALESCE(d.status, 'READY') = 'READY'
+                  AND LENGTH(TRIM(COALESCE(d.content, ''))) > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM knowledge_chunks c WHERE c.document_id = d.id
+                  )
+                ORDER BY d.updated_at ASC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+            for row in rows:
+                doc_id = row["id"]
+                content = row["content"] or ""
+                content_hash = row["content_hash"] or content_sha256(content)
+                try:
+                    self._replace_chunks(
+                        conn,
+                        document_id=doc_id,
+                        title=row["title"],
+                        content=content,
+                        original_path=row["original_path"] if "original_path" in row.keys() else None,
+                        source_mtime=row["source_mtime"] if "source_mtime" in row.keys() else None,
+                        document_hash=content_hash,
+                        source=row["source"] or "manual",
+                    )
+                    processed.append(doc_id)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append({"document_id": doc_id, "error": str(exc)[:300]})
+                    conn.execute(
+                        "UPDATE knowledge_documents SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+                        (IngestStatus.FAILED.value, str(exc)[:500], utc_now(), doc_id),
+                    )
+        remaining = self.count_pending_content_backfill()
+        return {
+            "processed": len(processed),
+            "document_ids": processed,
+            "errors": errors,
+            "remaining": remaining,
+            "status": "KNOWLEDGE_BACKFILL_PENDING" if remaining else "KNOWLEDGE_BACKFILL_DONE",
+        }
+
+    def stage_document(
+        self,
+        *,
+        title: str,
+        content: str,
+        source: str = "manual",
+        document_id: str | None = None,
+        original_path: str | None = None,
+        source_mtime: str | None = None,
+        size_bytes: int | None = None,
+        parser: str = "plain_text",
+        trust_metadata: dict[str, Any] | None = None,
+    ) -> DocumentRecord:
+        """Persist document metadata + content as INDEXING without chunking/embedding.
+
+        Control-plane safe: bounded SQLite write only. Worker calls
+        :meth:`prepare_staged_document` to finish.
+        """
+        document_id = document_id or str(uuid.uuid4())
+        now = utc_now()
+        digest = content_sha256(content)
+        trust = trust_metadata or {"trust": "manual"}
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            existing = conn.execute(
+                "SELECT created_at FROM knowledge_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            created_at = existing["created_at"] if existing else now
+            conn.execute(
+                """
+                INSERT INTO knowledge_documents(
+                    id, title, content, source, created_at, updated_at,
+                    status, content_hash, original_path, source_mtime, size_bytes,
+                    parser, parser_version, ingest_version, trust_metadata_json, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    content = excluded.content,
+                    source = excluded.source,
+                    updated_at = excluded.updated_at,
+                    status = excluded.status,
+                    content_hash = excluded.content_hash,
+                    original_path = excluded.original_path,
+                    source_mtime = excluded.source_mtime,
+                    size_bytes = excluded.size_bytes,
+                    parser = excluded.parser,
+                    parser_version = excluded.parser_version,
+                    ingest_version = excluded.ingest_version,
+                    trust_metadata_json = excluded.trust_metadata_json,
+                    error = NULL
+                """,
+                (
+                    document_id,
+                    title,
+                    content,
+                    source,
+                    created_at,
+                    now,
+                    IngestStatus.INDEXING.value,
+                    digest,
+                    original_path,
+                    source_mtime,
+                    size_bytes if size_bytes is not None else len(content.encode("utf-8")),
+                    parser,
+                    PARSER_VERSION,
+                    INGEST_VERSION,
+                    json.dumps(trust),
+                ),
+            )
+        record = self.get_document(document_id)
+        assert record is not None
+        return record
+
+    def prepare_staged_document(self, document_id: str) -> DocumentRecord:
+        """Chunk + embed a previously staged INDEXING document (worker-side)."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                "SELECT * FROM knowledge_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(document_id)
+            content = row["content"] or ""
+            content_hash = row["content_hash"] or content_sha256(content)
+            try:
+                self._replace_chunks(
+                    conn,
+                    document_id=document_id,
+                    title=row["title"],
+                    content=content,
+                    original_path=row["original_path"] if "original_path" in row.keys() else None,
+                    source_mtime=row["source_mtime"] if "source_mtime" in row.keys() else None,
+                    document_hash=content_hash,
+                    source=row["source"] or "manual",
+                )
+                conn.execute(
+                    "UPDATE knowledge_documents SET status = ?, error = NULL, updated_at = ? WHERE id = ?",
+                    (IngestStatus.READY.value, utc_now(), document_id),
+                )
+            except Exception as exc:  # noqa: BLE001
+                conn.execute(
+                    "UPDATE knowledge_documents SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+                    (IngestStatus.FAILED.value, str(exc)[:500], utc_now(), document_id),
+                )
+                raise
+        record = self.get_document(document_id)
+        assert record is not None
+        return record
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -215,39 +421,8 @@ class KnowledgeStore:
         except sqlite3.OperationalError:
             pass
 
-        # Backfill V1 documents missing hashes/chunks into READY V2/V3 shape.
-        rows = conn.execute(
-            """
-            SELECT id, title, content, source, created_at, updated_at,
-                   content_hash, status, original_path, source_mtime
-            FROM knowledge_documents
-            """
-        ).fetchall()
-        for row in rows:
-            doc_id = row["id"]
-            content = row["content"] or ""
-            content_hash = row["content_hash"] or content_sha256(content)
-            status = row["status"] or IngestStatus.READY.value
-            if not row["content_hash"]:
-                conn.execute(
-                    "UPDATE knowledge_documents SET content_hash = ?, status = ?, parser = COALESCE(parser, 'plain_text'), ingest_version = COALESCE(ingest_version, 1) WHERE id = ?",
-                    (content_hash, status, doc_id),
-                )
-            chunk_count = conn.execute(
-                "SELECT COUNT(*) AS c FROM knowledge_chunks WHERE document_id = ?",
-                (doc_id,),
-            ).fetchone()["c"]
-            if chunk_count == 0 and content.strip() and status == IngestStatus.READY.value:
-                self._replace_chunks(
-                    conn,
-                    document_id=doc_id,
-                    title=row["title"],
-                    content=content,
-                    original_path=row["original_path"] if "original_path" in row.keys() else None,
-                    source_mtime=row["source_mtime"] if "source_mtime" in row.keys() else None,
-                    document_hash=content_hash,
-                    source=row["source"] or "manual",
-                )
+        # Content backfill (chunk/embed legacy docs) is intentionally NOT done here.
+        # Call :meth:`backfill_content` from a knowledge_prepare worker / migration job.
 
     def upsert_document(
         self,

@@ -70,11 +70,21 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
     store = ctx["job_store"]
     args = dict(getattr(job, "arguments", None) or {})
     capability = str(getattr(job, "capability_id", "") or "")
-    action = str(
-        args.get("action")
-        or (capability.rsplit(".", 1)[-1] if capability.startswith("research.") else "")
-        or "advance"
-    ).strip().lower()
+    if capability == "research.fetch_url":
+        action = "fetch_url"
+    elif capability == "research.report.generate":
+        action = "regenerate_report"
+    else:
+        action = str(
+            args.get("action")
+            or (capability.rsplit(".", 1)[-1] if capability.startswith("research.") else "")
+            or "advance"
+        ).strip().lower()
+    if args.get("action") and capability not in {
+        "research.fetch_url",
+        "research.report.generate",
+    }:
+        action = str(args.get("action") or action).strip().lower()
     project_id = str(args.get("project_id") or "")
     if not project_id:
         return _fail(store, job, "missing project_id")
@@ -182,6 +192,14 @@ def process_research_job(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None
                     "research.verify not supported by ResearchService",
                     metadata={"research_action": action, "project_id": project_id},
                 )
+        elif action in {"fetch_url", "url"}:
+            url = str(args.get("url") or "").strip()
+            if not url:
+                return _fail(store, job, "missing url", metadata={"research_action": action})
+            source_id = str(args.get("source_id") or "") or None
+            result = service.execute_fetch_url(project_id, url, source_id=source_id)
+        elif action in {"regenerate_report", "report", "report.generate"}:
+            result = service._regenerate_report_inline(project_id)
         elif action in {"retrieve", "synthesize"}:
             # These are coordinator-internal phases; durable entry is research.advance.
             return _fail(

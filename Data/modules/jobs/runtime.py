@@ -28,6 +28,9 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "schedule.tick",
         "knowledge.prepare",
         "knowledge.commit",
+        "knowledge.ingest_scan",
+        "knowledge.ingest_document",
+        "knowledge.ingest_path",
         "embedding.batch",
         "rerank.batch",
         "evaluation.run",
@@ -45,6 +48,8 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "provider.hf.list",
         "model_download.start",
         "mcp.call",
+        "research.fetch_url",
+        "research.report.generate",
     }
 )
 
@@ -168,6 +173,19 @@ class JobRuntime:
             self._cancel_flags[job.job_id] = threading.Event()
             self.telemetry["enqueued"] += 1
             self._wake.set()
+            try:
+                from Data.modules.workers.events import get_worker_event_emitter
+
+                get_worker_event_emitter().job_queued(
+                    job_id=job.job_id,
+                    capability_id=capability_id,
+                    pool=resolved_pool,
+                    domain=domain,
+                    metadata=metadata,
+                    arguments=arguments,
+                )
+            except Exception:  # noqa: BLE001 — observability must not break enqueue
+                pass
         return job
 
     def get(self, job_id: str) -> JobRecord | None:
