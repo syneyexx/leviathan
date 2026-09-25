@@ -166,6 +166,31 @@ def _cot_leakage_scan() -> tuple[str, str]:
     return "PASS", "private_cot_strip_wired"
 
 
+def _ttc_scan() -> tuple[str, str]:
+    """R07 structural: TTC executor present; no unknown knobs on TTC path."""
+    ttc = ROOT / "Data" / "modules" / "cognition" / "ttc.py"
+    ctrl = ROOT / "Data" / "modules" / "cognition" / "inference_compute.py"
+    adapter = ROOT / "Data" / "modules" / "cognition" / "model_adapter.py"
+    if not ttc.is_file():
+        return "FAIL", "missing:ttc.py"
+    if not ctrl.is_file():
+        return "FAIL", "missing:inference_compute.py"
+    ttc_text = ttc.read_text(encoding="utf-8")
+    ctrl_text = ctrl.read_text(encoding="utf-8")
+    adapter_text = adapter.read_text(encoding="utf-8")
+    if "class TTCExecutor" not in ttc_text:
+        return "FAIL", "missing_TTCExecutor"
+    if "def select_ttc_candidate" not in ttc_text:
+        return "FAIL", "missing_select_ttc_candidate"
+    if "async def execute_ttc" not in ctrl_text:
+        return "FAIL", "controller_missing_execute_ttc"
+    if "ttc_candidate_budget" not in adapter_text:
+        return "FAIL", "model_adapter_missing_ttc_fanout"
+    if "provider_hints=None" not in adapter_text:
+        return "FAIL", "ttc_path_must_clear_provider_hints"
+    return "PASS", "ttc_multi_candidate_wired"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -300,6 +325,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st6, ev6
                     else:
                         evidence = f"{evidence};{ev6}"
+                if status == "PASS" and gid == "R07":
+                    st7, ev7 = _ttc_scan()
+                    if st7 != "PASS":
+                        status, evidence = st7, ev7
+                    else:
+                        evidence = f"{evidence};{ev7}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

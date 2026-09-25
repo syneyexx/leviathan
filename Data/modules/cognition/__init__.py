@@ -19,6 +19,7 @@ from .inference_compute import (
     InferenceComputePlan,
     InferenceComputeResult,
 )
+from .ttc import TTCCandidate, TTCExecutor, TTCSelection, select_ttc_candidate
 from .meta_controller import MetaController, MetaDecision
 from .model_adapter import build_control_plane_model_caller
 from .neural_compute import (
@@ -114,6 +115,9 @@ __all__ = [
     "SteerClassification",
     "SteerKind",
     "StrategyRegistry",
+    "TTCCandidate",
+    "TTCExecutor",
+    "TTCSelection",
     "TaskModel",
     "TaskModelBuilder",
     "VerifiedExperience",
@@ -127,5 +131,6 @@ __all__ = [
     "neural_budget_for_mode",
     "register_specialist_handlers",
     "resolve_reasoning_capability_profile",
+    "select_ttc_candidate",
     "should_blind_retry",
 ]

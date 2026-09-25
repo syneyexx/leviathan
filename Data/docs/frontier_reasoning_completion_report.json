@@ -1,6 +1,6 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-25T07:48:24Z",
+  "generated_at": "2026-09-25T07:52:55Z",
   "phase": "F0",
   "exit_code": 0,
   "definition_of_done": true,
@@ -107,8 +107,8 @@
       "id": "R07",
       "title": "TTC fallback",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f4_ttc;ttc_multi_candidate_wired",
       "phase": "F4",
       "kind": "program_gate"
     },

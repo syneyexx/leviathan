@@ -4,7 +4,8 @@ Uses the canonical inference_session path (residency + gateway + transport).
 Orchestration role ≠ model routing role.
 
 Native reasoning hints come from InferenceComputeController — never invented
-from model names. Generic providers receive empty hints (TTC path).
+from model names. Generic providers receive empty hints (TTC path) and may
+fan out multi-candidate completions under the neural budget.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ def build_control_plane_model_caller(
         provider_family: str | None = None,
         reasoning_mode: str | None = None,
         settings_capability_override: dict[str, Any] | None = None,
+        remaining_model_calls: int | None = None,
         **_kwargs: Any,
     ) -> dict[str, Any]:
         # orchestration role is public metadata — not a model id lookup key
@@ -111,7 +113,54 @@ def build_control_plane_model_caller(
                     capability_profile=capability_profile,
                     provider_family=str(family),
                     settings_capability_override=settings_capability_override,
+                    remaining_model_calls=remaining_model_calls,
                 )
+
+                if plan.path == "ttc" and plan.ttc_candidate_budget > 1:
+                    async def _complete(*, temperature: float, **_kw: Any) -> dict[str, Any]:
+                        # Explicitly empty hints — TTC must not invent native knobs.
+                        return await session.complete_messages(
+                            payload_messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            provider_hints=None,
+                        )
+
+                    base_temp = 0.2
+                    profile = getattr(session, "profile", None)
+                    if profile is not None and getattr(profile, "temperature", None) is not None:
+                        try:
+                            base_temp = float(profile.temperature)
+                        except (TypeError, ValueError):
+                            base_temp = 0.2
+
+                    normalized, _ttc_run = await inference_controller.execute_ttc(
+                        plan=plan,
+                        complete=_complete,
+                        base_temperature=base_temp,
+                    )
+                    usage = dict(normalized.usage)
+                    return {
+                        "text": normalized.text,
+                        "content": normalized.text,
+                        "model_id": session.model_id,
+                        "provider_model_id": session.backend_model_id,
+                        "usage": usage,
+                        "route": session.target.route.public_dict(),
+                        "run_id": run_id,
+                        "trace_id": session.call_id or trace_id,
+                        "usage_source": normalized.usage_source,
+                        "context_window": session.context_window,
+                        "inference_compute": normalized.public_dict(),
+                        "inference_plan": plan.public_dict(),
+                        "model_calls_consumed": normalized.model_calls_consumed,
+                        "truth": {
+                            "private_cot_not_returned": True,
+                            "native_hints_only_when_supported": False,
+                            "ttc_multi_candidate": True,
+                        },
+                    }
+
                 result = await session.complete_messages(
                     payload_messages,
                     max_tokens=max_tokens,
@@ -121,6 +170,7 @@ def build_control_plane_model_caller(
                     plan=plan,
                     raw_result=result if isinstance(result, dict) else {},
                     public_text=str((result or {}).get("text") or "") if isinstance(result, dict) else "",
+                    model_calls_consumed=1,
                 )
                 usage = dict(normalized.usage)
                 # Preserve non-reasoning usage fields from provider result.
@@ -140,10 +190,12 @@ def build_control_plane_model_caller(
                     "context_window": session.context_window,
                     "inference_compute": normalized.public_dict(),
                     "inference_plan": plan.public_dict(),
+                    "model_calls_consumed": 1,
                     # Never include private CoT.
                     "truth": {
                         "private_cot_not_returned": True,
                         "native_hints_only_when_supported": plan.path == "native",
+                        "ttc_multi_candidate": False,
                     },
                 }
 
