@@ -96,6 +96,16 @@ class WorkerRegistry:
                     """
                 )
                 self._ensure_lease_health_columns(conn)
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS worker_pool_desired (
+                        pool_id TEXT PRIMARY KEY,
+                        desired_count INTEGER NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        updated_by TEXT
+                    )
+                    """
+                )
 
         run_with_busy_retry(_init)
 
@@ -790,6 +800,68 @@ class WorkerRegistry:
                 {"worker_id": worker_id, "reason": "registry_row_decode_failure", "error": str(exc)}
             )
         return reg, quarantine
+
+    def list_pool_desired_overrides(self) -> dict[str, int]:
+        """Durable operator-desired pool counts (overrides env defaults when set)."""
+        def _do() -> list[sqlite3.Row]:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS worker_pool_desired (
+                        pool_id TEXT PRIMARY KEY,
+                        desired_count INTEGER NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        updated_by TEXT
+                    )
+                    """
+                )
+                return list(conn.execute("SELECT pool_id, desired_count FROM worker_pool_desired"))
+
+        rows = run_with_busy_retry(_do)
+        return {str(r["pool_id"]): int(r["desired_count"]) for r in rows}
+
+    def set_pool_desired_count(
+        self,
+        pool_id: str,
+        desired_count: int,
+        *,
+        updated_by: str | None = "api",
+    ) -> dict[str, Any]:
+        """Persist desired count for a pool. Caller must enforce max_count / catalog membership."""
+        now = utc_now()
+        count = int(desired_count)
+
+        def _do() -> None:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS worker_pool_desired (
+                        pool_id TEXT PRIMARY KEY,
+                        desired_count INTEGER NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        updated_by TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO worker_pool_desired(pool_id, desired_count, updated_at, updated_by)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(pool_id) DO UPDATE SET
+                        desired_count=excluded.desired_count,
+                        updated_at=excluded.updated_at,
+                        updated_by=excluded.updated_by
+                    """,
+                    (pool_id, count, now, updated_by),
+                )
+
+        run_with_busy_retry(_do)
+        return {
+            "poolId": pool_id,
+            "desiredCount": count,
+            "updatedAt": now,
+            "updatedBy": updated_by,
+        }
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> WorkerRegistration:

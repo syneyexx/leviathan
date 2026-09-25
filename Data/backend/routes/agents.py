@@ -68,8 +68,101 @@ class MissionLaunchBody(BaseModel):
     dryRun: bool = False
 
 
-def build_agents_router(fleet: AgentFleetService) -> APIRouter:
+def build_agents_router(
+    fleet: AgentFleetService,
+    *,
+    job_runtime: Any | None = None,
+    database_path: Any | None = None,
+) -> APIRouter:
     router = APIRouter(tags=["agents"])
+
+    def _workers_payload() -> dict | None:
+        if database_path is None:
+            return None
+        try:
+            from Data.modules.workers.pools import POOL_CATALOG
+            from Data.modules.workers.protocol import SupervisorHealth
+            from Data.modules.workers.registry import WorkerRegistry
+            from Data.modules.workers.settings import load_worker_settings
+
+            registry = WorkerRegistry(database_path)
+            registry.initialize()
+            workers = registry.list()
+            wsettings = load_worker_settings()
+            overrides = registry.list_pool_desired_overrides()
+            lease = registry.get_supervisor_lease() or {}
+            health = lease.get("health_state") or SupervisorHealth.UNAVAILABLE.value
+            pools = []
+            for pid, defn in POOL_CATALOG.items():
+                desired = overrides.get(pid)
+                if desired is None:
+                    desired = wsettings.desired_count(pid)
+                regs = [w for w in workers if w.pool_id == pid]
+                pools.append(
+                    {
+                        **defn.public_dict(),
+                        "desired": desired,
+                        "instances": len(regs),
+                        "ready": sum(1 for r in regs if r.state.value == "READY"),
+                        "busy": sum(1 for r in regs if r.state.value == "BUSY"),
+                        "draining": sum(1 for r in regs if r.state.value == "DRAINING"),
+                        "degraded": sum(1 for r in regs if r.state.value == "DEGRADED"),
+                        "workers": [r.public_dict() for r in regs],
+                    }
+                )
+            return {
+                "workers": [w.public_dict() for w in workers],
+                "pools": pools,
+                "supervisor": {"health": health, "degraded_reason": lease.get("degraded_reason")},
+            }
+        except Exception:  # noqa: BLE001 — dashboard soft-degrades workers
+            return None
+
+    def _jobs_by_pool() -> dict[str, dict[str, int]] | None:
+        if job_runtime is None:
+            return None
+        try:
+            from Data.modules.agents.dashboard import collect_job_pool_stats
+
+            return collect_job_pool_stats(job_runtime.list, limit=500)
+        except Exception:  # noqa: BLE001
+            return None
+
+    @router.get("/api/agents/dashboard")
+    def agents_dashboard(
+        windowHours: int = Query(default=24, ge=1, le=168),
+        failureWindowHours: int = Query(default=168, ge=1, le=720),
+    ) -> dict:
+        """Truthful Agents page read-model (aggregates only)."""
+        memory_writeback: int | None = None
+        try:
+            if getattr(fleet, "signal_fabric", None) is not None:
+                # MEMORY_CANDIDATE / completed memory signals in window if fabric exposes metrics.
+                metrics = fleet.signal_fabric.metrics(window_minutes=max(60, windowHours * 60))
+                by_type = (metrics or {}).get("byType") or {}
+                mem = by_type.get("MEMORY_CANDIDATE")
+                if mem is not None:
+                    memory_writeback = int(mem)
+        except Exception:  # noqa: BLE001
+            memory_writeback = None
+        payload = fleet.dashboard(
+            window_hours=windowHours,
+            failure_window_hours=failureWindowHours,
+            workers_payload=_workers_payload(),
+            jobs_by_pool=_jobs_by_pool(),
+            memory_writeback_count=memory_writeback,
+        )
+        return payload
+
+    @router.post("/api/agents/fleet/start-all")
+    def fleet_start_all() -> dict:
+        """Enable eligible USER fleet agents. SYSTEM components remain protected."""
+        return fleet.enable_all_user_agents()
+
+    @router.post("/api/agents/fleet/pause-all")
+    def fleet_pause_all() -> dict:
+        """Disable eligible USER fleet agents. SYSTEM components remain protected."""
+        return fleet.disable_all_user_agents()
 
     @router.get("/api/agents")
     def list_agents(

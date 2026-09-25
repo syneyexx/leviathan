@@ -1737,7 +1737,13 @@ app.include_router(build_training_router(training_service))
 app.include_router(build_research_router(research_service))
 app.include_router(build_coding_router(coding_service))
 app.include_router(build_signals_router(signal_fabric))
-app.include_router(build_agents_router(agent_fleet))
+app.include_router(
+    build_agents_router(
+        agent_fleet,
+        job_runtime=job_runtime,
+        database_path=settings.database_path,
+    )
+)
 app.include_router(build_analytics_router(analytics_service))
 app.include_router(build_system_telemetry_router(system_telemetry_sampler))
 app.include_router(
@@ -3949,6 +3955,7 @@ def list_workers(
     registry.initialize()
     workers = registry.list(pool_id=pool)
     wsettings = load_worker_settings()
+    overrides = registry.list_pool_desired_overrides()
     lease = registry.get_supervisor_lease() or {}
     health = lease.get("health_state") or SupervisorHealth.UNAVAILABLE.value
     return {
@@ -3956,7 +3963,7 @@ def list_workers(
         "pools": [
             {
                 **defn.public_dict(),
-                "desired": wsettings.desired_count(pid),
+                "desired": overrides.get(pid, wsettings.desired_count(pid)),
             }
             for pid, defn in POOL_CATALOG.items()
         ],
@@ -3977,6 +3984,7 @@ def list_workers(
         "truth": {
             "stale_row_is_not_live_worker": True,
             "model_serving_not_listed_here": True,
+            "desired_includes_durable_overrides": True,
         },
     }
 
@@ -3990,13 +3998,14 @@ def list_worker_pools() -> dict:
     registry = WorkerRegistry(settings.database_path)
     registry.initialize()
     wsettings = load_worker_settings()
+    overrides = registry.list_pool_desired_overrides()
     pools = []
     for pid, defn in POOL_CATALOG.items():
         regs = registry.list(pool_id=pid)
         pools.append(
             {
                 **defn.public_dict(),
-                "desired": wsettings.desired_count(pid),
+                "desired": overrides.get(pid, wsettings.desired_count(pid)),
                 "instances": len(regs),
                 "ready": sum(1 for r in regs if r.state.value == "READY"),
                 "busy": sum(1 for r in regs if r.state.value == "BUSY"),
@@ -4027,6 +4036,57 @@ def list_worker_pools() -> dict:
     except Exception:  # noqa: BLE001
         provider_status["queue_depth"] = None
     return {"pools": pools, "provider_io": provider_status}
+
+
+class WorkerPoolScaleBody(BaseModel):
+    desiredCount: int = Field(ge=0, le=64)
+
+
+@app.post("/api/workers/pools/{pool_id}/scale")
+def scale_worker_pool(pool_id: str, payload: WorkerPoolScaleBody) -> dict:
+    """Persist desired worker count for a pool. Supervisor hot-applies on next tick.
+
+    Does not spawn subprocesses from the API process. Enforces catalog max_count.
+    Protected singleton pools (max_count=1) cannot exceed 1.
+    """
+    from Data.modules.workers.pools import POOL_CATALOG
+    from Data.modules.workers.registry import WorkerRegistry
+    from Data.modules.workers.settings import load_worker_settings
+
+    if pool_id not in POOL_CATALOG:
+        raise HTTPException(status_code=404, detail=f"Unknown worker pool: {pool_id}")
+    defn = POOL_CATALOG[pool_id]
+    desired = max(0, min(int(payload.desiredCount), int(defn.max_count)))
+    if int(payload.desiredCount) > int(defn.max_count):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "MAX_COUNT_EXCEEDED",
+                "message": f"desiredCount {payload.desiredCount} exceeds max_count {defn.max_count}",
+                "maxCount": defn.max_count,
+            },
+        )
+    registry = WorkerRegistry(settings.database_path)
+    registry.initialize()
+    result = registry.set_pool_desired_count(pool_id, desired, updated_by="api")
+    wsettings = load_worker_settings()
+    regs = registry.list(pool_id=pool_id)
+    return {
+        "pool": {
+            **defn.public_dict(),
+            "desired": desired,
+            "envDesired": wsettings.desired_count(pool_id),
+            "instances": len(regs),
+            "ready": sum(1 for r in regs if r.state.value == "READY"),
+            "busy": sum(1 for r in regs if r.state.value == "BUSY"),
+        },
+        "override": result,
+        "truth": {
+            "api_does_not_spawn_subprocesses": True,
+            "supervisor_applies_on_tick": True,
+            "max_count_enforced": True,
+        },
+    }
 
 
 @app.get("/api/jobs/{job_id}/provider-stream")

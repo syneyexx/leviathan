@@ -91,9 +91,24 @@ class WorkerSupervisor:
         self._restart_attempts: dict[str, int] = {}
         self._events = get_worker_event_emitter()
 
+    def _apply_desired_overrides(self) -> None:
+        """Hot-apply durable API/operator pool desired counts before reconcile."""
+        try:
+            overrides = self.registry.list_pool_desired_overrides()
+        except Exception:  # noqa: BLE001
+            return
+        for pool_id, desired in overrides.items():
+            if pool_id not in self._pools or pool_id not in POOL_CATALOG:
+                continue
+            max_count = POOL_CATALOG[pool_id].max_count
+            clamped = max(0, min(int(desired), max_count))
+            self._pools[pool_id].desired = clamped
+            self.settings.pool_counts[pool_id] = clamped
+
     def initialize(self) -> None:
         self.registry.initialize()
         self.admission.initialize()
+        self._apply_desired_overrides()
 
     def acquire(self) -> bool:
         return self.registry.try_acquire_supervisor_lease(
@@ -193,6 +208,7 @@ class WorkerSupervisor:
         if not self._running:
             return {"ok": False, "reason": "not_running", "fatal": False, "health": self.health.value}
 
+        self._apply_desired_overrides()
         tick_errors: list[dict[str, Any]] = []
         now_s = utc_now()
         self.last_tick_at = now_s
