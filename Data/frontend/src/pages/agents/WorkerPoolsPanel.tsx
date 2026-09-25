@@ -6,7 +6,7 @@ import type {
   WorkerFabricWorker,
 } from "../../types/api";
 import { formatPct } from "./helpers";
-import { Bar, PanelHead } from "./agentsUi";
+import { PanelHead } from "./agentsUi";
 
 type Tab = "Pools" | "Workers" | "Jobs" | "Failures";
 

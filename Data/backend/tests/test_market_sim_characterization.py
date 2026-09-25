@@ -420,7 +420,10 @@ class D8PersistenceCharacterization(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = _store(tmp)
             src = inspect.getsource(store.connect)
-            self.assertIn("sqlite3.connect", src)
+            self.assertTrue(
+            "sqlite3.connect" in src or "open_sqlite_connection" in src,
+            msg="connect() must open a fresh SQLite connection each call",
+        )
             self.assertFalse(hasattr(store, "begin_slice"))
 
     def test_d8_current_list_equity_silently_truncates(self) -> None:

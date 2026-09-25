@@ -6,9 +6,11 @@ evals with evidence and low destructive/retry rates.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from Data.backend.migrations import MigrationRunner
 from Data.modules.coding import (
@@ -126,6 +128,16 @@ class SemanticMapAndTransactionalPatchTests(unittest.TestCase):
 
 class ResearchClaimGraphBundleTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._ext_patch = mock.patch.dict(
+            os.environ,
+            {
+                "LEVIATHAN_WORKERS_EXTERNALIZE_API": "0",
+                "LEVIATHAN_RESEARCH_RUNNER": "inprocess",
+            },
+            clear=False,
+        )
+        self._ext_patch.start()
+        self.addCleanup(self._ext_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db = self.root / "r.db"
@@ -189,6 +201,17 @@ class Wave6ExitGateCombinedTests(unittest.TestCase):
     """Coding task + research task both produce evidence with controlled edits."""
 
     def test_combined_exit_gate(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "LEVIATHAN_WORKERS_EXTERNALIZE_API": "0",
+                "LEVIATHAN_RESEARCH_RUNNER": "inprocess",
+            },
+            clear=False,
+        ):
+            self._combined_exit_gate_body()
+
+    def _combined_exit_gate_body(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = root / "repo"

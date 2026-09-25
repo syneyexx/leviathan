@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from Data.modules.knowledge import KnowledgeStore
 from Data.modules.research import (
@@ -33,6 +35,16 @@ from Data.modules.research.uploads import parse_bytes, sanitize_filename
 
 class ResearchHardeningTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._ext_patch = mock.patch.dict(
+            os.environ,
+            {
+                "LEVIATHAN_WORKERS_EXTERNALIZE_API": "0",
+                "LEVIATHAN_RESEARCH_RUNNER": "inprocess",
+            },
+            clear=False,
+        )
+        self._ext_patch.start()
+        self.addCleanup(self._ext_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db_path = self.root / "leviathan.db"
