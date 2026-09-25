@@ -398,6 +398,35 @@ def _cognition_advance_scan() -> tuple[str, str]:
     return "PASS", "cognition_advance_worker_externalization_ok"
 
 
+def _steering_resume_scan() -> tuple[str, str]:
+    """R18/R19 structural: scoped steer invalidation + restart-safe resume."""
+    steering = ROOT / "Data" / "modules" / "cognition" / "steering.py"
+    store = ROOT / "Data" / "modules" / "cognition" / "store.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    if not steering.is_file():
+        return "FAIL", "missing:steering.py"
+    st = steering.read_text(encoding="utf-8")
+    store_t = store.read_text(encoding="utf-8") if store.is_file() else ""
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    if "class InvalidationScope" not in st:
+        return "FAIL", "missing_InvalidationScope"
+    if "invalidation_is_scoped" not in st:
+        return "FAIL", "missing_scoped_invalidation_truth"
+    if "def invalidation_scope_for" not in st:
+        return "FAIL", "missing_invalidation_scope_for"
+    if "_apply_steer_invalidation" not in rt:
+        return "FAIL", "runtime_missing_steer_invalidation"
+    if "pending_worker_superseded" not in rt:
+        return "FAIL", "runtime_missing_pending_worker_supersede"
+    if "restart_safe" not in store_t or "WAITING_WORKER" not in store_t:
+        return "FAIL", "reconcile_missing_waiting_worker_preserve"
+    if "resumable" not in store_t:
+        return "FAIL", "reconcile_missing_resumable_flag"
+    if "restart_safe_waiting_worker" not in rt:
+        return "FAIL", "resume_missing_waiting_worker_path"
+    return "PASS", "steering_scoped_invalidation_and_restart_safe_resume_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -586,6 +615,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st17, ev17
                     else:
                         evidence = f"{evidence};{ev17}"
+                if status == "PASS" and gid in {"R18", "R19"}:
+                    stSR, evSR = _steering_resume_scan()
+                    if stSR != "PASS":
+                        status, evidence = stSR, evSR
+                    else:
+                        evidence = f"{evidence};{evSR}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

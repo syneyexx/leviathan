@@ -298,7 +298,13 @@ class CognitionStore:
         return [json.loads(r["payload_json"] or "{}") for r in rows]
 
     def reconcile_interrupted(self) -> list[str]:
-        """Mark non-terminal runs from a prior process as interrupted (not still running)."""
+        """Reconcile non-terminal runs after process restart.
+
+        Durable wait states (WAITING_WORKER / WAITING_APPROVAL) stay resumable —
+        they are backed by jobs/approvals outside this process. Active in-process
+        stages are marked interrupted but remain resumable (not blindly FAILED)
+        when a pending advance job exists or the run can be re-entered.
+        """
         conn = self.connect()
         terminal = (
             "COMPLETED_VERIFIED",
@@ -311,6 +317,10 @@ class CognitionStore:
             "BLOCKED",
             "SHADOW",
         )
+        durable_wait = (
+            CognitiveRunStatus.WAITING_WORKER.value,
+            CognitiveRunStatus.WAITING_APPROVAL.value,
+        )
         placeholders = ",".join("?" for _ in terminal)
         rows = conn.execute(
             f"SELECT run_id, status FROM cognitive_runs WHERE status NOT IN ({placeholders})",
@@ -319,28 +329,63 @@ class CognitionStore:
         updated: list[str] = []
         now = _now()
         for row in rows:
-            meta = {}
-            full = self.get_run(row["run_id"])
-            if full:
-                meta = dict(full.get("metadata") or {})
-            meta["reconciled"] = True
-            meta["prior_status"] = row["status"]
-            meta["reconcile_note"] = "process restart — prior RUNNING is not current truth"
-            conn.execute(
-                """
-                UPDATE cognitive_runs
-                SET status = ?, error = ?, metadata_json = ?, updated_at = ?
-                WHERE run_id = ?
-                """,
-                (
-                    CognitiveRunStatus.FAILED.value,
-                    "interrupted_by_restart",
-                    json.dumps(meta),
-                    now,
-                    row["run_id"],
-                ),
+            run_id = row["run_id"]
+            prior = row["status"]
+            full = self.get_run(run_id) or {}
+            meta = dict(full.get("metadata") or {})
+            result = dict(full.get("result") or {})
+            checkpoint = dict(result.get("checkpoint") or {})
+            pending_job = (
+                checkpoint.get("pending_advance_job_id")
+                or result.get("pending_advance_job_id")
             )
-            updated.append(row["run_id"])
+            meta["reconciled"] = True
+            meta["prior_status"] = prior
+            meta["reconcile_at"] = now
+
+            if prior in durable_wait or pending_job:
+                # Keep durable wait / pending worker runs — restart-safe.
+                new_status = (
+                    prior
+                    if prior in durable_wait
+                    else CognitiveRunStatus.WAITING_WORKER.value
+                )
+                meta["reconcile_note"] = (
+                    "process restart — durable wait preserved for resume"
+                )
+                meta["resumable"] = True
+                meta["restart_safe"] = True
+                conn.execute(
+                    """
+                    UPDATE cognitive_runs
+                    SET status = ?, metadata_json = ?, updated_at = ?
+                    WHERE run_id = ?
+                    """,
+                    (new_status, json.dumps(meta), now, run_id),
+                )
+            else:
+                # In-process mid-flight without durable worker binding:
+                # park as REASONING + resumable so resume()/hydrate() can continue.
+                meta["reconcile_note"] = (
+                    "process restart — in-process stage interrupted; resumable"
+                )
+                meta["resumable"] = True
+                meta["interrupted_by_restart"] = True
+                conn.execute(
+                    """
+                    UPDATE cognitive_runs
+                    SET status = ?, error = ?, metadata_json = ?, updated_at = ?
+                    WHERE run_id = ?
+                    """,
+                    (
+                        CognitiveRunStatus.REASONING.value,
+                        "interrupted_by_restart",
+                        json.dumps(meta),
+                        now,
+                        run_id,
+                    ),
+                )
+            updated.append(run_id)
         conn.commit()
         return updated
 

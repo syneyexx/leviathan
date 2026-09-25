@@ -1,4 +1,9 @@
-"""User steering classification — preserve valid constraints; don't flatten intents."""
+"""User steering classification — preserve valid constraints; don't flatten intents.
+
+Invalidation scopes make mid-turn corrections surgical: corrections do not wipe
+goals/constraints; goal replacement does not wipe hard constraints; status
+requests mutate nothing.
+"""
 
 from __future__ import annotations
 
@@ -18,12 +23,79 @@ class SteerKind(str, Enum):
 
 
 @dataclass(frozen=True)
+class InvalidationScope:
+    """What a steering event may invalidate — explicit, not blind wipe."""
+
+    plan: bool = False
+    current_action: bool = False
+    open_hypotheses: bool = False
+    response_draft: bool = False
+    pending_worker: bool = False
+    goal: bool = False
+    constraints: bool = False  # almost never true
+    beliefs: bool = False
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "plan": self.plan,
+            "current_action": self.current_action,
+            "open_hypotheses": self.open_hypotheses,
+            "response_draft": self.response_draft,
+            "pending_worker": self.pending_worker,
+            "goal": self.goal,
+            "constraints": self.constraints,
+            "beliefs": self.beliefs,
+            "truth": {
+                "invalidation_is_scoped": True,
+                "not_blind_full_reset": True,
+                "valid_constraints_preserved_unless_scoped": not self.constraints,
+            },
+        }
+
+
+# Per-kind default scopes (program: mid-turn corrections are scoped).
+_SCOPES: dict[SteerKind, InvalidationScope] = {
+    SteerKind.STATUS_REQUEST: InvalidationScope(),
+    SteerKind.CLARIFICATION: InvalidationScope(
+        response_draft=True,
+    ),
+    SteerKind.NEW_CONSTRAINT: InvalidationScope(
+        plan=True,
+        current_action=True,
+        pending_worker=True,
+    ),
+    SteerKind.CORRECTION: InvalidationScope(
+        plan=True,
+        current_action=True,
+        response_draft=True,
+        pending_worker=True,
+        open_hypotheses=False,  # corrections refine; do not wipe hypotheses
+        beliefs=False,
+    ),
+    SteerKind.GOAL_REPLACEMENT: InvalidationScope(
+        plan=True,
+        current_action=True,
+        response_draft=True,
+        pending_worker=True,
+        open_hypotheses=True,
+        goal=True,
+        # constraints stay unless explicitly superseded elsewhere
+    ),
+    SteerKind.UNKNOWN: InvalidationScope(
+        plan=True,
+        pending_worker=True,
+    ),
+}
+
+
+@dataclass(frozen=True)
 class SteerClassification:
     kind: SteerKind
     text: str
     preserves_existing_constraints: bool
     replaces_goal: bool
     detail: str
+    invalidation: InvalidationScope = InvalidationScope()
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -32,11 +104,17 @@ class SteerClassification:
             "preserves_existing_constraints": self.preserves_existing_constraints,
             "replaces_goal": self.replaces_goal,
             "detail": self.detail,
+            "invalidation": self.invalidation.public_dict(),
             "truth": {
                 "steering_is_not_blind_append": True,
                 "valid_constraints_are_preserved": self.preserves_existing_constraints,
+                "invalidation_is_scoped": True,
             },
         }
+
+
+def invalidation_scope_for(kind: SteerKind) -> InvalidationScope:
+    return _SCOPES.get(kind, InvalidationScope(plan=True))
 
 
 _STATUS = re.compile(
@@ -75,51 +153,64 @@ def classify_steer(instruction: str) -> SteerClassification:
             preserves_existing_constraints=True,
             replaces_goal=False,
             detail="empty",
+            invalidation=InvalidationScope(),
         )
     if _STATUS.search(text):
+        kind = SteerKind.STATUS_REQUEST
         return SteerClassification(
-            kind=SteerKind.STATUS_REQUEST,
+            kind=kind,
             text=text,
             preserves_existing_constraints=True,
             replaces_goal=False,
             detail="status inquiry — no plan mutation required",
+            invalidation=invalidation_scope_for(kind),
         )
     if _GOAL_REPLACE.search(text):
+        kind = SteerKind.GOAL_REPLACEMENT
         return SteerClassification(
-            kind=SteerKind.GOAL_REPLACEMENT,
+            kind=kind,
             text=text,
             preserves_existing_constraints=True,  # constraints still bind unless contradicted
             replaces_goal=True,
             detail="goal replacement — preserve prior constraints unless superseded",
+            invalidation=invalidation_scope_for(kind),
         )
     if _CORRECTION.search(text):
+        kind = SteerKind.CORRECTION
         return SteerClassification(
-            kind=SteerKind.CORRECTION,
+            kind=kind,
             text=text,
             preserves_existing_constraints=True,
             replaces_goal=False,
             detail="correction of prior approach",
+            invalidation=invalidation_scope_for(kind),
         )
     if _CONSTRAINT.search(text):
+        kind = SteerKind.NEW_CONSTRAINT
         return SteerClassification(
-            kind=SteerKind.NEW_CONSTRAINT,
+            kind=kind,
             text=text,
             preserves_existing_constraints=True,
             replaces_goal=False,
             detail="additional hard/soft constraint",
+            invalidation=invalidation_scope_for(kind),
         )
     if _CLARIFICATION.search(text) or text.endswith("?"):
+        kind = SteerKind.CLARIFICATION
         return SteerClassification(
-            kind=SteerKind.CLARIFICATION,
+            kind=kind,
             text=text,
             preserves_existing_constraints=True,
             replaces_goal=False,
             detail="clarification request",
+            invalidation=invalidation_scope_for(kind),
         )
+    kind = SteerKind.UNKNOWN
     return SteerClassification(
-        kind=SteerKind.UNKNOWN,
+        kind=kind,
         text=text,
         preserves_existing_constraints=True,
         replaces_goal=False,
         detail="generic steering note",
+        invalidation=invalidation_scope_for(kind),
     )
