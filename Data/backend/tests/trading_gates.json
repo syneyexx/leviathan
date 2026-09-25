@@ -8,8 +8,8 @@
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T2 MarketState + FeatureEngine; feature library causal + multi-TF views",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t2_market_state.py Data/backend/tests/test_market_sim_t1_causality.py -q"
+      "result": "P0A kernel honesty: SimFill realized_delta + ClosedTrade foundation + annualization resolver + D12 acceptance keys; D1/D2/D12 fixed; G08-G11 still NOT_STARTED",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_p0_kernel.py Data/backend/tests/test_market_sim_t1_causality.py Data/backend/tests/test_market_sim_t2_market_state.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -320,15 +320,32 @@
     "G18": {
       "title": "Metrics v2 ledger-derived + bootstrap CIs",
       "phase": "T5A/T5D",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py",
+        "P0A: resolve_periods_per_year provenance (crypto 1h != equity 1h)",
+        "P0A: SimFill realized_delta + ClosedTrade/PositionEpisode foundation",
+        "P0A: win_rate definition labeled (closed_position_episode vs fill_level_realized_delta)",
+        "P0A: evaluate_acceptance reads compute_metrics keys (D12)",
+        "bootstrap CIs not yet implemented"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::AnnualizationResolverTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::SimFillHonestyTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::ClosedTradeWinRateTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::MetricKeyAlignmentTests"
+      ],
+      "checks": [
+        "annualization_source provenance on Sharpe/Sortino",
+        "closed_trade_win_rate UNMEASURED until ClosedTrade samples",
+        "no silent 252 default for crypto/equity mismatch"
+      ],
+      "notes": "P0A slice: ledger honesty + annualization. Full G18 PASS requires block-bootstrap CIs (P3).",
       "related_defects": [
         "D1",
-        "D2"
+        "D2",
+        "D12"
       ]
     },
     "G19": {

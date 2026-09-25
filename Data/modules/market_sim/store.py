@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .types import (
+    ClosedTrade,
     DeliberationMessage,
     MarketDataSource,
     SimFill,
@@ -563,8 +564,10 @@ class MarketSimStore:
                 """
                 INSERT INTO market_sim_fills(
                     fill_id, run_id, bar_index, ts, side, qty, price, fee, slippage,
-                    agent_id, rationale, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    agent_id, rationale, status, created_at,
+                    realized_delta, remaining_qty, order_type, fill_price_source,
+                    observed_execution, decision_bar_index, intent_id, trade_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     fill.fill_id,
@@ -580,9 +583,48 @@ class MarketSimStore:
                     fill.rationale,
                     fill.status,
                     fill.created_at,
+                    fill.realized_delta,
+                    fill.remaining_qty,
+                    fill.order_type,
+                    fill.fill_price_source,
+                    1 if fill.observed_execution else 0,
+                    fill.decision_bar_index,
+                    fill.intent_id,
+                    fill.trade_id,
                 ),
             )
         return fill
+
+    def _fill_from_row(self, r: Any) -> SimFill:
+        keys = set(r.keys()) if hasattr(r, "keys") else set()
+        def _opt(name: str, default: Any = None) -> Any:
+            if name not in keys:
+                return default
+            return r[name]
+
+        return SimFill(
+            fill_id=r["fill_id"],
+            run_id=r["run_id"],
+            bar_index=r["bar_index"],
+            ts=r["ts"],
+            side=r["side"],
+            qty=r["qty"],
+            price=r["price"],
+            fee=r["fee"],
+            slippage=r["slippage"],
+            agent_id=r["agent_id"],
+            rationale=r["rationale"],
+            status=r["status"],
+            created_at=r["created_at"],
+            realized_delta=_opt("realized_delta"),
+            remaining_qty=_opt("remaining_qty"),
+            order_type=str(_opt("order_type") or "MARKET"),
+            fill_price_source=str(_opt("fill_price_source") or "next_bar_open"),
+            observed_execution=bool(_opt("observed_execution") or 0),
+            decision_bar_index=_opt("decision_bar_index"),
+            intent_id=_opt("intent_id"),
+            trade_id=_opt("trade_id"),
+        )
 
     def list_fills(self, run_id: str, *, limit: int = 500) -> list[SimFill]:
         """Return up to ``limit`` most recent fills in chronological order."""
@@ -599,21 +641,84 @@ class MarketSimStore:
                 """,
                 (run_id, limit),
             ).fetchall()
+        return [self._fill_from_row(r) for r in rows]
+
+    def add_closed_trade(self, trade: ClosedTrade) -> ClosedTrade:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_closed_trades(
+                    trade_id, run_id, instrument, strategy_id, strategy_version,
+                    opened_at, closed_at, side, entry_quantity, exit_quantity,
+                    avg_entry_price, avg_exit_price, gross_pnl, fees, slippage_cost,
+                    net_pnl, holding_period_bars, partial_fill_count, close_reason,
+                    open_bar_index, close_bar_index, agent_id, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trade.trade_id,
+                    trade.run_id,
+                    trade.instrument,
+                    trade.strategy_id,
+                    trade.strategy_version,
+                    trade.opened_at,
+                    trade.closed_at,
+                    trade.side,
+                    trade.entry_quantity,
+                    trade.exit_quantity,
+                    trade.avg_entry_price,
+                    trade.avg_exit_price,
+                    trade.gross_pnl,
+                    trade.fees,
+                    trade.slippage_cost,
+                    trade.net_pnl,
+                    trade.holding_period_bars,
+                    trade.partial_fill_count,
+                    trade.close_reason,
+                    trade.open_bar_index,
+                    trade.close_bar_index,
+                    trade.agent_id,
+                    json.dumps(trade.metadata),
+                ),
+            )
+        return trade
+
+    def list_closed_trades(self, run_id: str, *, limit: int = 500) -> list[ClosedTrade]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_closed_trades
+                WHERE run_id=?
+                ORDER BY close_bar_index ASC, closed_at ASC
+                LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
         return [
-            SimFill(
-                fill_id=r["fill_id"],
+            ClosedTrade(
+                trade_id=r["trade_id"],
                 run_id=r["run_id"],
-                bar_index=r["bar_index"],
-                ts=r["ts"],
+                instrument=r["instrument"],
+                strategy_id=r["strategy_id"],
+                strategy_version=r["strategy_version"],
+                opened_at=r["opened_at"],
+                closed_at=r["closed_at"],
                 side=r["side"],
-                qty=r["qty"],
-                price=r["price"],
-                fee=r["fee"],
-                slippage=r["slippage"],
+                entry_quantity=r["entry_quantity"],
+                exit_quantity=r["exit_quantity"],
+                avg_entry_price=r["avg_entry_price"],
+                avg_exit_price=r["avg_exit_price"],
+                gross_pnl=r["gross_pnl"],
+                fees=r["fees"],
+                slippage_cost=r["slippage_cost"],
+                net_pnl=r["net_pnl"],
+                holding_period_bars=r["holding_period_bars"],
+                partial_fill_count=r["partial_fill_count"],
+                close_reason=r["close_reason"],
+                open_bar_index=r["open_bar_index"],
+                close_bar_index=r["close_bar_index"],
                 agent_id=r["agent_id"],
-                rationale=r["rationale"],
-                status=r["status"],
-                created_at=r["created_at"],
+                metadata=_loads(r["metadata_json"], {}),
             )
             for r in rows
         ]

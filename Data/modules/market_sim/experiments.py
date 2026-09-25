@@ -109,29 +109,74 @@ def evaluate_acceptance(
     metrics: dict[str, Any],
     criteria: dict[str, Any],
 ) -> tuple[bool, str]:
-    """Return (passed, reason). Conservative defaults."""
+    """Return (passed, reason). Reads compute_metrics keys (D12 aligned).
+
+    Criteria use percent units (`max_drawdown_pct`, `min_total_return_pct`).
+    Canonical metrics may be fractions (`total_return`, `max_drawdown`) or
+    percent aliases (`total_return_pct`, `max_drawdown_pct`).
+    """
     min_trades = int(criteria.get("min_trades", 5))
     max_dd = float(criteria.get("max_drawdown_pct", 25.0))
     min_return = float(criteria.get("min_total_return_pct", 0.0))
     require_beat_benchmark = bool(criteria.get("beat_benchmark", False))
 
-    trades = int(metrics.get("trade_count") or metrics.get("fills") or 0)
-    if isinstance(metrics.get("trade_count"), dict):
-        trades = int(metrics["trade_count"].get("value") or 0)
+    def _raw(name: str) -> Any:
+        return metrics.get(name)
 
-    def _metric(name: str, default: float = 0.0) -> float:
-        raw = metrics.get(name)
+    def _metric_value(name: str) -> float | None:
+        raw = _raw(name)
         if isinstance(raw, dict):
             if raw.get("status") == MetricStatus.UNMEASURED.value:
-                return default
-            return float(raw.get("value") or default)
+                return None
+            if raw.get("value") is None:
+                return None
+            return float(raw["value"])
         if raw is None:
-            return default
+            return None
         return float(raw)
 
-    total_return = _metric("total_return_pct", 0.0)
-    max_drawdown = _metric("max_drawdown_pct", 100.0)
-    vs_bench = _metric("excess_return_pct", 0.0)
+    def _pct_metric(*names: str, fraction_keys: tuple[str, ...] = ()) -> float:
+        for name in names:
+            val = _metric_value(name)
+            if val is not None:
+                return val
+        for name in fraction_keys:
+            val = _metric_value(name)
+            if val is not None:
+                return val * 100.0
+        return 0.0
+
+    trades = 0
+    for key in ("trade_count", "closed_trade_count", "fills"):
+        val = _metric_value(key) if key != "fills" else None
+        if key == "fills":
+            raw = _raw("fills")
+            if isinstance(raw, (int, float)):
+                trades = int(raw)
+                break
+            if isinstance(raw, list):
+                trades = len(raw)
+                break
+            continue
+        if val is not None:
+            trades = int(val)
+            break
+
+    total_return = _pct_metric(
+        "total_return_pct",
+        fraction_keys=("total_return",),
+    )
+    max_drawdown = _pct_metric(
+        "max_drawdown_pct",
+        fraction_keys=("max_drawdown",),
+    )
+    # Default when drawdown missing: treat as worst-case so criteria fail closed.
+    if _metric_value("max_drawdown_pct") is None and _metric_value("max_drawdown") is None:
+        max_drawdown = 100.0
+    vs_bench = _pct_metric(
+        "excess_return_pct",
+        fraction_keys=("excess_return",),
+    )
 
     if trades < min_trades:
         return False, f"insufficient trades ({trades} < {min_trades}) — small sample"

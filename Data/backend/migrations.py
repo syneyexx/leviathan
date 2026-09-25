@@ -3317,6 +3317,58 @@ def _m44_trading_causality_data_foundation(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
+    """P0A: SimFill honesty fields + ClosedTrade / PositionEpisode table."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_sim_fills)").fetchall()}
+    fill_alter = {
+        "realized_delta": "REAL",
+        "remaining_qty": "REAL",
+        "order_type": "TEXT NOT NULL DEFAULT 'MARKET'",
+        "fill_price_source": "TEXT NOT NULL DEFAULT 'next_bar_open'",
+        "observed_execution": "INTEGER NOT NULL DEFAULT 0",
+        "decision_bar_index": "INTEGER",
+        "intent_id": "TEXT",
+        "trade_id": "TEXT",
+    }
+    for name, ddl in fill_alter.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE market_sim_fills ADD COLUMN {name} {ddl}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_closed_trades (
+            trade_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            instrument TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            opened_at TEXT NOT NULL,
+            closed_at TEXT NOT NULL,
+            side TEXT NOT NULL,
+            entry_quantity REAL NOT NULL,
+            exit_quantity REAL NOT NULL,
+            avg_entry_price REAL NOT NULL,
+            avg_exit_price REAL NOT NULL,
+            gross_pnl REAL NOT NULL,
+            fees REAL NOT NULL DEFAULT 0,
+            slippage_cost REAL NOT NULL DEFAULT 0,
+            net_pnl REAL NOT NULL,
+            holding_period_bars INTEGER NOT NULL DEFAULT 0,
+            partial_fill_count INTEGER NOT NULL DEFAULT 0,
+            close_reason TEXT NOT NULL DEFAULT '',
+            open_bar_index INTEGER NOT NULL DEFAULT 0,
+            close_bar_index INTEGER NOT NULL DEFAULT 0,
+            agent_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(run_id) REFERENCES market_sim_runs(run_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_closed_trades_run "
+        "ON market_sim_closed_trades(run_id, close_bar_index)"
+    )
+
 
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
@@ -3370,6 +3422,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=44,
         name="trading_causality_data_foundation",
         apply=_m44_trading_causality_data_foundation,
+    ),
+    Migration(
+        version=45,
+        name="p0a_kernel_honesty",
+        apply=_m45_p0a_kernel_honesty,
     ),
 )
 

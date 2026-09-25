@@ -14,13 +14,15 @@ from .causality import CausalityViolation, MarketView, SimulationClock
 from .commit_reveal import CommitRevealProtocol
 from .execution import NextBarFillModel, OrderIntent
 from .experiments import StrategyMemoryIndex, market_features_from_closes
+from .instruments import infer_family, spec_for_symbol
 from .market_state import build_market_state
-from .metrics import compute_metrics
+from .metrics import compute_metrics, resolve_periods_per_year
 from .ohlcv import load_ohlcv
+from .position_episodes import PositionEpisodeTracker
 from .risk_guard import RiskGuard, RiskLimits
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
-from .types import FillStatus, MarketSimError, OrderSide, RunStatus, SimFill
+from .types import FillStatus, MarketSimError, OrderSide, OrderType, RunStatus, SimFill
 
 
 CancelCheck = Callable[[], bool]
@@ -47,6 +49,7 @@ class MultiEngineState:
     benchmark_equity: list[float] = field(default_factory=list)
     memory: StrategyMemoryIndex = field(default_factory=StrategyMemoryIndex)
     game_mode: str = GAME_INDIVIDUAL
+    episodes_by_wallet: dict[str, PositionEpisodeTracker] = field(default_factory=dict)
 
 
 class MultiAgentEngine:
@@ -185,6 +188,7 @@ class MultiAgentEngine:
                 continue
             if decision.sized_qty > 0:
                 intent.qty = money(decision.sized_qty)
+            before_realized = float(wallet.realized_pnl)
             fill = fill_model.execute_intent(
                 wallet=wallet,
                 intent=intent,
@@ -193,6 +197,40 @@ class MultiAgentEngine:
                 fill_bar_index=state.clock.index,
             )
             if fill.filled:
+                realized_delta = float(wallet.realized_pnl) - before_realized
+                remaining = None
+                if intent.qty is not None:
+                    try:
+                        rem = float(intent.qty) - float(fill.qty)
+                        remaining = rem if rem > 1e-12 else 0.0
+                    except (TypeError, ValueError):
+                        remaining = None
+                tracker = state.episodes_by_wallet.get(intent.wallet_id)
+                if tracker is None:
+                    tracker = PositionEpisodeTracker(
+                        run_id=run.run_id,
+                        instrument=run.symbol,
+                        strategy_id=getattr(run, "strategy_id", None),
+                        strategy_version=getattr(run, "strategy_version", None),
+                    )
+                    state.episodes_by_wallet[intent.wallet_id] = tracker
+                trade_id = tracker.current_trade_id()
+                closed = tracker.on_fill(
+                    side=intent.side,
+                    qty=float(fill.qty),
+                    price=float(fill.price),
+                    fee=float(fill.fee),
+                    slippage=float(fill.slippage),
+                    ts=bar.ts,
+                    bar_index=state.clock.index,
+                    status=fill.status,
+                    agent_id=intent.agent_id,
+                    close_reason=intent.rationale or "signal",
+                    trade_id=trade_id,
+                )
+                trade_id = closed.trade_id if closed is not None else tracker.current_trade_id()
+                if closed is not None:
+                    self.store.add_closed_trade(closed)
                 record = SimFill(
                     fill_id=str(uuid.uuid4()),
                     run_id=run.run_id,
@@ -207,6 +245,14 @@ class MultiAgentEngine:
                     rationale=intent.rationale,
                     status=fill.status,
                     created_at=utc_now(),
+                    realized_delta=float(realized_delta),
+                    remaining_qty=remaining,
+                    order_type=OrderType.MARKET.value,
+                    fill_price_source="next_bar_open",
+                    observed_execution=False,
+                    decision_bar_index=intent.decision_bar_index,
+                    intent_id=intent.intent_id,
+                    trade_id=trade_id,
                 )
                 self.store.add_fill(record)
                 state.fills.append(record)
@@ -216,11 +262,8 @@ class MultiAgentEngine:
                     payload={
                         **record.public_dict(),
                         "wallet_id": intent.wallet_id,
-                        "decision_bar_index": intent.decision_bar_index,
                         "eligible_bar_index": intent.eligible_bar_index,
                         "info_version": intent.info_version,
-                        "fill_price_source": "next_bar_open",
-                        "observed_execution": False,
                     },
                     bar_index=state.clock.index,
                 )
@@ -638,6 +681,25 @@ class MultiAgentEngine:
                 initial_for_metrics = float(equity_curve[0])
             else:
                 initial_for_metrics = float(run.initial_cash)
+        family = infer_family(
+            getattr(run, "symbol", ""),
+            metadata=dict(getattr(run, "metadata", None) or {}),
+        )
+        spec = spec_for_symbol(
+            getattr(run, "symbol", "UNKNOWN"),
+            timeframe=getattr(run, "timeframe", "1D") or "1D",
+            metadata=dict(getattr(run, "metadata", None) or {}),
+        )
+        bar_timestamps = [b.ts for b in state.clock.bars] if state.clock.bars else None
+        annualization = resolve_periods_per_year(
+            timeframe=getattr(run, "timeframe", None),
+            instrument_family=family,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
+        )
+        closed_payloads: list[dict[str, Any]] = []
+        for tracker in state.episodes_by_wallet.values():
+            closed_payloads.extend(t.public_dict() for t in tracker.closed)
         run.metrics = compute_metrics(
             equity=equity_curve,
             fills=[f.public_dict() for f in state.fills],
@@ -648,6 +710,13 @@ class MultiAgentEngine:
             brain_misses=run.brain_misses,
             agreement_rate=agreement,
             veto_rate=veto_rate,
+            periods_per_year=None,
+            annualization=annualization,
+            closed_trades=closed_payloads,
+            timeframe=getattr(run, "timeframe", None),
+            instrument_family=family.value,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
         )
         run.metrics["game_mode"] = state.game_mode
         run.metrics["wallets"] = state.book.public_dict(

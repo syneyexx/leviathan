@@ -10,12 +10,14 @@ from .accounting import money
 from .causality import CausalityViolation, SimulationClock
 from .deliberation import DeliberationRuntime
 from .execution import NextBarFillModel, OrderIntent, make_intent
-from .metrics import compute_metrics
+from .instruments import infer_family, spec_for_symbol
+from .metrics import compute_metrics, resolve_periods_per_year
 from .ohlcv import load_ohlcv
 from .portfolio import Portfolio, RiskEngine, RiskLimits
+from .position_episodes import PositionEpisodeTracker
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
-from .types import FillStatus, MarketSimError, OrderSide, RunStatus, SimFill, SimRun
+from .types import FillStatus, MarketSimError, OrderSide, OrderType, RunStatus, SimFill, SimRun
 
 from Data.modules.common.hashing import sha256_file
 from pathlib import Path
@@ -36,6 +38,7 @@ class EngineState:
     veto_count: int = 0
     deliberation_rounds: int = 0
     benchmark_equity: list[float] = field(default_factory=list)
+    episodes: PositionEpisodeTracker | None = None
 
 
 class SimulationEngine:
@@ -107,6 +110,12 @@ class SimulationEngine:
             portfolio=portfolio,
             risk=risk,
             benchmark_equity=[],
+            episodes=PositionEpisodeTracker(
+                run_id=run.run_id,
+                instrument=run.symbol,
+                strategy_id=run.strategy_id,
+                strategy_version=run.strategy_version,
+            ),
         )
         state._bh_shares = bh_shares  # type: ignore[attr-defined]
         state._strategy_params = dict(strategy_params or {"fast_ma": 10, "slow_ma": 30})  # type: ignore[attr-defined]
@@ -168,6 +177,37 @@ class SimulationEngine:
             )
             if fill.filled:
                 realized_delta = state.portfolio.realized_pnl - before_realized
+                remaining = None
+                if intent.qty is not None:
+                    try:
+                        rem = float(intent.qty) - float(fill.qty)
+                        remaining = rem if rem > 1e-12 else 0.0
+                    except (TypeError, ValueError):
+                        remaining = None
+                closed = None
+                trade_id = None
+                if state.episodes is not None:
+                    trade_id = state.episodes.current_trade_id()
+                    closed = state.episodes.on_fill(
+                        side=intent.side,
+                        qty=float(fill.qty),
+                        price=float(fill.price),
+                        fee=float(fill.fee),
+                        slippage=float(fill.slippage),
+                        ts=bar.ts,
+                        bar_index=state.clock.index,
+                        status=FillStatus.FILLED.value,
+                        agent_id=intent.agent_id,
+                        close_reason=intent.rationale or "signal",
+                        trade_id=trade_id,
+                    )
+                    trade_id = (
+                        closed.trade_id
+                        if closed is not None
+                        else state.episodes.current_trade_id()
+                    )
+                    if closed is not None:
+                        self.store.add_closed_trade(closed)
                 record = SimFill(
                     fill_id=str(uuid.uuid4()),
                     run_id=run.run_id,
@@ -182,19 +222,21 @@ class SimulationEngine:
                     rationale=intent.rationale,
                     status=FillStatus.FILLED.value,
                     created_at=utc_now(),
+                    realized_delta=float(realized_delta),
+                    remaining_qty=remaining,
+                    order_type=OrderType.MARKET.value,
+                    fill_price_source="next_bar_open",
+                    observed_execution=False,
+                    decision_bar_index=intent.decision_bar_index,
+                    intent_id=intent.intent_id,
+                    trade_id=trade_id,
                 )
                 self.store.add_fill(record)
                 state.fills.append(record)
                 self.store.add_event(
                     run.run_id,
                     kind="fill",
-                    payload={
-                        **record.public_dict(),
-                        "realized_delta": realized_delta,
-                        "fill_price_source": "next_bar_open",
-                        "decision_bar_index": intent.decision_bar_index,
-                        "observed_execution": False,
-                    },
+                    payload=record.public_dict(),
                     bar_index=state.clock.index,
                 )
             intent.status = "filled" if fill.filled else "rejected"
@@ -359,6 +401,24 @@ class SimulationEngine:
             if state.deliberation_rounds
             else None
         )
+        family = infer_family(run.symbol, metadata=dict(run.metadata or {}))
+        spec = spec_for_symbol(
+            run.symbol,
+            timeframe=run.timeframe,
+            metadata=dict(run.metadata or {}),
+        )
+        bar_timestamps = [b.ts for b in state.clock.bars] if state.clock.bars else None
+        annualization = resolve_periods_per_year(
+            timeframe=run.timeframe,
+            instrument_family=family,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
+        )
+        closed_payloads = (
+            [t.public_dict() for t in state.episodes.closed]
+            if state.episodes is not None
+            else []
+        )
         run.metrics = compute_metrics(
             equity=equity,
             fills=fill_payloads,
@@ -369,6 +429,13 @@ class SimulationEngine:
             brain_misses=run.brain_misses,
             agreement_rate=agreement,
             veto_rate=veto_rate,
+            periods_per_year=None,
+            annualization=annualization,
+            closed_trades=closed_payloads,
+            timeframe=run.timeframe,
+            instrument_family=family.value,
+            instrument_spec=spec,
+            bar_timestamps=bar_timestamps,
         )
         run.metrics["fill_assumptions"] = list(self.FILL_ASSUMPTIONS)
         if state.run.status == RunStatus.COMPLETED.value:

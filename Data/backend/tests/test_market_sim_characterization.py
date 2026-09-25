@@ -94,27 +94,23 @@ class D1AnnualizationCharacterization(unittest.TestCase):
         sig = inspect.signature(compute_metrics)
         self.assertEqual(sig.parameters["periods_per_year"].default, 252.0)
 
-    def test_d1_current_engines_omit_periods_per_year(self) -> None:
-        engine_src = inspect.getsource(SimulationEngine._finalize_metrics)
-        multi_src = inspect.getsource(MultiAgentEngine._finalize_metrics)
-        self.assertNotIn("periods_per_year", engine_src)
-        self.assertNotIn("periods_per_year", multi_src)
-
-    @unittest.expectedFailure  # D1 — fixed in Phase T1
-    def test_d1_desired_engines_pass_timeframe_annualization(self) -> None:
+    def test_d1_engines_pass_timeframe_annualization(self) -> None:
+        """P0A: engines resolve periods_per_year via asset/family/timeframe."""
         engine_src = inspect.getsource(SimulationEngine._finalize_metrics)
         multi_src = inspect.getsource(MultiAgentEngine._finalize_metrics)
         self.assertIn("periods_per_year", engine_src)
+        self.assertIn("resolve_periods_per_year", engine_src)
         self.assertIn("periods_per_year", multi_src)
+        self.assertIn("resolve_periods_per_year", multi_src)
 
 
 # ---------------------------------------------------------------------------
-# D2 — Win rate / profit factor UNMEASURED without round-trip ledger
+# D2 — Win rate / profit factor; ClosedTrade vs fill-level realized_delta
 # ---------------------------------------------------------------------------
 
 
 class D2WinRateCharacterization(unittest.TestCase):
-    def test_d2_current_simfill_omits_realized_delta(self) -> None:
+    def test_d2_simfill_omits_unmeasured_realized_delta(self) -> None:
         fill = SimFill(
             fill_id="f1",
             run_id="r",
@@ -139,8 +135,7 @@ class D2WinRateCharacterization(unittest.TestCase):
         self.assertEqual(m["win_rate"]["status"], MetricStatus.UNMEASURED.value)
         self.assertEqual(m["profit_factor"]["status"], MetricStatus.UNMEASURED.value)
 
-    @unittest.expectedFailure  # D2 — fixed in Phase T1
-    def test_d2_desired_simfill_carries_realized_delta(self) -> None:
+    def test_d2_simfill_carries_measured_realized_delta(self) -> None:
         fill = SimFill(
             fill_id="f1",
             run_id="r",
@@ -155,8 +150,10 @@ class D2WinRateCharacterization(unittest.TestCase):
             rationale="",
             status="FILLED",
             created_at=utc_now(),
+            realized_delta=9.9,
         )
         self.assertIn("realized_delta", fill.public_dict())
+        self.assertEqual(fill.public_dict()["realized_delta"], 9.9)
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +540,8 @@ class D11CallerMetricsCharacterization(unittest.TestCase):
 
 
 class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
-    def test_d12_current_real_metrics_fail_acceptance_by_key_mismatch(self) -> None:
+    def test_d12_acceptance_reads_compute_metrics_shape(self) -> None:
+        """P0A: evaluate_acceptance aligns with compute_metrics keys (D12 fixed)."""
         equity = [100.0, 110.0, 120.0]
         fills = [
             {"side": "BUY", "qty": 1, "price": 100, "fee": 0},
@@ -551,26 +549,13 @@ class D12AcceptanceKeyMismatchCharacterization(unittest.TestCase):
         ]
         m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0)
         self.assertIn("total_return", m)
-        self.assertNotIn("total_return_pct", m)
-        self.assertNotIn("trade_count", m)
-        passed, reason = evaluate_acceptance(m, {"min_trades": 1, "max_drawdown_pct": 50.0})
-        self.assertFalse(passed)
-        self.assertIn("insufficient trades", reason)
-
-    @unittest.expectedFailure  # D12 — fixed in Phase T4
-    def test_d12_desired_acceptance_reads_compute_metrics_shape(self) -> None:
-        equity = [100.0, 110.0, 120.0]
-        fills = [
-            {"side": "BUY", "qty": 1, "price": 100, "fee": 0},
-            {"side": "SELL", "qty": 1, "price": 120, "fee": 0, "realized_delta": 20},
-        ]
-        m = compute_metrics(equity=equity, fills=fills, initial_cash=100.0)
-        m_with_trades = {**m, "trade_count": {"status": "MEASURED", "value": 1}}
-        passed, _reason = evaluate_acceptance(
-            m_with_trades,
+        self.assertIn("total_return_pct", m)
+        self.assertIn("trade_count", m)
+        passed, reason = evaluate_acceptance(
+            m,
             {"min_trades": 1, "max_drawdown_pct": 50.0, "min_total_return_pct": 0.0},
         )
-        self.assertTrue(passed)
+        self.assertTrue(passed, reason)
 
 
 # ---------------------------------------------------------------------------
