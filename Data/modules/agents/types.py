@@ -9,6 +9,8 @@ class AgentKind(str, Enum):
     GENERIC = "GENERIC"
     CODING = "CODING"
     RESEARCH = "RESEARCH"
+    # T7 / G24: trading agents plan/execute only via registered TradingMissionExecutor.
+    TRADING = "TRADING"
 
 
 class AgentStepKind(str, Enum):

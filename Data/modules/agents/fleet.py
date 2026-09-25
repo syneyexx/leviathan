@@ -743,13 +743,7 @@ class AgentFleetService:
         if definition.kind == AgentDefinitionKind.RESEARCH:
             return AgentKind.RESEARCH
         if definition.kind == AgentDefinitionKind.TRADING:
-            # Trading agents are never planned by the generic/coding/research planners.
-            raise AgentFleetError(
-                "TRADING_EXECUTOR_REQUIRED",
-                "Trading agents execute only through the registered trading executor "
-                "(market_sim orchestra); generic planning is refused.",
-                http_status=409,
-            )
+            return AgentKind.TRADING
         return AgentKind.GENERIC
 
     def launch_mission(
@@ -1184,6 +1178,9 @@ class AgentFleetService:
         When workers are externalized, QUEUED missions are left for the agents pool
         (re-enqueued via :meth:`enqueue_queued_missions` / :meth:`start_background`).
         RUNNING/STARTING rows are assumed owned by leased ``agent.advance`` jobs.
+
+        T7: trading missions owned by a registered domain executor with durable job
+        leases are not interrupted (resumable via JobStore).
         """
         updated: list[str] = []
         externalized = self._runners_externalized()
@@ -1197,6 +1194,27 @@ class AgentFleetService:
                 MissionStatus.CANCELLING,
             }:
                 continue
+            # Durable trading ownership: leave for JobStore / trading executor resume.
+            try:
+                agent = self.store.get_definition(mission.agent_id)
+            except Exception:  # noqa: BLE001
+                agent = None
+            if agent is not None:
+                kind = getattr(agent, "kind", None)
+                # T7 / G24: TRADING agents are never interrupted by generic reconcile —
+                # ownership belongs to TradingMissionExecutor + JobStore leases.
+                if kind == AgentDefinitionKind.TRADING:
+                    continue
+                executor = self._domain_executor_for(agent)
+                if executor is not None and (
+                    mission.job_ids
+                    or (
+                        kind == AgentDefinitionKind.ORCHESTRATOR
+                        and callable(getattr(executor, "owns_orchestrator", None))
+                        and executor.owns_orchestrator(agent)
+                    )
+                ):
+                    continue
             # In-process fleet executes synchronously; leftover active rows after
             # restart are orphaned truth.
             mission.status = MissionStatus.INTERRUPTED

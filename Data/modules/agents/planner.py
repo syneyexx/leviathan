@@ -113,6 +113,31 @@ class StructuredAgentPlanner:
             )
             criteria.extend(["workspace confinement respected", "verification attempted"])
             budget = {"max_tool_calls": 6, "max_model_calls": 3}
+        elif kind == AgentKind.TRADING:
+            # T7 / G24: trading never uses coding/research/generic capability chains.
+            steps.append(
+                AgentStep(
+                    kind=AgentStepKind.PLAN,
+                    note=(
+                        "Trading agents execute only via registered TradingMissionExecutor "
+                        "(market_sim orchestra); generic capability planning is refused"
+                    ),
+                )
+            )
+            steps.append(
+                AgentStep(
+                    kind=AgentStepKind.VERIFY,
+                    note="Live money blocked; RiskGuard decides; DecisionRecords are append-only",
+                )
+            )
+            criteria.extend(
+                [
+                    "trading executor owns execution",
+                    "live trading blocked",
+                    "as_of causality enforced",
+                ]
+            )
+            budget = {"max_tool_calls": 0, "max_model_calls": 4}
         else:
             # GENERIC: retrieve when knowledge capability exists; otherwise respond-only.
             if not caps or "knowledge.search" in caps:

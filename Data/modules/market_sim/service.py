@@ -1459,6 +1459,95 @@ class MarketSimControlPlane:
         self._require_enabled()
         return self.store.list_experiments(strategy_id=strategy_id)
 
+    # --- Research campaigns (T7 / G25) ---
+
+    def create_research_campaign(
+        self,
+        *,
+        strategy_id: str,
+        hypothesis: str,
+        proposer_agent_id: str = "human",
+        source_id: str | None = None,
+        seed: int = 42,
+        config: dict[str, Any] | None = None,
+        acceptance_criteria: dict[str, Any] | None = None,
+        n_bars: int | None = None,
+    ) -> dict[str, Any]:
+        from .research_campaign import ResearchCampaignController, new_campaign
+
+        self._require_enabled()
+        strat = self.store.get_strategy(strategy_id)
+        if strat is None:
+            raise MarketSimError("STRATEGY_NOT_FOUND", strategy_id, http_status=404)
+        data_hash = ""
+        bars_n = n_bars
+        if source_id:
+            source = self.data.get_source(source_id)
+            data_hash = source.content_hash
+            if bars_n is None and source.bar_count:
+                bars_n = int(source.bar_count)
+        campaign = new_campaign(
+            strategy_id=strategy_id,
+            hypothesis=hypothesis,
+            proposer_agent_id=proposer_agent_id,
+            source_id=source_id,
+            data_hash=data_hash,
+            seed=seed,
+            config=config,
+            acceptance_criteria=acceptance_criteria,
+            n_bars=bars_n,
+            created_at=utc_now(),
+        )
+        return ResearchCampaignController(self.store).create(campaign)
+
+    def get_research_campaign(self, campaign_id: str) -> dict[str, Any]:
+        from .research_campaign import ResearchCampaignController
+
+        self._require_enabled()
+        return ResearchCampaignController(self.store).get(campaign_id)
+
+    def list_research_campaigns(
+        self, *, strategy_id: str | None = None, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_research_campaigns(
+            strategy_id=strategy_id, status=status, limit=limit
+        )
+
+    def start_research_campaign(self, campaign_id: str) -> dict[str, Any]:
+        from .research_campaign import ResearchCampaignController
+
+        self._require_enabled()
+        return ResearchCampaignController(self.store).start(campaign_id, now=utc_now())
+
+    def pause_research_campaign(self, campaign_id: str) -> dict[str, Any]:
+        from .research_campaign import ResearchCampaignController
+
+        self._require_enabled()
+        return ResearchCampaignController(self.store).pause(campaign_id, now=utc_now())
+
+    def resume_research_campaign(self, campaign_id: str) -> dict[str, Any]:
+        from .research_campaign import ResearchCampaignController
+
+        self._require_enabled()
+        return ResearchCampaignController(self.store).resume(campaign_id, now=utc_now())
+
+    def advance_research_campaign(
+        self, campaign_id: str, *, trial_id: str | None = None
+    ) -> dict[str, Any]:
+        from .research_campaign import ResearchCampaignController
+
+        self._require_enabled()
+        return ResearchCampaignController(self.store).advance(
+            campaign_id, now=utc_now(), trial_id=trial_id
+        )
+
+    def cancel_research_campaign(self, campaign_id: str) -> dict[str, Any]:
+        from .research_campaign import ResearchCampaignController
+
+        self._require_enabled()
+        return ResearchCampaignController(self.store).cancel(campaign_id, now=utc_now())
+
     # --- Demo runners (equity + crypto) ---
 
     def run_market_demo(self, *, family: str, bars_limit: int = 120) -> dict[str, Any]:
