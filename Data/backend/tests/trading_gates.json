@@ -209,13 +209,33 @@
     "G10": {
       "title": "Instrument rules enforced",
       "phase": "T3B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CInstrumentAndShortTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CSizingModelTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CRiskGuardDayResetTests",
+        "RiskGuard.on_bar_timestamp UTC day rollover",
+        "SizingModel on SimRun; no risk_qty*5",
+        "lot/tick/min_notional via validate_intent_rules",
+        "short blocked without ShortMarginPolicy even if supports_short"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CInstrumentAndShortTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CSizingModelTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0CRiskGuardDayResetTests"
+      ],
+      "checks": [
+        "orders_today date rollover",
+        "sizing_model visible",
+        "short blocked without margin policy",
+        "short blocked if instrument disallows",
+        "instrument lot/tick/min_notional"
+      ],
+      "notes": "P0C complete.",
       "related_defects": [
+        "D3",
+        "D4",
         "D24"
       ]
     },

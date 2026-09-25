@@ -20,6 +20,8 @@ from .ohlcv import load_ohlcv
 from .portfolio import Portfolio
 from .position_episodes import PositionEpisodeTracker
 from .risk_guard import RiskGuard, RiskLimits
+from .short_margin import ShortMarginPolicy
+from .sizing import SizingModel
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
 from .types import (
@@ -134,12 +136,34 @@ class SimulationEngine:
             realized_pnl=money(run.realized_pnl if run.bar_index > 0 else 0.0),
             peak_equity=money(max(cash0, run.equity or cash0)),
         )
+        sizing = SizingModel.from_dict(
+            run.sizing_model or meta.get("sizing_model") or meta.get("sizingModel"),
+            defaults={
+                "kind": "risk_pct",
+                "per_trade_risk_pct": run.per_trade_risk_pct,
+                "max_position_pct": run.max_position_pct,
+            },
+        )
+        run.sizing_model = sizing.public_dict()
+        meta["sizing_model"] = run.sizing_model
+        run.metadata = meta
+        instrument = spec_for_symbol(
+            run.symbol,
+            timeframe=run.timeframe,
+            metadata=meta,
+        )
+        short_policy = ShortMarginPolicy.from_dict(
+            meta.get("short_margin_policy") or meta.get("shortMarginPolicy")
+        )
         risk = RiskGuard(
             RiskLimits(
                 max_position_pct=run.max_position_pct,
                 max_drawdown_pct=run.max_drawdown_pct,
                 per_trade_risk_pct=run.per_trade_risk_pct,
-            )
+            ),
+            sizing_model=sizing,
+            instrument_spec=instrument,
+            short_margin_policy=short_policy,
         )
         policy = str(
             meta.get("intrabar_path_policy")
@@ -185,6 +209,7 @@ class SimulationEngine:
 
         run.bar_index = state.clock.index
         run.clock_ts = bar.ts
+        state.risk.on_bar_timestamp(bar.ts)
 
         bh_shares = getattr(state, "_bh_shares", 0.0)
         state.benchmark_equity.append(bh_shares * bar.close)

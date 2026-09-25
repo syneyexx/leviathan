@@ -679,3 +679,139 @@ class P0BGoldenFillPnLTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# P0C — RiskGuard day reset, sizing, instruments, shorts
+# ---------------------------------------------------------------------------
+
+
+class P0CRiskGuardDayResetTests(unittest.TestCase):
+    def test_orders_today_resets_on_utc_day_change(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import make_intent
+        from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
+
+        guard = RiskGuard(RiskLimits(max_orders_per_day=1))
+        w = WalletBook().ensure_agent("a", initial_cash=10_000)
+        guard.on_bar_timestamp("2024-01-01T23:00:00+00:00")
+        intent = make_intent(
+            run_id="r", agent_id="a", wallet_id=w.wallet_id, side="BUY", qty=1,
+            decision_bar_index=0, decision_ts="t", info_version="v",
+        )
+        self.assertTrue(guard.evaluate_intent(intent, wallet=w, price=100).allowed)
+        guard.orders_today += 1
+        self.assertFalse(guard.evaluate_intent(intent, wallet=w, price=100).allowed)
+        guard.on_bar_timestamp("2024-01-02T00:00:01+00:00")
+        self.assertEqual(guard.orders_today, 0)
+        self.assertTrue(guard.evaluate_intent(intent, wallet=w, price=100).allowed)
+
+
+class P0CSizingModelTests(unittest.TestCase):
+    def test_sizing_model_visible_on_run(self) -> None:
+        from Data.modules.market_sim.types import SimRun
+
+        run = SimRun(
+            run_id="r", status="CREATED", source_id="s", strategy_id=None,
+            strategy_version=None, symbol="BTCUSDT", timeframe="1h",
+            start_ts="", end_ts="", data_hash="h", seed=1,
+            sizing_model={"kind": "fixed_qty", "fixedQty": 2.0},
+        )
+        payload = run.public_dict()
+        self.assertEqual(payload["sizingModel"]["kind"], "fixed_qty")
+        self.assertIn("sizing_model", payload)
+
+    def test_no_hidden_risk_qty_multiplier(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import make_intent
+        from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
+        import inspect
+
+        src = inspect.getsource(RiskGuard.evaluate_intent)
+        self.assertNotIn("risk_qty * 5", src)
+        guard = RiskGuard(RiskLimits(per_trade_risk_pct=1.0, max_position_pct=25.0))
+        w = WalletBook().ensure_agent("a", initial_cash=100_000)
+        intent = make_intent(
+            run_id="r", agent_id="a", wallet_id=w.wallet_id, side="BUY", qty=None,
+            decision_bar_index=0, decision_ts="t", info_version="v",
+        )
+        d = guard.evaluate_intent(intent, wallet=w, price=100.0)
+        self.assertAlmostEqual(float(d.sized_qty) * 100.0, 1000.0, delta=1.0)
+
+
+class P0CInstrumentAndShortTests(unittest.TestCase):
+    def test_min_notional_rejects(self) -> None:
+        from Data.modules.market_sim.instruments import CRYPTO_BTCUSDT, validate_intent_rules
+
+        ok, reason, _ = validate_intent_rules(
+            spec=CRYPTO_BTCUSDT, side="BUY", qty=0.001, price=100.0
+        )
+        self.assertFalse(ok)
+        self.assertTrue("min_notional" in reason or "qty rounds to zero" in reason)
+
+    def test_short_blocked_without_margin_policy(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import make_intent
+        from Data.modules.market_sim.instruments import InstrumentFamily, InstrumentSpec
+        from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
+
+        spec = InstrumentSpec(
+            instrument_id="t", symbol="XYZ", family=InstrumentFamily.EQUITY,
+            venue="X", quote_currency="USD", supports_short=True, lot_size="1",
+            tick_size="0.01", min_notional="1",
+        )
+        guard = RiskGuard(RiskLimits(), instrument_spec=spec, short_margin_policy=None)
+        w = WalletBook().ensure_agent("a", initial_cash=10_000)
+        intent = make_intent(
+            run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,
+            decision_bar_index=0, decision_ts="t", info_version="v",
+        )
+        d = guard.evaluate_intent(intent, wallet=w, price=100.0)
+        self.assertFalse(d.allowed)
+        self.assertIn("MARGIN_POLICY_REQUIRED", d.reason)
+
+    def test_short_blocked_if_instrument_disallows(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import make_intent
+        from Data.modules.market_sim.instruments import InstrumentFamily, InstrumentSpec
+        from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
+        from Data.modules.market_sim.short_margin import ShortMarginPolicy
+
+        spec = InstrumentSpec(
+            instrument_id="t", symbol="XYZ", family=InstrumentFamily.EQUITY,
+            venue="X", quote_currency="USD", supports_short=False, lot_size="1",
+            tick_size="0.01", min_notional="1",
+        )
+        policy = ShortMarginPolicy(initial_margin_pct=50.0, maintenance_margin_pct=30.0)
+        guard = RiskGuard(RiskLimits(), instrument_spec=spec, short_margin_policy=policy)
+        w = WalletBook().ensure_agent("a", initial_cash=10_000)
+        intent = make_intent(
+            run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,
+            decision_bar_index=0, decision_ts="t", info_version="v",
+        )
+        d = guard.evaluate_intent(intent, wallet=w, price=100.0)
+        self.assertFalse(d.allowed)
+        self.assertIn("INSTRUMENT_RULE", d.reason)
+
+    def test_short_allowed_with_policy_and_supports_short(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import make_intent
+        from Data.modules.market_sim.instruments import InstrumentFamily, InstrumentSpec
+        from Data.modules.market_sim.risk_guard import RiskGuard, RiskLimits
+        from Data.modules.market_sim.short_margin import ShortMarginPolicy
+
+        spec = InstrumentSpec(
+            instrument_id="t", symbol="XYZ", family=InstrumentFamily.EQUITY,
+            venue="X", quote_currency="USD", supports_short=True, lot_size="1",
+            tick_size="0.01", min_notional="1",
+        )
+        policy = ShortMarginPolicy(initial_margin_pct=50.0, maintenance_margin_pct=30.0)
+        guard = RiskGuard(RiskLimits(), instrument_spec=spec, short_margin_policy=policy)
+        w = WalletBook().ensure_agent("a", initial_cash=10_000)
+        intent = make_intent(
+            run_id="r", agent_id="a", wallet_id=w.wallet_id, side="SELL", qty=1,
+            decision_bar_index=0, decision_ts="t", info_version="v",
+        )
+        d = guard.evaluate_intent(intent, wallet=w, price=100.0)
+        self.assertTrue(d.allowed, d.reason)
+        self.assertGreater(d.sized_qty, 0)

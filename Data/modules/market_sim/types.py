@@ -323,6 +323,7 @@ class SimRun:
     started_at: str | None = None
     finished_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    sizing_model: dict[str, Any] = field(default_factory=lambda: {"kind": "risk_pct"})
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -344,6 +345,8 @@ class SimRun:
             "max_position_pct": self.max_position_pct,
             "max_drawdown_pct": self.max_drawdown_pct,
             "per_trade_risk_pct": self.per_trade_risk_pct,
+            "sizingModel": self.sizing_model,
+            "sizing_model": self.sizing_model,
             "agents": self.agents,
             "deliberation_every_n": self.deliberation_every_n,
             "clock_ts": self.clock_ts,

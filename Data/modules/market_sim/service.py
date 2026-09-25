@@ -559,6 +559,7 @@ class MarketSimControlPlane:
         stochastic_slippage: bool = False,
         game_mode: str | None = None,
         metadata: dict[str, Any] | None = None,
+        sizing_model: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
         source = self.data.get_source(source_id)
@@ -589,6 +590,17 @@ class MarketSimControlPlane:
                 for role in DEFAULT_AGENT_ROLES
             ]
         now = utc_now()
+        from .sizing import SizingModel
+
+        sizing = SizingModel.from_dict(
+            sizing_model or (metadata or {}).get("sizing_model") or (metadata or {}).get("sizingModel"),
+            defaults={
+                "kind": "risk_pct",
+                "per_trade_risk_pct": per_trade_risk_pct,
+                "max_position_pct": max_position_pct,
+            },
+        )
+        sizing_payload = sizing.public_dict()
         run = SimRun(
             run_id=str(uuid.uuid4()),
             status=RunStatus.CREATED.value,
@@ -614,12 +626,14 @@ class MarketSimControlPlane:
             equity=initial_cash,
             created_at=now,
             updated_at=now,
+            sizing_model=sizing_payload,
             metadata={
                 "stochastic_slippage": stochastic_slippage,
                 **(dict(metadata or {})),
                 **({"game_mode": game_mode} if game_mode else {}),
                 "instrument_family": infer_family(source.symbol, metadata=source.metadata).value,
                 "fill_schedule": "next_bar_open",
+                "sizing_model": sizing_payload,
             },
         )
         self.store.create_run(run)
@@ -639,6 +653,7 @@ class MarketSimControlPlane:
                 "per_trade_risk_pct": per_trade_risk_pct,
                 "fee_bps": fee_bps,
                 "slippage_bps": slippage_bps,
+                "sizing_model": sizing_payload,
             },
             agents=list(agent_list or []),
             evaluation_window="RESEARCH",

@@ -20,6 +20,8 @@ from .metrics import compute_metrics, resolve_periods_per_year
 from .ohlcv import load_ohlcv
 from .position_episodes import PositionEpisodeTracker
 from .risk_guard import RiskGuard, RiskLimits
+from .short_margin import ShortMarginPolicy
+from .sizing import SizingModel
 from .store import MarketSimStore, utc_now
 from .strategy_eval import evaluate_strategy
 from .types import FillStatus, MarketSimError, OrderSide, OrderType, RunStatus, SimFill
@@ -124,6 +126,26 @@ class MultiAgentEngine:
             if game_mode == GAME_TOURNAMENT:
                 book.ensure_shared(initial_cash=run.initial_cash, currency=currency)
 
+        sizing = SizingModel.from_dict(
+            getattr(run, "sizing_model", None) or meta.get("sizing_model") or meta.get("sizingModel"),
+            defaults={
+                "kind": "risk_pct",
+                "per_trade_risk_pct": run.per_trade_risk_pct,
+                "max_position_pct": run.max_position_pct,
+            },
+        )
+        if hasattr(run, "sizing_model"):
+            run.sizing_model = sizing.public_dict()
+        meta["sizing_model"] = sizing.public_dict()
+        run.metadata = meta
+        instrument = spec_for_symbol(
+            getattr(run, "symbol", "UNKNOWN"),
+            timeframe=getattr(run, "timeframe", "1D") or "1D",
+            metadata=meta,
+        )
+        short_policy = ShortMarginPolicy.from_dict(
+            meta.get("short_margin_policy") or meta.get("shortMarginPolicy")
+        )
         risk = RiskGuard(
             RiskLimits(
                 max_position_pct=run.max_position_pct,
@@ -131,7 +153,10 @@ class MultiAgentEngine:
                 per_trade_risk_pct=run.per_trade_risk_pct,
                 max_orders_per_day=int(meta.get("max_orders_per_day") or 50),
                 leverage_allowed=False,
-            )
+            ),
+            sizing_model=sizing,
+            instrument_spec=instrument,
+            short_margin_policy=short_policy,
         )
         run.bar_count = len(bars)
         first_price = bars[0].close if bars else 1.0
@@ -165,6 +190,7 @@ class MultiAgentEngine:
 
         run.bar_index = state.clock.index
         run.clock_ts = bar.ts
+        state.risk.on_bar_timestamp(bar.ts)
         bh = getattr(state, "_bh_shares", 0.0)
         state.benchmark_equity.append(bh * bar.close)
 

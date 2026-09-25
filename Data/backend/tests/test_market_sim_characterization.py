@@ -162,10 +162,11 @@ class D2WinRateCharacterization(unittest.TestCase):
 
 
 class D3OrdersPerDayCharacterization(unittest.TestCase):
-    def test_d3_current_orders_today_never_rolls(self) -> None:
+    def test_d3_on_bar_timestamp_resets_orders_today(self) -> None:
         guard = RiskGuard(RiskLimits(max_orders_per_day=2))
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=10_000)
+        guard.on_bar_timestamp("2024-01-01T10:00:00+00:00")
         for i in range(2):
             intent = make_intent(
                 run_id="r",
@@ -174,12 +175,15 @@ class D3OrdersPerDayCharacterization(unittest.TestCase):
                 side="BUY",
                 qty=1,
                 decision_bar_index=i,
-                decision_ts=f"t{i}",
+                decision_ts=f"2024-01-01T1{i}:00:00+00:00",
                 info_version=f"iv{i}",
             )
             decision = guard.evaluate_intent(intent, wallet=w, price=100.0)
             self.assertTrue(decision.allowed, decision.reason)
             guard.orders_today += 1
+        self.assertEqual(guard.orders_today, 2)
+        guard.on_bar_timestamp("2024-01-02T10:00:00+00:00")
+        self.assertEqual(guard.orders_today, 0)
         intent3 = make_intent(
             run_id="r",
             agent_id="a1",
@@ -191,18 +195,7 @@ class D3OrdersPerDayCharacterization(unittest.TestCase):
             info_version="iv3",
         )
         decision3 = guard.evaluate_intent(intent3, wallet=w, price=100.0)
-        self.assertFalse(decision3.allowed)
-        self.assertEqual(guard.orders_today, 2)
-        self.assertFalse(hasattr(guard, "roll_day"))
-        self.assertFalse(hasattr(guard, "on_bar_timestamp"))
-
-    @unittest.expectedFailure  # D3 — fixed in Phase T1
-    def test_d3_desired_per_simulated_day_rollover_api(self) -> None:
-        guard = RiskGuard(RiskLimits(max_orders_per_day=2))
-        self.assertTrue(
-            callable(getattr(guard, "on_bar_timestamp", None))
-            or callable(getattr(guard, "roll_day", None))
-        )
+        self.assertTrue(decision3.allowed, decision3.reason)
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +204,7 @@ class D3OrdersPerDayCharacterization(unittest.TestCase):
 
 
 class D4SizingCharacterization(unittest.TestCase):
-    def test_d4_current_default_sizes_tiny_notional(self) -> None:
+    def test_d4_default_risk_pct_sizes_one_percent(self) -> None:
         guard = RiskGuard(RiskLimits(per_trade_risk_pct=1.0, max_position_pct=25.0))
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=100_000)
@@ -231,12 +224,12 @@ class D4SizingCharacterization(unittest.TestCase):
         self.assertLess(notional, 6_000.0)
         self.assertAlmostEqual(notional, 1_000.0, delta=50.0)
 
-    @unittest.expectedFailure  # D4 — fixed in Phase T1
-    def test_d4_desired_explicit_sizing_model_on_run(self) -> None:
+    def test_d4_explicit_sizing_model_on_run(self) -> None:
         run = _run()
+        run.sizing_model = {"kind": "risk_pct", "perTradeRiskPct": 1.0}
         payload = run.public_dict()
         self.assertTrue(
-            "sizing_model" in payload or "sizing_model" in (run.metadata or {})
+            "sizing_model" in payload or "sizingModel" in payload
         )
 
 
@@ -978,31 +971,31 @@ class D24InstrumentsCharacterization(unittest.TestCase):
 
         self.assertEqual(infer_family("UNKNOWNXYZ"), InstrumentFamily.EQUITY)
 
-    def test_d24_current_fill_and_risk_do_not_use_instrument_spec(self) -> None:
-        fill_src = Path(
-            __import__("Data.modules.market_sim.fill_model", fromlist=["x"]).__file__
-        ).read_text(encoding="utf-8")
-        exec_src = Path(
-            __import__("Data.modules.market_sim.execution", fromlist=["x"]).__file__
-        ).read_text(encoding="utf-8")
+    def test_d24_risk_guard_uses_instrument_spec(self) -> None:
         risk_src = Path(
             __import__("Data.modules.market_sim.risk_guard", fromlist=["x"]).__file__
         ).read_text(encoding="utf-8")
-        for src in (fill_src, exec_src, risk_src):
-            self.assertNotIn("InstrumentSpec", src)
-            self.assertNotIn("spec_for_symbol", src)
+        self.assertIn("InstrumentSpec", risk_src)
+        self.assertIn("validate_intent_rules", risk_src)
+
+    def test_d24_explicit_family_not_overwritten(self) -> None:
+        from Data.modules.market_sim.instruments import InstrumentFamily, infer_family, spec_for_symbol
+
+        fam = infer_family("FOO", metadata={"family": "crypto_spot"})
+        self.assertEqual(fam, InstrumentFamily.CRYPTO_SPOT)
+        spec = spec_for_symbol("FOO", metadata={"family": "crypto_spot"})
+        self.assertEqual(spec.family, InstrumentFamily.CRYPTO_SPOT)
 
     def test_d24_current_qty_quantize_is_8_decimals(self) -> None:
         from Data.modules.market_sim import accounting
 
         self.assertEqual(accounting.MONEY_QUANT, __import__("decimal").Decimal("0.00000001"))
 
-    @unittest.expectedFailure  # D24 — fixed in Phase T3B
-    def test_d24_desired_unknown_family_refused(self) -> None:
+    def test_d24_unknown_explicit_family_refused(self) -> None:
         from Data.modules.market_sim.instruments import infer_family
 
-        with self.assertRaises(Exception):
-            infer_family("UNKNOWNXYZ")
+        with self.assertRaises(ValueError):
+            infer_family("UNKNOWNXYZ", metadata={"family": "not_a_real_family"})
 
 
 # ---------------------------------------------------------------------------

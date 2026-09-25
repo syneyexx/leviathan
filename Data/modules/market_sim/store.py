@@ -513,6 +513,12 @@ class MarketSimStore:
             return run
 
     def _row_run(self, row: sqlite3.Row) -> SimRun:
+        meta = _loads(row["metadata_json"], {})
+        sizing = meta.get("sizing_model") or meta.get("sizingModel") or {
+            "kind": "risk_pct",
+            "perTradeRiskPct": row["per_trade_risk_pct"],
+            "maxPositionPct": row["max_position_pct"],
+        }
         return SimRun(
             run_id=row["run_id"],
             status=row["status"],
@@ -553,7 +559,8 @@ class MarketSimStore:
             updated_at=row["updated_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
-            metadata=_loads(row["metadata_json"], {}),
+            metadata=meta,
+            sizing_model=sizing if isinstance(sizing, dict) else {"kind": "risk_pct"},
         )
 
     # --- Fills / messages / equity ---
