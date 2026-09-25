@@ -901,8 +901,9 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         # T7 research campaigns adds migration 47.
         # T8 gym/scorecards adds migration 48.
         # T9 paper/risk/audit adds migration 49.
+        # T13–T15 shadow live + lifecycle adds migration 50.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 49)
+        self.assertGreaterEqual(head, 50)
         by_ver = {m.version: m.name for m in MIGRATIONS}
         self.assertEqual(by_ver[42], "resource_reservations_device_aware")
         self.assertEqual(by_ver[43], "trading_orchestra")
@@ -912,6 +913,7 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         self.assertEqual(by_ver[47], "trading_research_campaigns")
         self.assertEqual(by_ver[48], "trading_gym_scorecards")
         self.assertEqual(by_ver[49], "trading_paper_risk_audit")
+        self.assertEqual(by_ver[50], "trading_shadow_lifecycle")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 

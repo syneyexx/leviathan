@@ -972,6 +972,102 @@ def build_market_sim_router(
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    # --- Shadow Live (T13) / lifecycle drift (T15) / training bridge (T16) ---
+
+    @router.post("/api/market-sim/shadow/sessions")
+    def start_shadow(payload: PaperSessionCreate) -> dict:
+        return _mutate(
+            "market_sim.shadow.start",
+            {
+                "symbol": payload.symbol,
+                "provider_id": payload.providerId,
+                "strategy_id": payload.strategyId,
+                "strategy_version": payload.strategyVersion,
+            },
+            fallback=lambda: {
+                "session": service.start_shadow_live(
+                    symbol=payload.symbol,
+                    provider_id=payload.providerId,
+                    strategy_id=payload.strategyId,
+                    strategy_version=payload.strategyVersion,
+                )
+            },
+        )
+
+    @router.get("/api/market-sim/shadow/sessions/{session_id}")
+    def get_shadow(session_id: str) -> dict:
+        try:
+            return {"session": service.get_shadow_live(session_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/shadow/sessions/{session_id}/decide")
+    def shadow_decide(session_id: str, payload: PaperOrderRequest) -> dict:
+        return _mutate(
+            "market_sim.shadow.decide",
+            {
+                "session_id": session_id,
+                "side": payload.side,
+                "qty": payload.qty,
+            },
+            fallback=lambda: service.shadow_live_decide(
+                session_id, side=payload.side, qty=payload.qty
+            ),
+        )
+
+    @router.post("/api/market-sim/shadow/sessions/{session_id}/outcomes/{decision_id}")
+    def shadow_outcome(
+        session_id: str,
+        decision_id: str,
+        payload: dict[str, Any],
+    ) -> dict:
+        realized = float(payload.get("realizedPrice") or payload.get("realized_price") or 0)
+        return _mutate(
+            "market_sim.shadow.outcome",
+            {
+                "session_id": session_id,
+                "decision_id": decision_id,
+                "realized_price": realized,
+            },
+            fallback=lambda: service.shadow_live_attach_outcome(
+                session_id, decision_id, realized_price=realized
+            ),
+        )
+
+    @router.post("/api/market-sim/strategy-drift")
+    def strategy_drift(payload: PaperDriftRequest) -> dict:
+        # Reuse equity lists as return series for drift helper.
+        return _mutate(
+            "market_sim.strategy.drift",
+            {
+                "expected_returns": payload.backtestEquity,
+                "actual_returns": payload.paperEquity,
+                "band": payload.bandPct / 100.0,
+            },
+            fallback=lambda: {
+                "drift": service.compute_strategy_drift(
+                    expected_returns=payload.backtestEquity,
+                    actual_returns=payload.paperEquity,
+                    band=payload.bandPct / 100.0,
+                )
+            },
+        )
+
+    @router.post("/api/market-sim/training-bridge/export")
+    def training_bridge_export(payload: dict[str, Any] | None = None) -> dict:
+        body = payload or {}
+        return _mutate(
+            "market_sim.training.export",
+            {
+                "session_id": body.get("sessionId") or body.get("session_id"),
+                "decisions": body.get("decisions"),
+            },
+            fallback=lambda: service.export_trading_training_bridge(
+                body.get("decisions"),
+                session_id=body.get("sessionId") or body.get("session_id"),
+            ),
+        )
+
     # --- Experiments ---
 
     @router.get("/api/market-sim/experiments")

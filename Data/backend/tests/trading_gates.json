@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T11",
+  "phase": "T18",
   "frozen_at": "2026-09-25",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T11 Master Program closeout \u2014 T11 gates PASS; residual T2/T3 infra DEFERRED",
+      "result": "T13\u2013T18 Master End-Product \u2014 shadow live, lifecycle, training bridge, UI labels; residual T2/T3 infra DEFERRED",
       "command": "python3 scripts/verify_trading_100.py --run-tests"
     }
   },
@@ -1469,7 +1469,152 @@
           "timeout_sec": 60
         }
       ],
-      "notes": "T11: append-only numbered migrations; head \u2265 49; compatibility posture documented."
+      "notes": "T11: append-only numbered migrations; head \u2265 49; compatibility posture documented. T18: head \u2265 50 (trading_shadow_lifecycle)."
+    },
+    "G67": {
+      "title": "Shadow Live — decide without broker submit",
+      "phase": "T13",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/shadow_live.py",
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::ShadowLiveTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::ShadowLiveTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t13_t18_end_product.py::ShadowLiveTests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T13: current-market decisions persist with no_broker_order truth; outcomes attach later; restart-safe via migration 50."
+    },
+    "G68": {
+      "title": "Live Paper modes — LOCAL/BROKER PAPER, live money blocked",
+      "phase": "T14",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::LivePaperModeTests",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::LivePaperModeTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t13_t18_end_product.py::LivePaperModeTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T14: same paper kernel as T9; sessions labeled LOCAL PAPER / BROKER PAPER; never ambiguous LIVE; live_money_blocked."
+    },
+    "G69": {
+      "title": "Promotion/degradation lifecycle + performance drift",
+      "phase": "T15",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/lifecycle.py",
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::LifecycleTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::LifecycleTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t13_t18_end_product.py::LifecycleTests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T15: ACTIVE\u2192DEGRADED\u2192REVIEW; drift UNMEASURED under insufficient sample; no fake significance."
+    },
+    "G70": {
+      "title": "Training bridge exports verified trajectories only",
+      "phase": "T16",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/training_bridge.py",
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::TrainingBridgeTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::TrainingBridgeTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t13_t18_end_product.py::TrainingBridgeTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T16: VerifiedExperience admission; unverified skipped; no TradingTrainer2; no raw private CoT."
+    },
+    "G71": {
+      "title": "Trading Center UI mode labels + shadow/training actions",
+      "phase": "T17",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/frontend/src/pages/trading/PaperTradingPage.tsx",
+        "Data/frontend/src/pages/trading/actionMatrix.ts",
+        "Data/frontend/src/api/client.ts",
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::PaperUiModeLabelTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::PaperUiModeLabelTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t13_t18_end_product.py::PaperUiModeLabelTests"
+          ],
+          "timeout_sec": 30
+        }
+      ],
+      "notes": "T17: SHADOW / LOCAL PAPER / BROKER PAPER / BLOCKED labels; shadow + training bridge wired in PaperTradingPage and action matrix."
+    },
+    "G72": {
+      "title": "Migration 50 + T13\u2013T18 hardening closeout",
+      "phase": "T18",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/migrations.py",
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::Migration50Tests",
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization",
+        "Data/docs/trading_master_program_completion.md"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t13_t18_end_product.py::Migration50Tests",
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t13_t18_end_product.py::Migration50Tests",
+            "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T18: head \u2265 50 trading_shadow_lifecycle; gates/docs updated; live money still BLOCKED."
     },
     "G61": {
       "title": "News provenance (source, hash, published/fetched/available_at, license; provider_io only)",

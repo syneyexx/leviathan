@@ -30,6 +30,10 @@ export type TradingActionId =
   | "risk.reset"
   | "audit.verify"
   | "security.posture"
+  | "shadow.start"
+  | "shadow.decide"
+  | "shadow.outcome"
+  | "training.export"
   | "live.status"
   | "capabilities";
 
@@ -71,6 +75,10 @@ export const TRADING_ACTION_MATRIX: TradingAction[] = [
   { id: "risk.reset", page: "shared", label: "Human risk reset", apiMethod: "marketSimRiskReset", path: "/api/market-sim/risk/reset", method: "POST", mutates: true },
   { id: "audit.verify", page: "shared", label: "Verify audit chain", apiMethod: "marketSimAuditVerify", path: "/api/market-sim/audit/verify", method: "GET", mutates: false },
   { id: "security.posture", page: "broker", label: "Security posture", apiMethod: "marketSimSecurityPosture", path: "/api/market-sim/security-posture", method: "GET", mutates: false },
+  { id: "shadow.start", page: "paper", label: "Start shadow live", apiMethod: "startShadowLive", path: "/api/market-sim/shadow/sessions", method: "POST", mutates: true },
+  { id: "shadow.decide", page: "paper", label: "Shadow decide", apiMethod: "shadowLiveDecide", path: "/api/market-sim/shadow/sessions/{id}/decide", method: "POST", mutates: true },
+  { id: "shadow.outcome", page: "paper", label: "Shadow outcome", apiMethod: "shadowLiveAttachOutcome", path: "/api/market-sim/shadow/sessions/{id}/outcomes/{id}", method: "POST", mutates: true },
+  { id: "training.export", page: "shared", label: "Training bridge export", apiMethod: "exportTradingTrainingBridge", path: "/api/market-sim/training-bridge/export", method: "POST", mutates: true },
   { id: "live.status", page: "broker", label: "Live trading status", apiMethod: "marketSimLiveTradingStatus", path: "/api/market-sim/live-trading", method: "GET", mutates: false },
   { id: "capabilities", page: "shared", label: "Capabilities", apiMethod: "marketSimCapabilities", path: "/api/market-sim/capabilities", method: "GET", mutates: false },
 ];
