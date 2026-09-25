@@ -1,9 +1,9 @@
 {
   "program": "frontier_reasoning",
-  "generated_at": "2026-09-25T07:39:43Z",
+  "generated_at": "2026-09-25T07:48:24Z",
   "phase": "F0",
-  "exit_code": 1,
-  "definition_of_done": false,
+  "exit_code": 0,
+  "definition_of_done": true,
   "skeleton": [
     {
       "id": "F0_AUDIT_DOC",
@@ -98,8 +98,8 @@
       "id": "R06",
       "title": "Native reasoning adapter",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f3_native;native_reasoning_controller_and_maps_ok",
       "phase": "F3",
       "kind": "program_gate"
     },
@@ -305,8 +305,8 @@
       "id": "R29",
       "title": "No hidden CoT leakage",
       "required": true,
-      "status": "NOT_STARTED",
-      "evidence": "\u2014",
+      "status": "PASS",
+      "evidence": "unittest:Data.backend.tests.test_frontier_reasoning_f3_native;private_cot_strip_wired",
       "phase": "F3+",
       "kind": "program_gate"
     },

@@ -100,6 +100,23 @@ class OpenAICompatibleAdapter:
     def capabilities(self) -> RuntimeCapabilities:
         return self._capabilities
 
+    def reasoning_capability_profile(self) -> dict[str, Any]:
+        """Honest default: do not claim native reasoning from endpoint shape alone.
+
+        Affirmation requires Settings override, structured model metadata, or a
+        successful capability probe — never the display name.
+        """
+        return {
+            "supports_native_reasoning": False,
+            "supported_efforts": [],
+            "supports_reasoning_token_budget": False,
+            "provider_family": "openai_compatible",
+            "resolution_source": "adapter",
+            "notes": (
+                "openai_compatible_default_ttc — native_requires_explicit_affirmation",
+            ),
+        }
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key and self.api_key != "not-needed":

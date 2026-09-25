@@ -1363,6 +1363,15 @@ class CognitiveRuntime:
         if remaining_tokens is None and state.decision:
             remaining_tokens = state.decision.budgets.max_model_tokens
         max_tokens = int(remaining_tokens or 2000)
+        neural_budget = state.decision.neural_budgets if state.decision else None
+        capability_profile = state.decision.capability_profile if state.decision else None
+        reasoning_mode = state.decision.mode.value if state.decision else None
+        override = None
+        policy = getattr(self.meta, "policy", None)
+        if policy is not None:
+            raw_override = getattr(policy, "reasoning_capability_override", None)
+            if isinstance(raw_override, dict) and raw_override:
+                override = dict(raw_override)
         try:
             result = self.model_caller(
                 system_prompt=system_prompt,
@@ -1371,6 +1380,10 @@ class CognitiveRuntime:
                 run_id=state.run_id,
                 trace_id=state.trace_id,
                 max_tokens=max_tokens,
+                neural_budget=neural_budget,
+                capability_profile=capability_profile,
+                reasoning_mode=reasoning_mode,
+                settings_capability_override=override,
             )
             usage: dict[str, Any] = {}
             usage_source = "unavailable"
@@ -1380,6 +1393,24 @@ class CognitiveRuntime:
                 text = result.get("text") or result.get("content")
                 usage = result.get("usage") or {}
                 usage_source = str(result.get("usage_source") or "unavailable")
+                # Public telemetry only — never private CoT.
+                inference_meta = result.get("inference_compute")
+                if isinstance(inference_meta, dict):
+                    self._emit(
+                        state,
+                        "inference_compute",
+                        {
+                            "path": inference_meta.get("path"),
+                            "native_effort_requested": inference_meta.get("native_effort_requested"),
+                            "native_effort_effective": inference_meta.get("native_effort_effective"),
+                            "reasoning_tokens": inference_meta.get("reasoning_tokens"),
+                            "reasoning_tokens_status": inference_meta.get(
+                                "reasoning_tokens_status", "UNMEASURED"
+                            ),
+                            "provider_hints_sent": inference_meta.get("provider_hints_sent"),
+                            "truth": inference_meta.get("truth"),
+                        },
+                    )
             else:
                 text = result
             text_s = str(text) if text is not None else None

@@ -78,6 +78,19 @@ class OllamaAdapter:
     def capabilities(self) -> RuntimeCapabilities:
         return self._capabilities
 
+    def reasoning_capability_profile(self) -> dict[str, Any]:
+        """Honest default: Ollama does not affirm native reasoning knobs by name."""
+        return {
+            "supports_native_reasoning": False,
+            "supported_efforts": [],
+            "supports_reasoning_token_budget": False,
+            "provider_family": "ollama",
+            "resolution_source": "adapter",
+            "notes": (
+                "ollama_default_ttc — native_requires_explicit_affirmation",
+            ),
+        }
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key and self.api_key != "not-needed":

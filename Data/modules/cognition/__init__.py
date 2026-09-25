@@ -14,6 +14,11 @@ from .domain_strategy import DomainCognitiveStrategy, DomainUnderstandResult, St
 from .errors import CognitionError, CognitionFeatureDisabled
 from .experience import ExperienceAdmissionPolicy, ExperienceStore, ProceduralMemoryHint, VerifiedExperience
 from .hypotheses import ConfidenceBand, Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band
+from .inference_compute import (
+    InferenceComputeController,
+    InferenceComputePlan,
+    InferenceComputeResult,
+)
 from .meta_controller import MetaController, MetaDecision
 from .model_adapter import build_control_plane_model_caller
 from .neural_compute import (
@@ -90,6 +95,9 @@ __all__ = [
     "Hypothesis",
     "HypothesisBoard",
     "HypothesisStatus",
+    "InferenceComputeController",
+    "InferenceComputePlan",
+    "InferenceComputeResult",
     "MetaController",
     "MetaDecision",
     "NativeEffort",

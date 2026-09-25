@@ -100,6 +100,19 @@ class LlamaCppAdapter:
     def capabilities(self) -> RuntimeCapabilities:
         return self._capabilities
 
+    def reasoning_capability_profile(self) -> dict[str, Any]:
+        """Honest default: managed llama.cpp does not invent reasoning knobs."""
+        return {
+            "supports_native_reasoning": False,
+            "supported_efforts": [],
+            "supports_reasoning_token_budget": False,
+            "provider_family": "llama_cpp",
+            "resolution_source": "adapter",
+            "notes": (
+                "llama_cpp_default_ttc — native_requires_explicit_affirmation",
+            ),
+        }
+
     async def health(self) -> tuple[ProviderHealth, float | None, str | None]:
         if self._inner is None:
             return (

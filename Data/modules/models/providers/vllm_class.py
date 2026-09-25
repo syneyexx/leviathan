@@ -46,6 +46,19 @@ class VllmClassAdapter:
     def capabilities(self) -> RuntimeCapabilities:
         return self._inner.capabilities()
 
+    def reasoning_capability_profile(self) -> dict[str, Any]:
+        """Honest default: vLLM-class endpoints do not invent reasoning knobs."""
+        return {
+            "supports_native_reasoning": False,
+            "supported_efforts": [],
+            "supports_reasoning_token_budget": False,
+            "provider_family": "vllm_class",
+            "resolution_source": "adapter",
+            "notes": (
+                "vllm_class_default_ttc — native_requires_explicit_affirmation",
+            ),
+        }
+
     async def health(self) -> tuple[ProviderHealth, float | None, str | None]:
         return await self._inner.health()
 

@@ -1,24 +1,25 @@
 # Frontier Reasoning — Completion Report
 
 **Generated:** 2026-09-25  
-**Phase covered:** F0 + F1 + F2  
+**Phase covered:** F0 + F1 + F2 + F3  
 **Overall program status:** NOT COMPLETE  
 
 ## Summary
 
-F2 adds two-axis compute inside the existing MetaController / Settings plane. Gates **R02, R03, R04, R05, R27, R28 PASS**. Verifier still exits non-zero until remaining required gates PASS.
+F3 adds provider-native reasoning maps and `InferenceComputeController` on the existing CognitiveRuntime → Model Control Plane path. Gates **R02–R06, R27–R29 PASS**. Verifier still exits non-zero until remaining required gates PASS.
 
-## F2 deliverables
+## F3 deliverables
 
 | Change | Status |
 |---|---|
-| `NeuralComputeBudget` | DONE |
-| `ReasoningCapabilityProfile` + resolve (no name guessing) | DONE |
-| MetaDecision requested/effective/clamp | DONE |
-| Settings schema + catalog neural budgets | DONE |
-| Resource pressure clamps | DONE |
-| F2 unit tests | DONE |
+| `InferenceComputeController` (prepare / normalize) | DONE |
+| `native_reasoning` provider maps | DONE |
+| Generic → empty hints / TTC path | DONE |
+| Adapter `reasoning_capability_profile()` honesty | DONE |
+| Strip private CoT on transport | DONE |
+| `reasoning_tokens` UNMEASURED unless provider-reported | DONE |
+| F3 unit tests | DONE |
 
 ## Next
 
-F3 — Native reasoning provider adapters.
+F4 — TTC multi-candidate execution (use `ttc_candidate_budget` prepared in F3).

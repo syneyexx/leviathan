@@ -124,6 +124,48 @@ def _behavior_identity_scan() -> tuple[str, str]:
     return "PASS", "behavior_profile_wired_chat_and_cognition"
 
 
+def _native_reasoning_scan() -> tuple[str, str]:
+    """R06 structural: InferenceComputeController + native maps; no second runtime."""
+    ctrl = ROOT / "Data" / "modules" / "cognition" / "inference_compute.py"
+    native = ROOT / "Data" / "modules" / "models" / "native_reasoning.py"
+    adapter = ROOT / "Data" / "modules" / "models" / "providers" / "openai_compatible.py"
+    if not ctrl.is_file():
+        return "FAIL", "missing:inference_compute.py"
+    if not native.is_file():
+        return "FAIL", "missing:native_reasoning.py"
+    ctrl_text = ctrl.read_text(encoding="utf-8")
+    native_text = native.read_text(encoding="utf-8")
+    adapter_text = adapter.read_text(encoding="utf-8")
+    if "class InferenceComputeController" not in ctrl_text:
+        return "FAIL", "missing_InferenceComputeController"
+    if "build_native_reasoning_hints" not in native_text:
+        return "FAIL", "missing_build_native_reasoning_hints"
+    if "generic_provider_family — no_unknown_reasoning_parameters" not in native_text:
+        return "FAIL", "missing_generic_no_unknown_knobs"
+    if "def reasoning_capability_profile" not in adapter_text:
+        return "FAIL", "openai_adapter_missing_reasoning_capability_profile"
+    if '"supports_native_reasoning": False' not in adapter_text:
+        return "FAIL", "openai_adapter_must_default_native_false"
+    return "PASS", "native_reasoning_controller_and_maps_ok"
+
+
+def _cot_leakage_scan() -> tuple[str, str]:
+    """R29 structural: private CoT fields stripped on public path."""
+    native = ROOT / "Data" / "modules" / "models" / "native_reasoning.py"
+    runtime_llm = ROOT / "Data" / "modules" / "model_runtime" / "openai_compatible.py"
+    if not native.is_file():
+        return "FAIL", "missing:native_reasoning.py"
+    text = native.read_text(encoding="utf-8")
+    llm_text = runtime_llm.read_text(encoding="utf-8") if runtime_llm.is_file() else ""
+    if "def strip_private_reasoning_fields" not in text:
+        return "FAIL", "missing_strip_private_reasoning_fields"
+    if "reasoning_content" not in text or "thinking" not in text:
+        return "FAIL", "strip_missing_private_field_names"
+    if "strip_private_reasoning_fields" not in llm_text:
+        return "FAIL", "llm_transport_does_not_strip_private_cot"
+    return "PASS", "private_cot_strip_wired"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -252,6 +294,18 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                             status, evidence = "FAIL", "missing_no_name_guess_invariant"
                         else:
                             evidence = f"{evidence};neural_compute_types_ok"
+                if status == "PASS" and gid == "R06":
+                    st6, ev6 = _native_reasoning_scan()
+                    if st6 != "PASS":
+                        status, evidence = st6, ev6
+                    else:
+                        evidence = f"{evidence};{ev6}"
+                if status == "PASS" and gid == "R29":
+                    st29, ev29 = _cot_leakage_scan()
+                    if st29 != "PASS":
+                        status, evidence = st29, ev29
+                    else:
+                        evidence = f"{evidence};{ev29}"
         elif declared == "PASS" and evidence in {"", "—", "None", "null"}:
             status, evidence = "FAIL", "PASS_without_evidence"
         elif declared == "PASS":
