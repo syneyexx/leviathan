@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +58,70 @@ REQUIRED_MODULES = (
     "Data/modules/cognition/experience.py",
     "Data/modules/verification/engine.py",
 )
+
+
+def _run_unittest(module: str) -> tuple[str, str]:
+    code, out = _run(
+        [sys.executable, "-m", "unittest", module, "-v"],
+        timeout=180,
+    )
+    if code == 0:
+        return "PASS", f"unittest:{module}"
+    snippet = " ".join(out.strip().splitlines()[-6:])[:400]
+    return "FAIL", f"unittest_failed:{module}:{snippet}"
+
+
+def _run(cmd: list[str], *, timeout: int = 600) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return 124, f"TIMEOUT: {exc}"
+    out = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode, out
+
+
+def _anti_fold_scan() -> tuple[str, str]:
+    """R02 structural: ContextBuilderV3 must not fold all non-system into system."""
+    path = ROOT / "Data" / "modules" / "cognition" / "context_v3.py"
+    if not path.is_file():
+        return "FAIL", "missing:context_v3.py"
+    text = path.read_text(encoding="utf-8")
+    if "serialize_reference_block" not in text:
+        return "FAIL", "missing_serialize_reference_block"
+    if "knowledge_in_system_role" not in text:
+        return "FAIL", "missing_knowledge_in_system_role_flag"
+    # Forbidden regression: fold all non-system sections into system_prompt.
+    if re.search(
+        r"data_sections\s*=\s*\[s for s in sections if s\.kind != [\"']system[\"']\]",
+        text,
+    ):
+        return "FAIL", "regress_fold_all_into_system"
+    if "authority_separation" not in text:
+        return "FAIL", "missing_authority_separation_flag"
+    return "PASS", "context_v3_authority_serialization_ok"
+
+
+def _behavior_identity_scan() -> tuple[str, str]:
+    """R03 structural: Cognition accepts BehaviorProfile; does not hard-require SEED only."""
+    runtime = (ROOT / "Data" / "modules" / "cognition" / "runtime.py").read_text(encoding="utf-8")
+    v3 = (ROOT / "Data" / "modules" / "cognition" / "context_v3.py").read_text(encoding="utf-8")
+    main = (ROOT / "Data" / "backend" / "main.py").read_text(encoding="utf-8")
+    if "behavior_profile_prompt" not in runtime:
+        return "FAIL", "runtime_missing_behavior_profile_prompt"
+    if "behavior_resolver" not in runtime:
+        return "FAIL", "runtime_missing_behavior_resolver"
+    if "behavior_profile_prompt" not in v3:
+        return "FAIL", "context_v3_missing_behavior_profile_prompt"
+    if "behavior_profile_prompt=behavior_snapshot.system_prompt" not in main:
+        return "FAIL", "chat_does_not_pass_behavior_snapshot"
+    return "PASS", "behavior_profile_wired_chat_and_cognition"
 
 
 def _load_gates() -> dict[str, Any]:
@@ -141,25 +207,52 @@ def _run_skeleton(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
-    """Program gates R01–R30: only PASS when manifest status is PASS with evidence.
-
-    F0 leaves them NOT_STARTED → verifier fails (by design).
-    """
+    """Evaluate R01–R30. PASS requires evidence; unittest/structural checks re-verified."""
     results: list[dict[str, Any]] = []
     for gate in manifest.get("gates") or []:
+        gid = str(gate.get("id") or "")
         declared = str(gate.get("status") or "NOT_STARTED").upper()
         evidence = str(gate.get("evidence") or gate.get("notes") or "—")
-        # Automated PASS criteria grow in later phases; F0 never auto-promotes.
-        if declared == "PASS" and evidence not in {"", "—", "None", "null"}:
-            status = "PASS"
+        check = str(gate.get("check") or "manual")
+        status = declared
+
+        if check == "unittest" and declared == "PASS":
+            module = str(gate.get("module") or "")
+            if not module:
+                status, evidence = "FAIL", "PASS_without_unittest_module"
+            else:
+                status, evidence = _run_unittest(module)
+                # Also enforce structural invariants for F1 authority gates.
+                if status == "PASS" and gid == "R02":
+                    st2, ev2 = _anti_fold_scan()
+                    if st2 != "PASS":
+                        status, evidence = st2, ev2
+                    else:
+                        evidence = f"{evidence};{ev2}"
+                if status == "PASS" and gid == "R03":
+                    st3, ev3 = _behavior_identity_scan()
+                    if st3 != "PASS":
+                        status, evidence = st3, ev3
+                    else:
+                        evidence = f"{evidence};{ev3}"
+                if status == "PASS" and gid == "R28":
+                    st2, ev2 = _anti_fold_scan()
+                    if st2 != "PASS":
+                        status, evidence = st2, ev2
+        elif declared == "PASS" and evidence in {"", "—", "None", "null"}:
+            status, evidence = "FAIL", "PASS_without_evidence"
         elif declared == "PASS":
-            status = "FAIL"
-            evidence = "PASS_without_evidence"
+            status = "PASS"
         else:
-            status = declared if declared in {"NOT_STARTED", "IN_PROGRESS", "FAIL", "NOT_TESTED"} else "NOT_STARTED"
+            status = (
+                declared
+                if declared in {"NOT_STARTED", "IN_PROGRESS", "FAIL", "NOT_TESTED"}
+                else "NOT_STARTED"
+            )
+
         results.append(
             {
-                "id": gate.get("id"),
+                "id": gid,
                 "title": gate.get("title"),
                 "required": bool(gate.get("required", True)),
                 "status": status,

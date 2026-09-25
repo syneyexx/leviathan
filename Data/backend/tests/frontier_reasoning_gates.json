@@ -2,8 +2,8 @@
   "program": "frontier_reasoning",
   "version": 1,
   "updated": "2026-09-25",
-  "active_phase": "F0",
-  "notes": "F0 audit only. R01-R30 must not PASS without executed evidence. Distinct from trading frontier_program.",
+  "active_phase": "F1",
+  "notes": "F1 context/trust landed. R02/R03/R28 evidence via unittest. Remaining R04–R30 open. Distinct from trading frontier_program.",
   "f0_skeleton_checks": [
     {
       "id": "F0_AUDIT_DOC",
@@ -55,9 +55,9 @@
     }
   ],
   "gates": [
-    {"id": "R01", "title": "Canonical CognitiveRuntime", "required": true, "status": "NOT_STARTED", "phase": "F0+", "check": "manual"},
-    {"id": "R02", "title": "Context authority separation", "required": true, "status": "NOT_STARTED", "phase": "F1", "check": "manual"},
-    {"id": "R03", "title": "BehaviorProfile identity", "required": true, "status": "NOT_STARTED", "phase": "F1", "check": "manual"},
+    {"id": "R01", "title": "Canonical CognitiveRuntime", "required": true, "status": "IN_PROGRESS", "phase": "F0+", "check": "manual", "evidence": "CognitiveRuntime remains sole orch owner; preserved in F1"},
+    {"id": "R02", "title": "Context authority separation", "required": true, "status": "PASS", "phase": "F1", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests", "evidence": "test_frontier_reasoning_f1_context.ContextV3AuthorityTests"},
+    {"id": "R03", "title": "BehaviorProfile identity", "required": true, "status": "PASS", "phase": "F1", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.CognitionBehaviorIdentityTests", "evidence": "test_frontier_reasoning_f1_context.CognitionBehaviorIdentityTests"},
     {"id": "R04", "title": "Two-axis compute", "required": true, "status": "NOT_STARTED", "phase": "F2", "check": "manual"},
     {"id": "R05", "title": "Reasoning capability profile", "required": true, "status": "NOT_STARTED", "phase": "F2", "check": "manual"},
     {"id": "R06", "title": "Native reasoning adapter", "required": true, "status": "NOT_STARTED", "phase": "F3", "check": "manual"},
@@ -82,7 +82,7 @@
     {"id": "R25", "title": "Frontend reasoning controls", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
     {"id": "R26", "title": "Observability", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
     {"id": "R27", "title": "Resource pressure", "required": true, "status": "NOT_STARTED", "phase": "F2+", "check": "manual"},
-    {"id": "R28", "title": "Security", "required": true, "status": "NOT_STARTED", "phase": "F1+", "check": "manual"},
+    {"id": "R28", "title": "Security", "required": true, "status": "PASS", "phase": "F1+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests", "evidence": "prompt-injection + role-marker + RAG/tool/memory authority tests"},
     {"id": "R29", "title": "No hidden CoT leakage", "required": true, "status": "NOT_STARTED", "phase": "F3+", "check": "manual"},
     {"id": "R30", "title": "Tests/typecheck/lint/build", "required": true, "status": "NOT_STARTED", "phase": "F18", "check": "manual"}
   ]

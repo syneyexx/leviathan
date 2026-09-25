@@ -19,6 +19,13 @@ class CognitionSubmitRequest(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     run: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Optional: pass the same effective BehaviorProfile snapshot Chat uses.
+    # When omitted, CognitiveRuntime resolves via Settings behavior_resolver.
+    behavior_profile_prompt: str | None = None
+    behavior_profile_id: str | None = None
+    behavior_profile_version: str | None = None
+    behavior_settings_hash: str | None = None
+    behavior_source: str | None = None
 
 
 class CognitionSteerRequest(BaseModel):
@@ -50,6 +57,11 @@ def build_cognition_router(runtime: CognitiveRuntime) -> APIRouter:
                 shadow=payload.shadow,
                 constraints=payload.constraints,
                 metadata=payload.metadata,
+                behavior_profile_prompt=payload.behavior_profile_prompt,
+                behavior_profile_id=payload.behavior_profile_id,
+                behavior_profile_version=payload.behavior_profile_version,
+                behavior_settings_hash=payload.behavior_settings_hash,
+                behavior_source=payload.behavior_source,
                 run=payload.run,
             )
         except Exception as exc:  # noqa: BLE001

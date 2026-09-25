@@ -90,6 +90,12 @@ class CognitiveRunState:
     experience: dict[str, Any] | None = None
     steering: list[str] = field(default_factory=list)
     trace_id: str | None = None
+    # Effective BehaviorProfile identity for this run (same plane as Chat).
+    behavior_profile_prompt: str | None = None
+    behavior_profile_id: str | None = None
+    behavior_profile_version: str | None = None
+    behavior_settings_hash: str | None = None
+    behavior_source: str | None = None
 
     def public_status(self) -> dict[str, Any]:
         return {
@@ -166,6 +172,7 @@ class CognitiveRuntime:
         execution_gateway: Any | None = None,
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
+        behavior_resolver: Any | None = None,
     ) -> None:
         self.enabled = enabled
         self.shadow_default = shadow
@@ -200,6 +207,8 @@ class CognitiveRuntime:
         self.execution_gateway = execution_gateway
         self.observability = observability
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
+        # Settings Control Plane — same BehaviorProfile plane as Chat.
+        self.behavior_resolver = behavior_resolver
 
         self._runs: dict[str, CognitiveRunState] = {}
         self._loops: dict[str, LoopDetector] = {}
@@ -218,6 +227,11 @@ class CognitiveRuntime:
         metadata: dict[str, Any] | None = None,
         user_requested_depth: str | None = None,
         run: bool = True,
+        behavior_profile_prompt: str | None = None,
+        behavior_profile_id: str | None = None,
+        behavior_profile_version: str | None = None,
+        behavior_settings_hash: str | None = None,
+        behavior_source: str | None = None,
     ) -> dict[str, Any]:
         if not self.enabled:
             raise CognitionFeatureDisabled("LEVIATHAN_FEATURE_COGNITION is disabled")
@@ -225,6 +239,15 @@ class CognitiveRuntime:
         meta_payload = dict(metadata or {})
         if user_requested_depth:
             meta_payload["user_requested_depth"] = str(user_requested_depth)
+        identity = self._resolve_behavior_identity(
+            message=message,
+            history=history,
+            behavior_profile_prompt=behavior_profile_prompt,
+            behavior_profile_id=behavior_profile_id,
+            behavior_profile_version=behavior_profile_version,
+            behavior_settings_hash=behavior_settings_hash,
+            behavior_source=behavior_source,
+        )
         task = self.task_builder.build(
             message,
             has_knowledge=has_knowledge,
@@ -240,6 +263,11 @@ class CognitiveRuntime:
             status=CognitiveRunStatus.CREATED,
             shadow=use_shadow,
             trace_id=str(uuid.uuid4()),
+            behavior_profile_prompt=identity.get("prompt"),
+            behavior_profile_id=identity.get("profile_id"),
+            behavior_profile_version=identity.get("version"),
+            behavior_settings_hash=identity.get("settings_hash"),
+            behavior_source=identity.get("source"),
         )
         state.working_memory.set_goal(task.goal)
         # Pin hard constraints so they survive compaction / retrieval / research.
@@ -432,10 +460,13 @@ class CognitiveRuntime:
             "tracked_runs": len(self._runs),
             "delegation_handlers": self.delegation.available(),
             "gateway_wired": self.execution_gateway is not None,
+            "behavior_resolver_wired": self.behavior_resolver is not None,
             "truth": {
                 "cognition_does_not_bypass_gateway": True,
                 "neuro_is_advisory": True,
                 "hydrate_reconstructs_live_state": True,
+                "behavior_profile_is_canonical_identity": True,
+                "no_independent_cognition_identity": True,
             },
         }
 
@@ -674,15 +705,7 @@ class CognitiveRuntime:
         }
 
     def _fast_path(self, state: CognitiveRunState, *, history: list[dict[str, str]] | None) -> dict[str, Any]:
-        ctx = self.context_builder.build(
-            task=state.task,
-            working_memory=state.working_memory,
-            beliefs=state.beliefs if self.belief_enabled else None,
-            perception=state.perception,
-            plan=state.plan,
-            history=history,
-            token_budget=state.decision.budgets.max_context_tokens if state.decision else None,
-        )
+        ctx = self._build_context(state, history=history)
         state.context_public = ctx.public_dict()
         self._emit(state, "context_built", ctx.pack.public_dict())
         text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role="responder")
@@ -1165,16 +1188,7 @@ class CognitiveRuntime:
         if kind in {CognitiveActionKind.MODEL_CALL, CognitiveActionKind.RESPOND}:
             self._transition(state, CognitiveRunStatus.REASONING)
             shortlist = [i.content for i in state.working_memory.list_by_kind("capability")]
-            ctx = self.context_builder.build(
-                task=state.task,
-                working_memory=state.working_memory,
-                beliefs=state.beliefs if self.belief_enabled else None,
-                perception=state.perception,
-                plan=state.plan,
-                capability_shortlist=shortlist,
-                history=history,
-                token_budget=state.decision.budgets.max_context_tokens if state.decision else None,
-            )
+            ctx = self._build_context(state, history=history, capability_shortlist=shortlist)
             state.context_public = ctx.public_dict()
             role = str(action.arguments.get("role") or "responder")
             text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role=role)
@@ -1216,6 +1230,86 @@ class CognitiveRuntime:
             )
 
         return None
+
+    def _resolve_behavior_identity(
+        self,
+        *,
+        message: str,
+        history: list[dict[str, str]] | None,
+        behavior_profile_prompt: str | None,
+        behavior_profile_id: str | None,
+        behavior_profile_version: str | None,
+        behavior_settings_hash: str | None,
+        behavior_source: str | None,
+    ) -> dict[str, Any]:
+        """Resolve the same effective BehaviorProfile plane as Chat.
+
+        Caller-supplied snapshot wins. Otherwise use Settings resolver when wired.
+        Seed is only the first-install/default when neither is available.
+        """
+        prompt = (behavior_profile_prompt or "").strip()
+        if prompt:
+            return {
+                "prompt": prompt,
+                "profile_id": behavior_profile_id,
+                "version": behavior_profile_version,
+                "settings_hash": behavior_settings_hash,
+                "source": behavior_source or "caller",
+            }
+        resolver = self.behavior_resolver
+        if resolver is not None and hasattr(resolver, "resolve"):
+            recent = [
+                str(m.get("content") or "")
+                for m in (history or [])
+                if m.get("role") == "user" and m.get("content")
+            ]
+            try:
+                snap = resolver.resolve(
+                    latest_user_message=message,
+                    recent_user_messages=recent[-6:],
+                )
+            except Exception:  # noqa: BLE001 — never invent a second identity on resolver failure
+                snap = None
+            if snap is not None:
+                profile = getattr(snap, "profile", None)
+                return {
+                    "prompt": str(getattr(snap, "system_prompt", "") or "").strip() or None,
+                    "profile_id": getattr(profile, "id", None) if profile is not None else None,
+                    "version": str(getattr(snap, "version", "") or getattr(profile, "version", "") or "")
+                    or None,
+                    "settings_hash": getattr(snap, "settings_hash", None),
+                    "source": getattr(snap, "source", None) or "behavior_resolver",
+                }
+        return {
+            "prompt": None,
+            "profile_id": behavior_profile_id,
+            "version": behavior_profile_version,
+            "settings_hash": behavior_settings_hash,
+            "source": behavior_source or "seed_default",
+        }
+
+    def _build_context(
+        self,
+        state: CognitiveRunState,
+        *,
+        history: list[dict[str, str]] | None,
+        capability_shortlist: list[str] | None = None,
+    ) -> Any:
+        return self.context_builder.build(
+            task=state.task,
+            working_memory=state.working_memory,
+            beliefs=state.beliefs if self.belief_enabled else None,
+            perception=state.perception,
+            plan=state.plan,
+            capability_shortlist=capability_shortlist,
+            history=history,
+            token_budget=state.decision.budgets.max_context_tokens if state.decision else None,
+            behavior_profile_prompt=state.behavior_profile_prompt,
+            behavior_profile_id=state.behavior_profile_id,
+            behavior_profile_version=state.behavior_profile_version,
+            behavior_settings_hash=state.behavior_settings_hash,
+            behavior_source=state.behavior_source,
+        )
 
     def _call_model(
         self,

@@ -167,13 +167,21 @@ class ContextV3Tests(unittest.TestCase):
             beliefs=beliefs,
             perception=perception,
             capability_shortlist=["fs.read"],
+            behavior_profile_prompt="You are ORCA from settings.",
         )
-        blob = result.pack.system_prompt
-        self.assertIn("ADVISORY", blob.upper() + "NEURAL")
-        self.assertIn("TASK MODEL", blob)
-        self.assertIn("SUCCESS CRITERIA", blob)
+        system = result.pack.system_prompt
+        joined = "\n".join([system] + [m["content"] for m in result.pack.messages])
+        self.assertIn("ORCA", system)
+        self.assertIn("TASK MODEL", system)
+        self.assertIn("SUCCESS CRITERIA", system)
+        self.assertIn("ADVISORY", joined.upper())
         self.assertTrue(result.pack.provenance.get("trust_labels"))
-
+        self.assertTrue(result.pack.provenance.get("authority_separation"))
+        self.assertFalse(result.pack.provenance.get("knowledge_in_system_role", True))
+        # Neural advisory must not live in system authority channel.
+        self.assertNotIn("advisory association", system)
+        self.assertIn("reference_context", joined)
+        self.assertIn("advisory association", joined)
 
 class MetaControllerTests(unittest.TestCase):
     def test_simple_stays_shallow(self) -> None:
