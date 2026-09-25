@@ -12,6 +12,7 @@ from typing import Any, Callable
 from Data.modules.jobs.states import JobState
 
 from .admission import ResourceAdmission, ResourceClass
+from .events import get_worker_event_emitter, resolve_human_title
 from .pools import POOL_CATALOG
 from .protocol import WorkerInstanceState
 from .registry import WorkerRegistry, utc_now
@@ -109,7 +110,8 @@ def run_pool_loop(
     last_hb = 0.0
     draining = False
 
-    print(f"[{pool_id}-worker] ready worker_id={worker_id} pid={os.getpid()}", flush=True)
+    emitter = get_worker_event_emitter()
+    emitter.worker_ready(pool=pool_id, worker_id=worker_id, worker_pid=os.getpid())
 
     while not stop["flag"]:
         now = time.time()
@@ -182,6 +184,21 @@ def run_pool_loop(
         )
         if not decision.allowed:
             # Put back to queued if possible; otherwise leave for retry path.
+            human = resolve_human_title(
+                capability_id=getattr(job, "capability_id", None),
+                metadata=getattr(job, "metadata", None),
+                arguments=getattr(job, "arguments", None),
+                domain=getattr(job, "domain", None) or pool_id,
+            )
+            emitter.job_waiting_resources(
+                job_id=job.job_id,
+                capability_id=str(getattr(job, "capability_id", "") or ""),
+                reason=str(decision.reason or "RESOURCE_UNAVAILABLE"),
+                pool=pool_id,
+                worker_id=worker_id,
+                human_title=human,
+                domain=getattr(job, "domain", None) or pool_id,
+            )
             try:
                 if hasattr(store, "transition"):
                     from Data.modules.jobs.states import JobState as JS
@@ -211,6 +228,25 @@ def run_pool_loop(
         ctx["lease_ttl_seconds"] = lease_ttl
         ctx["lease_lost"] = lease_lost
         ctx["job_cancel_fence"] = cancel_fence
+        job_started_monotonic = time.monotonic()
+        human_title = resolve_human_title(
+            capability_id=getattr(job, "capability_id", None),
+            metadata=getattr(job, "metadata", None),
+            arguments=getattr(job, "arguments", None),
+            domain=getattr(job, "domain", None) or pool_id,
+        )
+        emitter.job_started(
+            job_id=job.job_id,
+            capability_id=str(getattr(job, "capability_id", "") or ""),
+            pool=pool_id,
+            worker_id=worker_id,
+            worker_pid=os.getpid(),
+            human_title=human_title,
+            domain=getattr(job, "domain", None) or pool_id,
+            attempt=getattr(job, "attempt_number", None),
+            metadata=getattr(job, "metadata", None),
+            arguments=getattr(job, "arguments", None),
+        )
 
         def _job_cancel_check() -> bool:
             if lease_lost.is_set() or cancel_fence.is_set() or stop["flag"]:
@@ -353,14 +389,74 @@ def run_pool_loop(
             ctx.pop("job_cancel_fence", None)
             ctx.pop("current_job_id", None)
 
+        duration_ms = (time.monotonic() - job_started_monotonic) * 1000.0
+        final = None
+        try:
+            final = store.get(job.job_id)
+        except Exception:  # noqa: BLE001
+            final = None
+        final_state = getattr(getattr(final, "state", None), "name", None) or ""
+        cap_id = str(getattr(job, "capability_id", "") or "")
+        domain = getattr(job, "domain", None) or pool_id
+        if final_state == "COMPLETED":
+            emitter.job_completed(
+                job_id=job.job_id,
+                capability_id=cap_id,
+                duration_ms=duration_ms,
+                pool=pool_id,
+                worker_id=worker_id,
+                human_title=human_title,
+                domain=domain,
+                metadata=getattr(job, "metadata", None),
+                arguments=getattr(job, "arguments", None),
+            )
+        elif final_state == "CANCELLED":
+            emitter.job_cancelled(
+                job_id=job.job_id,
+                capability_id=cap_id,
+                pool=pool_id,
+                worker_id=worker_id,
+                human_title=human_title,
+                domain=domain,
+            )
+        elif final_state in {"FAILED", "RETRY_WAIT"} or (
+            final is not None and getattr(final, "error", None)
+        ):
+            err_code = getattr(final, "error_code", None) if final is not None else None
+            err_msg = getattr(final, "error", None) if final is not None else None
+            if final_state == "RETRY_WAIT":
+                emitter.job_retry(
+                    job_id=job.job_id,
+                    capability_id=cap_id,
+                    attempt=getattr(final, "attempt_number", None) if final else None,
+                    pool=pool_id,
+                    worker_id=worker_id,
+                    human_title=human_title,
+                    domain=domain,
+                )
+            else:
+                emitter.job_failed(
+                    job_id=job.job_id,
+                    capability_id=cap_id,
+                    error_code=err_code or err_msg,
+                    message=err_msg,
+                    duration_ms=duration_ms,
+                    pool=pool_id,
+                    worker_id=worker_id,
+                    human_title=human_title,
+                    domain=domain,
+                    metadata=getattr(job, "metadata", None),
+                    arguments=getattr(job, "arguments", None),
+                )
+
         processed += 1
-        print(f"[{pool_id}-worker] finished job={job.job_id}", flush=True)
         if max_jobs is not None and processed >= max_jobs:
             break
         if once:
             break
 
     registry.mark_state(worker_id, WorkerInstanceState.STOPPED)
+    emitter.worker_stopping(pool=pool_id, worker_id=worker_id)
     return processed
 
 

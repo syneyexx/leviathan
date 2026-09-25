@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .admission import ResourceAdmission
+from .events import WorkerEventKind, get_worker_event_emitter
 from .pools import POOL_CATALOG
 from .process import OwnedProcess, spawn_worker_process, terminate_owned, verify_owned
 from .protocol import (
@@ -86,6 +87,9 @@ class WorkerSupervisor:
         self.last_tick_error: str | None = None
         self.restart_count = int(restart_count)
         self._shutdown_errors: list[str] = []
+        self._announced_pools: set[str] = set()
+        self._restart_attempts: dict[str, int] = {}
+        self._events = get_worker_event_emitter()
 
     def initialize(self) -> None:
         self.registry.initialize()
@@ -123,6 +127,7 @@ class WorkerSupervisor:
         self._persist_health()
         try:
             self.reconcile_pools()
+            self._announce_started_pools()
         except Exception as exc:  # noqa: BLE001
             logger.warning("reconcile_pools at start failed: %s", exc)
             self._note_transient("reconcile_pools", exc)
@@ -164,6 +169,10 @@ class WorkerSupervisor:
                 self.registry.mark_state(worker_id, WorkerInstanceState.STOPPED)
             except Exception as exc:  # noqa: BLE001
                 self._shutdown_errors.append(f"mark_stopped:{worker_id}: {exc}")
+            try:
+                self._events.worker_stopping(pool=proc.pool_id, worker_id=worker_id)
+            except Exception:  # noqa: BLE001
+                pass
             self._owned.pop(worker_id, None)
 
         try:
@@ -318,6 +327,10 @@ class WorkerSupervisor:
                         "transient": is_transient_sqlite_error(exc),
                     }
                 )
+        try:
+            self._announce_started_pools()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _reconcile_one_pool(self, pool_id: str, state: PoolRuntimeState) -> None:
         if state.degraded and time.time() < state.cooldown_until:
@@ -349,6 +362,10 @@ class WorkerSupervisor:
                 owned = self._spawn(pool_id, slot=len(live))
             except Exception as exc:  # noqa: BLE001
                 self._record_crash(pool_id, str(exc))
+                try:
+                    self._events.pool_start_failed(pool_id, reason=str(exc))
+                except Exception:  # noqa: BLE001
+                    pass
                 break
             live.append(
                 WorkerRegistration(
@@ -359,6 +376,18 @@ class WorkerSupervisor:
                     process_start_identity=owned.process_start_identity,
                 )
             )
+            # Restart visibility when recovering after a crash window.
+            attempts = self._restart_attempts.get(pool_id, 0)
+            if attempts > 0:
+                try:
+                    self._events.worker_restarted(
+                        pool=pool_id,
+                        worker_id=owned.worker_id,
+                        attempt=attempts,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                self._restart_attempts[pool_id] = 0
         # Scale down — drain excess; do not kill active non-preemptible jobs.
         excess = len(live) - state.desired
         if excess > 0:
@@ -435,6 +464,12 @@ class WorkerSupervisor:
             try:
                 exited = proc.popen is not None and proc.popen.poll() is not None
                 if exited or not verify_owned(proc):
+                    exit_code = None
+                    try:
+                        if proc.popen is not None:
+                            exit_code = proc.popen.poll()
+                    except Exception:  # noqa: BLE001
+                        exit_code = None
                     try:
                         self.registry.mark_state(
                             worker_id,
@@ -450,8 +485,20 @@ class WorkerSupervisor:
                                 "transient": is_transient_sqlite_error(exc),
                             }
                         )
+                    try:
+                        self._events.worker_crashed(
+                            pool=proc.pool_id,
+                            worker_id=worker_id,
+                            exit_code=exit_code,
+                            reason="process_exited",
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                     self._owned.pop(worker_id, None)
                     self._record_crash(proc.pool_id, "process_exited")
+                    self._restart_attempts[proc.pool_id] = (
+                        self._restart_attempts.get(proc.pool_id, 0) + 1
+                    )
             except Exception as exc:  # noqa: BLE001
                 errors.append(
                     {
@@ -478,6 +525,30 @@ class WorkerSupervisor:
             state.degraded = True
             state.degraded_reason = f"WORKER_RESTART_EXHAUSTED: {reason}"
             state.cooldown_until = now + backoff
+            try:
+                self._events.emit_kind(
+                    WorkerEventKind.WORKER_CRASHED,
+                    pool=pool_id,
+                    worker_id=f"{pool_id}-pool",
+                    error_code="UITGESCHAKELD — restartlimiet bereikt",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _announce_started_pools(self) -> None:
+        """Log pools that actually have owned processes after reconcile."""
+        owned_by_pool: dict[str, int] = {}
+        for proc in self._owned.values():
+            owned_by_pool[proc.pool_id] = owned_by_pool.get(proc.pool_id, 0) + 1
+        for pool_id, count in sorted(owned_by_pool.items()):
+            if count <= 0 or pool_id in self._announced_pools:
+                continue
+            try:
+                self._events.pool_started(pool_id, worker_count=count)
+            except Exception:  # noqa: BLE001
+                pass
+            self._announced_pools.add(pool_id)
+        # Also announce desired==0 pools? No — only actually started.
 
     def _safe_pool_status(self, tick_errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
         try:

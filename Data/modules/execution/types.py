@@ -62,6 +62,20 @@ class CapabilityDefinition:
     def resolved_schema_hash(self) -> str:
         return self.schema_hash or schema_hash(self.input_schema, self.output_schema)
 
+    def execution_class(self) -> str:
+        """Resolved INLINE_SAFE / EXTERNAL_PREFERRED / EXTERNAL_REQUIRED."""
+        meta = self.normalized_metadata()
+        value = meta.get("execution_class")
+        if value:
+            return str(value)
+        from .workload import classify_capability
+
+        return classify_capability(
+            self.id,
+            metadata=meta,
+            provider_kind=self.provider_kind.value,
+        ).value
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -78,12 +92,14 @@ class CapabilityDefinition:
             "enabled": self.enabled,
             "schema_hash": self.resolved_schema_hash(),
             "metadata": self.normalized_metadata(),
+            "execution_class": self.execution_class(),
             "truth": {
                 "discoverable_is_not_authorized": True,
                 "registered_is_not_available": True,
                 "available_is_not_enabled": True,
                 "enabled_is_not_approved": True,
                 "metadata_is_not_authorization": True,
+                "execution_class_is_not_authorization": True,
             },
         }
 

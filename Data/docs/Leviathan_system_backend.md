@@ -442,11 +442,45 @@ BehaviorProfile is **not** AuthorityProfile. Side effects that require approval 
 - `bootstrap.py`, `process.py`, `supervisor.py`, `loop.py`;
 - `registry.py`, `pools.py`, `protocol.py`, `settings.py`;
 - `admission.py`, `sqlite_support.py`;
+- `events.py` — centralized worker terminal observability (`WorkerEventEmitter`);
 - `entrypoints/` for domain-specific processes.
 
 Current entrypoint families include agents, backup, coding, dataset, document AI, embeddings, evaluation, general jobs, knowledge prepare/commit, maintenance, market simulation, MCP execution, model downloads, provider I/O, reranking, research, scheduler, source ingestion, telemetry, training control and workflows.
 
 Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/CPU/GPU work should be externalized through JobRuntime/workers when practical.
+
+### Control Plane vs Execution Plane
+
+| Plane | Owns | Must not own |
+| --- | --- | --- |
+| Control Plane (API/main) | routing, validation, auth/policy, job enqueue/cancel/status, SSE, lightweight metadata | PDF/archive parse, bulk embedding, research runs, dataset transforms, training, evaluation suites, unbounded network fetch |
+| Execution Plane (WorkerSupervisor pools) | durable job claim/execute for heavy work | control-plane routing / approvals |
+
+### Workload classification (`Data/modules/execution/workload.py`)
+
+Capabilities declare an `execution_class` in metadata:
+
+- `INLINE_SAFE` — small/bounded; may run in API
+- `EXTERNAL_PREFERRED` — prefer workers when available
+- `EXTERNAL_REQUIRED` — must not run heavy implementation in API when `LEVIATHAN_WORKERS_EXTERNALIZE_API=true`
+
+`ExecutionGateway` rejects inline API execution of `EXTERNAL_REQUIRED` with `worker_required` (honest `WORKER_UNAVAILABLE` / enqueue path). Worker processes (`LEVIATHAN_WORKER_ID`) and explicit developer mode (`LEVIATHAN_WORKERS_EXTERNALIZE_API=false`) remain exempt. Classification never bypasses authorization.
+
+### Terminal observability
+
+Worker lifecycle uses one emitter → human terminal lines + structured logs:
+
+- `[LEVIATHAN] Control Plane gestart`
+- `[JOB] Research '…' ingepland — job ab12cd34` (enqueue; not yet started)
+- `[WORKER] research pool gestart — 2 workers` (after processes are owned)
+- `[WORKER:research-1] Research '…' gestart` (after claim/begin)
+- completion/failure with duration and safe error codes
+
+Labels come from allowlisted metadata (topic/filename/dataset name); secrets and document bodies are never printed.
+
+### Fallback policy
+
+When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
 
 ---
 

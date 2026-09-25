@@ -69,6 +69,11 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("filesystem.read",),
+            metadata={
+                "tags": ["filesystem", "pdf"],
+                "domains": ["filesystem"],
+                "execution_class": "EXTERNAL_REQUIRED",
+            },
         )
     )
     catalog.register(
@@ -926,6 +931,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["ingestion", "research", "archive"],
                 "domains": ["source_ingestion"],
                 "worker_kind": "source_ingestion",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -951,6 +957,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["ingestion", "brain", "retry"],
                 "domains": ["source_ingestion"],
                 "worker_kind": "source_ingestion",
+                "execution_class": "EXTERNAL_REQUIRED",
             },
         )
     )
@@ -976,6 +983,7 @@ def build_default_catalog() -> CapabilityCatalog:
                 "tags": ["compute", "tier0", "deterministic"],
                 "domains": ["compute"],
                 "worker_kind": "general",
+                "execution_class": "INLINE_SAFE",
             },
         )
     )
@@ -1005,6 +1013,7 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
             "tags": tags or [worker_kind, cap_id.split(".", 1)[-1]],
             "domains": domains or [cap_id.split(".", 1)[0]],
             "worker_kind": worker_kind,
+            "execution_class": "EXTERNAL_REQUIRED",
             "idempotent": True,
             "cacheable": False,
         }
