@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T9",
+  "phase": "T10",
   "frozen_at": "2026-09-25",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T9 paper forward + risk v2 + brokers/reconcile + audit ledger",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t9_paper_risk.py Data/backend/tests/test_market_sim_characterization.py -q"
+      "result": "T10 Trading Center run builder + action matrix + typed contracts",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t10_trading_center.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -973,12 +973,29 @@
     "G41": {
       "title": "Trading Center pages real data",
       "phase": "T10A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/frontend/src/pages/trading/SimulatiePage.tsx",
+        "Data/frontend/src/pages/trading/PaperTradingPage.tsx",
+        "Data/frontend/src/pages/trading/PortefeuillePage.tsx",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::LiveSeriesRecentTailTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::LiveSeriesRecentTailTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t10_trading_center.py::LiveSeriesRecentTailTests",
+            "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T10A: Trading Center pages bind to control-plane APIs; live equity/fills/messages are recent-tail (not oldest-first).",
       "related_defects": [
         "D27"
       ]
@@ -986,12 +1003,26 @@
     "G42": {
       "title": "Run configuration UI complete",
       "phase": "T10A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/frontend/src/pages/trading/SimulatiePage.tsx",
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::RunBuilderUiTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::RunBuilderUiTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t10_trading_center.py::RunBuilderUiTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T10A: SimulatiePage exposes initialCash + engine; agents from backend presets (no UI hardcodes).",
       "related_defects": [
         "D27"
       ]
@@ -1254,12 +1285,25 @@
     "G57": {
       "title": "Frontend action matrix complete",
       "phase": "T10D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/frontend/src/pages/trading/actionMatrix.ts",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::ActionMatrixTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::ActionMatrixTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t10_trading_center.py::ActionMatrixTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T10D: every Trading Center operator action maps to a real api.client method + control-plane path.",
       "related_defects": [
         "D27"
       ]
@@ -1290,12 +1334,26 @@
     "G59": {
       "title": "Typed frontend contracts",
       "phase": "T10A/T10D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/frontend/src/api/client.ts",
+        "Data/frontend/src/pages/trading/actionMatrix.ts",
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::TypedContractTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t10_trading_center.py::TypedContractTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t10_trading_center.py::TypedContractTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T10: typed api.client methods for run-builder, paper-forward, risk, audit, security posture."
     },
     "G60": {
       "title": "Compatibility/migration posture",
