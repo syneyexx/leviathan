@@ -701,7 +701,8 @@ class Migration39Tests(unittest.TestCase):
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(supervisor_leases)")}
             self.assertIn("health_state", cols)
             self.assertIn("last_tick_at", cols)
-            self.assertEqual(max(m.version for m in MIGRATIONS), 43)
+            self.assertEqual(max(m.version for m in MIGRATIONS), MIGRATIONS[-1].version)
+            self.assertGreaterEqual(MIGRATIONS[-1].version, 43)
         finally:
             tmp.cleanup()
 

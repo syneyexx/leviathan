@@ -1421,3 +1421,8 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         domains=["mcp"],
         extra_meta={"idempotent": False},
     )
+
+    # Paper/sim mutation surface — MODULE provider via MarketSimModuleExecutor
+    from Data.modules.market_sim.capabilities import register_market_sim_module_capabilities
+
+    register_market_sim_module_capabilities(catalog)

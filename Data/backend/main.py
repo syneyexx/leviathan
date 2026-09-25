@@ -457,6 +457,13 @@ market_sim_service = MarketSimControlPlane.from_settings(
 )
 if hasattr(market_sim_service, "bind_job_runtime"):
     market_sim_service.bind_job_runtime(job_runtime)
+if hasattr(market_sim_service, "bind_secrets_broker"):
+    market_sim_service.bind_secrets_broker(secrets_broker)
+if hasattr(market_sim_service, "bind_execution_gateway"):
+    from Data.modules.market_sim.gateway_executor import MarketSimModuleExecutor
+
+    execution_gateway.module_executor = MarketSimModuleExecutor(market_sim_service)
+    market_sim_service.bind_execution_gateway(execution_gateway)
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
 browser_worker = BrowserWorker(
     artifact_store=artifacts,
@@ -1680,7 +1687,13 @@ app.include_router(
 )
 app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
-app.include_router(build_market_sim_router(market_sim_service))
+app.include_router(
+    build_market_sim_router(
+        market_sim_service,
+        gateway=execution_gateway,
+        capability_catalog=capability_catalog,
+    )
+)
 app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))

@@ -60,18 +60,57 @@ class ExperimentTrial:
 
 
 def walk_forward_splits(
-    start_ts: str,
-    end_ts: str,
-    bars: list[Any],
+    start_ts: str | int,
+    end_ts: str | int | None = None,
+    bars: list[Any] | None = None,
     *,
     design_frac: float = 0.5,
     validation_frac: float = 0.25,
+    window: int | None = None,
+    step: int | None = None,
 ) -> dict[str, Any]:
-    """Chronological design / validation / holdout test — no shuffling."""
+    """Chronological design / validation / holdout — optional rolling windows.
+
+    Legacy: ``walk_forward_splits(start_ts, end_ts, bars)``.
+    Rolling: ``walk_forward_splits(n_bars, window=20, step=10)`` → ``windows`` list.
+    """
+    # Rolling-window API (D13 / G20 early)
+    if isinstance(start_ts, int) and window is not None:
+        n = int(start_ts)
+        win = max(2, int(window))
+        stp = max(1, int(step or max(1, win // 2)))
+        windows: list[dict[str, Any]] = []
+        start = 0
+        while start + win <= n:
+            windows.append(
+                {
+                    "start_index": start,
+                    "end_index": start + win - 1,
+                    "bar_count": win,
+                    "design": {"start_index": start, "end_index": start + win // 2 - 1},
+                    "validation": {
+                        "start_index": start + win // 2,
+                        "end_index": start + (3 * win) // 4 - 1,
+                    },
+                    "test": {"start_index": start + (3 * win) // 4, "end_index": start + win - 1},
+                }
+            )
+            start += stp
+        return {
+            "windows": windows,
+            "window": win,
+            "step": stp,
+            "bar_count": n,
+            "truth": {"chronological_only": True, "no_shuffle": True, "rolling": True},
+        }
+
+    bars = list(bars or [])
+    start_s = str(start_ts or "")
+    end_s = str(end_ts or "")
     n = len(bars)
     if n < 30:
         return {
-            "design": {"start_ts": start_ts, "end_ts": end_ts, "bar_count": n},
+            "design": {"start_ts": start_s, "end_ts": end_s, "bar_count": n},
             "validation": None,
             "test": None,
             "warning": "insufficient bars for walk-forward; single window only",
@@ -108,30 +147,61 @@ def walk_forward_splits(
 def evaluate_acceptance(
     metrics: dict[str, Any],
     criteria: dict[str, Any],
+    *,
+    run_id: str | None = None,
+    run_ids: list[str] | None = None,
 ) -> tuple[bool, str]:
-    """Return (passed, reason). Conservative defaults."""
+    """Return (passed, reason). Conservative defaults.
+
+    Accepts both hand-typed percent keys (``total_return_pct``) and
+    ``compute_metrics`` shapes (``total_return`` as fraction status/value).
+
+    When ``run_id`` / ``run_ids`` is provided, metrics are treated as
+    run-derived evidence (T4/T5 sealing hook — callers must supply the ids).
+    """
+    _ = run_id, run_ids  # reserved for run-sealed evidence path
     min_trades = int(criteria.get("min_trades", 5))
     max_dd = float(criteria.get("max_drawdown_pct", 25.0))
     min_return = float(criteria.get("min_total_return_pct", 0.0))
     require_beat_benchmark = bool(criteria.get("beat_benchmark", False))
 
-    trades = int(metrics.get("trade_count") or metrics.get("fills") or 0)
-    if isinstance(metrics.get("trade_count"), dict):
-        trades = int(metrics["trade_count"].get("value") or 0)
+    trades = 0
+    tc = metrics.get("trade_count")
+    if isinstance(tc, dict):
+        trades = int(tc.get("value") or 0)
+    elif tc is not None:
+        trades = int(tc)
+    elif metrics.get("fills") is not None:
+        fills_raw = metrics.get("fills")
+        trades = int(fills_raw) if not isinstance(fills_raw, dict) else int(fills_raw.get("value") or 0)
 
-    def _metric(name: str, default: float = 0.0) -> float:
-        raw = metrics.get(name)
+    def _raw(name: str) -> Any:
+        return metrics.get(name)
+
+    def _as_float(raw: Any, default: float = 0.0) -> float:
         if isinstance(raw, dict):
             if raw.get("status") == MetricStatus.UNMEASURED.value:
                 return default
-            return float(raw.get("value") or default)
+            return float(raw.get("value") if raw.get("value") is not None else default)
         if raw is None:
             return default
         return float(raw)
 
-    total_return = _metric("total_return_pct", 0.0)
-    max_drawdown = _metric("max_drawdown_pct", 100.0)
-    vs_bench = _metric("excess_return_pct", 0.0)
+    def _pct_from_fraction_or_pct(primary: str, alias: str, *, default: float = 0.0) -> float:
+        if primary in metrics:
+            return _as_float(_raw(primary), default)
+        if alias in metrics:
+            val = _as_float(_raw(alias), default)
+            # Heuristic: absolute values <= 5 treated as fraction (0.2 → 20%).
+            if abs(val) <= 5.0:
+                return val * 100.0
+            return val
+        return default
+
+    total_return = _pct_from_fraction_or_pct("total_return_pct", "total_return", default=0.0)
+    max_drawdown = _pct_from_fraction_or_pct("max_drawdown_pct", "max_drawdown", default=100.0)
+    max_drawdown = abs(max_drawdown)
+    vs_bench = _pct_from_fraction_or_pct("excess_return_pct", "excess_return", default=0.0)
 
     if trades < min_trades:
         return False, f"insufficient trades ({trades} < {min_trades}) — small sample"

@@ -1,7 +1,8 @@
-"""Market simulation worker — execution plane.
+"""Market simulation worker — JobStore lease path (default) + legacy soft claim.
 
-Honest telemetry: default is an in-process daemon thread. Optional subprocess
-entrypoint: scripts/market_sim_worker.py. Not a distributed lock — soft lease via worker_pid.
+Default production path: durable ``market_sim.advance`` jobs claimed by the
+``market_sim`` worker pool with JobStore leases + heartbeats. Soft ``worker_pid``
+claiming remains for local drain/tests when JobRuntime is unbound.
 """
 
 from __future__ import annotations
@@ -9,6 +10,8 @@ from __future__ import annotations
 import os
 import threading
 from typing import Any, Callable
+
+from Data.modules.jobs.store import JobStore
 
 from .engine import SimulationEngine
 from .multi_engine import MultiAgentEngine
@@ -28,6 +31,7 @@ class MarketSimWorker:
         resolve_strategy: Callable[[Any], dict[str, Any]] | None = None,
         bars_per_slice: int = 50,
         multi_engine: MultiAgentEngine | None = None,
+        job_store: JobStore | None = None,
     ) -> None:
         self.store = store
         self.engine = engine
@@ -35,11 +39,13 @@ class MarketSimWorker:
         self.resolve_bars_path = resolve_bars_path
         self.resolve_strategy = resolve_strategy
         self.bars_per_slice = bars_per_slice
+        self.job_store = job_store
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
         self._states: dict[str, Any] = {}
+        lease_model = "jobstore_lease" if job_store is not None else "soft_worker_pid"
         self.telemetry: dict[str, Any] = {
             "slices": 0,
             "completed": 0,
@@ -48,8 +54,14 @@ class MarketSimWorker:
             "worker_mode": "daemon_thread",
             "worker_pid": os.getpid(),
             "isolated_subprocess": False,
-            "lease_model": "soft_worker_pid",
+            "lease_model": lease_model,
+            "heartbeat": 0,
         }
+
+    def bind_job_store(self, job_store: JobStore | None) -> None:
+        self.job_store = job_store
+        if job_store is not None:
+            self.telemetry["lease_model"] = "jobstore_lease"
 
     def mark_subprocess(self) -> None:
         self.telemetry["worker_mode"] = "subprocess"
@@ -87,19 +99,38 @@ class MarketSimWorker:
     def wake(self) -> None:
         self._wake.set()
 
+    def _heartbeat(self, job_id: str | None, *, worker_id: str | None = None) -> None:
+        if not job_id or self.job_store is None:
+            return
+        try:
+            self.job_store.heartbeat_lease(
+                job_id,
+                worker_id=worker_id or f"market-sim-{os.getpid()}",
+                ttl_seconds=30.0,
+            )
+            self.telemetry["heartbeat"] = int(self.telemetry.get("heartbeat") or 0) + 1
+            self.telemetry["lease_model"] = "jobstore_lease"
+        except Exception:  # noqa: BLE001
+            pass
+
     def _use_multi(self, run: Any) -> bool:
         meta = dict(run.metadata or {})
         if meta.get("engine") == "legacy":
             return False
         if meta.get("game_mode") or meta.get("multi_agent") or meta.get("commit_reveal"):
             return True
-        # Default: multi when ≥2 order-capable agents
         agents = list(run.agents or [])
         traders = [
-            a for a in agents
-            if str(a.get("role")) not in {
-                "trading_orchestrator", "orchestrator", "evaluator",
-                "risk_agent", "risk_officer", "critic",
+            a
+            for a in agents
+            if str(a.get("role"))
+            not in {
+                "trading_orchestrator",
+                "orchestrator",
+                "evaluator",
+                "risk_agent",
+                "risk_officer",
+                "critic",
             }
         ]
         return len(traders) >= 2 and bool(meta.get("multi_wallet", False))
@@ -110,8 +141,15 @@ class MarketSimWorker:
             return False
         return self._advance_run(run)
 
-    def process_run(self, run_id: str) -> bool:
-        """Advance one slice for a specific simulation (durable job path)."""
+    def process_run(
+        self,
+        run_id: str,
+        *,
+        job_id: str | None = None,
+        worker_id: str | None = None,
+    ) -> bool:
+        """Advance one slice for a specific simulation (durable JobStore path)."""
+        self._heartbeat(job_id, worker_id=worker_id)
         run = self.store.get_run(run_id)
         if run is None:
             return False
@@ -121,12 +159,21 @@ class MarketSimWorker:
             RunStatus.STEPPING.value,
         }:
             return False
-        # Soft-claim: stamp worker_pid so concurrent claimants back off.
+        # Soft stamp still used as a secondary back-off signal for local drain.
         run.worker_pid = os.getpid()
         self.store.update_run(run)
-        return self._advance_run(run)
+        try:
+            return self._advance_run(run, job_id=job_id, worker_id=worker_id)
+        finally:
+            self._heartbeat(job_id, worker_id=worker_id)
 
-    def _advance_run(self, run: Any) -> bool:
+    def _advance_run(
+        self,
+        run: Any,
+        *,
+        job_id: str | None = None,
+        worker_id: str | None = None,
+    ) -> bool:
         try:
             if run.status == RunStatus.QUEUED.value:
                 run.status = RunStatus.RUNNING.value
@@ -162,6 +209,7 @@ class MarketSimWorker:
                 run.cancel_requested = True
 
             def cancel_check() -> bool:
+                self._heartbeat(job_id, worker_id=worker_id)
                 latest = self.store.get_run(run.run_id)
                 if latest is None:
                     return True

@@ -397,6 +397,11 @@ class ExecutionGateway:
         )
 
     def _enforce_policy(self, definition: CapabilityDefinition, request: CapabilityRequest) -> None:
+        # Paper/sim operator surface: gateway still validates + records receipts,
+        # but does not require a human approval ticket for research mutations.
+        approval_mode = str((definition.metadata or {}).get("approval_mode") or "")
+        if approval_mode == "receipt_only":
+            return
         needs_approval = any(effect not in _AUTO_ALLOWED_EFFECTS for effect in definition.side_effects)
         if not needs_approval:
             return

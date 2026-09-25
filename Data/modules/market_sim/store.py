@@ -486,11 +486,19 @@ class MarketSimStore:
         return [self._row_run(r) for r in rows]
 
     def claim_next_runnable(self) -> SimRun | None:
-        """Claim one QUEUED or RUNNING (without worker) run for the worker."""
+        """Atomically claim one QUEUED/RUNNING/STEPPING run (BEGIN IMMEDIATE).
+
+        Exclusive transaction prevents double-claim across concurrent workers.
+        """
         import os
 
         pid = os.getpid()
-        with self.connect() as conn:
+        now = utc_now()
+        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT * FROM market_sim_runs
@@ -502,14 +510,24 @@ class MarketSimStore:
                 """
             ).fetchone()
             if row is None:
+                conn.execute("COMMIT")
                 return None
             run = self._row_run(row)
             conn.execute(
                 "UPDATE market_sim_runs SET worker_pid=?, updated_at=? WHERE run_id=?",
-                (pid, utc_now(), run.run_id),
+                (pid, now, run.run_id),
             )
+            conn.execute("COMMIT")
             run.worker_pid = pid
             return run
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+        finally:
+            conn.close()
 
     def _row_run(self, row: sqlite3.Row) -> SimRun:
         return SimRun(
@@ -822,6 +840,7 @@ class MarketSimStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(trial_id) DO UPDATE SET
                     status=excluded.status,
+                    strategy_version=excluded.strategy_version,
                     results_json=excluded.results_json,
                     rejection_reason=excluded.rejection_reason,
                     finished_at=excluded.finished_at,
@@ -848,6 +867,31 @@ class MarketSimStore:
                 ),
             )
         return trial
+
+    def append_trial(self, trial: dict[str, Any]) -> dict[str, Any]:
+        """Append-only trial insert — refuses silent overwrite of an existing trial_id."""
+        existing = None
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT trial_id FROM market_experiments WHERE trial_id=?",
+                (trial["trial_id"],),
+            ).fetchone()
+            if row is not None:
+                existing = row["trial_id"]
+        if existing:
+            raise ValueError(f"trial already exists: {existing} (append-only ledger)")
+        return self.save_experiment(trial)
+
+    def count_trials(self, *, strategy_id: str | None = None) -> int:
+        with self.connect() as conn:
+            if strategy_id:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS n FROM market_experiments WHERE strategy_id=?",
+                    (strategy_id,),
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) AS n FROM market_experiments").fetchone()
+        return int(row["n"] if row else 0)
 
     def list_experiments(self, *, strategy_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as conn:

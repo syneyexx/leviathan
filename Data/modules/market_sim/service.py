@@ -77,6 +77,8 @@ class MarketSimControlPlane:
         self.brain = brain or BrainFacade()
         self._emit = observability_emit
         self.job_runtime = job_runtime
+        self.execution_gateway = None
+        self.secrets_broker = None
         self.engine = SimulationEngine(
             store,
             deliberation=DeliberationRuntime(self.brain),
@@ -148,6 +150,15 @@ class MarketSimControlPlane:
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
+        store = getattr(job_runtime, "store", None) if job_runtime is not None else None
+        if hasattr(self.worker, "bind_job_store"):
+            self.worker.bind_job_store(store)
+
+    def bind_execution_gateway(self, gateway: Any | None) -> None:
+        self.execution_gateway = gateway
+
+    def bind_secrets_broker(self, secrets_broker: Any | None) -> None:
+        self.secrets_broker = secrets_broker
 
     @staticmethod
     def _runners_externalized() -> bool:
@@ -243,9 +254,14 @@ class MarketSimControlPlane:
     def _emit_event(self, name: str, payload: dict[str, Any]) -> None:
         if self._emit:
             try:
-                self._emit("market_sim", name, payload=payload)
+                # Prefer trading category (G49); keep market_sim as subsystem tag in payload.
+                enriched = {**payload, "subsystem": "market_sim"}
+                self._emit("trading", name, payload=enriched)
             except Exception:  # noqa: BLE001
-                pass
+                try:
+                    self._emit("market_sim", name, payload=payload)
+                except Exception:  # noqa: BLE001
+                    pass
 
     def status(self) -> dict[str, Any]:
         health = self.data.health()
@@ -266,6 +282,8 @@ class MarketSimControlPlane:
             }
             for pid, p in getattr(self.providers, "providers", {}).items()
         ]
+        externalized = self._runners_externalized()
+        jobstore_default = bool(externalized and self.job_runtime is not None)
         return {
             "enabled": self.enabled,
             "feature_flag": "LEVIATHAN_FEATURE_MARKET_SIM",
@@ -278,13 +296,15 @@ class MarketSimControlPlane:
             "truth": {
                 "paper_sim_only": True,
                 "no_real_broker_orders": True,
-                "worker_is_daemon_thread_by_default": True,
+                "worker_is_daemon_thread_by_default": not jobstore_default,
+                "default_path_jobstore_lease": jobstore_default,
                 "subprocess_entrypoint": "scripts/market_sim_worker.py",
                 "causality_enforced": True,
                 "next_bar_open_fills": True,
                 "commit_reveal_multi_wallet": True,
                 "ohlcv_not_orderbook": True,
                 "profitable_backtest_is_not_proof": True,
+                "mutations_via_execution_gateway": self.execution_gateway is not None,
             },
         }
 
@@ -1047,12 +1067,16 @@ class MarketSimControlPlane:
     def _paper_broker(self, broker_id: str = "local_paper") -> Any:
         if broker_id not in self._paper_brokers:
             self._paper_brokers[broker_id] = build_paper_broker(
-                broker_id, job_runtime=self.job_runtime
+                broker_id,
+                job_runtime=self.job_runtime,
+                secrets_broker=self.secrets_broker,
             )
         else:
             broker = self._paper_brokers[broker_id]
             if hasattr(broker, "bind_job_runtime"):
                 broker.bind_job_runtime(self.job_runtime)
+            if hasattr(broker, "bind_secrets_broker"):
+                broker.bind_secrets_broker(self.secrets_broker)
         return self._paper_brokers[broker_id]
 
     def start_paper_session(
