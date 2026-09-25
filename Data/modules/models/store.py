@@ -26,14 +26,21 @@ class ModelStore:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=15, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
+        from Data.modules.common.sqlite_policy import open_sqlite_connection
+
+        conn = open_sqlite_connection(self.db_path, set_wal=False)
         try:
             yield conn
             conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
         finally:
             conn.close()
+
 
     # --- Providers ---
 

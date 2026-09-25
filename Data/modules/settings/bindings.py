@@ -25,6 +25,16 @@ _WORKER_ENV_BY_KEY: dict[str, str] = {
     "resource.background.ram_headroom": "LEVIATHAN_RESOURCE_BACKGROUND_RAM_HEADROOM",
     "resource.background.vram_headroom": "LEVIATHAN_RESOURCE_BACKGROUND_VRAM_HEADROOM",
     "knowledge.commit.concurrency": "LEVIATHAN_WORKERS_POOL_KNOWLEDGE_COMMIT_COUNT",
+    "workers.pools.db_commit.count": "LEVIATHAN_WORKERS_POOL_DB_COMMIT_COUNT",
+    "dbCommit.enabled": "LEVIATHAN_DB_COMMIT_ENABLED",
+    "dbCommit.maxPendingCount": "LEVIATHAN_DB_COMMIT_MAX_PENDING_COUNT",
+    "dbCommit.maxPendingBytes": "LEVIATHAN_DB_COMMIT_MAX_PENDING_BYTES",
+    "dbCommit.maxBatchRows": "LEVIATHAN_DB_COMMIT_MAX_BATCH_ROWS",
+    "dbCommit.targetTransactionMs": "LEVIATHAN_DB_COMMIT_TARGET_TRANSACTION_MS",
+    "dbCommit.retryLimit": "LEVIATHAN_DB_COMMIT_RETRY_LIMIT",
+    "dbCommit.spoolRetentionHours": "LEVIATHAN_DB_COMMIT_SPOOL_RETENTION_HOURS",
+    "dbCommit.appliedRetentionHours": "LEVIATHAN_DB_COMMIT_APPLIED_RETENTION_HOURS",
+    "dbCommit.priorityAgingSeconds": "LEVIATHAN_DB_COMMIT_PRIORITY_AGING_SECONDS",
 }
 
 _WORKER_ATTR_BY_KEY: dict[str, str] = {

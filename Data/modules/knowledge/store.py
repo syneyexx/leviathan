@@ -61,19 +61,27 @@ class KnowledgeStore:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path, timeout=15, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
+        from Data.modules.common.sqlite_policy import open_sqlite_connection
+
+        # Hot path: busy_timeout yes; journal_mode set during initialize only.
+        conn = open_sqlite_connection(self.path, set_wal=False)
         try:
             yield conn
             conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
         finally:
             conn.close()
 
     def initialize(self) -> None:
-        """Schema/migrations only — never chunk or embed a legacy corpus at startup."""
+        from Data.modules.common.sqlite_policy import ensure_wal
+
         with self.connect() as conn:
+            ensure_wal(conn)
             self._ensure_schema(conn)
 
     def initialize_schema(self) -> None:

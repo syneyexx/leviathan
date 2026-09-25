@@ -84,20 +84,27 @@ class JobStore:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
+        from Data.modules.common.sqlite_policy import open_sqlite_connection
+
         # Hot path: busy_timeout yes; journal_mode is set during initialize/migration.
-        conn = sqlite3.connect(self.path, timeout=15, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn = open_sqlite_connection(self.path, set_wal=False)
         try:
             yield conn
             conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
         finally:
             conn.close()
 
     def initialize(self) -> None:
+        from Data.modules.common.sqlite_policy import ensure_wal
+
         with self.connect() as conn:
-            conn.execute("PRAGMA journal_mode = WAL")
+            ensure_wal(conn)
             self._ensure_schema(conn)
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:

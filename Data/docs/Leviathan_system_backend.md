@@ -139,13 +139,36 @@ Current wiring includes:
 | `Data/backend/main.py` | FastAPI app + system composition |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration 43 |
+| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration 49 (`db_commit_receipts`) |
 | `Data/backend/llm.py` | compatibility/boundary helpers |
 | `Data/backend/reasoning.py` | compatibility import/boundary |
 
 SQLite is the canonical metadata database. Subsystems must not silently create a second metadata authority.
 
+### SQLite write architecture (CONTROL_WRITE vs COMMIT_WRITE)
+
+LEVIATHAN uses one canonical SQLite database with two explicit write classes:
+
+| Class | Rule | Examples |
+| --- | --- | --- |
+| `CONTROL_WRITE` | Tiny, latency-sensitive, **direct** SQLite allowed | supervisor/worker heartbeats, job status transitions, cancel flags, lease renewals |
+| `COMMIT_WRITE` | Substantial canonical mutations **must** go through the DB Commit Coordinator | Knowledge chunks/embeddings, research evidence/claims/reports, dataset index batches, MarketSim event batches, evaluation/training lineage batches, source-ingestion bulk metadata |
+
+**DB Commit Coordinator** (`Data/modules/db_commit/`, worker pool `db_commit`, `desired_count=1`):
+
+- External worker managed by `WorkerSupervisor` (not an AI agent).
+- Producers submit typed `CommitIntent` messages (payload **refs** + hashes — never giant inline blobs, never arbitrary SQL).
+- Fast path: Windows-compatible localhost IPC; correctness path: durable filesystem spool under `<db-parent>/commit_spool/{pending,inflight,applied,failed,quarantine}`.
+- Allowlisted `CommitHandlerRegistry` adapters call domain stores (`KnowledgeStore`, `ResearchStore`, …) — domain ownership stays with those stores.
+- Idempotent `commit_receipts` / `commit_batches` tables live in the **same** main DB; crash recovery checks receipts before re-applying.
+- Bulk handlers use bounded batches and release the SQLite writer lock between batches so control-plane heartbeats are not starved.
+- Writer unavailable ⇒ durable spool / `DB_COMMIT_BACKPRESSURE` / `DB_COMMIT_SPOOL_UNAVAILABLE` — **never** fall back to direct heavy SQLite writes from producers.
+- Legacy `knowledge_commit` pool defaults to `0`; `knowledge.commit` jobs are owned by `db_commit`.
+
+Canonical connection policy: `Data/modules/common/sqlite_policy.py` (busy_timeout on hot paths; `PRAGMA journal_mode=WAL` only during initialize/migration).
+
 ---
+
 
 # 5. API route map
 
@@ -441,11 +464,12 @@ BehaviorProfile is **not** AuthorityProfile. Side effects that require approval 
 
 - `bootstrap.py`, `process.py`, `supervisor.py`, `loop.py`;
 - `registry.py`, `pools.py`, `protocol.py`, `settings.py`;
-- `admission.py`, `sqlite_support.py`;
+- `admission.py`, `sqlite_support.py` (re-exports canonical `sqlite_policy`);
 - `events.py` — centralized worker terminal observability (`WorkerEventEmitter`);
-- `entrypoints/` for domain-specific processes.
+- `entrypoints/` for domain-specific processes;
+- `Data/modules/db_commit/` — DB Commit Coordinator (serialized `COMMIT_WRITE`).
 
-Current entrypoint families include agents, backup, coding, dataset, document AI, embeddings, evaluation, general jobs, knowledge prepare/commit, maintenance, market simulation, MCP execution, model downloads, provider I/O, reranking, research, scheduler, source ingestion, telemetry, training control and workflows.
+Current entrypoint families include agents, backup, coding, dataset, document AI, embeddings, evaluation, general jobs, knowledge prepare, **db_commit** (canonical bulk writer; knowledge_commit is a deprecated compatibility shim with desired=0), maintenance, market simulation, MCP execution, model downloads, provider I/O, reranking, research, scheduler, source ingestion, telemetry, training control and workflows.
 
 Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/CPU/GPU work should be externalized through JobRuntime/workers when practical.
 
@@ -477,6 +501,15 @@ Worker lifecycle uses one emitter → human terminal lines + structured logs:
 - completion/failure with duration and safe error codes
 
 Labels come from allowlisted metadata (topic/filename/dataset name); secrets and document bodies are never printed.
+
+DB Commit Coordinator terminal channel:
+
+- `[WORKER] DB Commit pool gestart — 1 worker`
+- `[DB-WRITER] Research '…' commit ingepland — N records` (queued ≠ started)
+- `[DB-WRITER] … commit gestart` / `voltooid — N records — …ms`
+- retries (`SQLITE_BUSY`), quarantine (`PAYLOAD_HASH_MISMATCH`), shutdown (`writer stopt — pending=N`)
+
+---
 
 ### Fallback policy
 

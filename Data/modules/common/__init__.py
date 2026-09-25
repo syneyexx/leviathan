@@ -14,6 +14,17 @@ from .paths import PathEscapeError, safe_join, safe_relpath
 from .process import pid_is_alive, read_pid_file, write_pid_file
 from .retry import RetryPolicy, compute_backoff_seconds
 from .secrets import looks_like_secret, redact_secrets
+from .sqlite_policy import (
+    WriteClass,
+    control_write,
+    ensure_wal,
+    is_transient_sqlite_error,
+    open_sqlite_connection,
+    run_with_busy_retry,
+    sqlite_connection,
+    sqlite_metrics_snapshot,
+    write_transaction,
+)
 
 __all__ = [
     "atomic_write_bytes",
@@ -40,4 +51,13 @@ __all__ = [
     "SINGLETON_CLASS_OWNERS",
     "OwnershipRule",
     "ownership_public_dict",
+    "WriteClass",
+    "control_write",
+    "ensure_wal",
+    "is_transient_sqlite_error",
+    "open_sqlite_connection",
+    "run_with_busy_retry",
+    "sqlite_connection",
+    "sqlite_metrics_snapshot",
+    "write_transaction",
 ]
