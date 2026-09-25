@@ -209,7 +209,7 @@ class CognitiveRuntime:
         self.delegation_enabled = delegation_enabled
         self.experience_learning = experience_learning
 
-        self.task_builder = task_builder or TaskModelBuilder()
+        self.task_builder = task_builder or self._default_task_builder(model_caller)
         self.perception = perception or PerceptionService(neuro_advisor=neuro_advisor)
         if meta is not None:
             self.meta = meta
@@ -219,7 +219,7 @@ class CognitiveRuntime:
             self.meta = MetaController(policy=policy)
         else:
             self.meta = MetaController()
-        self.planner = planner or CognitivePlanner()
+        self.planner = planner or self._default_planner(model_caller)
         self.broker = broker or CapabilityBroker()
         self.actions = actions or ActionSelector(self.broker, meta=self.meta)
         self.context_builder = context_builder or ContextBuilderV3()
@@ -238,6 +238,35 @@ class CognitiveRuntime:
 
         self._runs: dict[str, CognitiveRunState] = {}
         self._loops: dict[str, LoopDetector] = {}
+
+    @staticmethod
+    def _default_task_builder(model_caller: ModelCaller | None) -> TaskModelBuilder:
+        """Deterministic builder + heuristic advisor (model advisor opt-in via custom builder)."""
+        from .neural_advisors import HeuristicTaskAdvisor
+
+        # Heuristic only by default — model-backed advisors are explicit/opt-in to
+        # avoid surprise extra inference calls on every submit.
+        _ = model_caller
+        return TaskModelBuilder(advisor=HeuristicTaskAdvisor())
+
+    @staticmethod
+    def _default_planner(model_caller: ModelCaller | None) -> CognitivePlanner:
+        from .neural_advisors import HeuristicPlanAdvisor
+
+        _ = model_caller
+        return CognitivePlanner(advisor=HeuristicPlanAdvisor())
+
+    def _record_plan_advice(self, state: CognitiveRunState, plan: CognitivePlan | None) -> None:
+        if plan is None:
+            return
+        advisory = [
+            s for s in plan.steps if isinstance(s.resource_estimate, dict) and s.resource_estimate.get("advisory")
+        ]
+        if advisory:
+            state.reasoning_state.notes.append(f"plan_advisory_steps={len(advisory)}")
+        for assumption in plan.assumptions:
+            if str(assumption).startswith("plan_advice_"):
+                state.reasoning_state.notes.append(str(assumption)[:200])
 
     # --- public API ---
 
@@ -327,6 +356,15 @@ class CognitiveRuntime:
                 confidence_band="weak",
                 source="task_assumption",
             )
+        advice_meta = (task.metadata or {}).get("task_advice")
+        if isinstance(advice_meta, dict):
+            state.reasoning_state.notes.append(
+                f"task_advice_accepted={bool(advice_meta.get('accepted'))}"
+            )
+            if advice_meta.get("rejected_fields"):
+                state.reasoning_state.notes.append(
+                    "task_advice_rejected=" + ",".join(map(str, advice_meta.get("rejected_fields") or []))
+                )
         self._runs[run_id] = state
         self._loops[run_id] = LoopDetector()
         self._persist_create(state)
@@ -357,6 +395,7 @@ class CognitiveRuntime:
                 # Shadow: produce structured plan/decisions without changing user-visible actions.
                 plan = self.planner.plan(state.task, decision)
                 state.plan = plan
+                self._record_plan_advice(state, plan)
                 self._emit(state, "plan_created", plan.public_dict())
                 self._transition(state, CognitiveRunStatus.SHADOW)
                 state.completion = {
@@ -368,6 +407,7 @@ class CognitiveRuntime:
 
             self._transition(state, CognitiveRunStatus.REASONING)
             state.plan = self.planner.plan(state.task, decision)
+            self._record_plan_advice(state, state.plan)
             self._emit(state, "plan_created", state.plan.public_dict())
 
             if not self.iterative or decision.mode == ReasoningMode.FAST:

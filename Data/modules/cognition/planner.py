@@ -1,4 +1,8 @@
-"""Structured planner — public plan steps with acceptance conditions."""
+"""Structured planner — public plan steps with acceptance conditions.
+
+Template plans remain authority. Optional neural/heuristic advisors may append
+**validated** advisory steps only — free-form proposals are rejected.
+"""
 
 from __future__ import annotations
 
@@ -13,13 +17,25 @@ from .types import CognitivePlan, PlanStep, ReasoningStrategy, RiskClass
 class CognitivePlanner:
     """Produce bounded structured plans. Domain planners may specialize later."""
 
+    def __init__(
+        self,
+        *,
+        advisor: Any | None = None,
+        enable_heuristic_advisor: bool = False,
+    ) -> None:
+        self.advisor = advisor
+        if self.advisor is None and enable_heuristic_advisor:
+            from .neural_advisors import HeuristicPlanAdvisor
+
+            self.advisor = HeuristicPlanAdvisor()
+
     def plan(self, task: TaskModel, decision: MetaDecision) -> CognitivePlan:
         strategy = decision.strategy
         steps = self._steps_for(task, strategy)
         assumptions = list(task.ambiguities)
         if task.unknowns:
             assumptions.extend(f"unknown:{u}" for u in task.unknowns[:3])
-        return CognitivePlan(
+        plan = CognitivePlan(
             plan_id=str(uuid.uuid4()),
             strategy=strategy,
             steps=steps,
@@ -27,6 +43,7 @@ class CognitivePlanner:
             stale=False,
             revision=0,
         )
+        return self._apply_advisor(task, plan)
 
     def replan(
         self,
@@ -56,6 +73,29 @@ class CognitivePlanner:
         plan.stale = True
         plan.assumptions.append(f"stale:{reason}")
         return plan
+
+    def _apply_advisor(self, task: TaskModel, plan: CognitivePlan) -> CognitivePlan:
+        if self.advisor is None:
+            return plan
+        from .neural_advisors import merge_plan_advice, validate_plan_advice
+
+        try:
+            raw = self.advisor.advise_plan(
+                task,
+                strategy=plan.strategy,
+                base_steps=list(plan.steps),
+            )
+        except Exception:  # noqa: BLE001
+            plan.assumptions.append("plan_advice_error:advisor_raised")
+            return plan
+        advice = validate_plan_advice(
+            raw,
+            strategy=plan.strategy,
+            risk_floor=task.risk_class,
+            existing_step_ids=[s.step_id for s in plan.steps],
+            source=str(getattr(self.advisor, "source", "advisor")),
+        )
+        return merge_plan_advice(plan, advice)
 
     def _steps_for(self, task: TaskModel, strategy: ReasoningStrategy) -> list[PlanStep]:
         risk = task.risk_class

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from Data.modules.context.compaction import extract_hard_constraints
@@ -221,12 +221,25 @@ _AMBIGUITY_MARKERS = {
 class TaskModelBuilder:
     """Build TaskModel from a user request.
 
-    Hybrid understanding: deterministic parsing + ReasoningEngine classification.
-    Does not claim authority over tools or completion.
+    Hybrid understanding: deterministic parsing + ReasoningEngine classification
+    + optional validated neural/heuristic semantic advisor.
+    Does not claim authority over tools or completion. Advisor never owns risk /
+    hard constraints / side effects.
     """
 
-    def __init__(self, reasoner: ReasoningEngine | None = None) -> None:
+    def __init__(
+        self,
+        reasoner: ReasoningEngine | None = None,
+        *,
+        advisor: Any | None = None,
+        enable_heuristic_advisor: bool = False,
+    ) -> None:
         self.reasoner = reasoner or ReasoningEngine()
+        self.advisor = advisor
+        if self.advisor is None and enable_heuristic_advisor:
+            from .neural_advisors import HeuristicTaskAdvisor
+
+            self.advisor = HeuristicTaskAdvisor()
 
     def build(
         self,
@@ -293,7 +306,7 @@ class TaskModelBuilder:
             uncertainty = min(1.0, uncertainty + 0.2)
             unknowns.append("current external information may be required")
 
-        return TaskModel(
+        task = TaskModel(
             task_id=str(uuid.uuid4()),
             run_id=run_id,
             raw_request=text,
@@ -350,6 +363,25 @@ class TaskModelBuilder:
             },
             legacy_plan=plan,
         )
+        return self._apply_advisor(task, text)
+
+    def _apply_advisor(self, task: TaskModel, text: str) -> TaskModel:
+        if self.advisor is None:
+            return task
+        from .neural_advisors import apply_task_advice, validate_task_advice
+
+        try:
+            raw = self.advisor.advise_task(text, task)
+        except Exception:  # noqa: BLE001
+            meta = dict(task.metadata or {})
+            meta["task_advice_error"] = "advisor_raised"
+            return replace(task, metadata=meta)
+        advice = validate_task_advice(
+            raw if isinstance(raw, dict) else None,
+            base=task,
+            source=str(getattr(self.advisor, "source", "advisor")),
+        )
+        return apply_task_advice(task, advice)
 
     def _permissions(
         self,

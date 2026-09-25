@@ -30,6 +30,16 @@ from .structured_state import (
 )
 from .meta_controller import MetaController, MetaDecision
 from .model_adapter import build_control_plane_model_caller
+from .neural_advisors import (
+    HeuristicPlanAdvisor,
+    HeuristicTaskAdvisor,
+    PlanAdvice,
+    TaskModelAdvice,
+    apply_task_advice,
+    merge_plan_advice,
+    validate_plan_advice,
+    validate_task_advice,
+)
 from .neural_compute import (
     ClampReason,
     NativeEffort,
@@ -109,6 +119,8 @@ __all__ = [
     "InferenceComputeController",
     "InferenceComputePlan",
     "InferenceComputeResult",
+    "HeuristicPlanAdvisor",
+    "HeuristicTaskAdvisor",
     "MetaController",
     "MetaDecision",
     "NativeEffort",
@@ -117,6 +129,7 @@ __all__ = [
     "PerceptionItem",
     "PerceptionService",
     "PerceptionSnapshot",
+    "PlanAdvice",
     "PlanStep",
     "ProceduralMemoryHint",
     "PublicClaim",
@@ -132,19 +145,24 @@ __all__ = [
     "TTCExecutor",
     "TTCSelection",
     "TaskModel",
+    "TaskModelAdvice",
     "TaskModelBuilder",
     "VerifiedExperience",
     "WorkingMemory",
     "WorkingMemoryItem",
     "apply_capability_to_budget",
+    "apply_task_advice",
     "build_control_plane_model_caller",
     "classify_failure",
     "classify_steer",
     "confidence_to_band",
+    "merge_plan_advice",
     "neural_budget_for_mode",
     "register_specialist_handlers",
     "resolve_reasoning_capability_profile",
     "select_ttc_candidate",
     "should_blind_retry",
     "structured_state_from_mapping",
+    "validate_plan_advice",
+    "validate_task_advice",
 ]

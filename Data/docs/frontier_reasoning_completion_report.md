@@ -1,24 +1,24 @@
 # Frontier Reasoning — Completion Report
 
 **Generated:** 2026-09-25  
-**Phase covered:** F0 + F1 + F2 + F3 + F4 + F5  
+**Phase covered:** F0–F6  
 **Overall program status:** NOT COMPLETE  
 
 ## Summary
 
-F5 adds a schema-versioned public structured reasoning state with candidate summaries and persist/hydrate. Gates **R02–R07, R09, R27–R29 PASS**. Verifier still exits non-zero until remaining required gates PASS.
+F6 adds validated neural/heuristic advisors for TaskModel and plans. Deterministic builders remain owners; forbidden authority fields and unvalidated steps are rejected. Gates **R02–R07, R09–R11, R27–R29 PASS**.
 
-## F5 deliverables
+## F6 deliverables
 
 | Change | Status |
 |---|---|
-| `StructuredReasoningState` public contract | DONE |
-| Candidate summaries from TTC | DONE |
-| Open questions / claims / evidence refs | DONE |
-| Persist + hydrate via checkpoint/result_json | DONE |
-| `public_status.reasoning_state` | DONE |
-| F5 unit tests | DONE |
+| `validate_task_advice` / `apply_task_advice` | DONE |
+| `validate_plan_advice` / `merge_plan_advice` | DONE |
+| Heuristic + callable advisors | DONE |
+| Builder/planner advisor hooks | DONE |
+| Runtime default heuristic wiring | DONE |
+| F6 unit tests | DONE |
 
 ## Next
 
-F6 — Neural TaskModel / planner advisors.
+HypothesisBoard / critic mesh (F8) or adaptive compute (R08).

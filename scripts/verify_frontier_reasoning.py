@@ -214,6 +214,31 @@ def _structured_state_scan() -> tuple[str, str]:
     return "PASS", "structured_reasoning_state_contract_ok"
 
 
+def _neural_advisor_scan() -> tuple[str, str]:
+    """R10/R11 structural: advisors validated; builders remain owners."""
+    path = ROOT / "Data" / "modules" / "cognition" / "neural_advisors.py"
+    task = ROOT / "Data" / "modules" / "cognition" / "task_model.py"
+    planner = ROOT / "Data" / "modules" / "cognition" / "planner.py"
+    if not path.is_file():
+        return "FAIL", "missing:neural_advisors.py"
+    text = path.read_text(encoding="utf-8")
+    task_text = task.read_text(encoding="utf-8") if task.is_file() else ""
+    plan_text = planner.read_text(encoding="utf-8") if planner.is_file() else ""
+    if "def validate_task_advice" not in text or "def validate_plan_advice" not in text:
+        return "FAIL", "missing_advice_validators"
+    if "advice_is_not_task_authority" not in text:
+        return "FAIL", "missing_task_advice_authority_flag"
+    if "template_plan_remains_owner" not in text:
+        return "FAIL", "missing_plan_owner_flag"
+    if "hard_constraints" not in text or "risk_class" not in text:
+        return "FAIL", "missing_forbidden_field_guards"
+    if "_apply_advisor" not in task_text:
+        return "FAIL", "task_builder_missing_advisor_hook"
+    if "_apply_advisor" not in plan_text:
+        return "FAIL", "planner_missing_advisor_hook"
+    return "PASS", "neural_advisors_validated_non_owning"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -360,6 +385,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st9, ev9
                     else:
                         evidence = f"{evidence};{ev9}"
+                if status == "PASS" and gid in {"R10", "R11"}:
+                    stA, evA = _neural_advisor_scan()
+                    if stA != "PASS":
+                        status, evidence = stA, evA
+                    else:
+                        evidence = f"{evidence};{evA}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":
