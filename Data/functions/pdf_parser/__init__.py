@@ -26,12 +26,17 @@ def run(path: str, *, max_pages: int = 5) -> dict[str, Any]:
             "Install it to enable PDF text extraction."
         ) from exc
 
-    reader = PdfReader(str(target))
-    pages = []
-    for index, page in enumerate(reader.pages):
-        if index >= max_pages:
-            break
-        pages.append({"index": index, "text": page.extract_text() or ""})
+    try:
+        reader = PdfReader(str(target))
+        pages = []
+        for index, page in enumerate(reader.pages):
+            if index >= max_pages:
+                break
+            pages.append({"index": index, "text": page.extract_text() or ""})
+    except Exception as exc:  # noqa: BLE001 — corrupt/unsupported PDF
+        raise RuntimeError(
+            f"pypdf failed to parse PDF ({type(exc).__name__}): {exc}"
+        ) from exc
 
     return {
         "path": str(target),

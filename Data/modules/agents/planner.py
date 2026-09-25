@@ -94,6 +94,17 @@ class StructuredAgentPlanner:
                         note="file.read requires path override from caller",
                     )
                 )
+            # Capability-aware: include CSV inspect when goal mentions it and catalog has it.
+            lowered = text.lower()
+            if ("csv" in lowered or "inspect" in lowered) and (not caps or "file.inspect_csv" in caps):
+                steps.append(
+                    AgentStep(
+                        kind=AgentStepKind.CAPABILITY,
+                        capability_id="file.inspect_csv",
+                        arguments={},
+                        note="file.inspect_csv requires path override from caller",
+                    )
+                )
             steps.append(
                 AgentStep(
                     kind=AgentStepKind.VERIFY,
