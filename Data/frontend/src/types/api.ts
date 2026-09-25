@@ -55,6 +55,7 @@ export type ChatResponse = {
   model: string;
   reasoning: ReasoningSummary;
   knowledge_sources: KnowledgeSource[];
+  memory_sources?: Array<{ memory_id?: string }>;
   language?: LanguageDecisionMeta;
   behavior?: Record<string, unknown>;
   quality?: {
@@ -64,6 +65,7 @@ export type ChatResponse = {
   neuro?: unknown;
   cortex?: unknown;
   cognition?: CognitionRunStatus | { error?: string; truth?: Record<string, boolean> };
+  assistant_telemetry?: AssistantTurnTelemetry;
   streamed?: boolean;
   truth?: {
     neural_signal_is_not_authority?: boolean;
@@ -73,6 +75,33 @@ export type ChatResponse = {
     model_output_is_not_evidence?: boolean;
     [key: string]: boolean | undefined;
   };
+};
+
+/** Real turn telemetry for Chat Context/Tools/Agents panels — never mocked. */
+export type AssistantTurnTelemetry = {
+  model?: string | null;
+  behavior_hash?: string | null;
+  behavior_profile_id?: string | null;
+  context_budget?: number | null;
+  context_tokens?: number | null;
+  brain_hits?: number;
+  knowledge_hits?: number;
+  memory_hits?: number;
+  evidence_hits?: number;
+  tools_invoked?: string[];
+  agents?: string[];
+  gi_specialists?: string[];
+  verification_mode?: string | null;
+  verification_passed?: boolean | null;
+  factuality?: Record<string, unknown> | null;
+  execution_class?: string | null;
+  cognition_mode?: string | null;
+  cognition_status?: string | null;
+  latency_ms?: number | null;
+  usage?: Record<string, number> | null;
+  budgets?: Record<string, number> | null;
+  web_used?: boolean;
+  truth?: Record<string, boolean>;
 };
 
 export type CognitionHealth = {
@@ -108,14 +137,30 @@ export type CognitionRunStatus = {
     steps?: Array<{ step_id: string; objective: string; status: string }>;
   } | null;
   observations?: Array<{ kind: string; summary: string; success?: boolean | null }>;
-  actions?: Array<{ kind: string; rationale?: string | null }>;
+  actions?: Array<{ kind: string; rationale?: string | null; capability_id?: string | null }>;
   cancel_requested?: boolean;
   cancel_acknowledged?: boolean;
   shadow?: boolean;
   error?: string | null;
   verification_passed?: boolean | null;
   completion?: Record<string, unknown> | null;
+  factuality?: Record<string, unknown> | null;
   response_preview?: string;
+  response?: string | null;
+  execution_class?: string | null;
+  verification_mode?: string | null;
+  gi_specialists?: string[];
+  behavior_hash?: string | null;
+  behavior_profile_id?: string | null;
+  context_budget?: number | null;
+  retrieval_hits?: {
+    brain?: number;
+    knowledge?: number;
+    memory?: number;
+    evidence?: number;
+  };
+  tools_invoked?: string[];
+  active_agents?: Array<string | null | undefined>;
   truth?: Record<string, boolean>;
 };
 

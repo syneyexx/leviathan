@@ -15,18 +15,18 @@ from .worker import (
 from .qa_crawler import (
     BrowserJourneyCrawler,
     CrawlBudget,
+    CrawlBudgets,
+    CrawlConfig,
     CrawlReport,
     CrawlStatus,
     HostNotAllowed,
     JourneyPersona,
+    LocalUserJourneyCrawler,
 )
 from .playwright_backend import PlaywrightBrowserBackend, PlaywrightUnavailable
 
-# Compatibility aliases (GI9 naming variants).
-CrawlBudgets = CrawlBudget
-CrawlConfig = CrawlBudget
+# Compatibility aliases.
 JourneyReport = CrawlReport
-LocalUserJourneyCrawler = BrowserJourneyCrawler
 
 __all__ = [
     "BrowserAction",

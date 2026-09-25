@@ -334,24 +334,23 @@ class BrowserWorker:
 
     def get_qa_crawler(self) -> Any:
         if self._qa_crawler is None or self._qa_crawler is False:
-            from .qa_crawler import LocalUserJourneyCrawler
+            from .qa_crawler import BrowserJourneyCrawler
 
             # QA crawls need localhost HTTP; do not widen the primary worker policy.
             qa_worker = BrowserWorker(
                 backend_kind=(
                     self.backend.kind.value
-                    if hasattr(self.backend, "kind")
+                    if hasattr(getattr(self, "backend", None), "kind")
                     else "local_dom"
                 ),
                 artifact_store=self.artifact_store,
                 allow_network=True,
                 allow_uploads=self.allow_uploads,
                 filesystem_root=self.filesystem_root,
+                qa_crawler=False,  # type: ignore[arg-type] — sentinel: no nested factory
             )
-            # Child worker must not recursively spawn another crawler factory.
-            qa_worker._qa_crawler = "pending"
-            crawler = LocalUserJourneyCrawler(
-                worker=qa_worker,
+            crawler = BrowserJourneyCrawler(
+                browser_worker=qa_worker,
                 artifact_store=self.artifact_store,
             )
             qa_worker._qa_crawler = crawler
@@ -547,7 +546,7 @@ class BrowserWorker:
         run_id: str | None,
         request_id: str | None,
     ) -> dict[str, Any]:
-        from .qa_crawler import CrawlBudgets, CrawlConfig, JourneyPersona, LocalUserJourneyCrawler
+        from .qa_crawler import CrawlBudget, CrawlStatus, JourneyPersona
 
         crawler = self.get_qa_crawler()
         key = action_key.upper().replace("BROWSER.QA.", "").replace("QA.", "")
@@ -558,78 +557,133 @@ class BrowserWorker:
             except ValueError:
                 persona = JourneyPersona.DESKTOP_MOUSE
             budgets_raw = dict(args.get("budgets") or {})
-            budgets = CrawlBudgets(
-                max_pages=int(budgets_raw.get("max_pages", 40)),
-                max_actions=int(budgets_raw.get("max_actions", 120)),
-                max_depth=int(budgets_raw.get("max_depth", 6)),
-                max_wall_time_s=float(budgets_raw.get("max_wall_time_s", 90)),
-                max_forms=int(budgets_raw.get("max_forms", 12)),
-                jitter_min_ms=int(budgets_raw.get("jitter_min_ms", 100)),
-                jitter_max_ms=int(budgets_raw.get("jitter_max_ms", 700)),
-            )
+            if budgets_raw:
+                crawler.budget = CrawlBudget(
+                    max_pages=int(budgets_raw.get("max_pages", crawler.budget.max_pages)),
+                    max_actions=int(budgets_raw.get("max_actions", crawler.budget.max_actions)),
+                    max_depth=int(budgets_raw.get("max_depth", crawler.budget.max_depth)),
+                    max_wall_time_seconds=float(
+                        budgets_raw.get(
+                            "max_wall_time_seconds",
+                            budgets_raw.get(
+                                "max_wall_time_s", crawler.budget.max_wall_time_seconds
+                            ),
+                        )
+                    ),
+                    max_forms=int(budgets_raw.get("max_forms", crawler.budget.max_forms)),
+                )
             hosts = args.get("allowed_hosts")
-            from .qa_crawler import _DEFAULT_LOCAL_HOSTS
-
-            config = CrawlConfig(
-                seed_url=str(args.get("seed_url") or args.get("url") or ""),
-                persona=persona,
-                allowed_hosts=frozenset(hosts) if hosts else _DEFAULT_LOCAL_HOSTS,
-                budgets=budgets,
-                allow_destructive_test_actions=bool(
-                    args.get("allow_destructive_test_actions", False)
-                ),
-                seed=int(args.get("seed", 42)),
-                auth_secret_ref=args.get("auth_secret_ref"),
-                auth_lease_id=args.get("auth_lease_id"),
-                run_id=run_id or args.get("run_id"),
-                trace_id=request_id or args.get("trace_id"),
-                journey_id=args.get("journey_id"),
+            if hosts:
+                crawler.allowed_hosts = tuple(str(h).lower() for h in hosts)
+            crawler.allow_destructive = bool(
+                args.get("allow_destructive_test_actions", crawler.allow_destructive)
             )
-            if not config.seed_url:
+            start_url = str(args.get("seed_url") or args.get("url") or args.get("start_url") or "")
+            if not start_url:
                 return {
                     "status": BrowserJobStatus.REJECTED.value,
                     "error": "browser.qa.crawl requires seed_url",
                     "action": "QA_CRAWL",
                 }
-            report = crawler.run(config)
+            report = crawler.run(
+                start_url=start_url,
+                persona=persona,
+                seed=int(args.get("seed", 42)),
+                run_id=run_id or args.get("run_id"),
+            )
+            payload = report.public_dict() if hasattr(report, "public_dict") else dict(report)
+            terminal_ok = payload.get("status") in {
+                CrawlStatus.COMPLETED.value,
+                CrawlStatus.LIMIT_REACHED.value,
+                CrawlStatus.CANCELLED.value,
+            }
             return {
-                "status": BrowserJobStatus.COMPLETED.value,
+                "status": (
+                    BrowserJobStatus.COMPLETED.value
+                    if terminal_ok
+                    else BrowserJobStatus.FAILED.value
+                ),
                 "action": "QA_CRAWL",
-                "report": report,
-                "journey_id": report.get("journey_id"),
-                "detail": f"QA crawl {report.get('status')}",
-                "truth": report.get("truth") or {},
+                "report": payload,
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "detail": f"QA crawl {payload.get('status')}",
+                "truth": payload.get("truth") or {},
             }
         if key in {"QA_STATUS", "STATUS"}:
-            journey_id = str(args.get("journey_id") or "")
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                report = crawler.status(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_STATUS",
+                }
+            payload = report.public_dict()
             return {
                 "status": BrowserJobStatus.COMPLETED.value,
                 "action": "QA_STATUS",
-                **crawler.status(journey_id),
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "report": payload,
+                "truth": payload.get("truth") or {},
             }
         if key in {"QA_CANCEL", "CANCEL"}:
-            journey_id = str(args.get("journey_id") or "")
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                report = crawler.cancel(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_CANCEL",
+                }
+            payload = report.public_dict()
             return {
                 "status": BrowserJobStatus.COMPLETED.value,
                 "action": "QA_CANCEL",
-                **crawler.request_cancel(journey_id),
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "report": payload,
+                "truth": {
+                    "cancelled_is_not_success": True,
+                    **(payload.get("truth") or {}),
+                },
             }
         if key in {"QA_REPLAY", "REPLAY"}:
-            journey_id = str(args.get("journey_id") or "")
-            report = crawler.replay(journey_id, seed=args.get("seed"))
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                report = crawler.replay(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_REPLAY",
+                }
+            payload = report.public_dict()
             return {
                 "status": BrowserJobStatus.COMPLETED.value,
                 "action": "QA_REPLAY",
-                "report": report,
-                "journey_id": report.get("journey_id"),
-                "detail": f"QA replay {report.get('status')}",
+                "report": payload,
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "detail": f"QA replay {payload.get('status')}",
             }
         if key in {"QA_REPORT", "REPORT"}:
-            journey_id = str(args.get("journey_id") or "")
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                payload = crawler.report_artifact(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_REPORT",
+                }
             return {
                 "status": BrowserJobStatus.COMPLETED.value,
                 "action": "QA_REPORT",
-                **crawler.report(journey_id),
+                **payload,
             }
         return {
             "status": BrowserJobStatus.UNSUPPORTED.value,

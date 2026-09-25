@@ -189,6 +189,10 @@ class PlaywrightBrowserBackend:
             self._teardown_runtime()
         return dict(self._readiness)
 
+    def is_ready(self) -> bool:
+        """Boolean READY probe — package alone never returns True."""
+        return bool(self.readiness().get("ready"))
+
     def _ensure_ready(self) -> None:
         info = self.readiness()
         if not info.get("ready"):

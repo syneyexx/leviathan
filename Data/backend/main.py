@@ -161,6 +161,7 @@ from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_m
 from Data.backend.routes.mcp import build_mcp_router
 from Data.backend.routes.cognition import build_cognition_router
 from Data.backend.routes.tasks import build_tasks_router
+from Data.backend.routes.browser_qa import build_browser_qa_router
 from Data.modules.tasks import TaskService, TaskStore
 from Data.modules.mcp.errors import McpError
 from Data.modules.cognition import (
@@ -488,7 +489,36 @@ browser_worker = BrowserWorker(
     artifact_store=artifacts,
     backend_kind="local_dom",
     filesystem_root=str(PROJECT_ROOT),
+    allow_network=True,  # localhost QA crawler probes; public crawl still host-scoped
 )
+# Shared GI9/GI10 journey crawler — JobRuntime owns durable cancel/checkpoint/resume.
+from Data.modules.browser import BrowserJourneyCrawler, CrawlBudget  # noqa: E402
+
+_qa_hosts = tuple(
+    h.strip().lower()
+    for h in str(getattr(settings.browser_qa, "allowed_hosts", "localhost,127.0.0.1,::1")).split(",")
+    if h.strip()
+)
+browser_qa_crawler = BrowserJourneyCrawler(
+    browser_worker=BrowserWorker(
+        artifact_store=artifacts,
+        backend_kind="local_dom",
+        filesystem_root=str(PROJECT_ROOT),
+        allow_network=True,
+        qa_crawler=False,  # type: ignore[arg-type]
+    ),
+    artifact_store=artifacts,
+    allowed_hosts=_qa_hosts or ("localhost", "127.0.0.1", "::1"),
+    budget=CrawlBudget(
+        max_pages=int(getattr(settings.browser_qa, "max_pages", 50)),
+        max_actions=int(getattr(settings.browser_qa, "max_actions", 200)),
+    ),
+    allow_destructive=bool(
+        getattr(settings.browser_qa, "allow_destructive_test_actions", False)
+    ),
+    observability=observability,
+)
+browser_worker._qa_crawler = browser_qa_crawler
 browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
 if settings.features.capability_world:
     execution_gateway.browser_executor = browser_worker
@@ -1970,6 +2000,7 @@ app.include_router(
 app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))
+app.include_router(build_browser_qa_router(browser_worker))
 app.include_router(build_settings_router(settings_plane))
 app.include_router(build_behavior_router(behavior_store, observability=observability))
 app.include_router(build_efficiency_router())
@@ -3215,6 +3246,15 @@ async def chat(payload: ChatRequest, request: Request):
             },
             "cortex": cortex_report if behavior_profile.diagnostic_visibility else None,
             "cognition": cognition_meta,
+            "assistant_telemetry": _build_assistant_telemetry(
+                model=model,
+                behavior_snapshot=behavior_snapshot,
+                cognition_meta=cognition_meta,
+                knowledge_hits=knowledge_hits,
+                memory_hits=memory_hits,
+                evidence_hits=[],
+                run_started_at=getattr(run, "started_at", None) or getattr(run, "created_at", None),
+            ),
             "streamed": use_sse and not cognition_owns_response,
             "truth": chat_truth(
                 streaming_degraded=streaming_degraded,

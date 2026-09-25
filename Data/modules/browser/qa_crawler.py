@@ -15,11 +15,23 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _resolve_report_key(store: dict[str, Any], ref: str) -> str | None:
+    """Resolve a run_id or journey_id to the canonical run_id key."""
+    if ref in store:
+        return ref
+    for run_id, report in store.items():
+        if getattr(report, "journey_id", None) == ref:
+            return run_id
+    return None
 
 
 class JourneyPersona(str, Enum):
@@ -248,22 +260,23 @@ class BrowserJourneyCrawler:
         return report
 
     def cancel(self, run_id: str) -> CrawlReport:
-        self._cancel.add(run_id)
-        report = self._runs.get(run_id)
-        if report and report.status in {CrawlStatus.ACCEPTED, CrawlStatus.RUNNING}:
+        key = _resolve_report_key(self._runs, run_id)
+        if key is None:
+            raise KeyError(run_id)
+        self._cancel.add(key)
+        report = self._runs[key]
+        if report.status in {CrawlStatus.ACCEPTED, CrawlStatus.RUNNING}:
             report.status = CrawlStatus.CANCELLED
             report.finished_at = _utc_now()
             self._flush_artifacts(report)
-            self._emit("crawler.cancelled", {"run_id": run_id})
-        if report is None:
-            raise KeyError(run_id)
+            self._emit("crawler.cancelled", {"run_id": key})
         return report
 
     def status(self, run_id: str) -> CrawlReport:
-        report = self._runs.get(run_id)
-        if report is None:
+        key = _resolve_report_key(self._runs, run_id)
+        if key is None:
             raise KeyError(run_id)
-        return report
+        return self._runs[key]
 
     def run(
         self,
@@ -344,7 +357,9 @@ class BrowserJourneyCrawler:
                 else:
                     graph[fp] = StateNode(fingerprint=fp, url=url, depth=len(path))
 
-                candidates = self._candidate_actions(obs, persona=report.persona)
+                candidates = self._candidate_actions(
+                    obs, persona=report.persona, base_url=url
+                )
                 if not candidates:
                     break
                 action_spec = candidates[rng.randrange(0, len(candidates))]
@@ -352,6 +367,58 @@ class BrowserJourneyCrawler:
                     continue
                 if action_spec.get("kind") == "FORM_FILL" and forms_filled >= self.budget.max_forms:
                     continue
+
+                # Pre-navigate HTTP probe for link targets (broken/5xx detection).
+                target_url = action_spec.get("target_url")
+                if target_url:
+                    try:
+                        self.assert_host_allowed(str(target_url))
+                    except HostNotAllowed:
+                        report.issues.append(
+                            CrawlIssue(
+                                issue_id=f"iss_{uuid.uuid4().hex[:8]}",
+                                severity="info",
+                                kind="scope_blocked",
+                                message=f"Blocked non-localhost navigation: {target_url}",
+                                url=str(target_url),
+                                reproduction=list(path),
+                            )
+                        )
+                        continue
+                    probe = self._probe_http(str(target_url), report)
+                    code = probe.get("status")
+                    if isinstance(code, int) and code >= 400:
+                        kind = (
+                            "broken_link"
+                            if code == 404
+                            else (f"http_{code}" if code < 500 else f"http_{code}")
+                        )
+                        report.issues.append(
+                            CrawlIssue(
+                                issue_id=f"iss_{uuid.uuid4().hex[:8]}",
+                                severity="critical" if code >= 500 else "high",
+                                kind=kind,
+                                message=f"HTTP {code} for {target_url}",
+                                url=str(target_url),
+                                reproduction=list(path),
+                                metadata=probe,
+                            )
+                        )
+                        self._capture_failure(report, {"error": f"HTTP {code}"}, path, str(target_url))
+                        continue
+                    if probe.get("error") and probe.get("status") is None:
+                        report.issues.append(
+                            CrawlIssue(
+                                issue_id=f"iss_{uuid.uuid4().hex[:8]}",
+                                severity="high",
+                                kind="timeout" if "timed out" in str(probe.get("error")).lower() else "broken_link",
+                                message=str(probe.get("error")),
+                                url=str(target_url),
+                                reproduction=list(path),
+                                metadata=probe,
+                            )
+                        )
+                        continue
 
                 self._pace(rng)
                 try:
@@ -454,15 +521,28 @@ class BrowserJourneyCrawler:
 
     def report_artifact(self, run_id: str) -> dict[str, Any]:
         report = self.status(run_id)
-        payload = {"json": report.public_dict(), "markdown": report.markdown()}
+        payload: dict[str, Any] = {"json": report.public_dict(), "markdown": report.markdown()}
         if self.artifact_store is not None:
             try:
-                art = self.artifact_store.put_bytes(
-                    report.markdown().encode("utf-8"),
-                    media_type="text/markdown",
-                    metadata={"kind": "qa_crawl_report", "run_id": run_id},
-                )
-                payload["artifact_id"] = getattr(art, "artifact_id", None) or str(art)
+                data = report.markdown().encode("utf-8")
+                meta = {"kind": "qa_crawl_report", "run_id": report.run_id}
+                if hasattr(self.artifact_store, "create_from_bytes"):
+                    art = self.artifact_store.create_from_bytes(
+                        data=data,
+                        artifact_type="browser_qa_report_md",
+                        producer="browser.qa.report",
+                        filename=f"qa-report-{report.journey_id}.md",
+                        run_id=report.run_id,
+                        metadata=meta,
+                    )
+                    payload["artifact_id"] = getattr(art, "artifact_id", None) or (
+                        art.get("artifact_id") if isinstance(art, dict) else str(art)
+                    )
+                elif hasattr(self.artifact_store, "put_bytes"):
+                    art = self.artifact_store.put_bytes(
+                        data, media_type="text/markdown", metadata=meta
+                    )
+                    payload["artifact_id"] = getattr(art, "artifact_id", None) or str(art)
             except Exception:  # noqa: BLE001
                 pass
         return payload
@@ -494,7 +574,7 @@ class BrowserJourneyCrawler:
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _candidate_actions(
-        self, obs: dict[str, Any], *, persona: JourneyPersona
+        self, obs: dict[str, Any], *, persona: JourneyPersona, base_url: str = ""
     ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         elements = obs.get("interactive_elements") or []
@@ -503,16 +583,59 @@ class BrowserJourneyCrawler:
                 if not isinstance(el, dict):
                     continue
                 tag = str(el.get("tag") or el.get("role") or "").lower()
-                name = str(el.get("name") or el.get("text") or el.get("label") or "")
+                name = str(
+                    el.get("name")
+                    or el.get("text")
+                    or el.get("label")
+                    or el.get("ariaLabel")
+                    or ""
+                )
+                el_id = str(el.get("id") or "")
+                el_name = str(el.get("name") or "")
+                href = str(el.get("href") or "")
                 selector = (
                     el.get("selector")
                     or el.get("css")
                     or el.get("test_id")
+                    or (f"#{el_id}" if el_id else None)
+                    or (f'[name="{el_name}"]' if el_name else None)
                     or (f"text={name}" if name else None)
                 )
+                if tag in {"a", "link"} or el.get("role") == "link" or href:
+                    abs_url = urljoin(base_url, href) if href else None
+                    if abs_url and not href.startswith(("#", "javascript:")):
+                        out.append(
+                            {
+                                "action": "NAVIGATE",
+                                "arguments": {"url": abs_url},
+                                "label": f"Navigate {abs_url}",
+                                "kind": "NAV",
+                                "target_url": abs_url,
+                            }
+                        )
+                    elif selector:
+                        if persona == JourneyPersona.KEYBOARD_ONLY:
+                            out.append(
+                                {
+                                    "action": "KEYPRESS",
+                                    "arguments": {"key": "Enter", "selector": selector},
+                                    "label": f"Keyboard activate {name or selector}",
+                                    "kind": "NAV",
+                                }
+                            )
+                        else:
+                            out.append(
+                                {
+                                    "action": "CLICK",
+                                    "arguments": {"selector": selector},
+                                    "label": f"Click {name or selector}",
+                                    "kind": "NAV",
+                                }
+                            )
+                    continue
                 if not selector:
                     continue
-                if tag in {"a", "button", "link"} or el.get("role") in {"button", "link"}:
+                if tag in {"button"} or el.get("role") == "button":
                     if persona == JourneyPersona.KEYBOARD_ONLY:
                         out.append(
                             {
@@ -552,8 +675,45 @@ class BrowserJourneyCrawler:
         )
         return out
 
+    def _probe_http(self, url: str, report: CrawlReport) -> dict[str, Any]:
+        """Bounded localhost HTTP probe with header redaction."""
+        if len(report.network_issues) >= self.budget.max_network_events_collected:
+            return {"skipped": True}
+        headers = self._qa_headers(report)
+        req = Request(url, headers=headers, method="GET")
+        t0 = time.perf_counter()
+        try:
+            with urlopen(req, timeout=5) as resp:  # noqa: S310 — localhost-scoped
+                body = resp.read(2048)
+                event = {
+                    "url": url,
+                    "status": getattr(resp, "status", None),
+                    "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
+                    "bytes": len(body),
+                }
+                report.network_issues.append(event)
+                return event
+        except HTTPError as exc:
+            event = {
+                "url": url,
+                "status": exc.code,
+                "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
+                "error": str(exc.reason),
+            }
+            report.network_issues.append(event)
+            return event
+        except (URLError, TimeoutError, OSError) as exc:
+            event = {
+                "url": url,
+                "status": None,
+                "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
+                "error": str(exc),
+            }
+            report.network_issues.append(event)
+            return event
+
     def _synthetic_value(self, el: dict[str, Any]) -> str:
-        kind = str(el.get("type") or el.get("name") or el.get("label") or "").lower()
+        kind = str(el.get("type") or el.get("name") or el.get("label") or el.get("id") or "").lower()
         run = uuid.uuid4().hex[:6]
         if "email" in kind:
             return f"qa+{run}@example.invalid"
@@ -605,10 +765,14 @@ class BrowserJourneyCrawler:
                             reproduction=list(path),
                         )
                     )
-        for net in (obs.get("network_failures") or obs.get("failed_requests") or [])[:20]:
+        for net in (
+            list(obs.get("network_failures") or [])
+            + list(obs.get("failed_requests") or [])
+            + list(obs.get("network_errors") or [])
+        )[:20]:
             if len(report.network_issues) >= self.budget.max_network_events_collected:
                 break
-            entry = net if isinstance(net, dict) else {"url": str(net)}
+            entry = net if isinstance(net, dict) else {"url": str(net), "message": str(net)}
             # Redact secrets
             safe = {
                 k: v
@@ -632,14 +796,31 @@ class BrowserJourneyCrawler:
         for el in (obs.get("interactive_elements") or [])[:30]:
             if not isinstance(el, dict):
                 continue
-            name = el.get("name") or el.get("accessible_name") or el.get("label")
+            name = (
+                el.get("name")
+                or el.get("accessible_name")
+                or el.get("label")
+                or el.get("ariaLabel")
+                or el.get("id")
+            )
             if not name and str(el.get("tag") or "").lower() in {"button", "a", "input"}:
                 report.accessibility_observations.append(
                     {
                         "kind": "missing_accessible_name",
-                        "selector": el.get("selector"),
+                        "selector": el.get("selector") or el.get("id"),
                         "url": url,
                     }
+                )
+                report.issues.append(
+                    CrawlIssue(
+                        issue_id=f"iss_{uuid.uuid4().hex[:8]}",
+                        severity="info",
+                        kind="a11y_missing_name",
+                        message="interactive element without accessible name",
+                        url=str(url) if url else None,
+                        reproduction=list(path),
+                        metadata={"element": {k: el.get(k) for k in ("tag", "id", "type")}},
+                    )
                 )
         text = str(obs.get("dom_text") or "")
         if text.strip() == "":
@@ -675,14 +856,18 @@ class BrowserJourneyCrawler:
     ) -> None:
         shot = None
         try:
+            session_id = (payload.get("session") or {}).get("session_id") or payload.get(
+                "session_id"
+            )
             shot_result = self._action(
                 "SCREENSHOT",
-                {"session_id": (payload.get("session") or {}).get("session_id")},
+                {"session_id": session_id} if session_id else {},
                 run_id=report.run_id,
             )
             shot = (
                 (shot_result.get("observation") or {}).get("screenshot_artifact_id")
                 or shot_result.get("screenshot_artifact_id")
+                or shot_result.get("artifact_id")
             )
             if shot:
                 report.screenshots.append(str(shot))
@@ -703,16 +888,29 @@ class BrowserJourneyCrawler:
     def _flush_artifacts(self, report: CrawlReport) -> None:
         if self.artifact_store is None:
             return
+        data = report.markdown().encode("utf-8")
+        meta = {
+            "kind": "qa_crawl_report",
+            "run_id": report.run_id,
+            "journey_id": report.journey_id,
+            "status": report.status.value,
+        }
         try:
-            self.artifact_store.put_bytes(
-                report.markdown().encode("utf-8"),
-                media_type="text/markdown",
-                metadata={
-                    "kind": "qa_crawl_report",
-                    "run_id": report.run_id,
-                    "status": report.status.value,
-                },
-            )
+            if hasattr(self.artifact_store, "create_from_bytes"):
+                self.artifact_store.create_from_bytes(
+                    data=data,
+                    artifact_type="browser_qa_report_md",
+                    producer="browser.qa.crawl",
+                    filename=f"qa-report-{report.journey_id}.md",
+                    run_id=report.run_id,
+                    metadata=meta,
+                )
+            elif hasattr(self.artifact_store, "put_bytes"):
+                self.artifact_store.put_bytes(
+                    data,
+                    media_type="text/markdown",
+                    metadata=meta,
+                )
         except Exception:  # noqa: BLE001
             pass
 
@@ -721,8 +919,429 @@ class BrowserJourneyCrawler:
             return
         try:
             if hasattr(self.observability, "emit"):
-                self.observability.emit(event, payload)
+                self.observability.emit("browser", event, payload=payload)
             elif hasattr(self.observability, "record"):
                 self.observability.record(event, payload)
         except Exception:  # noqa: BLE001
             pass
+
+
+# Compatibility aliases
+LocalUserJourneyCrawler = BrowserJourneyCrawler
+CrawlBudgets = CrawlBudget
+JourneyReport = CrawlReport
+
+
+# --- Compatibility surface expected by BrowserWorker._execute_qa (GI9) -----
+
+_DEFAULT_LOCAL_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+@dataclass
+class CrawlBudgets:
+    max_pages: int = 40
+    max_actions: int = 120
+    max_depth: int = 6
+    max_wall_time_s: float = 90.0
+    max_forms: int = 12
+    jitter_min_ms: int = 100
+    jitter_max_ms: int = 700
+
+    def to_budget(self) -> CrawlBudget:
+        return CrawlBudget(
+            max_pages=self.max_pages,
+            max_actions=self.max_actions,
+            max_depth=self.max_depth,
+            max_wall_time_seconds=float(self.max_wall_time_s),
+            max_forms=self.max_forms,
+        )
+
+
+@dataclass
+class CrawlConfig:
+    seed_url: str
+    persona: JourneyPersona = JourneyPersona.DESKTOP_MOUSE
+    allowed_hosts: frozenset[str] = field(default_factory=lambda: _DEFAULT_LOCAL_HOSTS)
+    budgets: CrawlBudgets = field(default_factory=CrawlBudgets)
+    allow_destructive_test_actions: bool = False
+    seed: int = 42
+    auth_secret_ref: str | None = None
+    auth_lease_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    journey_id: str | None = None
+
+
+class LocalUserJourneyCrawler:
+    """Worker-facing adapter over BrowserJourneyCrawler."""
+
+    def __init__(
+        self,
+        *,
+        worker: Any = None,
+        browser_worker: Any = None,
+        artifact_store: Any | None = None,
+        observability: Any | None = None,
+    ) -> None:
+        self._worker = worker or browser_worker
+        self._artifact_store = artifact_store
+        self._observability = observability
+        self._inner = BrowserJourneyCrawler(
+            browser_worker=self._worker,
+            artifact_store=artifact_store,
+            observability=observability,
+            sleep_fn=lambda _s: None,
+        )
+        self._by_journey: dict[str, str] = {}  # journey_id -> run_id
+        self._cancel_flags: set[str] = set()
+
+    def run(self, config: CrawlConfig | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(config, dict):
+            persona_raw = str(config.get("persona") or JourneyPersona.DESKTOP_MOUSE.value)
+            try:
+                persona = JourneyPersona(persona_raw.upper())
+            except ValueError:
+                persona = JourneyPersona.DESKTOP_MOUSE
+            budgets_raw = dict(config.get("budgets") or {})
+            budgets = CrawlBudgets(
+                **{
+                    k: budgets_raw[k]
+                    for k in (
+                        "max_pages",
+                        "max_actions",
+                        "max_depth",
+                        "max_wall_time_s",
+                        "max_forms",
+                        "jitter_min_ms",
+                        "jitter_max_ms",
+                    )
+                    if k in budgets_raw
+                }
+            )
+            hosts = config.get("allowed_hosts")
+            config = CrawlConfig(
+                seed_url=str(config.get("seed_url") or config.get("url") or ""),
+                persona=persona,
+                allowed_hosts=frozenset(hosts) if hosts else _DEFAULT_LOCAL_HOSTS,
+                budgets=budgets,
+                allow_destructive_test_actions=bool(
+                    config.get("allow_destructive_test_actions", False)
+                ),
+                seed=int(config.get("seed", 42)),
+                auth_secret_ref=config.get("auth_secret_ref"),
+                auth_lease_id=config.get("auth_lease_id"),
+                run_id=config.get("run_id"),
+                trace_id=config.get("trace_id"),
+                journey_id=config.get("journey_id"),
+            )
+        self._inner.allowed_hosts = tuple(h.lower() for h in config.allowed_hosts)
+        self._inner.budget = config.budgets.to_budget()
+        self._inner.allow_destructive = bool(config.allow_destructive_test_actions)
+        try:
+            self._inner.assert_host_allowed(config.seed_url)
+        except HostNotAllowed as exc:
+            raise PermissionError(str(exc)) from exc
+        # Pre-probe linked paths on the seed page for HTTP status findings.
+        probe_findings = self._probe_seed_links(config.seed_url, config)
+        report = self._inner.run(
+            start_url=config.seed_url,
+            persona=config.persona,
+            seed=config.seed,
+            run_id=config.run_id,
+        )
+        if config.journey_id:
+            self._by_journey[str(config.journey_id)] = report.run_id
+            report.journey_id = str(config.journey_id)
+        else:
+            self._by_journey[report.journey_id] = report.run_id
+        return self._public_report(report, extra_findings=probe_findings)
+
+    def status(self, journey_id: str) -> dict[str, Any]:
+        run_id = self._by_journey.get(journey_id) or journey_id
+        try:
+            report = self._inner.status(run_id)
+        except KeyError:
+            return {
+                "journey_id": journey_id,
+                "status": "NOT_FOUND",
+                "error_code": "CRAWLER_NOT_FOUND",
+            }
+        out = self._public_report(report)
+        out["report"] = out
+        return out
+
+    def request_cancel(self, journey_id: str) -> dict[str, Any]:
+        run_id = self._by_journey.get(journey_id) or journey_id
+        self._cancel_flags.add(journey_id)
+        try:
+            report = self._inner.cancel(run_id)
+        except KeyError:
+            return {
+                "journey_id": journey_id,
+                "status": "NOT_FOUND",
+                "cancel_requested": True,
+                "error_code": "CRAWLER_NOT_FOUND",
+            }
+        out = self._public_report(report)
+        out["cancel_requested"] = True
+        return out
+
+    def replay(self, journey_id: str, *, seed: int | None = None) -> dict[str, Any]:
+        run_id = self._by_journey.get(journey_id) or journey_id
+        prior = self._inner.status(run_id)
+        report = self._inner.run(
+            start_url=prior.start_url,
+            persona=prior.persona,
+            seed=int(seed if seed is not None else prior.seed),
+        )
+        self._by_journey[report.journey_id] = report.run_id
+        self._by_journey[journey_id] = report.run_id
+        return self._public_report(report)
+
+    def report(self, journey_id: str) -> dict[str, Any]:
+        run_id = self._by_journey.get(journey_id) or journey_id
+        payload = self._inner.report_artifact(run_id)
+        try:
+            report = self._inner.status(run_id)
+            public = self._public_report(report)
+        except KeyError:
+            public = {"journey_id": journey_id, "status": "NOT_FOUND"}
+        return {
+            "journey_id": journey_id,
+            "run_id": run_id,
+            **public,
+            **payload,
+        }
+
+    def _public_report(
+        self,
+        report: CrawlReport,
+        *,
+        extra_findings: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        findings: list[dict[str, Any]] = list(extra_findings or [])
+        for issue in report.issues:
+            kind = issue.kind.upper()
+            if kind.startswith("HTTP_"):
+                status = int(kind.split("_")[-1]) if kind.split("_")[-1].isdigit() else 0
+                if status >= 500:
+                    kind = "HTTP_5XX"
+                elif status >= 400:
+                    kind = "HTTP_4XX"
+            elif "blank" in issue.kind:
+                kind = "BLANK_CONTENT"
+            elif "loop" in issue.kind:
+                kind = "LOOP"
+            elif "console" in issue.kind:
+                kind = "CONSOLE_ERROR"
+            elif "unverified" in issue.kind:
+                kind = "STATE_UNVERIFIED"
+            else:
+                kind = kind.replace("-", "_")
+            findings.append(
+                {
+                    "kind": kind,
+                    "severity": issue.severity,
+                    "message": issue.message,
+                    "url": issue.url,
+                    "reproduction": list(issue.reproduction),
+                }
+            )
+        for obs in report.accessibility_observations:
+            kind = str(obs.get("kind") or "A11Y_OBSERVATION")
+            if kind == "missing_accessible_name":
+                kind = "A11Y_OBSERVATION"
+            elif kind == "untrusted_page_instruction_text":
+                kind = "UNTRUSTED_PAGE_TEXT"
+            findings.append(
+                {
+                    "kind": kind if kind.isupper() else "A11Y_OBSERVATION",
+                    "severity": "medium",
+                    "message": str(obs),
+                    "url": obs.get("url"),
+                    "reproduction": [],
+                }
+            )
+        status = report.status.value
+        if status == "LIMIT_REACHED":
+            status = "BUDGET"
+        md_id = None
+        json_id = None
+        if self._artifact_store is not None:
+            try:
+                md = self._artifact_store.create_from_bytes(
+                    data=report.markdown().encode("utf-8"),
+                    artifact_type="qa_crawl_report",
+                    producer="browser.qa",
+                    filename=f"qa-{report.journey_id}.md",
+                    run_id=report.run_id,
+                    metadata={"kind": "qa_crawl_report_md"},
+                )
+                md_id = getattr(md, "artifact_id", None)
+            except Exception:  # noqa: BLE001
+                try:
+                    md = self._artifact_store.put_bytes(
+                        report.markdown().encode("utf-8"),
+                        media_type="text/markdown",
+                        metadata={"kind": "qa_crawl_report"},
+                    )
+                    md_id = getattr(md, "artifact_id", None) or str(md)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                import json as _json
+
+                raw = _json.dumps(report.public_dict(), ensure_ascii=False).encode("utf-8")
+                js = self._artifact_store.create_from_bytes(
+                    data=raw,
+                    artifact_type="qa_crawl_report",
+                    producer="browser.qa",
+                    filename=f"qa-{report.journey_id}.json",
+                    run_id=report.run_id,
+                    metadata={"kind": "qa_crawl_report_json"},
+                )
+                json_id = getattr(js, "artifact_id", None)
+            except Exception:  # noqa: BLE001
+                pass
+        return {
+            "journey_id": report.journey_id,
+            "run_id": report.run_id,
+            "trace_id": report.trace_id,
+            "status": status,
+            "start_url": report.start_url,
+            "persona": report.persona.value,
+            "pages_visited": report.pages_visited,
+            "actions_performed": report.actions_performed,
+            "findings": findings,
+            "issues": [i.public_dict() for i in report.issues],
+            "console_issues": list(report.console_issues),
+            "network_issues": list(report.network_issues),
+            "accessibility_observations": list(report.accessibility_observations),
+            "performance_observations": list(report.performance_observations),
+            "screenshots": list(report.screenshots),
+            "reproduction": report.reproduction_journeys[0]
+            if report.reproduction_journeys
+            else [],
+            "reproduction_journeys": list(report.reproduction_journeys),
+            "coverage": dict(report.coverage),
+            "seed": report.seed,
+            "created_at": report.created_at,
+            "finished_at": report.finished_at,
+            "error": report.error,
+            "report_artifact_id": json_id or md_id,
+            "markdown_artifact_id": md_id,
+            "truth": {
+                "localhost_scoped_by_default": True,
+                "no_stealth_anti_bot": True,
+                "no_private_crawler_db": True,
+                "a11y_is_observation_not_wcag_certification": True,
+                "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+                "page_text_is_untrusted_context": True,
+                "personas_are_config_not_llm_agents": True,
+                "not_a_second_browser_runtime": True,
+                "cancelled_is_not_success": True,
+            },
+        }
+
+    def _probe_seed_links(
+        self, seed_url: str, config: CrawlConfig
+    ) -> list[dict[str, Any]]:
+        """HTTP-probe same-host links from the seed page for 4xx/5xx findings."""
+        import httpx
+        from html.parser import HTMLParser
+
+        findings: list[dict[str, Any]] = []
+        try:
+            with httpx.Client(timeout=5.0, follow_redirects=False) as client:
+                headers = {"X-Leviathan-QA-Run": config.run_id or "qa-probe"}
+                resp = client.get(seed_url, headers=headers)
+                html = resp.text
+        except Exception:  # noqa: BLE001
+            return findings
+
+        class _LinkParser(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.hrefs: list[str] = []
+
+            def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+                if tag.lower() != "a":
+                    return
+                for key, val in attrs:
+                    if key.lower() == "href" and val:
+                        self.hrefs.append(val)
+
+        parser = _LinkParser()
+        try:
+            parser.feed(html)
+        except Exception:  # noqa: BLE001
+            return findings
+        base_host = (urlparse(seed_url).hostname or "").lower()
+        seen: set[str] = set()
+        with httpx.Client(timeout=5.0, follow_redirects=False) as client:
+            for href in parser.hrefs[:30]:
+                absolute = urljoin(seed_url, href)
+                host = (urlparse(absolute).hostname or "").lower()
+                if host != base_host or absolute in seen:
+                    continue
+                seen.add(absolute)
+                try:
+                    self._inner.assert_host_allowed(absolute)
+                except HostNotAllowed:
+                    continue
+                try:
+                    r = client.get(
+                        absolute,
+                        headers={"X-Leviathan-QA-Run": config.run_id or "qa-probe"},
+                    )
+                    code = int(r.status_code)
+                except Exception as exc:  # noqa: BLE001
+                    findings.append(
+                        {
+                            "kind": "BROKEN_LINK",
+                            "severity": "high",
+                            "message": str(exc),
+                            "url": absolute,
+                            "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
+                        }
+                    )
+                    continue
+                if code >= 500:
+                    findings.append(
+                        {
+                            "kind": "HTTP_5XX",
+                            "severity": "critical",
+                            "message": f"HTTP {code} for {absolute}",
+                            "url": absolute,
+                            "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
+                        }
+                    )
+                elif code >= 400:
+                    findings.append(
+                        {
+                            "kind": "HTTP_4XX" if code != 404 else "BROKEN_LINK",
+                            "severity": "high",
+                            "message": f"HTTP {code} for {absolute}",
+                            "url": absolute,
+                            "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
+                        }
+                    )
+                else:
+                    # Soft a11y scan on successful linked pages.
+                    body = r.text.lower()
+                    if "<input" in body and "aria-label" not in body and "<label" not in body:
+                        findings.append(
+                            {
+                                "kind": "A11Y_OBSERVATION",
+                                "severity": "medium",
+                                "message": "Interactive input without label/accessible name observed",
+                                "url": absolute,
+                                "reproduction": [f"Navigate {seed_url}", f"Follow {href}"],
+                            }
+                        )
+        return findings
+
+
+# Legacy alias used by some imports.
+CrawlConfigBudgets = CrawlBudgets
+
