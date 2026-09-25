@@ -584,14 +584,25 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 
 `Data/modules/market_sim/` is the current trading research/simulation owner. It includes:
 
-- market/data models: `ohlcv.py`, `data_store.py`, `instruments.py`, providers;
-- engine: `engine.py`, `multi_engine.py`, `causality.py`, `fill_model.py`, `execution.py`;
+- market/data models: `ohlcv.py`, `data_store.py`, `dataset_pipeline.py`, `instruments.py`, providers;
+- causality / epistemic firewall: `causality.py` (`SimulationClock`, `MarketView`, `EpistemicFirewall`), `sealed_holdout.py`, `knowledge_snapshot.py`;
+- engine: `engine.py`, `multi_engine.py`, `fill_model.py`, `execution.py`;
 - accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
 - strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py`;
 - multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py`;
 - paper path: `paper_broker.py`;
 - service/store/worker/types/capabilities;
 - `orchestra/` — trading-only orchestration on the existing Agent Fleet and Model Control Plane.
+
+**T1 (causality + data foundation) — implemented:**
+
+- Bar causality via `SimulationClock`; agents use bounded `MarketView` (no future bars).
+- Epistemic firewall: `available_at <= as_of` for Brain/Memory/news/StrategyMemory; timeless general knowledge remains visible.
+- Sealed holdout windows block strategy-creation access; holdout outcomes cannot mutate the same strategy version.
+- Import pipeline: quarantine → schema/timestamp validation → duplicate/order/gap/outlier reporting → provenance → hash → optional seal.
+- `market_sealed_datasets` are immutable (SQLite triggers); corrections require a new version/hash.
+- `TradingKnowledgeSnapshot` persisted per run (`market_knowledge_snapshots`) for reproducibility.
+- Engine `prepare()` refuses `data_hash` mismatches.
 
 Current safe supported posture is simulation/paper research. Live broker/real-money execution is deliberately guarded and must not be inferred from the presence of UI/routes.
 

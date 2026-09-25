@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .causality import EpistemicFirewall
+
 
 class BrainMiss:
     pass
@@ -15,16 +17,21 @@ class BrainRetrieval:
     hits: list[dict[str, Any]] = field(default_factory=list)
     miss: bool = True
     notes: list[str] = field(default_factory=list)
+    as_of: str | None = None
+    causal_dropped: int = 0
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "hits": self.hits,
             "miss": self.miss,
             "notes": self.notes,
+            "as_of": self.as_of,
+            "causal_dropped": self.causal_dropped,
             "truth": {
                 "brain_is_advisory": True,
                 "model_output_is_not_evidence": True,
                 "neural_signal_is_not_authority": True,
+                "time_sensitive_filtered_by_available_at": True,
             },
         }
 
@@ -70,24 +77,37 @@ class BrainFacade:
         dependencies: list[str] | None = None,
         limit: int = 3,
         as_of: str | None = None,
+        require_timestamps: bool = False,
     ) -> BrainRetrieval:
-        """Retrieve brain hits; with ``as_of`` any hit carrying a timestamp newer than
-        the decision time is dropped (causal boundary for trading agents)."""
+        """Retrieve brain hits under the epistemic firewall.
+
+        With ``as_of``, time-sensitive hits whose ``available_at`` (preferred) or
+        fallback timestamp is strictly after ``as_of`` are dropped. Timeless /
+        general knowledge (``timeless=True`` or ``knowledge_class=general``) remains
+        visible. Retrieved content is DATA, not authority.
+        """
         retrieval = self._retrieve(query, dependencies=dependencies, limit=limit)
         if not as_of:
-            return retrieval
-        kept: list[dict[str, Any]] = []
-        dropped = 0
-        for hit in retrieval.hits:
-            stamp = _hit_timestamp(hit)
-            if stamp and stamp > as_of:
-                dropped += 1
-                continue
-            kept.append(hit)
+            return BrainRetrieval(
+                hits=retrieval.hits,
+                miss=retrieval.miss,
+                notes=retrieval.notes,
+                as_of=None,
+                causal_dropped=0,
+            )
+        firewall = EpistemicFirewall(as_of=as_of, allow_untimestamped=not require_timestamps)
+        kept = firewall.filter_records(retrieval.hits, source="brain")
         notes = list(retrieval.notes)
+        dropped = firewall.violations
         if dropped:
             notes.append(f"as_of filter dropped {dropped} hit(s) newer than {as_of}")
-        return BrainRetrieval(hits=kept, miss=len(kept) == 0, notes=notes)
+        return BrainRetrieval(
+            hits=kept,
+            miss=len(kept) == 0,
+            notes=notes,
+            as_of=as_of,
+            causal_dropped=dropped,
+        )
 
     def _retrieve(
         self,
@@ -153,23 +173,6 @@ class BrainFacade:
                     notes.append(f"neuro error: {exc}")
 
         return BrainRetrieval(hits=hits, miss=len(hits) == 0, notes=notes)
-
-
-_TIMESTAMP_KEYS = ("available_at", "availableAt", "created_at", "createdAt", "updated_at", "updatedAt", "timestamp")
-
-
-def _hit_timestamp(hit: dict[str, Any]) -> str | None:
-    for key in _TIMESTAMP_KEYS:
-        value = hit.get(key)
-        if value:
-            return str(value)
-    meta = hit.get("metadata")
-    if isinstance(meta, dict):
-        for key in _TIMESTAMP_KEYS:
-            value = meta.get(key)
-            if value:
-                return str(value)
-    return None
 
 
 class NullKnowledge:

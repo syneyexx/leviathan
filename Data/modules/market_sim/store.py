@@ -984,3 +984,296 @@ class MarketSimStore:
             }
             for r in rows
         ]
+
+    # --- Sealed market datasets (T1) ---
+
+    def insert_sealed_dataset(self, dataset: Any) -> Any:
+        from .dataset_pipeline import SealedMarketDataset
+
+        assert isinstance(dataset, SealedMarketDataset)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sealed_datasets(
+                    dataset_id, source_id, version, content_hash, symbol, timeframe, kind,
+                    path, start_ts, end_ts, bar_count, provider, venue, instrument_family,
+                    timezone, adjustment_mode, quality_json, provenance_json, sealed_at,
+                    sealed, sealed_for, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    dataset.dataset_id,
+                    dataset.source_id,
+                    dataset.version,
+                    dataset.content_hash,
+                    dataset.symbol,
+                    dataset.timeframe,
+                    dataset.kind,
+                    dataset.path,
+                    dataset.start_ts,
+                    dataset.end_ts,
+                    dataset.bar_count,
+                    dataset.provider,
+                    dataset.venue,
+                    dataset.instrument_family,
+                    dataset.timezone,
+                    dataset.adjustment_mode,
+                    json.dumps(dataset.quality),
+                    json.dumps(dataset.provenance),
+                    dataset.sealed_at,
+                    1 if dataset.sealed else 0,
+                    dataset.sealed_for,
+                    dataset.created_at,
+                    json.dumps(dataset.metadata),
+                ),
+            )
+        return dataset
+
+    def get_sealed_dataset(self, dataset_id: str) -> Any | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sealed_datasets WHERE dataset_id=?",
+                (dataset_id,),
+            ).fetchone()
+        return self._row_sealed_dataset(row) if row else None
+
+    def get_sealed_dataset_by_hash(self, content_hash: str) -> Any | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sealed_datasets WHERE content_hash=? AND sealed=1 "
+                "ORDER BY version DESC LIMIT 1",
+                (content_hash,),
+            ).fetchone()
+        return self._row_sealed_dataset(row) if row else None
+
+    def list_sealed_datasets(
+        self, *, source_id: str | None = None, limit: int = 100
+    ) -> list[Any]:
+        with self.connect() as conn:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT * FROM market_sealed_datasets WHERE source_id=? "
+                    "ORDER BY version DESC LIMIT ?",
+                    (source_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM market_sealed_datasets ORDER BY sealed_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [self._row_sealed_dataset(r) for r in rows]
+
+    def _row_sealed_dataset(self, row: sqlite3.Row) -> Any:
+        from .dataset_pipeline import SealedMarketDataset
+
+        return SealedMarketDataset(
+            dataset_id=row["dataset_id"],
+            source_id=row["source_id"],
+            version=int(row["version"]),
+            content_hash=row["content_hash"],
+            symbol=row["symbol"],
+            timeframe=row["timeframe"],
+            kind=row["kind"],
+            path=row["path"],
+            start_ts=row["start_ts"],
+            end_ts=row["end_ts"],
+            bar_count=int(row["bar_count"]),
+            provider=row["provider"],
+            venue=row["venue"],
+            instrument_family=row["instrument_family"],
+            timezone=row["timezone"],
+            adjustment_mode=row["adjustment_mode"],
+            quality=_loads(row["quality_json"], {}),
+            provenance=_loads(row["provenance_json"], {}),
+            sealed_at=row["sealed_at"],
+            sealed=bool(row["sealed"]),
+            sealed_for=row["sealed_for"],
+            created_at=row["created_at"],
+            metadata=_loads(row["metadata_json"], {}),
+        )
+
+    # --- Trading knowledge snapshots (T1) ---
+
+    def save_knowledge_snapshot(self, snapshot: Any) -> Any:
+        from .knowledge_snapshot import TradingKnowledgeSnapshot
+
+        assert isinstance(snapshot, TradingKnowledgeSnapshot)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_knowledge_snapshots(
+                    snapshot_id, run_id, as_of, market_dataset_id, market_dataset_hash,
+                    market_dataset_version, strategy_id, strategy_version, strategy_content_hash,
+                    brain_policy_ref, memory_cutoff, strategy_memory_cutoff, news_cutoff,
+                    model_profile, model_version, agent_definitions_hash,
+                    feature_pipeline_version, execution_model_version, cost_model_version,
+                    risk_configuration_json, random_seed, code_version, content_fingerprint,
+                    created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.snapshot_id,
+                    snapshot.run_id,
+                    snapshot.as_of,
+                    snapshot.market_dataset_id,
+                    snapshot.market_dataset_hash,
+                    snapshot.market_dataset_version,
+                    snapshot.strategy_id,
+                    snapshot.strategy_version,
+                    snapshot.strategy_content_hash,
+                    snapshot.brain_policy_ref,
+                    snapshot.memory_cutoff,
+                    snapshot.strategy_memory_cutoff,
+                    snapshot.news_cutoff,
+                    snapshot.model_profile,
+                    snapshot.model_version,
+                    snapshot.agent_definitions_hash,
+                    snapshot.feature_pipeline_version,
+                    snapshot.execution_model_version,
+                    snapshot.cost_model_version,
+                    json.dumps(snapshot.risk_configuration),
+                    snapshot.random_seed,
+                    snapshot.code_version,
+                    snapshot.content_fingerprint(),
+                    snapshot.created_at,
+                    json.dumps(snapshot.metadata),
+                ),
+            )
+        return snapshot
+
+    def get_knowledge_snapshot(self, snapshot_id: str) -> Any | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_knowledge_snapshots WHERE snapshot_id=?",
+                (snapshot_id,),
+            ).fetchone()
+        return self._row_knowledge_snapshot(row) if row else None
+
+    def get_knowledge_snapshot_for_run(self, run_id: str) -> Any | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_knowledge_snapshots WHERE run_id=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        return self._row_knowledge_snapshot(row) if row else None
+
+    def _row_knowledge_snapshot(self, row: sqlite3.Row) -> Any:
+        from .knowledge_snapshot import TradingKnowledgeSnapshot
+
+        return TradingKnowledgeSnapshot(
+            snapshot_id=row["snapshot_id"],
+            run_id=row["run_id"],
+            as_of=row["as_of"],
+            market_dataset_id=row["market_dataset_id"],
+            market_dataset_hash=row["market_dataset_hash"],
+            market_dataset_version=row["market_dataset_version"],
+            strategy_id=row["strategy_id"],
+            strategy_version=row["strategy_version"],
+            strategy_content_hash=row["strategy_content_hash"],
+            brain_policy_ref=row["brain_policy_ref"],
+            memory_cutoff=row["memory_cutoff"],
+            strategy_memory_cutoff=row["strategy_memory_cutoff"],
+            news_cutoff=row["news_cutoff"],
+            model_profile=row["model_profile"],
+            model_version=row["model_version"],
+            agent_definitions_hash=row["agent_definitions_hash"],
+            feature_pipeline_version=row["feature_pipeline_version"],
+            execution_model_version=row["execution_model_version"],
+            cost_model_version=row["cost_model_version"],
+            risk_configuration=_loads(row["risk_configuration_json"], {}),
+            random_seed=int(row["random_seed"]),
+            code_version=row["code_version"],
+            created_at=row["created_at"],
+            metadata=_loads(row["metadata_json"], {}),
+        )
+
+    # --- Sealed holdout windows (T1 epistemic firewall) ---
+
+    def register_sealed_holdout(self, holdout: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sealed_holdouts(
+                    holdout_id, strategy_id, strategy_version, dataset_id, content_hash,
+                    start_ts, end_ts, status, created_at, disclosed_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    holdout["holdout_id"],
+                    holdout.get("strategy_id"),
+                    holdout.get("strategy_version"),
+                    holdout.get("dataset_id"),
+                    holdout.get("content_hash") or "",
+                    holdout["start_ts"],
+                    holdout["end_ts"],
+                    holdout.get("status") or "SEALED",
+                    holdout.get("created_at") or utc_now(),
+                    holdout.get("disclosed_at"),
+                    json.dumps(holdout.get("metadata") or {}),
+                ),
+            )
+        return holdout
+
+    def list_sealed_holdouts(
+        self,
+        *,
+        strategy_id: str | None = None,
+        status: str | None = "SEALED",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            sql = "SELECT * FROM market_sealed_holdouts WHERE 1=1"
+            params: list[Any] = []
+            if strategy_id:
+                sql += " AND strategy_id=?"
+                params.append(strategy_id)
+            if status:
+                sql += " AND status=?"
+                params.append(status)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "holdout_id": r["holdout_id"],
+                "strategy_id": r["strategy_id"],
+                "strategy_version": r["strategy_version"],
+                "dataset_id": r["dataset_id"],
+                "content_hash": r["content_hash"],
+                "start_ts": r["start_ts"],
+                "end_ts": r["end_ts"],
+                "status": r["status"],
+                "created_at": r["created_at"],
+                "disclosed_at": r["disclosed_at"],
+                "metadata": _loads(r["metadata_json"], {}),
+            }
+            for r in rows
+        ]
+
+    def disclose_sealed_holdout(self, holdout_id: str, *, disclosed_at: str | None = None) -> dict[str, Any]:
+        now = disclosed_at or utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE market_sealed_holdouts SET status='DISCLOSED', disclosed_at=? WHERE holdout_id=?",
+                (now, holdout_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM market_sealed_holdouts WHERE holdout_id=?",
+                (holdout_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(holdout_id)
+        return {
+            "holdout_id": row["holdout_id"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": row["strategy_version"],
+            "dataset_id": row["dataset_id"],
+            "content_hash": row["content_hash"],
+            "start_ts": row["start_ts"],
+            "end_ts": row["end_ts"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "disclosed_at": row["disclosed_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }

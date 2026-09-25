@@ -3237,6 +3237,123 @@ def _m43_trading_orchestra(conn: sqlite3.Connection) -> None:
     )
 
 
+
+def _m44_trading_causality_data_foundation(conn: sqlite3.Connection) -> None:
+    """T1 — sealed datasets, knowledge snapshots, sealed holdout windows."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sealed_datasets (
+            dataset_id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'ohlcv',
+            path TEXT NOT NULL,
+            start_ts TEXT,
+            end_ts TEXT,
+            bar_count INTEGER NOT NULL DEFAULT 0,
+            provider TEXT NOT NULL DEFAULT 'csv_local',
+            venue TEXT NOT NULL DEFAULT '',
+            instrument_family TEXT NOT NULL DEFAULT 'equity',
+            timezone TEXT NOT NULL DEFAULT 'UTC',
+            adjustment_mode TEXT NOT NULL DEFAULT 'unspecified',
+            quality_json TEXT NOT NULL DEFAULT '{}',
+            provenance_json TEXT NOT NULL DEFAULT '{}',
+            sealed_at TEXT NOT NULL,
+            sealed INTEGER NOT NULL DEFAULT 1,
+            sealed_for TEXT,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            UNIQUE(content_hash, version)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sealed_datasets_hash "
+        "ON market_sealed_datasets(content_hash, sealed)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sealed_datasets_source "
+        "ON market_sealed_datasets(source_id, version)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_knowledge_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            market_dataset_id TEXT NOT NULL,
+            market_dataset_hash TEXT NOT NULL,
+            market_dataset_version TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            strategy_content_hash TEXT,
+            brain_policy_ref TEXT,
+            memory_cutoff TEXT,
+            strategy_memory_cutoff TEXT,
+            news_cutoff TEXT,
+            model_profile TEXT,
+            model_version TEXT,
+            agent_definitions_hash TEXT,
+            feature_pipeline_version TEXT NOT NULL DEFAULT 'market_sim-features-1',
+            execution_model_version TEXT NOT NULL DEFAULT 'next_bar_open-v1',
+            cost_model_version TEXT NOT NULL DEFAULT 'fee_slippage_bps-v1',
+            risk_configuration_json TEXT NOT NULL DEFAULT '{}',
+            random_seed INTEGER NOT NULL DEFAULT 42,
+            code_version TEXT NOT NULL DEFAULT 'market_sim-1',
+            content_fingerprint TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_knowledge_snapshots_run "
+        "ON market_knowledge_snapshots(run_id, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sealed_holdouts (
+            holdout_id TEXT PRIMARY KEY,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            dataset_id TEXT,
+            content_hash TEXT NOT NULL DEFAULT '',
+            start_ts TEXT NOT NULL,
+            end_ts TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'SEALED',
+            created_at TEXT NOT NULL,
+            disclosed_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sealed_holdouts_strategy "
+        "ON market_sealed_holdouts(strategy_id, status, created_at)"
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_sealed_datasets_no_update
+        BEFORE UPDATE ON market_sealed_datasets
+        BEGIN
+            SELECT RAISE(ABORT, 'market_sealed_datasets is immutable');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_market_sealed_datasets_no_delete
+        BEFORE DELETE ON market_sealed_datasets
+        BEGIN
+            SELECT RAISE(ABORT, 'market_sealed_datasets is immutable');
+        END
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3285,6 +3402,11 @@ MIGRATIONS: Sequence[Migration] = (
         apply=_m42_resource_reservations_device_aware,
     ),
     Migration(version=43, name="trading_orchestra", apply=_m43_trading_orchestra),
+    Migration(
+        version=44,
+        name="trading_causality_data_foundation",
+        apply=_m44_trading_causality_data_foundation,
+    ),
 )
 
 

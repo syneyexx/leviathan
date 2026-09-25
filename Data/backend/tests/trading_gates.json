@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T0",
+  "phase": "T1",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
-      "date": "2026-09-24",
-      "result": "74 passed, 31 xfailed",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_characterization.py -q"
+      "date": "2026-09-25",
+      "result": "T1 causality + data foundation in progress",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t1_causality_data.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -29,7 +29,7 @@
   ],
   "gates": {
     "G01": {
-      "title": "Streaming ingest 5y×1m within memory budget",
+      "title": "Streaming ingest 5y\u00d71m within memory budget",
       "phase": "T2A/T3C",
       "status": "NOT_STARTED",
       "required": true,
@@ -44,26 +44,46 @@
     },
     "G02": {
       "title": "Timestamp parser + quarantine",
-      "phase": "T2B",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "T1 gate linked via G02"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py"
+          ],
+          "timeout_sec": 300
+        }
+      ],
+      "notes": "T1 \u2014 timestamp parser + quarantine via MarketDatasetPipeline",
       "related_defects": [
         "D9"
       ]
     },
     "G03": {
       "title": "Quality report persisted",
-      "phase": "T2B",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "T1 gate linked via G03"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py"
+          ],
+          "timeout_sec": 300
+        }
+      ],
+      "notes": "T1 \u2014 quality report in DataQualityReport / analyze_ohlcv_quality",
       "related_defects": [
         "D9"
       ]
@@ -80,13 +100,23 @@
     },
     "G05": {
       "title": "Immutable content-addressed datasets",
-      "phase": "T2A",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "T1 gate linked via G05"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py"
+          ],
+          "timeout_sec": 300
+        }
+      ],
+      "notes": "T1 \u2014 market_sealed_datasets immutable + content hash",
       "related_defects": [
         "D7"
       ]
@@ -165,13 +195,23 @@
     },
     "G12": {
       "title": "Causality MarketView poison-future",
-      "phase": "T1D",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "T1 gate linked via G12"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py"
+          ],
+          "timeout_sec": 300
+        }
+      ],
+      "notes": "T1 \u2014 MarketView + EpistemicFirewall",
       "related_defects": [
         "D10"
       ]
@@ -299,13 +339,23 @@
     },
     "G23": {
       "title": "Brain/Memory as_of or excluded",
-      "phase": "T6B",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "T1 gate linked via G23"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py"
+          ],
+          "timeout_sec": 300
+        }
+      ],
+      "notes": "T1 \u2014 BrainFacade.retrieve(as_of) + available_at preference",
       "related_defects": [
         "D22"
       ]
@@ -354,7 +404,7 @@
       "notes": "T0: gate not yet implemented; characterization only"
     },
     "G28": {
-      "title": "Readiness ladder A0–A4; A5 blocked",
+      "title": "Readiness ladder A0\u2013A4; A5 blocked",
       "phase": "T8D",
       "status": "NOT_STARTED",
       "required": true,
@@ -554,7 +604,7 @@
       "notes": "T0: gate not yet implemented; characterization only"
     },
     "G45": {
-      "title": "All T0 characterization → regressions",
+      "title": "All T0 characterization \u2192 regressions",
       "phase": "T11",
       "status": "NOT_STARTED",
       "required": true,
@@ -672,13 +722,23 @@
     },
     "G56": {
       "title": "Unified time semantics",
-      "phase": "T2B",
-      "status": "NOT_STARTED",
+      "phase": "T1",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
+      "evidence": [
+        "T1 gate linked via G56"
+      ],
       "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py"
+          ],
+          "timeout_sec": 300
+        }
+      ],
+      "notes": "T1 \u2014 compare_ts datetime-aware; available_at policy",
       "related_defects": [
         "D9"
       ]
@@ -738,7 +798,7 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
       ],
-      "notes": "Frontier Program F1/F4 — offline evidence only; live feed fetch through provider_io not exercised in CI",
+      "notes": "Frontier Program F1/F4 \u2014 offline evidence only; live feed fetch through provider_io not exercised in CI",
       "assertions": [
         "available_at = max(published, fetched) + declared latency",
         "content_hash dedupe",
@@ -768,7 +828,7 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
       ],
-      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) — PARTIAL scope, see notes in frontier_program.md",
+      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) \u2014 PARTIAL scope, see notes in frontier_program.md",
       "assertions": [
         "list_items(as_of) hides future items",
         "news_digest at early as_of makes zero model calls",
@@ -788,7 +848,7 @@
       ]
     },
     "G63": {
-      "title": "News-reader safety (schema → repair → honest failure; article text is reference context)",
+      "title": "News-reader safety (schema \u2192 repair \u2192 honest failure; article text is reference context)",
       "phase": "F4",
       "status": "PASS",
       "required": true,
@@ -831,8 +891,8 @@
       "notes": "Frontier Program F1",
       "assertions": [
         "_execution_kind(TRADING) raises TRADING_EXECUTOR_REQUIRED",
-        "TRADING member outside trade orchestra → TRADING_MEMBER_ISOLATION",
-        "trade orchestra with non-trading member → 422",
+        "TRADING member outside trade orchestra \u2192 TRADING_MEMBER_ISOLATION",
+        "trade orchestra with non-trading member \u2192 422",
         "Mandate.cannot_enable_live immutable; A5 does not parse"
       ],
       "checks": [
@@ -847,7 +907,7 @@
       ]
     },
     "G65": {
-      "title": "Decision record completeness (proposal → critique → risk → intent, as_of + model id, append-only)",
+      "title": "Decision record completeness (proposal \u2192 critique \u2192 risk \u2192 intent, as_of + model id, append-only)",
       "phase": "F2",
       "status": "PASS",
       "required": true,
@@ -860,7 +920,7 @@
       ],
       "notes": "fill and post_mortem links exist as stages; paper routing (fill) is not produced by the orchestra yet (execution_agent records intents only)",
       "assertions": [
-        "parent chain proposal→critique→risk→intent",
+        "parent chain proposal\u2192critique\u2192risk\u2192intent",
         "as_of + mandateFingerprint on every record",
         "SQLite triggers refuse UPDATE/DELETE on market_decisions"
       ],
@@ -886,7 +946,7 @@
       "test_node_ids": [
         "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
       ],
-      "notes": "vitest contract test; visual check recorded in PR — vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
+      "notes": "vitest contract test; visual check recorded in PR \u2014 vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
       "assertions": [
         "readiness label never inferred client-side",
         "PnL UNMEASURED without fill records",
@@ -903,6 +963,122 @@
           "path": "Data/frontend/src/pages/agents/TradeOrchestraSection.tsx"
         }
       ]
+    },
+    "T01": {
+      "title": "Existing architecture preserved (SimulationClock + MarketSimStore)",
+      "phase": "T1",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/causality.py",
+        "Data/backend/tests/test_market_sim_t1_causality_data.py::BarCausalityTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t1_causality_data.py::BarCausalityTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::BarCausalityTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T1 \u2014 SimulationClock retained; MarketView is the agent boundary"
+    },
+    "T02": {
+      "title": "Strict bar causality + MarketView",
+      "phase": "T1",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/tests/test_market_sim_t1_causality_data.py::BarCausalityTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D10ClockCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::BarCausalityTests",
+            "Data/backend/tests/test_market_sim_characterization.py::D10ClockCharacterization"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "D10 fixed in T1"
+    },
+    "T03": {
+      "title": "Full epistemic time firewall (bars/news/brain/memory/strategy memory)",
+      "phase": "T1",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/causality.py::EpistemicFirewall",
+        "Data/backend/tests/test_market_sim_t1_causality_data.py"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::StrategyMemoryCausalityTests",
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::NewsFirewallTests",
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::BrainFirewallTests",
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::EpistemicFirewallTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "available_at <= as_of; timeless general knowledge admitted"
+    },
+    "T04": {
+      "title": "Sealed market datasets + immutability",
+      "phase": "T1",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/dataset_pipeline.py",
+        "Data/backend/migrations.py::_m44_trading_causality_data_foundation",
+        "Data/backend/tests/test_market_sim_t1_causality_data.py::DatasetImmutabilityTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::DatasetImmutabilityTests",
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::ImportPipelineTests",
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::SealedHoldoutTests"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "Corrections create new version/hash; SQLite triggers refuse UPDATE/DELETE"
+    },
+    "T05": {
+      "title": "Market data provenance + quality + TradingKnowledgeSnapshot",
+      "phase": "T1",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/knowledge_snapshot.py",
+        "Data/backend/tests/test_market_sim_t1_causality_data.py::DataValidationTests",
+        "Data/backend/tests/test_market_sim_t1_causality_data.py::KnowledgeSnapshotTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D7DataHashCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::DataValidationTests",
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::KnowledgeSnapshotTests",
+            "Data/backend/tests/test_market_sim_t1_causality_data.py::PrepareHashTests",
+            "Data/backend/tests/test_market_sim_characterization.py::D7DataHashCharacterization",
+            "Data/backend/tests/test_market_sim_characterization.py::D9IngestCharacterization"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "Hash verified at prepare; duplicates/gaps/timezone reported; no silent repair"
     }
   },
   "frontier_program": {

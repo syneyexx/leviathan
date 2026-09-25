@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .causality import compare_ts
 from .types import MetricStatus
 
 
@@ -205,14 +206,13 @@ class StrategyMemoryIndex:
         feats = features or {}
         hits = []
         for e in self._entries:
-            if e.available_at > as_of_ts:
+            if compare_ts(e.available_at, as_of_ts) > 0:
                 continue
             score = 0
             for k, v in feats.items():
                 if e.features.get(k) == v or e.applicability.get(k) == v:
                     score += 1
             hits.append((score, e))
-        hits.sort(key=lambda x: (-x[0], x[1].available_at), reverse=False)
         hits.sort(key=lambda x: -x[0])
         return [e for _, e in hits[:limit]]
 
