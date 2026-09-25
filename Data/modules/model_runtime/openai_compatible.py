@@ -275,8 +275,13 @@ class OpenAICompatibleLLM:
         temperature: float | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
+        provider_hints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Low-level completion for cognition / tool loops — no ContextBuilder rewrite."""
+        """Low-level completion for cognition / tool loops — no ContextBuilder rewrite.
+
+        ``provider_hints`` may carry Model Control Plane–approved native reasoning
+        fields. Unknown/generic callers must pass None/{} — never invent knobs.
+        """
         model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
         payload = self._completion_payload(
             model=model,
@@ -285,6 +290,7 @@ class OpenAICompatibleLLM:
             max_tokens=max_tokens,
             top_p=top_p,
             stream=False,
+            provider_hints=provider_hints,
         )
         base = self._base_url(endpoint)
         try:
@@ -302,14 +308,35 @@ class OpenAICompatibleLLM:
             raise LLMUnavailable("LLM server returned invalid JSON.") from exc
 
         try:
-            content = data["choices"][0]["message"]["content"]
-            finish_reason = data["choices"][0].get("finish_reason")
+            choice0 = data["choices"][0]
+            message = choice0.get("message") if isinstance(choice0, dict) else None
+            finish_reason = choice0.get("finish_reason") if isinstance(choice0, dict) else None
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMUnavailable("LLM server returned an unexpected chat-completion payload.") from exc
 
+        # Public answer channel only — strip private reasoning/thinking fields.
+        from Data.modules.models.native_reasoning import (
+            parse_reasoning_usage,
+            strip_private_reasoning_fields,
+        )
+
+        cleaned_message = strip_private_reasoning_fields(
+            message if isinstance(message, dict) else {}
+        )
+        content = cleaned_message.get("content")
+        if content is None and isinstance(message, dict):
+            content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise LLMUnavailable("LLM returned an empty response.")
         usage, usage_source = self._extract_usage(data if isinstance(data, dict) else {})
+        # Always parse from the raw provider payload — normalized usage may drop
+        # completion_tokens_details / reasoning_tokens fields.
+        reasoning_tokens, reasoning_source = parse_reasoning_usage(
+            data if isinstance(data, dict) else {}
+        )
+        if reasoning_tokens is not None and reasoning_source == "provider":
+            usage = dict(usage)
+            usage["reasoning_tokens"] = reasoning_tokens
         return self._normalize_completion_result(
             text=content.strip(),
             model=model,
@@ -317,7 +344,15 @@ class OpenAICompatibleLLM:
             termination_source="provider_finish_reason" if finish_reason else "completion_message",
             usage=usage,
             usage_source=usage_source,
-            raw_meta={"id": data.get("id")} if isinstance(data, dict) else {},
+            raw_meta={
+                "id": data.get("id") if isinstance(data, dict) else None,
+                "reasoning_tokens": reasoning_tokens,
+                "reasoning_tokens_status": (
+                    "provider" if reasoning_tokens is not None else "UNMEASURED"
+                ),
+                "provider_hints_keys": sorted((provider_hints or {}).keys()),
+                "private_reasoning_stripped": True,
+            },
         )
 
     async def chat(

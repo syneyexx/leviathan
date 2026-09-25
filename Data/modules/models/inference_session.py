@@ -53,6 +53,7 @@ class InferenceSession:
         max_tokens: int | None = None,
         top_p: float | None = None,
         skip_context_fit: bool = False,
+        provider_hints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         profile = self.target.profile
         effective_max = max_tokens
@@ -95,6 +96,7 @@ class InferenceSession:
             temperature=profile.temperature if temperature is None else temperature,
             max_tokens=effective_max,
             top_p=profile.top_p if top_p is None else top_p,
+            provider_hints=provider_hints,
         )
         # Record provider cached tokens when present.
         try:

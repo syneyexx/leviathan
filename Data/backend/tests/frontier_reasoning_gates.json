@@ -2,8 +2,8 @@
   "program": "frontier_reasoning",
   "version": 1,
   "updated": "2026-09-25",
-  "active_phase": "F2",
-  "notes": "F2 two-axis compute landed. R02/R03/R04/R05/R27/R28 PASS evidence. Remaining open. Distinct from trading frontier_program.",
+  "active_phase": "F3",
+  "notes": "F3 native reasoning adapters + InferenceComputeController landed. R02–R06/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
   "f0_skeleton_checks": [
     {
       "id": "F0_AUDIT_DOC",
@@ -60,7 +60,7 @@
     {"id": "R03", "title": "BehaviorProfile identity", "required": true, "status": "PASS", "phase": "F1", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.CognitionBehaviorIdentityTests", "evidence": "test_frontier_reasoning_f1_context.CognitionBehaviorIdentityTests"},
     {"id": "R04", "title": "Two-axis compute", "required": true, "status": "PASS", "phase": "F2", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests", "evidence": "NeuralComputeBudget + MetaDecision two-axis"},
     {"id": "R05", "title": "Reasoning capability profile", "required": true, "status": "PASS", "phase": "F2", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f2_two_axis.CapabilityProfileTests", "evidence": "resolve_reasoning_capability_profile never guesses from name"},
-    {"id": "R06", "title": "Native reasoning adapter", "required": true, "status": "NOT_STARTED", "phase": "F3", "check": "manual"},
+    {"id": "R06", "title": "Native reasoning adapter", "required": true, "status": "PASS", "phase": "F3", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f3_native", "evidence": "InferenceComputeController + provider maps; generic sends no unknown knobs"},
     {"id": "R07", "title": "TTC fallback", "required": true, "status": "NOT_STARTED", "phase": "F4", "check": "manual"},
     {"id": "R08", "title": "Adaptive compute", "required": true, "status": "NOT_STARTED", "phase": "F2+", "check": "manual"},
     {"id": "R09", "title": "Structured reasoning state", "required": true, "status": "NOT_STARTED", "phase": "F5", "check": "manual"},
@@ -83,7 +83,7 @@
     {"id": "R26", "title": "Observability", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
     {"id": "R27", "title": "Resource pressure", "required": true, "status": "PASS", "phase": "F2+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f2_two_axis.MetaTwoAxisTests", "evidence": "requested MAXIMUM → effective DEEP under GPU_RESOURCE_PRESSURE"},
     {"id": "R28", "title": "Security", "required": true, "status": "PASS", "phase": "F1+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f1_context.ContextV3AuthorityTests", "evidence": "prompt-injection + role-marker + RAG/tool/memory authority tests"},
-    {"id": "R29", "title": "No hidden CoT leakage", "required": true, "status": "NOT_STARTED", "phase": "F3+", "check": "manual"},
+    {"id": "R29", "title": "No hidden CoT leakage", "required": true, "status": "PASS", "phase": "F3+", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f3_native", "evidence": "strip_private_reasoning_fields + normalize_result public channel only"},
     {"id": "R30", "title": "Tests/typecheck/lint/build", "required": true, "status": "NOT_STARTED", "phase": "F18", "check": "manual"}
   ]
 }
