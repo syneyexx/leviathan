@@ -1,11 +1,17 @@
-"""Honest fill model — fees + slippage; no fabricated success."""
+"""LEGACY float Portfolio fill model — compatibility shim only.
+
+Canonical historical execution is NextBarFillModel in execution.py.
+SimulationEngine.step_once must NOT call this module.
+"""
 
 from __future__ import annotations
 
-import random
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
+from .accounting import WalletLedger, money
+from .execution import NextBarFillModel
 from .portfolio import Portfolio
 
 
@@ -30,9 +36,9 @@ class FillResult:
 
 
 class FillModel:
-    """Conservative bar fill: market orders fill at close ± slippage.
+    """Thin adapter over NextBarFillModel for legacy Portfolio callers.
 
-    When order-book data is absent, we do not claim partial L2 realism.
+    Prefer NextBarFillModel + WalletLedger directly.
     """
 
     def __init__(
@@ -42,11 +48,23 @@ class FillModel:
         slippage_bps: float = 2.0,
         seed: int = 0,
         stochastic: bool = False,
+        max_participation: float = 0.1,
     ) -> None:
+        if stochastic:
+            warnings.warn(
+                "FillModel stochastic mode is ignored — NextBarFillModel is deterministic",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
-        self.rng = random.Random(seed)
-        self.stochastic = stochastic
+        self.seed = seed
+        self.stochastic = False
+        self._model = NextBarFillModel(
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+            max_participation=max_participation,
+        )
 
     def execute(
         self,
@@ -57,52 +75,56 @@ class FillModel:
         bar_close: float,
         bar_volume: float,
     ) -> FillResult:
-        if side == "HOLD" or qty <= 0:
+        """Compatibility: map Portfolio ↔ temporary WalletLedger, sync back."""
+        from .execution import OrderIntent
+        from .types import OrderSide
+
+        if side == OrderSide.HOLD.value or qty <= 0:
             return FillResult(False, 0.0, bar_close, 0.0, 0.0, "no trade")
         if bar_close <= 0:
             return FillResult(False, 0.0, 0.0, 0.0, 0.0, "invalid bar close")
 
-        slip_bps = self.slippage_bps
-        if self.stochastic:
-            slip_bps = abs(self.rng.gauss(self.slippage_bps, self.slippage_bps * 0.25))
-        # Volume-aware: larger fraction of bar volume → more slippage
-        if bar_volume > 0:
-            participation = min(1.0, qty / max(bar_volume, 1e-9))
-            slip_bps += participation * self.slippage_bps * 2.0
-
-        slip_frac = slip_bps / 10_000.0
-        if side == "BUY":
-            fill_price = bar_close * (1.0 + slip_frac)
-        else:
-            fill_price = bar_close * (1.0 - slip_frac)
-
-        notional = qty * fill_price
-        fee = notional * (self.fee_bps / 10_000.0)
-        slippage_cost = abs(fill_price - bar_close) * qty
-
-        if side == "BUY":
-            total_cost = notional + fee
-            if total_cost > portfolio.cash + 1e-9:
-                return FillResult(False, 0.0, fill_price, 0.0, 0.0, "insufficient cash after fees")
-            # Update avg entry
-            new_qty = portfolio.position_qty + qty
-            if new_qty > 0:
-                portfolio.avg_entry = (
-                    (portfolio.avg_entry * portfolio.position_qty) + (fill_price * qty)
-                ) / new_qty
-            portfolio.position_qty = new_qty
-            portfolio.cash -= total_cost
-            return FillResult(True, qty, fill_price, fee, slippage_cost, "filled buy")
-
-        # SELL
-        sell_qty = min(qty, portfolio.position_qty)
-        if sell_qty <= 0:
-            return FillResult(False, 0.0, fill_price, 0.0, 0.0, "no position")
-        proceeds = sell_qty * fill_price - fee
-        portfolio.realized_pnl += (fill_price - portfolio.avg_entry) * sell_qty - fee
-        portfolio.position_qty -= sell_qty
-        portfolio.cash += proceeds
-        if portfolio.position_qty <= 1e-12:
-            portfolio.position_qty = 0.0
-            portfolio.avg_entry = 0.0
-        return FillResult(True, sell_qty, fill_price, fee, slippage_cost, "filled sell")
+        wallet = WalletLedger(
+            wallet_id="legacy-shim",
+            owner_id="legacy",
+            owner_kind="shared",
+            cash=money(portfolio.cash),
+            position_qty=money(portfolio.position_qty),
+            avg_entry=money(portfolio.avg_entry),
+            realized_pnl=money(portfolio.realized_pnl),
+            peak_equity=money(portfolio.peak_equity or portfolio.cash),
+        )
+        intent = OrderIntent(
+            intent_id=f"legacy-{self.seed}",
+            run_id="legacy",
+            agent_id="legacy",
+            wallet_id=wallet.wallet_id,
+            side=side,
+            qty=money(qty),
+            decision_bar_index=0,
+            decision_ts="",
+            eligible_bar_index=0,
+            order_type="MARKET",
+            time_in_force="BAR",
+        )
+        result = self._model.execute_intent(
+            wallet=wallet,
+            intent=intent,
+            fill_open=bar_close,
+            bar_volume=bar_volume,
+            fill_bar_index=0,
+        )
+        # Sync wallet → portfolio
+        portfolio.cash = float(wallet.cash)
+        portfolio.position_qty = float(wallet.position_qty)
+        portfolio.avg_entry = float(wallet.avg_entry)
+        portfolio.realized_pnl = float(wallet.realized_pnl)
+        portfolio.peak_equity = float(wallet.peak_equity)
+        return FillResult(
+            filled=result.filled,
+            qty=float(result.qty),
+            price=float(result.price),
+            fee=float(result.fee),
+            slippage=float(result.slippage),
+            detail=result.detail,
+        )

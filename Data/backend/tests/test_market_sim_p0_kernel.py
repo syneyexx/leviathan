@@ -334,5 +334,348 @@ class EngineFinalizeAnnualizationTests(unittest.TestCase):
         self.assertIn("resolve_periods_per_year", multi_src)
 
 
+# ---------------------------------------------------------------------------
+# P0B — one execution path, TIF, limit/stop, intrabar
+# ---------------------------------------------------------------------------
+
+
+class P0BCanonicalExecutionPathTests(unittest.TestCase):
+    def test_step_once_has_no_legacy_fill_import(self) -> None:
+        import inspect
+
+        from Data.modules.market_sim.engine import SimulationEngine
+
+        src = inspect.getsource(SimulationEngine.step_once)
+        self.assertNotIn("LegacyFill", src)
+        self.assertNotIn("from .fill_model", src)
+        self.assertIn("execute_intent", src)
+        self.assertIn("wallet", src)
+
+    def test_engine_state_uses_wallet_ledger(self) -> None:
+        import inspect
+
+        from Data.modules.market_sim.engine import EngineState, SimulationEngine
+
+        fields = EngineState.__dataclass_fields__
+        self.assertIn("wallet", fields)
+        prep = inspect.getsource(SimulationEngine.prepare)
+        self.assertIn("WalletLedger", prep)
+        self.assertIn("RiskGuard", prep)
+
+
+class P0BPartialAndTifTests(unittest.TestCase):
+    def test_bar_tif_cancels_remainder(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=500)
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=100,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            time_in_force="BAR",
+        )
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0).execute_intent(
+            wallet=w, intent=intent, fill_open=100.0, bar_volume=1e9, fill_bar_index=1
+        )
+        self.assertTrue(result.filled)
+        self.assertEqual(result.status, "PARTIAL")
+        self.assertEqual(intent.status, "filled")
+        self.assertEqual(float(result.remaining_qty or 0), 0.0)
+
+    def test_gtc_partial_keeps_working_remainder(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=500)
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=100,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            time_in_force="GTC",
+        )
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0).execute_intent(
+            wallet=w, intent=intent, fill_open=100.0, bar_volume=1e9, fill_bar_index=1
+        )
+        self.assertTrue(result.filled)
+        self.assertEqual(intent.status, "working")
+        self.assertGreater(float(result.remaining_qty or 0), 0)
+        self.assertAlmostEqual(float(intent.qty or 0), float(result.remaining_qty or 0))
+
+    def test_fok_rejects_when_cash_insufficient(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=500)
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=100,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            time_in_force="FOK",
+        )
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0).execute_intent(
+            wallet=w, intent=intent, fill_open=100.0, bar_volume=1e9, fill_bar_index=1
+        )
+        self.assertFalse(result.filled)
+        self.assertEqual(intent.status, "rejected")
+
+
+class P0BLimitStopTests(unittest.TestCase):
+    def test_limit_buy_non_trigger(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=10_000)
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=1,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            order_type="LIMIT",
+            limit_price=90.0,
+            time_in_force="GTC",
+        )
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0).execute_intent(
+            wallet=w,
+            intent=intent,
+            fill_open=100.0,
+            fill_high=105.0,
+            fill_low=95.0,
+            bar_volume=1e6,
+            fill_bar_index=1,
+        )
+        self.assertFalse(result.filled)
+        self.assertEqual(intent.status, "working")
+
+    def test_limit_buy_triggers_at_limit_when_open_above(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=10_000)
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=1,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            order_type="LIMIT",
+            limit_price=98.0,
+            time_in_force="BAR",
+        )
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0).execute_intent(
+            wallet=w,
+            intent=intent,
+            fill_open=100.0,
+            fill_high=101.0,
+            fill_low=97.0,
+            bar_volume=1e6,
+            fill_bar_index=1,
+        )
+        self.assertTrue(result.filled)
+        self.assertAlmostEqual(float(result.price), 98.0)
+        self.assertEqual(result.fill_price_source, "limit_price")
+
+    def test_stop_buy_gap_uses_open(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=10_000)
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=1,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            order_type="STOP",
+            stop_price=100.0,
+            time_in_force="BAR",
+        )
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0).execute_intent(
+            wallet=w,
+            intent=intent,
+            fill_open=105.0,
+            fill_high=106.0,
+            fill_low=104.0,
+            bar_volume=1e6,
+            fill_bar_index=1,
+        )
+        self.assertTrue(result.filled)
+        self.assertAlmostEqual(float(result.price), 105.0)
+        self.assertEqual(result.fill_price_source, "next_bar_open_gap")
+
+    def test_stop_sell_triggers_at_stop_inside_bar(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook, money
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=10_000)
+        w.apply_buy(qty=1, price=money(110), fee=money(0), tx_id="setup")
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="SELL",
+            qty=1,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            order_type="STOP",
+            stop_price=100.0,
+            time_in_force="BAR",
+        )
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0).execute_intent(
+            wallet=w,
+            intent=intent,
+            fill_open=102.0,
+            fill_high=103.0,
+            fill_low=99.0,
+            bar_volume=1e6,
+            fill_bar_index=1,
+        )
+        self.assertTrue(result.filled)
+        self.assertAlmostEqual(float(result.price), 100.0)
+        self.assertEqual(result.fill_price_source, "stop_price")
+
+    def test_stop_limit_no_guaranteed_fill_after_arm(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=10_000)
+        intent = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=1,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            order_type="STOP_LIMIT",
+            stop_price=100.0,
+            limit_price=99.0,
+            time_in_force="GTC",
+        )
+        # Open gaps through stop but never trades down to limit
+        result = NextBarFillModel(fee_bps=0, slippage_bps=0).execute_intent(
+            wallet=w,
+            intent=intent,
+            fill_open=101.0,
+            fill_high=102.0,
+            fill_low=100.5,
+            bar_volume=1e6,
+            fill_bar_index=1,
+        )
+        self.assertFalse(result.filled)
+        self.assertTrue(intent.stop_triggered)
+        self.assertEqual(intent.status, "working")
+
+
+class P0BIntrabarPolicyTests(unittest.TestCase):
+    def test_ambiguous_stop_target_uses_conservative(self) -> None:
+        from Data.modules.market_sim.execution import resolve_intrabar_path
+        from Data.modules.market_sim.types import IntrabarPathPolicy
+
+        path = resolve_intrabar_path(
+            side="LONG",
+            stop_price=95.0,
+            target_price=108.0,
+            open_px=100.0,
+            high=110.0,
+            low=90.0,
+            policy=IntrabarPathPolicy.CONSERVATIVE.value,
+        )
+        self.assertTrue(path["ambiguous"])
+        self.assertEqual(path["outcome"], "stop")
+
+    def test_unresolved_policy_marks_unresolved(self) -> None:
+        from Data.modules.market_sim.execution import resolve_intrabar_path
+        from Data.modules.market_sim.types import IntrabarPathPolicy
+
+        path = resolve_intrabar_path(
+            side="LONG",
+            stop_price=95.0,
+            target_price=108.0,
+            open_px=100.0,
+            high=110.0,
+            low=90.0,
+            policy=IntrabarPathPolicy.UNRESOLVED.value,
+        )
+        self.assertEqual(path["outcome"], "unresolved")
+
+
+class P0BGoldenFillPnLTests(unittest.TestCase):
+    def test_market_buy_sell_roundtrip_pnl(self) -> None:
+        from Data.modules.market_sim.accounting import WalletBook
+        from Data.modules.market_sim.execution import NextBarFillModel, make_intent
+
+        book = WalletBook()
+        w = book.ensure_agent("a", initial_cash=10_000)
+        model = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0)
+        buy = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="BUY",
+            qty=10,
+            decision_bar_index=0,
+            decision_ts="t0",
+            info_version="v",
+            time_in_force="BAR",
+        )
+        r1 = model.execute_intent(
+            wallet=w, intent=buy, fill_open=100.0, bar_volume=1e9, fill_bar_index=1
+        )
+        self.assertTrue(r1.filled)
+        sell = make_intent(
+            run_id="r",
+            agent_id="a",
+            wallet_id=w.wallet_id,
+            side="SELL",
+            qty=10,
+            decision_bar_index=1,
+            decision_ts="t1",
+            info_version="v2",
+            time_in_force="BAR",
+        )
+        before = float(w.realized_pnl)
+        r2 = model.execute_intent(
+            wallet=w, intent=sell, fill_open=110.0, bar_volume=1e9, fill_bar_index=2
+        )
+        self.assertTrue(r2.filled)
+        self.assertAlmostEqual(float(w.realized_pnl) - before, 100.0)
+
+
 if __name__ == "__main__":
     unittest.main()

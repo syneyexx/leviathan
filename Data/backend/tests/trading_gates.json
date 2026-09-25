@@ -8,7 +8,7 @@
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "P0A kernel honesty: SimFill realized_delta + ClosedTrade foundation + annualization resolver + D12 acceptance keys; D1/D2/D12 fixed; G08-G11 still NOT_STARTED",
+      "result": "P0B one execution path: SimulationEngine WalletLedger+RiskGuard+NextBarFillModel; TIF/Limit/Stop/Intrabar; D5 fixed; G08 IN_PROGRESS",
       "command": "python3 -m pytest Data/backend/tests/test_market_sim_p0_kernel.py Data/backend/tests/test_market_sim_t1_causality.py Data/backend/tests/test_market_sim_t2_market_state.py -q"
     }
   },
@@ -168,12 +168,30 @@
     "G08": {
       "title": "Kernel v2 golden fills/PnL",
       "phase": "T3A/T3B",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BCanonicalExecutionPathTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BPartialAndTifTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BLimitStopTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BIntrabarPolicyTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BGoldenFillPnLTests",
+        "SimulationEngine.step_once uses NextBarFillModel only (no LegacyFill)",
+        "MARKET BAR cancels remainder; GTC leaves WORKING; Limit/Stop gap rules"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BCanonicalExecutionPathTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BPartialAndTifTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BLimitStopTests",
+        "Data/backend/tests/test_market_sim_p0_kernel.py::P0BGoldenFillPnLTests"
+      ],
+      "checks": [
+        "no LegacyFill in SimulationEngine.step_once",
+        "partial remainder + TIF semantics",
+        "limit non-trigger / stop gap behavior",
+        "intrabar ambiguity uses explicit policy"
+      ],
+      "notes": "P0B slice complete for execution path. Full G08 PASS still needs broader golden corpus + P0C/P0D alignment.",
       "related_defects": [
         "D5"
       ]

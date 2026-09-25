@@ -113,11 +113,32 @@ class OrderType(str, Enum):
     STOP_LIMIT = "STOP_LIMIT"
 
 
+class TimeInForce(str, Enum):
+    """Historical TIF — no implicit eternal MARKET orders."""
+
+    BAR = "BAR"  # one eligible-bar attempt; remainder cancelled
+    IOC = "IOC"  # immediate-or-cancel (same as BAR for OHLCV next-bar model)
+    FOK = "FOK"  # fill-or-kill — reject if full qty cannot fill
+    GTC = "GTC"  # good-till-cancelled — remainder stays WORKING
+    DAY = "DAY"  # working until UTC calendar day rolls (engine cancels)
+
+
+class IntrabarPathPolicy(str, Enum):
+    """OHLCV has no full intra-bar sequence — never silently pick favorable path."""
+
+    CONSERVATIVE = "CONSERVATIVE"  # adverse-to-position when stop+target both possible
+    PESSIMISTIC = "PESSIMISTIC"  # alias of CONSERVATIVE for evaluation default
+    OPEN_HIGH_LOW_CLOSE = "OPEN_HIGH_LOW_CLOSE"
+    OPEN_LOW_HIGH_CLOSE = "OPEN_LOW_HIGH_CLOSE"
+    UNRESOLVED = "UNRESOLVED"
+
+
 class FillStatus(str, Enum):
     FILLED = "FILLED"
     PARTIAL = "PARTIAL"
     REJECTED = "REJECTED"
     CANCELLED = "CANCELLED"
+    WORKING = "WORKING"
 
 
 class WinRateDefinition(str, Enum):

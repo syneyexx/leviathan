@@ -246,14 +246,26 @@ class D4SizingCharacterization(unittest.TestCase):
 
 
 class D5FillModelCharacterization(unittest.TestCase):
-    def test_d5_current_two_fill_models_exist(self) -> None:
+    def test_d5_legacy_fill_model_is_shim_over_next_bar(self) -> None:
         self.assertTrue(inspect.isclass(FillModel))
         self.assertTrue(inspect.isclass(NextBarFillModel))
-        legacy = FillModel(fee_bps=10, slippage_bps=5)
-        nxt = NextBarFillModel(fee_bps=10, slippage_bps=5, max_participation=0.1)
-        self.assertNotEqual(type(legacy).__module__, type(nxt).__module__)
+        src = Path(FillModel.__module__.replace(".", "/") + ".py")
+        # Module path relative to package root
+        text = Path(__import__("Data.modules.market_sim.fill_model", fromlist=["x"]).__file__).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("NextBarFillModel", text)
+        self.assertIn("compatibility", text.lower())
 
-    def test_d5_current_partial_marks_intent_filled_drops_remainder(self) -> None:
+    def test_d5_engine_step_once_does_not_use_legacy_fill(self) -> None:
+        src = inspect.getsource(SimulationEngine.step_once)
+        self.assertNotIn("LegacyFill", src)
+        self.assertNotIn("fill_model import", src)
+        self.assertIn("NextBarFillModel", inspect.getsource(SimulationEngine))
+        self.assertIn("execute_intent", src)
+
+    def test_d5_market_bar_tif_cancels_partial_remainder(self) -> None:
+        """MARKET default TIF=BAR — partial remainder cancelled (no eternal market)."""
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=500)
         intent = make_intent(
@@ -265,6 +277,7 @@ class D5FillModelCharacterization(unittest.TestCase):
             decision_bar_index=0,
             decision_ts="t0",
             info_version="iv",
+            time_in_force="BAR",
         )
         model = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0)
         result = model.execute_intent(
@@ -273,10 +286,10 @@ class D5FillModelCharacterization(unittest.TestCase):
         self.assertTrue(result.filled)
         self.assertLess(float(result.qty), 100.0)
         self.assertEqual(intent.status, "filled")
-        self.assertNotEqual(intent.status, "working")
+        self.assertEqual(result.status, "PARTIAL")
+        self.assertEqual(float(result.remaining_qty or 0), 0.0)
 
-    @unittest.expectedFailure  # D5 — fixed in Phase T1
-    def test_d5_desired_partial_leaves_working_remainder(self) -> None:
+    def test_d5_gtc_partial_leaves_working_remainder(self) -> None:
         book = WalletBook()
         w = book.ensure_agent("a1", initial_cash=500)
         intent = make_intent(
@@ -288,6 +301,7 @@ class D5FillModelCharacterization(unittest.TestCase):
             decision_bar_index=0,
             decision_ts="t0",
             info_version="iv",
+            time_in_force="GTC",
         )
         model = NextBarFillModel(fee_bps=0, slippage_bps=0, max_participation=1.0)
         result = model.execute_intent(
@@ -295,8 +309,8 @@ class D5FillModelCharacterization(unittest.TestCase):
         )
         self.assertTrue(result.filled)
         self.assertEqual(intent.status, "working")
-        remaining = money(intent.qty) - money(result.qty)
-        self.assertGreater(remaining, 0)
+        self.assertGreater(float(intent.qty or 0), 0)
+        self.assertGreater(float(result.remaining_qty or 0), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -801,11 +815,16 @@ class D19SecretsCharacterization(unittest.TestCase):
 
 
 class D20ProductSurfaceCharacterization(unittest.TestCase):
-    def test_d20_current_orderintent_has_no_limit_price(self) -> None:
+    def test_d20_orderintent_has_limit_stop_and_tif(self) -> None:
+        """P0B: OrderIntent carries order_type / limit / stop / TIF."""
         fields = OrderIntent.__dataclass_fields__
-        self.assertNotIn("limit_price", fields)
-        self.assertNotIn("order_type", fields)
+        self.assertIn("limit_price", fields)
+        self.assertIn("stop_price", fields)
+        self.assertIn("order_type", fields)
+        self.assertIn("time_in_force", fields)
         self.assertTrue(hasattr(OrderType, "LIMIT"))
+        self.assertTrue(hasattr(OrderType, "STOP"))
+        self.assertTrue(hasattr(OrderType, "STOP_LIMIT"))
 
     def test_d20_current_portfolio_unrealized_pnl_stub(self) -> None:
         p = Portfolio(cash=10_000.0)
@@ -833,12 +852,6 @@ class D20ProductSurfaceCharacterization(unittest.TestCase):
         stub = TradingStub()
         result = stub.place_order(symbol="AAPL", side="BUY", quantity=1)
         self.assertFalse(result.accepted)
-
-    @unittest.expectedFailure  # D20 — later phases
-    def test_d20_desired_orderintent_carries_order_type_and_limit(self) -> None:
-        fields = OrderIntent.__dataclass_fields__
-        self.assertIn("order_type", fields)
-        self.assertIn("limit_price", fields)
 
 
 # ---------------------------------------------------------------------------

@@ -195,11 +195,16 @@ class MultiAgentEngine:
                 fill_open=bar.open,
                 bar_volume=bar.volume,
                 fill_bar_index=state.clock.index,
+                fill_high=bar.high,
+                fill_low=bar.low,
+                fill_close=bar.close,
             )
             if fill.filled:
                 realized_delta = float(wallet.realized_pnl) - before_realized
                 remaining = None
-                if intent.qty is not None:
+                if fill.remaining_qty is not None:
+                    remaining = float(fill.remaining_qty)
+                elif intent.qty is not None:
                     try:
                         rem = float(intent.qty) - float(fill.qty)
                         remaining = rem if rem > 1e-12 else 0.0
@@ -247,8 +252,8 @@ class MultiAgentEngine:
                     created_at=utc_now(),
                     realized_delta=float(realized_delta),
                     remaining_qty=remaining,
-                    order_type=OrderType.MARKET.value,
-                    fill_price_source="next_bar_open",
+                    order_type=fill.order_type or getattr(intent, "order_type", OrderType.MARKET.value),
+                    fill_price_source=fill.fill_price_source,
                     observed_execution=False,
                     decision_bar_index=intent.decision_bar_index,
                     intent_id=intent.intent_id,
@@ -268,6 +273,8 @@ class MultiAgentEngine:
                     bar_index=state.clock.index,
                 )
                 state.risk.orders_today += 1
+            if intent.status == "working":
+                still_pending.append(intent)
         state.pending_intents = still_pending
 
         # 2) Kill-switch / drawdown on each trading wallet
