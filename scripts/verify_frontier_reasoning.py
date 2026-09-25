@@ -548,6 +548,45 @@ def _candidate_lifecycle_scan() -> tuple[str, str]:
     return "PASS", "candidate_lifecycle_wired_from_cognition_ok"
 
 
+def _frontier_evaluation_scan() -> tuple[str, str]:
+    """R24 structural: frontier reasoning suite + ablations in evaluation platform."""
+    path = ROOT / "Data" / "modules" / "evaluation" / "frontier_reasoning.py"
+    harness = ROOT / "Data" / "modules" / "evaluation" / "harness.py"
+    platform = ROOT / "Data" / "modules" / "evaluation" / "platform.py"
+    main = ROOT / "Data" / "backend" / "main.py"
+    if not path.is_file():
+        return "FAIL", "missing:frontier_reasoning.py"
+    text = path.read_text(encoding="utf-8")
+    h = harness.read_text(encoding="utf-8") if harness.is_file() else ""
+    p = platform.read_text(encoding="utf-8") if platform.is_file() else ""
+    m = main.read_text(encoding="utf-8") if main.is_file() else ""
+    if "def frontier_reasoning_suite" not in text:
+        return "FAIL", "missing_frontier_reasoning_suite"
+    if "def run_frontier_probe" not in text:
+        return "FAIL", "missing_run_frontier_probe"
+    if "FRONTIER_ABLATION_FEATURES" not in text:
+        return "FAIL", "missing_FRONTIER_ABLATION_FEATURES"
+    if "def run_all_frontier_ablations" not in text:
+        return "FAIL", "missing_run_all_frontier_ablations"
+    if "feature_flag_is_not_ablation_result" not in text:
+        return "FAIL", "missing_ablation_truth"
+    if "frontier_probe" not in h:
+        return "FAIL", "harness_missing_frontier_probe_check"
+    if "def frontier_reasoning_suite" not in h:
+        return "FAIL", "harness_missing_frontier_reasoning_suite"
+    if "def run_frontier_reasoning" not in p:
+        return "FAIL", "platform_missing_run_frontier_reasoning"
+    if "def run_frontier_ablations" not in p:
+        return "FAIL", "platform_missing_run_frontier_ablations"
+    if 'sid == "frontier_reasoning"' not in p:
+        return "FAIL", "platform_missing_frontier_named_suite"
+    if "/api/evaluation/frontier-reasoning" not in m:
+        return "FAIL", "route_missing_frontier_reasoning"
+    if "/api/evaluation/frontier-ablations" not in m:
+        return "FAIL", "route_missing_frontier_ablations"
+    return "PASS", "frontier_reasoning_evaluation_suite_and_ablations_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -760,6 +799,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st23, ev23
                     else:
                         evidence = f"{evidence};{ev23}"
+                if status == "PASS" and gid == "R24":
+                    st24, ev24 = _frontier_evaluation_scan()
+                    if st24 != "PASS":
+                        status, evidence = st24, ev24
+                    else:
+                        evidence = f"{evidence};{ev24}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

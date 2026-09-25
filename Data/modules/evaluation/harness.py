@@ -269,6 +269,12 @@ class EvaluationHarness:
             ),
         ]
 
+    def frontier_reasoning_suite(self) -> list[EvalCase]:
+        """F16 / R24 — deterministic frontier reasoning contract suite."""
+        from .frontier_reasoning import frontier_reasoning_suite as _suite
+
+        return _suite()
+
     def neuro_ablation_suite(
         self,
         *,
@@ -615,6 +621,22 @@ class EvaluationHarness:
                         str(case.params.get("reason") or "unmeasured"),
                         judgment_kind=case.judgment_kind,
                         measurement=MeasurementState.UNMEASURED,
+                    ),
+                )
+            if case.check == "frontier_probe":
+                from .frontier_reasoning import run_frontier_probe
+
+                probe_id = str(case.params.get("probe_id") or "")
+                result = run_frontier_probe(probe_id)
+                return self._enrich(
+                    case,
+                    EvalCaseResult(
+                        case.case_id,
+                        result.outcome,
+                        result.detail,
+                        judgment_kind=case.judgment_kind,
+                        measurement=result.measurement,
+                        component=case.component,
                     ),
                 )
             return self._enrich(
