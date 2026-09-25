@@ -373,6 +373,8 @@ T1 backend additions consumed by TradingCenter (no mock data): sealed/versioned 
 
 T2 backend: simulation rounds persist deterministic `MarketState` (regime/trend/volatility/features with provenance). UI continues to read live run events — no fabricated order-book capabilities.
 
+T3 backend: Strategy Spec DSL v2 (`/api/market-sim/strategies` with `dslSpec`/`family`, `/strategies/validate`, `/strategies/families/{family}/template`). Declarative sandboxed specs only — UI must not offer free-form code strategies.
+
 ---
 
 # 14. Media Control UI

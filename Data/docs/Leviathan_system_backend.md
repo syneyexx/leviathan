@@ -587,6 +587,7 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 - market/data models: `ohlcv.py`, `data_store.py`, `dataset_pipeline.py`, `instruments.py`, providers;
 - causality / epistemic time: `causality.py` (`SimulationClock`, `MarketView`), `epistemic.py` (`EpistemicFirewall`, `available_at <= as_of`);
 - market state / features (T2): `features.py` (deterministic OHLCV indicator library + provenance), `market_state.py` (`MarketState`, `MultiTimeframeView`, causal higher-TF aggregation);
+- strategy DSL v2 (T3): `strategy_dsl.py` (declarative sandboxed AST — no arbitrary Python), `strategy_eval.py` (legacy ma_cross/mean_reversion + DSL evaluate);
 - reproducibility: `knowledge_snapshot.py` (`TradingKnowledgeSnapshot` persisted per run);
 - engine: `engine.py`, `multi_engine.py`, `fill_model.py`, `execution.py` (prepare verifies `data_hash`; multi-agent rounds attach `MarketState`);
 - accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
@@ -599,6 +600,8 @@ These paths are FEATURE-GATED and backend/provider availability must be reported
 **T1 (causality + data foundation):** historical agents observe markets through `MarketView`; information sources must respect `available_at <= simulation as_of`; sealed market dataset versions are content-addressed and immutable (corrections create a new version); every run stores a `TradingKnowledgeSnapshot`.
 
 **T2 (market state + features):** `FeatureEngine` computes causal SMA/EMA/RSI/ATR/ADX/Bollinger/z-score/ROC/realized-vol/Donchian/VWAP/volume/breakout/slope/drawdown/correlation/beta/relative-strength with measured/insufficient/not-implemented status and provenance. `MarketState` packages deterministic price/trend/momentum/volatility/volume/structure/regime fields (neural interpretation excluded). Multi-timeframe views synthesize higher TFs from visible base bars only. OHLCV never claims order-book imbalance. Live broker/real-money execution remains blocked.
+
+**T3 (Strategy Spec DSL v2):** Strategies are declarative documents (features, regime filters, entry/exit conditions, sizing, risk, cooldowns) compiled to a sandboxed AST — no `eval`/`exec`/imports. Family templates cover trend/MA/momentum/mean-reversion/breakout/vol-breakout/range/RS/MTF/event-filtered/custom. Legacy `ma_cross` / `mean_reversion` remain supported and lift into DSL v2. Validate + family-template APIs reject invalid specs before simulation. Immutable version lineage stores content hashes + nested DSL specs.
 
 `Data/modules/trading/stub.py` remains a boundary/stub, not a second trading platform.
 

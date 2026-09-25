@@ -35,7 +35,12 @@ from .paper_broker import LocalPaperBroker, PaperSession, build_paper_broker, ut
 from .providers import default_registry
 from .roles import default_competition_agents, ensure_trading_agents_in_fleet
 from .store import MarketSimStore, utc_now
-from .strategy_eval import strategy_content_hash
+from .strategy_eval import strategy_content_hash, validate_strategy_document
+from .strategy_dsl import (
+    family_template,
+    is_dsl_v2_document,
+    unwrap_dsl_spec,
+)
 from .types import (
     ACTIVE_RUN_STATUSES,
     AgentConfig,
@@ -368,6 +373,8 @@ class MarketSimControlPlane:
         required_timeframes: list[str] | None = None,
         brain_dependencies: list[str] | None = None,
         changelog: str = "initial",
+        dsl_spec: dict[str, Any] | None = None,
+        family: str | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
         now = utc_now()
@@ -377,6 +384,43 @@ class MarketSimControlPlane:
         risk_rules = dict(risk_rules or {"max_position_pct": 25})
         required_timeframes = list(required_timeframes or ["1h"])
         brain_dependencies = list(brain_dependencies or ["knowledge", "memory", "neuro"])
+
+        compiled = None
+        if dsl_spec is not None:
+            compiled = validate_strategy_document(dsl_spec)
+        elif family:
+            dsl_spec = family_template(family)
+            compiled = validate_strategy_document(dsl_spec)
+        else:
+            unwrapped = unwrap_dsl_spec(entry_rules)
+            if unwrapped is not None:
+                dsl_spec = unwrapped
+                compiled = validate_strategy_document(dsl_spec)
+            elif is_dsl_v2_document(entry_rules):
+                compiled = validate_strategy_document(entry_rules)
+                dsl_spec = dict(entry_rules)
+
+        if compiled is not None and dsl_spec is not None:
+            # Persist DSL as entry_rules document + metadata pointer
+            entry_rules = {
+                "kind": "dsl_v2",
+                "dsl_version": compiled.dsl_version,
+                "content_hash": compiled.content_hash,
+                "family": compiled.family,
+                "spec": compiled.public_dict(),
+            }
+            exit_rules = {"kind": "dsl_v2", "mirrors_entry": True}
+            parameters = {
+                **parameters,
+                "dsl_version": compiled.dsl_version,
+                "family": compiled.family,
+            }
+            if compiled.required_timeframes:
+                required_timeframes = list(compiled.required_timeframes)
+            if compiled.brain_dependencies:
+                brain_dependencies = list(compiled.brain_dependencies)
+            risk_rules = {**risk_rules, **compiled.risk_conditions}
+
         content_hash = strategy_content_hash(
             parameters=parameters,
             entry_rules=entry_rules,
@@ -384,6 +428,7 @@ class MarketSimControlPlane:
             risk_rules=risk_rules,
             required_timeframes=required_timeframes,
             brain_dependencies=brain_dependencies,
+            dsl_spec=dsl_spec,
         )
         strategy_id = str(uuid.uuid4())
         record = StrategyRecord(
@@ -396,6 +441,10 @@ class MarketSimControlPlane:
             content_hash=content_hash,
             created_at=now,
             updated_at=now,
+            metadata={
+                "dsl_version": compiled.dsl_version if compiled else 1,
+                "family": (compiled.family if compiled else (entry_rules.get("kind") or "ma_cross")),
+            },
         )
         version = StrategyVersion(
             version_id=str(uuid.uuid4()),
@@ -410,13 +459,36 @@ class MarketSimControlPlane:
             brain_dependencies=brain_dependencies,
             created_at=now,
             changelog=changelog,
+            metadata={
+                "dsl_spec": dsl_spec,
+                "compiled_hash": compiled.content_hash if compiled else None,
+            },
         )
         self.store.create_strategy(record, version)
-        self._emit_event("strategy.created", {"strategy_id": strategy_id})
+        self._emit_event("strategy.created", {"strategy_id": strategy_id, "dsl": compiled is not None})
         return {
             "strategy": record.public_dict(),
             "version": version.public_dict(),
+            "compiled": compiled.public_dict() if compiled else None,
         }
+
+    def validate_strategy_dsl(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """Reject invalid DSL before simulation."""
+        self._require_enabled()
+        compiled = validate_strategy_document(spec)
+        return {"valid": True, "compiled": compiled.public_dict()}
+
+    def strategy_family_template(self, family: str, *, symbol: str = "BTCUSDT", timeframe: str = "1h") -> dict[str, Any]:
+        self._require_enabled()
+        spec = family_template(family, symbol=symbol, timeframe=timeframe)
+        compiled = validate_strategy_document(spec)
+        return {"family": family, "spec": spec, "compiled": compiled.public_dict()}
+
+    def list_strategy_families(self) -> dict[str, Any]:
+        self._require_enabled()
+        from .strategy_dsl import STRATEGY_FAMILIES
+
+        return {"families": sorted(STRATEGY_FAMILIES), "dsl_version": 2}
 
     def version_strategy(
         self,
@@ -432,6 +504,7 @@ class MarketSimControlPlane:
         name: str | None = None,
         description: str | None = None,
         tags: list[str] | None = None,
+        dsl_spec: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
         record = self.store.get_strategy(strategy_id)
@@ -450,6 +523,39 @@ class MarketSimControlPlane:
         brain_dependencies = list(
             brain_dependencies if brain_dependencies is not None else current.brain_dependencies
         )
+
+        compiled = None
+        if dsl_spec is None:
+            dsl_spec = unwrap_dsl_spec(entry_rules, metadata=current.metadata if entry_rules == current.entry_rules else None)
+            # If caller passed a fresh DSL document as entry_rules
+            if dsl_spec is None and is_dsl_v2_document(entry_rules):
+                dsl_spec = dict(entry_rules)
+        if dsl_spec is not None:
+            compiled = validate_strategy_document(dsl_spec)
+            entry_rules = {
+                "kind": "dsl_v2",
+                "dsl_version": compiled.dsl_version,
+                "content_hash": compiled.content_hash,
+                "family": compiled.family,
+                "spec": compiled.public_dict(),
+            }
+            exit_rules = {"kind": "dsl_v2", "mirrors_entry": True}
+            parameters = {
+                **parameters,
+                "dsl_version": compiled.dsl_version,
+                "family": compiled.family,
+            }
+            if compiled.required_timeframes:
+                required_timeframes = list(compiled.required_timeframes)
+            if compiled.brain_dependencies:
+                brain_dependencies = list(compiled.brain_dependencies)
+            risk_rules = {**risk_rules, **compiled.risk_conditions}
+            record.metadata = {
+                **dict(record.metadata or {}),
+                "dsl_version": compiled.dsl_version,
+                "family": compiled.family,
+            }
+
         content_hash = strategy_content_hash(
             parameters=parameters,
             entry_rules=entry_rules,
@@ -457,6 +563,7 @@ class MarketSimControlPlane:
             risk_rules=risk_rules,
             required_timeframes=required_timeframes,
             brain_dependencies=brain_dependencies,
+            dsl_spec=dsl_spec,
         )
         now = utc_now()
         new_version_num = record.current_version + 1
@@ -473,6 +580,10 @@ class MarketSimControlPlane:
             brain_dependencies=brain_dependencies,
             created_at=now,
             changelog=changelog or f"v{new_version_num}",
+            metadata={
+                "dsl_spec": dsl_spec,
+                "compiled_hash": compiled.content_hash if compiled else None,
+            },
         )
         record.current_version = new_version_num
         record.content_hash = content_hash
@@ -484,7 +595,11 @@ class MarketSimControlPlane:
         if tags is not None:
             record.tags = tags
         self.store.update_strategy_head(record, version)
-        return {"strategy": record.public_dict(), "version": version.public_dict()}
+        return {
+            "strategy": record.public_dict(),
+            "version": version.public_dict(),
+            "compiled": compiled.public_dict() if compiled else None,
+        }
 
     def fork_strategy(self, strategy_id: str, *, name: str | None = None) -> dict[str, Any]:
         self._require_enabled()
@@ -492,17 +607,19 @@ class MarketSimControlPlane:
         version = self.store.get_strategy_version(strategy_id)
         if record is None or version is None:
             raise MarketSimError("STRATEGY_NOT_FOUND", strategy_id, http_status=404)
+        dsl_spec = unwrap_dsl_spec(version.entry_rules, metadata=version.metadata)
         return self.create_strategy(
             name=name or f"{record.name} (fork)",
             description=record.description,
             tags=list(record.tags),
             parameters=dict(version.parameters),
-            entry_rules=dict(version.entry_rules),
-            exit_rules=dict(version.exit_rules),
+            entry_rules=dict(version.entry_rules) if dsl_spec is None else None,
+            exit_rules=dict(version.exit_rules) if dsl_spec is None else None,
             risk_rules=dict(version.risk_rules),
             required_timeframes=list(version.required_timeframes),
             brain_dependencies=list(version.brain_dependencies),
             changelog=f"fork of {strategy_id}@{version.version}",
+            dsl_spec=dsl_spec,
         )
 
     def archive_strategy(self, strategy_id: str) -> dict[str, Any]:

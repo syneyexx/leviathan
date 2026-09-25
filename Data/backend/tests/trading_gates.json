@@ -275,47 +275,77 @@
     "G15": {
       "title": "Strategy Spec v2 + feature library",
       "phase": "T2/T3D",
-      "status": "IN_PROGRESS",
+      "status": "PASS",
       "required": true,
       "evidence": [
         "Data/modules/market_sim/features.py",
         "Data/modules/market_sim/market_state.py",
-        "Data/backend/tests/test_market_sim_t2_market_state.py"
+        "Data/modules/market_sim/strategy_dsl.py",
+        "Data/modules/market_sim/strategy_eval.py",
+        "Data/backend/tests/test_market_sim_t2_market_state.py",
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py"
       ],
       "test_node_ids": [
-        "Data/backend/tests/test_market_sim_t2_market_state.py"
+        "Data/backend/tests/test_market_sim_t2_market_state.py",
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py"
       ],
       "checks": [
         {
           "kind": "pytest",
           "node_ids": [
-            "Data/backend/tests/test_market_sim_t2_market_state.py"
+            "Data/backend/tests/test_market_sim_t2_market_state.py",
+            "Data/backend/tests/test_market_sim_t3_strategy_dsl.py"
           ],
           "timeout_sec": 180
         }
       ],
-      "notes": "T2: FeatureEngine + MarketState + MultiTimeframeView implemented and tested. Strategy Spec DSL v2 remains T3."
+      "notes": "T2+T3: FeatureEngine + MarketState + Strategy Spec DSL v2 (sandboxed AST, family templates, legacy ma_cross/mean_reversion lift, validate/template APIs)."
     },
     "G16": {
       "title": "Code strategy sandbox escape suite",
       "phase": "T3E",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
-      "related_defects": []
+      "evidence": [
+        "Data/modules/market_sim/strategy_dsl.py",
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::SandboxEscapeSuite"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::SandboxEscapeSuite"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::SandboxEscapeSuite"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T3: DSL rejects eval/exec/import/script/path/url/code/module escape hatches and dunder feature params. No arbitrary Python strategy path."
     },
     "G17": {
       "title": "Immutable strategy versions + lineage",
       "phase": "T3D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::ServiceDslIntegrationTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::ServiceDslIntegrationTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t3_strategy_dsl.py::ServiceDslIntegrationTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T3: version_strategy appends immutable versions with content_hash; fork clones DSL lineage without mutating source."
     },
     "G18": {
       "title": "Metrics v2 ledger-derived + bootstrap CIs",
