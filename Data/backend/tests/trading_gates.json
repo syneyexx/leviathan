@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T8",
+  "phase": "T9",
   "frozen_at": "2026-09-25",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T8 TradingGym + scorecards + readiness + trajectory export + sim-real gap",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t8_trading_gym.py Data/backend/tests/test_market_sim_characterization.py -q"
+      "result": "T9 paper forward + risk v2 + brokers/reconcile + audit ledger",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t9_paper_risk.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -734,12 +734,28 @@
     "G32": {
       "title": "PaperForwardRunner autonomous loop",
       "phase": "T9A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/paper_forward.py",
+        "Data/modules/market_sim/paper_broker.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperForwardTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperForwardTests",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperSessionWalletTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperForwardTests",
+            "Data/backend/tests/test_market_sim_t9_paper_risk.py::PaperSessionWalletTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T9A: per-session wallets; PaperForwardRunner start/pause/resume/tick with idempotent client_order_ids; readonly GET session helper.",
       "related_defects": [
         "D18"
       ]
@@ -747,22 +763,49 @@
     "G33": {
       "title": "Reconciliation + drift + watchdog",
       "phase": "T9C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/reconciliation.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::ReconciliationTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::ReconciliationTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t9_paper_risk.py::ReconciliationTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T9C: independent shadow-ledger reconciliation; drift-vs-backtest bands; data-quality watchdog pause/halt."
     },
     "G34": {
       "title": "Risk Engine v2 on every order path",
       "phase": "T9B",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/risk_engine_v2.py",
+        "Data/modules/market_sim/service.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::RiskEngineV2Tests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::RiskEngineV2Tests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t9_paper_risk.py::RiskEngineV2Tests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T9B: RiskEngineV2 on paper_place_order; global/per-strategy kill with human reset; limit loosening approval-gated.",
       "related_defects": [
         "D18"
       ]
@@ -770,12 +813,25 @@
     "G35": {
       "title": "BrokerAdapter; LiveBroker UNSUPPORTED",
       "phase": "T9C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/brokers.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::BrokerAdapterTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::BrokerAdapterTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t9_paper_risk.py::BrokerAdapterTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T9C: BrokerAdapter + ReplayBroker + LiveBroker UNSUPPORTED (501); local paper retains SecretsBroker Alpaca path.",
       "related_defects": [
         "D19",
         "D20"
@@ -784,12 +840,25 @@
     "G36": {
       "title": "Hash-chained audit ledger",
       "phase": "T9D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/audit_ledger.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::AuditLedgerTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::AuditLedgerTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t9_paper_risk.py::AuditLedgerTests"
+          ],
+          "timeout_sec": 90
+        }
+      ],
+      "notes": "T9D: intent→risk→broker→fill→reconcile hash chain; tamper detection; append-only trading_audit_chain (migration 49)."
     },
     "G37": {
       "title": "Capabilities via Gateway",
@@ -997,12 +1066,27 @@
     "G48": {
       "title": "Security posture live flag off",
       "phase": "T9D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/brokers.py",
+        "Data/modules/trading/stub.py",
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::SecurityPostureTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t9_paper_risk.py::SecurityPostureTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t9_paper_risk.py::SecurityPostureTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T9D: LEVIATHAN_FEATURE_TRADING_LIVE off by default; TradingStub refuses; LiveBroker UNSUPPORTED; live guard BLOCKED."
     },
     "G49": {
       "title": "Observability trading category",

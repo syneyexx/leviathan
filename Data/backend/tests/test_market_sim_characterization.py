@@ -772,29 +772,34 @@ class D17AgentsCharacterization(unittest.TestCase):
 
 
 class D18PaperCharacterization(unittest.TestCase):
-    def test_d18_current_local_broker_single_wallet(self) -> None:
+    def test_d18_local_broker_supports_per_session_wallets(self) -> None:
         b = LocalPaperBroker()
-        self.assertEqual(float(b.wallet.cash), 100_000.0)
-        b.wallet.cash = money(50_000)
-        self.assertEqual(float(b.wallet.cash), 50_000.0)
+        self.assertTrue(hasattr(b, "wallet_for_session"))
+        self.assertTrue(hasattr(b, "sessions"))
+        w = b.wallet_for_session("sess-a", initial_cash=12_345)
+        self.assertEqual(float(w.cash), 12_345.0)
 
-    def test_d18_current_paper_place_order_source_has_no_riskguard(self) -> None:
+    def test_d18_paper_place_order_routes_through_risk_engine(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.paper_place_order)
-        self.assertNotIn("RiskGuard", src)
+        self.assertIn("risk_engine", src)
+        self.assertIn("evaluate_order", src)
         self.assertIn("kill", src.lower())
 
-    def test_d18_current_start_paper_session_resets_shared_cash(self) -> None:
+    def test_d18_start_paper_session_creates_per_session_wallet(self) -> None:
         from Data.modules.market_sim import service as svc_mod
 
         src = inspect.getsource(svc_mod.MarketSimControlPlane.start_paper_session)
-        self.assertIn("wallet.cash", src)
+        self.assertIn("wallet_for_session", src)
+        self.assertIn("per_session_wallet", src)
 
-    @unittest.expectedFailure  # D18 — fixed in Phase T9
-    def test_d18_desired_per_session_wallets(self) -> None:
+    def test_d18_per_session_wallets(self) -> None:
         b = LocalPaperBroker()
         self.assertTrue(hasattr(b, "wallet_for_session") or hasattr(b, "sessions"))
+        a = b.wallet_for_session("a", initial_cash=1_000)
+        c = b.wallet_for_session("c", initial_cash=2_000)
+        self.assertNotEqual(float(a.cash), float(c.cash))
 
 
 # ---------------------------------------------------------------------------
@@ -894,8 +899,9 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         # T6 strategy library adds migration 46.
         # T7 research campaigns adds migration 47.
         # T8 gym/scorecards adds migration 48.
+        # T9 paper/risk/audit adds migration 49.
         head = MIGRATIONS[-1].version
-        self.assertGreaterEqual(head, 48)
+        self.assertGreaterEqual(head, 49)
         by_ver = {m.version: m.name for m in MIGRATIONS}
         self.assertEqual(by_ver[42], "resource_reservations_device_aware")
         self.assertEqual(by_ver[43], "trading_orchestra")
@@ -904,6 +910,7 @@ class D21MigrationHeadCharacterization(unittest.TestCase):
         self.assertEqual(by_ver[46], "trading_strategy_library")
         self.assertEqual(by_ver[47], "trading_research_campaigns")
         self.assertEqual(by_ver[48], "trading_gym_scorecards")
+        self.assertEqual(by_ver[49], "trading_paper_risk_audit")
         versions = [m.version for m in MIGRATIONS]
         self.assertEqual(versions, list(range(1, head + 1)))
 

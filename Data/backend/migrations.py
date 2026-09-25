@@ -3615,6 +3615,88 @@ def _m48_trading_gym_scorecards(conn: sqlite3.Connection) -> None:
         )
 
 
+def _m49_trading_paper_risk_audit(conn: sqlite3.Connection) -> None:
+    """T9: paper forward runners, risk kill state, reconciliation, hash-chained audit."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_forward_runners (
+            runner_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            symbol TEXT NOT NULL DEFAULT '',
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
+            loop_count INTEGER NOT NULL DEFAULT 0,
+            last_client_order_id TEXT,
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS risk_kill_switch_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            global_armed INTEGER NOT NULL DEFAULT 0,
+            global_reason TEXT NOT NULL DEFAULT '',
+            per_strategy_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paper_reconciliations (
+            reconciliation_id TEXT PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS trading_audit_chain (
+            event_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            session_id TEXT,
+            run_id TEXT,
+            payload_json TEXT NOT NULL,
+            prev_hash TEXT NOT NULL,
+            entry_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trading_audit_chain_created "
+        "ON trading_audit_chain(created_at)"
+    )
+    # Append-only enforcement for audit chain.
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trading_audit_chain_no_update
+        BEFORE UPDATE ON trading_audit_chain
+        BEGIN
+            SELECT RAISE(ABORT, 'trading_audit_chain is append-only');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trading_audit_chain_no_delete
+        BEFORE DELETE ON trading_audit_chain
+        BEGIN
+            SELECT RAISE(ABORT, 'trading_audit_chain is append-only');
+        END
+        """
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -3687,6 +3769,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=48,
         name="trading_gym_scorecards",
         apply=_m48_trading_gym_scorecards,
+    ),
+    Migration(
+        version=49,
+        name="trading_paper_risk_audit",
+        apply=_m49_trading_paper_risk_audit,
     ),
 )
 

@@ -120,6 +120,35 @@ class PaperOrderRequest(BaseModel):
     clientOrderId: str | None = None
 
 
+class PaperForwardStart(BaseModel):
+    strategyId: str | None = None
+    strategyVersion: int | None = None
+
+
+class PaperForwardTick(BaseModel):
+    side: str | None = None
+
+
+class PaperReconcileRequest(BaseModel):
+    shadowFills: list[dict[str, Any]] | None = None
+
+
+class PaperDriftRequest(BaseModel):
+    paperEquity: list[float]
+    backtestEquity: list[float]
+    bandPct: float = 5.0
+
+
+class RiskResetRequest(BaseModel):
+    humanToken: str
+    strategyId: str | None = None
+
+
+class RiskLoosenRequest(BaseModel):
+    patch: dict[str, Any]
+    approvalId: str | None = None
+
+
 class ExperimentPropose(BaseModel):
     strategyId: str
     hypothesis: str
@@ -765,7 +794,8 @@ def build_market_sim_router(
     @router.get("/api/market-sim/paper/sessions/{session_id}")
     def get_paper(session_id: str) -> dict:
         try:
-            return {"session": service.paper_session_state(session_id)}
+            # G32: GET must not refresh quotes / write session state.
+            return {"session": service.get_paper_session_readonly(session_id)}
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
@@ -798,6 +828,135 @@ def build_market_sim_router(
             idempotency_key=f"market_sim:paper.kill:{session_id}:{armed}",
             fallback=lambda: {"session": service.paper_kill_switch(session_id, armed=armed)},
         )
+
+    # --- Paper forward / risk / reconcile / audit (T9) ---
+
+    @router.post("/api/market-sim/paper/sessions/{session_id}/forward")
+    def start_paper_forward(session_id: str, payload: PaperForwardStart | None = None) -> dict:
+        body = payload or PaperForwardStart()
+        return _mutate(
+            "market_sim.paper.forward.start",
+            {
+                "session_id": session_id,
+                "strategy_id": body.strategyId,
+                "strategy_version": body.strategyVersion,
+            },
+            fallback=lambda: {
+                "runner": service.start_paper_forward(
+                    session_id,
+                    strategy_id=body.strategyId,
+                    strategy_version=body.strategyVersion,
+                )
+            },
+        )
+
+    @router.get("/api/market-sim/paper/forward/{runner_id}")
+    def get_paper_forward(runner_id: str) -> dict:
+        try:
+            return {"runner": service.get_paper_forward(runner_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/paper/forward/{runner_id}/tick")
+    def paper_forward_tick(runner_id: str, payload: PaperForwardTick | None = None) -> dict:
+        body = payload or PaperForwardTick()
+        return _mutate(
+            "market_sim.paper.forward.tick",
+            {"runner_id": runner_id, "side": body.side},
+            fallback=lambda: service.paper_forward_tick(runner_id, side=body.side),
+        )
+
+    @router.post("/api/market-sim/paper/forward/{runner_id}/pause")
+    def paper_forward_pause(runner_id: str) -> dict:
+        return _mutate(
+            "market_sim.paper.forward.pause",
+            {"runner_id": runner_id},
+            fallback=lambda: {"runner": service.paper_forward_pause(runner_id)},
+        )
+
+    @router.post("/api/market-sim/paper/forward/{runner_id}/resume")
+    def paper_forward_resume(runner_id: str) -> dict:
+        return _mutate(
+            "market_sim.paper.forward.resume",
+            {"runner_id": runner_id},
+            fallback=lambda: {"runner": service.paper_forward_resume(runner_id)},
+        )
+
+    @router.post("/api/market-sim/paper/sessions/{session_id}/reconcile")
+    def paper_reconcile(session_id: str, payload: PaperReconcileRequest | None = None) -> dict:
+        body = payload or PaperReconcileRequest()
+        return _mutate(
+            "market_sim.paper.reconcile",
+            {"session_id": session_id, "shadow_fills": body.shadowFills},
+            fallback=lambda: {
+                "report": service.reconcile_paper_session(
+                    session_id, shadow_fills=body.shadowFills
+                )
+            },
+        )
+
+    @router.post("/api/market-sim/paper/drift")
+    def paper_drift(payload: PaperDriftRequest) -> dict:
+        return _mutate(
+            "market_sim.paper.drift",
+            {
+                "paper_equity": payload.paperEquity,
+                "backtest_equity": payload.backtestEquity,
+                "band_pct": payload.bandPct,
+            },
+            fallback=lambda: {
+                "drift": service.compute_paper_drift(
+                    paper_equity=payload.paperEquity,
+                    backtest_equity=payload.backtestEquity,
+                    band_pct=payload.bandPct,
+                )
+            },
+        )
+
+    @router.get("/api/market-sim/risk")
+    def risk_status() -> dict:
+        try:
+            return {"risk": service.risk_engine_status()}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/risk/reset")
+    def risk_reset(payload: RiskResetRequest) -> dict:
+        return _mutate(
+            "market_sim.risk.reset",
+            {"human_token": payload.humanToken, "strategy_id": payload.strategyId},
+            fallback=lambda: {
+                "kill": service.risk_human_reset(
+                    human_token=payload.humanToken, strategy_id=payload.strategyId
+                )
+            },
+        )
+
+    @router.post("/api/market-sim/risk/loosen")
+    def risk_loosen(payload: RiskLoosenRequest) -> dict:
+        return _mutate(
+            "market_sim.risk.loosen",
+            {"patch": payload.patch, "approval_id": payload.approvalId},
+            fallback=lambda: {
+                "limits": service.risk_loosen_limits(
+                    payload.patch, approval_id=payload.approvalId
+                )
+            },
+        )
+
+    @router.get("/api/market-sim/audit/verify")
+    def audit_verify() -> dict:
+        try:
+            return service.verify_trading_audit()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/security-posture")
+    def security_posture() -> dict:
+        try:
+            return service.security_posture()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
 
     # --- Experiments ---
 

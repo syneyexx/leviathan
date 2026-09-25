@@ -420,6 +420,90 @@ def register_market_sim_module_capabilities(catalog: Any) -> None:
         idempotent=True,
     )
     _mod(
+        cap_id="market_sim.paper.forward.start",
+        name="Start Paper Forward Runner",
+        description="Start an autonomous paper-forward loop for a session (T9).",
+        provider_ref="paper.forward.start",
+        required=["session_id"],
+        properties={
+            "session_id": {"type": "string"},
+            "strategy_id": {"type": "string"},
+            "strategy_version": {"type": "integer"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.paper.forward.tick",
+        name="Tick Paper Forward Runner",
+        description="Advance one paper-forward loop with idempotent client order id.",
+        provider_ref="paper.forward.tick",
+        required=["runner_id"],
+        properties={"runner_id": {"type": "string"}, "side": {"type": "string"}},
+    )
+    _mod(
+        cap_id="market_sim.paper.forward.pause",
+        name="Pause Paper Forward Runner",
+        description="Pause a running (or already-paused) paper-forward runner.",
+        provider_ref="paper.forward.pause",
+        required=["runner_id"],
+        properties={"runner_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.paper.forward.resume",
+        name="Resume Paper Forward Runner",
+        description="Resume a paused paper-forward runner from checkpoint.",
+        provider_ref="paper.forward.resume",
+        required=["runner_id"],
+        properties={"runner_id": {"type": "string"}},
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.paper.reconcile",
+        name="Reconcile Paper Session",
+        description="Shadow-ledger reconciliation for paper fills.",
+        provider_ref="paper.reconcile",
+        required=["session_id"],
+        properties={
+            "session_id": {"type": "string"},
+            "shadow_fills": {"type": "array"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.paper.drift",
+        name="Paper vs Backtest Drift",
+        description="Compare paper-forward equity path vs backtest within bands.",
+        provider_ref="paper.drift",
+        required=["paper_equity", "backtest_equity"],
+        properties={
+            "paper_equity": {"type": "array"},
+            "backtest_equity": {"type": "array"},
+            "band_pct": {"type": "number"},
+        },
+    )
+    _mod(
+        cap_id="market_sim.risk.reset",
+        name="Human Reset Risk Kill",
+        description="Human-token reset of global or per-strategy kill switch.",
+        provider_ref="risk.reset",
+        required=["human_token"],
+        properties={
+            "human_token": {"type": "string"},
+            "strategy_id": {"type": "string"},
+        },
+        idempotent=True,
+    )
+    _mod(
+        cap_id="market_sim.risk.loosen",
+        name="Loosen Risk Limits",
+        description="Approval-gated loosening of RiskEngineV2 limits.",
+        provider_ref="risk.loosen",
+        required=["patch"],
+        properties={
+            "patch": {"type": "object"},
+            "approval_id": {"type": "string"},
+        },
+    )
+    _mod(
         cap_id="market_sim.experiment.propose",
         name="Propose Experiment",
         description="Propose a strategy research trial.",

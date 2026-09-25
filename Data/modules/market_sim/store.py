@@ -1772,6 +1772,154 @@ class MarketSimStore:
             )
         return report
 
+    # --- T9 paper forward / risk / audit ---
+
+    def save_paper_forward_runner(self, runner: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO paper_forward_runners(
+                    runner_id, session_id, status, strategy_id, strategy_version, symbol,
+                    checkpoint_json, loop_count, last_client_order_id, last_error,
+                    created_at, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(runner_id) DO UPDATE SET
+                    status=excluded.status,
+                    checkpoint_json=excluded.checkpoint_json,
+                    loop_count=excluded.loop_count,
+                    last_client_order_id=excluded.last_client_order_id,
+                    last_error=excluded.last_error,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    runner["runner_id"],
+                    runner["session_id"],
+                    runner.get("status") or "running",
+                    runner.get("strategy_id"),
+                    runner.get("strategy_version"),
+                    runner.get("symbol") or "",
+                    json.dumps(runner.get("checkpoint") or {}),
+                    int(runner.get("loop_count") or 0),
+                    runner.get("last_client_order_id"),
+                    runner.get("last_error") or "",
+                    runner.get("created_at") or utc_now(),
+                    runner.get("updated_at") or utc_now(),
+                    json.dumps(runner.get("metadata") or {}),
+                ),
+            )
+        return runner
+
+    def get_paper_forward_runner(self, runner_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM paper_forward_runners WHERE runner_id=?",
+                    (runner_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+        if row is None:
+            return None
+        return {
+            "runner_id": row["runner_id"],
+            "session_id": row["session_id"],
+            "status": row["status"],
+            "strategy_id": row["strategy_id"],
+            "strategy_version": row["strategy_version"],
+            "symbol": row["symbol"],
+            "checkpoint": _loads(row["checkpoint_json"], {}),
+            "loop_count": row["loop_count"],
+            "last_client_order_id": row["last_client_order_id"],
+            "last_error": row["last_error"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+        }
+
+    def save_risk_kill_state(self, state: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO risk_kill_switch_state(
+                    id, global_armed, global_reason, per_strategy_json, updated_at, metadata_json
+                ) VALUES (1, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    global_armed=excluded.global_armed,
+                    global_reason=excluded.global_reason,
+                    per_strategy_json=excluded.per_strategy_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    1 if state.get("global_armed") else 0,
+                    state.get("global_reason") or "",
+                    json.dumps(state.get("per_strategy") or {}),
+                    state.get("updated_at") or utc_now(),
+                    json.dumps(state.get("metadata") or {}),
+                ),
+            )
+        return state
+
+    def save_paper_reconciliation(self, report: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO paper_reconciliations(reconciliation_id, payload_json, created_at, metadata_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(reconciliation_id) DO UPDATE SET payload_json=excluded.payload_json
+                """,
+                (
+                    report["reconciliation_id"],
+                    json.dumps(report),
+                    report.get("created_at") or utc_now(),
+                    json.dumps(report.get("metadata") or {}),
+                ),
+            )
+        return report
+
+    def append_trading_audit_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO trading_audit_chain(
+                    event_id, kind, session_id, run_id, payload_json, prev_hash, entry_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event["event_id"],
+                    event["kind"],
+                    event.get("session_id"),
+                    event.get("run_id"),
+                    json.dumps(event.get("payload") or {}),
+                    event["prev_hash"],
+                    event["entry_hash"],
+                    event.get("created_at") or utc_now(),
+                ),
+            )
+        return event
+
+    def list_trading_audit_events(self, *, limit: int = 10_000) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM trading_audit_chain ORDER BY created_at ASC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [
+            {
+                "event_id": r["event_id"],
+                "kind": r["kind"],
+                "session_id": r["session_id"],
+                "run_id": r["run_id"],
+                "payload": _loads(r["payload_json"], {}),
+                "prev_hash": r["prev_hash"],
+                "entry_hash": r["entry_hash"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
     def list_events(self, run_id: str, *, kind: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         with self.connect() as conn:
             if kind:

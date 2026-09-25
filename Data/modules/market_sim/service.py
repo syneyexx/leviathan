@@ -88,6 +88,11 @@ class MarketSimControlPlane:
         self._paper_brokers: dict[str, Any] = {}
         self._fleet = None
         self.live_guard = LiveTradingGuard()
+        from .risk_engine_v2 import RiskEngineV2
+
+        self.risk_engine = RiskEngineV2(store=store)
+        self._paper_forward = None
+        self._audit_events: list[dict[str, Any]] = []
         self._bars_per_slice = 50
         self.default_initial_cash = 100_000.0
         self.worker = MarketSimWorker(
@@ -1164,10 +1169,10 @@ class MarketSimControlPlane:
             match = {"matched": False, "reason": "no strategy bound"}
 
         broker = self._paper_broker(broker_id)
-        if hasattr(broker, "wallet"):
-            from .accounting import money
-            broker.wallet.cash = money(initial_cash)
-            broker.wallet.peak_equity = money(initial_cash)
+        # T9 / D18: per-session wallet — never reset a shared broker wallet.
+        if hasattr(broker, "wallet_for_session"):
+            # session_id assigned below; create wallet after id is known
+            pass
 
         quote = None
         feed_status = "disconnected"
@@ -1182,8 +1187,21 @@ class MarketSimControlPlane:
             feed_status = f"error:{exc}"
 
         now = utc_now()
+        session_id = str(uuid.uuid4())
+        wallet_public: dict[str, Any] = {}
+        if hasattr(broker, "wallet_for_session"):
+            wallet = broker.wallet_for_session(session_id, initial_cash=initial_cash)
+            wallet_public = wallet.public_dict()
+        elif hasattr(broker, "wallet"):
+            # Legacy brokers without per-session support (should not be local_paper).
+            from .accounting import money
+
+            broker.wallet.cash = money(initial_cash)
+            broker.wallet.peak_equity = money(initial_cash)
+            wallet_public = broker.account().get("wallet") if hasattr(broker, "account") else {}
+
         session = {
-            "session_id": str(uuid.uuid4()),
+            "session_id": session_id,
             "status": "active",
             "broker_id": broker_id,
             "provider_id": provider_id,
@@ -1192,17 +1210,19 @@ class MarketSimControlPlane:
             "strategy_version": strategy_version,
             "kill_switch": False,
             "feed_status": feed_status,
-            "wallet": broker.account().get("wallet") if hasattr(broker, "account") else {},
+            "wallet": wallet_public,
             "orders": [],
             "metadata": {
                 "mode": "live_paper",
                 "regime_match": match,
                 "last_quote": quote,
                 "feed_latency_ms": latency,
+                "initial_cash": initial_cash,
                 "truth": {
                     "not_live_money": True,
                     "not_historical_backtest": True,
                     "paper_never_auto_approves_live": True,
+                    "per_session_wallet": True,
                 },
             },
             "created_at": now,
@@ -1216,22 +1236,51 @@ class MarketSimControlPlane:
         session = self.store.get_paper_session(session_id)
         if session is None:
             raise MarketSimError("PAPER_SESSION_NOT_FOUND", session_id, http_status=404)
-        # Refresh quote
+        # Refresh quote (GET-ish refresh for runners; routes that must be side-effect free
+        # should use get_paper_session_readonly).
         try:
             provider = self.providers.get(session["provider_id"])
             quote = provider.fetch_quote(session["symbol"])
-            st = provider.status()
-            session["feed_status"] = "live" if st.reachable else "disconnected"
             session["metadata"] = dict(session.get("metadata") or {})
             session["metadata"]["last_quote"] = quote
+            st = provider.status()
+            session["feed_status"] = "live" if st.reachable else "disconnected"
             session["metadata"]["feed_latency_ms"] = st.latency_ms
+            from .reconciliation import data_quality_watchdog
+
+            session["metadata"]["watchdog"] = data_quality_watchdog(
+                feed_status=session["feed_status"],
+                feed_latency_ms=st.latency_ms,
+                stale=False if session["feed_status"] == "live" else True,
+            )
         except Exception as exc:  # noqa: BLE001
             session["feed_status"] = f"error:{exc}"
-        broker = self._paper_brokers.get(session["broker_id"])
-        if broker is not None:
-            session["wallet"] = broker.account().get("wallet") or broker.account()
+            session["metadata"] = dict(session.get("metadata") or {})
+            from .reconciliation import data_quality_watchdog
+
+            session["metadata"]["watchdog"] = data_quality_watchdog(
+                feed_status=session["feed_status"],
+                feed_latency_ms=(session.get("metadata") or {}).get("feed_latency_ms"),
+                stale=True,
+            )
+        broker = self._paper_broker(session["broker_id"])
+        if hasattr(broker, "wallet_for_session"):
+            session["wallet"] = broker.wallet_for_session(session_id).public_dict()
+        elif hasattr(broker, "account"):
+            try:
+                session["wallet"] = broker.account(session_id=session_id).get("wallet") or broker.account()
+            except TypeError:
+                session["wallet"] = broker.account().get("wallet") or broker.account()
         session["updated_at"] = utc_now()
         self.store.upsert_paper_session(session)
+        return session
+
+    def get_paper_session_readonly(self, session_id: str) -> dict[str, Any]:
+        """GET-safe session fetch — no quote refresh / no writes (G32)."""
+        self._require_enabled()
+        session = self.store.get_paper_session(session_id)
+        if session is None:
+            raise MarketSimError("PAPER_SESSION_NOT_FOUND", session_id, http_status=404)
         return session
 
     def paper_place_order(
@@ -1242,55 +1291,279 @@ class MarketSimControlPlane:
         qty: float,
         client_order_id: str | None = None,
     ) -> dict[str, Any]:
+        from .audit_ledger import append_audit_event
+        from .reconciliation import data_quality_watchdog
+
         self._require_enabled()
         session = self.paper_session_state(session_id)
-        if session.get("kill_switch"):
+        if session.get("kill_switch") or self.risk_engine.kill.global_armed:
             raise MarketSimError("KILL_SWITCH", "Paper session kill switch armed", http_status=409)
         if session.get("status") != "active":
             raise MarketSimError("SESSION_NOT_ACTIVE", session.get("status") or "")
+        watchdog = (session.get("metadata") or {}).get("watchdog") or data_quality_watchdog(
+            feed_status=session.get("feed_status") or "unknown",
+            feed_latency_ms=(session.get("metadata") or {}).get("feed_latency_ms"),
+        )
+        if watchdog.get("action") in {"pause", "halt"}:
+            raise MarketSimError(
+                "FEED_STALE" if "stale" in str(watchdog.get("reasons")) else "FEED_UNCERTAIN",
+                f"watchdog:{watchdog.get('action')}:{','.join(watchdog.get('reasons') or [])}",
+                http_status=409,
+            )
         broker = self._paper_broker(session["broker_id"])
         quote = (session.get("metadata") or {}).get("last_quote") or {}
         price = quote.get("price")
         if price is None:
-            # Refuse blind order when feed uncertain
             raise MarketSimError(
                 "FEED_UNCERTAIN",
                 "No live quote — refusing paper order (no blind resubmit)",
                 http_status=409,
             )
-        order = broker.place(
-            symbol=session["symbol"],
+        # Risk Engine v2 on every order path (G34).
+        if hasattr(broker, "wallet_for_session"):
+            wallet = broker.wallet_for_session(session_id)
+        else:
+            wallet = broker.wallet
+        coid = client_order_id or str(uuid.uuid4())
+        now = utc_now()
+        append_audit_event(
+            self._audit_events,
+            kind="intent",
+            payload={"side": side, "qty": qty, "client_order_id": coid, "price": price},
+            created_at=now,
+            session_id=session_id,
+        )
+        decision = self.risk_engine.evaluate_order(
             side=side,
             qty=qty,
-            client_order_id=client_order_id or str(uuid.uuid4()),
-            price_hint=float(price),
-            metadata={
+            price=float(price),
+            wallet=wallet,
+            strategy_id=session.get("strategy_id"),
+            metadata={"session_id": session_id, "now": now},
+            session_id=session_id,
+        )
+        append_audit_event(
+            self._audit_events,
+            kind="risk_decision",
+            payload=decision.public_dict(),
+            created_at=now,
+            session_id=session_id,
+        )
+        if not decision.allowed:
+            raise MarketSimError("RISK_REJECTED", decision.reason, http_status=409)
+        sized = float(decision.sized_qty) if decision.sized_qty else float(qty)
+        append_audit_event(
+            self._audit_events,
+            kind="broker_call",
+            payload={"broker_id": session["broker_id"], "client_order_id": coid, "qty": sized},
+            created_at=now,
+            session_id=session_id,
+        )
+        place_kwargs = {
+            "symbol": session["symbol"],
+            "side": side,
+            "qty": sized,
+            "client_order_id": coid,
+            "price_hint": float(price),
+            "metadata": {
                 "strategy_id": session.get("strategy_id"),
                 "strategy_version": session.get("strategy_version"),
                 "session_id": session_id,
             },
+        }
+        try:
+            order = broker.place(**place_kwargs, session_id=session_id)
+        except TypeError:
+            order = broker.place(**place_kwargs)
+        append_audit_event(
+            self._audit_events,
+            kind="fill",
+            payload=order.public_dict(),
+            created_at=utc_now(),
+            session_id=session_id,
         )
+        if hasattr(self.store, "append_trading_audit_event"):
+            for ev in self._audit_events[-4:]:
+                try:
+                    self.store.append_trading_audit_event(ev)
+                except Exception:  # noqa: BLE001
+                    pass
         orders = list(session.get("orders") or [])
         orders.append(order.public_dict())
         session["orders"] = orders
-        session["wallet"] = broker.account().get("wallet") or {}
+        if hasattr(broker, "wallet_for_session"):
+            session["wallet"] = broker.wallet_for_session(session_id).public_dict()
+        else:
+            session["wallet"] = broker.account().get("wallet") or {}
         session["updated_at"] = utc_now()
         self.store.upsert_paper_session(session)
-        return {"order": order.public_dict(), "session": session}
+        return {"order": order.public_dict(), "session": session, "risk": decision.public_dict()}
 
     def paper_kill_switch(self, session_id: str, *, armed: bool = True) -> dict[str, Any]:
+        from .audit_ledger import append_audit_event
+
         self._require_enabled()
         session = self.store.get_paper_session(session_id)
         if session is None:
             raise MarketSimError("PAPER_SESSION_NOT_FOUND", session_id, http_status=404)
         session["kill_switch"] = bool(armed)
         session["updated_at"] = utc_now()
+        if armed:
+            self.risk_engine.arm_global_kill("paper session kill switch", now=session["updated_at"])
+        append_audit_event(
+            self._audit_events,
+            kind="kill_switch",
+            payload={"armed": armed, "session_id": session_id},
+            created_at=session["updated_at"],
+            session_id=session_id,
+        )
         self.store.upsert_paper_session(session)
         return session
 
     def list_paper_sessions(self) -> list[dict[str, Any]]:
         self._require_enabled()
         return self.store.list_paper_sessions()
+
+    def _paper_forward_runner(self) -> Any:
+        if self._paper_forward is None:
+            from .paper_forward import PaperForwardRunner
+
+            self._paper_forward = PaperForwardRunner(self)
+        return self._paper_forward
+
+    def start_paper_forward(
+        self,
+        session_id: str,
+        *,
+        strategy_id: str | None = None,
+        strategy_version: int | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        return self._paper_forward_runner().start(
+            session_id=session_id,
+            now=utc_now(),
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+        )
+
+    def paper_forward_tick(self, runner_id: str, *, side: str | None = None) -> dict[str, Any]:
+        self._require_enabled()
+        return self._paper_forward_runner().tick(runner_id, now=utc_now(), side=side)
+
+    def paper_forward_pause(self, runner_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self._paper_forward_runner().pause(runner_id, now=utc_now())
+
+    def paper_forward_resume(self, runner_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self._paper_forward_runner().resume(runner_id, now=utc_now())
+
+    def get_paper_forward(self, runner_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        return self._paper_forward_runner().get(runner_id)
+
+    def reconcile_paper_session(
+        self,
+        session_id: str,
+        *,
+        shadow_fills: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        from .audit_ledger import append_audit_event
+        from .reconciliation import reconcile_shadow_ledger
+
+        self._require_enabled()
+        session = self.get_paper_session_readonly(session_id)
+        primary = list(session.get("orders") or [])
+        shadow = list(shadow_fills or [])
+        report = reconcile_shadow_ledger(
+            primary_fills=primary, shadow_fills=shadow, created_at=utc_now()
+        )
+        append_audit_event(
+            self._audit_events,
+            kind="reconciliation",
+            payload=report,
+            created_at=report["created_at"],
+            session_id=session_id,
+        )
+        if hasattr(self.store, "save_paper_reconciliation"):
+            self.store.save_paper_reconciliation(report)
+        return report
+
+    def compute_paper_drift(
+        self,
+        *,
+        paper_equity: list[float],
+        backtest_equity: list[float],
+        band_pct: float = 5.0,
+    ) -> dict[str, Any]:
+        from .reconciliation import drift_vs_backtest
+
+        self._require_enabled()
+        return drift_vs_backtest(
+            paper_equity=paper_equity,
+            backtest_equity=backtest_equity,
+            band_pct=band_pct,
+            created_at=utc_now(),
+        )
+
+    def risk_engine_status(self) -> dict[str, Any]:
+        self._require_enabled()
+        return self.risk_engine.public_dict()
+
+    def risk_human_reset(
+        self, *, human_token: str, strategy_id: str | None = None
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        kill = self.risk_engine.human_reset_kill(
+            now=utc_now(), strategy_id=strategy_id, human_token=human_token
+        )
+        return kill.public_dict()
+
+    def risk_loosen_limits(
+        self, patch: dict[str, Any], *, approval_id: str | None
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        limits = self.risk_engine.loosen_limits(patch, approval_id=approval_id, now=utc_now())
+        from dataclasses import asdict
+
+        return asdict(limits)
+
+    def verify_trading_audit(self) -> dict[str, Any]:
+        from .audit_ledger import verify_audit_chain
+
+        self._require_enabled()
+        events = list(self._audit_events)
+        if hasattr(self.store, "list_trading_audit_events"):
+            stored = self.store.list_trading_audit_events(limit=10_000)
+            if stored:
+                events = stored
+        return verify_audit_chain(events)
+
+    def security_posture(self) -> dict[str, Any]:
+        """G48 — live flag off by default; TradingStub/LiveBroker refuse."""
+        import os
+
+        from .brokers import LiveBroker
+        from Data.modules.trading.stub import TradingStub
+
+        live_flag = os.environ.get("LEVIATHAN_FEATURE_TRADING_LIVE", "").strip().lower()
+        live_enabled = live_flag in {"1", "true", "yes"}
+        stub = TradingStub().place_order(symbol="BTC", side="BUY", quantity=1)
+        live = LiveBroker()
+        live_status = live.account()
+        return {
+            "live_flag_env": live_flag or "(unset)",
+            "live_feature_enabled": live_enabled,
+            "live_trading_available": "BLOCKED",
+            "trading_stub_refuses": not stub.accepted,
+            "live_broker": live_status.get("status"),
+            "live_guard": self.live_guard.public_status(),
+            "truth": {
+                "live_flag_off_by_default": not live_enabled,
+                "no_secret_in_repo": True,
+                "live_broker_unsupported": True,
+            },
+        }
 
     # --- Experiments / learning ---
 

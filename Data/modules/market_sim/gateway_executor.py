@@ -146,6 +146,66 @@ class MarketSimModuleExecutor:
                     armed=bool(arguments.get("armed", True)),
                 )
             }
+        if action == "paper.forward.start":
+            args = _snake_args(arguments)
+            return {
+                "runner": svc.start_paper_forward(
+                    str(args.get("session_id") or ""),
+                    strategy_id=args.get("strategy_id"),
+                    strategy_version=args.get("strategy_version"),
+                )
+            }
+        if action == "paper.forward.tick":
+            args = _snake_args(arguments)
+            return svc.paper_forward_tick(
+                str(args.get("runner_id") or ""),
+                side=args.get("side"),
+            )
+        if action == "paper.forward.pause":
+            return {
+                "runner": svc.paper_forward_pause(
+                    str(arguments.get("runner_id") or arguments.get("runnerId") or "")
+                )
+            }
+        if action == "paper.forward.resume":
+            return {
+                "runner": svc.paper_forward_resume(
+                    str(arguments.get("runner_id") or arguments.get("runnerId") or "")
+                )
+            }
+        if action == "paper.reconcile":
+            args = _snake_args(arguments)
+            return {
+                "report": svc.reconcile_paper_session(
+                    str(args.get("session_id") or ""),
+                    shadow_fills=args.get("shadow_fills"),
+                )
+            }
+        if action == "paper.drift":
+            args = _snake_args(arguments)
+            return {
+                "drift": svc.compute_paper_drift(
+                    paper_equity=list(args.get("paper_equity") or []),
+                    backtest_equity=list(args.get("backtest_equity") or []),
+                    band_pct=float(args.get("band_pct") or 5.0),
+                )
+            }
+        if action == "risk.reset":
+            args = _snake_args(arguments)
+            return {
+                "kill": svc.risk_human_reset(
+                    human_token=str(args.get("human_token") or ""),
+                    strategy_id=args.get("strategy_id"),
+                )
+            }
+        if action == "risk.loosen":
+            args = _snake_args(arguments)
+            return {
+                "limits": svc.risk_loosen_limits(
+                    dict(args.get("patch") or {}),
+                    approval_id=args.get("approval_id"),
+                )
+            }
         if action == "experiment.propose":
             return {
                 "trial": svc.propose_experiment(
@@ -349,6 +409,13 @@ def _snake_args(arguments: dict[str, Any], *, skip: set[str] | None = None) -> d
         "paperFills": "paper_fills",
         "calibrationSourceIds": "calibration_source_ids",
         "evaluationSourceIds": "evaluation_source_ids",
+        "runnerId": "runner_id",
+        "shadowFills": "shadow_fills",
+        "paperEquity": "paper_equity",
+        "backtestEquity": "backtest_equity",
+        "bandPct": "band_pct",
+        "humanToken": "human_token",
+        "approvalId": "approval_id",
     }
     out: dict[str, Any] = {}
     for key, value in arguments.items():
