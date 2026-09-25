@@ -18,7 +18,7 @@ from .delegation import DelegateRequest, DelegateResult, DelegationService
 from .domain_strategy import DomainCognitiveStrategy, DomainUnderstandResult, StrategyRegistry
 from .errors import CognitionError, CognitionFeatureDisabled
 from .experience import ExperienceAdmissionPolicy, ExperienceStore, ProceduralMemoryHint, VerifiedExperience
-from .hypotheses import ConfidenceBand, Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band
+from .hypotheses import ConfidenceBand, Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band, hypothesis_board_from_mapping
 from .inference_compute import (
     InferenceComputeController,
     InferenceComputePlan,
@@ -33,6 +33,7 @@ from .structured_state import (
     StructuredReasoningState,
     structured_state_from_mapping,
 )
+from .critic_mesh import CriticFinding, CriticMesh, CriticMeshReport
 from .meta_controller import MetaController, MetaDecision
 from .model_adapter import build_control_plane_model_caller
 from .neural_advisors import (
@@ -108,6 +109,9 @@ __all__ = [
     "ContextBuilderV3",
     "ContextV3Result",
     "CriterionResult",
+    "CriticFinding",
+    "CriticMesh",
+    "CriticMeshReport",
     "DelegateRequest",
     "DelegateResult",
     "DelegationService",
@@ -171,6 +175,7 @@ __all__ = [
     "select_ttc_candidate",
     "should_blind_retry",
     "structured_state_from_mapping",
+    "hypothesis_board_from_mapping",
     "validate_plan_advice",
     "validate_task_advice",
 ]
