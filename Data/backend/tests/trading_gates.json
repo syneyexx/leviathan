@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T2",
-  "frozen_at": "2026-09-24",
+  "phase": "T5",
+  "frozen_at": "2026-09-25",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T2 MarketState + FeatureEngine; feature library causal + multi-TF views",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t2_market_state.py Data/backend/tests/test_market_sim_t1_causality.py -q"
+      "result": "T5 science layer: metrics v2, trial ledger, purged CV/CPCV, sealed acceptance, FDR",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t5_science.py Data/backend/tests/test_market_sim_characterization.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -350,12 +350,30 @@
     "G18": {
       "title": "Metrics v2 ledger-derived + bootstrap CIs",
       "phase": "T5A/T5D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/metrics.py",
+        "Data/modules/market_sim/types.py",
+        "Data/modules/market_sim/engine.py",
+        "Data/modules/market_sim/multi_engine.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::MetricsV2Tests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t5_science.py::MetricsV2Tests",
+        "Data/backend/tests/test_market_sim_characterization.py::D1AnnualizationCharacterization",
+        "Data/backend/tests/test_market_sim_characterization.py::D2WinRateCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t5_science.py::MetricsV2Tests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T5: engines pass timeframe periods_per_year; SimFill.realized_delta feeds win_rate/profit_factor; bootstrap CIs on Sharpe/mean return.",
       "related_defects": [
         "D1",
         "D2"
@@ -364,12 +382,27 @@
     "G19": {
       "title": "Global append-only Trial Ledger",
       "phase": "T5A",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/store.py",
+        "Data/backend/migrations.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::TrialLedgerTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t5_science.py::TrialLedgerTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t5_science.py::TrialLedgerTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T5: market_trial_ledger append-only events (no UPDATE/DELETE); append_trial refuses overwrite; strategy_version persisted.",
       "related_defects": [
         "D14"
       ]
@@ -377,12 +410,26 @@
     "G20": {
       "title": "WFA/purged CV/CPCV/robustness suite",
       "phase": "T5B/T5C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/experiments.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::WalkForwardScienceTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t5_science.py::WalkForwardScienceTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t5_science.py::WalkForwardScienceTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T5: rolling WFA + purged K-fold + combinatorial purged CV + cross-window robustness report.",
       "related_defects": [
         "D13"
       ]
@@ -390,12 +437,29 @@
     "G21": {
       "title": "Acceptance from run IDs; sealed single-use",
       "phase": "T5A/T5C",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/experiments.py",
+        "Data/modules/market_sim/service.py",
+        "Data/modules/market_sim/store.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::SealedAcceptanceTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t5_science.py::SealedAcceptanceTests",
+        "Data/backend/tests/test_market_sim_characterization.py::D11CallerMetricsCharacterization",
+        "Data/backend/tests/test_market_sim_characterization.py::D12AcceptanceKeyMismatchCharacterization"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t5_science.py::SealedAcceptanceTests"
+          ],
+          "timeout_sec": 120
+        }
+      ],
+      "notes": "T5: evaluate_acceptance requires run_id/run_ids; complete_experiment loads run metrics and seals runs single-use via market_acceptance_seals.",
       "related_defects": [
         "D11",
         "D12"
@@ -742,12 +806,25 @@
     "G46": {
       "title": "False-discovery calibration FDR/power",
       "phase": "T5D",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only",
+      "evidence": [
+        "Data/modules/market_sim/science.py",
+        "Data/backend/tests/test_market_sim_t5_science.py::FdrPowerTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t5_science.py::FdrPowerTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t5_science.py::FdrPowerTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "T5: Benjamini–Hochberg FDR + approximate z-test power + trial-family calibration helper.",
       "related_defects": []
     },
     "G47": {

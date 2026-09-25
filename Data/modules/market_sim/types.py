@@ -358,9 +358,14 @@ class SimFill:
     rationale: str
     status: str
     created_at: str
+    # Ledger-derived closed-trade PnL attribution (G18 / D2). None = not attributed.
+    realized_delta: float | None = None
 
     def public_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        # Always expose the key so metrics can detect ledger attribution;
+        # None means "not attributed for this fill" (e.g. opening BUY).
+        return payload
 
 
 @dataclass

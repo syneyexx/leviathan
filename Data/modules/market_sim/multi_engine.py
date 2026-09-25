@@ -185,6 +185,7 @@ class MultiAgentEngine:
                 continue
             if decision.sized_qty > 0:
                 intent.qty = money(decision.sized_qty)
+            before_realized = float(wallet.realized_pnl)
             fill = fill_model.execute_intent(
                 wallet=wallet,
                 intent=intent,
@@ -193,6 +194,7 @@ class MultiAgentEngine:
                 fill_bar_index=state.clock.index,
             )
             if fill.filled:
+                realized_delta = float(wallet.realized_pnl) - before_realized
                 record = SimFill(
                     fill_id=str(uuid.uuid4()),
                     run_id=run.run_id,
@@ -207,6 +209,7 @@ class MultiAgentEngine:
                     rationale=intent.rationale,
                     status=fill.status,
                     created_at=utc_now(),
+                    realized_delta=realized_delta,
                 )
                 self.store.add_fill(record)
                 state.fills.append(record)
@@ -595,6 +598,8 @@ class MultiAgentEngine:
         return state
 
     def _finalize_metrics(self, state: MultiEngineState) -> None:
+        from .metrics import periods_per_year_for_timeframe
+
         run = state.run
         equity_curve = []
         # Rebuild from store equity points if needed
@@ -638,6 +643,7 @@ class MultiAgentEngine:
                 initial_for_metrics = float(equity_curve[0])
             else:
                 initial_for_metrics = float(run.initial_cash)
+        periods_per_year = periods_per_year_for_timeframe(run.timeframe)
         run.metrics = compute_metrics(
             equity=equity_curve,
             fills=[f.public_dict() for f in state.fills],
@@ -648,6 +654,8 @@ class MultiAgentEngine:
             brain_misses=run.brain_misses,
             agreement_rate=agreement,
             veto_rate=veto_rate,
+            periods_per_year=periods_per_year,
+            timeframe=run.timeframe,
         )
         run.metrics["game_mode"] = state.game_mode
         run.metrics["wallets"] = state.book.public_dict(

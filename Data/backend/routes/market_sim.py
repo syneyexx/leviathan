@@ -131,8 +131,10 @@ class ExperimentPropose(BaseModel):
 
 
 class ExperimentComplete(BaseModel):
-    metrics: dict[str, Any]
+    metrics: dict[str, Any] | None = None
     strategyVersion: int | None = None
+    runId: str | None = None
+    runIds: list[str] | None = None
 
 
 class DemoRequest(BaseModel):
@@ -716,6 +718,8 @@ def build_market_sim_router(
                 "trial_id": trial_id,
                 "metrics": payload.metrics,
                 "strategy_version": payload.strategyVersion,
+                "run_id": payload.runId,
+                "run_ids": payload.runIds,
             },
             idempotency_key=f"market_sim:experiment.complete:{trial_id}",
             fallback=lambda: {
@@ -723,6 +727,8 @@ def build_market_sim_router(
                     trial_id,
                     metrics=payload.metrics,
                     strategy_version=payload.strategyVersion,
+                    run_id=payload.runId,
+                    run_ids=payload.runIds,
                 )
             },
         )

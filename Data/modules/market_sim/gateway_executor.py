@@ -151,11 +151,16 @@ class MarketSimModuleExecutor:
                 )
             }
         if action == "experiment.complete":
+            run_ids = arguments.get("run_ids") or arguments.get("runIds")
+            if isinstance(run_ids, str):
+                run_ids = [run_ids]
             return {
                 "trial": svc.complete_experiment(
                     str(arguments.get("trial_id") or ""),
-                    metrics=dict(arguments.get("metrics") or {}),
+                    metrics=dict(arguments.get("metrics") or {}) or None,
                     strategy_version=arguments.get("strategy_version") or arguments.get("strategyVersion"),
+                    run_id=arguments.get("run_id") or arguments.get("runId"),
+                    run_ids=list(run_ids) if run_ids else None,
                 )
             }
         if action == "demo.run":
