@@ -509,6 +509,45 @@ def _training_export_scan() -> tuple[str, str]:
     return "PASS", "structured_trajectory_export_bridge_ok"
 
 
+def _candidate_lifecycle_scan() -> tuple[str, str]:
+    """R23 structural: candidate lifecycle wired from cognition trajectories."""
+    path = ROOT / "Data" / "modules" / "training" / "candidate_lifecycle.py"
+    routes = ROOT / "Data" / "backend" / "routes" / "cognition.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    main = ROOT / "Data" / "backend" / "main.py"
+    if not path.is_file():
+        return "FAIL", "missing:candidate_lifecycle.py"
+    text = path.read_text(encoding="utf-8")
+    route_t = routes.read_text(encoding="utf-8") if routes.is_file() else ""
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    main_t = main.read_text(encoding="utf-8") if main.is_file() else ""
+    if "class CandidateTrainingLifecycle" not in text:
+        return "FAIL", "missing_CandidateTrainingLifecycle"
+    if "class CandidatePhase" not in text:
+        return "FAIL", "missing_CandidatePhase"
+    if "def accept_export_bundle" not in text:
+        return "FAIL", "missing_accept_export_bundle"
+    if "def mark_ingested" not in text:
+        return "FAIL", "missing_mark_ingested"
+    if "wired_from_cognition_trajectories" not in text:
+        return "FAIL", "missing_wired_from_cognition_truth"
+    if "ingested_is_not_trained" not in text:
+        return "FAIL", "missing_ingested_is_not_trained"
+    if "auto_promote_forbidden" not in text:
+        return "FAIL", "missing_auto_promote_forbidden"
+    if "sync_training_candidates" not in rt:
+        return "FAIL", "runtime_missing_sync_training_candidates"
+    if "/api/cognition/training-candidates/sync" not in route_t:
+        return "FAIL", "route_missing_training_candidates_sync"
+    if "/api/cognition/training-candidates/{candidate_id}/ingest" not in route_t:
+        return "FAIL", "route_missing_candidate_ingest"
+    if "CandidateTrainingLifecycle" not in main_t:
+        return "FAIL", "main_missing_CandidateTrainingLifecycle"
+    if "candidate_lifecycle=" not in main_t and "candidate_training_lifecycle" not in main_t:
+        return "FAIL", "main_missing_lifecycle_wire"
+    return "PASS", "candidate_lifecycle_wired_from_cognition_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -715,6 +754,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st22, ev22
                     else:
                         evidence = f"{evidence};{ev22}"
+                if status == "PASS" and gid == "R23":
+                    st23, ev23 = _candidate_lifecycle_scan()
+                    if st23 != "PASS":
+                        status, evidence = st23, ev23
+                    else:
+                        evidence = f"{evidence};{ev23}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":

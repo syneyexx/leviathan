@@ -122,6 +122,7 @@ from Data.modules.evaluation import EvaluationHarness, EvaluationPlatform, Evalu
 from Data.modules.isolation import IsolationGuard, IsolationMode, IsolationRequest
 from Data.modules.training import (
     ActiveLearningMiner,
+    CandidateTrainingLifecycle,
     FlywheelControlPlane,
     PreferenceBridge,
     PreferenceStore,
@@ -410,6 +411,7 @@ preference_store.initialize()
 preference_bridge = PreferenceBridge(training_registry, preference_store=preference_store)
 synthetic_data_service = SyntheticDataService()
 active_learning_miner = ActiveLearningMiner()
+candidate_training_lifecycle = CandidateTrainingLifecycle(miner=active_learning_miner)
 model_store_for_flywheel = ModelStore(settings.database_path)
 flywheel = FlywheelControlPlane(
     settings.database_path,
@@ -1688,7 +1690,12 @@ app.include_router(build_brain_router(brain_facade))
 app.include_router(build_mcp_router(mcp_bridge, execution_gateway))
 app.include_router(build_market_sim_router(market_sim_service))
 app.include_router(build_trading_orchestra_router(trading_orchestra_service))
-app.include_router(build_cognition_router(cognition_runtime))
+app.include_router(
+    build_cognition_router(
+        cognition_runtime,
+        candidate_lifecycle=candidate_training_lifecycle,
+    )
+)
 app.include_router(build_tasks_router(task_service))
 app.include_router(build_settings_router(settings_plane))
 app.include_router(build_behavior_router(behavior_store))
@@ -5197,9 +5204,17 @@ class ActiveGovernRequest(BaseModel):
 @app.post("/api/training/active-learning/{candidate_id}/govern")
 def govern_active_learning(candidate_id: str, payload: ActiveGovernRequest) -> dict:
     try:
+        # Prefer shared lifecycle when the candidate was wired from cognition.
+        if candidate_id in getattr(candidate_training_lifecycle, "_items", {}):
+            cand = candidate_training_lifecycle.govern(
+                candidate_id, operator=payload.operator, note=payload.note
+            )
+            return {"candidate": cand.public_dict()}
         cand = active_learning_miner.govern(candidate_id, operator=payload.operator, note=payload.note)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"candidate": cand.public_dict()}
 
 

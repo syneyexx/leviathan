@@ -2,8 +2,8 @@
   "program": "frontier_reasoning",
   "version": 1,
   "updated": "2026-09-25",
-  "active_phase": "F14",
-  "notes": "F14 training export landed. R02–R15/R17–R22/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
+  "active_phase": "F15",
+  "notes": "F15 candidate training lifecycle landed. R02–R15/R17–R23/R27–R29 PASS evidence. Remaining open. Distinct from trading frontier_program.",
   "f0_skeleton_checks": [
     {
       "id": "F0_AUDIT_DOC",
@@ -77,7 +77,7 @@
     {"id": "R20", "title": "Experience v2", "required": true, "status": "PASS", "phase": "F13", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f13_experience", "evidence": "ExperienceStore v2 aggregates N/Wilson CI by domain/mode/strategy + runtime finalize axes"},
     {"id": "R21", "title": "Active learning", "required": true, "status": "PASS", "phase": "F13", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f13_experience", "evidence": "ACTIVE_LEARNING_TRIGGERS + capture_active_learning_from_context; never auto-trains"},
     {"id": "R22", "title": "Training export", "required": true, "status": "PASS", "phase": "F14", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f14_training_export", "evidence": "PublicCognitiveTrajectory + TrajectoryExportBridge; no private CoT; export≠train"},
-    {"id": "R23", "title": "Candidate training lifecycle", "required": true, "status": "NOT_STARTED", "phase": "F15", "check": "manual"},
+    {"id": "R23", "title": "Candidate training lifecycle", "required": true, "status": "PASS", "phase": "F15", "check": "unittest", "module": "Data.backend.tests.test_frontier_reasoning_f15_candidate_lifecycle", "evidence": "CandidateTrainingLifecycle pending→governed→ingested from cognition export; never auto-promotes"},
     {"id": "R24", "title": "Evaluation/ablation", "required": true, "status": "NOT_STARTED", "phase": "F16", "check": "manual"},
     {"id": "R25", "title": "Frontend reasoning controls", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
     {"id": "R26", "title": "Observability", "required": true, "status": "NOT_STARTED", "phase": "F17", "check": "manual"},
