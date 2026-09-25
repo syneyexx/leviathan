@@ -149,12 +149,16 @@ class MetaController:
         )
 
         execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
-        if execution_class == "DIRECT" or task.task_type == "simple_chat":
+        if execution_class == "DIRECT" and task.task_type == "simple_chat":
             notes.append("simple/DIRECT execution_class — keep FAST path")
+        elif execution_class == "DIRECT":
+            notes.append("DIRECT execution_class — keep FAST path")
         if execution_class == "CURRENT_INFO" or getattr(task, "requires_current_information", False):
             notes.append("freshness required — external research valuable when permitted")
         if execution_class in {"MULTI_DOMAIN", "COMPLEX_REASONING"}:
             notes.append(f"execution_class={execution_class} — deeper orchestration")
+        if execution_class in {"TOOL_REQUIRED", "VERIFICATION_REQUIRED"}:
+            notes.append(f"execution_class={execution_class} — tool/verify path required")
         if getattr(task, "research_mode", "none") == "deep":
             notes.append("deep research mode indicated by task semantics")
         if resource_pressure >= 0.7:
@@ -321,10 +325,8 @@ class MetaController:
         deep_threshold = self._uncertainty_deep_threshold()
         allow_fast = self._allow_fast_path()
         execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
-        # Adaptive depth from TaskModel.execution_class (GI4).
+        # Adaptive depth from TaskModel.execution_class (GI4) — beats short-message simple_chat.
         if execution_class == "DIRECT" and task.risk_class == RiskClass.LOW:
-            return ReasoningMode.FAST if allow_fast else ReasoningMode.STANDARD
-        if task.task_type == "simple_chat" and task.risk_class == RiskClass.LOW:
             return ReasoningMode.FAST if allow_fast else ReasoningMode.STANDARD
         if execution_class in {"MULTI_DOMAIN", "COMPLEX_REASONING", "WORK"}:
             if resource_pressure < 0.7:
@@ -336,6 +338,8 @@ class MetaController:
             return ReasoningMode.STANDARD if resource_pressure >= 0.6 else ReasoningMode.DEEP
         if execution_class in {"TOOL_REQUIRED", "VERIFICATION_REQUIRED", "CONTEXTUAL"}:
             return ReasoningMode.STANDARD
+        if task.task_type == "simple_chat" and task.risk_class == RiskClass.LOW:
+            return ReasoningMode.FAST if allow_fast else ReasoningMode.STANDARD
         if getattr(task, "research_mode", "none") == "deep" or getattr(task, "requires_research", False):
             if resource_pressure < 0.7:
                 return ReasoningMode.DEEP if uncertainty >= 0.45 or task.research_mode == "deep" else ReasoningMode.STANDARD
@@ -364,7 +368,22 @@ class MetaController:
             min_evidence = float(self.policy.minimum_evidence_coverage)
 
         execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
-        if execution_class == "DIRECT" or task.task_type == "simple_chat":
+        # Coding / research domain strategies stay specialized even when execution_class is TOOL_REQUIRED.
+        if task.domain == "coding" and execution_class not in {"DIRECT", "CURRENT_INFO"}:
+            if "repair" in task.task_type or any("test" in c.lower() for c in task.success_criteria):
+                return ReasoningStrategy.CODING_REPAIR
+            return ReasoningStrategy.DEBUG_LOOP if uncertainty >= 0.55 else ReasoningStrategy.PLAN_EXECUTE_VERIFY
+        if (task.domain == "research" or getattr(task, "requires_research", False)) and execution_class not in {
+            "DIRECT",
+            "TOOL_REQUIRED",
+        }:
+            if contradiction_density >= contradiction_threshold:
+                return ReasoningStrategy.COMPARE_ALTERNATIVES
+            if task.task_type == "research_comparison":
+                return ReasoningStrategy.COMPARE_ALTERNATIVES
+            return ReasoningStrategy.RESEARCH_SYNTHESIS
+        # execution_class beats short-message simple_chat when tools/current-info are required.
+        if execution_class == "DIRECT":
             return ReasoningStrategy.DIRECT
         if execution_class == "MULTI_DOMAIN":
             return ReasoningStrategy.MULTI_AGENT
@@ -382,6 +401,8 @@ class MetaController:
             return ReasoningStrategy.HIGH_RISK_VERIFY
         if execution_class == "CONTEXTUAL":
             return ReasoningStrategy.RETRIEVE_THEN_ANSWER
+        if task.task_type == "simple_chat":
+            return ReasoningStrategy.DIRECT
         if task.domain == "coding":
             if "repair" in task.task_type or any("test" in c.lower() for c in task.success_criteria):
                 return ReasoningStrategy.CODING_REPAIR

@@ -98,6 +98,18 @@ class ActionSelector:
                 arguments={"status": "PARTIAL"},
             )
 
+        # Preferred inspect/web/calc capabilities beat plan-step mapping (GI5/GI6).
+        preferred_pending = [
+            (score, action)
+            for score, action in candidates
+            if action.kind == CognitiveActionKind.INVOKE_CAPABILITY
+            and action.capability_id
+            in {"system.inspect", "web.search", "web.fetch", "math.calculate", "compute.numeric"}
+        ]
+        if preferred_pending:
+            preferred_pending.sort(key=lambda c: c[0], reverse=True)
+            return preferred_pending[0][1]
+
         # Prefer plan-ready steps when plan is not stale.
         if plan is not None and not plan.stale:
             ready = self._next_ready_step(plan)
@@ -154,9 +166,9 @@ class ActionSelector:
                 if capability_id in invoked_caps:
                     continue
                 score = self.meta.estimate_value_of_action(
-                    expected_gain=0.85,
-                    expected_completion_progress=0.3,
-                    cost=0.15,
+                    expected_gain=0.95,
+                    expected_completion_progress=0.35,
+                    cost=0.1,
                     failure_risk=0.05,
                 )
                 args: dict[str, Any] = {"query": task.goal, "limit": 5}
@@ -403,8 +415,11 @@ class ActionSelector:
                 )
             )
 
-        # FAST / DIRECT respond
-        if strategy == ReasoningStrategy.DIRECT or decision.mode.value == "FAST" or execution_class == "DIRECT":
+        # FAST / DIRECT respond — suppressed when preferred tool capabilities are pending.
+        if (
+            (strategy == ReasoningStrategy.DIRECT or decision.mode.value == "FAST" or execution_class == "DIRECT")
+            and not preferred_caps
+        ):
             if budgets_remaining.get("model_calls", 0) > 0:
                 out.append(
                     (
@@ -513,7 +528,19 @@ class ActionSelector:
         working_memory: WorkingMemory,
     ) -> CognitiveAction | None:
         objective = (step.objective or "").lower()
-        if "retriev" in objective or "search" in objective or "knowledge" in objective:
+        # Capability shortlist ≠ knowledge retrieval.
+        if "shortlist" in objective and "capabilit" in objective:
+            return CognitiveAction(
+                kind=CognitiveActionKind.SEARCH_CAPABILITY,
+                action_id=str(uuid.uuid4()),
+                rationale=f"plan step: {step.objective}",
+                arguments={"query": task.goal, "step_id": step.step_id},
+            )
+        if (
+            "retriev" in objective
+            or ("knowledge" in objective and "capabilit" not in objective)
+            or ("search" in objective and "capabilit" not in objective)
+        ):
             if budgets_remaining.get("retrieval_rounds", 0) > 0:
                 return CognitiveAction(
                     kind=CognitiveActionKind.RETRIEVE,
