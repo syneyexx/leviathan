@@ -30,7 +30,16 @@ from .context_v3 import ContextBuilderV3, ContextV3Result
 from .delegation import DelegateRequest, DelegateResult, DelegationService
 from .domain_strategy import DomainCognitiveStrategy, DomainUnderstandResult, StrategyRegistry
 from .errors import CognitionError, CognitionFeatureDisabled
-from .experience import ExperienceAdmissionPolicy, ExperienceStore, ProceduralMemoryHint, VerifiedExperience
+from .experience import (
+    ACTIVE_LEARNING_TRIGGERS,
+    BucketStats,
+    ExperienceAdmissionPolicy,
+    ExperienceStore,
+    ProceduralMemoryHint,
+    VerifiedExperience,
+    evaluate_active_learning_triggers,
+    wilson_interval,
+)
 from .hypotheses import ConfidenceBand, Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band, hypothesis_board_from_mapping
 from .inference_compute import (
     InferenceComputeController,
@@ -103,10 +112,12 @@ __all__ = [
     "COGNITION_ADVANCE_CAPABILITY",
     "CandidateSummary",
     "CapabilityBroker",
+    "ACTIVE_LEARNING_TRIGGERS",
     "CapabilityShortlist",
     "CapabilityAxis",
     "CapabilityState",
     "AxisState",
+    "BucketStats",
     "ClampReason",
     "CognitionError",
     "CognitionFeatureDisabled",
@@ -186,6 +197,7 @@ __all__ = [
     "calibrate_expected_gain",
     "classify_failure",
     "classify_steer",
+    "evaluate_active_learning_triggers",
     "invalidation_scope_for",
     "confidence_to_band",
     "merge_plan_advice",
@@ -202,4 +214,5 @@ __all__ = [
     "should_externalize_advance",
     "validate_plan_advice",
     "validate_task_advice",
+    "wilson_interval",
 ]

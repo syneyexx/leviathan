@@ -427,6 +427,51 @@ def _steering_resume_scan() -> tuple[str, str]:
     return "PASS", "steering_scoped_invalidation_and_restart_safe_resume_ok"
 
 
+def _experience_v2_scan() -> tuple[str, str]:
+    """R20/R21 structural: ExperienceStore v2 aggregates + active-learning triggers."""
+    exp = ROOT / "Data" / "modules" / "cognition" / "experience.py"
+    runtime = ROOT / "Data" / "modules" / "cognition" / "runtime.py"
+    if not exp.is_file():
+        return "FAIL", "missing:experience.py"
+    text = exp.read_text(encoding="utf-8")
+    rt = runtime.read_text(encoding="utf-8") if runtime.is_file() else ""
+    if "def wilson_interval" not in text:
+        return "FAIL", "missing_wilson_interval"
+    if "class BucketStats" not in text:
+        return "FAIL", "missing_BucketStats"
+    if "def public_aggregates" not in text:
+        return "FAIL", "missing_public_aggregates"
+    if "ACTIVE_LEARNING_TRIGGERS" not in text:
+        return "FAIL", "missing_ACTIVE_LEARNING_TRIGGERS"
+    if "def evaluate_active_learning_triggers" not in text:
+        return "FAIL", "missing_evaluate_active_learning_triggers"
+    if "def capture_active_learning_from_context" not in text:
+        return "FAIL", "missing_capture_active_learning_from_context"
+    if "auto_promote_forbidden" not in text:
+        return "FAIL", "missing_auto_promote_forbidden"
+    if "neural_effort" not in text or "expected_gain" not in text:
+        return "FAIL", "missing_v2_experience_axes"
+    for reason in (
+        "contradiction_dense",
+        "low_evidence_research",
+        "budget_exhausted",
+        "repeated_critic_replan",
+        "user_correction",
+        "capability_blocked",
+        "unresolved_hypotheses",
+        "timeout",
+    ):
+        if reason not in text:
+            return "FAIL", f"missing_trigger:{reason}"
+    if "capture_active_learning_from_context" not in rt:
+        return "FAIL", "runtime_missing_active_learning_capture"
+    if "_active_learning_context" not in rt:
+        return "FAIL", "runtime_missing_active_learning_context"
+    if "neural_effort=" not in rt or "expected_gain=" not in rt:
+        return "FAIL", "runtime_finalize_missing_v2_axes"
+    return "PASS", "experience_v2_aggregates_and_active_learning_triggers_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -621,6 +666,12 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = stSR, evSR
                     else:
                         evidence = f"{evidence};{evSR}"
+                if status == "PASS" and gid in {"R20", "R21"}:
+                    stE, evE = _experience_v2_scan()
+                    if stE != "PASS":
+                        status, evidence = stE, evE
+                    else:
+                        evidence = f"{evidence};{evE}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":
