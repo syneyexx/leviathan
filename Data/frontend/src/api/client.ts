@@ -6,6 +6,13 @@ import type {
   AgentMission,
   AgentMissionLaunchPayload,
   AgentRosterEntry,
+  AgentSignal,
+  AgentSignalDeadLetter,
+  AgentSignalDelivery,
+  AgentSignalMetrics,
+  AgentSignalStats,
+  AgentCommunicationGraph,
+  SignalCausalChain,
   AnalyticsAgentsResponse,
   AnalyticsDatasetsResponse,
   AnalyticsOverview,
@@ -2552,6 +2559,146 @@ export const api = {
     if (opts?.limit != null) params.set("limit", String(opts.limit));
     const q = params.toString();
     return request(`/api/agents/events${q ? `?${q}` : ""}`);
+  },
+
+  listAgentSignals(opts?: {
+    agentId?: string;
+    senderId?: string;
+    recipientId?: string;
+    missionId?: string;
+    runId?: string;
+    traceId?: string;
+    signalType?: string;
+    priority?: string;
+    status?: string;
+    correlationId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ signals: AgentSignal[]; enabled?: boolean; truth?: Record<string, boolean> }> {
+    const params = new URLSearchParams();
+    if (opts?.agentId) params.set("agentId", opts.agentId);
+    if (opts?.senderId) params.set("senderId", opts.senderId);
+    if (opts?.recipientId) params.set("recipientId", opts.recipientId);
+    if (opts?.missionId) params.set("missionId", opts.missionId);
+    if (opts?.runId) params.set("runId", opts.runId);
+    if (opts?.traceId) params.set("traceId", opts.traceId);
+    if (opts?.signalType) params.set("signalType", opts.signalType);
+    if (opts?.priority) params.set("priority", opts.priority);
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.correlationId) params.set("correlationId", opts.correlationId);
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const q = params.toString();
+    return request(`/api/agents/signals${q ? `?${q}` : ""}`);
+  },
+
+  getAgentSignal(signalId: string): Promise<{ signal: AgentSignal }> {
+    return request(`/api/agents/signals/${encodeURIComponent(signalId)}`);
+  },
+
+  listAgentSignalDeliveries(
+    signalId: string,
+    opts?: { limit?: number },
+  ): Promise<{ deliveries: AgentSignalDelivery[] }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/signals/${encodeURIComponent(signalId)}/deliveries${q ? `?${q}` : ""}`);
+  },
+
+  getAgentSignalChain(
+    signalId: string,
+    opts?: { depth?: number; limit?: number },
+  ): Promise<SignalCausalChain> {
+    const params = new URLSearchParams();
+    if (opts?.depth != null) params.set("depth", String(opts.depth));
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/signals/${encodeURIComponent(signalId)}/chain${q ? `?${q}` : ""}`);
+  },
+
+  getAgentSignalMetrics(opts?: {
+    windowMinutes?: number;
+  }): Promise<{ enabled?: boolean; metrics: AgentSignalMetrics; truth?: Record<string, boolean> }> {
+    const params = new URLSearchParams();
+    if (opts?.windowMinutes != null) params.set("windowMinutes", String(opts.windowMinutes));
+    const q = params.toString();
+    return request(`/api/agents/signals/metrics${q ? `?${q}` : ""}`);
+  },
+
+  getAgentSignalGraph(opts?: {
+    windowHours?: number;
+    missionId?: string;
+  }): Promise<{
+    enabled?: boolean;
+    graph: AgentCommunicationGraph;
+    truth?: Record<string, boolean>;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.windowHours != null) params.set("windowHours", String(opts.windowHours));
+    if (opts?.missionId) params.set("missionId", opts.missionId);
+    const q = params.toString();
+    return request(`/api/agents/signals/graph${q ? `?${q}` : ""}`);
+  },
+
+  listAgentSignalDeadLetters(opts?: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ deadLetters: AgentSignalDeadLetter[]; enabled?: boolean }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    if (opts?.offset != null) params.set("offset", String(opts.offset));
+    const q = params.toString();
+    return request(`/api/agents/signals/dead-letters${q ? `?${q}` : ""}`);
+  },
+
+  retryAgentSignalDeadLetter(
+    deadLetterId: string,
+  ): Promise<{ delivery: AgentSignalDelivery }> {
+    return request(`/api/agents/signals/dead-letters/${encodeURIComponent(deadLetterId)}/retry`, {
+      method: "POST",
+    });
+  },
+
+  listSignalsForAgent(
+    agentId: string,
+    opts?: { limit?: number },
+  ): Promise<{
+    signals: AgentSignal[];
+    stats: AgentSignalStats;
+    enabled?: boolean;
+  }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/${encodeURIComponent(agentId)}/signals${q ? `?${q}` : ""}`);
+  },
+
+  listSignalsForMission(
+    missionId: string,
+    opts?: { limit?: number },
+  ): Promise<{ signals: AgentSignal[]; enabled?: boolean }> {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request(`/api/agents/missions/${encodeURIComponent(missionId)}/signals${q ? `?${q}` : ""}`);
+  },
+
+  publishAgentSignal(payload: Record<string, unknown>): Promise<{ signal: AgentSignal }> {
+    return request("/api/agents/signals", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  ackAgentSignal(
+    signalId: string,
+    payload?: { deliveryId?: string; consumer?: string },
+  ): Promise<{ acknowledged: AgentSignalDelivery[] }> {
+    return request(`/api/agents/signals/${encodeURIComponent(signalId)}/ack`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
   },
 
   reconcileAgents(): Promise<{ updated: string[]; count: number }> {

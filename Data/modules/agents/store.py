@@ -379,7 +379,7 @@ class AgentFleetStore:
                 UPDATE agent_missions SET
                     status=?, priority=?, progress=?, parent_mission_id=?, run_id=?,
                     job_ids_json=?, result_json=?, error=?, cancel_requested=?,
-                    started_at=?, updated_at=?, finished_at=?, metadata_json=?
+                    trace_id=?, started_at=?, updated_at=?, finished_at=?, metadata_json=?
                 WHERE mission_id=?
                 """,
                 (
@@ -392,6 +392,7 @@ class AgentFleetStore:
                     json.dumps(mission.result),
                     mission.error,
                     1 if mission.cancel_requested else 0,
+                    mission.trace_id,
                     mission.started_at,
                     mission.updated_at,
                     mission.finished_at,

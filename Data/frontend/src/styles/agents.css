@@ -1230,3 +1230,88 @@
   .lv-ag-trading-grid { grid-template-columns: 1fr; }
   .lv-ag-trading-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ---------- Agent Signal Fabric ---------- */
+.lv-ag-signals { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.lv-ag-signal-stats,
+.lv-ag-signal-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--lv-text-secondary);
+}
+.lv-ag-signal-stats span,
+.lv-ag-signal-metrics span {
+  border: 1px solid rgba(214, 169, 87, 0.16);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: rgba(2, 10, 9, 0.55);
+}
+.lv-ag-signal-feed { max-height: 280px; overflow: auto; }
+.lv-ag-signal-row {
+  display: grid;
+  grid-template-columns: 58px minmax(90px, 1.1fr) minmax(90px, 0.9fr) minmax(0, 1.6fr) 72px 42px;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.lv-ag-signal-feed li.is-selected,
+.lv-ag-signal-feed li:hover {
+  background: rgba(214, 169, 87, 0.08);
+}
+.lv-ag-signal-type {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--lv-gold);
+  text-transform: uppercase;
+}
+.lv-ag-signal-status { font-size: 10px; color: var(--lv-text-secondary); }
+.lv-ag-signal-conf { font-size: 11px; color: var(--lv-text-bright); }
+.lv-ag-signal-inspector {
+  margin-top: 8px;
+  border-top: 1px solid rgba(214, 169, 87, 0.18);
+  padding-top: 8px;
+}
+.lv-ag-signal-dl {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: 12px;
+  margin: 0;
+}
+.lv-ag-signal-dl dt { color: var(--lv-text-secondary); }
+.lv-ag-signal-dl dd { margin: 0; color: var(--lv-text-bright); word-break: break-all; }
+.lv-ag-signal-pre {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(214, 169, 87, 0.14);
+  border-radius: 6px;
+  padding: 8px;
+}
+.lv-ag-signal-chain {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 12px;
+  color: var(--lv-text-secondary);
+}
+.lv-ag-signal-chain .is-current { color: var(--lv-text-bright); }
+.lv-ag-live.is-on { color: #7dcea0; }
+.lv-ag-live.is-off { color: #c39b6a; }
+.lv-ag-warn { color: #c39b6a; }
+@media (max-width: 900px) {
+  .lv-ag-signal-row {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+  .lv-ag-signal-type,
+  .lv-ag-signal-status,
+  .lv-ag-signal-conf { display: none; }
+}

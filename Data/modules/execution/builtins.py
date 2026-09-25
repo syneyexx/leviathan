@@ -1339,6 +1339,40 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         domains=["agents"],
     )
     _ext(
+        cap_id="agent_signal.deliver",
+        name="Deliver Agent Signal",
+        description="Deliver one Signal Fabric delivery record (route/handler/ACK lifecycle).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="agent_signals",
+        properties={"delivery_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["agent_signals", "signal", "deliver"],
+        domains=["agents"],
+        extra_meta={"idempotent": True},
+    )
+    _ext(
+        cap_id="agent_signal.retry",
+        name="Retry Agent Signal Dead Letter",
+        description="Manually retry a dead-lettered Signal Fabric delivery (idempotent).",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="agent_signals",
+        properties={"dead_letter_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["agent_signals", "signal", "retry"],
+        domains=["agents"],
+    )
+    _ext(
+        cap_id="agent_signal.housekeeping",
+        name="Agent Signal Housekeeping",
+        description="Expire due signals and purge retained telemetry per Signal Fabric policy.",
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="agent_signals",
+        properties={},
+        permissions=("process.execute",),
+        tags=["agent_signals", "signal", "housekeeping"],
+        domains=["agents"],
+    )
+    _ext(
         cap_id="provider.http",
         name="Provider HTTP",
         description="Bounded outbound HTTP via provider_io workers (SSRF-guarded).",

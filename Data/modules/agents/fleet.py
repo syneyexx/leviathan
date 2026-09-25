@@ -128,9 +128,14 @@ class AgentFleetService:
         # Domain executors keyed by AgentDefinitionKind (e.g. TRADING → market_sim orchestra).
         # Missions for a kind with a registered executor never reach the generic runtime.
         self._kind_executors: dict[AgentDefinitionKind, Any] = {}
+        self.signal_fabric: Any | None = None
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
+
+    def bind_signal_fabric(self, fabric: Any | None) -> None:
+        """Optional LEVIATHAN Signal Fabric for mission lifecycle observability."""
+        self.signal_fabric = fabric
 
     def register_kind_executor(self, kind: AgentDefinitionKind | str, executor: Any) -> None:
         """Register a domain executor: ``executor.execute(mission, agent, fleet=...) -> dict``."""
@@ -970,7 +975,42 @@ class AgentFleetService:
             message=f"Mission {mission.status.value}: {mission.title}",
             level="error" if mission.status == MissionStatus.FAILED else "info",
         )
+        self._emit_lifecycle_signal(mission, agent)
         return mission
+
+    def _emit_lifecycle_signal(self, mission: AgentMission, agent: AgentDefinition) -> None:
+        fabric = self.signal_fabric
+        if fabric is None:
+            return
+        try:
+            from Data.modules.agents.signals.types import SignalType
+
+            if mission.status == MissionStatus.COMPLETED:
+                st = SignalType.COMPLETED
+                subject = f"Mission completed: {mission.title}"
+            elif mission.status == MissionStatus.FAILED:
+                st = SignalType.ERROR
+                subject = f"Mission failed: {mission.error or mission.title}"
+            elif mission.status == MissionStatus.CANCELLED:
+                st = SignalType.CANCEL
+                subject = f"Mission cancelled: {mission.title}"
+            else:
+                return
+            # Observability-only: do not change mission semantics if publish fails.
+            fabric.emit_mission_lifecycle(
+                signal_type=st,
+                mission_id=mission.mission_id,
+                agent_id=agent.agent_id,
+                subject=subject,
+                payload={
+                    "missionStatus": mission.status.value,
+                    "progress": mission.progress,
+                },
+                run_id=mission.run_id,
+                trace_id=mission.trace_id,
+            )
+        except Exception:  # noqa: BLE001
+            return
 
     def _domain_executor_for(self, agent: AgentDefinition) -> Any | None:
         """Resolve the domain executor that owns this agent (by kind, or by orchestra claim)."""

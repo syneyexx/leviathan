@@ -2525,6 +2525,174 @@ export type AgentMissionLaunchPayload = {
   dryRun?: boolean;
 };
 
+/* ---------- Agent Signal Fabric ---------- */
+
+export type AgentSignalType =
+  | "TASK_REQUEST"
+  | "TASK_HANDOFF"
+  | "FINDING"
+  | "EVIDENCE"
+  | "HYPOTHESIS"
+  | "QUESTION"
+  | "ANSWER"
+  | "ARTIFACT_READY"
+  | "VERIFY_REQUEST"
+  | "VERIFIED"
+  | "REJECTED"
+  | "CHALLENGE"
+  | "DECISION"
+  | "BLOCK"
+  | "UNBLOCK"
+  | "RESOURCE_REQUEST"
+  | "WORKER_SPAWN_REQUEST"
+  | "PROGRESS"
+  | "WARNING"
+  | "ERROR"
+  | "CANCEL"
+  | "MEMORY_CANDIDATE"
+  | "KNOWLEDGE_CANDIDATE"
+  | "HEARTBEAT"
+  | "COMPLETED"
+  | string;
+
+export type AgentSignalPriority = "CRITICAL" | "HIGH" | "NORMAL" | "LOW" | "TELEMETRY" | string;
+
+export type AgentSignal = {
+  signalId: string;
+  signalType: AgentSignalType;
+  senderType: string;
+  senderId: string;
+  recipientType: string;
+  recipientId: string;
+  missionId?: string | null;
+  runId?: string | null;
+  traceId?: string | null;
+  parentSignalId?: string | null;
+  correlationId?: string | null;
+  priority: AgentSignalPriority;
+  subject: string;
+  payload: Record<string, unknown>;
+  artifactRefs: string[];
+  evidenceRefs: string[];
+  confidence?: number | null;
+  requiresAck: boolean;
+  expiresAt?: string | null;
+  idempotencyKey?: string | null;
+  hopCount: number;
+  maxHops: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
+export type AgentSignalDelivery = {
+  deliveryId: string;
+  signalId: string;
+  recipientType: string;
+  recipientId: string;
+  resolvedAgentId?: string | null;
+  state: string;
+  attemptCount: number;
+  maxAttempts: number;
+  nextAttemptAt?: string | null;
+  claimedBy?: string | null;
+  claimedAt?: string | null;
+  leaseExpiresAt?: string | null;
+  deliveredAt?: string | null;
+  acknowledgedAt?: string | null;
+  consumedAt?: string | null;
+  ackConsumer?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type AgentSignalDeadLetter = {
+  deadLetterId: string;
+  signalId: string;
+  deliveryId?: string | null;
+  recipientType?: string | null;
+  recipientId?: string | null;
+  attemptCount: number;
+  lastError?: string | null;
+  firstFailureAt?: string | null;
+  lastFailureAt?: string | null;
+  reason: string;
+  retryable: boolean;
+  signalSnapshot?: Record<string, unknown>;
+  createdAt: string;
+  retriedAt?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type AgentSignalMetrics = {
+  windowMinutes?: number;
+  since?: string;
+  signalsTotal: number;
+  signalsPerMinute?: number;
+  byType?: Record<string, number>;
+  delivered: number;
+  acknowledged: number;
+  failed: number;
+  deadLetter: number;
+  expired: number;
+  handoffs?: number;
+  verificationRequests?: number;
+  rejections?: number;
+  blocks?: number;
+  knowledgeCandidates?: number;
+  avgDeliveryLatencyS?: number | null;
+  p95DeliveryLatencyS?: number | null;
+  avgAckLatencyS?: number | null;
+  retryRate?: number;
+  dedupeKeys?: number;
+  truth?: Record<string, boolean>;
+};
+
+export type AgentCommunicationGraph = {
+  since?: string;
+  missionId?: string | null;
+  nodes: Array<{ id: string; kind?: string }>;
+  edges: Array<{
+    from: string;
+    to: string;
+    signalCount: number;
+    handoffs?: number;
+    verificationRequests?: number;
+    blocks?: number;
+    errors?: number;
+    avgDeliveryLatencyS?: number | null;
+    byType?: Record<string, number>;
+  }>;
+  truth?: Record<string, boolean>;
+};
+
+export type SignalCausalChain = {
+  signal: AgentSignal;
+  parent?: AgentSignal | null;
+  ancestors?: AgentSignal[];
+  children?: AgentSignal[];
+  related?: AgentSignal[];
+  deliveries?: AgentSignalDelivery[];
+  mission?: AgentMission | null;
+  events?: AgentEvent[];
+  truth?: Record<string, boolean>;
+};
+
+export type AgentSignalStats = {
+  agentId: string;
+  signalsSent: number;
+  signalsReceived: number;
+  handoffs: number;
+  verificationRequests: number;
+  blocksRejections: number;
+  windowHours?: number;
+  truth?: Record<string, boolean>;
+};
+
 /* ---------- Analytics ---------- */
 
 export type AnalyticsOverview = {

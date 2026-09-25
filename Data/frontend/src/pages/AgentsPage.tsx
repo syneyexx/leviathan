@@ -51,6 +51,7 @@ import {
   type LogFilter,
   type MissionTab,
 } from "./agents/helpers";
+import { SignalsPanel } from "./agents/SignalsPanel";
 import { TradeOrchestraSection } from "./agents/TradeOrchestraSection";
 
 const MISSION_TABS: MissionTab[] = [
@@ -1889,7 +1890,7 @@ export function AgentsPage() {
           <section className="lv-ag-panel">
             <SectionTitle n={5} title="COMMUNICATION / COORDINATION" />
             <div className="lv-ag-tabs">
-              {["Agent Network", "Delegation Chain", "Message Log"].map((tab) => (
+              {["Agent Network", "Delegation Chain", "Message Log", "Signals"].map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -1962,6 +1963,15 @@ export function AgentsPage() {
                   <li className="lv-ag-empty">No events for current filters.</li>
                 ) : null}
               </ul>
+            ) : null}
+            {commTab === "Signals" ? (
+              <SignalsPanel
+                selectedAgentId={selectedAgentId}
+                selectedMissionId={selectedMissionId}
+                agentNameById={Object.fromEntries(
+                  Object.entries(agentById).map(([id, a]) => [id, a.name]),
+                )}
+              />
             ) : null}
           </section>
 

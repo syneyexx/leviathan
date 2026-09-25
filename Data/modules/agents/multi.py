@@ -63,8 +63,12 @@ class DagCycleError(ValueError):
 class MultiAgentCoordinator:
     """DAG executor over shared AgentRuntime — not a second job system."""
 
-    def __init__(self, agents: AgentRuntime) -> None:
+    def __init__(self, agents: AgentRuntime, *, signal_fabric: Any = None) -> None:
         self.agents = agents
+        self.signal_fabric = signal_fabric
+
+    def bind_signal_fabric(self, fabric: Any) -> None:
+        self.signal_fabric = fabric
 
     def run(
         self,
@@ -109,6 +113,11 @@ class MultiAgentCoordinator:
             raise DagCycleError(f"DAG cycle detected: {' -> '.join(cycle)}")
 
         board = blackboard or AgentBlackboard(run_id=run_id)
+        if self.signal_fabric is not None and run_id:
+            try:
+                self.signal_fabric.register_blackboard(run_id, board)
+            except Exception:  # noqa: BLE001
+                pass
         board.post(
             kind="open_question",
             content=request,
