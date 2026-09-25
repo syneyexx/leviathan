@@ -172,7 +172,8 @@ class MetaController:
         # Adaptive escalation / de-escalation during a run.
         if previous_mode is not None and (
             not user_requested_depth
-            or str(user_requested_depth).strip().lower() in {"adaptive", "adadaptive", ""}
+            or str(user_requested_depth).strip().lower()
+            in {"adaptive", "adadaptive", "auto", ""}
             or str(user_requested_depth).strip().upper() == ReasoningMode.ADAPTIVE.value
         ):
             mode, escalation, esc_notes = self._adapt_mode(
@@ -197,7 +198,7 @@ class MetaController:
             user_forced=bool(
                 user_requested_depth
                 and str(user_requested_depth).strip().lower()
-                not in {"", "adaptive", "adadaptive"}
+                not in {"", "adaptive", "adadaptive", "auto"}
             ),
         )
         notes.extend(clamp_notes)
@@ -335,8 +336,12 @@ class MetaController:
     ) -> ReasoningMode:
         """Mode the operator/user asked for before resource clamps."""
         if user_depth:
+            raw = user_depth.strip().lower()
+            # AUTO is the UI alias for ADAPTIVE (heuristics, not a forced depth).
+            if raw in {"auto", "adaptive", "adadaptive"}:
+                return self._mode(task, uncertainty, None, resource_pressure=0.0)
             mapping = {m.value.lower(): m for m in ReasoningMode}
-            forced = mapping.get(user_depth.strip().lower())
+            forced = mapping.get(raw)
             if forced and forced != ReasoningMode.ADAPTIVE:
                 return forced
             if forced == ReasoningMode.ADAPTIVE:
@@ -490,13 +495,18 @@ class MetaController:
         resource_pressure: float,
     ) -> ReasoningMode:
         if user_depth:
-            mapping = {m.value.lower(): m for m in ReasoningMode}
-            forced = mapping.get(user_depth.strip().lower())
-            # ADAPTIVE falls through to heuristics (settings default_mode=adaptive).
-            if forced and forced != ReasoningMode.ADAPTIVE:
-                if resource_pressure >= 0.8 and forced in {ReasoningMode.DEEP, ReasoningMode.MAXIMUM}:
-                    return ReasoningMode.STANDARD
-                return forced
+            raw = user_depth.strip().lower()
+            # AUTO / ADAPTIVE fall through to heuristics.
+            if raw not in {"auto", "adaptive", "adadaptive", ""}:
+                mapping = {m.value.lower(): m for m in ReasoningMode}
+                forced = mapping.get(raw)
+                if forced and forced != ReasoningMode.ADAPTIVE:
+                    if resource_pressure >= 0.8 and forced in {
+                        ReasoningMode.DEEP,
+                        ReasoningMode.MAXIMUM,
+                    }:
+                        return ReasoningMode.STANDARD
+                    return forced
         deep_threshold = self._uncertainty_deep_threshold()
         allow_fast = self._allow_fast_path()
         if task.task_type == "simple_chat" and task.risk_class == RiskClass.LOW:

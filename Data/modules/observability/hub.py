@@ -301,6 +301,20 @@ class ObservabilityHub:
         if self.store is not None:
             snap["durable_latest_sequence"] = self.store.latest_sequence()
             snap["level_counts"] = self.store.counts_by_level()
+        provider = getattr(self, "_cognition_compute_provider", None)
+        if callable(provider):
+            try:
+                compute = provider()
+                if isinstance(compute, dict) and compute:
+                    snap["cognition_compute"] = compute
+            except Exception:  # noqa: BLE001 — telemetry must not break
+                snap["cognition_compute"] = {
+                    "error": "provider_failed",
+                    "truth": {
+                        "two_axis_compute_observability": True,
+                        "unmeasured_is_not_pass": True,
+                    },
+                }
         return snap
 
     def shutdown(self) -> None:

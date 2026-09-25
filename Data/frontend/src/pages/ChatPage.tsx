@@ -10,8 +10,10 @@ import type {
   Conversation,
   KnowledgeSource,
   ModelDescriptor,
+  ReasoningDepth,
   ReasoningSummary,
 } from "../types/api";
+import { REASONING_DEPTH_OPTIONS } from "../types/api";
 
 type LocationState = {
   draft?: string;
@@ -36,6 +38,13 @@ type LastTurnMeta = {
   cognitionMode: string | null;
   cognitionStatus: string | null;
   cognitionPhase: string | null;
+  requestedMode: string | null;
+  effectiveMode: string | null;
+  clampReason: string | null;
+  nativeEffort: string | null;
+  neuralAdaptation: string | null;
+  expectedGain: number | null;
+  maxReasoningTokens: number | null;
 };
 
 const EMPTY_TURN: LastTurnMeta = {
@@ -49,6 +58,13 @@ const EMPTY_TURN: LastTurnMeta = {
   cognitionMode: null,
   cognitionStatus: null,
   cognitionPhase: null,
+  requestedMode: null,
+  effectiveMode: null,
+  clampReason: null,
+  nativeEffort: null,
+  neuralAdaptation: null,
+  expectedGain: null,
+  maxReasoningTokens: null,
 };
 
 function formatTime(value: string | null | undefined): string {
@@ -88,6 +104,7 @@ export function ChatPage() {
   const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [reasoningMode, setReasoningMode] = useState<ReasoningDepth>("AUTO");
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [capabilities, setCapabilities] = useState<CapabilityListItem[]>([]);
   const [agentsEnabled, setAgentsEnabled] = useState<boolean | null>(null);
@@ -454,6 +471,7 @@ export function ChatPage() {
         {
           conversationId: activeId,
           modelId: selectedModelId,
+          reasoningMode,
         },
         {
           onToken: (token) => {
@@ -508,12 +526,24 @@ export function ChatPage() {
       });
       const degraded = Boolean(data.truth?.streaming_degraded);
       const cog = data.cognition && typeof data.cognition === "object" ? data.cognition : null;
+      const cogRecord = cog as Record<string, unknown> | null;
       const cogDecision =
-        cog && "decision" in cog && cog.decision && typeof cog.decision === "object"
-          ? (cog.decision as Record<string, unknown>)
+        cogRecord && "decision" in cogRecord && cogRecord.decision && typeof cogRecord.decision === "object"
+          ? (cogRecord.decision as Record<string, unknown>)
           : null;
       const cogStatus =
-        cog && "status" in cog && typeof cog.status === "string" ? cog.status : null;
+        cogRecord && typeof cogRecord.status === "string" ? cogRecord.status : null;
+      const neural =
+        cogRecord &&
+        "neural_budgets" in cogRecord &&
+        cogRecord.neural_budgets &&
+        typeof cogRecord.neural_budgets === "object"
+          ? (cogRecord.neural_budgets as Record<string, unknown>)
+          : null;
+      const modeFromCog =
+        (cogRecord && typeof cogRecord.mode === "string" && cogRecord.mode) ||
+        (cogDecision && typeof cogDecision.mode === "string" && String(cogDecision.mode)) ||
+        null;
       setLastTurn({
         model: data.model || null,
         intent: data.reasoning?.intent ?? null,
@@ -522,12 +552,35 @@ export function ChatPage() {
         streaming: degraded ? "degraded" : "complete",
         reasoning: data.reasoning ?? null,
         knowledgeSources: data.knowledge_sources ?? [],
-        cognitionMode:
-          cogDecision && typeof cogDecision.mode === "string" ? String(cogDecision.mode) : null,
+        cognitionMode: modeFromCog,
         cognitionStatus: cogStatus,
         cognitionPhase:
           cogStatus && ["REASONING", "PERCEIVING", "VERIFYING", "EXECUTING"].includes(cogStatus)
             ? cogStatus.charAt(0) + cogStatus.slice(1).toLowerCase()
+            : null,
+        requestedMode:
+          cogRecord && typeof cogRecord.requested_mode === "string"
+            ? cogRecord.requested_mode
+            : null,
+        effectiveMode:
+          cogRecord && typeof cogRecord.effective_mode === "string"
+            ? cogRecord.effective_mode
+            : modeFromCog,
+        clampReason:
+          cogRecord && typeof cogRecord.clamp_reason === "string" ? cogRecord.clamp_reason : null,
+        nativeEffort:
+          neural && typeof neural.native_effort === "string" ? neural.native_effort : null,
+        neuralAdaptation:
+          cogRecord && typeof cogRecord.neural_adaptation === "string"
+            ? cogRecord.neural_adaptation
+            : null,
+        expectedGain:
+          cogRecord && typeof cogRecord.expected_gain === "number"
+            ? cogRecord.expected_gain
+            : null,
+        maxReasoningTokens:
+          neural && typeof neural.max_reasoning_tokens === "number"
+            ? neural.max_reasoning_tokens
             : null,
       });
       const list = await refreshConversations(data.conversation_id);
@@ -874,6 +927,34 @@ export function ChatPage() {
                 </div>
               ) : null}
             </div>
+            <label
+              className="lv-model"
+              title="Session reasoning depth (not saved)"
+              style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
+            >
+              <span className="lv-muted" style={{ fontSize: "0.75rem" }}>
+                Depth
+              </span>
+              <select
+                aria-label="Reasoning depth"
+                value={reasoningMode}
+                disabled={busy}
+                onChange={(event) => setReasoningMode(event.target.value as ReasoningDepth)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "inherit",
+                  font: "inherit",
+                  cursor: busy ? "not-allowed" : "pointer",
+                }}
+              >
+                {REASONING_DEPTH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               className="lv-prompt-send lv-button-primary"
               type="button"
@@ -957,6 +1038,52 @@ export function ChatPage() {
                 ))}
               </div>
             ) : null}
+            {(lastTurn.cognitionMode ||
+              lastTurn.nativeEffort ||
+              lastTurn.requestedMode ||
+              lastTurn.effectiveMode) && (
+              <div className="lv-context-list" aria-label="Cognition compute">
+                <div className="lv-context-item">
+                  <span>
+                    <strong>Orchestration</strong>
+                    <small>
+                      {[
+                        lastTurn.requestedMode
+                          ? `requested ${lastTurn.requestedMode}`
+                          : null,
+                        lastTurn.effectiveMode || lastTurn.cognitionMode
+                          ? `effective ${lastTurn.effectiveMode || lastTurn.cognitionMode}`
+                          : null,
+                        lastTurn.clampReason ? `clamp ${lastTurn.clampReason}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "—"}
+                    </small>
+                  </span>
+                </div>
+                <div className="lv-context-item">
+                  <span>
+                    <strong>Neural axis</strong>
+                    <small>
+                      {[
+                        lastTurn.nativeEffort ? `effort ${lastTurn.nativeEffort}` : null,
+                        lastTurn.maxReasoningTokens != null
+                          ? `tokens ${lastTurn.maxReasoningTokens}`
+                          : null,
+                        lastTurn.expectedGain != null
+                          ? `gain ${lastTurn.expectedGain.toFixed(2)}`
+                          : null,
+                        lastTurn.neuralAdaptation
+                          ? `adapt ${lastTurn.neuralAdaptation}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "Unmeasured"}
+                    </small>
+                  </span>
+                </div>
+              </div>
+            )}
             <div className="lv-context-list">
               {lastTurn.knowledgeSources.length === 0 ? (
                 <div className="lv-context-item">

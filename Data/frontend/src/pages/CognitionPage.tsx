@@ -2,7 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { AppShell } from "../layouts/AppShell";
 import { useAppToast } from "../state/useAppToast";
-import type { CognitionHealth, CognitionRunStatus } from "../types/api";
+import type {
+  CognitionComputeSnapshot,
+  CognitionHealth,
+  CognitionRunStatus,
+  ReasoningDepth,
+} from "../types/api";
+import { REASONING_DEPTH_OPTIONS } from "../types/api";
 
 /**
  * Operator surface for Cognitive Runtime.
@@ -15,18 +21,26 @@ export function CognitionPage() {
   const [health, setHealth] = useState<CognitionHealth | null>(null);
   const [message, setMessage] = useState("");
   const [shadow, setShadow] = useState(true);
+  const [depth, setDepth] = useState<ReasoningDepth>("AUTO");
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState<CognitionRunStatus | null>(null);
   const [events, setEvents] = useState<unknown[]>([]);
+  const [compute, setCompute] = useState<CognitionComputeSnapshot | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.cognitionHealth();
+      const [res, computeRes] = await Promise.all([
+        api.cognitionHealth(),
+        api.cognitionCompute().catch(() => null),
+      ]);
       setHealth(res.cognition);
       if (typeof res.cognition.shadow_default === "boolean") {
         setShadow(res.cognition.shadow_default);
+      }
+      if (computeRes?.cognition_compute) {
+        setCompute(computeRes.cognition_compute);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load cognition health");
@@ -47,10 +61,20 @@ export function CognitionPage() {
     }
     setBusy(true);
     try {
-      const result = await api.cognitionSubmit({ message: text, shadow, run: true });
+      const result = await api.cognitionSubmit({
+        message: text,
+        shadow,
+        run: true,
+        user_requested_depth: depth,
+        reasoning_mode: depth,
+      });
       setRun(result);
       const ev = await api.cognitionEvents(result.run_id);
       setEvents(ev.events);
+      const computeRes = await api.cognitionCompute().catch(() => null);
+      if (computeRes?.cognition_compute) {
+        setCompute(computeRes.cognition_compute);
+      }
       toast(result.shadow ? "Shadow cognition completed" : `Cognition status: ${result.status}`);
       await load();
     } catch (err) {
@@ -73,6 +97,9 @@ export function CognitionPage() {
       setBusy(false);
     }
   }
+
+  const orch = compute?.orchestration;
+  const neural = compute?.neural ?? run?.neural_budgets;
 
   return (
     <AppShell
@@ -110,6 +137,57 @@ export function CognitionPage() {
         </section>
 
         <section className="lv-panel lv-card" style={{ marginBottom: "1rem" }}>
+          <div className="lv-section-label">Two-axis compute</div>
+          <p className="lv-muted" style={{ marginTop: 0 }}>
+            Orchestration mode and neural effort/tokens — unmeasured fields stay null, never fake PASS.
+          </p>
+          <div
+            className="lv-kv-grid"
+            style={{ display: "grid", gap: "0.5rem", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))" }}
+          >
+            <div>
+              orch mode:{" "}
+              <strong>{orch?.effective_mode ?? orch?.mode ?? run?.effective_mode ?? run?.mode ?? "—"}</strong>
+            </div>
+            <div>
+              requested: <strong>{orch?.requested_mode ?? run?.requested_mode ?? "—"}</strong>
+            </div>
+            <div>
+              clamp: <strong>{orch?.clamp_reason ?? run?.clamp_reason ?? "—"}</strong>
+            </div>
+            <div>
+              strategy: <strong>{orch?.strategy ?? run?.strategy ?? "—"}</strong>
+            </div>
+            <div>
+              native effort:{" "}
+              <strong>
+                {(neural && "native_effort" in neural ? neural.native_effort : null) ?? "—"}
+              </strong>
+            </div>
+            <div>
+              max reasoning tokens:{" "}
+              <strong>
+                {(neural && "max_reasoning_tokens" in neural
+                  ? neural.max_reasoning_tokens
+                  : null) ?? "—"}
+              </strong>
+            </div>
+            <div>
+              candidates:{" "}
+              <strong>
+                {(neural && "candidate_count" in neural ? neural.candidate_count : null) ?? "—"}
+              </strong>
+            </div>
+            <div>
+              expected gain:{" "}
+              <strong>
+                {compute?.neural?.expected_gain ?? run?.expected_gain ?? "—"}
+              </strong>
+            </div>
+          </div>
+        </section>
+
+        <section className="lv-panel lv-card" style={{ marginBottom: "1rem" }}>
           <div className="lv-section-label">Submit task</div>
           <textarea
             className="lv-input"
@@ -119,10 +197,36 @@ export function CognitionPage() {
             placeholder="Describe a task… (shadow mode does not replace chat answers)"
             style={{ width: "100%", marginTop: "0.5rem" }}
           />
-          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.75rem" }}>
-            <input type="checkbox" checked={shadow} onChange={(e) => setShadow(e.target.checked)} />
-            Shadow mode (plan/decide only — no user-visible answer replacement)
-          </label>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "1rem",
+              alignItems: "center",
+              marginTop: "0.75rem",
+            }}
+          >
+            <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <input type="checkbox" checked={shadow} onChange={(e) => setShadow(e.target.checked)} />
+              Shadow mode (plan/decide only — no user-visible answer replacement)
+            </label>
+            <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              Reasoning depth
+              <select
+                className="lv-input"
+                aria-label="Reasoning depth"
+                value={depth}
+                onChange={(e) => setDepth(e.target.value as ReasoningDepth)}
+                style={{ width: "auto", minWidth: "8rem" }}
+              >
+                {REASONING_DEPTH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.75rem" }}>
             <button className="lv-btn" type="button" disabled={busy || !health?.enabled} onClick={() => void submit()}>
               Run cognition
@@ -151,7 +255,18 @@ export function CognitionPage() {
               <div>run_id: <code>{run.run_id}</code></div>
               <div>goal: {run.goal}</div>
               <div>domain: {run.domain}</div>
-              <div>mode / strategy: {run.mode ?? "—"} / {run.strategy ?? "—"}</div>
+              <div>
+                mode / strategy: {run.mode ?? "—"} / {run.strategy ?? "—"}
+              </div>
+              <div>
+                requested → effective: {run.requested_mode ?? "—"} → {run.effective_mode ?? run.mode ?? "—"}
+                {run.clamp_reason ? ` (clamp: ${run.clamp_reason})` : ""}
+              </div>
+              <div>
+                neural: effort={run.neural_budgets?.native_effort ?? "—"} tokens=
+                {run.neural_budgets?.max_reasoning_tokens ?? "—"} candidates=
+                {run.neural_budgets?.candidate_count ?? "—"}
+              </div>
               <div>uncertainty: {run.uncertainty ?? "—"}</div>
               <div>working_memory: {run.working_memory_count ?? 0}</div>
               <div>shadow: {String(!!run.shadow)}</div>

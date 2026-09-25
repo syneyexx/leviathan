@@ -14,11 +14,63 @@ export type Message = {
   created_at: string;
 };
 
+/** Session override for cognition depth (F17 / R25). AUTO ≡ ADAPTIVE. */
+export type ReasoningDepth =
+  | "AUTO"
+  | "ADAPTIVE"
+  | "FAST"
+  | "STANDARD"
+  | "DEEP"
+  | "MAXIMUM";
+
+export const REASONING_DEPTH_OPTIONS: ReadonlyArray<{
+  value: ReasoningDepth;
+  label: string;
+}> = [
+  { value: "AUTO", label: "Auto" },
+  { value: "FAST", label: "Fast" },
+  { value: "STANDARD", label: "Standard" },
+  { value: "DEEP", label: "Deep" },
+  { value: "MAXIMUM", label: "Maximum" },
+] as const;
+
 export type ChatOptions = {
   conversationId?: string | null;
   modelId?: string | null;
   preferredRole?: string | null;
   stream?: boolean;
+  /** Session cognition depth: AUTO|ADAPTIVE|FAST|STANDARD|DEEP|MAXIMUM */
+  reasoningMode?: ReasoningDepth | string | null;
+};
+
+/** Public two-axis cognition compute snapshot (F17 / R26). Never private CoT. */
+export type CognitionComputeSnapshot = {
+  orchestration?: {
+    mode?: string | null;
+    requested_mode?: string | null;
+    effective_mode?: string | null;
+    clamp_reason?: string | null;
+    strategy?: string | null;
+    budgets?: Record<string, number> | null;
+    usage?: Record<string, number> | null;
+  };
+  neural?: {
+    native_effort?: string | null;
+    max_reasoning_tokens?: number | null;
+    candidate_count?: number | null;
+    max_parallel_candidates?: number | null;
+    diversity_temperature?: number | null;
+    reasoning_tokens_status?: string | null;
+    inference_path?: string | null;
+    model_calls_consumed?: number | null;
+    expected_gain?: number | null;
+    neural_adaptation?: string | null;
+  };
+  run_id?: string | null;
+  status?: string | null;
+  health?: Record<string, unknown>;
+  error?: string;
+  truth?: Record<string, boolean>;
 };
 
 export type ReasoningSummary = {
@@ -75,6 +127,9 @@ export type CognitionRunStatus = {
   status: string;
   stage?: string;
   mode?: string | null;
+  requested_mode?: string | null;
+  effective_mode?: string | null;
+  clamp_reason?: string | null;
   strategy?: string | null;
   goal?: string;
   domain?: string;
@@ -82,6 +137,16 @@ export type CognitionRunStatus = {
   belief_counts?: Record<string, number>;
   working_memory_count?: number;
   budgets?: Record<string, number>;
+  neural_budgets?: {
+    native_effort?: string | null;
+    max_reasoning_tokens?: number | null;
+    candidate_count?: number | null;
+    max_parallel_candidates?: number | null;
+    diversity_temperature?: number | null;
+  } | null;
+  expected_gain?: number | null;
+  neural_adaptation?: string | null;
+  reasoning_state?: Record<string, unknown> | null;
   usage?: Record<string, number>;
   plan?: {
     strategy?: string;

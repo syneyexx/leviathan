@@ -4,7 +4,7 @@ import { api } from "../../api/client";
 import { useSystemTelemetry } from "../../hooks/useSystemTelemetry";
 import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
-import type { PerformanceSnapshot } from "../../types/api";
+import type { CognitionComputeSnapshot, PerformanceSnapshot } from "../../types/api";
 import { Bar, Panel, Pill, PrHero, Spark, type PillTone } from "./shared";
 
 function statusPillTone(status: string): PillTone {
@@ -66,6 +66,7 @@ export function PerformancePage() {
     intervalMs: 1500,
   });
   const [snap, setSnap] = useState<PerformanceSnapshot | null>(null);
+  const [cognitionCompute, setCognitionCompute] = useState<CognitionComputeSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState("Alle types");
@@ -73,8 +74,14 @@ export function PerformancePage() {
 
   const load = useCallback(async () => {
     try {
-      const data = await api.performanceSnapshot();
+      const [data, computeRes] = await Promise.all([
+        api.performanceSnapshot(),
+        api.cognitionCompute().catch(() => null),
+      ]);
       setSnap(data);
+      if (computeRes?.cognition_compute) {
+        setCognitionCompute(computeRes.cognition_compute);
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Performance unavailable");
@@ -248,6 +255,73 @@ export function PerformancePage() {
             </article>
           ))}
         </section>
+
+        <Panel title="Cognition Compute (two-axis)" className="lv-pr-panel">
+          {cognitionCompute ? (
+            <div className="lv-pr-kpi-grid" aria-label="Cognition compute">
+              <article className="lv-pr-kpi">
+                <div className="lv-pr-kpi-label">Orchestration mode</div>
+                <div className="lv-pr-kpi-value">
+                  {cognitionCompute.orchestration?.effective_mode ??
+                    cognitionCompute.orchestration?.mode ??
+                    "—"}
+                </div>
+                <div className="lv-pr-kpi-foot">
+                  <span className="lv-pr-kpi-sub">
+                    requested {cognitionCompute.orchestration?.requested_mode ?? "—"}
+                    {cognitionCompute.orchestration?.clamp_reason
+                      ? ` · clamp ${cognitionCompute.orchestration.clamp_reason}`
+                      : ""}
+                  </span>
+                </div>
+              </article>
+              <article className="lv-pr-kpi">
+                <div className="lv-pr-kpi-label">Native effort</div>
+                <div className="lv-pr-kpi-value">
+                  {cognitionCompute.neural?.native_effort ?? "—"}
+                </div>
+                <div className="lv-pr-kpi-foot">
+                  <span className="lv-pr-kpi-sub">
+                    {cognitionCompute.neural?.native_effort == null
+                      ? "Unmeasured"
+                      : cognitionCompute.neural?.inference_path ?? "neural axis"}
+                  </span>
+                </div>
+              </article>
+              <article className="lv-pr-kpi">
+                <div className="lv-pr-kpi-label">Max reasoning tokens</div>
+                <div className="lv-pr-kpi-value">
+                  {cognitionCompute.neural?.max_reasoning_tokens ?? "—"}
+                </div>
+                <div className="lv-pr-kpi-foot">
+                  <span className="lv-pr-kpi-sub">
+                    {cognitionCompute.neural?.max_reasoning_tokens == null
+                      ? "Unmeasured"
+                      : cognitionCompute.neural?.reasoning_tokens_status ?? "budget"}
+                  </span>
+                </div>
+              </article>
+              <article className="lv-pr-kpi">
+                <div className="lv-pr-kpi-label">Candidates / gain</div>
+                <div className="lv-pr-kpi-value">
+                  {cognitionCompute.neural?.candidate_count ?? "—"}
+                  {cognitionCompute.neural?.expected_gain != null
+                    ? ` / ${cognitionCompute.neural.expected_gain.toFixed(2)}`
+                    : ""}
+                </div>
+                <div className="lv-pr-kpi-foot">
+                  <span className="lv-pr-kpi-sub">
+                    {cognitionCompute.neural?.neural_adaptation ?? "no private CoT"}
+                  </span>
+                </div>
+              </article>
+            </div>
+          ) : (
+            <p className="lv-pr-kpi-sub">
+              Unmeasured — cognition compute snapshot not yet available. Unknown stays unknown.
+            </p>
+          )}
+        </Panel>
 
         <Panel title="Inference Efficiency" className="lv-pr-panel">
           {(() => {

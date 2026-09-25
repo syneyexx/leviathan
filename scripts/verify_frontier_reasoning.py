@@ -587,6 +587,67 @@ def _frontier_evaluation_scan() -> tuple[str, str]:
     return "PASS", "frontier_reasoning_evaluation_suite_and_ablations_ok"
 
 
+def _frontend_reasoning_controls_scan() -> tuple[str, str]:
+    """R25 structural: AUTO/FAST/STANDARD/DEEP/MAXIMUM controls in Chat/Cognition UI."""
+    chat = ROOT / "Data" / "frontend" / "src" / "pages" / "ChatPage.tsx"
+    cognition = ROOT / "Data" / "frontend" / "src" / "pages" / "CognitionPage.tsx"
+    types = ROOT / "Data" / "frontend" / "src" / "types" / "api.ts"
+    client = ROOT / "Data" / "frontend" / "src" / "api" / "client.ts"
+    main = ROOT / "Data" / "backend" / "main.py"
+    for path in (chat, cognition, types, client, main):
+        if not path.is_file():
+            return "FAIL", f"missing:{path.relative_to(ROOT)}"
+    t = types.read_text(encoding="utf-8")
+    c = chat.read_text(encoding="utf-8")
+    cog = cognition.read_text(encoding="utf-8")
+    cl = client.read_text(encoding="utf-8")
+    m = main.read_text(encoding="utf-8")
+    if "REASONING_DEPTH_OPTIONS" not in t or "reasoningMode" not in t:
+        return "FAIL", "types_missing_reasoning_depth"
+    for token in ("AUTO", "FAST", "STANDARD", "DEEP", "MAXIMUM"):
+        if token not in t:
+            return "FAIL", f"types_missing_{token}"
+    if "REASONING_DEPTH_OPTIONS" not in c or "reasoningMode" not in c:
+        return "FAIL", "chat_missing_depth_selector"
+    if "user_requested_depth" not in cog or "REASONING_DEPTH_OPTIONS" not in cog:
+        return "FAIL", "cognition_page_missing_depth_selector"
+    if "reasoning_mode" not in cl or "cognitionCompute" not in cl:
+        return "FAIL", "client_missing_reasoning_mode_wire"
+    if "reasoning_mode" not in m or "user_requested_depth" not in m:
+        return "FAIL", "chat_route_missing_reasoning_mode"
+    return "PASS", "frontend_reasoning_depth_controls_ok"
+
+
+def _cognition_compute_obs_scan() -> tuple[str, str]:
+    """R26 structural: two-axis cognition compute observability surfaces."""
+    mod = ROOT / "Data" / "modules" / "observability" / "cognition_compute.py"
+    hub = ROOT / "Data" / "modules" / "observability" / "hub.py"
+    route = ROOT / "Data" / "backend" / "routes" / "observability.py"
+    status = ROOT / "Data" / "frontend" / "src" / "pages" / "StatusPage.tsx"
+    perf = ROOT / "Data" / "frontend" / "src" / "pages" / "plugin-runtime" / "PerformancePage.tsx"
+    for path in (mod, hub, route, status, perf):
+        if not path.is_file():
+            return "FAIL", f"missing:{path.relative_to(ROOT)}"
+    text = mod.read_text(encoding="utf-8")
+    h = hub.read_text(encoding="utf-8")
+    r = route.read_text(encoding="utf-8")
+    s = status.read_text(encoding="utf-8")
+    p = perf.read_text(encoding="utf-8")
+    if "def cognition_compute_snapshot" not in text:
+        return "FAIL", "missing_cognition_compute_snapshot"
+    if "two_axis_compute_observability" not in text:
+        return "FAIL", "missing_two_axis_truth"
+    if "no_private_cot" not in text:
+        return "FAIL", "missing_no_private_cot_truth"
+    if "_cognition_compute_provider" not in h:
+        return "FAIL", "hub_missing_cognition_compute_provider"
+    if "/api/observability/cognition-compute" not in r:
+        return "FAIL", "route_missing_cognition_compute"
+    if "cognitionCompute" not in s or "cognitionCompute" not in p:
+        return "FAIL", "ui_missing_cognition_compute_panel"
+    return "PASS", "cognition_compute_two_axis_observability_ok"
+
+
 def _load_gates() -> dict[str, Any]:
     with GATES_PATH.open(encoding="utf-8") as fh:
         return json.load(fh)
@@ -805,6 +866,18 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                         status, evidence = st24, ev24
                     else:
                         evidence = f"{evidence};{ev24}"
+                if status == "PASS" and gid == "R25":
+                    st25, ev25 = _frontend_reasoning_controls_scan()
+                    if st25 != "PASS":
+                        status, evidence = st25, ev25
+                    else:
+                        evidence = f"{evidence};{ev25}"
+                if status == "PASS" and gid == "R26":
+                    st26, ev26 = _cognition_compute_obs_scan()
+                    if st26 != "PASS":
+                        status, evidence = st26, ev26
+                    else:
+                        evidence = f"{evidence};{ev26}"
                 if status == "PASS" and gid == "R29":
                     st29, ev29 = _cot_leakage_scan()
                     if st29 != "PASS":
