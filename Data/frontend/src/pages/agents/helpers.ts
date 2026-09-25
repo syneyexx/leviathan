@@ -4,8 +4,14 @@ import type {
   AgentMission,
   CapabilityListItem,
   OrchestratorConfig,
+  SystemArchitectureEntry,
 } from "../../types/api";
+import { ApiError } from "../../api/client";
 import { isActiveJobStatus } from "../../lib/jobStatus";
+
+export function errMsg(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
 
 export const AGENT_KINDS = [
   "generic",
@@ -507,4 +513,352 @@ export function validateEditorDraft(
     }
   }
   return null;
+}
+
+/* ---------- Agents dashboard (SCREEN 1) helpers ---------- */
+
+export const TEAM_BUCKETS = [
+  "Research",
+  "Development",
+  "Trading",
+  "Planning",
+  "Risk",
+  "Memory",
+  "Evaluation",
+  "Vision",
+  "Other",
+] as const;
+
+export type TeamBucket = (typeof TEAM_BUCKETS)[number];
+
+/** Mirrors `team_bucket_for_agent` in Data/modules/agents/dashboard.py — keep in sync. */
+export function teamBucketForAgent(agent: AgentDefinition): TeamBucket {
+  const kind = String(agent.kind || "").toLowerCase();
+  const role = String(agent.role || "").toLowerCase();
+  const name = String(agent.name || "").toLowerCase();
+  const tags = Array.from(new Set((agent.tags || []).map((t) => String(t).toLowerCase()))).sort();
+  const systemKey = String(
+    agent.systemKey || (agent.metadata as { systemKey?: string } | undefined)?.systemKey || "",
+  ).toLowerCase();
+  const blob = [role, name, systemKey, tags.join(" ")].join(" ");
+
+  // Kind is authoritative when it maps cleanly.
+  if (kind === "research" || systemKey === "research") return "Research";
+  if (kind === "coding" || systemKey === "coding") return "Development";
+  if (kind === "trading") return "Trading";
+  if (kind === "orchestrator" || systemKey === "planner") return "Planning";
+  if (
+    systemKey === "critic" ||
+    name.includes("critic") ||
+    name.includes("risk") ||
+    tags.includes("risk") ||
+    tags.includes("critic")
+  ) {
+    return "Risk";
+  }
+
+  if (blob.includes("research")) return "Research";
+  if (blob.includes("coding") || blob.includes("development")) return "Development";
+  if (blob.includes("trading") || blob.includes("trade")) return "Trading";
+  if (blob.includes("plan")) return "Planning";
+  if (blob.includes("risk") || blob.includes("critic") || blob.includes("guard")) return "Risk";
+  if (blob.includes("memory")) return "Memory";
+  if (blob.includes("evaluat") || tags.includes("qa") || tags.includes("review")) return "Evaluation";
+  if (blob.includes("vision") || blob.includes("media") || blob.includes("image")) return "Vision";
+  return "Other";
+}
+
+/** Compact human duration; null/invalid → em dash (never a fabricated zero). */
+export function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`;
+  const m = Math.floor(s / 60);
+  const rem = Math.round(s % 60);
+  if (m < 60) return rem ? `${m}m ${rem}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return mm ? `${h}h ${mm}m` : `${h}h`;
+}
+
+export function formatSyncAge(iso: string | null | undefined, nowMs: number = Date.now()): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "—";
+  const sec = Math.max(0, Math.round((nowMs - t) / 1000));
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+export function formatPct(ratio: number | null | undefined, digits = 1): string {
+  if (ratio == null || !Number.isFinite(ratio)) return "—";
+  return `${(ratio * 100).toFixed(digits)}%`;
+}
+
+export type AgentMissionStats = {
+  total: number;
+  active: number;
+  completed: number;
+  failed: number;
+  successRate: number | null;
+  avgDurationMs: number | null;
+};
+
+export function agentMissionStats(missions: AgentMission[], agentId: string): AgentMissionStats {
+  let total = 0;
+  let active = 0;
+  let completed = 0;
+  let failed = 0;
+  const durations: number[] = [];
+  for (const m of missions) {
+    if (m.agentId !== agentId) continue;
+    total += 1;
+    if (isActiveJobStatus(m.status)) active += 1;
+    if (m.status === "completed") {
+      completed += 1;
+      if (m.startedAt && m.finishedAt) {
+        const d = Date.parse(m.finishedAt) - Date.parse(m.startedAt);
+        if (Number.isFinite(d) && d >= 0) durations.push(d);
+      }
+    } else if (m.status === "failed") {
+      failed += 1;
+    }
+  }
+  const elig = completed + failed;
+  return {
+    total,
+    active,
+    completed,
+    failed,
+    successRate: elig ? completed / elig : null,
+    avgDurationMs: durations.length
+      ? durations.reduce((a, b) => a + b, 0) / durations.length
+      : null,
+  };
+}
+
+/** Orchestrators (fleet) that list the agent as a member — from real memberAgentIds. */
+export function orchestratorsForMember(
+  agents: AgentDefinition[],
+  agentId: string,
+): AgentDefinition[] {
+  return agents.filter(
+    (a) =>
+      !a.archived &&
+      a.kind === "orchestrator" &&
+      Boolean(a.orchestrator?.memberAgentIds.includes(agentId)),
+  );
+}
+
+export type ArchitectureNode = {
+  id: string;
+  label: string;
+  sublabel: string;
+  status: string;
+  source: "fleet" | "system";
+  team: TeamBucket | null;
+  memberIds: string[];
+};
+
+export type ArchitectureTiers = {
+  orchestrators: ArchitectureNode[];
+  specialists: ArchitectureNode[];
+  hiddenOrchestrators: number;
+  hiddenSpecialists: number;
+};
+
+/**
+ * Hierarchy tiers for the architecture diagram. Orchestrators = fleet orchestrators
+ * plus SystemInventory orchestrators; specialists = non-orchestrator fleet agents.
+ * Membership edges come only from orchestrator.memberAgentIds.
+ */
+export function buildArchitectureTiers(
+  agents: AgentDefinition[],
+  systemEntries: SystemArchitectureEntry[],
+  opts?: { maxOrchestrators?: number; maxSpecialists?: number },
+): ArchitectureTiers {
+  const maxO = opts?.maxOrchestrators ?? 4;
+  const maxS = opts?.maxSpecialists ?? 8;
+  const live = agents.filter((a) => !a.archived);
+  const fleetOrch: ArchitectureNode[] = live
+    .filter((a) => a.kind === "orchestrator")
+    .map((a) => ({
+      id: a.agentId,
+      label: a.name,
+      sublabel: a.role || "Orchestrator",
+      status: healthLabel(a),
+      source: "fleet" as const,
+      team: teamBucketForAgent(a),
+      memberIds: [...(a.orchestrator?.memberAgentIds ?? [])],
+    }));
+  const sysOrch: ArchitectureNode[] = systemEntries
+    .filter((e) => e.entityType === "orchestrator")
+    .map((e) => ({
+      id: e.id,
+      label: e.name,
+      sublabel: e.runtimeKind || "system",
+      status: e.status || "unknown",
+      source: "system" as const,
+      team: null,
+      memberIds: [],
+    }));
+  const allOrch = [...fleetOrch, ...sysOrch];
+  const teamOrder = new Map<string, number>(TEAM_BUCKETS.map((t, i) => [t, i]));
+  const specialistsAll: ArchitectureNode[] = live
+    .filter((a) => a.kind !== "orchestrator")
+    .map((a) => ({
+      id: a.agentId,
+      label: a.name,
+      sublabel: a.role || String(a.kind),
+      status: healthLabel(a),
+      source: "fleet" as const,
+      team: teamBucketForAgent(a),
+      memberIds: [],
+    }))
+    .sort(
+      (x, y) =>
+        (teamOrder.get(x.team ?? "Other") ?? 99) - (teamOrder.get(y.team ?? "Other") ?? 99) ||
+        x.label.localeCompare(y.label),
+    );
+  return {
+    orchestrators: allOrch.slice(0, maxO),
+    specialists: specialistsAll.slice(0, maxS),
+    hiddenOrchestrators: Math.max(0, allOrch.length - maxO),
+    hiddenSpecialists: Math.max(0, specialistsAll.length - maxS),
+  };
+}
+
+export function groupSystemEntriesByRuntime(
+  entries: SystemArchitectureEntry[],
+): Array<{ runtimeKind: string; entries: SystemArchitectureEntry[] }> {
+  const map = new Map<string, SystemArchitectureEntry[]>();
+  for (const e of entries) {
+    const key = e.runtimeKind || e.entityType || "other";
+    const list = map.get(key) ?? [];
+    list.push(e);
+    map.set(key, list);
+  }
+  return Array.from(map.entries())
+    .map(([runtimeKind, list]) => ({ runtimeKind, entries: list }))
+    .sort((a, b) => a.runtimeKind.localeCompare(b.runtimeKind));
+}
+
+export type DashboardFilters = {
+  team: string;
+  status: string;
+  role: string;
+  model: string;
+  environment: string;
+  query?: string;
+};
+
+export const ALL_TEAMS = "All Teams";
+export const ALL_STATUS = "All Status";
+export const ALL_ROLES = "All Roles";
+export const ALL_MODELS = "All Models";
+export const ALL_ENVIRONMENTS = "All Environments";
+export const MODEL_UNSET = "(inherit / unset)";
+
+export function emptyDashboardFilters(): DashboardFilters {
+  return {
+    team: ALL_TEAMS,
+    status: ALL_STATUS,
+    role: ALL_ROLES,
+    model: ALL_MODELS,
+    environment: ALL_ENVIRONMENTS,
+    query: "",
+  };
+}
+
+/** Environment = ownership plane: SYSTEM (backend-seeded) vs USER (operator-created). */
+export function agentEnvironment(agent: AgentDefinition): "System" | "User" | "Architecture" {
+  if (isArchitectureEntry(agent)) return "Architecture";
+  return agentOrigin(agent) === "system" ? "System" : "User";
+}
+
+export function agentModelLabel(agent: AgentDefinition): string {
+  return (agent.modelRef || "").trim() || MODEL_UNSET;
+}
+
+export function deriveTeamOptions(agents: AgentDefinition[]): string[] {
+  const present = new Set(agents.map((a) => teamBucketForAgent(a)));
+  return TEAM_BUCKETS.filter((t) => present.has(t));
+}
+
+export function deriveModelOptions(agents: AgentDefinition[]): string[] {
+  return Array.from(new Set(agents.map(agentModelLabel))).sort((a, b) => a.localeCompare(b));
+}
+
+export function deriveEnvironmentOptions(agents: AgentDefinition[]): string[] {
+  return Array.from(new Set(agents.map(agentEnvironment))).sort((a, b) => a.localeCompare(b));
+}
+
+export function filterDashboardAgents(
+  agents: AgentDefinition[],
+  filters: DashboardFilters,
+): AgentDefinition[] {
+  const q = (filters.query || "").trim().toLowerCase();
+  return agents.filter((agent) => {
+    if (filters.team !== ALL_TEAMS && teamBucketForAgent(agent) !== filters.team) return false;
+    if (filters.status !== ALL_STATUS && healthLabel(agent) !== filters.status) return false;
+    if (
+      filters.role !== ALL_ROLES &&
+      (agent.role || "").toLowerCase() !== filters.role.toLowerCase()
+    ) {
+      return false;
+    }
+    if (filters.model !== ALL_MODELS && agentModelLabel(agent) !== filters.model) return false;
+    if (filters.environment !== ALL_ENVIRONMENTS && agentEnvironment(agent) !== filters.environment) {
+      return false;
+    }
+    if (q) {
+      const hay = [agent.name, agent.role, agent.kind, agent.description, agent.modelRef || "", agent.tags.join(" ")]
+        .join(" ")
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+export function isDefaultDashboardFilters(filters: DashboardFilters): boolean {
+  return (
+    filters.team === ALL_TEAMS &&
+    filters.status === ALL_STATUS &&
+    filters.role === ALL_ROLES &&
+    filters.model === ALL_MODELS &&
+    filters.environment === ALL_ENVIRONMENTS &&
+    !(filters.query || "").trim()
+  );
+}
+
+/** Workers whose current job belongs to one of the given missions (registry truth only). */
+export function workersForMissions<T extends { current_job_id?: string | null }>(
+  workers: T[],
+  missions: AgentMission[],
+): T[] {
+  const jobIds = new Set(missions.flatMap((m) => m.jobIds || []));
+  if (jobIds.size === 0) return [];
+  return workers.filter((w) => Boolean(w.current_job_id && jobIds.has(w.current_job_id)));
+}
+
+export type DonutSegment = { label: string; value: number; start: number; end: number };
+
+export function donutSegments(items: Array<{ label: string; value: number }>): DonutSegment[] {
+  const total = items.reduce((a, b) => a + Math.max(0, b.value), 0);
+  if (total <= 0) return [];
+  let acc = 0;
+  return items
+    .filter((i) => i.value > 0)
+    .map((i) => {
+      const start = acc / total;
+      acc += i.value;
+      return { label: i.label, value: i.value, start, end: acc / total };
+    });
 }

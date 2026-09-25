@@ -1361,3 +1361,70 @@ class AgentFleetService:
                 "system_origin_from_backend": True,
             },
         }
+
+    def enable_all_user_agents(self) -> dict[str, Any]:
+        """Enable mutable USER fleet agents (not SYSTEM / architecture)."""
+        changed: list[str] = []
+        skipped: list[dict[str, str]] = []
+        for agent in self.list_agents(include_archived=False):
+            ownership = classify_fleet_agent(agent)
+            if ownership.get("origin") == "system" or ownership.get("mutable") is False:
+                skipped.append({"agentId": agent.agent_id, "reason": "system_protected"})
+                continue
+            if agent.enabled:
+                skipped.append({"agentId": agent.agent_id, "reason": "already_enabled"})
+                continue
+            self.set_enabled(agent.agent_id, True)
+            changed.append(agent.agent_id)
+        return {
+            "changed": changed,
+            "skipped": skipped,
+            "truth": {"system_agents_never_mutated": True},
+        }
+
+    def disable_all_user_agents(self) -> dict[str, Any]:
+        """Disable mutable USER fleet agents (pause launch intake for those agents)."""
+        changed: list[str] = []
+        skipped: list[dict[str, str]] = []
+        for agent in self.list_agents(include_archived=False):
+            ownership = classify_fleet_agent(agent)
+            if ownership.get("origin") == "system" or ownership.get("mutable") is False:
+                skipped.append({"agentId": agent.agent_id, "reason": "system_protected"})
+                continue
+            if not agent.enabled:
+                skipped.append({"agentId": agent.agent_id, "reason": "already_disabled"})
+                continue
+            self.set_enabled(agent.agent_id, False)
+            changed.append(agent.agent_id)
+        return {
+            "changed": changed,
+            "skipped": skipped,
+            "truth": {"system_agents_never_mutated": True},
+        }
+
+    def dashboard(
+        self,
+        *,
+        window_hours: int = 24,
+        failure_window_hours: int = 168,
+        workers_payload: dict[str, Any] | None = None,
+        jobs_by_pool: dict[str, dict[str, int]] | None = None,
+        memory_writeback_count: int | None = None,
+    ) -> dict[str, Any]:
+        """Operator dashboard read-model — aggregates only, no new state store."""
+        from .dashboard import build_agents_dashboard
+
+        agents = self.list_agents(include_archived=False)
+        missions = self.store.list_missions(limit=500)
+        architecture = self.list_system_inventory()
+        return build_agents_dashboard(
+            agents=agents,
+            missions=missions,
+            architecture_entries=architecture,
+            agents_enabled=bool(self.runtime.agents_enabled),
+            workers_payload=workers_payload,
+            jobs_by_pool=jobs_by_pool,
+            memory_writeback_count=memory_writeback_count,
+            window_hours=window_hours,
+            failure_window_hours=failure_window_hours,
+        )
