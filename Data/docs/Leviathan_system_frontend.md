@@ -371,6 +371,8 @@ This UI sits on the existing `MarketSimControlPlane` and trading-orchestra backe
 
 T1 backend additions consumed by TradingCenter (no mock data): sealed/versioned market datasets (`/api/market-sim/datasets`, `/api/market-sim/data/import`), run knowledge snapshots (`/api/market-sim/runs/{id}/knowledge-snapshot`), and causal `MarketView` / epistemic `as_of` boundaries on historical runs.
 
+T2 backend: simulation rounds persist deterministic `MarketState` (regime/trend/volatility/features with provenance). UI continues to read live run events — no fabricated order-book capabilities.
+
 ---
 
 # 14. Media Control UI

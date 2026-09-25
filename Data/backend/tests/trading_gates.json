@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "program": "Master Program v4",
-  "phase": "T1",
+  "phase": "T2",
   "frozen_at": "2026-09-24",
   "characterization": {
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
       "date": "2026-09-25",
-      "result": "T1 causality+data foundation; D7/D9/D10 fixed; stale D6/D16/D25/D27 characterization refreshed",
-      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t1_causality.py Data/backend/tests/test_market_sim.py Data/backend/tests/test_market_sim_characterization.py -q"
+      "result": "T2 MarketState + FeatureEngine; feature library causal + multi-TF views",
+      "command": "python3 -m pytest Data/backend/tests/test_market_sim_t2_market_state.py Data/backend/tests/test_market_sim_t1_causality.py -q"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -274,13 +274,27 @@
     },
     "G15": {
       "title": "Strategy Spec v2 + feature library",
-      "phase": "T3D",
-      "status": "NOT_STARTED",
+      "phase": "T2/T3D",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/features.py",
+        "Data/modules/market_sim/market_state.py",
+        "Data/backend/tests/test_market_sim_t2_market_state.py"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_market_sim_t2_market_state.py"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_market_sim_t2_market_state.py"
+          ],
+          "timeout_sec": 180
+        }
+      ],
+      "notes": "T2: FeatureEngine + MarketState + MultiTimeframeView implemented and tested. Strategy Spec DSL v2 remains T3."
     },
     "G16": {
       "title": "Code strategy sandbox escape suite",
@@ -991,6 +1005,19 @@
       "date": "2026-09-24",
       "command": "python3 -m pytest Data/backend/tests/test_trading_orchestra.py -q",
       "result": "25 passed"
+    }
+  },
+  "phase_completions": {
+    "T2": {
+      "status": "PASS",
+      "modules": [
+        "features.py",
+        "market_state.py"
+      ],
+      "tests": [
+        "test_market_sim_t2_market_state.py"
+      ],
+      "notes": "MarketState + deterministic feature library + multi-timeframe causal views"
     }
   }
 }
