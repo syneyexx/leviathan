@@ -32,6 +32,7 @@ import "./styles/research-dashboard.css";
 import "./styles/datasets-dashboard.css";
 import "./styles/ritual-theme.css";
 import "./styles/ritual-pages.css";
+import "./styles/ritual-special.css";
 
 const root = document.getElementById("root");
 if (!root) {
