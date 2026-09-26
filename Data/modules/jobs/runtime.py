@@ -138,6 +138,7 @@ class JobRuntime:
         max_attempts: int | None = None,
         timeout_seconds: float | None = None,
         deadline_at: str | None = None,
+        resource_request: dict[str, Any] | None = None,
     ) -> JobRecord:
         if self.gateway.get_capability(capability_id) is None:
             raise KeyError(f"Unknown capability: {capability_id}")
@@ -177,6 +178,7 @@ class JobRuntime:
             "priority": priority,
             "timeout_seconds": timeout_seconds,
             "deadline_at": deadline_at,
+            "resource_request": resource_request,
         }
         if max_attempts is not None:
             create_kwargs["max_attempts"] = max_attempts

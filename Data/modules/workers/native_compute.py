@@ -23,6 +23,9 @@ BINARY_NAME = "leviathan-data-plane"
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_STDOUT_LIMIT = 2 * 1024 * 1024
 DEFAULT_STDERR_LIMIT = 2 * 1024 * 1024
+# Soft RSS watchdog: terminate when child RSS exceeds memoryBytes * grace.
+MEMORY_RSS_GRACE_FACTOR = 1.25
+MEMORY_ENFORCEMENT_SOFT = "SOFT_ENFORCED"
 
 SUPPORTED_OPERATIONS = frozenset(
     {
@@ -32,6 +35,17 @@ SUPPORTED_OPERATIONS = frozenset(
         "dataset.split",
         "dataset.export",
         "dataset.dedupe",
+        "dataset.parquet_validate",
+        "dataset.parquet_hash",
+        "dataset.parquet_to_jsonl",
+    }
+)
+
+PARQUET_OPERATIONS = frozenset(
+    {
+        "dataset.parquet_validate",
+        "dataset.parquet_hash",
+        "dataset.parquet_to_jsonl",
     }
 )
 
@@ -82,6 +96,8 @@ class NativeRunResult:
     duration_ms: int
     error_code: str | None = None
     error_message: str | None = None
+    memory_enforcement: str | None = None
+    peak_rss_bytes: int | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -94,6 +110,8 @@ class NativeRunResult:
             "durationMs": self.duration_ms,
             "errorCode": self.error_code,
             "errorMessage": self.error_message,
+            "memoryEnforcement": self.memory_enforcement,
+            "peakRssBytes": self.peak_rss_bytes,
         }
 
 
@@ -348,6 +366,66 @@ def build_task_document(
     }
 
 
+def read_process_rss_bytes(pid: int) -> int | None:
+    """Best-effort child RSS in bytes (psutil → /proc → Windows WorkingSet)."""
+    if pid <= 0:
+        return None
+    try:
+        import psutil  # type: ignore[import-untyped]
+
+        return int(psutil.Process(pid).memory_info().rss)
+    except Exception:  # noqa: BLE001
+        pass
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            GetProcessMemoryInfo = ctypes.windll.psapi.GetProcessMemoryInfo  # type: ignore[attr-defined]
+            OpenProcess = ctypes.windll.kernel32.OpenProcess  # type: ignore[attr-defined]
+            CloseHandle = ctypes.windll.kernel32.CloseHandle  # type: ignore[attr-defined]
+            PROCESS_QUERY_INFORMATION = 0x0400
+            PROCESS_VM_READ = 0x0010
+            handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, int(pid))
+            if not handle:
+                return None
+            try:
+                counters = PROCESS_MEMORY_COUNTERS()
+                counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+                if GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+                    return int(counters.WorkingSetSize)
+            finally:
+                CloseHandle(handle)
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+    # Linux /proc/<pid>/status VmRSS (kB)
+    try:
+        status_path = Path(f"/proc/{int(pid)}/status")
+        for line in status_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("VmRSS:"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    return int(parts[1]) * 1024
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def run_native_task(
     task: dict[str, Any],
     *,
@@ -357,8 +435,15 @@ def run_native_task(
     stderr_limit: int = DEFAULT_STDERR_LIMIT,
     cancel_event: threading.Event | None = None,
     work_dir: Path | None = None,
+    rss_reader: Callable[[int], int | None] | None = None,
+    memory_grace_factor: float = MEMORY_RSS_GRACE_FACTOR,
 ) -> NativeRunResult:
-    """Execute one native task via JSON file protocol."""
+    """Execute one native task via JSON file protocol.
+
+    Soft memory watchdog (SOFT_ENFORCED): poll child RSS vs limits.memoryBytes
+    * grace; on exceed terminate the child and return NATIVE_MEMORY_BUDGET_EXCEEDED.
+    This is not OS hard cgroup enforcement.
+    """
     started = time.monotonic()
     path = binary or resolve_native_binary()
     if path is None:
@@ -372,6 +457,7 @@ def run_native_task(
             duration_ms=0,
             error_code="NATIVE_BINARY_MISSING",
             error_message="allowlisted binary not found",
+            memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
         )
 
     operation = str(task.get("operation") or "")
@@ -387,7 +473,15 @@ def run_native_task(
             duration_ms=0,
             error_code="NATIVE_UNSUPPORTED_OPERATION",
             error_message=f"unsupported operation: {operation}",
+            memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
         )
+
+    limits = task.get("limits") if isinstance(task.get("limits"), dict) else {}
+    memory_budget = int(limits.get("memoryBytes") or limits.get("memory_bytes") or 0)
+    rss_limit = (
+        int(memory_budget * float(memory_grace_factor)) if memory_budget > 0 else 0
+    )
+    read_rss = rss_reader or read_process_rss_bytes
 
     tmp_ctx = None
     if work_dir is None:
@@ -425,6 +519,8 @@ def run_native_task(
         deadline = time.monotonic() + float(timeout_seconds)
         cancelled = False
         timed_out = False
+        memory_exceeded = False
+        peak_rss: int | None = None
         while True:
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
@@ -434,6 +530,17 @@ def run_native_task(
                 timed_out = True
                 _terminate(proc)
                 break
+            if rss_limit > 0 and proc.pid:
+                try:
+                    rss = read_rss(int(proc.pid))
+                except Exception:  # noqa: BLE001
+                    rss = None
+                if rss is not None:
+                    peak_rss = rss if peak_rss is None else max(peak_rss, rss)
+                    if rss > rss_limit:
+                        memory_exceeded = True
+                        _terminate(proc)
+                        break
             if proc.poll() is not None:
                 break
             time.sleep(0.05)
@@ -461,6 +568,46 @@ def run_native_task(
                 duration_ms=duration_ms,
                 error_code="NATIVE_CANCELLED",
                 error_message="native task cancelled",
+                memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
+                peak_rss_bytes=peak_rss,
+            )
+        if memory_exceeded:
+            receipt = {
+                "protocolVersion": PROTOCOL_VERSION,
+                "taskId": task_id,
+                "operation": operation,
+                "status": "error",
+                "memoryEnforcement": MEMORY_ENFORCEMENT_SOFT,
+                "peakRssBytes": peak_rss,
+                "memoryBudgetBytes": memory_budget,
+                "memoryLimitBytes": rss_limit,
+                "error": {
+                    "code": "NATIVE_MEMORY_BUDGET_EXCEEDED",
+                    "message": (
+                        f"child RSS {peak_rss} exceeded soft limit "
+                        f"{rss_limit} (budget {memory_budget} × {memory_grace_factor})"
+                    ),
+                },
+                "backend": {"name": "rust_native", "memoryEnforcement": MEMORY_ENFORCEMENT_SOFT},
+                "recordsIn": 0,
+                "recordsOut": 0,
+                "bytesIn": 0,
+                "bytesOut": 0,
+                "durationMs": duration_ms,
+                "spillBytes": 0,
+            }
+            return NativeRunResult(
+                ok=False,
+                receipt=receipt,
+                status="error",
+                exit_code=proc.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                duration_ms=duration_ms,
+                error_code="NATIVE_MEMORY_BUDGET_EXCEEDED",
+                error_message=str(receipt["error"]["message"]),
+                memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
+                peak_rss_bytes=peak_rss,
             )
         if timed_out:
             return NativeRunResult(
@@ -473,6 +620,8 @@ def run_native_task(
                 duration_ms=duration_ms,
                 error_code="NATIVE_TIMEOUT",
                 error_message=f"native task exceeded {timeout_seconds}s",
+                memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
+                peak_rss_bytes=peak_rss,
             )
 
         receipt: dict[str, Any] | None = None
@@ -501,6 +650,8 @@ def run_native_task(
                 duration_ms=duration_ms,
                 error_code="NATIVE_RECEIPT_MISSING",
                 error_message="receipt JSON missing or invalid",
+                memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
+                peak_rss_bytes=peak_rss,
             )
 
         issues = validate_receipt(receipt, task_id=task_id, operation=operation)
@@ -515,10 +666,15 @@ def run_native_task(
                 duration_ms=duration_ms,
                 error_code="NATIVE_RECEIPT_INVALID",
                 error_message="; ".join(issues),
+                memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
+                peak_rss_bytes=peak_rss,
             )
 
         ok = str(receipt.get("status")) == "ok" and proc.returncode == 0
         err = receipt.get("error") if isinstance(receipt.get("error"), dict) else {}
+        # Annotate soft enforcement honesty on successful/error receipts.
+        if "memoryEnforcement" not in receipt:
+            receipt = {**receipt, "memoryEnforcement": MEMORY_ENFORCEMENT_SOFT}
         return NativeRunResult(
             ok=ok,
             receipt=receipt,
@@ -529,6 +685,10 @@ def run_native_task(
             duration_ms=duration_ms,
             error_code=str(err.get("code")) if err else None,
             error_message=str(err.get("message")) if err else None,
+            memory_enforcement=MEMORY_ENFORCEMENT_SOFT,
+            peak_rss_bytes=peak_rss
+            if peak_rss is not None
+            else (int(receipt["peakRssBytes"]) if receipt.get("peakRssBytes") is not None else None),
         )
     finally:
         if tmp_ctx is not None:
@@ -596,6 +756,8 @@ class NativeComputeRunner:
         input_format: str = "jsonl",
         cancel_event: threading.Event | None = None,
         work_dir: Path | None = None,
+        rss_reader: Callable[[int], int | None] | None = None,
+        memory_grace_factor: float = MEMORY_RSS_GRACE_FACTOR,
     ) -> NativeRunResult:
         task = build_task_document(
             task_id=task_id,
@@ -614,6 +776,8 @@ class NativeComputeRunner:
             timeout_seconds=self.timeout_seconds,
             cancel_event=cancel_event,
             work_dir=work_dir,
+            rss_reader=rss_reader,
+            memory_grace_factor=memory_grace_factor,
         )
 
     def verify_output(
@@ -668,6 +832,8 @@ class NativeComputeRunner:
 
 __all__ = [
     "BINARY_NAME",
+    "MEMORY_ENFORCEMENT_SOFT",
+    "MEMORY_RSS_GRACE_FACTOR",
     "PROTOCOL_VERSION",
     "SUPPORTED_OPERATIONS",
     "NativeCapabilities",
@@ -677,6 +843,7 @@ __all__ = [
     "build_task_document",
     "default_binary_candidates",
     "probe_capabilities",
+    "read_process_rss_bytes",
     "resolve_native_binary",
     "run_native_task",
     "validate_receipt",
