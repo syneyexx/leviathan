@@ -36,20 +36,51 @@ class CognitivePlanner:
         previous: CognitivePlan | None,
         reason: str,
         observations: list[Any] | None = None,
+        require_observation_trace: bool = False,
     ) -> CognitivePlan:
         plan = self.plan(task, decision)
         plan.revision = (previous.revision + 1) if previous else 1
         plan.assumptions.append(f"replan_reason:{reason}")
+        refs: list[str] = []
         if observations:
             # Trace plan change to concrete observations (adaptive, not blind restart).
-            refs = []
             for o in observations[-5:]:
-                oid = getattr(o, "observation_id", None) or (o.get("observation_id") if isinstance(o, dict) else None)
-                summary = getattr(o, "summary", None) or (o.get("summary") if isinstance(o, dict) else "")
+                oid = getattr(o, "observation_id", None) or (
+                    o.get("observation_id") if isinstance(o, dict) else None
+                )
+                summary = getattr(o, "summary", None) or (
+                    o.get("summary") if isinstance(o, dict) else ""
+                )
                 if oid:
                     refs.append(f"{oid}:{str(summary)[:60]}")
-            if refs:
-                plan.assumptions.append("observation_trace:" + " | ".join(refs))
+        reason_l = (reason or "").lower()
+        needs_trace = bool(require_observation_trace) or any(
+            token in reason_l
+            for token in (
+                "observation",
+                "tool_failed",
+                "tool_error",
+                "failed_step",
+                "evidence",
+                "contradiction",
+            )
+        )
+        if refs:
+            plan.observation_linked = True
+            plan.observation_refs = list(refs)
+            plan.assumptions.append("observation_trace:" + " | ".join(refs))
+        elif needs_trace:
+            plan.observation_linked = False
+            plan.assumptions.append("observation_trace:MISSING")
+            if require_observation_trace:
+                # Strict callers / adversarial gates refuse blind "adaptive" replan.
+                raise ValueError(
+                    "COGNITION_REPLAN_MISSING_OBSERVATION_TRACE: "
+                    "adaptive replan requires observation_id refs; got none"
+                )
+        else:
+            plan.observation_linked = False
+            plan.assumptions.append("replan_mode:blind_or_steering_without_observation")
         return plan
 
     def mark_stale(self, plan: CognitivePlan, *, reason: str) -> CognitivePlan:

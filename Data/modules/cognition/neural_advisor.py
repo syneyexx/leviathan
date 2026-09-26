@@ -65,8 +65,15 @@ class NeuralTaskModelAdvisor:
         self.model_caller = model_caller
         self.builder = builder or TaskModelBuilder()
 
-    def advise(self, message: str, *, metadata: dict[str, Any] | None = None) -> TaskAdvice:
-        if self.model_caller is not None:
+    def advise(
+        self,
+        message: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        allow_neural: bool = True,
+    ) -> TaskAdvice:
+        """Emit TaskAdvice. Neural path is optional so cheap DIRECT turns stay one model call."""
+        if allow_neural and self.model_caller is not None:
             try:
                 neural = self._neural_advise(message, metadata=metadata)
                 if neural is not None:

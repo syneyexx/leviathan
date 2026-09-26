@@ -21,10 +21,11 @@ from .types import ClaimStatus, ResearchProject
 @dataclass
 class DimensionScore:
     name: str
-    score: float
+    score: float | None
     numerator: float
     denominator: float
     notes: str
+    measurement: str = "MEASURED"
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +34,7 @@ class DimensionScore:
             "numerator": self.numerator,
             "denominator": self.denominator,
             "notes": self.notes,
+            "measurement": self.measurement,
         }
 
 
@@ -149,18 +151,20 @@ def build_quality_scorecard(
             f"critical_unsupported={len(citation_report.critical_unsupported)}"
         )
     else:
-        # Fall back to evidence that can resolve at all.
-        cit_num = float(len(evidence))
-        cit_den = float(max(1, len(evidence)))
-        cit_notes = "no report markdown audited; fallback uses evidence presence only"
-        if not evidence:
-            cit_num = 0.0
+        # No report audit → citation validity remains UNMEASURED.
+        # Evidence presence alone must never inflate this dimension to 1.0.
+        cit_num = 0.0
+        cit_den = 0.0
+        cit_notes = (
+            "UNMEASURED: no report markdown audited; evidence presence is not citation validity"
+        )
     citation_dim = DimensionScore(
         name="citation_validity",
-        score=_ratio(cit_num, cit_den),
+        score=_ratio(cit_num, cit_den) if cit_den > 0 else None,
         numerator=cit_num,
         denominator=cit_den,
         notes=cit_notes,
+        measurement="MEASURED" if cit_den > 0 else "UNMEASURED",
     )
 
     # --- source_diversity ---
@@ -305,7 +309,16 @@ def build_quality_scorecard(
         "conflict_handling": 0.10,
         "unresolved_critical_gaps": 0.10,
     }
-    overall = sum(dimensions[k].score * weights[k] for k in weights)
+    # Renormalize over measured dimensions only — UNMEASURED must not contribute 1.0.
+    measured_weights = {
+        k: w
+        for k, w in weights.items()
+        if dimensions[k].measurement != "UNMEASURED" and dimensions[k].score is not None
+    }
+    weight_sum = sum(measured_weights.values()) or 1.0
+    overall = sum(
+        float(dimensions[k].score) * (measured_weights[k] / weight_sum) for k in measured_weights
+    )
 
     return ResearchQualityScorecard(
         project_id=project_id,

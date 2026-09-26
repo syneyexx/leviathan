@@ -369,6 +369,20 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(cancelled["status"], CognitiveRunStatus.CANCELLED.value)
         self.assertTrue(cancelled["cancel_acknowledged"])
 
+    def test_cancellation_propagates_to_child_runs(self) -> None:
+        parent = self.runtime.submit("parent orchestration", run=False)
+        child = self.runtime.submit("child specialist work", run=False)
+        self.runtime.register_child_run(parent["run_id"], child["run_id"])
+        cancelled = self.runtime.cancel(parent["run_id"])
+        self.assertEqual(cancelled["status"], CognitiveRunStatus.CANCELLED.value)
+        child_status = self.runtime.status(child["run_id"])
+        self.assertEqual(child_status["status"], CognitiveRunStatus.CANCELLED.value)
+        self.assertTrue(child_status["cancel_acknowledged"])
+        self.assertEqual(child_status["parent_run_id"], parent["run_id"])
+        self.assertTrue(
+            any(r.get("run_id") == child["run_id"] for r in cancelled.get("child_cancel_results") or [])
+        )
+
     def test_loop_detection_stops(self) -> None:
         # Force selector into repeated COMPLETE with failing pattern via detector unit already;
         # here ensure iterative run terminates.

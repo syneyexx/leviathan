@@ -93,6 +93,10 @@ class ExecutionCompatibilityManifest:
         feature_pipeline_version: str,
         available_features: set[str] | None = None,
         surface: CompatibilitySurface = CompatibilitySurface.HISTORICAL,
+        available_timeframes: set[str] | None = None,
+        runtime_schema_version: str | None = None,
+        available_models: set[str] | None = None,
+        instrument_family: str | None = None,
     ) -> dict[str, Any]:
         reasons: list[str] = []
         if feature_pipeline_version != self.required_feature_pipeline_version:
@@ -100,10 +104,36 @@ class ExecutionCompatibilityManifest:
                 f"feature_pipeline_mismatch want={self.required_feature_pipeline_version} "
                 f"have={feature_pipeline_version}"
             )
-        if available_features is not None:
-            missing = [f for f in self.required_features if f not in available_features]
-            if missing:
-                reasons.append(f"missing_features:{','.join(missing)}")
+        # Missing available_features is not permission to skip a required check.
+        if self.required_features:
+            if available_features is None:
+                reasons.append(
+                    "available_features_unmeasured — cannot skip required feature compatibility check"
+                )
+            else:
+                missing = [f for f in self.required_features if f not in available_features]
+                if missing:
+                    reasons.append(f"missing_features:{','.join(missing)}")
+        if self.required_timeframes:
+            if available_timeframes is None:
+                reasons.append("available_timeframes_unmeasured")
+            else:
+                missing_tf = [t for t in self.required_timeframes if t not in available_timeframes]
+                if missing_tf:
+                    reasons.append(f"missing_timeframes:{','.join(missing_tf)}")
+        if self.model_dependencies:
+            if available_models is None:
+                reasons.append("model_dependencies_unmeasured")
+            else:
+                missing_m = [m for m in self.model_dependencies if m not in available_models]
+                if missing_m:
+                    reasons.append(f"missing_models:{','.join(missing_m)}")
+        if instrument_family and instrument_family not in self.supported_instrument_families:
+            reasons.append(f"unsupported_instrument_family:{instrument_family}")
+        if runtime_schema_version is not None and runtime_schema_version < self.minimum_runtime_schema_version:
+            reasons.append(
+                f"runtime_schema_too_old want>={self.minimum_runtime_schema_version} have={runtime_schema_version}"
+            )
         if surface == CompatibilitySurface.LIVE or self.live_compatible:
             reasons.append("live_compatible_blocked")
         if surface == CompatibilitySurface.PAPER and not self.paper_compatible:
@@ -116,7 +146,10 @@ class ExecutionCompatibilityManifest:
             "surface": surface.value,
             "reasons": reasons,
             "measurement": "MEASURED",
-            "truth": {"reject_incompatible_deployment": True},
+            "truth": {
+                "reject_incompatible_deployment": True,
+                "missing_available_features_is_not_skip": True,
+            },
         }
 
 
@@ -270,12 +303,34 @@ def promote_asset(
     target_status: str,
     evidence: dict[str, Any],
 ) -> StrategyAsset:
-    """Promote only with evidence. CHAMPION requires VALIDATED prior + evaluation refs."""
+    """Promote only with server-resolvable evidence. Caller booleans are not proof."""
     target = str(target_status).upper()
     if target not in ASSET_STATUSES:
         raise MarketSimError("STRATEGY_STATUS_INVALID", f"unknown status {target}")
+    ev = dict(evidence or {})
+    # Reject bare accepted=True / acceptance={"passed": True} without refs or metrics.
+    acceptance = ev.get("acceptance")
+    bare_bool = ev.get("accepted") is True and not (
+        ev.get("evaluation_refs") or ev.get("trial_ids") or isinstance(acceptance, dict)
+    )
+    bare_acceptance = (
+        isinstance(acceptance, dict)
+        and acceptance.get("passed") is True
+        and not (
+            acceptance.get("run_id")
+            or acceptance.get("criteria_id")
+            or acceptance.get("metrics")
+            or ev.get("evaluation_refs")
+        )
+    )
+    if bare_bool or bare_acceptance:
+        raise MarketSimError(
+            "PROMOTION_EVIDENCE_INSUFFICIENT",
+            "caller-supplied accepted/passed boolean is not authoritative proof",
+            http_status=409,
+        )
     if target in {StrategyStatus.VALIDATED.value, StrategyStatus.CHAMPION.value, StrategyStatus.RESEARCH.value}:
-        if not evidence:
+        if not ev:
             raise MarketSimError(
                 "PROMOTION_EVIDENCE_REQUIRED",
                 "promotion requires evidence refs (evals/trials/acceptance)",
@@ -288,28 +343,33 @@ def promote_asset(
                 "CHAMPION requires VALIDATED status first",
                 http_status=409,
             )
-        if not (evidence.get("evaluation_refs") or asset.evaluation_refs):
+        if not (ev.get("evaluation_refs") or asset.evaluation_refs):
             raise MarketSimError(
                 "PROMOTION_EVIDENCE_REQUIRED",
                 "CHAMPION requires evaluation_refs",
                 http_status=409,
             )
     if target == StrategyStatus.VALIDATED.value and not (
-        evidence.get("acceptance") or evidence.get("evaluation_refs")
+        (
+            isinstance(acceptance, dict)
+            and acceptance.get("passed") is True
+            and (acceptance.get("run_id") or acceptance.get("metrics") or acceptance.get("criteria_id"))
+        )
+        or ev.get("evaluation_refs")
     ):
         raise MarketSimError(
             "PROMOTION_EVIDENCE_REQUIRED",
-            "VALIDATED requires acceptance or evaluation_refs",
+            "VALIDATED requires resolved acceptance (run/metrics/criteria) or evaluation_refs",
             http_status=409,
         )
     asset.status = target
     asset.promotion_evidence = {
         **dict(asset.promotion_evidence),
-        **dict(evidence),
+        **ev,
         "promoted_to": target,
     }
-    if evidence.get("evaluation_refs"):
+    if ev.get("evaluation_refs"):
         asset.evaluation_refs = list(
-            dict.fromkeys([*asset.evaluation_refs, *list(evidence["evaluation_refs"])])
+            dict.fromkeys([*asset.evaluation_refs, *list(ev["evaluation_refs"])])
         )
     return asset

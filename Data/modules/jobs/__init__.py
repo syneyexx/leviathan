@@ -15,7 +15,13 @@ from .priority import (
 from .resources import ResourceManager
 from .retry import DEFAULT_RETRY_POLICY, RetryPolicy
 from .runtime import EXTERNAL_WORKER_CAPABILITIES, JobRuntime
-from .states import TERMINAL_JOB_STATES, InvalidJobTransition, JobState, validate_job_transition
+from .states import (
+    TERMINAL_JOB_STATES,
+    InvalidJobTransition,
+    JobState,
+    StaleLeaseError,
+    validate_job_transition,
+)
 from .store import JobStore
 from .types import JobRecord
 
@@ -37,6 +43,7 @@ __all__ = [
     "ResourceBudgetEnvelope",
     "ResourceManager",
     "RetryPolicy",
+    "StaleLeaseError",
     "TERMINAL_JOB_STATES",
     "WORKER_PROTOCOL_VERSION",
     "WorkerLease",

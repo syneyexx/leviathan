@@ -373,7 +373,16 @@ class JobStore:
         error_code: str | None = None,
         retryable: bool | None = None,
         result_summary: dict[str, Any] | None = None,
+        expected_lease_owner: str | None = None,
     ) -> JobRecord:
+        """Transition job state.
+
+        When ``expected_lease_owner`` is set, the UPDATE is fenced: it only
+        succeeds if the row is still in ``current`` state **and** ``lease_owner``
+        matches. A stale worker that lost its lease cannot complete or fail the job.
+        """
+        from .states import StaleLeaseError
+
         with self.connect() as conn:
             self._ensure_schema(conn)
             row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
@@ -405,28 +414,45 @@ class JobStore:
                 if result_summary is not None
                 else _row_get(row, "result_summary_json")
             )
-            conn.execute(
-                """
+            params: list[Any] = [
+                new_state.value,
+                result_json,
+                error_value,
+                json.dumps(metadata),
+                now,
+                queued_at,
+                finished_at,
+                next_error_code,
+                retryable_sql,
+                summary_json,
+                job_id,
+                current.value,
+            ]
+            where = "job_id = ? AND state = ?"
+            if expected_lease_owner is not None:
+                where += " AND lease_owner = ?"
+                params.append(expected_lease_owner)
+            cursor = conn.execute(
+                f"""
                 UPDATE jobs
                 SET state = ?, result_json = ?, error = ?, metadata_json = ?, updated_at = ?,
                     queued_at = ?, finished_at = ?, error_code = ?, retryable = ?,
                     result_summary_json = ?
-                WHERE job_id = ?
+                WHERE {where}
                 """,
-                (
-                    new_state.value,
-                    result_json,
-                    error_value,
-                    json.dumps(metadata),
-                    now,
-                    queued_at,
-                    finished_at,
-                    next_error_code,
-                    retryable_sql,
-                    summary_json,
-                    job_id,
-                ),
+                params,
             )
+            if cursor.rowcount == 0:
+                if expected_lease_owner is not None:
+                    raise StaleLeaseError(
+                        f"Stale lease fence: job {job_id} not owned by {expected_lease_owner!r} "
+                        f"in state {current.value}",
+                        job_id=job_id,
+                        worker_id=expected_lease_owner,
+                    )
+                raise InvalidJobTransition(
+                    f"Job {job_id} state changed concurrently (expected {current.value})"
+                )
             row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         assert row is not None
         return self._from_row(row)
@@ -736,7 +762,10 @@ class JobStore:
         error: str | None = None,
         error_code: str | None = None,
         retryable: bool = True,
+        expected_lease_owner: str | None = None,
     ) -> JobRecord:
+        from .states import StaleLeaseError
+
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat(timespec="seconds")
         next_at = (now_dt + timedelta(seconds=max(0.0, float(delay_seconds)))).isoformat(
@@ -749,26 +778,42 @@ class JobStore:
                 raise KeyError(f"Unknown job: {job_id}")
             current = JobState(row["state"])
             validate_job_transition(current, JobState.RETRY_WAIT)
-            conn.execute(
-                """
+            params: list[Any] = [
+                JobState.RETRY_WAIT.value,
+                next_at,
+                now,
+                error,
+                error_code,
+                int(bool(retryable)),
+                job_id,
+                current.value,
+            ]
+            where = "job_id = ? AND state = ?"
+            if expected_lease_owner is not None:
+                where += " AND lease_owner = ?"
+                params.append(expected_lease_owner)
+            cursor = conn.execute(
+                f"""
                 UPDATE jobs
                 SET state = ?, next_attempt_at = ?, updated_at = ?,
                     error = COALESCE(?, error), error_code = COALESCE(?, error_code),
                     retryable = ?, lease_owner = NULL, lease_expires_at = NULL,
                     finished_at = NULL
-                WHERE job_id = ? AND state = ?
+                WHERE {where}
                 """,
-                (
-                    JobState.RETRY_WAIT.value,
-                    next_at,
-                    now,
-                    error,
-                    error_code,
-                    int(bool(retryable)),
-                    job_id,
-                    current.value,
-                ),
+                params,
             )
+            if cursor.rowcount == 0:
+                if expected_lease_owner is not None:
+                    raise StaleLeaseError(
+                        f"Stale lease fence: cannot schedule_retry job {job_id} "
+                        f"for worker {expected_lease_owner!r}",
+                        job_id=job_id,
+                        worker_id=expected_lease_owner,
+                    )
+                raise InvalidJobTransition(
+                    f"Job {job_id} state changed concurrently (expected {current.value})"
+                )
             row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         assert row is not None
         return self._from_row(row)

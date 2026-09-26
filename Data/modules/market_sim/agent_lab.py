@@ -103,28 +103,85 @@ class AcceptanceCriteria:
         }
 
     def evaluate(self, metrics: dict[str, Any], *, val_pass: bool, robustness_pass: bool) -> dict[str, Any]:
+        """Fail closed on missing, NaN, infinite, or unit-ambiguous metrics."""
+        import math
+
         reasons: list[str] = []
-        trades = int(metrics.get("trade_count") or metrics.get("trades") or 0)
-        if trades < self.min_trades:
-            reasons.append(f"trades {trades} < {self.min_trades}")
-        dd = float(metrics.get("max_drawdown_pct") or metrics.get("max_drawdown") or 0.0)
-        # drawdown may be fraction or pct
-        if abs(dd) <= 1.0 and "max_drawdown_pct" not in metrics:
-            dd = abs(dd) * 100.0
-        if abs(dd) > self.max_drawdown_pct:
-            reasons.append(f"drawdown {dd} > {self.max_drawdown_pct}")
+
+        def _raw(key: str) -> Any:
+            return metrics.get(key)
+
+        def _finite_number(raw: Any, *, field: str) -> float | None:
+            if raw is None:
+                return None
+            if isinstance(raw, dict):
+                if raw.get("status") == "UNMEASURED" or raw.get("value") is None:
+                    return None
+                raw = raw.get("value")
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                reasons.append(f"{field} malformed")
+                return None
+            if math.isnan(val) or math.isinf(val):
+                reasons.append(f"{field} non-finite")
+                return None
+            return val
+
+        trades_raw = _raw("trade_count")
+        if trades_raw is None:
+            trades_raw = _raw("trades")
+        if trades_raw is None:
+            reasons.append("trade_count UNMEASURED")
+            trades = None
+        else:
+            trades_val = _finite_number(trades_raw, field="trade_count")
+            trades = int(trades_val) if trades_val is not None else None
+            if trades is not None and trades < self.min_trades:
+                reasons.append(f"trades {trades} < {self.min_trades}")
+
+        # Require an explicitly named drawdown field — missing is not zero risk.
+        # Do not infer percent vs fraction from magnitude.
+        if "max_drawdown_pct" in metrics:
+            dd = _finite_number(_raw("max_drawdown_pct"), field="max_drawdown_pct")
+            if dd is None and "max_drawdown_pct non-finite" not in reasons and "max_drawdown_pct malformed" not in reasons:
+                reasons.append("max_drawdown_pct UNMEASURED")
+            elif dd is not None and abs(dd) > self.max_drawdown_pct:
+                reasons.append(f"drawdown {dd} > {self.max_drawdown_pct}")
+        elif "max_drawdown" in metrics:
+            dd = _finite_number(_raw("max_drawdown"), field="max_drawdown")
+            if dd is None and "max_drawdown non-finite" not in reasons and "max_drawdown malformed" not in reasons:
+                reasons.append("max_drawdown UNMEASURED")
+            else:
+                reasons.append(
+                    "max_drawdown unit ambiguous — require max_drawdown_pct with explicit percent units"
+                )
+        else:
+            reasons.append("max_drawdown_pct UNMEASURED")
+
         if self.min_total_return_pct is not None:
-            ret = float(metrics.get("total_return_pct") or metrics.get("total_return") or 0.0)
-            if abs(ret) <= 1.0 and "total_return_pct" not in metrics:
-                ret = ret * 100.0
-            if ret < self.min_total_return_pct:
-                reasons.append(f"return {ret} < {self.min_total_return_pct}")
+            if "total_return_pct" in metrics:
+                ret = _finite_number(_raw("total_return_pct"), field="total_return_pct")
+                if ret is None and "total_return_pct non-finite" not in reasons and "total_return_pct malformed" not in reasons:
+                    reasons.append("total_return_pct UNMEASURED")
+                elif ret is not None and ret < self.min_total_return_pct:
+                    reasons.append(f"return {ret} < {self.min_total_return_pct}")
+            elif "total_return" in metrics:
+                reasons.append(
+                    "total_return unit ambiguous — require total_return_pct with explicit percent units"
+                )
+            else:
+                reasons.append("total_return_pct UNMEASURED")
+
         if self.min_sharpe is not None:
-            sharpe = metrics.get("sharpe")
-            if sharpe is None:
+            sharpe_raw = _raw("sharpe")
+            if sharpe_raw is None:
                 reasons.append("sharpe UNMEASURED")
-            elif float(sharpe) < self.min_sharpe:
-                reasons.append(f"sharpe {sharpe} < {self.min_sharpe}")
+            else:
+                sharpe = _finite_number(sharpe_raw, field="sharpe")
+                if sharpe is not None and sharpe < self.min_sharpe:
+                    reasons.append(f"sharpe {sharpe} < {self.min_sharpe}")
+
         if self.require_val_pass and not val_pass:
             reasons.append("validation_failed")
         if self.require_robustness_pass and not robustness_pass:
@@ -134,8 +191,13 @@ class AcceptanceCriteria:
             "passed": passed,
             "reasons": reasons,
             "criteria_id": self.criteria_id,
-            "measurement": "MEASURED",
-            "truth": {"thresholds_not_relaxed": True},
+            "measurement": "MEASURED" if passed or reasons else "UNMEASURED",
+            "truth": {
+                "thresholds_not_relaxed": True,
+                "missing_is_not_zero": True,
+                "nan_is_not_pass": True,
+                "units_not_inferred_from_magnitude": True,
+            },
         }
 
 
@@ -202,8 +264,50 @@ class AgentLabRun:
         }
 
 
-def lineage_key(strategy_id: str, *, parent_version: int | None = None) -> str:
-    return f"{strategy_id}@parent={parent_version}"
+def lineage_aliases(lab: AgentLabRun) -> dict[str, str]:
+    """Map strategy_id → stable root lineage id (survives rename)."""
+    raw = lab.metadata.get("lineage_aliases")
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items() if k and v}
+    return {}
+
+
+def resolve_root_lineage_id(
+    lab: AgentLabRun,
+    strategy_id: str,
+    *,
+    root_lineage_id: str | None = None,
+) -> str:
+    """Resolve the contamination root for a strategy id (rename-safe)."""
+    if root_lineage_id:
+        return str(root_lineage_id)
+    aliases = lineage_aliases(lab)
+    return aliases.get(strategy_id, strategy_id)
+
+
+def register_lineage_rename(
+    lab: AgentLabRun,
+    *,
+    from_strategy_id: str,
+    to_strategy_id: str,
+) -> str:
+    """Record a rename so sealed holdout exposure stays inherited."""
+    aliases = lineage_aliases(lab)
+    root = aliases.get(from_strategy_id, from_strategy_id)
+    aliases[from_strategy_id] = root
+    aliases[to_strategy_id] = root
+    lab.metadata["lineage_aliases"] = aliases
+    return root
+
+
+def lineage_key(
+    strategy_id: str,
+    *,
+    parent_version: int | None = None,
+    root_lineage_id: str | None = None,
+) -> str:
+    root = (root_lineage_id or strategy_id).strip() or strategy_id
+    return f"{root}@parent={parent_version}"
 
 
 def assert_lineage_holdout_clean(
@@ -212,15 +316,35 @@ def assert_lineage_holdout_clean(
     strategy_id: str,
     parent_version: int | None,
     sealed_dataset_id: str,
+    root_lineage_id: str | None = None,
+    ancestor_strategy_ids: Sequence[str] | None = None,
 ) -> None:
-    """If a parent lineage already saw this sealed holdout, refuse 'unseen' claim."""
-    key = f"{lineage_key(strategy_id, parent_version=parent_version)}::{sealed_dataset_id}"
-    if key in lab.sealed_lineages_consumed:
-        raise MarketSimError(
-            "HOLDOUT_LINEAGE_CONTAMINATED",
-            "descendants that learned from a revealed sealed result need a new sealed holdout/version/epoch",
-            http_status=409,
-        )
+    """If a parent lineage already saw this sealed holdout, refuse 'unseen' claim.
+
+    Renames and explicit ancestors share the same contamination root so a
+    renamed descendant cannot claim a fresh sealed holdout after revelation.
+    """
+    roots: set[str] = {
+        resolve_root_lineage_id(lab, strategy_id, root_lineage_id=root_lineage_id)
+    }
+    for ancestor in ancestor_strategy_ids or ():
+        roots.add(resolve_root_lineage_id(lab, str(ancestor)))
+    # Also treat any prior name that maps to the same root as contaminated.
+    aliases = lineage_aliases(lab)
+    target_roots = set(roots)
+    for sid, root in aliases.items():
+        if root in target_roots or sid in target_roots:
+            roots.add(root)
+            roots.add(sid)
+
+    for root in roots:
+        key = f"{lineage_key(root, parent_version=parent_version, root_lineage_id=root)}::{sealed_dataset_id}"
+        if key in lab.sealed_lineages_consumed:
+            raise MarketSimError(
+                "HOLDOUT_LINEAGE_CONTAMINATED",
+                "descendants that learned from a revealed sealed result need a new sealed holdout/version/epoch",
+                http_status=409,
+            )
 
 
 def mark_sealed_revealed(
@@ -230,8 +354,14 @@ def mark_sealed_revealed(
     parent_version: int | None,
     sealed_dataset_id: str,
     sealed_attempt_id: str,
+    root_lineage_id: str | None = None,
 ) -> None:
-    key = f"{lineage_key(strategy_id, parent_version=parent_version)}::{sealed_dataset_id}"
+    root = resolve_root_lineage_id(lab, strategy_id, root_lineage_id=root_lineage_id)
+    # Keep alias identity even when first mark uses the original id.
+    aliases = lineage_aliases(lab)
+    aliases.setdefault(strategy_id, root)
+    lab.metadata["lineage_aliases"] = aliases
+    key = f"{lineage_key(strategy_id, parent_version=parent_version, root_lineage_id=root)}::{sealed_dataset_id}"
     lab.sealed_lineages_consumed[key] = sealed_attempt_id
 
 
@@ -301,6 +431,8 @@ def evaluate_candidate_pipeline(
     sealed_attempt_id: str | None = None,
     parent_version: int | None = None,
     sealed_dataset_id: str | None = None,
+    root_lineage_id: str | None = None,
+    ancestor_strategy_ids: Sequence[str] | None = None,
     relax_thresholds: bool = False,
 ) -> CandidateRecord:
     """Run the scientific pipeline for one candidate. Refuses threshold relaxation."""
@@ -310,22 +442,44 @@ def evaluate_candidate_pipeline(
             "lab must never relax pre-registered acceptance until something wins",
             http_status=422,
         )
-    if len(lab.candidates) >= lab.max_candidates and sealed_metrics is None:
-        # Still allow completing an already-started sealed eval, but block new mining.
-        pass
-    if len([c for c in lab.candidates]) >= lab.max_candidates:
-        # Cap search — negative result is valuable.
-        pass
+
+    # Completing an already-reserved candidate (sealed metrics for known id/version)
+    # must not consume a new budget slot.
+    existing = None
+    for c in lab.candidates:
+        if (
+            c.strategy_id == strategy_id
+            and int(c.strategy_version) == int(strategy_version)
+            and c.rejection_reason == "eligible_awaiting_sealed"
+            and sealed_metrics is not None
+        ):
+            existing = c
+            break
+
+    if existing is None:
+        if len(lab.candidates) >= lab.max_candidates:
+            raise MarketSimError(
+                "CANDIDATE_BUDGET_EXHAUSTED",
+                f"lab {lab.lab_id} already has {len(lab.candidates)}/{lab.max_candidates} candidates",
+                http_status=409,
+            )
 
     # Retrieve prior failure lessons before accepting new hypothesis (recorded on candidate).
     prior = retrieve_lessons(lab.lessons, trust=LessonTrust.AGENT_PROPOSED.value)
-    candidate = CandidateRecord(
+    candidate = existing or CandidateRecord(
         candidate_id=str(uuid.uuid4()),
         strategy_id=strategy_id,
         strategy_version=strategy_version,
         hypothesis=hypothesis,
         metadata={"prior_lesson_ids": [l.lesson_id for l in prior]},
     )
+    if existing is not None:
+        candidate.hypothesis = hypothesis
+        candidate.metadata = {
+            **dict(candidate.metadata),
+            "prior_lesson_ids": [l.lesson_id for l in prior],
+            "sealed_completion": True,
+        }
 
     val_eval = lab.acceptance.evaluate(val_metrics, val_pass=True, robustness_pass=True)
     # First check val alone with require flags temporarily interpreted via metrics stages
@@ -364,12 +518,14 @@ def evaluate_candidate_pipeline(
             applies_to=[strategy_id],
         )
         candidate.lesson_ids.append(lesson.lesson_id)
-        lab.candidates.append(candidate)
+        if existing is None:
+            lab.candidates.append(candidate)
         return candidate
 
     if sealed_metrics is None:
         candidate.rejection_reason = "eligible_awaiting_sealed"
-        lab.candidates.append(candidate)
+        if existing is None:
+            lab.candidates.append(candidate)
         return candidate
 
     if sealed_dataset_id:
@@ -378,6 +534,8 @@ def evaluate_candidate_pipeline(
             strategy_id=strategy_id,
             parent_version=parent_version,
             sealed_dataset_id=sealed_dataset_id,
+            root_lineage_id=root_lineage_id,
+            ancestor_strategy_ids=ancestor_strategy_ids,
         )
 
     sealed_ok = val_only.evaluate(sealed_metrics, val_pass=True, robustness_pass=True)
@@ -415,8 +573,10 @@ def evaluate_candidate_pipeline(
             parent_version=parent_version,
             sealed_dataset_id=sealed_dataset_id,
             sealed_attempt_id=sealed_attempt_id,
+            root_lineage_id=root_lineage_id,
         )
-    lab.candidates.append(candidate)
+    if existing is None:
+        lab.candidates.append(candidate)
     return candidate
 
 

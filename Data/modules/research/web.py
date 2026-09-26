@@ -164,19 +164,28 @@ def check_robots_allowed(
             try:
                 with httpx.Client(timeout=timeout_seconds, follow_redirects=False) as client:
                     resp = client.get(robots_url, headers={"User-Agent": user_agent})
-                    if resp.status_code == 404:
+                    status = int(getattr(resp, "status_code", 0) or 0)
+                    if status == 404:
                         parser = RobotFileParser()
                         parser.parse([])
-                    elif resp.status_code >= 400:
+                    elif status >= 400:
                         return {
                             "allowed": False,
-                            "reason": f"robots_http_{resp.status_code}",
+                            "reason": f"robots_http_{status}",
                             "robots_checked": False,
                             "robots_url": robots_url,
                         }
                     else:
+                        # Prefer .text; fall back to .content for thin test doubles.
+                        text = getattr(resp, "text", None)
+                        if text is None:
+                            raw = getattr(resp, "content", b"") or b""
+                            if isinstance(raw, bytes):
+                                text = raw.decode("utf-8", errors="replace")
+                            else:
+                                text = str(raw)
                         parser = RobotFileParser()
-                        parser.parse(resp.text.splitlines())
+                        parser.parse(str(text).splitlines())
             except Exception as exc:  # noqa: BLE001
                 return {
                     "allowed": False,
@@ -282,11 +291,17 @@ class HttpWebProvider:
             params = {"q": query, "limit": limit}
         with httpx.Client(timeout=20.0, follow_redirects=False) as client:
             response = client.get(self.search_endpoint, params=params, headers=headers)
-            if response.status_code == 429:
-                retry = float(response.headers.get("retry-after") or 1.0)
+            status = int(getattr(response, "status_code", 0) or 0)
+            if status == 429:
+                headers_map = getattr(response, "headers", {}) or {}
+                retry = float(headers_map.get("retry-after") or 1.0)
                 self.rate_limiter.wait(host, retry_after=retry)
                 response = client.get(self.search_endpoint, params=params, headers=headers)
-            response.raise_for_status()
+            raise_for_status = getattr(response, "raise_for_status", None)
+            if callable(raise_for_status):
+                raise_for_status()
+            elif status and status >= 400:
+                raise RuntimeError(f"search_http_{status}")
             payload = response.json()
         items = _extract_search_items(payload, kind=kind)
         now = utc_now()
@@ -345,12 +360,16 @@ class HttpWebProvider:
             for _ in range(5):
                 assert_safe_url(current)
                 response = client.get(current, headers=headers)
-                if response.status_code == 429:
-                    retry = float(response.headers.get("retry-after") or 1.0)
+                status = int(getattr(response, "status_code", 0) or 0)
+                headers_map = getattr(response, "headers", {}) or {}
+                if status == 429:
+                    retry = float(headers_map.get("retry-after") or 1.0)
                     self.rate_limiter.wait(urlparse(current).hostname or host, retry_after=retry)
                     response = client.get(current, headers=headers)
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
+                    status = int(getattr(response, "status_code", 0) or 0)
+                    headers_map = getattr(response, "headers", {}) or {}
+                if status in {301, 302, 303, 307, 308}:
+                    location = headers_map.get("location")
                     if not location:
                         raise RuntimeError("Redirect without Location header")
                     current = urljoin(current, location)
@@ -359,8 +378,10 @@ class HttpWebProvider:
             else:
                 raise RuntimeError("Too many redirects")
 
-            content_type = response.headers.get("content-type", "application/octet-stream")
-            raw = response.content[: max(1, max_bytes)]
+            headers_map = getattr(response, "headers", {}) or {}
+            content_type = headers_map.get("content-type", "application/octet-stream")
+            raw_full = getattr(response, "content", b"") or b""
+            raw = raw_full[: max(1, max_bytes)]
             text = raw.decode("utf-8", errors="replace")
             title = _extract_title(text) or current
             published_at = _extract_published_at(text) if "html" in content_type.lower() else None
@@ -376,13 +397,13 @@ class HttpWebProvider:
                 title=title,
                 text=body,
                 content_type=content_type.split(";")[0].strip(),
-                status_code=int(response.status_code),
+                status_code=int(getattr(response, "status_code", 0) or 0),
                 content_hash=sha256_bytes(raw),
                 fetched_at=utc_now(),
                 metadata={
                     "final_url": current,
                     "bytes": len(raw),
-                    "truncated": len(response.content) > max_bytes,
+                    "truncated": len(raw_full) > max_bytes,
                     "respect_robots_txt": respect_robots_txt,
                     "domain": urlparse(current).hostname,
                     "robots": robots_meta,

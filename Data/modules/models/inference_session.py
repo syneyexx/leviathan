@@ -66,6 +66,9 @@ class InferenceSession:
         prompt_cache_key: str | None = None,
         cache_control: dict[str, Any] | None = None,
         reject_unsupported: bool = True,
+        on_context_overflow: str = "refuse",
+        enforce_structured: bool = True,
+        structured_fail_closed: bool = True,
     ) -> dict[str, Any]:
         profile = self.target.profile
         effective_max = max_tokens
@@ -74,14 +77,18 @@ class InferenceSession:
         elif profile.max_tokens is not None:
             effective_max = min(int(profile.max_tokens), int(effective_max))
 
+        outbound = list(messages)
+        context_signal: dict[str, Any] | None = None
         if not skip_context_fit:
+            # Prefer efficiency-plane preflight; always fall through to transport
+            # contract bounds so overflow is never silent.
             try:
                 from Data.modules.context.efficiency import get_efficiency_plane
                 from Data.modules.context.fit import preflight_context_fit, raise_if_unfit
 
                 plane_eff = get_efficiency_plane()
                 decision = preflight_context_fit(
-                    messages=list(messages),
+                    messages=list(outbound),
                     model_id=self.model_id,
                     context_window=self.context_window,
                     max_output_tokens=effective_max,
@@ -94,14 +101,27 @@ class InferenceSession:
                     "TOO_LARGE_FOR_SELECTED_MODEL",
                 }:
                     plane_eff.metrics.context_fit_failures += 1
-                    raise_if_unfit(decision)
+                    if on_context_overflow == "truncate" and decision.state.value != "TOO_LARGE_PINNED_CONTEXT":
+                        from Data.modules.model_runtime.inference_contract import (
+                            enforce_context_bounds,
+                        )
+
+                        outbound, signal = enforce_context_bounds(
+                            outbound,
+                            context_window=self.context_window,
+                            max_output_tokens=effective_max,
+                            policy="truncate",
+                        )
+                        context_signal = signal.public_dict()
+                    else:
+                        raise_if_unfit(decision)
             except ModelControlError:
                 raise
-            except Exception:  # noqa: BLE001 — never block inference on preflight infra failure
+            except Exception:  # noqa: BLE001 — transport contract still enforces bounds
                 pass
 
         result = await self.llm.complete_messages(
-            messages,
+            outbound,
             model_id=self.backend_model_id,
             endpoint=self.endpoint,
             api_key=self.api_key,
@@ -121,7 +141,13 @@ class InferenceSession:
             prompt_cache_key=prompt_cache_key,
             cache_control=cache_control,
             reject_unsupported=reject_unsupported,
+            context_window=self.context_window,
+            on_context_overflow=on_context_overflow,
+            enforce_structured=enforce_structured,
+            structured_fail_closed=structured_fail_closed,
         )
+        if context_signal and isinstance(result, dict) and "context_bound" not in result:
+            result["context_bound"] = context_signal
         # Record provider cached tokens when present.
         try:
             from Data.modules.context.efficiency import get_efficiency_plane

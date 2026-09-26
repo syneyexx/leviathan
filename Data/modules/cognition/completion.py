@@ -2,6 +2,11 @@
 
 Criterion evaluation is evidence/observation based. Lexical presence of
 words like "passed" / "completed" in model prose is NEVER sufficient.
+
+W03: prefer typed ``TaskModel.acceptance_criteria`` with criterion IDs and
+verifier kinds. Legacy string ``success_criteria`` remain as compatibility
+input via coerce_acceptance_criteria; unsupported legacy semantics stay
+unverified and never auto-pass.
 """
 
 from __future__ import annotations
@@ -9,8 +14,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .task_model import TaskModel
+from Data.modules.verification.types import CriterionVerificationStatus, VerifierKind
+
+from .task_model import AcceptanceCriterion, TaskModel, coerce_acceptance_criteria
 from .types import CognitiveObservation, CognitiveObservationKind, CognitiveRunStatus, RiskClass
+
+# Trusted capability IDs that may satisfy a tests_passed criterion.
+_TRUSTED_TEST_CAPABILITIES = frozenset(
+    {
+        "coding.run_tests",
+        "coding.test",
+        "pytest.run",
+        "tests.run",
+    }
+)
+
+_NON_TEST_CAPABILITIES = frozenset(
+    {
+        "shell.exec",
+        "shell.run",
+        "subprocess.run",
+        "filesystem.list",
+        "filesystem.ls",
+        "file.list",
+        "workspace.list",
+        "os.listdir",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -18,12 +48,18 @@ class CriterionResult:
     criterion: str
     met: bool
     detail: str | None = None
+    criterion_id: str | None = None
+    verification_status: str = CriterionVerificationStatus.UNVERIFIED.value
+    verifier_kind: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "criterion": self.criterion,
+            "criterion_id": self.criterion_id,
             "met": self.met,
             "detail": self.detail,
+            "verification_status": self.verification_status,
+            "verifier_kind": self.verifier_kind,
         }
 
 
@@ -46,6 +82,8 @@ class CompletionDecision:
                 "model_text_does_not_decide_completion": True,
                 "partial_is_not_completed": True,
                 "prose_keywords_are_not_evidence": True,
+                "unrelated_receipts_do_not_pass_tests": True,
+                "typed_criteria_preferred": True,
             },
         }
 
@@ -54,33 +92,159 @@ def _obs_has_kind(observations: list[CognitiveObservation], kind: CognitiveObser
     return any(o.kind == kind for o in observations)
 
 
-def _obs_with_evidence(observations: list[CognitiveObservation]) -> bool:
-    return any(bool(o.evidence_refs) for o in observations)
-
-
-def _test_receipt_passed(observations: list[CognitiveObservation]) -> bool | None:
-    """True/False when a real test receipt exists; None when unmeasured."""
+def _obs_with_claim_support(observations: list[CognitiveObservation]) -> CriterionVerificationStatus:
+    """Source ID presence alone is insufficient — need claim-support provenance."""
     for o in observations:
         payload = o.payload or {}
-        # Explicit structured receipt fields only — not prose.
+        if payload.get("model_authored_evidence") is True:
+            continue
+        if payload.get("claim_supported") is True and (
+            payload.get("span") or payload.get("quote") or payload.get("evidence_id")
+        ):
+            return CriterionVerificationStatus.SUPPORTED
+        if payload.get("claim_supported") is False or payload.get("contradicted") is True:
+            return CriterionVerificationStatus.CONTRADICTED
+        if o.evidence_refs and payload.get("independent_claim_support"):
+            return CriterionVerificationStatus.SUPPORTED
+    if any(bool(o.evidence_refs) for o in observations):
+        return CriterionVerificationStatus.INSUFFICIENT_EVIDENCE
+    return CriterionVerificationStatus.INSUFFICIENT_EVIDENCE
+
+
+def _trusted_test_receipt(
+    observations: list[CognitiveObservation],
+    *,
+    expected_attempt_id: str | None = None,
+    expected_artifact_revision: str | None = None,
+) -> tuple[CriterionVerificationStatus, str]:
+    """exit_code=0 only counts when a trusted test receipt identifies the suite.
+
+    Required on a supporting receipt:
+    - trusted capability or kind=test_receipt (not shell/ls)
+    - test command/suite identity
+    - actual execution marker
+    - workspace/artifact revision
+    - current attempt id
+    - non-model provenance
+
+    A successful directory listing / unrelated shell command cannot satisfy tests.
+    """
+    found_untrusted = False
+    found_incomplete = False
+    found_stale = False
+    found_failed = False
+
+    for o in observations:
+        if o.kind == CognitiveObservationKind.MODEL_RESULT:
+            continue
+        payload = dict(o.payload or {})
+        # Model-authored evidence fields are never authoritative.
+        if payload.get("model_authored_evidence") is True or payload.get("model_authored") is True:
+            found_untrusted = True
+            continue
+        authored = str(payload.get("authored_by") or "").lower()
+        prov = payload.get("provenance")
+        if authored in {"model", "model_authored", "assistant", "llm"}:
+            found_untrusted = True
+            continue
+        if isinstance(prov, str) and prov.lower() in {"model", "model_authored", "assistant", "llm"}:
+            found_untrusted = True
+            continue
+
+        capability = str(payload.get("capability_id") or "").strip()
+        kind = str(payload.get("kind") or "").strip().lower()
+        is_trusted = kind == "test_receipt" or capability in _TRUSTED_TEST_CAPABILITIES
+
+        if capability in _NON_TEST_CAPABILITIES or (capability and not is_trusted):
+            if "exit_code" in payload or "tests_passed" in payload or "passed" in payload:
+                found_untrusted = True
+            continue
+        if not is_trusted:
+            continue
+
+        suite = (
+            payload.get("test_suite")
+            or payload.get("test_command")
+            or payload.get("command")
+            or payload.get("selector")
+            or payload.get("test_selector")
+        )
+        if not suite or not str(suite).strip():
+            found_incomplete = True
+            continue
+
+        executed = payload.get("executed")
+        if executed is None:
+            executed = payload.get("execution") == "completed"
+        if executed is not True and "exit_code" not in payload and "tests_passed" not in payload:
+            found_incomplete = True
+            continue
+
+        attempt_id = payload.get("attempt_id") or payload.get("run_attempt_id")
+        if not attempt_id:
+            found_incomplete = True
+            continue
+        if expected_attempt_id and str(attempt_id) != str(expected_attempt_id):
+            found_incomplete = True
+            continue
+
+        revision = (
+            payload.get("artifact_revision")
+            or payload.get("workspace_revision")
+            or payload.get("revision")
+            or payload.get("content_hash")
+        )
+        if not revision:
+            found_incomplete = True
+            continue
+        if expected_artifact_revision and str(revision) != str(expected_artifact_revision):
+            found_stale = True
+            continue
+        if payload.get("stale") is True or payload.get("fresh") is False:
+            found_stale = True
+            continue
+
+        passed: bool | None = None
         if "tests_passed" in payload:
-            return bool(payload.get("tests_passed"))
-        if "exit_code" in payload:
+            passed = bool(payload.get("tests_passed"))
+        elif "passed" in payload:
+            passed = bool(payload.get("passed"))
+        elif "exit_code" in payload:
             try:
-                return int(payload["exit_code"]) == 0
+                passed = int(payload["exit_code"]) == 0
             except (TypeError, ValueError):
-                return False
-        if payload.get("kind") == "test_receipt":
-            if "passed" in payload:
-                return bool(payload.get("passed"))
-        if o.kind == CognitiveObservationKind.TOOL_RESULT and payload.get("capability_id") in {
-            "coding.run_tests",
-        }:
-            if o.success is not None:
-                return bool(o.success)
-            if "passed" in payload:
-                return bool(payload.get("passed"))
-    return None
+                found_failed = True
+                continue
+        elif o.success is not None and capability in _TRUSTED_TEST_CAPABILITIES:
+            found_incomplete = True
+            continue
+
+        if passed is True:
+            return CriterionVerificationStatus.SUPPORTED, f"trusted test receipt passed ({suite})"
+        if passed is False:
+            found_failed = True
+            continue
+        found_incomplete = True
+
+    if found_failed:
+        return CriterionVerificationStatus.FAILED_EXECUTION, "trusted test receipt failed"
+    if found_stale:
+        return (
+            CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+            "stale or revision-mismatched test receipt",
+        )
+    if found_untrusted:
+        return (
+            CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+            "unrelated shell/exit_code receipt cannot satisfy tests_passed",
+        )
+    if found_incomplete:
+        return (
+            CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+            "test receipt incomplete (suite/command, execution, revision, attempt)",
+        )
+    return CriterionVerificationStatus.INSUFFICIENT_EVIDENCE, "no trusted test receipt"
+
 
 
 class CompletionEngine:
@@ -121,12 +285,23 @@ class CompletionEngine:
             )
 
         criteria = self._score_criteria(task, observations, response_text)
+        # Only SUPPORTED counts as met; UNVERIFIED/INSUFFICIENT never auto-pass.
         met = sum(1 for c in criteria if c.met)
         total = len(criteria) or 1
         verification_required = bool(task.required_evidence) or task.risk_class in {
             RiskClass.HIGH,
             RiskClass.CRITICAL,
-        }
+        } or any(
+            c.verification_status
+            in {
+                CriterionVerificationStatus.INSUFFICIENT_EVIDENCE.value,
+                CriterionVerificationStatus.FAILED_EXECUTION.value,
+                CriterionVerificationStatus.CONTRADICTED.value,
+            }
+            for c in criteria
+            if c.verifier_kind
+            in {VerifierKind.TEST_RECEIPT.value, VerifierKind.EVIDENCE_STORE.value, VerifierKind.ARTIFACT.value}
+        )
 
         if budget_exhausted and met < total:
             return CompletionDecision(
@@ -186,11 +361,14 @@ class CompletionEngine:
                 verification_required=verification_required,
                 verification_passed=verification_passed,
             )
-        if response_text and task.task_type == "simple_chat":
+        # Low-risk conversation may finish without pretending to be verified.
+        if response_text and task.task_type == "simple_chat" and task.risk_class == RiskClass.LOW:
             return CompletionDecision(
                 status=CognitiveRunStatus.COMPLETED_UNVERIFIED,
                 criteria=criteria,
-                reason="simple chat reply produced",
+                reason="simple chat reply produced (unverified)",
+                verification_required=False,
+                verification_passed=None,
             )
         return CompletionDecision(
             status=CognitiveRunStatus.FAILED,
@@ -206,53 +384,82 @@ class CompletionEngine:
         observations: list[CognitiveObservation],
         response_text: str | None,
     ) -> list[CriterionResult]:
+        typed = list(task.acceptance_criteria or [])
+        if not typed and task.success_criteria:
+            typed = coerce_acceptance_criteria(None, legacy_strings=task.success_criteria)
         results: list[CriterionResult] = []
-        for criterion in task.success_criteria:
-            c_low = criterion.lower()
-            met = False
-            detail = None
-            if "helpful direct reply" in c_low:
-                met = bool(response_text and len(response_text.strip()) > 0)
-                detail = "response present" if met else "no response"
-            elif "source" in c_low or "evidence" in c_low:
-                met = _obs_with_evidence(observations)
-                detail = "evidence refs on observations" if met else "missing evidence refs"
-            elif "test" in c_low:
-                receipt = _test_receipt_passed(observations)
-                if receipt is True:
-                    met = True
-                    detail = "test receipt passed"
-                elif receipt is False:
-                    met = False
-                    detail = "test receipt failed"
-                else:
-                    met = False
-                    detail = "no structured test receipt — prose claims ignored"
-            elif "conflict" in c_low:
-                # Conflicts handled only when contradiction observations exist OR
-                # an explicit conflict-resolution observation was recorded.
-                has_conflict = any(
-                    "contradict" in (o.summary or "").lower()
-                    or (o.payload or {}).get("conflicts")
-                    or o.kind == CognitiveObservationKind.SYSTEM_STATE
-                    and (o.payload or {}).get("conflict_resolved") is True
-                    for o in observations
+        meta = getattr(task, "metadata", None) or {}
+        attempt_id = None
+        artifact_rev = None
+        if isinstance(meta, dict):
+            attempt_id = meta.get("attempt_id") or meta.get("current_attempt")
+            artifact_rev = meta.get("workspace_revision") or meta.get("artifact_revision")
+        # Observations may carry the current attempt/revision when task metadata omits them;
+        # matching is still enforced only against expected values from task scope.
+        for criterion in typed:
+            status, detail, met = self._evaluate_typed(
+                criterion,
+                observations=observations,
+                response_text=response_text,
+                task=task,
+                expected_attempt_id=str(attempt_id) if attempt_id else None,
+                expected_artifact_revision=str(artifact_rev) if artifact_rev else None,
+            )
+            results.append(
+                CriterionResult(
+                    criterion=criterion.description or criterion.predicate,
+                    criterion_id=criterion.criterion_id,
+                    met=met,
+                    detail=detail,
+                    verification_status=status.value,
+                    verifier_kind=criterion.verifier_kind.value,
                 )
-                # Vacuous: no conflict signals and no requirement to surface any → unmet
-                # unless task recorded zero ambiguities/unknowns about conflicts.
-                if any("conflict" in (o.summary or "").lower() for o in observations):
-                    met = has_conflict or any(
-                        (o.payload or {}).get("conflict_resolved") is True for o in observations
-                    )
-                    detail = "conflict observation handled" if met else "conflict unresolved"
-                else:
-                    # No conflicts detected in observations — criterion not auto-passed.
-                    met = False
-                    detail = "no conflict observations to satisfy criterion"
-            elif "goal" in c_low or "address" in c_low or "answer" in c_low:
-                # Goal criteria require a substantive reply AND must not claim success
-                # when the reply itself admits failure (false-positive trap).
-                text = (response_text or "").strip()
+            )
+        return results
+
+    def _evaluate_typed(
+        self,
+        criterion: AcceptanceCriterion,
+        *,
+        observations: list[CognitiveObservation],
+        response_text: str | None,
+        task: TaskModel,
+        expected_attempt_id: str | None,
+        expected_artifact_revision: str | None,
+    ) -> tuple[CriterionVerificationStatus, str, bool]:
+        kind = criterion.verifier_kind
+        if kind == VerifierKind.LEGACY_UNSUPPORTED or kind == VerifierKind.UNAVAILABLE:
+            return (
+                CriterionVerificationStatus.UNVERIFIED
+                if kind == VerifierKind.LEGACY_UNSUPPORTED
+                else CriterionVerificationStatus.UNAVAILABLE_VERIFIER,
+                "unsupported/unavailable verifier — not auto-passed",
+                False,
+            )
+
+        if kind == VerifierKind.TEST_RECEIPT or criterion.predicate == "tests_passed":
+            status, detail = _trusted_test_receipt(
+                observations,
+                expected_attempt_id=expected_attempt_id,
+                expected_artifact_revision=expected_artifact_revision,
+            )
+            return status, detail, status == CriterionVerificationStatus.SUPPORTED
+
+        if kind == VerifierKind.EVIDENCE_STORE or criterion.predicate in {
+            "claim_supported",
+            "knowledge_grounded",
+        }:
+            status = _obs_with_claim_support(observations)
+            detail = {
+                CriterionVerificationStatus.SUPPORTED: "claim support with provenance",
+                CriterionVerificationStatus.CONTRADICTED: "claim contradicted by evidence",
+                CriterionVerificationStatus.INSUFFICIENT_EVIDENCE: "evidence refs alone do not support claim",
+            }.get(status, status.value)
+            return status, detail, status == CriterionVerificationStatus.SUPPORTED
+
+        if kind == VerifierKind.RESPONSE_PRESENCE:
+            text = (response_text or "").strip()
+            if criterion.predicate in {"goal_addressed"}:
                 failure_markers = (
                     "cannot answer",
                     "could not",
@@ -262,42 +469,143 @@ class CompletionEngine:
                     "i cannot",
                 )
                 admits_failure = any(m in text.lower() for m in failure_markers)
-                met = bool(text) and len(text) > 10 and not admits_failure
+                ok = bool(text) and len(text) > 10 and not admits_failure
+                status = (
+                    CriterionVerificationStatus.SUPPORTED
+                    if ok
+                    else CriterionVerificationStatus.INSUFFICIENT_EVIDENCE
+                )
                 detail = (
                     "substantive reply"
-                    if met
+                    if ok
                     else ("reply admits failure" if admits_failure else "reply missing/too short")
                 )
-            elif "observation" in c_low or "workspace" in c_low:
-                met = bool(observations)
-                detail = "observations recorded" if met else "no observations"
-            elif "approval" in c_low:
-                met = _obs_has_kind(observations, CognitiveObservationKind.APPROVAL_RESULT) or (
+                return status, detail, ok
+            ok = bool(text)
+            status = (
+                CriterionVerificationStatus.SUPPORTED
+                if ok
+                else CriterionVerificationStatus.INSUFFICIENT_EVIDENCE
+            )
+            return status, ("response present" if ok else "no response"), ok
+
+        if kind == VerifierKind.ARTIFACT or criterion.predicate == "artifact_present":
+            expected = criterion.expected_artifact
+            for o in observations:
+                payload = o.payload or {}
+                if payload.get("model_authored_evidence") is True:
+                    continue
+                art = payload.get("artifact_id") or payload.get("artifact_ref")
+                if not art:
+                    continue
+                if expected and str(art) != str(expected):
+                    continue
+                if payload.get("fake_artifact") is True:
+                    continue
+                return CriterionVerificationStatus.SUPPORTED, "artifact receipt present", True
+            return (
+                CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+                "no matching artifact receipt",
+                False,
+            )
+
+        if kind == VerifierKind.HONESTY:
+            return CriterionVerificationStatus.SUPPORTED, "honesty constraint tracked", True
+
+        if kind == VerifierKind.OBSERVATION:
+            if criterion.predicate == "conflict_surfaced":
+                has_conflict = any(
+                    "contradict" in (o.summary or "").lower()
+                    or (o.payload or {}).get("conflicts")
+                    or (
+                        o.kind == CognitiveObservationKind.SYSTEM_STATE
+                        and (o.payload or {}).get("conflict_resolved") is True
+                    )
+                    for o in observations
+                )
+                if any("conflict" in (o.summary or "").lower() for o in observations):
+                    ok = has_conflict or any(
+                        (o.payload or {}).get("conflict_resolved") is True for o in observations
+                    )
+                    return (
+                        CriterionVerificationStatus.SUPPORTED
+                        if ok
+                        else CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+                        "conflict observation handled" if ok else "conflict unresolved",
+                        ok,
+                    )
+                return (
+                    CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+                    "no conflict observations to satisfy criterion",
+                    False,
+                )
+            if criterion.predicate == "approval_respected":
+                ok = _obs_has_kind(observations, CognitiveObservationKind.APPROVAL_RESULT) or (
                     not task.side_effect_expectations
                 )
-                detail = "approval path respected"
-            elif "unverif" in c_low or "silent" in c_low:
-                # Honesty constraint — tracked as met when we did not claim verified completion.
-                met = True
-                detail = "honesty constraint tracked"
-            elif "artifact" in c_low:
-                met = any(
-                    (o.payload or {}).get("artifact_id") or (o.payload or {}).get("artifact_ref")
-                    for o in observations
-                ) or any("artifact:" in ref for o in observations for ref in o.evidence_refs)
-                detail = "artifact receipt present" if met else "no artifact receipt"
-            else:
-                # Unknown criterion: require matching observation payload/criterion_id —
-                # never token-overlap against model prose.
-                met = any(
-                    (o.payload or {}).get("criterion_id") == criterion
-                    or (o.payload or {}).get("satisfies_criterion") == criterion
-                    for o in observations
+                return (
+                    CriterionVerificationStatus.SUPPORTED
+                    if ok
+                    else CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+                    "approval path respected" if ok else "approval missing",
+                    ok,
                 )
-                detail = (
-                    "explicit criterion satisfaction observation"
-                    if met
-                    else "no explicit satisfaction observation (prose ignored)"
+            if criterion.predicate == "observations_recorded":
+                ok = bool(observations)
+                return (
+                    CriterionVerificationStatus.SUPPORTED
+                    if ok
+                    else CriterionVerificationStatus.INSUFFICIENT_EVIDENCE,
+                    "observations recorded" if ok else "no observations",
+                    ok,
                 )
-            results.append(CriterionResult(criterion=criterion, met=met, detail=detail))
-        return results
+            # Explicit satisfaction observation by criterion_id only.
+            ok = any(
+                (o.payload or {}).get("criterion_id") == criterion.criterion_id
+                or (o.payload or {}).get("satisfies_criterion") == criterion.criterion_id
+                for o in observations
+            )
+            return (
+                CriterionVerificationStatus.SUPPORTED
+                if ok
+                else CriterionVerificationStatus.UNVERIFIED,
+                "explicit criterion satisfaction observation"
+                if ok
+                else "no explicit satisfaction observation (prose ignored)",
+                ok,
+            )
+
+        return CriterionVerificationStatus.UNAVAILABLE_VERIFIER, f"unknown verifier {kind}", False
+
+
+# Back-compat alias used by older tests.
+def _test_receipt_passed(observations: list[CognitiveObservation]) -> bool | None:
+    status, _ = _trusted_test_receipt(observations)
+    if status == CriterionVerificationStatus.SUPPORTED:
+        return True
+    if status == CriterionVerificationStatus.FAILED_EXECUTION:
+        return False
+    return None
+
+
+def evaluate_test_receipt(
+    observations: list[CognitiveObservation],
+    *,
+    expected_attempt_id: str | None = None,
+    expected_artifact_revision: str | None = None,
+) -> dict[str, Any]:
+    """Public helper for trusted test-receipt evaluation (A04 / W03)."""
+    status, detail = _trusted_test_receipt(
+        observations,
+        expected_attempt_id=expected_attempt_id,
+        expected_artifact_revision=expected_artifact_revision,
+    )
+    return {
+        "status": status.value,
+        "detail": detail,
+        "passed": status == CriterionVerificationStatus.SUPPORTED,
+        "truth": {
+            "unrelated_shell_exit_zero_is_not_tests_passed": True,
+            "model_authored_evidence_ignored": True,
+        },
+    }

@@ -6,7 +6,7 @@ from typing import Any
 
 from .belief_state import BeliefItem, BeliefState
 from .meta_controller import MetaDecision
-from .task_model import TaskModel
+from .task_model import AcceptanceCriterion, TaskModel, acceptance_criterion_from_mapping, coerce_acceptance_criteria
 from .types import (
     BeliefCategory,
     BeliefStatus,
@@ -34,6 +34,13 @@ def task_from_dict(data: dict[str, Any] | None, *, run_id: str | None = None) ->
         risk_class = RiskClass(risk)
     except ValueError:
         risk_class = RiskClass.LOW
+    preferences = list(raw.get("preferences") or [])
+    legacy_criteria = list(raw.get("success_criteria") or [])
+    typed_raw = raw.get("acceptance_criteria")
+    if typed_raw:
+        acceptance = coerce_acceptance_criteria(typed_raw)
+    else:
+        acceptance = coerce_acceptance_criteria(None, legacy_strings=legacy_criteria)
     return TaskModel(
         task_id=str(raw.get("task_id") or "unknown"),
         run_id=run_id or raw.get("run_id"),
@@ -43,7 +50,8 @@ def task_from_dict(data: dict[str, Any] | None, *, run_id: str | None = None) ->
         task_type=str(raw.get("task_type") or "general"),
         requested_outputs=list(raw.get("requested_outputs") or []),
         constraints=list(raw.get("constraints") or []),
-        success_criteria=list(raw.get("success_criteria") or []),
+        success_criteria=legacy_criteria,
+        acceptance_criteria=acceptance,
         risk_class=risk_class,
         side_effect_expectations=list(raw.get("side_effect_expectations") or []),
         required_evidence=list(raw.get("required_evidence") or []),

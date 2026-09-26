@@ -38,4 +38,47 @@ export const marketSimLabApi = {
     return request(`/api/market-sim/lab/trials${qs ? `?${qs}` : ""}`);
   },
 
+  marketSimLabListRuns(limit = 50): Promise<{ labs: Record<string, unknown>[] }> {
+    return request(`/api/market-sim/lab/runs?limit=${limit}`);
+  },
+
+  marketSimLabGetRun(labId: string): Promise<{ lab: Record<string, unknown> }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}`);
+  },
+
+  marketSimLabCreateRun(payload: Record<string, unknown>): Promise<{ lab: Record<string, unknown> }> {
+    return request("/api/market-sim/lab/runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  marketSimLabStartRun(labId: string): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/start`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  marketSimLabPauseRun(labId: string): Promise<{ lab: Record<string, unknown> }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/pause`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  marketSimLabResumeRun(labId: string): Promise<Record<string, unknown>> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/resume`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  marketSimLabCancelRun(labId: string): Promise<{ lab: Record<string, unknown> }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
 } as const;

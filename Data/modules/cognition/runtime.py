@@ -123,6 +123,9 @@ class CognitiveRunState:
     critic_report: dict[str, Any] | None = None
     steering: list[str] = field(default_factory=list)
     trace_id: str | None = None
+    # W06: stop must reach delegated/child cognitive runs, not only the parent.
+    child_run_ids: list[str] = field(default_factory=list)
+    parent_run_id: str | None = None
 
     def public_status(self) -> dict[str, Any]:
         return {
@@ -156,6 +159,8 @@ class CognitiveRunState:
             "actions": [a.public_dict() for a in self.actions[-12:]],
             "cancel_requested": self.cancel_requested,
             "cancel_acknowledged": self.cancel_acknowledged,
+            "child_run_ids": list(self.child_run_ids),
+            "parent_run_id": self.parent_run_id,
             "shadow": self.shadow,
             "error": self.error,
             "verification_passed": self.verification_passed,
@@ -534,8 +539,16 @@ class CognitiveRuntime:
             constraints=constraints,
             metadata=meta_payload,
         )
-        # W5: neural/heuristic task advice — fallback always labeled.
-        advice = self.task_advisor.advise(message, metadata=meta_payload)
+        # W5/W05: neural/heuristic task advice — fallback always labeled.
+        # DIRECT short path budgets a single responder call; skip neural advisor
+        # so greetings / simple_chat do not burn a second model invocation.
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        allow_neural_advice = execution_class != "DIRECT"
+        advice = self.task_advisor.advise(
+            message,
+            metadata=meta_payload,
+            allow_neural=allow_neural_advice,
+        )
         task = self.task_advisor.apply_to_task(task, advice)
         # GI12: select bounded specialists for MULTI_DOMAIN / COMPLEX (not every request).
         self._assign_gi_specialists(task)
@@ -680,13 +693,50 @@ class CognitiveRuntime:
             self._finalize(state, failed_reason=state.error)
             return state.public_status()
 
-    def cancel(self, run_id: str) -> dict[str, Any]:
+    def register_child_run(self, parent_run_id: str, child_run_id: str) -> None:
+        """Link a child cognitive run so parent cancel propagates (W06)."""
+        parent = self._require(parent_run_id)
+        child_id = (child_run_id or "").strip()
+        if not child_id or child_id == parent_run_id:
+            return
+        if child_id not in parent.child_run_ids:
+            parent.child_run_ids.append(child_id)
+        child = self._runs.get(child_id)
+        if child is not None and not child.parent_run_id:
+            child.parent_run_id = parent_run_id
+
+    def cancel(self, run_id: str, *, _from_parent: bool = False) -> dict[str, Any]:
         state = self._require(run_id)
         state.cancel_requested = True
-        self._emit(state, "cancellation_requested", {})
+        self._emit(
+            state,
+            "cancellation_requested",
+            {"from_parent": bool(_from_parent), "child_run_ids": list(state.child_run_ids)},
+        )
+        # Propagate stop to children before finalizing parent (W06).
+        child_cancel_results: list[dict[str, Any]] = []
+        for child_id in list(state.child_run_ids):
+            if child_id not in self._runs:
+                child_cancel_results.append(
+                    {"run_id": child_id, "status": "MISSING", "cancel_acknowledged": False}
+                )
+                continue
+            try:
+                child_cancel_results.append(self.cancel(child_id, _from_parent=True))
+            except Exception as exc:  # noqa: BLE001
+                child_cancel_results.append(
+                    {
+                        "run_id": child_id,
+                        "status": "FAILED",
+                        "error": str(exc),
+                        "cancel_acknowledged": False,
+                    }
+                )
         if state.status in TERMINAL_STATUSES:
             state.cancel_acknowledged = True
-            return state.public_status()
+            payload = state.public_status()
+            payload["child_cancel_results"] = child_cancel_results
+            return payload
         # Cooperative cancel — loop checks flag; mark acknowledged.
         state.cancel_acknowledged = True
         if state.status not in TERMINAL_STATUSES:
@@ -695,7 +745,9 @@ class CognitiveRuntime:
             except CognitionTransitionInvalid:
                 state.status = CognitiveRunStatus.CANCELLED
         self._finalize(state, cancelled=True)
-        return state.public_status()
+        payload = state.public_status()
+        payload["child_cancel_results"] = child_cancel_results
+        return payload
 
     def steer(self, run_id: str, instruction: str) -> dict[str, Any]:
         state = self._require(run_id)
@@ -1450,6 +1502,13 @@ class CognitiveRuntime:
             req.metadata.update(meta)
             self._emit(state, "agent_delegated", req.public_dict())
             result = self.delegation.delegate(req)
+            child_run_id = str(
+                (result.metadata or {}).get("child_run_id")
+                or (result.metadata or {}).get("run_id")
+                or ""
+            ).strip()
+            if child_run_id:
+                self.register_child_run(state.run_id, child_run_id)
             for ref in result.artifact_refs:
                 state.working_memory.upsert("artifact", ref, priority=0.7, verified=True)
             self._transition(state, CognitiveRunStatus.OBSERVING)

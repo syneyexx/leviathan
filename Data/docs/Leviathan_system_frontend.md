@@ -35,6 +35,10 @@ npm run preview
 
 Production builds are emitted to `Data/frontend/dist` and served by the FastAPI backend when present.
 
+### Optional layout editor (W00 CURRENT)
+
+`vite.config.ts` does **not** statically import `../../editor/vite-plugin.mjs`. Default `npm run test` / `npm run build` / `npm run typecheck` resolve without the excluded `editor/` tree. Set `LEVIATHAN_EDITOR=1` only when the editor checkout is present; otherwise Vite fails with an explicit configuration error.
+
 ---
 
 # 2. Frontend repository layout
@@ -593,6 +597,8 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 ### Trading Center Lab (W17)
 
 `/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials). Live broker remains explicitly blocked. No mock KPIs.
+
+**W16 lifecycle (CURRENT):** client helpers in `api/domains/marketSimLab.ts` also cover `/api/market-sim/lab/runs` create/list/get/start/pause/resume/cancel for durable autonomous labs bound to research campaigns.
 
 
 ### Frontend Platform (W18 CURRENT)

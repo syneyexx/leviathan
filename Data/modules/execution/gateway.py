@@ -164,6 +164,8 @@ class ExecutionGateway:
     """Single controlled path for privileged capability execution.
 
     Flow: validate → policy → (approval if required) → provider → result + effect record.
+    Idempotent COMPLETED invocations with the same ``idempotency_key`` replay the prior
+    result and do not re-dispatch providers (no double side-effects).
     """
 
     catalog: CapabilityCatalog
@@ -182,6 +184,8 @@ class ExecutionGateway:
     # When set, path-bearing args are confined under this root (Round 8).
     filesystem_root: str | Path | None = None
     effect_ledger: list[EffectRecord] = field(default_factory=list)
+    # Process-local COMPLETED replay cache keyed by idempotency_key.
+    _idempotency_cache: dict[str, CapabilityResult] = field(default_factory=dict, repr=False)
     telemetry: dict[str, Any] = field(
         default_factory=lambda: {
             "requests": 0,
@@ -193,6 +197,7 @@ class ExecutionGateway:
             "approval_required": 0,
             "observations_recorded": 0,
             "receipts_recorded": 0,
+            "idempotent_replays": 0,
         }
     )
 
@@ -234,6 +239,12 @@ class ExecutionGateway:
             trace_id=request.trace_id,
             idempotency_key=request.idempotency_key,
         )
+
+        # Idempotent replay before policy/dispatch — no second side-effect.
+        if request.idempotency_key:
+            replay = self._replay_idempotent(request, request_id=request_id, started=started)
+            if replay is not None:
+                return replay
 
         authority_decision = "pending"
         try:
@@ -343,6 +354,7 @@ class ExecutionGateway:
             self._bump_status(output.status)
             self._maybe_consume_approval(request, output)
             self._record_effect(output, request=request, authority_decision=authority_decision)
+            self._remember_idempotent(request, output)
             return output
 
         result = CapabilityResult(
@@ -359,7 +371,114 @@ class ExecutionGateway:
         self.telemetry["completed"] += 1
         self._maybe_consume_approval(request, result)
         self._record_effect(result, request=request, authority_decision=authority_decision)
+        self._remember_idempotent(request, result)
         return result
+
+    def _replay_idempotent(
+        self,
+        request: CapabilityRequest,
+        *,
+        request_id: str,
+        started: float,
+    ) -> CapabilityResult | None:
+        key = request.idempotency_key
+        if not key:
+            return None
+        cached = self._idempotency_cache.get(key)
+        if cached is not None and cached.capability_id == request.capability_id:
+            return self._mark_replay(cached, request_id=request_id, started=started, source="memory")
+
+        # Durable observation ledger (same process restart / multi-gateway share DB).
+        store = self.observation_store
+        getter = getattr(store, "get_completed_by_idempotency_key", None) if store else None
+        if callable(getter):
+            try:
+                prior = getter(key)
+            except Exception:  # noqa: BLE001 — lookup must not block execution
+                prior = None
+            if prior is not None:
+                observation, effect = prior
+                if observation.capability_id != request.capability_id:
+                    return self._reject(
+                        request_id,
+                        request.capability_id,
+                        f"Idempotency key {key!r} already used for capability "
+                        f"{observation.capability_id!r}",
+                        reason="idempotency_conflict",
+                        started=started,
+                        request=request,
+                        authority_decision="rejected_idempotency_conflict",
+                    )
+                from Data.modules.function_runtime.types import SideEffect as _SE
+
+                side_effects: tuple[Any, ...] = ()
+                try:
+                    side_effects = tuple(
+                        _SE(s) if not isinstance(s, _SE) else s for s in observation.side_effects
+                    )
+                except Exception:  # noqa: BLE001
+                    side_effects = ()
+                rebuilt = CapabilityResult(
+                    request_id=request_id,
+                    capability_id=observation.capability_id,
+                    status=CapabilityStatus.COMPLETED,
+                    output=observation.output,
+                    error=observation.error,
+                    side_effects=side_effects,  # type: ignore[arg-type]
+                    provider_kind=observation.provider_kind,
+                    provider_ref=observation.provider_ref,
+                    approval_id=observation.approval_id,
+                    telemetry={
+                        "duration_ms": (time.perf_counter() - started) * 1000,
+                        "observation_id": observation.observation_id,
+                        "effect_id": effect.effect_id,
+                        "idempotent_replay": True,
+                        "idempotent_replay_source": "observation_store",
+                    },
+                )
+                self._idempotency_cache[key] = rebuilt
+                self.telemetry["idempotent_replays"] = (
+                    int(self.telemetry.get("idempotent_replays", 0)) + 1
+                )
+                self.telemetry["completed"] += 1
+                return rebuilt
+        return None
+
+    def _mark_replay(
+        self,
+        prior: CapabilityResult,
+        *,
+        request_id: str,
+        started: float,
+        source: str,
+    ) -> CapabilityResult:
+        replayed = CapabilityResult(
+            request_id=request_id,
+            capability_id=prior.capability_id,
+            status=prior.status,
+            output=dict(prior.output) if isinstance(prior.output, dict) else prior.output,
+            error=prior.error,
+            side_effects=prior.side_effects,
+            provider_kind=prior.provider_kind,
+            provider_ref=prior.provider_ref,
+            approval_id=prior.approval_id,
+            telemetry={
+                **(prior.telemetry or {}),
+                "duration_ms": (time.perf_counter() - started) * 1000,
+                "idempotent_replay": True,
+                "idempotent_replay_source": source,
+                "original_request_id": prior.request_id,
+            },
+        )
+        self.telemetry["idempotent_replays"] = int(self.telemetry.get("idempotent_replays", 0)) + 1
+        if prior.status == CapabilityStatus.COMPLETED:
+            self.telemetry["completed"] += 1
+        return replayed
+
+    def _remember_idempotent(self, request: CapabilityRequest, result: CapabilityResult) -> None:
+        if not request.idempotency_key or result.status != CapabilityStatus.COMPLETED:
+            return
+        self._idempotency_cache[request.idempotency_key] = result
 
     def _maybe_consume_approval(self, request: CapabilityRequest, result: CapabilityResult) -> None:
         if result.status != CapabilityStatus.COMPLETED or not request.approval_id:
@@ -789,6 +908,13 @@ class ExecutionGateway:
 
         if self.observation_store is not None:
             try:
+                # Only stamp idempotency_key on COMPLETED so failed/rejected calls
+                # can retry under the same key without unique-index collisions.
+                idem_for_ledger = (
+                    request.idempotency_key
+                    if request and result.status == CapabilityStatus.COMPLETED
+                    else None
+                )
                 observation, durable = self.observation_store.record_execution(
                     request_id=result.request_id,
                     capability_id=result.capability_id,
@@ -806,12 +932,42 @@ class ExecutionGateway:
                         "reason": (result.telemetry or {}).get("reason"),
                         "trace_id": request.trace_id if request else None,
                     },
+                    idempotency_key=idem_for_ledger,
+                    trace_id=request.trace_id if request else None,
                 )
                 observation_id = observation.observation_id
                 effect_id = durable.effect_id
                 self.telemetry["observations_recorded"] += 1
                 result.telemetry["observation_id"] = observation_id
                 result.telemetry["effect_id"] = effect_id
+            except TypeError:
+                # Older ObservationRecorder protocol without idempotency kwargs.
+                try:
+                    observation, durable = self.observation_store.record_execution(
+                        request_id=result.request_id,
+                        capability_id=result.capability_id,
+                        status=result.status.value,
+                        side_effects=side_effects,
+                        provider_kind=result.provider_kind,
+                        provider_ref=result.provider_ref,
+                        approval_id=result.approval_id,
+                        run_id=run_id,
+                        job_id=job_id,
+                        output=result.output,
+                        error=result.error,
+                        duration_ms=duration_ms,
+                        metadata={
+                            "reason": (result.telemetry or {}).get("reason"),
+                            "trace_id": request.trace_id if request else None,
+                        },
+                    )
+                    observation_id = observation.observation_id
+                    effect_id = durable.effect_id
+                    self.telemetry["observations_recorded"] += 1
+                    result.telemetry["observation_id"] = observation_id
+                    result.telemetry["effect_id"] = effect_id
+                except Exception as exc:  # noqa: BLE001
+                    result.telemetry["observation_persist_error"] = str(exc)
             except Exception as exc:  # noqa: BLE001 — never fail execution on ledger write
                 result.telemetry["observation_persist_error"] = str(exc)
 

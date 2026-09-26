@@ -69,7 +69,16 @@ class CompletionFalsePositiveTests(unittest.TestCase):
             observation_id="obs-1",
             summary="tests executed",
             success=True,
-            payload={"capability_id": "coding.run_tests", "tests_passed": True, "exit_code": 0},
+            payload={
+                "kind": "test_receipt",
+                "capability_id": "coding.run_tests",
+                "test_suite": "pytest reconnect",
+                "executed": True,
+                "tests_passed": True,
+                "exit_code": 0,
+                "attempt_id": "attempt-1",
+                "workspace_revision": "rev-workspace-1",
+            },
             evidence_refs=["obs:obs-1"],
         )
         decision = CompletionEngine().evaluate(

@@ -165,9 +165,11 @@ class MarketView:
         """Deterministic causal feature (delegates to FeatureEngine in T2).
 
         Legacy aliases: ``close``, ``closes``, ``return`` remain supported.
+        Cache entries are bound to the current simulation index/as_of so a
+        reused view cannot return a prior bar's feature after the clock advances.
         """
         p = period if period is not None else window
-        key = f"{name}:{p}"
+        key = f"{name}:{p}:{self.index}:{self.as_of}"
         if key in self._feature_cache:
             return self._feature_cache[key]
         if name == "close":

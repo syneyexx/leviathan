@@ -21,6 +21,13 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def paper_fill_key_for_event(*, session_id: str, event_id: str) -> str:
+    """Stable client/fill key so feed replay cannot mint a second paper fill (T09)."""
+    sid = str(session_id or "").strip() or "session"
+    eid = str(event_id or "").strip() or "event"
+    return f"fill:{sid}:{eid}"
+
+
 @dataclass
 class PaperOrder:
     order_id: str
@@ -174,6 +181,65 @@ class LocalPaperBroker(PaperBroker):
         self.sessions[sid] = wal
         return wal
 
+    def restore_session(
+        self,
+        session_id: str,
+        *,
+        wallet_payload: dict[str, Any] | None,
+        orders: list[dict[str, Any]] | None = None,
+    ) -> WalletLedger:
+        """Hydrate in-memory wallet + order index from a durable paper session (W18).
+
+        Idempotent: if the session wallet already exists, keep it. Restored orders
+        re-seed client_order_id idempotency so reconnect/restart cannot double-fill.
+        """
+        sid = str(session_id)
+        if sid not in self.sessions:
+            if wallet_payload:
+                wal = WalletLedger.from_public_dict(wallet_payload)
+                wal.owner_id = sid
+                wal.owner_kind = "paper_session"
+                self.sessions[sid] = wal
+            else:
+                self.wallet_for_session(sid, create=True)
+        for raw in orders or []:
+            if not isinstance(raw, dict):
+                continue
+            cid = str(raw.get("client_order_id") or "").strip()
+            oid = str(raw.get("order_id") or "").strip() or str(uuid.uuid4())
+            meta = dict(raw.get("metadata") or {})
+            fkey = str(meta.get("fill_key") or "").strip()
+            if not cid and not fkey:
+                continue
+            # Skip if already indexed under this client id or fill_key.
+            if cid and any(o.client_order_id == cid for o in self._orders.values()):
+                continue
+            if fkey and any(
+                str(o.metadata.get("fill_key") or "") == fkey
+                or o.client_order_id == fkey
+                for o in self._orders.values()
+            ):
+                continue
+            order = PaperOrder(
+                order_id=oid,
+                client_order_id=cid or fkey,
+                symbol=str(raw.get("symbol") or ""),
+                side=str(raw.get("side") or "BUY").upper(),
+                qty=float(raw.get("qty") or 0),
+                status=str(raw.get("status") or "filled"),
+                broker_order_id=raw.get("broker_order_id"),
+                fill_price=float(raw["fill_price"]) if raw.get("fill_price") is not None else None,
+                fee=float(raw.get("fee") or 0),
+                submitted_at=str(raw.get("submitted_at") or ""),
+                updated_at=str(raw.get("updated_at") or ""),
+                reject_reason=str(raw.get("reject_reason") or ""),
+                strategy_id=raw.get("strategy_id"),
+                strategy_version=raw.get("strategy_version"),
+                metadata=meta,
+            )
+            self._orders[order.order_id] = order
+        return self.sessions[sid]
+
     def place(
         self,
         *,
@@ -184,12 +250,21 @@ class LocalPaperBroker(PaperBroker):
         price_hint: float | None = None,
         metadata: dict[str, Any] | None = None,
         session_id: str | None = None,
+        fill_key: str | None = None,
     ) -> PaperOrder:
-        # Idempotent by client_order_id
+        meta = dict(metadata or {})
+        key = (fill_key or meta.get("fill_key") or "").strip() or None
+        if key:
+            meta["fill_key"] = key
+        # Idempotent by client_order_id OR durable fill_key (feed event identity).
         for existing in self._orders.values():
             if existing.client_order_id == client_order_id:
                 return existing
-        meta = dict(metadata or {})
+            if key and (
+                existing.client_order_id == key
+                or str(existing.metadata.get("fill_key") or "") == key
+            ):
+                return existing
         sid = session_id or meta.get("session_id")
         wallet = self.wallet_for_session(str(sid), create=True) if sid else self.wallet
         now = utc_now()
@@ -214,20 +289,27 @@ class LocalPaperBroker(PaperBroker):
         slip = self.slippage_bps / 10_000.0
         px = price_hint * (1 + slip) if order.side == "BUY" else price_hint * (1 - slip)
         fee = abs(qty * px) * (self.fee_bps / 10_000.0)
+        # Prefer stable fill_key as ledger tx_id so replay cannot double-post cash.
+        tx_id = key or order.order_id
         try:
             if order.side == "BUY":
                 wallet.apply_buy(
-                    qty=qty, price=px, fee=fee, tx_id=order.order_id, meta={"symbol": symbol}
+                    qty=qty, price=px, fee=fee, tx_id=tx_id, meta={"symbol": symbol}
                 )
             else:
                 wallet.apply_sell(
-                    qty=qty, price=px, fee=fee, tx_id=order.order_id, meta={"symbol": symbol}
+                    qty=qty, price=px, fee=fee, tx_id=tx_id, meta={"symbol": symbol}
                 )
             order.status = "filled"
             order.fill_price = px
             order.fee = fee
             order.broker_order_id = f"local-{order.order_id[:8]}"
         except ValueError as exc:
+            # Duplicate tx_id after hydrate/replay → treat as idempotent success if known.
+            if key and "duplicate tx_id" in str(exc).lower():
+                for existing in self._orders.values():
+                    if str(existing.metadata.get("fill_key") or "") == key:
+                        return existing
             order.status = "rejected"
             order.reject_reason = str(exc)
         order.updated_at = utc_now()
@@ -429,3 +511,32 @@ def build_paper_broker(
     if broker_id == "local_paper":
         return LocalPaperBroker()
     raise MarketSimError("PAPER_BROKER_UNKNOWN", broker_id, http_status=404)
+
+
+def apply_paper_fill_from_feed_event(
+    broker: LocalPaperBroker,
+    *,
+    session_id: str,
+    event_id: str,
+    symbol: str,
+    side: str,
+    qty: float,
+    price: float,
+    metadata: dict[str, Any] | None = None,
+) -> PaperOrder:
+    """Place a paper fill keyed by feed event_id — safe under reconnect replay (T09)."""
+    fill_key = paper_fill_key_for_event(session_id=session_id, event_id=event_id)
+    meta = dict(metadata or {})
+    meta["fill_key"] = fill_key
+    meta["event_id"] = event_id
+    meta["session_id"] = session_id
+    return broker.place(
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        client_order_id=fill_key,
+        price_hint=price,
+        session_id=session_id,
+        fill_key=fill_key,
+        metadata=meta,
+    )

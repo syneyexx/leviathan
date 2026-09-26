@@ -225,10 +225,36 @@ class FeedSession:
                 "derived": len(derived),
             }
 
+    def begin_reconnect(self, *, reason: str = "transport_reconnect") -> dict[str, Any]:
+        """Mark transport reconnect without clearing EventOrderer seen_ids (T09).
+
+        Replay after reconnect must keep dropping duplicate event_id values so
+        downstream paper fills cannot double-apply the same trade.
+        """
+        with self._lock:
+            self.metrics.reconnect_count += 1
+            self.sub.connection_id = f"conn_{uuid.uuid4().hex[:10]}"
+            self.sub.error = reason
+            self.sub.updated_at = _utc_now()
+            self.set_status(FeedConnectionState.RECONNECTING, error=reason)
+            return {
+                "feed_id": self.sub.feed_id,
+                "connection_id": self.sub.connection_id,
+                "reconnect_count": self.metrics.reconnect_count,
+                "orderer_symbols": list(self.orderer._states.keys()),
+                "truth": {
+                    "seen_ids_preserved": True,
+                    "no_duplicate_paper_fill_on_replay": True,
+                },
+            }
+
     def mark_recovered(self) -> None:
         with self._lock:
             self._gap_unresolved = False
-            if self.sub.status == FeedConnectionState.DEGRADED:
+            if self.sub.status in {
+                FeedConnectionState.DEGRADED,
+                FeedConnectionState.RECONNECTING,
+            }:
                 self.set_status(FeedConnectionState.LIVE)
 
     def check_stale(self, *, now: float | None = None) -> bool:

@@ -494,7 +494,15 @@ def _default_gateway_execute(
             )
         )
     except Exception as exc:  # noqa: BLE001
-        store.transition(job.job_id, JobState.FAILED, error=str(exc))
+        try:
+            store.transition(
+                job.job_id,
+                JobState.FAILED,
+                error=str(exc),
+                expected_lease_owner=worker_id,
+            )
+        except Exception:  # noqa: BLE001 — stale lease / concurrent terminal
+            pass
         return None
 
     if cap_result.status == CapabilityStatus.COMPLETED:
@@ -502,13 +510,20 @@ def _default_gateway_execute(
             job.job_id,
             JobState.COMPLETED,
             result={"output": getattr(cap_result, "output", None) or cap_result.public_dict()},
+            expected_lease_owner=worker_id,
         )
     elif cap_result.status == CapabilityStatus.REJECTED:
-        store.transition(job.job_id, JobState.FAILED, error=str(getattr(cap_result, "error", "rejected")))
+        store.transition(
+            job.job_id,
+            JobState.FAILED,
+            error=str(getattr(cap_result, "error", "rejected")),
+            expected_lease_owner=worker_id,
+        )
     else:
         store.transition(
             job.job_id,
             JobState.FAILED,
             error=str(getattr(cap_result, "error", None) or cap_result.status),
+            expected_lease_owner=worker_id,
         )
     return {"status": cap_result.status.value if hasattr(cap_result.status, "value") else str(cap_result.status)}

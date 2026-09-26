@@ -406,6 +406,9 @@ class CognitivePlan:
     assumptions: list[str] = field(default_factory=list)
     stale: bool = False
     revision: int = 0
+    # W06: true only when replan cites concrete observation ids (not blind restart).
+    observation_linked: bool = False
+    observation_refs: list[str] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -415,6 +418,12 @@ class CognitivePlan:
             "assumptions": list(self.assumptions),
             "stale": self.stale,
             "revision": self.revision,
+            "observation_linked": self.observation_linked,
+            "observation_refs": list(self.observation_refs),
+            "truth": {
+                "replan_requires_observation_trace_when_claimed": True,
+                "blind_restart_is_not_adaptive": not self.observation_linked,
+            },
         }
 
 
