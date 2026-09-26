@@ -148,6 +148,26 @@ def build_market_capabilities(
             notes="Forex not implemented.",
             verified_by="explicitly not implemented",
         ),
+        MarketModeStatus(
+            family=InstrumentFamily.FIXED_INCOME.value,
+            historical_sim="NOT_IMPLEMENTED",
+            live_paper="NOT_IMPLEMENTED",
+            live_trading="BLOCKED",
+            data_providers=[],
+            paper_brokers=[],
+            notes="Fixed income not implemented — no yield/duration/accrual engine yet.",
+            verified_by="explicitly not implemented",
+        ),
+        MarketModeStatus(
+            family=InstrumentFamily.OTHER.value,
+            historical_sim="NOT_IMPLEMENTED",
+            live_paper="NOT_IMPLEMENTED",
+            live_trading="BLOCKED",
+            data_providers=[],
+            paper_brokers=[],
+            notes="Catch-all family — never silently treated as equity.",
+            verified_by="explicitly not implemented",
+        ),
     ]
 
     return {

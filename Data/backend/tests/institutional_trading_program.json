@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "678d815a3654bd0c8429373658657459311b48d1",
+  "last_verified_commit": "2d57d7742f3e48f586ad10da7214135e9236c2a1",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W06",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01–W05 PASS. W06 market data quality + PIT fabric.",
+  "active_wave": "W07",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01–W06 PASS. W07 instrument model foundation.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -197,7 +197,8 @@
     "fixed_income": {
       "status": "NOT_IMPLEMENTED",
       "evidence": [
-        "no FIXED_INCOME family in capabilities matrix"
+        "InstrumentFamily.FIXED_INCOME in instruments.py + capabilities matrix",
+        "stub FIXED_INCOME_US10Y_STUB; HISTORICAL_SIM/LIVE_PAPER NOT_IMPLEMENTED"
       ]
     },
     "quotes": {
@@ -427,14 +428,28 @@
         "14/14 W06 + T1 causality regression PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "678d815a3654bd0c8429373658657459311b48d1"
+      "last_verified_commit": "d9b3510393dd63bc2f7ec6e8fcaf27703a45fd66"
     },
     {
       "id": "W07",
       "title": "Institutional instrument model foundation",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim instruments",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_instrument_model_w07",
+        "Data.backend.tests.test_adversarial_w09_w19",
+        "Data.backend.tests.test_market_sim_p0_kernel"
+      ],
+      "evidence": [
+        "InstrumentFamily.FIXED_INCOME + OTHER in support/capabilities matrix",
+        "InstrumentIdentifiers + multiplier on InstrumentSpec",
+        "make/parse_instrument_id + registry_lookup + compute_notional",
+        "unsupported families fail-closed (no equity fallback)",
+        "9/9 W07 PASS; p0 kernel + T16 adversarial regression PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "2d57d7742f3e48f586ad10da7214135e9236c2a1"
     },
     {
       "id": "W08",

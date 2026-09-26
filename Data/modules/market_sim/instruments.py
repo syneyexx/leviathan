@@ -1,4 +1,9 @@
-"""Instrument / market model — honest capability claims per family."""
+"""Instrument / market model — honest capability claims per family.
+
+Institutional W07 foundation: structured identifiers, multiplier/notional,
+family inventory including fixed_income stubs, and fail-closed unsupported
+families (enum existence is never market support).
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ class InstrumentFamily(str, Enum):
     OPTIONS = "options"
     FUTURES = "futures"
     FOREX = "forex"
+    FIXED_INCOME = "fixed_income"
     OTHER = "other"
 
 
@@ -43,9 +49,49 @@ UNSUPPORTED_SIM_FAMILIES: frozenset[InstrumentFamily] = frozenset(
         InstrumentFamily.OPTIONS,
         InstrumentFamily.FUTURES,
         InstrumentFamily.FOREX,
+        InstrumentFamily.FIXED_INCOME,
         InstrumentFamily.OTHER,
     }
 )
+
+
+@dataclass(frozen=True)
+class InstrumentIdentifiers:
+    """Canonical identity fields — free-text venue/symbol alone is not enough long-term."""
+
+    symbol: str
+    venue: str
+    isin: str | None = None
+    figi: str | None = None
+    exchange_symbol: str | None = None
+    currency_pair: str | None = None  # FX later (W09); unused for equity/crypto
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "venue": self.venue,
+            "isin": self.isin,
+            "figi": self.figi,
+            "exchangeSymbol": self.exchange_symbol or self.symbol,
+            "currencyPair": self.currency_pair,
+        }
+
+
+def make_instrument_id(
+    family: InstrumentFamily | str,
+    symbol: str,
+    venue: str,
+) -> str:
+    fam = family.value if isinstance(family, InstrumentFamily) else str(family)
+    return f"{fam}:{symbol.upper()}:{venue.upper()}"
+
+
+def parse_instrument_id(instrument_id: str) -> tuple[str, str, str]:
+    """Parse ``family:SYMBOL:VENUE`` — raises ValueError on malformed ids."""
+    parts = (instrument_id or "").split(":")
+    if len(parts) != 3 or not all(parts):
+        raise ValueError(f"malformed instrument_id: {instrument_id!r}")
+    return parts[0], parts[1], parts[2]
 
 
 def family_capability_status(family: InstrumentFamily | str) -> CapabilityState:
@@ -102,10 +148,25 @@ class InstrumentSpec:
     min_notional: str = "1"
     supports_short: bool = False
     data_level: DataLevel = DataLevel.OHLCV
+    # W07 — contract multiplier (futures/options later). Equity/crypto default "1".
+    multiplier: str = "1"
+    isin: str | None = None
+    figi: str | None = None
+    exchange_symbol: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def resolved_settlement_currency(self) -> str:
         return self.settlement_currency or self.quote_currency
+
+    def identifiers(self) -> InstrumentIdentifiers:
+        return InstrumentIdentifiers(
+            symbol=self.symbol,
+            venue=self.venue,
+            isin=self.isin,
+            figi=self.figi,
+            exchange_symbol=self.exchange_symbol or self.symbol,
+            currency_pair=(self.metadata or {}).get("currency_pair"),
+        )
 
     def capability_status(self) -> CapabilityState:
         meta_cap = self.metadata.get("capability") if self.metadata else None
@@ -128,8 +189,10 @@ class InstrumentSpec:
             "tick_size": self.tick_size,
             "lot_size": self.lot_size,
             "min_notional": self.min_notional,
+            "multiplier": self.multiplier,
             "supports_short": self.supports_short,
             "data_level": self.data_level.value,
+            "identifiers": self.identifiers().public_dict(),
             "capability": self.capability_status().value,
             "metadata": self.metadata,
             "truth": {
@@ -137,6 +200,8 @@ class InstrumentSpec:
                     self.family in SUPPORTED_SIM_FAMILIES
                     or self.capability_status() == CapabilityState.NOT_IMPLEMENTED
                 ),
+                "enum_exists_is_not_market_support": True,
+                "multiplier_required_for_contract_notional": True,
             },
         }
 
@@ -151,6 +216,9 @@ EQUITY_AAPL = InstrumentSpec(
     tick_size="0.01",
     lot_size="1",
     min_notional="1",
+    multiplier="1",
+    isin="US0378331005",
+    exchange_symbol="AAPL",
 )
 
 CRYPTO_BTCUSDT = InstrumentSpec(
@@ -163,7 +231,47 @@ CRYPTO_BTCUSDT = InstrumentSpec(
     tick_size="0.01",
     lot_size="0.0001",
     min_notional="10",
+    multiplier="1",
+    exchange_symbol="BTCUSDT",
 )
+
+# Stub specs for unsupported families — capability NOT_IMPLEMENTED; never tradeable.
+FUTURES_ES_STUB = InstrumentSpec(
+    instrument_id="futures:ES:CME",
+    symbol="ES",
+    family=InstrumentFamily.FUTURES,
+    venue="CME",
+    quote_currency="USD",
+    tick_size="0.25",
+    lot_size="1",
+    min_notional="1",
+    multiplier="50",
+    metadata={"capability": "NOT_IMPLEMENTED", "stub": True},
+)
+
+FIXED_INCOME_US10Y_STUB = InstrumentSpec(
+    instrument_id="fixed_income:US10Y:OTC",
+    symbol="US10Y",
+    family=InstrumentFamily.FIXED_INCOME,
+    venue="OTC",
+    quote_currency="USD",
+    tick_size="0.001",
+    lot_size="1000",
+    min_notional="1000",
+    multiplier="1",
+    metadata={"capability": "NOT_IMPLEMENTED", "stub": True},
+)
+
+_REGISTRY: dict[str, InstrumentSpec] = {
+    EQUITY_AAPL.instrument_id: EQUITY_AAPL,
+    CRYPTO_BTCUSDT.instrument_id: CRYPTO_BTCUSDT,
+    FUTURES_ES_STUB.instrument_id: FUTURES_ES_STUB,
+    FIXED_INCOME_US10Y_STUB.instrument_id: FIXED_INCOME_US10Y_STUB,
+    EQUITY_AAPL.symbol: EQUITY_AAPL,
+    CRYPTO_BTCUSDT.symbol: CRYPTO_BTCUSDT,
+    FUTURES_ES_STUB.symbol: FUTURES_ES_STUB,
+    FIXED_INCOME_US10Y_STUB.symbol: FIXED_INCOME_US10Y_STUB,
+}
 
 
 def family_capability(family: InstrumentFamily | str) -> CapabilityState:
@@ -172,7 +280,7 @@ def family_capability(family: InstrumentFamily | str) -> CapabilityState:
 
 
 def support_matrix() -> dict[str, Any]:
-    """Explicit support matrix for operator/UI honesty (W19 / T16)."""
+    """Explicit support matrix for operator/UI honesty (W19 / T16 / W07)."""
     rows = []
     for fam in InstrumentFamily:
         cap = family_capability(fam)
@@ -192,6 +300,7 @@ def support_matrix() -> dict[str, Any]:
         "truth": {
             "enum_exists_is_not_market_support": True,
             "unsupported_is_explicit": True,
+            "fixed_income_is_not_equity": True,
         },
     }
 
@@ -214,25 +323,30 @@ def infer_family(
         except ValueError as exc:
             raise ValueError(f"INSTRUMENT_RULE: unknown family {meta['family']!r}") from exc
     sym = symbol.upper().replace("/", "").replace("-", "")
+    itype = str(meta.get("instrument_type") or "").lower()
+    if itype in {"bond", "fixed_income", "treasury", "govvie"}:
+        return InstrumentFamily.FIXED_INCOME
+    if any(tok in sym for tok in ("BOND", "US10Y", "TNOTE", "TBILL")):
+        return InstrumentFamily.FIXED_INCOME
     # Explicit unsupported-family markers — never equity fallback.
-    if any(tok in sym for tok in ("OPT", "CALL", "PUT")) or meta.get("instrument_type") in {
+    if any(tok in sym for tok in ("OPT", "CALL", "PUT")) or itype in {
         "option",
         "options",
     }:
         return InstrumentFamily.OPTIONS
-    if any(tok in sym for tok in ("PERP", "FUT", "FUTURE")) or meta.get("instrument_type") in {
+    if any(tok in sym for tok in ("PERP", "FUT", "FUTURE")) or itype in {
         "future",
         "futures",
     }:
         return InstrumentFamily.FUTURES
-    if meta.get("instrument_type") in {"fx", "forex"} or (
+    if itype in {"fx", "forex"} or (
         len(sym) == 6 and sym.isalpha() and sym[:3] != sym[3:] and sym.endswith(("USD", "EUR", "GBP", "JPY"))
         and not sym.endswith(("USDT", "USDC"))
     ):
         # Crude FX pair detector; still NOT_IMPLEMENTED for execution.
         if venue and venue.upper() in {"BINANCE", "COINBASE", "KRAKEN"}:
             pass  # crypto venues win below
-        elif meta.get("instrument_type") in {"fx", "forex"} or meta.get("family") == "forex":
+        elif itype in {"fx", "forex"} or meta.get("family") == "forex":
             return InstrumentFamily.FOREX
         elif len(sym) == 6 and sym.isalpha() and not sym.endswith(("USDT", "USDC")):
             # EURUSD-style — treat as forex unsupported rather than equity.
@@ -256,32 +370,44 @@ def spec_for_symbol(
     meta = dict(metadata or {})
     family = infer_family(symbol, venue=meta.get("venue"), metadata=meta)
     supports_short = bool(meta.get("supports_short", False))
+    multiplier = str(meta.get("multiplier") or "1")
+    venue = str(meta.get("venue") or ("BINANCE" if family == InstrumentFamily.CRYPTO_SPOT else "NASDAQ"))
     if family == InstrumentFamily.CRYPTO_SPOT:
+        venue = str(meta.get("venue") or "BINANCE")
         return InstrumentSpec(
-            instrument_id=f"crypto_spot:{symbol.upper()}:{meta.get('venue') or 'BINANCE'}",
+            instrument_id=make_instrument_id(family, symbol, venue),
             symbol=symbol.upper(),
             family=family,
-            venue=str(meta.get("venue") or "BINANCE"),
+            venue=venue,
             quote_currency=str(meta.get("quote_currency") or "USDT"),
             timezone="UTC",
             tick_size=str(meta.get("tick_size") or "0.01"),
             lot_size=str(meta.get("lot_size") or "0.0001"),
             min_notional=str(meta.get("min_notional") or "10"),
             supports_short=supports_short,
+            multiplier=multiplier,
+            isin=meta.get("isin"),
+            figi=meta.get("figi"),
+            exchange_symbol=str(meta.get("exchange_symbol") or symbol.upper()),
             metadata={"timeframe": timeframe, **meta},
         )
-    if family in {InstrumentFamily.OPTIONS, InstrumentFamily.FUTURES, InstrumentFamily.FOREX}:
+    if family in UNSUPPORTED_SIM_FAMILIES:
+        venue = str(meta.get("venue") or "UNKNOWN")
         return InstrumentSpec(
-            instrument_id=f"{family.value}:{symbol.upper()}:{meta.get('venue') or 'UNKNOWN'}",
+            instrument_id=make_instrument_id(family, symbol, venue),
             symbol=symbol.upper(),
             family=family,
-            venue=str(meta.get("venue") or "UNKNOWN"),
+            venue=venue,
             quote_currency=str(meta.get("quote_currency") or "USD"),
             timezone=str(meta.get("timezone") or "UTC"),
             tick_size=str(meta.get("tick_size") or "0.01"),
             lot_size=str(meta.get("lot_size") or "1"),
             min_notional=str(meta.get("min_notional") or "1"),
             supports_short=supports_short,
+            multiplier=multiplier,
+            isin=meta.get("isin"),
+            figi=meta.get("figi"),
+            exchange_symbol=str(meta.get("exchange_symbol") or symbol.upper()),
             metadata={
                 "timeframe": timeframe,
                 "capability": family_capability(family).value,
@@ -290,19 +416,61 @@ def spec_for_symbol(
                 **meta,
             },
         )
+    venue = str(meta.get("venue") or "NASDAQ")
     return InstrumentSpec(
-        instrument_id=f"equity:{symbol.upper()}:{meta.get('venue') or 'NASDAQ'}",
+        instrument_id=make_instrument_id(InstrumentFamily.EQUITY, symbol, venue),
         symbol=symbol.upper(),
         family=InstrumentFamily.EQUITY,
-        venue=str(meta.get("venue") or "NASDAQ"),
+        venue=venue,
         quote_currency=str(meta.get("quote_currency") or "USD"),
         timezone=str(meta.get("timezone") or "America/New_York"),
         tick_size=str(meta.get("tick_size") or "0.01"),
         lot_size=str(meta.get("lot_size") or "1"),
         min_notional=str(meta.get("min_notional") or "1"),
         supports_short=supports_short,
+        multiplier=multiplier,
+        isin=meta.get("isin"),
+        figi=meta.get("figi"),
+        exchange_symbol=str(meta.get("exchange_symbol") or symbol.upper()),
         metadata={"timeframe": timeframe, **meta},
     )
+
+
+def registry_lookup(
+    symbol_or_id: str,
+    *,
+    venue: str | None = None,
+    family: InstrumentFamily | str | None = None,
+) -> InstrumentSpec | None:
+    """Lookup known catalog specs; None when unknown (does not invent support)."""
+    key = (symbol_or_id or "").strip()
+    if not key:
+        return None
+    if key in _REGISTRY:
+        return _REGISTRY[key]
+    upper = key.upper()
+    if upper in _REGISTRY:
+        return _REGISTRY[upper]
+    if family is not None and venue:
+        fam = family if isinstance(family, InstrumentFamily) else InstrumentFamily(str(family))
+        iid = make_instrument_id(fam, upper, venue)
+        return _REGISTRY.get(iid)
+    return None
+
+
+def register_instrument(spec: InstrumentSpec) -> InstrumentSpec:
+    """Insert/replace a catalog entry (tests / operator seeding)."""
+    _REGISTRY[spec.instrument_id] = spec
+    _REGISTRY[spec.symbol.upper()] = spec
+    return spec
+
+
+def compute_notional(qty: Any, price: Any, *, multiplier: str | Decimal | InstrumentSpec = "1") -> Decimal:
+    """Contract-aware notional = qty × price × multiplier."""
+    mult = multiplier
+    if isinstance(multiplier, InstrumentSpec):
+        mult = multiplier.multiplier
+    return Decimal(str(qty)) * Decimal(str(price)) * Decimal(str(mult))
 
 
 def round_to_lot(qty: Any, lot_size: str | Decimal) -> Decimal:
@@ -351,7 +519,7 @@ def validate_intent_rules(
     if rounded_qty <= 0:
         return False, "INSTRUMENT_RULE: qty rounds to zero under lot_size", Decimal("0")
     px = round_to_tick(price, spec.tick_size)
-    notional = rounded_qty * px
+    notional = compute_notional(rounded_qty, px, multiplier=spec)
     min_n = Decimal(str(spec.min_notional))
     if notional < min_n:
         return False, f"INSTRUMENT_RULE: notional {notional} < min_notional {min_n}", rounded_qty
