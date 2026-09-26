@@ -1181,6 +1181,8 @@ brain_access = BrainAccessFacade(
     capability_list=lambda: capability_catalog.list(),
     run_lookup=lambda run_id: run_store.get(run_id) if run_id else None,
 )
+# W8: Perception must go through Brain when bound — no private store bypass.
+cognition_runtime.perception.brain_access = brain_access
 
 domain_strategy_registry = StrategyRegistry()
 domain_strategy_registry.register(CodingCognitiveStrategy())

@@ -19,6 +19,7 @@ from .model_adapter import build_control_plane_model_caller
 from .perception import PerceptionItem, PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .runtime import CognitiveRunState, CognitiveRuntime
+from .skills import Skill, SkillLibrary
 from .specialists import register_specialist_handlers
 from .steering import SteerClassification, SteerKind, classify_steer
 from .failure import FailureCategory, classify_failure, should_blind_retry
@@ -111,6 +112,8 @@ __all__ = [
     "ReasoningMode",
     "ReasoningStrategy",
     "RiskClass",
+    "Skill",
+    "SkillLibrary",
     "SteerClassification",
     "SteerKind",
     "StrategyRegistry",

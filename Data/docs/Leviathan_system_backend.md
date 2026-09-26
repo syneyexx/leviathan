@@ -375,7 +375,7 @@ Epistemic trust labels (`KNOWLEDGE_SOURCE`, `EVIDENCE`, `TOOL_OBSERVATION`, `NEU
 - `contracts.py` — Brain-facing data contracts;
 - `facade.py` — unified querying across knowledge, memory, evidence, experience and capabilities.
 
-`main.py` constructs `BrainAccessFacade` over the canonical stores.
+`main.py` constructs `BrainAccessFacade` over the canonical stores and binds it onto `PerceptionService` (W8). When Brain is bound, Perception gathers Knowledge/Memory/Evidence through Brain first and does **not** bypass Brain with private store calls.
 
 ## 8.2 Knowledge/RAG
 
@@ -401,7 +401,14 @@ Current behavior is RAG/Brain-based evidence acquisition with provenance and ret
 `Data/modules/memory/` owns **durable scoped memory**:
 
 - `store.py` — persistence/search;
-- `types.py` — kinds, scopes, states and contracts.
+- `types.py` — kinds, scopes, states and contracts;
+- `consolidation.py` — episodic → semantic candidates with provenance (W8).
+
+Explicit trust states (`MemoryTrustState`):
+
+`AGENT_PROPOSED` · `USER_STATED` · `SOURCE_DERIVED` · `VERIFIED` · `CONFLICTED` · `REVOKED`
+
+LLM confidence never becomes memory truth. Consolidation may admit semantic candidates as `AGENT_PROPOSED` until verification. Procedural skills derived from repeated VERIFIED cognition runs live in `cognition/skills.py` (`SkillLibrary`) — no hidden CoT.
 
 Keep these concepts separate:
 
@@ -409,7 +416,8 @@ Keep these concepts separate:
 2. cognition `WorkingMemory`;
 3. durable MemoryStore;
 4. Brain/Knowledge documents;
-5. VerifiedExperience.
+5. VerifiedExperience;
+6. SkillLibrary (procedural, measured success rate).
 
 They may be combined in perception/context, but they are not the same storage or trust class.
 

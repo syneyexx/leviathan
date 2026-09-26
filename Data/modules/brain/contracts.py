@@ -60,6 +60,7 @@ class BrainMemoryRef:
     content: str = ""
     kind: str = ""
     scope: str = ""
+    trust: str = "AGENT_PROPOSED"
     score: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -69,6 +70,7 @@ class BrainMemoryRef:
             "content": self.content,
             "kind": self.kind,
             "scope": self.scope,
+            "trust": self.trust,
             "score": self.score,
             "metadata": dict(self.metadata),
         }
