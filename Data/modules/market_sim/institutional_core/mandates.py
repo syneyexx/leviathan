@@ -114,10 +114,39 @@ def pre_trade_check(
         )
 
     universe = {str(s).upper() for s in (view.get("universe") or [])}
+    allowed_instruments = {
+        str(s).upper()
+        for s in (view.get("allowedInstruments") or view.get("allowed_instruments") or [])
+    }
+    restricted = {
+        str(s).upper()
+        for s in (
+            view.get("restrictedInstruments")
+            or view.get("restricted_instruments")
+            or []
+        )
+    }
+    if restricted and intent.symbol.upper() in restricted:
+        violations.append(
+            PolicyViolation(
+                "RESTRICTED_INSTRUMENT",
+                "BLOCK",
+                f"{intent.symbol} is restricted by mandate",
+            )
+        )
     if universe and intent.symbol.upper() not in universe:
         violations.append(
             PolicyViolation("UNIVERSE", "BLOCK", f"{intent.symbol} not in mandate universe")
         )
+    if allowed_instruments and "*" not in allowed_instruments:
+        if intent.symbol.upper() not in allowed_instruments:
+            violations.append(
+                PolicyViolation(
+                    "ALLOWED_INSTRUMENTS",
+                    "BLOCK",
+                    f"{intent.symbol} not in allowedInstruments",
+                )
+            )
 
     allowed_types = {str(t).upper() for t in (view.get("allowedOrderTypes") or ["MARKET"])}
     if intent.order_type.upper() not in allowed_types:

@@ -52,7 +52,8 @@ class InstrumentModelW07Tests(unittest.TestCase):
         self.assertEqual(fi["HISTORICAL_SIM_AVAILABLE"], "NOT_IMPLEMENTED")
         self.assertEqual(fi["LIVE_TRADING_AVAILABLE"], "BLOCKED")
         fx = next(m for m in caps["markets"] if m["family"] == "forex")
-        self.assertEqual(fx["HISTORICAL_SIM_AVAILABLE"], "AVAILABLE")
+        # Identity/pip model exists; full historical sim path remains NOT_IMPLEMENTED (D20).
+        self.assertEqual(fx["HISTORICAL_SIM_AVAILABLE"], "NOT_IMPLEMENTED")
 
     def test_instrument_id_round_trip(self) -> None:
         iid = make_instrument_id(InstrumentFamily.EQUITY, "aapl", "nasdaq")

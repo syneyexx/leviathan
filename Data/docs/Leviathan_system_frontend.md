@@ -179,6 +179,8 @@ Trading routes:
 - `/trading/paper`
 - `/trading/broker`
 - `/trading/onderzoek`
+- `/trading/lab`
+- `/trading/control-room`
 
 Settings aliases route to `/settings?section=...` for the appropriate operator category.
 
@@ -599,6 +601,10 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 ### Trading Center Lab (W17 / W25)
 
 `/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials, runs lifecycle, learning/generations/candidates/lessons). Shows real Learning Run status/stage/generation/budgets, family probabilities, candidate lineage, and evidence-linked lessons. Labels use TRAIN LEADER / VALIDATION PASSED / SEALED PASSED / QUALIFIED / UNMEASURED / NOT RUN — never fake profitability claims. Live broker remains explicitly blocked. No mock KPIs.
+
+### Institutional Control Room (W68 / W98)
+
+`/trading/control-room` (`InstitutionalControlRoomPage`) consumes `GET /api/market-sim/institutional/control-room`. Panels show live-trading blocked status, open reconciliation breaks, open exceptions, and audit-chain verification from `InstitutionalRuntime` — UNMEASURED/EMPTY only when genuinely unmeasured. Frontend does not invent green health.
 
 **W16 lifecycle (CURRENT):** client helpers in `api/domains/marketSimLab.ts` cover `/api/market-sim/lab/runs` create/list/get/start/pause/resume/cancel plus learning inspection endpoints.
 

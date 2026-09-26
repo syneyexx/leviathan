@@ -494,6 +494,54 @@ class PortfolioService:
             if existing and existing.get("status") == "filled":
                 return {"order": existing, "idempotent_replay": True, "portfolio": self._public_portfolio(row)}
 
+            # Institutional pre-trade: resolve instrument + mandate gate (server-side)
+            try:
+                from ..institutional_core.runtime import get_institutional_runtime
+
+                inst_rt = get_institutional_runtime(self.store.db_path)
+                inst_rt.ensure_instrument(
+                    symbol,
+                    currency=str(row.get("base_currency") or "USD"),
+                )
+                gate_m = inst_rt.pre_trade_gate(
+                    portfolio_id=portfolio_id,
+                    symbol=symbol,
+                    side=side,
+                    qty=float(qty),
+                )
+                if not gate_m.get("allowed"):
+                    order = self._record_order(
+                        row,
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        client_order_id=client_order_id,
+                        status="blocked",
+                        reject_reason="mandate/compliance blocked: "
+                        + ",".join(
+                            v.get("code", "") for v in (gate_m.get("violations") or [])
+                        ),
+                        agent_id=agent_id,
+                        orchestra_id=orchestra_id or row.get("orchestra_id"),
+                        strategy_id=strategy_id,
+                        strategy_version=strategy_version,
+                        decision_id=decision_id,
+                        risk_result={"mandate": gate_m},
+                    )
+                    return {
+                        "order": order,
+                        "portfolio": self._public_portfolio(row),
+                        "mandate": gate_m,
+                        "code": "MANDATE_VETO",
+                    }
+            except Exception as exc:  # noqa: BLE001
+                # Fail closed on institutional gate errors
+                raise MarketSimError(
+                    "INSTITUTIONAL_GATE_ERROR",
+                    str(exc),
+                    http_status=500,
+                ) from exc
+
             book = self._load_book(row)
             settings = dict(row.get("settings") or {})
             settings["sod_equity"] = float(row.get("sod_equity") or row.get("equity") or 0)
@@ -689,11 +737,40 @@ class PortfolioService:
             self._persist_book(row, book, marks)
             self._maybe_snapshot(row, book, marks, reason="fill")
             book.assert_invariants(marks)
+
+            institutional = None
+            try:
+                from ..institutional_core.runtime import get_institutional_runtime
+
+                inst_rt = get_institutional_runtime(self.store.db_path)
+                institutional = inst_rt.on_paper_fill(
+                    portfolio_id=portfolio_id,
+                    symbol=symbol.upper(),
+                    side=side.upper(),
+                    qty=sized,
+                    price=fill_px,
+                    fee=fee,
+                    fill_id=fill_id,
+                    order_id=order_id,
+                    currency=str(row.get("base_currency") or "USD"),
+                    decision_id=decision_id,
+                    actor=str(agent_id or "paper"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Fill already applied to PortfolioBook — surface institutional failure
+                # without rolling back cash (atomic DB txn limitation across layers).
+                institutional = {
+                    "error": str(exc),
+                    "status": "FAIL",
+                    "truth": {"portfolio_book_updated": True, "institutional_partial": True},
+                }
+
             return {
                 "order": order,
                 "transaction": tx,
                 "portfolio": self._public_portfolio(row),
                 "risk": gate,
+                "institutional": institutional,
                 "truth": {"paper_only": True, "real_money": False},
             }
 

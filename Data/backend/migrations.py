@@ -4013,6 +4013,181 @@ def _m54_market_sim_learning_runs(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m56_institutional_runtime(conn: sqlite3.Connection) -> None:
+    """Institutional runtime persistence — IBOR events, journal, recon, mandates, workflows."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_ibor_events (
+            event_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL DEFAULT '',
+            sequence INTEGER NOT NULL DEFAULT 0,
+            kind TEXT NOT NULL DEFAULT '',
+            ts TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            idempotency_key TEXT NOT NULL UNIQUE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_ibor_events_portfolio "
+        "ON institutional_ibor_events(portfolio_id, sequence)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_journal_entries (
+            entry_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL DEFAULT '',
+            ts TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT '',
+            lines_json TEXT NOT NULL DEFAULT '[]',
+            refs_json TEXT NOT NULL DEFAULT '{}',
+            currency TEXT NOT NULL DEFAULT '',
+            idempotency_key TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'POSTED'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_journal_portfolio "
+        "ON institutional_journal_entries(portfolio_id, ts)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_recon_runs (
+            run_id TEXT PRIMARY KEY,
+            domain TEXT NOT NULL DEFAULT '',
+            contract_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT '',
+            open_count INTEGER NOT NULL DEFAULT 0,
+            break_count INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_mandates (
+            mandate_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 1,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            fingerprint TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_mandates_portfolio "
+        "ON institutional_mandates(portfolio_id, status)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_workflow_checkpoints (
+            workflow_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL DEFAULT '',
+            step_index INTEGER NOT NULL DEFAULT 0,
+            state_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'RUNNING',
+            updated_at TEXT NOT NULL DEFAULT '',
+            idempotency_key TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_valuation_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            portfolio_id TEXT NOT NULL DEFAULT '',
+            as_of TEXT NOT NULL DEFAULT '',
+            base_currency TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            quality TEXT NOT NULL DEFAULT 'OBSERVED',
+            created_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_valuation_portfolio "
+        "ON institutional_valuation_snapshots(portfolio_id, as_of)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_bitemporal_records (
+            record_id TEXT PRIMARY KEY,
+            entity_type TEXT NOT NULL DEFAULT '',
+            entity_id TEXT NOT NULL DEFAULT '',
+            effective_time TEXT NOT NULL DEFAULT '',
+            observed_at TEXT NOT NULL DEFAULT '',
+            recorded_at TEXT NOT NULL DEFAULT '',
+            superseded_at TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT '',
+            source_version TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            quality TEXT NOT NULL DEFAULT 'OBSERVED',
+            content_hash TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_bitemporal_entity "
+        "ON institutional_bitemporal_records(entity_type, entity_id, effective_time)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_authority_approvals (
+            approval_id TEXT PRIMARY KEY,
+            change_id TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT '',
+            maker_id TEXT NOT NULL DEFAULT '',
+            checker_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_authority_change "
+        "ON institutional_authority_approvals(change_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_model_governance (
+            model_id TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '',
+            intended_use TEXT NOT NULL DEFAULT '',
+            prohibited_use TEXT NOT NULL DEFAULT '',
+            validation_state TEXT NOT NULL DEFAULT 'UNVALIDATED',
+            owner TEXT NOT NULL DEFAULT '',
+            validator TEXT NOT NULL DEFAULT '',
+            approval_state TEXT NOT NULL DEFAULT 'DRAFT',
+            limitations_json TEXT NOT NULL DEFAULT '[]',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (model_id, version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_quarantine (
+            quarantine_id TEXT PRIMARY KEY,
+            entity_type TEXT NOT NULL DEFAULT '',
+            entity_id TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'QUARANTINED',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+
+
 def _m55_institutional_core(conn: sqlite3.Connection) -> None:
     """Institutional core additive tables (instruments, breaks, audit, exceptions)."""
     conn.execute(
@@ -4253,6 +4428,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=55,
         name="institutional_core",
         apply=_m55_institutional_core,
+    ),
+    Migration(
+        version=56,
+        name="institutional_runtime",
+        apply=_m56_institutional_runtime,
     ),
 )
 

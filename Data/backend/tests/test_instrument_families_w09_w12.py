@@ -51,7 +51,8 @@ class FxSpotW09Tests(unittest.TestCase):
     def test_capabilities_forex_available(self) -> None:
         caps = build_market_capabilities(feature_enabled=True, binance_reachable=False, alpaca_paper=False)
         fx = next(m for m in caps["markets"] if m["family"] == "forex")
-        self.assertEqual(fx["HISTORICAL_SIM_AVAILABLE"], "AVAILABLE")
+        # Pip/tick identity is AVAILABLE via family_capability; HISTORICAL_SIM stays honest.
+        self.assertEqual(fx["HISTORICAL_SIM_AVAILABLE"], "NOT_IMPLEMENTED")
         self.assertEqual(fx["LIVE_TRADING_AVAILABLE"], "BLOCKED")
 
 

@@ -120,29 +120,35 @@ def build_market_capabilities(
         ),
         MarketModeStatus(
             family=InstrumentFamily.FUTURES.value,
-            historical_sim="AVAILABLE" if feature_enabled else "UNAVAILABLE",
-            live_paper="AVAILABLE" if feature_enabled and local_paper else "UNAVAILABLE",
+            # Contract identity/multiplier exist (W10); full historical sim path is not
+            # proven end-to-end — do not claim AVAILABLE from enum/model presence alone.
+            historical_sim="NOT_IMPLEMENTED",
+            live_paper="NOT_IMPLEMENTED",
             live_trading=live_trading,
-            data_providers=["csv_local"] if feature_enabled else [],
-            paper_brokers=["local_paper"] if feature_enabled and local_paper else [],
+            data_providers=[],
+            paper_brokers=[],
             notes=(
-                "Futures/perps OHLCV sim with contract multiplier. "
-                "Funding rate UNMEASURED unless provided. Live money blocked."
+                "Futures/perps contract multiplier identity exists; funding UNMEASURED. "
+                "Historical/paper sim NOT_IMPLEMENTED until E2E path is proven. "
+                "Live money blocked."
             ),
-            verified_by="market_sim.futures_contracts + instruments W10",
+            verified_by="market_sim.futures_contracts + instruments W10 (identity only)",
         ),
         MarketModeStatus(
             family=InstrumentFamily.FOREX.value,
-            historical_sim="AVAILABLE" if feature_enabled else "UNAVAILABLE",
-            live_paper="AVAILABLE" if feature_enabled and local_paper else "UNAVAILABLE",
+            # FX pip/tick model exists (W09); full historical sim path is not proven
+            # end-to-end — do not claim AVAILABLE from instrument-model presence alone.
+            historical_sim="NOT_IMPLEMENTED",
+            live_paper="NOT_IMPLEMENTED",
             live_trading=live_trading,
-            data_providers=["csv_local"] if feature_enabled else [],
-            paper_brokers=["local_paper"] if feature_enabled and local_paper else [],
+            data_providers=[],
+            paper_brokers=[],
             notes=(
-                "FX spot currency-pair model with pip/tick conventions. "
-                "OHLCV paper only — no order-book FX realism. Live money blocked."
+                "FX spot pip/tick identity exists. "
+                "Historical/paper sim NOT_IMPLEMENTED until E2E path is proven. "
+                "Live money blocked."
             ),
-            verified_by="market_sim.fx + instruments W09",
+            verified_by="market_sim.fx + instruments W09 (identity only)",
         ),
         MarketModeStatus(
             family=InstrumentFamily.OPTIONS.value,

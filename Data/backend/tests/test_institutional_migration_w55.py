@@ -1,4 +1,4 @@
-"""WAVE 55 — institutional_core migration creates additive tables."""
+"""WAVE 55+ — institutional_core / institutional_runtime migrations."""
 
 from __future__ import annotations
 
@@ -18,22 +18,39 @@ EXPECTED_TABLES = {
     "institutional_exceptions",
 }
 
+RUNTIME_TABLES = {
+    "institutional_ibor_events",
+    "institutional_journal_entries",
+    "institutional_recon_runs",
+    "institutional_mandates",
+    "institutional_workflow_checkpoints",
+    "institutional_valuation_snapshots",
+    "institutional_bitemporal_records",
+    "institutional_authority_approvals",
+    "institutional_model_governance",
+    "institutional_quarantine",
+}
+
 
 class InstitutionalMigrationW55Tests(unittest.TestCase):
-    def test_head_is_55(self) -> None:
-        self.assertEqual(MIGRATIONS[-1].version, 55)
-        self.assertEqual(MIGRATIONS[-1].name, "institutional_core")
+    def test_head_includes_institutional_core(self) -> None:
+        self.assertGreaterEqual(MIGRATIONS[-1].version, 55)
+        names = {m.version: m.name for m in MIGRATIONS}
+        self.assertEqual(names[55], "institutional_core")
+        if MIGRATIONS[-1].version >= 56:
+            self.assertEqual(names[56], "institutional_runtime")
 
     def test_upgrade_from_empty_creates_tables(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "institutional_w55.sqlite"
             runner = MigrationRunner(path)
             applied = runner.apply_all()
-            self.assertEqual(applied, list(range(1, 56)))
-            self.assertEqual(applied[-1], 55)
+            self.assertEqual(applied[0], 1)
+            self.assertIn(55, applied)
+            self.assertEqual(applied[-1], MIGRATIONS[-1].version)
 
             with sqlite3.connect(path) as conn:
-                self.assertEqual(runner.current_version(conn), 55)
+                self.assertEqual(runner.current_version(conn), MIGRATIONS[-1].version)
                 tables = {
                     row[0]
                     for row in conn.execute(
@@ -42,8 +59,10 @@ class InstitutionalMigrationW55Tests(unittest.TestCase):
                 }
                 for name in EXPECTED_TABLES:
                     self.assertIn(name, tables)
+                if MIGRATIONS[-1].version >= 56:
+                    for name in RUNTIME_TABLES:
+                        self.assertIn(name, tables)
 
-                # Indexes present for fingerprint / status / instrument_id
                 indexes = {
                     row[0]
                     for row in conn.execute(
@@ -55,7 +74,6 @@ class InstitutionalMigrationW55Tests(unittest.TestCase):
                 self.assertIn("idx_institutional_instrument_aliases_instrument", indexes)
                 self.assertIn("idx_institutional_exceptions_status", indexes)
 
-            # Idempotent re-apply
             second = MigrationRunner(path).apply_all()
             self.assertEqual(second, [])
 

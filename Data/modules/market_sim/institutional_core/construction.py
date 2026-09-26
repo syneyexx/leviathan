@@ -238,3 +238,87 @@ def optimize_scores(
         violations=[],
         notes=notes,
     )
+
+
+def optimize_constrained(
+    scores: Mapping[str, float],
+    constraints: ConstructionConstraints | None = None,
+    *,
+    allow_approximate: bool = False,
+) -> ConstructionResult:
+    """Constrained portfolio construction.
+
+    Prefer a projected score optimizer with explicit feasibility. Labels method
+    honestly. Falls back to greedy only when constraints are the simple sum-
+    to-one long-only case; never claims approximate success unless opted in.
+    """
+    cons = constraints or ConstructionConstraints()
+    # Structural infeasibility short-circuit via greedy precheck path.
+    seed = optimize_scores(scores, cons)
+    if seed.status == MeasurementState.INFEASIBLE.value:
+        return ConstructionResult(
+            status=seed.status,
+            weights={},
+            objective_value=None,
+            violations=list(seed.violations),
+            method="constrained_projection",
+            notes=["structural_or_joint_infeasibility"],
+        )
+    if seed.status in {MeasurementState.EMPTY.value}:
+        return ConstructionResult(
+            status=seed.status,
+            weights={},
+            objective_value=None,
+            method="constrained_projection",
+            notes=list(seed.notes),
+        )
+
+    # Refine with iterative projection onto box + simplex (long-only).
+    weights = dict(seed.weights)
+    bounds = _bound_map(cons)
+    for _ in range(32):
+        # Box projection
+        for inst, w in list(weights.items()):
+            lo = bounds[inst].lower if inst in bounds else 0.0
+            up = bounds[inst].upper if inst in bounds else (1.0 if cons.long_only else cons.max_gross)
+            weights[inst] = min(up, max(lo, w))
+        # Simplex / sum projection
+        total = sum(weights.values())
+        if cons.require_full_invest and abs(total - cons.sum_weights) > 1e-10 and total != 0:
+            scale = cons.sum_weights / total
+            weights = {k: v * scale for k, v in weights.items()}
+        # Gross cap
+        gross = sum(abs(v) for v in weights.values())
+        if gross > cons.max_gross + 1e-12 and gross > 0:
+            scale = cons.max_gross / gross
+            weights = {k: v * scale for k, v in weights.items()}
+        violations = check_feasibility(weights, cons)
+        if not violations:
+            objective = sum(float(scores.get(k, 0.0)) * v for k, v in weights.items())
+            return ConstructionResult(
+                status=MeasurementState.OBSERVED.value,
+                weights={k: v for k, v in weights.items() if abs(v) > 1e-15},
+                objective_value=objective,
+                violations=[],
+                method="constrained_projection",
+                notes=["projected_box_simplex"],
+            )
+    violations = check_feasibility(weights, cons)
+    if allow_approximate:
+        objective = sum(float(scores.get(k, 0.0)) * v for k, v in weights.items())
+        return ConstructionResult(
+            status=MeasurementState.ASSUMED.value,
+            weights=weights,
+            objective_value=objective,
+            violations=violations,
+            method="constrained_projection_approximate",
+            notes=["operator_opted_into_approximation"],
+        )
+    return ConstructionResult(
+        status=MeasurementState.INFEASIBLE.value,
+        weights={},
+        objective_value=None,
+        violations=violations,
+        method="constrained_projection",
+        notes=["projection_did_not_converge_to_feasible"],
+    )

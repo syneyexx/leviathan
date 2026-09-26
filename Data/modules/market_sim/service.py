@@ -2521,12 +2521,24 @@ class MarketSimControlPlane:
                 metrics = dict(sim_result.get("metrics") or run.metrics or {})
                 last_run_metrics = metrics
                 last_run_id = run_id
-                acceptance = evaluate_acceptance_from_run(
-                    run.public_dict(),
-                    criteria=campaign.acceptance_criteria
-                    or {"min_trades": 1, "max_drawdown_pct": 100.0, "min_total_return_pct": -100.0},
-                )
-                accepted = bool(getattr(acceptance, "passed", False))
+                # Empty campaign criteria must not invent pass-all thresholds
+                # (min_trades=1 / dd=100 / return=-100) that fabricate wins==trials.
+                if campaign.acceptance_criteria:
+                    acceptance = evaluate_acceptance_from_run(
+                        run.public_dict(),
+                        criteria=campaign.acceptance_criteria,
+                    )
+                    accepted = bool(getattr(acceptance, "passed", False))
+                else:
+                    acceptance = {
+                        "passed": False,
+                        "reason": "NO_ACCEPTANCE_CRITERIA",
+                        "run_id": run_id,
+                        "metrics": metrics,
+                        "acceptance_criteria": {},
+                        "truth": {"no_fabricated_pass_all_fallback": True},
+                    }
+                    accepted = False
                 if accepted:
                     wins += 1
                 # Extract measured scalars for scorecard (never invent zeros as wins).
@@ -2662,8 +2674,8 @@ class MarketSimControlPlane:
             if last_run_id
             else None,
             metrics=promo_metrics or None,
-            acceptance_criteria=campaign.acceptance_criteria
-            or {"min_trades": 1, "max_drawdown_pct": 100.0, "min_total_return_pct": -100.0},
+            # Do not invent permissive criteria when campaign left them empty.
+            acceptance_criteria=campaign.acceptance_criteria or {},
             current_level="A0",
             target_level=campaign.autonomy_ceiling,
         )
@@ -3250,12 +3262,11 @@ class MarketSimControlPlane:
         return build_capability_gap_matrix().public_dict()
 
     def institutional_control_room(self) -> dict[str, Any]:
-        from .institutional_core.control_room import build_control_room_snapshot
+        from .institutional_core.runtime import get_institutional_runtime
 
-        return build_control_room_snapshot(
-            generated_at=utc_now(),
+        return get_institutional_runtime(self.store.db_path).control_room_snapshot(
             feature_enabled=self.enabled,
-        ).public_dict()
+        )
 
     def institutional_api_catalog(self) -> dict[str, Any]:
         from .institutional_core.api_surface import api_catalog_public
@@ -3272,6 +3283,30 @@ class MarketSimControlPlane:
 
         return build_multi_asset_truth_pack(feature_enabled=self.enabled).public_dict()
 
+    def institutional_runtime(self) -> Any:
+        from .institutional_core.runtime import get_institutional_runtime
+
+        return get_institutional_runtime(self.store.db_path)
+
+    def institutional_instruments(self) -> dict[str, Any]:
+        rt = self.institutional_runtime()
+        items = rt.repo.list_instruments()
+        return {
+            "items": items,
+            "count": len(items),
+            "truth": {"persisted": True, "source": "institutional_instruments"},
+        }
+
+    def institutional_portfolio_state(self, portfolio_id: str) -> dict[str, Any]:
+        rt = self.institutional_runtime()
+        return {
+            "portfolioId": portfolio_id,
+            "ibor": rt.reconstruct_portfolio_ibor(portfolio_id),
+            "journal": rt.journal_balances(portfolio_id),
+            "decisions": rt.repo.list_decision_packets(limit=50),
+            "audit": rt.repo.verify_audit_chain(),
+        }
+
     def institutional_run_reconciliation(
         self,
         left: Any,
@@ -3284,10 +3319,10 @@ class MarketSimControlPlane:
         fields: list[str] | tuple[str, ...] | None = None,
         key_field: str = "id",
         numeric_tolerance: float = 0.0,
+        allow_both_empty: bool = False,
+        expected_population: int | None = None,
     ) -> dict[str, Any]:
-        """Compare left/right maps or row lists; no silent auto-resolve."""
-        from .institutional_core.reconciliation import CompareContract, run_reconciliation
-
+        """Compare left/right maps or row lists; persist breaks; no silent auto-resolve."""
         def _as_rows(payload: Any) -> list[dict[str, Any]]:
             if payload is None:
                 return []
@@ -3312,25 +3347,21 @@ class MarketSimControlPlane:
         left_rows = _as_rows(left)
         right_rows = _as_rows(right)
         compare_fields = tuple(fields) if fields else ("value",)
-        # Prefer intersecting numeric/object fields when rows look structured.
         if fields is None and left_rows and right_rows:
             sample_keys = set(left_rows[0]) & set(right_rows[0]) - {key_field}
             if sample_keys:
                 compare_fields = tuple(sorted(sample_keys))
-        contract = CompareContract(
-            contract_id=f"recon-{domain}",
+        rt = self.institutional_runtime()
+        return rt.run_and_persist_reconciliation(
+            run_id=run_id,
             domain=str(domain or "generic"),
             left_system=str(left_system or "left"),
             right_system=str(right_system or "right"),
+            left_rows=left_rows,
+            right_rows=right_rows,
             fields=compare_fields,
             key_field=key_field,
             numeric_tolerance=float(numeric_tolerance or 0.0),
+            allow_both_empty=bool(allow_both_empty),
+            expected_population=expected_population,
         )
-        rid = run_id or f"recon-{utc_now()}"
-        run = run_reconciliation(
-            run_id=rid,
-            contract=contract,
-            left_rows=left_rows,
-            right_rows=right_rows,
-        )
-        return run.public_dict()

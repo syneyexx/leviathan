@@ -1,0 +1,407 @@
+{
+  "overall": "PASS",
+  "results": [
+    {
+      "detail": "head=56 applied_tail=[54, 55, 56]",
+      "evidence": {
+        "head": 56,
+        "names": {
+          "55": "institutional_core",
+          "56": "institutional_runtime"
+        }
+      },
+      "name": "head_and_fresh_apply",
+      "section": "01_migrations",
+      "status": "PASS"
+    },
+    {
+      "detail": "assurance ran",
+      "evidence": {
+        "findingCount": 0,
+        "liveTrading": {
+          "LIVE_TRADING_AVAILABLE": "BLOCKED",
+          "findings": [],
+          "ok": true,
+          "publicStatus": {
+            "LIVE_TRADING_AVAILABLE": "BLOCKED",
+            "adapter_configured": false,
+            "agent_cannot_enable": true,
+            "credentials_separated": true,
+            "detail": "Live broker orders are intentionally blocked. Paper trading and historical simulation remain available. Enabling live trading requires a verified adapter, separated credentials, explicit human authorization, deterministic risk checks, order preview, kill switch, and idempotent client order ids \u2014 not present in this build.",
+            "human_authorization_required": true,
+            "unlock_env_set": false
+          },
+          "status": "PASS",
+          "truth": {
+            "agent_cannot_enable": true
+          }
+        }
+      },
+      "name": "no_forbidden_parallel_owners",
+      "section": "03_ownership",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "instrument": {
+          "created": true,
+          "currency": "USD",
+          "family": "equity",
+          "instrument_id": "INST-EQUITY-AAPL",
+          "multiplier": "1",
+          "primary_symbol": "AAPL",
+          "status": "CREATED"
+        },
+        "resolved": {
+          "candidates": [
+            "INST-EQUITY-AAPL"
+          ],
+          "instrument_id": "INST-EQUITY-AAPL",
+          "query": "AAPL",
+          "status": "PASS"
+        }
+      },
+      "name": "canonical_identity_persists",
+      "section": "04_instruments",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {},
+      "name": "timezone_aware_equivalence",
+      "section": "05_temporal",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "accepted": false,
+        "findings": {
+          "datasetId": "market_price:BAD",
+          "findings": [
+            {
+              "detail": "gap_ratio=0.0",
+              "passed": true,
+              "ruleId": "qr_gaps",
+              "severity": "WARN",
+              "state": "OBSERVED"
+            },
+            {
+              "detail": "duplicates=0",
+              "passed": true,
+              "ruleId": "qr_dupes",
+              "severity": "BLOCK",
+              "state": "OBSERVED"
+            },
+            {
+              "detail": "negative_prices=1",
+              "passed": false,
+              "ruleId": "qr_neg",
+              "severity": "BLOCK",
+              "state": "OBSERVED"
+            },
+            {
+              "detail": "hash_stable",
+              "passed": true,
+              "ruleId": "qr_hash",
+              "severity": "BLOCK",
+              "state": "OBSERVED"
+            },
+            {
+              "detail": "source_known",
+              "passed": true,
+              "ruleId": "qr_source",
+              "severity": "WARN",
+              "state": "OBSERVED"
+            }
+          ],
+          "golden": null,
+          "quarantined": true,
+          "sourceId": "csv_local",
+          "sourceRank": 4,
+          "truth": {
+            "extends_dataset_pipeline": true,
+            "live_trading_blocked": true,
+            "no_aladdin_parity_claim": true,
+            "no_fabricated_metrics": true
+          },
+          "verdict": "FAIL"
+        },
+        "quality": "FAIL",
+        "quarantined": true
+      },
+      "name": "negative_price_quarantine",
+      "section": "06_data_quality",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "eventCount": 8
+      },
+      "name": "ibor_reconstruct_idempotent",
+      "section": "07_portfolio",
+      "status": "PASS"
+    },
+    {
+      "detail": "sum=0E-8 balances={'lots': '100.00000000', 'fees': '1.00000000', 'cash': '-101.00000000'}",
+      "evidence": {},
+      "name": "journal_balanced",
+      "section": "08_subledger",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "keys": [
+          "nav",
+          "grossExposure",
+          "netExposure",
+          "var95",
+          "factorExposures",
+          "concentrationByInstrument",
+          "concentrationByPortfolio",
+          "rollup",
+          "notes",
+          "truth"
+        ]
+      },
+      "name": "risk_from_canonical_positions",
+      "section": "10_risk",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "allowed": false,
+        "mandateFingerprint": "62cfbcf12197dbbfc6bcf1fdf53a2d559bce32469ec19aaa70214a8a838b3933",
+        "mandateId": "mandate-c1",
+        "mandateVersion": 1,
+        "phase": "PRE_TRADE",
+        "status": "OBSERVED",
+        "truth": {
+          "extends_orchestra_mandate": true,
+          "live_trading_blocked": true,
+          "live_trading_never_granted_by_mandate": true,
+          "no_aladdin_parity_claim": true,
+          "no_fabricated_metrics": true
+        },
+        "violations": [
+          {
+            "code": "RESTRICTED_INSTRUMENT",
+            "detail": "AAPL is restricted by mandate",
+            "severity": "BLOCK"
+          },
+          {
+            "code": "ALLOWED_INSTRUMENTS",
+            "detail": "AAPL not in allowedInstruments",
+            "severity": "BLOCK"
+          }
+        ]
+      },
+      "name": "restricted_instrument_blocked",
+      "section": "13_compliance",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "allowed": false,
+        "reasons": [
+          "maker_equals_checker"
+        ],
+        "status": "FAIL"
+      },
+      "name": "self_approval_blocked",
+      "section": "14_sod",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "breakCount": 0,
+        "breaks": [],
+        "contract": {
+          "allowBothEmpty": false,
+          "contractId": "c",
+          "domain": "d",
+          "expectedPopulation": null,
+          "fields": [
+            "value"
+          ],
+          "keyField": "id",
+          "leftSystem": "l",
+          "minimumRecords": 0,
+          "numericTolerance": 0.0,
+          "rightSystem": "r"
+        },
+        "contractViolations": [
+          "both_empty_without_allow_both_empty"
+        ],
+        "leftCount": 0,
+        "openCount": 0,
+        "rightCount": 0,
+        "runId": "v18",
+        "status": "FAIL",
+        "truth": {
+          "empty_left_and_right_is_not_pass_unless_expected": true,
+          "live_trading_blocked": true,
+          "no_aladdin_parity_claim": true,
+          "no_fabricated_metrics": true,
+          "no_silent_auto_resolve": true
+        }
+      },
+      "name": "both_empty_not_pass",
+      "section": "18_reconciliation",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "decision_id": "dec-fill-4aab2072-c9ef-4545-b462-85456787a2a5"
+      },
+      "name": "decision_packet_persisted",
+      "section": "19_decision",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "bad": {
+          "brokenAt": "adc964d1-bb0e-4fa7-9b7c-ab22fe660f1c",
+          "count": 4,
+          "ok": false,
+          "status": "FAIL"
+        },
+        "ok": {
+          "count": 4,
+          "ok": true,
+          "status": "PASS"
+        }
+      },
+      "name": "tamper_detected",
+      "section": "20_audit",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "idempotency_key": "wf",
+        "job_id": "j",
+        "state": {
+          "x": 1
+        },
+        "status": "RUNNING",
+        "step_index": 1,
+        "updated_at": "2026-09-26T17:58:21.839130+00:00",
+        "workflow_id": "wf"
+      },
+      "name": "checkpoint_resume",
+      "section": "21_workflow",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "audit": {
+          "count": 4,
+          "ok": true,
+          "status": "PASS"
+        },
+        "events": 8
+      },
+      "name": "copy_restore_verify",
+      "section": "22_backup",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "audit": {
+          "count": 1,
+          "ok": true,
+          "status": "PASS"
+        },
+        "openCount": 1
+      },
+      "name": "real_break_visible",
+      "section": "23_control_room",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "instrument": "INST-EQUITY-E2E",
+        "recon": "PASS"
+      },
+      "name": "full_paper_lifecycle",
+      "section": "26_e2e",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "missing_fx": true,
+        "unknown_event": true
+      },
+      "name": "unsafe_paths_fail_closed",
+      "section": "27_torture",
+      "status": "PASS"
+    },
+    {
+      "detail": "",
+      "evidence": {
+        "LIVE_TRADING_AVAILABLE": "BLOCKED",
+        "findings": [],
+        "ok": true,
+        "publicStatus": {
+          "LIVE_TRADING_AVAILABLE": "BLOCKED",
+          "adapter_configured": false,
+          "agent_cannot_enable": true,
+          "credentials_separated": true,
+          "detail": "Live broker orders are intentionally blocked. Paper trading and historical simulation remain available. Enabling live trading requires a verified adapter, separated credentials, explicit human authorization, deterministic risk checks, order preview, kill switch, and idempotent client order ids \u2014 not present in this build.",
+          "human_authorization_required": true,
+          "unlock_env_set": false
+        },
+        "status": "PASS",
+        "truth": {
+          "agent_cannot_enable": true
+        }
+      },
+      "name": "live_trading_blocked",
+      "section": "29_live_trading",
+      "status": "PASS"
+    },
+    {
+      "detail": "active_wave=W108",
+      "evidence": {
+        "active_wave": "W108",
+        "keys": [
+          "program",
+          "version",
+          "updated",
+          "baseline_commit",
+          "last_verified_commit",
+          "branch",
+          "active_wave",
+          "notes",
+          "status_vocabulary",
+          "excluded_trees",
+          "canonical_docs",
+          "baseline"
+        ]
+      },
+      "name": "ledger_present",
+      "section": "30_docs_ledger",
+      "status": "PASS"
+    }
+  ],
+  "summary": {
+    "blocked_external": 0,
+    "fail": 0,
+    "pass": 20,
+    "skip": 0
+  },
+  "verifier": "verify_institutional_runtime"
+}

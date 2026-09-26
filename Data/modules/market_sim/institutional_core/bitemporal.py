@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from .status import MeasurementState, DEFAULT_TRUTH
+from .timeutil import ts_le, parse_ts
 
 
 def _canon(obj: Any) -> str:
@@ -113,12 +114,18 @@ class BitemporalStore:
         candidates = [
             v
             for v in self._versions.get(entity_id, [])
-            if v.stamp.effective_time <= effective_time
-            and (recorded_at is None or v.stamp.recorded_at <= recorded_at)
+            if ts_le(v.stamp.effective_time, effective_time)
+            and (recorded_at is None or ts_le(v.stamp.recorded_at, recorded_at))
         ]
         if not candidates:
             return None
-        candidates.sort(key=lambda v: (v.stamp.effective_time, v.stamp.recorded_at, v.version_id))
+        candidates.sort(
+            key=lambda v: (
+                parse_ts(v.stamp.effective_time),
+                parse_ts(v.stamp.recorded_at),
+                v.version_id,
+            )
+        )
         return candidates[-1]
 
     def lineage_chain(self, entity_id: str, version_id: str) -> list[dict[str, Any]]:

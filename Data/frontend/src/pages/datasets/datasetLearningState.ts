@@ -73,7 +73,7 @@ const LEARNED_CANONICAL = new Set(["LEARNED", "STALE_JOB"]);
  */
 export function resolveLearningState(input: {
   learningState?: DatasetLearningState | null;
-  brain?: Partial<DatasetLearningState> | null;
+  brain?: Partial<DatasetLearningState> | (Record<string, unknown> & { brainStatus?: string; canonicalState?: string }) | null;
   brainStatus?: string | null;
   learned?: boolean | null;
   canonicalState?: string | null;
@@ -82,25 +82,34 @@ export function resolveLearningState(input: {
     return input.learningState;
   }
   if (input.brain && (input.brain.canonicalState || input.brain.brainStatus)) {
+    const brain = input.brain as Partial<DatasetLearningState> & Record<string, unknown>;
+    const errRaw = brain.error;
+    const err =
+      errRaw == null
+        ? null
+        : typeof errRaw === "string"
+          ? errRaw
+          : String(errRaw);
     return {
-      datasetId: String(input.brain.datasetId ?? ""),
+      datasetId: String(brain.datasetId ?? ""),
       canonicalState: String(
-        input.brain.canonicalState ??
+        brain.canonicalState ??
           input.canonicalState ??
-          mapBrainStatusToCanonical(input.brain.brainStatus ?? input.brainStatus),
+          mapBrainStatusToCanonical(String(brain.brainStatus ?? input.brainStatus ?? "")),
       ),
-      brainStatus: String(input.brain.brainStatus ?? input.brainStatus ?? "not_learned"),
-      learned: Boolean(input.brain.learned ?? input.learned),
-      label: input.brain.label,
-      progress: input.brain.progress ?? null,
-      phase: input.brain.phase ?? null,
-      jobId: input.brain.jobId ?? null,
-      indexId: input.brain.indexId ?? null,
-      stale: Boolean(input.brain.stale),
-      sourceMissing: Boolean(input.brain.sourceMissing),
-      usableIndexId: input.brain.usableIndexId ?? null,
-      priorReadyPreserved: Boolean(input.brain.priorReadyPreserved),
-      truth: input.brain.truth,
+      brainStatus: String(brain.brainStatus ?? input.brainStatus ?? "not_learned"),
+      learned: Boolean(brain.learned ?? input.learned),
+      label: brain.label,
+      progress: (brain.progress as number | null | undefined) ?? null,
+      phase: (brain.phase as string | null | undefined) ?? null,
+      jobId: (brain.jobId as string | null | undefined) ?? null,
+      indexId: (brain.indexId as string | null | undefined) ?? null,
+      stale: Boolean(brain.stale),
+      sourceMissing: Boolean(brain.sourceMissing),
+      usableIndexId: (brain.usableIndexId as string | null | undefined) ?? null,
+      priorReadyPreserved: Boolean(brain.priorReadyPreserved),
+      error: err,
+      truth: brain.truth as Record<string, unknown> | undefined,
     };
   }
   if (input.brainStatus || input.canonicalState) {
