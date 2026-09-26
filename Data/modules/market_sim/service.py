@@ -119,6 +119,9 @@ class MarketSimControlPlane:
         evidence: Any | None = None,
         neuro: Any | None = None,
         observability_emit: Any | None = None,
+        hybrid_retriever: Any | None = None,
+        staged_retriever: Any | None = None,
+        brain_access: Any | None = None,
     ) -> "MarketSimControlPlane":
         path = Path(db_path or settings.database_path)
         store = MarketSimStore(path)
@@ -126,7 +129,14 @@ class MarketSimControlPlane:
         markets_root = Path(settings.market_sim.markets_root)
         data = MarketDataStore(store, markets_root)
         brain = BrainFacade(
-            knowledge=adapt_knowledge_store(knowledge) if knowledge is not None else NullKnowledge(),
+            knowledge=adapt_knowledge_store(
+                knowledge,
+                hybrid_retriever=hybrid_retriever,
+                staged_retriever=staged_retriever,
+                brain_access=brain_access,
+            )
+            if knowledge is not None or hybrid_retriever is not None or brain_access is not None
+            else NullKnowledge(),
             memory=adapt_memory_store(memory) if memory is not None else NullMemory(),
             evidence=adapt_evidence_store(evidence) if evidence is not None else NullEvidence(),
             neuro=neuro,

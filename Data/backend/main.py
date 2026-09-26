@@ -510,7 +510,10 @@ market_sim_service = MarketSimControlPlane.from_settings(
     evidence=evidence_store,
     neuro=neuro_advisor,
     observability_emit=observability.emit,
+    hybrid_retriever=retriever,
+    staged_retriever=staged_retriever,
 )
+# brain_access is constructed later — rebound when available (see below).
 if hasattr(market_sim_service, "bind_job_runtime"):
     market_sim_service.bind_job_runtime(job_runtime)
 neuro_soak = NeuroSoakHarness(long_soak_enabled=settings.features.neuro_soak_long)
@@ -1191,6 +1194,19 @@ brain_access = BrainAccessFacade(
 )
 # W8: Perception must go through Brain when bound — no private store bypass.
 cognition_runtime.perception.brain_access = brain_access
+# Institutional W03: trading BrainFacade uses canonical BrainAccess + HybridRetriever.
+try:
+    from Data.modules.market_sim.brain_hooks import attach_trading_brain_adapter
+
+    attach_trading_brain_adapter(
+        market_sim_service.brain,
+        knowledge_store=knowledge,
+        hybrid_retriever=retriever,
+        staged_retriever=staged_retriever,
+        brain_access=brain_access,
+    )
+except Exception:  # noqa: BLE001 — market_sim may be disabled/unbound in some boots
+    pass
 
 domain_strategy_registry = StrategyRegistry()
 domain_strategy_registry.register(CodingCognitiveStrategy())

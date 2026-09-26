@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "a5e3eabc3208183b9c9df83caa5e21fb95494b64",
+  "last_verified_commit": "760ab3d15ffcc232d8f547d41e0bb36155a24836",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W02",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed. W02 trading classification/routing landed.",
+  "active_wave": "W03",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed. W02 trading classification/routing landed. W03 TradingBrainAdapter \u2192 canonical HybridRetriever/BrainAccess.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -358,9 +358,20 @@
     {
       "id": "W03",
       "title": "Canonical Trading Brain integration",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim brain_hooks \u2192 brain facade",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_trading_brain_w03"
+      ],
+      "evidence": [
+        "market_sim/trading_brain.py TradingBrainAdapter",
+        "adapt_knowledge_store uses HybridRetriever",
+        "main.py attaches staged+hybrid+brain_access",
+        "semantic honesty for hash embeddings",
+        "5/5 W03 PASS"
+      ],
+      "last_verified_commit": "760ab3d15ffcc232d8f547d41e0bb36155a24836"
     },
     {
       "id": "W04",
