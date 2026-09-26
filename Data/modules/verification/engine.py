@@ -17,6 +17,7 @@ from .types import (
     VerificationOutcome,
     VerificationReport,
     VerificationRequirement,
+    VerificationTier,
 )
 
 
@@ -54,7 +55,15 @@ class VerificationEngine:
                 run_id=run_id,
                 job_id=job_id,
                 requirements=(),
-                metadata={"reason": "no_requirements"},
+                metadata={
+                    "reason": "no_requirements",
+                    "verification_tier": VerificationTier.DETERMINISTIC_VERIFICATION.value,
+                    "truth": {
+                        "deterministic_evidence_checks": True,
+                        "unmeasured_is_not_passed": True,
+                        "same_model_critique_is_not_independent_verification": True,
+                    },
+                },
             )
 
         pool = evidence
@@ -83,7 +92,14 @@ class VerificationEngine:
             run_id=run_id,
             job_id=job_id,
             requirements=tuple(results),
-            metadata={"evidence_considered": len(pool)},
+            metadata={
+                "evidence_considered": len(pool),
+                "verification_tier": VerificationTier.DETERMINISTIC_VERIFICATION.value,
+                "truth": {
+                    "deterministic_evidence_checks": True,
+                    "same_model_critique_is_not_independent_verification": True,
+                },
+            },
         )
 
     def _check_requirement(
@@ -313,4 +329,95 @@ class VerificationEngine:
             confidence=raw.get("confidence"),
             contradiction_refs=tuple(raw.get("contradiction_refs") or ()),
             reason=raw.get("reason"),
+        )
+
+    def self_critique(
+        self,
+        *,
+        text: str,
+        run_id: str | None = None,
+        critic_findings: Sequence[Mapping[str, Any]] | None = None,
+    ) -> VerificationReport:
+        """Same-model / same-role critique path — NEVER labelled independent verification."""
+        findings = list(critic_findings or [])
+        high = [f for f in findings if str(f.get("severity") or "").lower() == "high"]
+        if high:
+            outcome = VerificationOutcome.FAILED
+            detail = str(high[0].get("message") or "self-critique high severity")
+        elif findings:
+            outcome = VerificationOutcome.PARTIAL
+            detail = f"{len(findings)} self-critique finding(s) — not independent verification"
+        elif not (text or "").strip():
+            outcome = VerificationOutcome.UNMEASURED
+            detail = "empty text — self-critique unmeasured"
+        else:
+            outcome = VerificationOutcome.UNMEASURED
+            detail = "self-critique without structured findings remains UNMEASURED"
+
+        return VerificationReport(
+            report_id=str(uuid.uuid4()),
+            outcome=outcome,
+            created_at=utc_now(),
+            run_id=run_id,
+            requirements=(),
+            metadata={
+                "verification_tier": VerificationTier.SELF_CRITIQUE.value,
+                "detail": detail,
+                "finding_count": len(findings),
+                "truth": {
+                    "self_critique_is_not_independent_verification": True,
+                    "same_model_critique_is_not_cross_model": True,
+                    "unmeasured_is_not_passed": True,
+                },
+            },
+        )
+
+    def cross_model_verify(
+        self,
+        *,
+        run_id: str | None = None,
+        secondary_model_available: bool = False,
+        secondary_agrees: bool | None = None,
+        requirements: list[VerificationRequirement] | None = None,
+    ) -> VerificationReport:
+        """Cross-model tier — requires a different model/family when available."""
+        if not secondary_model_available:
+            return VerificationReport(
+                report_id=str(uuid.uuid4()),
+                outcome=VerificationOutcome.UNMEASURED,
+                created_at=utc_now(),
+                run_id=run_id,
+                requirements=(),
+                metadata={
+                    "verification_tier": VerificationTier.CROSS_MODEL_VERIFICATION.value,
+                    "detail": "no distinct secondary model/family available",
+                    "truth": {
+                        "cross_model_requires_different_model": True,
+                        "unmeasured_is_not_passed": True,
+                    },
+                },
+            )
+        if secondary_agrees is True and not requirements:
+            outcome = VerificationOutcome.PASSED
+            detail = "secondary model agreed (no deterministic requirements attached)"
+        elif secondary_agrees is False:
+            outcome = VerificationOutcome.FAILED
+            detail = "secondary model disagreed"
+        else:
+            outcome = VerificationOutcome.UNMEASURED
+            detail = "secondary agreement UNMEASURED"
+        return VerificationReport(
+            report_id=str(uuid.uuid4()),
+            outcome=outcome,
+            created_at=utc_now(),
+            run_id=run_id,
+            requirements=(),
+            metadata={
+                "verification_tier": VerificationTier.CROSS_MODEL_VERIFICATION.value,
+                "detail": detail,
+                "truth": {
+                    "cross_model_requires_different_model": True,
+                    "self_critique_is_not_cross_model": True,
+                },
+            },
         )

@@ -19,6 +19,7 @@ from .model_adapter import build_control_plane_model_caller
 from .perception import PerceptionItem, PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .runtime import CognitiveRunState, CognitiveRuntime
+from .skills import Skill, SkillLibrary
 from .specialists import register_specialist_handlers
 from .steering import SteerClassification, SteerKind, classify_steer
 from .failure import FailureCategory, classify_failure, should_blind_retry
@@ -29,6 +30,15 @@ from .system_inspect import (
     get_system_inspect_service,
 )
 from .task_model import TaskModel, TaskModelBuilder
+from .trajectory_export import export_training_trajectory, trajectories_to_dataset_rows
+from .ttc import (
+    Candidate,
+    CandidateSet,
+    IntegrityScorer,
+    TestTimeComputeEngine,
+)
+from .neural_advisor import NeuralTaskModelAdvisor, TaskAdvice
+from .critics import CriticMesh, CriticReport
 from .types import (
     BeliefCategory,
     BeliefStatus,
@@ -52,11 +62,19 @@ __all__ = [
     "BeliefItem",
     "BeliefState",
     "BeliefStatus",
+    "Candidate",
+    "CandidateSet",
     "CapabilityBroker",
     "CapabilityShortlist",
     "CognitionError",
     "CognitionFeatureDisabled",
     "CognitionStore",
+    "CriticMesh",
+    "CriticReport",
+    "IntegrityScorer",
+    "NeuralTaskModelAdvisor",
+    "TaskAdvice",
+    "TestTimeComputeEngine",
     "CognitiveAction",
     "CognitiveActionKind",
     "CognitiveBudgets",
@@ -95,6 +113,8 @@ __all__ = [
     "ReasoningMode",
     "ReasoningStrategy",
     "RiskClass",
+    "Skill",
+    "SkillLibrary",
     "SteerClassification",
     "SteerKind",
     "StrategyRegistry",
@@ -109,7 +129,9 @@ __all__ = [
     "classify_failure",
     "classify_steer",
     "confidence_to_band",
+    "export_training_trajectory",
     "get_system_inspect_service",
     "register_specialist_handlers",
     "should_blind_retry",
+    "trajectories_to_dataset_rows",
 ]

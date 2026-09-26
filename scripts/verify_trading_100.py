@@ -131,6 +131,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-tests", action="store_true")
     parser.add_argument("--anti-shortcut", action="store_true", default=True)
     parser.add_argument("--no-anti-shortcut", action="store_true")
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help=(
+            "Exit 0 when no gate is FAIL and anti-shortcut is clean, even if required "
+            "gates remain NOT_STARTED/IN_PROGRESS/FEATURE_GATED/UNMEASURED/NOT_TESTED. "
+            "Never upgrades those statuses to PASS."
+        ),
+    )
     args = parser.parse_args(argv)
     if not GATES_PATH.is_file():
         print(f"MISSING gate manifest: {GATES_PATH}", file=sys.stderr)
@@ -167,24 +176,55 @@ def main(argv: list[str] | None = None) -> int:
     ]
     # FEATURE_GATED is an honest terminal for sandbox-gated features (e.g. G16).
     acceptable = {"PASS", "FEATURE_GATED"}
+    incomplete_statuses = {
+        "NOT_STARTED",
+        "IN_PROGRESS",
+        "UNMEASURED",
+        "NOT_TESTED",
+        "FEATURE_GATED",
+    }
+    hard_fail = any(r["status"] == "FAIL" for r in required) or (
+        anti is not None and not anti.get("ok")
+    )
     all_pass = all(r["status"] in acceptable for r in required) and (anti is None or anti.get("ok"))
-    exit_code = 0 if all_pass and required else 1
+    if hard_fail:
+        exit_code = 1
+        reason = "FAIL status or anti-shortcut findings"
+    elif all_pass and required:
+        exit_code = 0
+        reason = "every required offline gate is PASS/FEATURE_GATED"
+    elif args.allow_incomplete:
+        # Incomplete is honest — not PASS. Only refuse on FAIL/crash.
+        open_gates = [r["id"] for r in required if r["status"] in incomplete_statuses or r["status"] not in acceptable]
+        exit_code = 0
+        reason = f"incomplete gates reported honestly ({len(open_gates)} open); no FAIL"
+        print(f"allow-incomplete: open={open_gates[:12]}{'…' if len(open_gates) > 12 else ''}")
+    else:
+        exit_code = 1
+        reason = "required gates incomplete (not all PASS)"
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "phase": manifest.get("phase"),
         "program": manifest.get("program") or "Master Program v4.1",
         "all_required_pass": all_pass,
+        "allow_incomplete": bool(args.allow_incomplete),
         "counts": counts,
         "gates": results,
         "anti_shortcut": anti,
         "explicitly_not_claimed": manifest.get("explicitly_not_claimed") or [],
         "canonical_system_doc": str(SYSTEM_DOC.relative_to(ROOT)),
+        "truth": {
+            "incomplete_is_not_pass": True,
+            "feature_gated_is_not_pass_claim": True,
+            "baseline_green_does_not_mark_trading_pass": True,
+        },
+        "exit_reason": reason,
     }
     REPORT_JSON.parent.mkdir(parents=True, exist_ok=True)
     REPORT_JSON.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {REPORT_JSON.relative_to(ROOT)}")
-    print(f"exit={exit_code} (0 only when every required offline gate is PASS)")
+    print(f"exit={exit_code} ({reason})")
     return exit_code
 
 

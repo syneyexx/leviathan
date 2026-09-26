@@ -173,12 +173,24 @@ class ExperienceStore:
         if self._db_store is not None and hasattr(self._db_store, "save_experience"):
             self._db_store.save_experience(experience)
         if ok:
+            # Recompute historical success from admitted experiences in this domain/pattern.
+            matching = [
+                e
+                for e in self._items.values()
+                if e.admitted and e.domain == experience.domain and e.task_type == experience.task_type
+            ]
+            successes = sum(
+                1
+                for e in matching
+                if e.outcome in {CognitiveRunStatus.COMPLETED_VERIFIED.value, "COMPLETED_VERIFIED", "success"}
+            )
+            total = max(1, len(matching))
             self._procedural.append(
                 ProceduralMemoryHint(
                     domain=experience.domain,
                     pattern=experience.task_type,
                     strategy=experience.strategy,
-                    historical_success="1/1",
+                    historical_success=f"{successes}/{total}",
                     verification=experience.verification_status,
                 )
             )
@@ -186,6 +198,68 @@ class ExperienceStore:
 
     def list_admitted(self) -> list[VerifiedExperience]:
         return [e for e in self._items.values() if e.admitted]
+
+    def list_all(self) -> list[VerifiedExperience]:
+        return list(self._items.values())
+
+    def search(
+        self,
+        query: str,
+        *,
+        domain: str | None = None,
+        limit: int = 8,
+        admitted_only: bool = True,
+    ) -> list[VerifiedExperience]:
+        """Bounded lexical search over stored experiences (Brain/main probe)."""
+        q = (query or "").lower().strip()
+        items = self.list_admitted() if admitted_only else self.list_all()
+        if domain:
+            items = [e for e in items if e.domain == domain]
+        if not q:
+            return items[: max(1, limit)]
+        scored: list[tuple[float, VerifiedExperience]] = []
+        for exp in items:
+            blob = f"{exp.task_summary} {exp.domain} {exp.task_type} {exp.strategy}".lower()
+            hits = sum(1 for tok in q.split() if tok and tok in blob)
+            if hits:
+                scored.append((float(hits), exp))
+        scored.sort(key=lambda p: -p[0])
+        return [e for _, e in scored[: max(1, limit)]]
+
+    def aggregate_stats(self) -> dict[str, Any]:
+        """Domain/strategy rollups — unverified never counted as training truth (W11)."""
+        by_domain: dict[str, dict[str, int]] = {}
+        by_strategy: dict[str, dict[str, int]] = {}
+        failure_hist: dict[str, int] = {}
+        admitted = 0
+        rejected = 0
+        for exp in self._items.values():
+            if exp.admitted:
+                admitted += 1
+            else:
+                rejected += 1
+            bucket = by_domain.setdefault(exp.domain or "unknown", {"admitted": 0, "rejected": 0, "total": 0})
+            bucket["total"] += 1
+            bucket["admitted" if exp.admitted else "rejected"] += 1
+            sb = by_strategy.setdefault(exp.strategy or "unknown", {"admitted": 0, "rejected": 0, "total": 0})
+            sb["total"] += 1
+            sb["admitted" if exp.admitted else "rejected"] += 1
+            for fail in exp.failures:
+                key = str(fail)[:120] or "unknown"
+                failure_hist[key] = failure_hist.get(key, 0) + 1
+        return {
+            "admitted": admitted,
+            "rejected": rejected,
+            "total": admitted + rejected,
+            "by_domain": by_domain,
+            "by_strategy": by_strategy,
+            "failure_histogram": failure_hist,
+            "active_learning_pending": len(self._active_learning),
+            "truth": {
+                "unverified_is_not_training_truth": True,
+                "aggregation_is_not_promotion": True,
+            },
+        }
 
     def procedural_hints(self, *, domain: str | None = None) -> list[ProceduralMemoryHint]:
         if domain is None:
@@ -197,12 +271,16 @@ class ExperienceStore:
         payload = {
             **dict(candidate),
             "candidate_id": str(candidate.get("candidate_id") or uuid.uuid4()),
+            "lifecycle": str(candidate.get("lifecycle") or "CANDIDATE"),
             "requires_human_or_policy_approval": True,
             "auto_promote_forbidden": True,
             "created_at": candidate.get("created_at") or _now(),
         }
         self._active_learning.append(payload)
         return payload
+
+    def list_active_learning(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return list(self._active_learning)[-max(1, limit) :]
 
     def training_candidates(self) -> list[dict[str, Any]]:
         """Controlled bridge payload — never auto-promotes models."""
@@ -212,6 +290,7 @@ class ExperienceStore:
                 "domain": e.domain,
                 "strategy": e.strategy,
                 "verification_status": e.verification_status,
+                "lifecycle": "ELIGIBLE",
                 "requires_human_or_policy_approval": True,
                 "auto_promote_forbidden": True,
                 "source": "verified_experience",
@@ -221,6 +300,7 @@ class ExperienceStore:
         active = [
             {
                 **c,
+                "lifecycle": c.get("lifecycle") or "CANDIDATE",
                 "requires_human_or_policy_approval": True,
                 "auto_promote_forbidden": True,
                 "source": c.get("source") or "active_learning",

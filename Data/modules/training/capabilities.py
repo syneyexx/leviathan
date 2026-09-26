@@ -60,8 +60,8 @@ def probe_training_capabilities() -> TrainingCapabilities:
         "HF/GPU production DPO is not claimed."
     )
     notes.append(
-        "Reward-model and process-supervision recipes remain registered≠trained until "
-        "their own objective trainers exist."
+        "Reward-model / GRPO / RL trainers are FEATURE_GATED until operational trainers exist "
+        "(registered recipe ≠ trained capability)."
     )
 
     ready = can_lora or True  # fixture always available
@@ -74,6 +74,13 @@ def probe_training_capabilities() -> TrainingCapabilities:
         ready=ready,
         missing_for_lora=missing_lora,
         notes=tuple(notes),
+        can_run_reward_model=False,
+        can_run_grpo=False,
+        can_run_rl=False,
+        reward_model_status="FEATURE_GATED",
+        grpo_status="FEATURE_GATED",
+        rl_status="FEATURE_GATED",
+        dpo_hf_status="FEATURE_GATED",
     )
 
 

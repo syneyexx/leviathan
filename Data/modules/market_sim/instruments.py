@@ -40,6 +40,7 @@ class InstrumentSpec:
     family: InstrumentFamily
     venue: str
     quote_currency: str
+    settlement_currency: str | None = None  # W13A: defaults to quote when unset
     timezone: str = "UTC"
     tick_size: str = "0.01"
     lot_size: str = "0.0001"
@@ -48,6 +49,9 @@ class InstrumentSpec:
     data_level: DataLevel = DataLevel.OHLCV
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def resolved_settlement_currency(self) -> str:
+        return self.settlement_currency or self.quote_currency
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "instrument_id": self.instrument_id,
@@ -55,6 +59,7 @@ class InstrumentSpec:
             "family": self.family.value,
             "venue": self.venue,
             "quote_currency": self.quote_currency,
+            "settlement_currency": self.resolved_settlement_currency(),
             "timezone": self.timezone,
             "tick_size": self.tick_size,
             "lot_size": self.lot_size,

@@ -554,6 +554,7 @@ class CitationResolution:
     snapshot_path: str | None = None
     span_text: str | None = None
     reason: str | None = None
+    location: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -564,6 +565,7 @@ class CitationResolution:
             "snapshot_path": self.snapshot_path,
             "span_text": self.span_text,
             "reason": self.reason,
+            "location": dict(self.location),
         }
 
 

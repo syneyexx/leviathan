@@ -117,6 +117,7 @@ export function ChatPage() {
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const busyRef = useRef(false);
   const creatingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.id === conversationId) ?? null,
@@ -476,6 +477,7 @@ export function ChatPage() {
     setBusy(true);
     setLastTurn((prev) => ({ ...prev, streaming: "streaming" }));
     const abort = new AbortController();
+    abortRef.current = abort;
 
     try {
       let doneOnce = false;
@@ -996,18 +998,34 @@ export function ChatPage() {
                 </div>
               ) : null}
             </div>
-            <button
-              className="lv-prompt-send lv-button-primary"
-              type="button"
-              id="sendBtn"
-              aria-label="Send"
-              disabled={busy}
-              onClick={() => void sendMessage()}
-            >
-              <svg className="lv-icon" viewBox="0 0 24 24">
-                <path d="M5 12h12M13 6l6 6-6 6" />
-              </svg>
-            </button>
+            {busy ? (
+              <button
+                className="lv-prompt-send lv-button-secondary"
+                type="button"
+                id="stopBtn"
+                aria-label="Stop generation"
+                title="Stop generation"
+                onClick={() => {
+                  abortRef.current?.abort();
+                  abortRef.current = null;
+                }}
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                className="lv-prompt-send lv-button-primary"
+                type="button"
+                id="sendBtn"
+                aria-label="Send"
+                disabled={busy}
+                onClick={() => void sendMessage()}
+              >
+                <svg className="lv-icon" viewBox="0 0 24 24">
+                  <path d="M5 12h12M13 6l6 6-6 6" />
+                </svg>
+              </button>
+            )}
           </div>
           <div className="lv-quick-actions">
             {Object.keys(QUICK_PROMPTS).map((label) => (

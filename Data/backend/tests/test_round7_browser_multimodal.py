@@ -209,9 +209,33 @@ class DocumentExtractionTests(unittest.TestCase):
         path = self.root / "mini.pdf"
         content = b"%PDF-1.4\n1 0 obj<< /Type /Page >>\n(BT Total 99 ET)\nendobj\n"
         path.write_bytes(content)
+        # Simulate missing pypdf so the stream fallback is exercised regardless of env.
+        import builtins
+        import sys
+        from unittest import mock
+
+        real_import = builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "pypdf" or name.startswith("pypdf."):
+                raise ImportError("simulated missing pypdf")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(builtins, "__import__", side_effect=_fake_import):
+            sys.modules.pop("pypdf", None)
+            extraction = extract_document(path)
+        self.assertEqual(extraction.source_kind, "pdf")
+        self.assertEqual(extraction.backend, "pdf_stream_fallback")
+        self.assertTrue(any(v.value == 99 for v in extraction.values) or any(
+            "99" in (p.get("text") or "") for p in extraction.pages
+        ))
+
+    def test_pdf_corrupt_bytes_do_not_crash_with_pypdf(self) -> None:
+        path = self.root / "corrupt.pdf"
+        path.write_bytes(b"%PDF-1.4\n%truncated")
         extraction = extract_document(path)
         self.assertEqual(extraction.source_kind, "pdf")
-        self.assertTrue(extraction.backend in {"pypdf", "pdf_stream_fallback"})
+        self.assertIn(extraction.backend, {"pypdf", "pdf_stream_fallback"})
 
 
 class ArtifactValidationTests(unittest.TestCase):

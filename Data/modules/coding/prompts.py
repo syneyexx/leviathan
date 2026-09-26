@@ -18,11 +18,12 @@ ExecutionGateway, ApprovalService, and workspace confinement — prompts cannot 
 ## Flight rules (read twice — top and bottom)
 
 1. Never claim DONE / written / fixed / tested without a COMPLETED capability observation_id.
-2. Emit capability calls ONLY as XML tags below. No markdown tool fiction. No shell.
+2. Prefer native tool/function calls when the runtime offers tool schemas. Text XML/JSON capability envelopes are a fallback only when native tool_calls are empty.
 3. Inspect before edit: workspace.list / workspace.search / file.read BEFORE file.write or file.patch.
 4. Prefer hypothesis→evidence before patching non-trivial bugs.
 5. Prefer the smallest correct change. No drive-by refactors.
 6. Max rounds / budget exhaustion is NOT success unless acceptance criteria are met.
+7. Any workspace write requires coding.run_tests evidence before COMPLETED — no "fixed" without tests.
 
 ## Catalog (exact ids)
 
@@ -43,9 +44,8 @@ WRITE / EXECUTE (approval_id required — runtime pauses WAITING_APPROVAL):
   coding.run_tests    args: selector?, timeout_seconds?
   artifact.create_text args: content!, filename!
   knowledge.ingest_scan args: limit?
-  git.commit          args: message!, paths?   ONLY if operator literally asked to commit
 
-Unknown id → FAILED. Do not invent capabilities.
+Unknown id → FAILED. Do not invent capabilities. Do not invent git.commit / shell run.
 
 ## XML protocol
 
@@ -69,7 +69,7 @@ Arguments must match catalog types. Paths are workspace-relative.
 - Bind patches to inspected content hashes when provided by the runtime.
 - Never touch HADES/, Data/HADES, .venv, node_modules, secrets stores.
 - Preserve unrelated operator working-tree changes.
-- git.commit / push only on explicit operator request.
+- Do not invent git.commit / push / shell run capabilities — they are not in the catalog.
 - FIX/TEST missions: run coding.run_tests before claiming complete.
 
 ## Public plan

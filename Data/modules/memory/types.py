@@ -37,6 +37,40 @@ class MemoryScope(str, Enum):
     PROJECT = "PROJECT"
     CONVERSATION = "CONVERSATION"
     AGENT_PRIVATE = "AGENT_PRIVATE"
+    # W9: explicit shared scope for orchestrator-coordinated multi-agent memory.
+    ORCHESTRATOR_SHARED = "ORCHESTRATOR_SHARED"
+
+
+class MemoryTrustState(str, Enum):
+    """Explicit memory trust — LLM confidence never becomes truth (W8)."""
+
+    AGENT_PROPOSED = "AGENT_PROPOSED"
+    USER_STATED = "USER_STATED"
+    SOURCE_DERIVED = "SOURCE_DERIVED"
+    VERIFIED = "VERIFIED"
+    CONFLICTED = "CONFLICTED"
+    REVOKED = "REVOKED"
+
+
+# Map legacy trust strings → MemoryTrustState.
+LEGACY_TRUST_MAP: dict[str, MemoryTrustState] = {
+    "explicit": MemoryTrustState.USER_STATED,
+    "imported": MemoryTrustState.SOURCE_DERIVED,
+    "derived": MemoryTrustState.SOURCE_DERIVED,
+    "model_output": MemoryTrustState.AGENT_PROPOSED,
+    "agent": MemoryTrustState.AGENT_PROPOSED,
+    "verified": MemoryTrustState.VERIFIED,
+}
+
+
+def normalize_trust_state(raw: str | MemoryTrustState | None) -> MemoryTrustState:
+    if isinstance(raw, MemoryTrustState):
+        return raw
+    text = str(raw or "AGENT_PROPOSED").strip()
+    try:
+        return MemoryTrustState(text)
+    except ValueError:
+        return LEGACY_TRUST_MAP.get(text.lower(), MemoryTrustState.AGENT_PROPOSED)
 
 
 # Higher = keep longer under budget pressure.

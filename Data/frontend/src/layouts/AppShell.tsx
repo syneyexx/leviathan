@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AppFooter } from "../components/AppFooter";
 import { AppHeader } from "../components/AppHeader";
 import { AppSidebar } from "../components/AppSidebar";
+import { SkipLink } from "../components/SkipLink";
 
 type ShellProps = {
   activeMode?: "explore" | "chat";
@@ -50,6 +51,7 @@ export function AppShell({
 
   return (
     <div className={appClass}>
+      <SkipLink />
       <AppHeader
         searchPlaceholder={searchPlaceholder}
         modeLabel={modeLabel}
@@ -58,7 +60,10 @@ export function AppShell({
       />
       <div className="lv-body">
         <AppSidebar open={sidebarOpen} />
-        {children}
+        {/* Landmark only — pages own `.lv-main` layout; avoid nested main padding. */}
+        <div id="main-content" className="lv-main-slot" tabIndex={-1}>
+          {children}
+        </div>
       </div>
       <AppFooter />
     </div>

@@ -1024,4 +1024,83 @@ def build_market_sim_router(
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    # --- W17 Trading Lab surface (typed real endpoints; no mock KPIs) ---
+
+    @router.get("/api/market-sim/lab/overview")
+    def lab_overview() -> dict:
+        """Aggregate lab capability truth for Trading Center UI."""
+        from Data.modules.market_sim.agent_lab import LAB_ROLES, LabOutcome
+        from Data.modules.market_sim.costs import CostModelPack
+        from Data.modules.market_sim.curriculum import STAGE_ORDER
+        from Data.modules.market_sim.features import FEATURE_PIPELINE_VERSION
+        from Data.modules.market_sim.hpo import HPO_METHODS, bayesian_tpe_capability
+        from Data.modules.market_sim.regimes import REGIME_DETECTOR_VERSION, hmm_regime_capability
+        from Data.modules.market_sim.strategy_dsl import DSL_CURRENT_VERSION
+        from Data.modules.market_sim.code_strategy import python_strategy_capability
+
+        live = service.live_guard.public_status()
+        trials = 0
+        try:
+            trials = int(service.store.count_trials())
+        except Exception:
+            trials = 0
+        return {
+            "feature_pipeline_version": FEATURE_PIPELINE_VERSION,
+            "dsl_version": DSL_CURRENT_VERSION,
+            "regime_detector_version": REGIME_DETECTOR_VERSION,
+            "lab_roles": list(LAB_ROLES),
+            "curriculum_stages": [s.value for s in STAGE_ORDER],
+            "hpo_methods": sorted(HPO_METHODS),
+            "hpo_bayesian_tpe": bayesian_tpe_capability(),
+            "hmm_regime": hmm_regime_capability(),
+            "python_strategies": python_strategy_capability(),
+            "default_cost_pack": CostModelPack.from_fee_slippage_bps().public_dict(),
+            "trial_ledger_count": trials,
+            "valid_lab_outcomes": [LabOutcome.QUALIFIED_STRATEGY_FOUND.value, LabOutcome.NO_STRATEGY_QUALIFIED.value],
+            "live_trading": live,
+            "truth": {
+                "no_mock_kpis": True,
+                "paper_does_not_prove_live_profitability": True,
+                "live_trading": "BLOCKED",
+                "a5": "IMPOSSIBLE",
+                "no_strategy_qualified_is_valid_pass": True,
+            },
+        }
+
+    @router.get("/api/market-sim/lab/cost-pack")
+    def lab_cost_pack(feeBps: float = 0.0, slippageBps: float = 0.0, seed: int | None = None) -> dict:
+        from Data.modules.market_sim.costs import CostModelPack
+
+        pack = CostModelPack.from_fee_slippage_bps(fee_bps=feeBps, slippage_bps=slippageBps, seed=seed)
+        return {"cost_pack": pack.public_dict()}
+
+    @router.post("/api/market-sim/lab/feed-health")
+    def lab_feed_health(payload: dict[str, Any]) -> dict:
+        from Data.modules.market_sim.paper_deployment import assess_feed_health
+
+        health = assess_feed_health(
+            feed_id=str(payload.get("feedId") or payload.get("feed_id") or "unknown"),
+            last_tick_ts=payload.get("lastTickTs") or payload.get("last_tick_ts"),
+            as_of=payload.get("asOf") or payload.get("as_of"),
+            gap_count=int(payload.get("gapCount") or payload.get("gap_count") or 0),
+            reconnect_count=int(payload.get("reconnectCount") or payload.get("reconnect_count") or 0),
+            provenance=str(payload.get("provenance") or ""),
+            max_staleness_seconds=float(
+                payload.get("maxStalenessSeconds") or payload.get("max_staleness_seconds") or 120.0
+            ),
+        )
+        return {"feed_health": health.public_dict()}
+
+    @router.get("/api/market-sim/lab/trials")
+    def lab_trials(strategyId: str | None = None, limit: int = Query(50, ge=1, le=500)) -> dict:
+        try:
+            rows = service.store.list_experiments(strategy_id=strategyId, limit=limit)
+            return {
+                "trials": rows,
+                "count": service.store.count_trials(strategy_id=strategyId),
+                "truth": {"losing_trials_retained": True, "append_only": True},
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     return router

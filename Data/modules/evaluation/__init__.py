@@ -9,7 +9,21 @@ from .assistant_benchmark import (
     TaskRunResult,
     default_assistant_tasks,
 )
+from .compute_paired import (
+    BootstrapResult,
+    ComputeTrial,
+    PairedComputeReport,
+    analyze_paired_compute,
+    paired_bootstrap,
+    run_paired_compute_evaluation,
+)
 from .harness import EvaluationHarness
+from .judge_calibration import (
+    JudgeCalibrationReport,
+    LabeledJudgeExample,
+    calibrate_judge,
+    judge_or_unmeasured,
+)
 from .paired import PairedEvaluationReport, run_paired_evaluation
 from .platform import EvaluationPlatform
 from .scorecard import build_scorecard, scorecard_from_report_dicts
@@ -33,6 +47,8 @@ __all__ = [
     "AblationReport",
     "AssistantBenchmarkRunner",
     "AssistantTask",
+    "BootstrapResult",
+    "ComputeTrial",
     "EvalCase",
     "EvalCaseResult",
     "EvalOutcome",
@@ -40,8 +56,11 @@ __all__ = [
     "EvaluationHarness",
     "EvaluationPlatform",
     "EvaluationStore",
+    "JudgeCalibrationReport",
     "JudgmentKind",
+    "LabeledJudgeExample",
     "MeasurementState",
+    "PairedComputeReport",
     "PairedEvaluationReport",
     "RegressionCase",
     "Scorecard",
@@ -49,12 +68,17 @@ __all__ = [
     "TaskFamily",
     "TaskRunMetrics",
     "TaskRunResult",
+    "analyze_paired_compute",
     "build_scorecard",
+    "calibrate_judge",
     "default_assistant_tasks",
+    "judge_or_unmeasured",
     "measurement_is_pass",
     "outcome_to_measurement",
+    "paired_bootstrap",
     "run_all_ablations",
     "run_feature_ablation",
+    "run_paired_compute_evaluation",
     "run_paired_evaluation",
     "scorecard_from_report_dicts",
     "seed_default_regressions",

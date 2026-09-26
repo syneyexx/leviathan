@@ -76,10 +76,9 @@ KNOWN_INLINE_SAFE: frozenset[str] = frozenset(
         "file.read",
         "file.inspect_csv",
         "file.write",
-        "file.list",
+        "workspace.list",
         "git.status",
         "git.diff",
-        "git.log",
     }
 )
 

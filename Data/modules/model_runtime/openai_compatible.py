@@ -275,9 +275,44 @@ class OpenAICompatibleLLM:
         temperature: float | None = None,
         max_tokens: int | None = None,
         top_p: float | None = None,
+        transport: Any | None = None,
+        dialect_id: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
+        parallel_tool_calls: bool | None = None,
+        response_format: dict[str, Any] | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_max_tokens: int | None = None,
+        logprobs: bool | None = None,
+        top_logprobs: int | None = None,
+        n: int | None = None,
+        prompt_cache_key: str | None = None,
+        cache_control: dict[str, Any] | None = None,
+        reject_unsupported: bool = True,
     ) -> dict[str, Any]:
-        """Low-level completion for cognition / tool loops — no ContextBuilder rewrite."""
+        """Low-level completion for cognition / tool loops — no ContextBuilder rewrite.
+
+        Frontier transport options are dialect-adapted. Unsupported *requested*
+        capabilities are never silently dropped (CAPABILITY_NOT_SUPPORTED).
+        """
+        from .dialect import InferenceTransportOptions, adapt_transport
+
         model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
+        options = transport or InferenceTransportOptions(
+            tools=tools,
+            tool_choice=tool_choice,
+            parallel_tool_calls=parallel_tool_calls,
+            response_format=response_format,
+            reasoning_effort=reasoning_effort,
+            reasoning_max_tokens=reasoning_max_tokens,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
+            n=n,
+            prompt_cache_key=prompt_cache_key,
+            cache_control=cache_control,
+            reject_unsupported=reject_unsupported,
+        )
+        adaptation = adapt_transport(options, dialect_id=dialect_id)
         payload = self._completion_payload(
             model=model,
             messages=messages,
@@ -285,6 +320,7 @@ class OpenAICompatibleLLM:
             max_tokens=max_tokens,
             top_p=top_p,
             stream=False,
+            provider_hints=adaptation.payload_fields,
         )
         base = self._base_url(endpoint)
         try:
@@ -302,23 +338,37 @@ class OpenAICompatibleLLM:
             raise LLMUnavailable("LLM server returned invalid JSON.") from exc
 
         try:
-            content = data["choices"][0]["message"]["content"]
-            finish_reason = data["choices"][0].get("finish_reason")
+            choice0 = data["choices"][0]
+            message = choice0["message"]
+            content = message.get("content")
+            finish_reason = choice0.get("finish_reason")
+            tool_calls = message.get("tool_calls")
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMUnavailable("LLM server returned an unexpected chat-completion payload.") from exc
 
-        if not isinstance(content, str) or not content.strip():
+        text = content.strip() if isinstance(content, str) else ""
+        if not text and not tool_calls:
             raise LLMUnavailable("LLM returned an empty response.")
         usage, usage_source = self._extract_usage(data if isinstance(data, dict) else {})
-        return self._normalize_completion_result(
-            text=content.strip(),
+        result = self._normalize_completion_result(
+            text=text,
             model=model,
-            finish_reason=str(finish_reason) if finish_reason else "stop",
+            finish_reason=str(finish_reason) if finish_reason else ("tool_calls" if tool_calls else "stop"),
             termination_source="provider_finish_reason" if finish_reason else "completion_message",
             usage=usage,
             usage_source=usage_source,
             raw_meta={"id": data.get("id")} if isinstance(data, dict) else {},
         )
+        if tool_calls:
+            result["tool_calls"] = tool_calls
+        if isinstance(data, dict) and isinstance(data.get("choices"), list) and len(data["choices"]) > 1:
+            result["candidates"] = data["choices"]
+        # Attach dialect feature report (honest support states).
+        result["transport"] = adaptation.public_dict()
+        # Surface logprobs when provider returned them.
+        if isinstance(choice0, dict) and choice0.get("logprobs") is not None:
+            result["logprobs"] = choice0.get("logprobs")
+        return result
 
     async def chat(
         self,

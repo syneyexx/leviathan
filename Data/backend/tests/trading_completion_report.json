@@ -1,8 +1,9 @@
 {
-  "generated_at": "2026-09-25T20:06:56+00:00",
+  "generated_at": "2026-09-26T00:34:56+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
+  "allow_incomplete": true,
   "counts": {
     "PASS": 43,
     "NOT_STARTED": 18,
@@ -18,8 +19,7 @@
         "Data/modules/market_sim/ohlcv.py::iter_ohlcv / stream_ohlcv",
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests",
         "Streaming peak RSS bounded vs materialize on 120k 1m bars",
-        "Full 5y\u00d71m product target uses same streaming API; absolute CI fixture uses 120k for runtime",
-        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests'] exit=0"
+        "Full 5y\u00d71m product target uses same streaming API; absolute CI fixture uses 120k for runtime"
       ],
       "notes": "P1A: canonical iter_ohlcv/stream_ohlcv; memory budget proven vs load_ohlcv materialization"
     },
@@ -30,8 +30,7 @@
         "Data/backend/tests/test_market_sim_t1_causality.py",
         "Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests",
-        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability",
-        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::TimestampNormalizationTests', 'Data/backend/tests/test_market_sim_t1_causality.py::OhlcvValidationTests', 'Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability'] exit=0"
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
       ],
       "notes": "T1: YYYYMMDD + microsecond epoch normalization; quarantine import pipeline; duplicates rejected"
     },
@@ -41,8 +40,7 @@
       "evidence": [
         "Data/backend/tests/test_market_sim_t1_causality.py",
         "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting",
-        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability",
-        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_gap_reporting', 'Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability'] exit=0"
+        "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests::test_import_seal_and_immutability"
       ],
       "notes": "T1: DatasetQualityReport with gaps/duplicates/repairs persisted on sealed dataset versions"
     },
@@ -58,8 +56,7 @@
       "evidence": [
         "Data/backend/tests/test_market_sim_t1_causality.py",
         "Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests",
-        "Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests",
-        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::SealedDatasetTests', 'Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests'] exit=0"
+        "Data/backend/tests/test_market_sim_t1_causality.py::DataHashPrepareTests"
       ],
       "notes": "T1: sealed dataset versions immutable; corrections create new version/hash; prepare refuses hash mismatch"
     },
@@ -70,8 +67,7 @@
         "Data/modules/market_sim/split_manifest.py::DatasetSplitManifest",
         "Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests",
         "Sealed datasets attach frozen chronological TRAIN/VAL/SEALED manifest",
-        "Frozen manifests refuse mutation (SPLIT_MANIFEST_FROZEN)",
-        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1ASplitManifestTests'] exit=0"
+        "Frozen manifests refuse mutation (SPLIT_MANIFEST_FROZEN)"
       ],
       "notes": "P1A: chronological TRAIN/VAL/SEALED; embargo_bars; frozen on seal"
     },
@@ -157,8 +153,7 @@
         "Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests",
         "Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests",
-        "Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests",
-        "pytest ['Data/backend/tests/test_market_sim_t1_causality.py::MarketViewTests', 'Data/backend/tests/test_market_sim_t1_causality.py::EpistemicFirewallTests', 'Data/backend/tests/test_market_sim_t1_causality.py::BrainCausalBoundaryTests', 'Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests'] exit=0"
+        "Data/backend/tests/test_market_sim_t1_causality.py::StrategyMemoryCausalityTests"
       ],
       "notes": "T1: MarketView + EpistemicFirewall; available_at <= as_of; sealed holdout blocked during research"
     },
@@ -168,8 +163,7 @@
       "evidence": [
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize",
         "Streaming RSS delta bounded vs materialize on 120k bars",
-        "Full 5y\u00d71m absolute no-OOM soak not yet CI-measured",
-        "pytest exit=0"
+        "Full 5y\u00d71m absolute no-OOM soak not yet CI-measured"
       ],
       "notes": "P1A foundation; absolute 5y soak remains for P1B gym long-run worker path"
     },
@@ -188,8 +182,7 @@
         "Data/modules/market_sim/strategy_dsl.py::StrategySpecV2",
         "Data/backend/tests/test_market_sim_t2_market_state.py",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests",
-        "DSL kinds: breakout, rsi, feature_compare, ma_cross, mean_reversion + regime_filter",
-        "pytest ['Data/backend/tests/test_market_sim_t2_market_state.py', 'Data/backend/tests/test_market_sim_p2_strategies.py::P2AStrategyDslTests'] exit=0"
+        "DSL kinds: breakout, rsi, feature_compare, ma_cross, mean_reversion + regime_filter"
       ],
       "notes": "P2A: Strategy Spec DSL v2 over FeatureEngine; legacy ma_cross/mean_reversion preserved"
     },
@@ -212,8 +205,7 @@
       "evidence": [
         "Data/modules/market_sim/strategy_lineage.py::attach_lineage_metadata / lineage_chain / assert_version_immutable",
         "create_strategy + version_strategy attach parent_version / parent_content_hash / immutable",
-        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata",
-        "pytest ['Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata'] exit=0"
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_lineage_metadata"
       ],
       "notes": "P2C: lineage metadata on every version; content-addressed immutability"
     },
@@ -226,8 +218,7 @@
         "P0A: SimFill realized_delta + ClosedTrade/PositionEpisode foundation",
         "P0A: win_rate definition labeled (closed_position_episode vs fill_level_realized_delta)",
         "P0A: evaluate_acceptance reads compute_metrics keys (D12)",
-        "bootstrap CIs not yet implemented",
-        "pytest exit=0"
+        "bootstrap CIs not yet implemented"
       ],
       "notes": "P0A slice: ledger honesty + annualization. Full G18 PASS requires block-bootstrap CIs (P3)."
     },
@@ -238,8 +229,7 @@
         "Data/modules/market_sim/store.py::append_trial / count_trials",
         "save_experiment persists strategy_version on upsert",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_append_trial_ledger",
-        "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization'] exit=0"
+        "Data/backend/tests/test_market_sim_characterization.py::D14TrialLedgerCharacterization"
       ],
       "notes": "P2B: append-only trial ledger + strategy_version persistence (D14 fixed)"
     },
@@ -251,8 +241,7 @@
         "walk_forward_splits rolling overload (window/step)",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
         "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization",
-        "CPCV / full robustness suite not yet complete",
-        "pytest exit=0"
+        "CPCV / full robustness suite not yet complete"
       ],
       "notes": "P2B: rolling WFA + purge gap. CPCV/combinatorial remains later."
     },
@@ -264,8 +253,7 @@
         "Data/modules/market_sim/wfa.py::evaluate_acceptance_from_run",
         "Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids",
-        "Acceptance reads run.metrics (kernel); never request payload",
-        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1ASealedAttemptTests', 'Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_acceptance_from_run_ids'] exit=0"
+        "Acceptance reads run.metrics (kernel); never request payload"
       ],
       "notes": "P1A sealed attempts + P2B acceptance-from-run-IDs"
     },
@@ -276,8 +264,7 @@
         "MarketSimStore.save_strategy_memory / list_strategy_memories(as_of_ts)",
         "MultiAgentEngine.prepare hydrates StrategyMemory via list_strategy_memories with causal as_of",
         "Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization",
-        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D15MemoryCharacterization', 'Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal'] exit=0"
+        "Data/backend/tests/test_market_sim_p2_strategies.py::P2CSandboxLineageMemoryTests::test_strategy_memory_as_of_causal"
       ],
       "notes": "P2C: durable StrategyMemory hydrate on prepare; as_of causal filter (D15)"
     },
@@ -288,8 +275,7 @@
         "BrainFacade.retrieve(as_of=...) drops hits newer than decision time",
         "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_brain_as_of_gate_evidence",
-        "StrategyMemory list_strategy_memories(as_of_ts) causal filter",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization'] exit=0"
+        "StrategyMemory list_strategy_memories(as_of_ts) causal filter"
       ],
       "notes": "P3B: causal Brain/Memory as_of (D22)"
     },
@@ -304,8 +290,7 @@
         "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
         "Data/backend/tests/test_trading_orchestra.py::DeliberationTests",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests",
-        "Data/backend/tests/test_market_sim_characterization.py::D31CadenceCharacterization",
-        "pytest ['Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests', 'Data/backend/tests/test_market_sim_p3_campaigns.py::P3ADecisionCadenceTests'] exit=0"
+        "Data/backend/tests/test_market_sim_characterization.py::D31CadenceCharacterization"
       ],
       "notes": "P3A: Trading Orchestra cadence + async DecisionRecord + Fleet TRADING executor (D17/D31)"
     },
@@ -316,8 +301,7 @@
         "Data/modules/market_sim/research_campaign.py + migration 48 market_sim_research_campaigns",
         "checkpoint_iteration resume; never rewind from zero",
         "EXTERNAL_REQUIRED via market_sim.research_campaign worker; TRADING_WORKER_UNAVAILABLE without JobRuntime",
-        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind",
-        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind'] exit=0"
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_campaign_durable_resume_no_rewind"
       ],
       "notes": "P3B: durable ResearchCampaign + worker ownership"
     },
@@ -330,8 +314,7 @@
         "reset/step observations via MarketView (no future bars)",
         "complete episodes EXTERNAL_REQUIRED via market_sim.gym_episode worker",
         "TRADING_WORKER_UNAVAILABLE when externalized without job_runtime (no FastAPI sync fallback)",
-        "API: POST /api/market-sim/gym/episodes[+ /step /start]",
-        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1BTradingGymTests'] exit=0"
+        "API: POST /api/market-sim/gym/episodes[+ /step /start]"
       ],
       "notes": "P1B: TradingGym + API + worker ownership. RewardSpec completed in P1C."
     },
@@ -341,8 +324,7 @@
       "evidence": [
         "Data/modules/market_sim/scorecards.py::build_scorecard / rank_scorecards / compute_penalty",
         "Penalty for causality_violations, risk_vetoes, drawdown",
-        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank",
-        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank'] exit=0"
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_scorecards_penalty_and_rank"
       ],
       "notes": "P3B: kernel-derived scorecards with violation penalties"
     },
@@ -356,8 +338,7 @@
         "LiveTradingGuard remains BLOCKED",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
         "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
-        "Data/backend/tests/test_trading_orchestra.py::MandateTests",
-        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5'] exit=0"
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests"
       ],
       "notes": "P3B: A0\u2013A4 ladder; A5 impossible; promotion kernel-gated"
     },
@@ -370,8 +351,7 @@
         "Data/modules/market_sim/dataset_bridge.py::export_trajectory_to_dataset",
         "Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests",
         "JSONL trajectory export; DatasetService bridge when bound (FILE_ONLY honest otherwise)",
-        "API: POST /api/market-sim/gym/episodes/{id}/export-trajectory",
-        "pytest ['Data/backend/tests/test_market_sim_p1_gym.py::P1CRewardAndTrajectoryTests'] exit=0"
+        "API: POST /api/market-sim/gym/episodes/{id}/export-trajectory"
       ],
       "notes": "P1C: kernel RewardSpec + content-addressed trajectory JSONL + DatasetService bridge"
     },
@@ -380,8 +360,7 @@
       "status": "PASS",
       "evidence": [
         "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap (paper-safe; live N/A)",
-        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured",
-        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured'] exit=0"
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
       ],
       "notes": "P4B: sim-to-paper gap report; live gap N/A while live BLOCKED"
     },
@@ -392,8 +371,7 @@
         "Data/modules/market_sim/promotion.py::evaluate_promotion",
         "Data/modules/market_sim/readiness.py::may_promote_to",
         "A2+ requires kernel acceptance; A5 impossible",
-        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2",
-        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2'] exit=0"
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_promotion_requires_acceptance_for_a2"
       ],
       "notes": "P3B: kernel-owned promotion; live never enabled"
     },
@@ -405,8 +383,7 @@
         "MarketSimControlPlane.paper_forward_step",
         "Per-session WalletLedger isolation on LocalPaperBroker",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests",
-        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization",
-        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests'] exit=0"
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization"
       ],
       "notes": "P4A: PaperForwardRunner + isolated paper accounting (D18)"
     },
@@ -416,8 +393,7 @@
       "evidence": [
         "Data/modules/market_sim/sim_to_paper_gap.py::measure_sim_to_paper_gap",
         "Gap status MEASURED/UNMEASURED honest; no fabricated precision",
-        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured",
-        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured'] exit=0"
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_sim_to_paper_gap_measured"
       ],
       "notes": "P4B: sim-to-paper gap measurement foundation"
     },
@@ -428,8 +404,7 @@
         "paper_place_order routes through PaperForwardRunner + RiskGuard",
         "SimulationEngine / MultiAgentEngine already use RiskGuard",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order",
-        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization::test_d18_paper_place_order_uses_riskguard",
-        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4APaperIsolationTests::test_risk_guard_blocks_paper_order'] exit=0"
+        "Data/backend/tests/test_market_sim_characterization.py::D18PaperCharacterization::test_d18_paper_place_order_uses_riskguard"
       ],
       "notes": "P4A: RiskGuard on paper path (D18)"
     },
@@ -440,8 +415,7 @@
         "Data/modules/market_sim/broker_adapter.py::LiveBrokerAdapter / resolve_broker_adapter",
         "LIVE_BROKER_UNSUPPORTED for live/real/production ids",
         "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported",
-        "LiveTradingGuard remains BLOCKED",
-        "pytest ['Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_live_broker_unsupported'] exit=0"
+        "LiveTradingGuard remains BLOCKED"
       ],
       "notes": "P4B: live broker explicitly UNSUPPORTED"
     },
@@ -459,8 +433,7 @@
         "paper_order mutations via _mutate_via_gateway",
         "main.py wires gateway into market_sim router",
         "Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization",
-        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_routes_import_gateway",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D16GatewayCharacterization'] exit=0"
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_routes_import_gateway"
       ],
       "notes": "P4B: mutation routes via ExecutionGateway (D16)"
     },
@@ -472,8 +445,7 @@
         "MarketSimStore.claim_next_runnable uses BEGIN IMMEDIATE (D25)",
         "Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization",
         "Data/backend/tests/test_market_sim_characterization.py::D26JobRuntimeCharacterization",
-        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_claim_begin_immediate",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D25WorkerClaimCharacterization'] exit=0"
+        "Data/backend/tests/test_market_sim_p4_paper.py::P4BGatewayGapLeaseTests::test_claim_begin_immediate"
       ],
       "notes": "P4B: JobStore leases + BEGIN IMMEDIATE claim (D25/D26)"
     },
@@ -483,8 +455,7 @@
       "evidence": [
         "Single leviathan.db; MigrationRunner contiguous versions through 48",
         "Data/backend/tests/test_migrations.py",
-        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization",
-        "pytest ['Data/backend/tests/test_migrations.py'] exit=0"
+        "Data/backend/tests/test_market_sim_characterization.py::D21MigrationHeadCharacterization"
       ],
       "notes": "Canonical SQLite + contiguous migrations"
     },
@@ -501,8 +472,7 @@
         "SimulatiePage / PaperTradingPage / StrategieenPage call real /api/market-sim routes",
         "No hardcoded agent-alpha default roster; engine single|multi explicit",
         "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization",
-        "PaperTradingPage uses api.listPaperSessions / createPaperSession / capabilities",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization'] exit=0"
+        "PaperTradingPage uses api.listPaperSessions / createPaperSession / capabilities"
       ],
       "notes": "P4C: TradingCenter uses real backend state (D27)"
     },
@@ -512,8 +482,7 @@
       "evidence": [
         "SimulatiePage exposes initialCash, engine, decisionCadence, seed, speed",
         "Default engine=single (empty agents); multi-agent opt-in",
-        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options'] exit=0"
+        "Data/backend/tests/test_market_sim_characterization.py::D27FrontendGapsCharacterization::test_d27_desired_simulatie_exposes_run_builder_options"
       ],
       "notes": "P4C: run builder options (D27)"
     },
@@ -544,8 +513,7 @@
       "evidence": [
         "Data/backend/tests/test_market_sim_characterization.py \u2014 D1\u2013D31 converted where fixed",
         "P0\u2013P4 regression files: test_market_sim_p0_kernel.py \u2026 p4_paper.py",
-        "282 trading suite tests passed (6 xfailed remaining defects)",
-        "pytest ['Data/backend/tests/test_market_sim_characterization.py'] exit=0"
+        "282 trading suite tests passed (6 xfailed remaining defects)"
       ],
       "notes": "Slice 16: characterization suite green with honest xfails"
     },
@@ -570,8 +538,7 @@
         "LiveTradingGuard.public_status LIVE_TRADING_AVAILABLE=BLOCKED",
         "readiness_ladder A5=IMPOSSIBLE",
         "normalize_autonomy('A5') raises A5_IMPOSSIBLE",
-        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5",
-        "pytest ['Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5'] exit=0"
+        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests::test_readiness_ladder_blocks_a5"
       ],
       "notes": "Live money blocked; A5 impossible"
     },
@@ -652,8 +619,7 @@
       "status": "PASS",
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at",
-        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only",
-        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_items_have_provenance_and_causal_available_at', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only'] exit=0"
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g61_production_fetch_path_is_provider_io_only"
       ],
       "notes": "Frontier Program F1/F4 \u2014 offline evidence only; live feed fetch through provider_io not exercised in CI"
     },
@@ -663,8 +629,7 @@
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at",
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at",
-        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization",
-        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_poison_future_article_invisible_before_available_at', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g62_signal_as_of_equals_item_available_at', 'Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization'] exit=0"
+        "Data/backend/tests/test_market_sim_characterization.py::D22BrainAsOfCharacterization"
       ],
       "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) \u2014 PARTIAL scope, see notes in frontier_program.md"
     },
@@ -673,8 +638,7 @@
       "status": "PASS",
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced",
-        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure",
-        "pytest ['Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_article_text_is_reference_context_and_schema_is_enforced', 'Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure'] exit=0"
+        "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests::test_g63_schema_repair_then_honest_failure"
       ],
       "notes": "Injection corpus is a 1-item corpus today; extend in F4b"
     },
@@ -683,8 +647,7 @@
       "status": "PASS",
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests",
-        "Data/backend/tests/test_trading_orchestra.py::MandateTests::test_mandate_can_never_enable_live",
-        "pytest ['Data/backend/tests/test_trading_orchestra.py::FleetIsolationTests', 'Data/backend/tests/test_trading_orchestra.py::MandateTests'] exit=0"
+        "Data/backend/tests/test_trading_orchestra.py::MandateTests::test_mandate_can_never_enable_live"
       ],
       "notes": "Frontier Program F1"
     },
@@ -693,8 +656,7 @@
       "status": "PASS",
       "evidence": [
         "Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent",
-        "Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only",
-        "pytest ['Data/backend/tests/test_trading_orchestra.py::DeliberationTests::test_g65_round_links_proposal_critique_risk_intent', 'Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only'] exit=0"
+        "Data/backend/tests/test_trading_orchestra.py::MigrationAndSchemaTests::test_g65_decisions_are_append_only"
       ],
       "notes": "fill and post_mortem links exist as stages; paper routing (fill) is not produced by the orchestra yet (execution_agent records intents only)"
     },
@@ -723,5 +685,11 @@
     "tax/legal compliance",
     "investment advice"
   ],
-  "canonical_system_doc": "Data/docs/Leviathan_system_backend.md"
+  "canonical_system_doc": "Data/docs/Leviathan_system_backend.md",
+  "truth": {
+    "incomplete_is_not_pass": true,
+    "feature_gated_is_not_pass_claim": true,
+    "baseline_green_does_not_mark_trading_pass": true
+  },
+  "exit_reason": "incomplete gates reported honestly (22 open); no FAIL"
 }

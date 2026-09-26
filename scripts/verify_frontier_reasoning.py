@@ -133,7 +133,16 @@ def _run_program_gates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         elif declared == "PASS":
             status, evidence = "FAIL", "PASS_without_evidence"
         else:
-            allowed = {"NOT_STARTED", "IN_PROGRESS", "FAIL", "NOT_TESTED", "NOT_TESTED_IN_CI", "UNMEASURED"}
+            allowed = {
+                "NOT_STARTED",
+                "IN_PROGRESS",
+                "FAIL",
+                "NOT_TESTED",
+                "NOT_TESTED_IN_CI",
+                "UNMEASURED",
+                "FEATURE_GATED",
+                "PARTIAL",
+            }
             status = declared if declared in allowed else "NOT_STARTED"
         results.append({
             "id": gate.get("id"),

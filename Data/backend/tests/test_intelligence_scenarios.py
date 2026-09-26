@@ -215,7 +215,8 @@ class ScenarioEMetaControllerHotPolicy(unittest.TestCase):
 
     def test_set_policy_hot_swap_budgets(self) -> None:
         meta = MetaController()
-        task = TaskModelBuilder().build("hi")
+        # Use TOOL_REQUIRED so DIRECT hard-caps do not mask policy hot-swap.
+        task = TaskModelBuilder().build("Calculate 17 * 23 precisely")
         baseline = meta.decide(task, user_requested_depth="FAST")
         self.assertEqual(baseline.budgets.max_model_calls, 1)
 

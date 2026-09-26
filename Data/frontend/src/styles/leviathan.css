@@ -408,6 +408,11 @@ img { display: block; max-width: 100%; }
 
 /* ---------- Main ---------- */
 
+/* W18A: shell landmark slot — display:contents so page-level `.lv-main` stays grid child */
+.lv-main-slot {
+  display: contents;
+}
+
 .lv-main {
   min-width: 0;
   min-height: 0;
@@ -1192,4 +1197,37 @@ img { display: block; max-width: 100%; }
   .lv-dock-item { min-width: 44px; }
   .lv-prompt { grid-template-columns: auto minmax(0, 1fr) auto; }
   .lv-auto { display: none; }
+}
+
+/* W18A/F — a11y skip link + error boundary */
+.lv-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 10000;
+  padding: 0.5rem 1rem;
+  background: var(--lv-bg-elevated, #111);
+  color: var(--lv-fg, #fff);
+}
+.lv-skip-link:focus {
+  left: 0.75rem;
+  top: 0.75rem;
+}
+.lv-error-boundary {
+  max-width: 42rem;
+  margin: 3rem auto;
+  padding: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.lv-error-boundary pre {
+  white-space: pre-wrap;
+  opacity: 0.8;
+}
+.lv-demo-banner {
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.08);
+  color: inherit;
+  font-size: 0.9rem;
 }

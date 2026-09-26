@@ -9,6 +9,18 @@ class VerificationOutcome(str, Enum):
     PASSED = "PASSED"
     FAILED = "FAILED"
     UNMEASURED = "UNMEASURED"
+    PARTIAL = "PARTIAL"
+
+
+class VerificationTier(str, Enum):
+    """Honest verification tier names (W6).
+
+    SELF_CRITIQUE must never be labelled independent/cross-model verification.
+    """
+
+    DETERMINISTIC_VERIFICATION = "DETERMINISTIC_VERIFICATION"
+    CROSS_MODEL_VERIFICATION = "CROSS_MODEL_VERIFICATION"
+    SELF_CRITIQUE = "SELF_CRITIQUE"
 
 
 @dataclass(frozen=True)

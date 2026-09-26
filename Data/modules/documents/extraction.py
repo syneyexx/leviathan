@@ -348,38 +348,42 @@ def _extract_pdf(path: Path, raw: bytes, digest: str, *, max_pages: int) -> Docu
         # Minimal fallback: extract literal strings from PDF content streams (no OCR).
         return _extract_pdf_streams(path, raw, digest, max_pages=max_pages)
 
-    reader = PdfReader(io.BytesIO(raw))
-    pages: list[dict[str, Any]] = []
-    values: list[ExtractedValue] = []
-    for index, page in enumerate(reader.pages):
-        if index >= max_pages:
-            break
-        text = page.extract_text() or ""
-        pages.append({"index": index, "text": text[:4000], "kind": "pdf"})
-        for match in _NUM_RE.finditer(text):
-            values.append(
-                ExtractedValue(
-                    kind="number",
-                    value=_parse_number(match.group(0)),
-                    provenance=ProvenanceSpan(
-                        source_path=str(path),
-                        page=index,
-                        locator=f"pdf:page={index}:offset={match.start()}",
-                        char_start=match.start(),
-                        char_end=match.end(),
-                    ),
-                    validated=True,
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        pages: list[dict[str, Any]] = []
+        values: list[ExtractedValue] = []
+        for index, page in enumerate(reader.pages):
+            if index >= max_pages:
+                break
+            text = page.extract_text() or ""
+            pages.append({"index": index, "text": text[:4000], "kind": "pdf"})
+            for match in _NUM_RE.finditer(text):
+                values.append(
+                    ExtractedValue(
+                        kind="number",
+                        value=_parse_number(match.group(0)),
+                        provenance=ProvenanceSpan(
+                            source_path=str(path),
+                            page=index,
+                            locator=f"pdf:page={index}:offset={match.start()}",
+                            char_start=match.start(),
+                            char_end=match.end(),
+                        ),
+                        validated=True,
+                    )
                 )
-            )
-    return DocumentExtraction(
-        source_path=str(path),
-        source_kind="pdf",
-        pages=pages,
-        values=values,
-        content_sha256=digest,
-        backend="pypdf",
-        unsupported=["ocr_scan"] if not pages else [],
-    )
+        return DocumentExtraction(
+            source_path=str(path),
+            source_kind="pdf",
+            pages=pages,
+            values=values,
+            content_sha256=digest,
+            backend="pypdf",
+            unsupported=["ocr_scan"] if not pages else [],
+        )
+    except Exception:
+        # Corrupt/truncated PDFs must not crash the pipeline — fall back to stream scan.
+        return _extract_pdf_streams(path, raw, digest, max_pages=max_pages)
 
 
 def _extract_pdf_streams(path: Path, raw: bytes, digest: str, *, max_pages: int) -> DocumentExtraction:

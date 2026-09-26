@@ -36,13 +36,17 @@ from .hydration import (
     usage_from_dict,
     working_memory_from_dict,
 )
+from .hypotheses import Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band
 from .loop_detection import LoopDetector
 from .meta_controller import MetaController, MetaDecision
+from .neural_advisor import NeuralTaskModelAdvisor
+from .critics import CriticMesh
 from .perception import PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .steering import SteerKind, classify_steer
 from .store import CognitionStore
 from .task_model import TaskModel, TaskModelBuilder
+from .ttc import Candidate, TestTimeComputeEngine
 from .types import (
     BeliefCategory,
     BeliefStatus,
@@ -63,6 +67,31 @@ from .working_memory import WorkingMemory
 
 
 ModelCaller = Callable[..., Any]
+
+
+def _parse_event_timestamp(value: Any) -> float | None:
+    """Parse in-process epoch seconds or durable ISO-8601 event timestamps."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        pass
+    try:
+        from datetime import datetime, timezone
+
+        normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -89,6 +118,9 @@ class CognitiveRunState:
     completion: dict[str, Any] | None = None
     experience: dict[str, Any] | None = None
     factuality: dict[str, Any] | None = None
+    ttc: dict[str, Any] | None = None
+    hypotheses: HypothesisBoard = field(default_factory=HypothesisBoard)
+    critic_report: dict[str, Any] | None = None
     steering: list[str] = field(default_factory=list)
     trace_id: str | None = None
 
@@ -99,6 +131,16 @@ class CognitiveRunState:
             "status": self.status.value,
             "stage": self.status.value,
             "mode": self.decision.mode.value if self.decision else None,
+            "requested_mode": (
+                self.decision.requested_mode.value
+                if self.decision and self.decision.requested_mode
+                else None
+            ),
+            "effective_mode": (
+                (self.decision.effective_mode or self.decision.mode).value
+                if self.decision
+                else None
+            ),
             "strategy": self.decision.strategy.value if self.decision else None,
             "goal": self.task.goal,
             "domain": self.task.domain,
@@ -107,6 +149,7 @@ class CognitiveRunState:
             "working_memory_count": len(self.working_memory.items),
             "working_memory_saturation": self.working_memory.saturation(),
             "budgets": self.decision.budgets.public_dict() if self.decision else None,
+            "neural": self.decision.neural.public_dict() if self.decision and self.decision.neural else None,
             "usage": self.usage.public_dict(),
             "plan": self.plan.public_dict() if self.plan else None,
             "observations": [o.public_dict() for o in self.observations[-12:]],
@@ -118,6 +161,9 @@ class CognitiveRunState:
             "verification_passed": self.verification_passed,
             "completion": self.completion,
             "factuality": self.factuality,
+            "ttc": self.ttc,
+            "hypotheses": self.hypotheses.public_dict() if self.hypotheses.items else None,
+            "critic_report": self.critic_report,
             "response_preview": (self.response_text or "")[:400],
             # Full response only when this run owns the user-visible answer (not shadow).
             "response": None if self.shadow else self.response_text,
@@ -307,14 +353,19 @@ class CognitiveRunState:
     def _latency_ms(self) -> float | None:
         if not self.events:
             return None
-        times = [
-            float(e.get("created_at"))
-            for e in self.events
-            if isinstance(e, dict) and e.get("created_at") is not None
-        ]
+        times: list[float] = []
+        for e in self.events:
+            if not isinstance(e, dict) or e.get("created_at") is None:
+                continue
+            parsed = _parse_event_timestamp(e.get("created_at"))
+            if parsed is not None:
+                times.append(parsed)
         if len(times) < 2:
             return None
-        return round((max(times) - min(times)) * 1000.0, 3)
+        span = max(times) - min(times)
+        # In-process events use unix epoch seconds; hydrated store events use ISO-8601.
+        # Both yield a comparable delta in seconds.
+        return round(span * 1000.0, 3)
 
 
 class CognitiveRuntime:
@@ -390,6 +441,11 @@ class CognitiveRuntime:
         # Canonical BehaviorSettingsResolver — resolve current persisted profile
         # at each new submit/operation. Do not cache identity on the runtime.
         self.behavior_resolver = behavior_resolver
+        self.task_advisor = NeuralTaskModelAdvisor(
+            model_caller=model_caller,
+            builder=self.task_builder,
+        )
+        self.critic_mesh = CriticMesh()
 
         self._runs: dict[str, CognitiveRunState] = {}
         self._loops: dict[str, LoopDetector] = {}
@@ -478,6 +534,9 @@ class CognitiveRuntime:
             constraints=constraints,
             metadata=meta_payload,
         )
+        # W5: neural/heuristic task advice — fallback always labeled.
+        advice = self.task_advisor.advise(message, metadata=meta_payload)
+        task = self.task_advisor.apply_to_task(task, advice)
         # GI12: select bounded specialists for MULTI_DOMAIN / COMPLEX (not every request).
         self._assign_gi_specialists(task)
         run_id = str(uuid.uuid4())
@@ -809,9 +868,38 @@ class CognitiveRuntime:
             context_public=result.get("context"),
             completion=result.get("completion"),
             experience=result.get("experience"),
+            ttc=checkpoint.get("ttc"),
+            critic_report=checkpoint.get("critic_report"),
             steering=list(checkpoint.get("steering") or []),
             trace_id=row.get("trace_id"),
         )
+        # Restore HypothesisBoard from durable checkpoint (W7).
+        hyp_blob = checkpoint.get("hypotheses") if isinstance(checkpoint.get("hypotheses"), dict) else None
+        if hyp_blob and isinstance(hyp_blob.get("items"), list):
+            for item in hyp_blob["items"]:
+                if not isinstance(item, dict):
+                    continue
+                statement = str(item.get("statement") or "").strip()
+                if not statement:
+                    continue
+                hyp = state.hypotheses.add(
+                    statement,
+                    prior_plausibility=float(item.get("prior_plausibility") or 0.5),
+                    belief_id=item.get("belief_id"),
+                    metadata=dict(item.get("metadata") or {}),
+                )
+                for eid in item.get("supporting_evidence_ids") or []:
+                    hyp.apply_evidence(str(eid), supports=True)
+                for eid in item.get("contradicting_evidence_ids") or []:
+                    hyp.apply_evidence(str(eid), supports=False)
+        # Re-pin durable constraints into working memory so compaction cannot drop them.
+        for constraint in checkpoint.get("pinned_constraints") or list(
+            getattr(task, "hard_constraints", None) or task.constraints or []
+        ):
+            if constraint:
+                state.working_memory.upsert(
+                    "constraint", str(constraint), priority=0.99, verified=True
+                )
         events = self.store.list_events(run_id)
         state.events = list(events)
         return state
@@ -948,7 +1036,20 @@ class CognitiveRuntime:
         b = state.decision.budgets if state.decision else None
         u = state.usage
         if b is None:
-            return {"iterations": 0}
+            # No MetaDecision yet — offer a minimal positive ceiling so governance
+            # can authorize a first child hop (ablation / early DELEGATE paths).
+            return {
+                "iterations": 1,
+                "model_calls": 2,
+                "tool_calls": 4,
+                "agent_delegations": 1,
+                "replans": 1,
+                "retries": 1,
+                "retrieval_rounds": 1,
+                "critic_passes": 0,
+                "model_tokens": 2000,
+                "wall_ok": 1,
+            }
         elapsed = time.monotonic() - (u.started_monotonic or time.monotonic())
         wall_left = b.max_wall_time_seconds - elapsed
         # Token budget depletes from measured usage when available; otherwise
@@ -984,6 +1085,12 @@ class CognitiveRuntime:
         self._emit(state, "context_built", ctx.pack.public_dict())
         text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role="responder")
         state.response_text = self._sanitize_response_text(text)
+        self._maybe_apply_ttc(
+            state,
+            system_prompt=ctx.pack.system_prompt,
+            messages=list(ctx.pack.messages),
+            role="responder",
+        )
         state.observations.append(
             CognitiveObservation(
                 kind=CognitiveObservationKind.MODEL_RESULT,
@@ -1316,6 +1423,29 @@ class CognitiveRuntime:
                 budget=state.decision.budgets.public_dict() if state.decision else {},
                 parent_trace_id=state.trace_id,
                 required_evidence=list(state.task.required_evidence),
+                parent_run_id=state.run_id,
+                delegation_depth=int(
+                    action.arguments.get("delegation_depth")
+                    or (state.task.metadata or {}).get("delegation_depth")
+                    or 0
+                ),
+                max_delegation_depth=int(
+                    action.arguments.get("max_delegation_depth")
+                    or (state.task.metadata or {}).get("max_delegation_depth")
+                    or 3
+                ),
+                remaining_parent_budget=self._budgets_remaining(state),
+                lineage=list(
+                    action.arguments.get("lineage")
+                    or (state.task.metadata or {}).get("delegation_lineage")
+                    or ["cognition"]
+                ),
+                memory_scope=str(action.arguments.get("memory_scope") or "AGENT_PRIVATE"),
+                shared_orchestrator_scope=(
+                    str(action.arguments["shared_orchestrator_scope"])
+                    if action.arguments.get("shared_orchestrator_scope")
+                    else (state.task.metadata or {}).get("shared_orchestrator_scope")
+                ),
             )
             req.metadata.update(meta)
             self._emit(state, "agent_delegated", req.public_dict())
@@ -1506,6 +1636,12 @@ class CognitiveRuntime:
             role = str(action.arguments.get("role") or "responder")
             text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role=role)
             state.response_text = self._sanitize_response_text(text)
+            self._maybe_apply_ttc(
+                state,
+                system_prompt=ctx.pack.system_prompt,
+                messages=list(ctx.pack.messages),
+                role=role,
+            )
             if action.arguments.get("purpose") == "hypothesis" and state.response_text and self.belief_enabled:
                 state.beliefs.add(
                     state.response_text[:400],
@@ -1514,7 +1650,12 @@ class CognitiveRuntime:
                     source_type=EpistemicType.MODEL_INFERENCE,
                     status=BeliefStatus.INFERRED,
                 )
-                self._emit(state, "belief_added", {"proposition": state.response_text[:200]})
+                hyp = state.hypotheses.add(state.response_text[:400], prior_plausibility=0.55)
+                self._emit(
+                    state,
+                    "belief_added",
+                    {"proposition": state.response_text[:200], "hypothesis_id": hyp.hypothesis_id},
+                )
             return CognitiveObservation(
                 kind=CognitiveObservationKind.MODEL_RESULT,
                 observation_id=str(uuid.uuid4()),
@@ -1593,6 +1734,64 @@ class CognitiveRuntime:
         except Exception as exc:  # noqa: BLE001
             self._emit(state, "model_error", {"error": f"{type(exc).__name__}: {exc}"})
             return None
+
+    def _maybe_apply_ttc(
+        self,
+        state: CognitiveRunState,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+        role: str,
+    ) -> None:
+        """When neural candidate_count > 1, run bounded test-time candidate search."""
+        decision = state.decision
+        if decision is None or getattr(decision, "neural", None) is None:
+            return
+        want = int(decision.neural.candidate_count or 1)
+        if want <= 1 or not state.response_text:
+            return
+        remaining = self._budgets_remaining(state)
+        extra = min(want - 1, max(0, int(remaining.get("model_calls", 0))))
+        outputs: list[str] = [state.response_text]
+        for _ in range(extra):
+            alt = self._call_model(state, system_prompt, messages, role=role)
+            alt_s = self._sanitize_response_text(alt)
+            if alt_s:
+                outputs.append(alt_s)
+        if len(outputs) < 2:
+            return
+        tool_receipts: list[str] = []
+        for o in state.observations:
+            payload = o.payload or {}
+            if payload.get("receipt_id"):
+                tool_receipts.append(str(payload["receipt_id"]))
+            cap = str(payload.get("capability_id") or "")
+            if cap:
+                tool_receipts.append(cap)
+        context = {
+            "constraints": list(state.task.constraints or []),
+            "required_evidence_refs": [
+                ref for o in state.observations for ref in (o.evidence_refs or [])
+            ],
+            "tool_receipts": tool_receipts,
+            "unsupported_capabilities": [],
+        }
+        engine = TestTimeComputeEngine(max_candidates=want)
+        result = engine.run(outputs, context=context, keep=2)
+        state.ttc = result.public_dict()
+        selected = result.selected
+        if selected is not None and selected.output:
+            state.response_text = selected.output
+        self._emit(
+            state,
+            "ttc_candidate_search",
+            {
+                "candidate_count": len(result.candidates),
+                "selected_id": result.selected_id,
+                "evaluation": result.evaluation,
+                "truth": result.public_dict()["truth"],
+            },
+        )
 
     def _record_token_usage(
         self,
@@ -1946,7 +2145,35 @@ class CognitiveRuntime:
         elif state.working_memory.saturation() > 0.9:
             recommend = "compact"
             reason = "working memory saturated"
-        out = {"recommend": recommend, "reason": reason}
+
+        evidence_ids = [
+            ref for o in state.observations for ref in (o.evidence_refs or [])
+        ]
+        plan_steps = [
+            s.objective for s in (state.plan.steps if state.plan else [])
+        ]
+        acceptance = list(state.task.success_criteria or [])
+        mesh = self.critic_mesh.run(
+            text=state.response_text or "",
+            plan_steps=plan_steps,
+            acceptance=acceptance,
+            evidence_ids=evidence_ids,
+            require_evidence=bool(
+                getattr(state.task, "requires_research", False)
+                or getattr(state.task, "verification_mode", "") in {"REQUIRED", "CORROBORATED"}
+            ),
+            domain=state.task.domain,
+        )
+        state.critic_report = mesh.public_dict()
+        if mesh.recommend in {"replan", "verify", "stop"} and recommend == "continue":
+            recommend = mesh.recommend
+            reason = mesh.reason
+        out = {
+            "recommend": recommend,
+            "reason": reason,
+            "mesh": mesh.public_dict(),
+            "truth": mesh.public_dict()["truth"],
+        }
         self._transition(state, CognitiveRunStatus.REASONING)
         return out
 
@@ -2020,7 +2247,7 @@ class CognitiveRuntime:
             state.experience = admitted.public_dict()
             self._emit(state, "experience_admitted" if admitted.admitted else "experience_rejected", state.experience)
 
-        # Active-learning candidates on high uncertainty or verification failure — never auto-train.
+        # Active-learning candidates — never auto-train (W11 expanded triggers).
         uncertainty = (
             state.beliefs.uncertainty()
             if self.belief_enabled
@@ -2028,6 +2255,8 @@ class CognitiveRuntime:
         )
         verification_failed = state.verification_passed is False
         high_uncertainty = uncertainty >= 0.75
+        al_events: list[dict[str, Any]] = []
+
         if verification_failed or high_uncertainty or decision.status == CognitiveRunStatus.FAILED:
             reason = (
                 "verification_failed"
@@ -2036,24 +2265,115 @@ class CognitiveRuntime:
                 if decision.status == CognitiveRunStatus.FAILED
                 else "high_uncertainty"
             )
-            candidate = {
-                "run_id": state.run_id,
-                "task_id": state.task.task_id,
-                "domain": state.task.domain,
-                "goal": state.task.goal[:300],
-                "status": decision.status.value,
-                "uncertainty": uncertainty,
-                "verification_status": (
-                    "FAILED"
+            al_events.append(
+                {
+                    "kind": "verification_failure"
                     if verification_failed
-                    else "PASSED"
-                    if state.verification_passed is True
-                    else "UNMEASURED"
-                ),
-                "reason": reason,
-                "kind": "failure" if verification_failed or decision.status == CognitiveRunStatus.FAILED else "uncertainty",
+                    else "failure"
+                    if decision.status == CognitiveRunStatus.FAILED
+                    else "uncertainty",
+                    "reason": reason,
+                    "run_id": state.run_id,
+                    "task_id": state.task.task_id,
+                    "domain": state.task.domain,
+                    "goal": state.task.goal[:300],
+                    "status": decision.status.value,
+                    "uncertainty": uncertainty,
+                    "verification_status": (
+                        "FAILED"
+                        if verification_failed
+                        else "PASSED"
+                        if state.verification_passed is True
+                        else "UNMEASURED"
+                    ),
+                }
+            )
+
+        # Critic high severity
+        for obs in state.observations:
+            payload = obs.payload if isinstance(getattr(obs, "payload", None), dict) else {}
+            critics = payload.get("critics") or payload.get("critic_reports") or []
+            if isinstance(critics, list):
+                for c in critics:
+                    if not isinstance(c, dict):
+                        continue
+                    sev = str(c.get("severity") or "").lower()
+                    if sev in {"high", "critical"}:
+                        al_events.append(
+                            {
+                                "kind": "critic_high_severity",
+                                "run_id": state.run_id,
+                                "source_ref": str(c.get("critic_id") or c.get("name") or "critic"),
+                                "content": str(c.get("summary") or c.get("finding") or "")[:500],
+                                "prompt": state.task.goal[:300],
+                            }
+                        )
+
+        # Tool failure patterns
+        tool_fails = [
+            o
+            for o in state.observations
+            if (o.error or (getattr(o, "success", True) is False))
+            and str(getattr(o.kind, "value", o.kind) or "").upper() in {"TOOL_RESULT", "ERROR"}
+        ]
+        if len(tool_fails) >= 2:
+            al_events.append(
+                {
+                    "kind": "tool_failure_pattern",
+                    "run_id": state.run_id,
+                    "source_ref": state.run_id,
+                    "content": "; ".join(str(o.error or o.summary)[:120] for o in tool_fails[:5]),
+                    "prompt": state.task.goal[:300],
+                    "count": len(tool_fails),
+                }
+            )
+
+        # Low TTC candidate agreement
+        ttc_meta = state.ttc if isinstance(state.ttc, dict) else None
+        if isinstance(ttc_meta, dict):
+            scores = ttc_meta.get("candidate_scores") or ttc_meta.get("scores") or []
+            if isinstance(scores, list) and len(scores) >= 2:
+                nums = sorted(
+                    (float(s) for s in scores if isinstance(s, (int, float))),
+                    reverse=True,
+                )
+                if len(nums) >= 2 and (nums[0] - nums[1]) < 0.05:
+                    al_events.append(
+                        {
+                            "kind": "low_candidate_agreement",
+                            "run_id": state.run_id,
+                            "content": f"top_delta={nums[0] - nums[1]:.4f}",
+                            "prompt": state.task.goal[:300],
+                        }
+                    )
+
+        # User correction / retrieval miss from task metadata
+        meta = dict(state.task.metadata or {})
+        if meta.get("user_correction") or meta.get("correction"):
+            al_events.append(
+                {
+                    "kind": "user_correction",
+                    "run_id": state.run_id,
+                    "content": str(meta.get("user_correction") or meta.get("correction"))[:500],
+                    "prompt": state.task.goal[:300],
+                }
+            )
+        if meta.get("retrieval_miss") or meta.get("retrieval_miss_count"):
+            al_events.append(
+                {
+                    "kind": "retrieval_miss",
+                    "run_id": state.run_id,
+                    "content": str(meta.get("retrieval_miss") or meta.get("retrieval_miss_count")),
+                    "prompt": state.task.goal[:300],
+                }
+            )
+
+        for event in al_events:
+            candidate = {
+                **event,
                 "auto_promote_forbidden": True,
                 "requires_human_or_policy_approval": True,
+                "lifecycle": "CANDIDATE",
             }
             if hasattr(self.experience_store, "record_active_learning_candidate"):
                 candidate = self.experience_store.record_active_learning_candidate(candidate)
@@ -2112,6 +2432,26 @@ class CognitiveRuntime:
                 "steering": list(state.steering),
                 "usage": state.usage.public_dict(),
                 "cursor_iteration": state.usage.iterations,
+                # W7 durable ReasoningState fields (public — no private CoT).
+                "hypotheses": state.hypotheses.public_dict(),
+                "neural": state.decision.neural.public_dict()
+                if state.decision and state.decision.neural
+                else None,
+                "evidence_refs": [
+                    ref for o in state.observations for ref in (o.evidence_refs or [])
+                ],
+                "public_events": [
+                    e
+                    for e in state.events
+                    if isinstance(e, dict) and e.get("type") not in {"private_cot", "hidden_reasoning"}
+                ][-50:],
+                "ttc": state.ttc,
+                "critic_report": state.critic_report,
+                "pinned_constraints": list(
+                    getattr(state.task, "hard_constraints", None)
+                    or state.task.constraints
+                    or []
+                ),
             }
             result_json = {
                 "response_text": state.response_text,

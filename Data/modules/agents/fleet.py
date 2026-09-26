@@ -19,6 +19,7 @@ from .fleet_types import (
     MissionStatus,
     OrchestratorConfig,
 )
+from .governance import DelegationGovernor
 from .runtime import AgentRuntime
 from .store import AgentFleetStore, utc_now
 from .system_inventory import SystemInventory, classify_fleet_agent
@@ -121,6 +122,7 @@ class AgentFleetService:
         dataset_activity_provider: Any | None = None,
         system_inventory: SystemInventory | None = None,
         job_runtime: Any | None = None,
+        governor: DelegationGovernor | None = None,
     ) -> None:
         self.store = store
         self.runtime = runtime
@@ -132,6 +134,8 @@ class AgentFleetService:
         # Missions for a kind with a registered executor never reach the generic runtime.
         self._kind_executors: dict[AgentDefinitionKind, Any] = {}
         self.signal_fabric: Any | None = None
+        # W9: shared recursion/authority/budget governor for orchestrator children.
+        self.governor = governor or DelegationGovernor()
 
     def bind_job_runtime(self, job_runtime: Any | None) -> None:
         self.job_runtime = job_runtime
@@ -1096,16 +1100,87 @@ class AgentFleetService:
         depth: int,
         use_jobs: bool,
     ) -> AgentMission:
-        return self.launch_mission(
-            agent_id=member_id,
-            request=mission.request,
-            title=f"{mission.title} → {member_id}",
-            priority=mission.priority,
-            use_jobs=use_jobs,
-            dry_run=False,
-            parent_mission_id=mission.mission_id,
-            depth=depth + 1,
+        parent_lineage = list((mission.metadata or {}).get("delegation_lineage") or [])
+        if mission.agent_id and mission.agent_id not in parent_lineage:
+            parent_lineage.append(mission.agent_id)
+        parent_authority = str(
+            (mission.metadata or {}).get("authority_ceiling")
+            or (mission.metadata or {}).get("parent_authority")
+            or "MEDIUM"
         )
+        parent_budget = dict((mission.metadata or {}).get("remaining_budget") or {})
+        max_depth = int((mission.metadata or {}).get("max_delegation_depth") or 0)
+        if max_depth <= 0:
+            try:
+                parent_agent = self.get_agent(mission.agent_id)
+                if parent_agent.orchestrator is not None:
+                    max_depth = int(parent_agent.orchestrator.max_delegation_depth)
+            except Exception:  # noqa: BLE001
+                max_depth = 3
+        if max_depth <= 0:
+            max_depth = 3
+        decision = self.governor.authorize(
+            parent_run_id=mission.run_id or mission.mission_id,
+            agent_kind=member_id,
+            child_id=f"{mission.mission_id}:{member_id}:{depth + 1}",
+            parent_authority=parent_authority,
+            requested_authority=parent_authority,
+            delegation_depth=depth,
+            max_delegation_depth=max_depth,
+            remaining_parent_budget=parent_budget or {"slots": max(1, max_depth - depth)},
+            lineage=parent_lineage,
+            conversation_id=str((mission.metadata or {}).get("conversation_id") or "") or None,
+            memory_scope="AGENT_PRIVATE",
+            shared_orchestrator_scope=mission.mission_id,
+        )
+        if not decision.allowed or decision.frame is None:
+            violation = decision.violation.value if decision.violation else "REFUSED"
+            failed = AgentMission(
+                mission_id=AgentFleetStore.new_id("msn"),
+                agent_id=member_id,
+                title=f"{mission.title} → {member_id} (refused)",
+                request=mission.request,
+                status=MissionStatus.FAILED,
+                priority=mission.priority,
+                progress=0.0,
+                parent_mission_id=mission.mission_id,
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                error=f"DELEGATION_{violation}: {decision.reason}",
+                metadata={
+                    "governance": decision.public_dict(),
+                    "depth": depth + 1,
+                },
+            )
+            # Persist refused child for audit without executing side effects.
+            self.store.create_mission(failed)
+            return failed
+        frame = decision.frame
+        try:
+            child = self.launch_mission(
+                agent_id=member_id,
+                request=mission.request,
+                title=f"{mission.title} → {member_id}",
+                priority=mission.priority,
+                use_jobs=use_jobs,
+                dry_run=False,
+                parent_mission_id=mission.mission_id,
+                depth=frame.delegation_depth,
+                metadata={
+                    "delegation_lineage": list(frame.lineage),
+                    "authority_ceiling": frame.child_authority,
+                    "parent_authority": frame.parent_authority,
+                    "remaining_budget": dict(frame.child_budget),
+                    "max_delegation_depth": frame.max_delegation_depth,
+                    "parent_run_id": frame.parent_run_id,
+                    "memory_scope": frame.memory_scope,
+                    "shared_orchestrator_scope": frame.shared_orchestrator_scope,
+                    "governance": frame.public_dict(),
+                },
+            )
+            return child
+        finally:
+            self.governor.close(frame.child_id)
 
     def _run_orchestrator_sequential(
         self,

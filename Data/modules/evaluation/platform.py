@@ -463,6 +463,60 @@ class EvaluationPlatform:
             },
         }
 
+    def run_paired_compute_evaluation(
+        self,
+        *,
+        persist: bool = False,
+        min_useful_effect: float = 0.05,
+        bootstrap_samples: int = 500,
+    ) -> dict[str, Any]:
+        """W12: FAST vs DEEP paired compute analysis with bootstrap of deltas."""
+        from .compute_paired import run_paired_compute_evaluation
+        from .types import EvalCaseResult, EvalOutcome, EvalReport, JudgmentKind, MeasurementState
+
+        report = run_paired_compute_evaluation(
+            min_useful_effect=min_useful_effect,
+            bootstrap_samples=bootstrap_samples,
+        )
+        payload = report.public_dict()
+        if persist and self.enabled:
+            mapping = {
+                "PASSED": (EvalOutcome.PASSED, MeasurementState.PASS),
+                "FAILED": (EvalOutcome.FAILED, MeasurementState.FAIL),
+                "PARTIAL": (EvalOutcome.FAILED, MeasurementState.FAIL),
+                "UNMEASURED": (EvalOutcome.UNMEASURED, MeasurementState.UNMEASURED),
+            }
+            outcome, measurement = mapping.get(
+                report.measurement, (EvalOutcome.UNMEASURED, MeasurementState.UNMEASURED)
+            )
+            stored = EvalReport(
+                suite_id="paired_compute",
+                name="paired_compute_fast_vs_deep",
+                results=(
+                    EvalCaseResult(
+                        case_id="compute_paired_aggregate",
+                        outcome=outcome,
+                        detail=report.detail,
+                        judgment_kind=JudgmentKind.STATISTICAL,
+                        measurement=measurement,
+                        component="evaluation",
+                    ),
+                ),
+                summary={
+                    "passed": 1 if outcome == EvalOutcome.PASSED else 0,
+                    "failed": 1 if outcome == EvalOutcome.FAILED else 0,
+                    "unmeasured": 1 if outcome == EvalOutcome.UNMEASURED else 0,
+                    "error": 0,
+                    "total": 1,
+                },
+                suite_version="1",
+                component_scope=("evaluation", "cognition"),
+                system_level=True,
+            )
+            stored = self.store.save_report(stored)
+            payload["stored_report"] = stored.public_dict()
+        return payload
+
     def public_dict(self) -> dict[str, Any]:
         scorecard = self.build_system_scorecard()
         return {

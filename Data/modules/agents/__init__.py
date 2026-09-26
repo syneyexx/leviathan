@@ -11,6 +11,17 @@ from .fleet_types import (
     MissionStatus,
     OrchestratorConfig,
 )
+from .governance import (
+    AUTHORITY_RANK,
+    DelegationFrame,
+    DelegationGovernor,
+    DelegationViolation,
+    GovernanceDecision,
+    authority_rank,
+    clamp_authority,
+    detect_cycle,
+    split_budget,
+)
 from .multi import DagCycleError, DagNode, MultiAgentCoordinator, MultiAgentResult
 from .planner import StructuredAgentPlan, StructuredAgentPlanner
 from .runtime import AgentRuntime
@@ -28,6 +39,7 @@ from .system_inventory import SystemInventory, SystemInventoryEntry, classify_fl
 from .types import AgentKind, AgentResult, AgentStep, AgentStepKind
 
 __all__ = [
+    "AUTHORITY_RANK",
     "AgentBlackboard",
     "AgentDefinition",
     "AgentDefinitionKind",
@@ -48,6 +60,10 @@ __all__ = [
     "BlackboardEntry",
     "DagCycleError",
     "DagNode",
+    "DelegationFrame",
+    "DelegationGovernor",
+    "DelegationViolation",
+    "GovernanceDecision",
     "MissionStatus",
     "MultiAgentCoordinator",
     "MultiAgentResult",
@@ -60,5 +76,9 @@ __all__ = [
     "StructuredAgentPlanner",
     "SystemInventory",
     "SystemInventoryEntry",
+    "authority_rank",
+    "clamp_authority",
     "classify_fleet_agent",
+    "detect_cycle",
+    "split_budget",
 ]

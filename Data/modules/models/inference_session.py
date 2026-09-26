@@ -53,6 +53,19 @@ class InferenceSession:
         max_tokens: int | None = None,
         top_p: float | None = None,
         skip_context_fit: bool = False,
+        dialect_id: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
+        parallel_tool_calls: bool | None = None,
+        response_format: dict[str, Any] | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_max_tokens: int | None = None,
+        logprobs: bool | None = None,
+        top_logprobs: int | None = None,
+        n: int | None = None,
+        prompt_cache_key: str | None = None,
+        cache_control: dict[str, Any] | None = None,
+        reject_unsupported: bool = True,
     ) -> dict[str, Any]:
         profile = self.target.profile
         effective_max = max_tokens
@@ -95,6 +108,19 @@ class InferenceSession:
             temperature=profile.temperature if temperature is None else temperature,
             max_tokens=effective_max,
             top_p=profile.top_p if top_p is None else top_p,
+            dialect_id=dialect_id,
+            tools=tools,
+            tool_choice=tool_choice,
+            parallel_tool_calls=parallel_tool_calls,
+            response_format=response_format,
+            reasoning_effort=reasoning_effort,
+            reasoning_max_tokens=reasoning_max_tokens,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
+            n=n,
+            prompt_cache_key=prompt_cache_key,
+            cache_control=cache_control,
+            reject_unsupported=reject_unsupported,
         )
         # Record provider cached tokens when present.
         try:

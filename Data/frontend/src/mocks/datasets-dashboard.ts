@@ -71,6 +71,7 @@ export const DH_DEMO_FILTER_COUNTS: Record<DhFilterId, number> = {
   processing: 2,
 };
 
+/** DEMO-only decorative rows — must never be rendered as live inventory without DemoBanner. */
 export const DH_DEMO_ROWS: DhRow[] = [
   {
     id: "demo-pile",

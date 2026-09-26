@@ -1,0 +1,30 @@
+{
+  "program": "leviathan_verification",
+  "generated_at": "2026-09-26T00:34:56Z",
+  "allow_incomplete": true,
+  "truth": {
+    "incomplete_is_not_pass": true,
+    "baseline_green_does_not_mark_frontier_pass": true,
+    "not_started_is_not_pass": true,
+    "unmeasured_is_not_pass": true,
+    "feature_gated_is_not_pass": true
+  },
+  "runs": {
+    "frontier": {
+      "exit_code": 0,
+      "cmd": [
+        "--write-report",
+        "--allow-f0-skeleton-only"
+      ]
+    },
+    "trading": {
+      "exit_code": 0,
+      "cmd": [
+        "--allow-incomplete"
+      ]
+    }
+  },
+  "exit_code": 0,
+  "reason": "incomplete gates reported honestly; structural/smoke OK",
+  "incomplete_ok": true
+}

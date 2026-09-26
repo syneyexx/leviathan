@@ -169,10 +169,20 @@ class ContextV3Tests(unittest.TestCase):
             capability_shortlist=["fs.read"],
         )
         blob = result.pack.system_prompt
-        self.assertIn("ADVISORY", blob.upper() + "NEURAL")
         self.assertIn("TASK MODEL", blob)
         self.assertIn("SUCCESS CRITERIA", blob)
         self.assertTrue(result.pack.provenance.get("trust_labels"))
+        # W1: neural/advisory content is DATA — not folded into system authority.
+        self.assertNotIn("advisory association", blob)
+        data = " ".join(
+            s.content for s in result.pack.sections if s.included and s.kind != "system"
+        )
+        data += " ".join(m.get("content") or "" for m in result.pack.messages)
+        self.assertIn("advisory association", data.lower() + data)
+        self.assertEqual(
+            result.pack.provenance.get("canonical_compiler"),
+            "Data.modules.context.ContextBuilder",
+        )
 
 
 class MetaControllerTests(unittest.TestCase):

@@ -9,6 +9,9 @@ on:
       - "requirements-dev.txt"
       - ".github/workflows/leviathan-ci.yml"
       - "scripts/leviathan_ci.sh"
+      - "scripts/verify_leviathan.py"
+      - "scripts/verify_frontier_reasoning.py"
+      - "scripts/verify_trading_100.py"
   pull_request:
     paths:
       - "Data/**"
@@ -16,6 +19,9 @@ on:
       - "requirements-dev.txt"
       - ".github/workflows/leviathan-ci.yml"
       - "scripts/leviathan_ci.sh"
+      - "scripts/verify_leviathan.py"
+      - "scripts/verify_frontier_reasoning.py"
+      - "scripts/verify_trading_100.py"
 
 concurrency:
   group: leviathan-ci-${{ github.workflow }}-${{ github.ref }}
@@ -54,6 +60,8 @@ jobs:
         run: python -m pytest Data/backend/tests/test_round*.py -q --tb=line
       - name: CI plan honesty (no skip→pass)
         run: python -c "from Data.modules.release import default_leviathan_ci_plan, GateMeasurement; p=default_leviathan_ci_plan(); d=p.public_dict(); assert d['truth']['skipped_unavailable_is_not_success']; assert all(s.measurement==GateMeasurement.NOT_APPLICABLE for s in p.suites if s.suite_id in ('hades','editor')); print('ci-plan-ok', d['summary'])"
+      - name: Offline frontier + trading verifiers (honest incomplete)
+        run: python scripts/verify_leviathan.py --allow-incomplete --write-report
 
   frontend:
     name: Frontend typecheck + lint + test + build

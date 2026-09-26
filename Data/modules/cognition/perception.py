@@ -91,6 +91,7 @@ class PerceptionService:
         capability_catalog: Any | None = None,
         neuro_advisor: Any | None = None,
         experience_store: Any | None = None,
+        brain_access: Any | None = None,
         default_budget: int = 16,
         rerank_policy: str = "auto",
     ) -> None:
@@ -101,6 +102,8 @@ class PerceptionService:
         self.capability_catalog = capability_catalog
         self.neuro_advisor = neuro_advisor
         self.experience_store = experience_store
+        # W8: when BrainAccessFacade is bound, perception prefers Brain over private store calls.
+        self.brain_access = brain_access
         self.default_budget = default_budget
         self.rerank_policy = rerank_policy
 
@@ -159,9 +162,121 @@ class PerceptionService:
                 )
             )
 
-        # Knowledge — prefer staged / hybrid retriever when wired.
-        if budgets["knowledge"] > 0 and (
-            self.knowledge_retriever is not None or self.knowledge_store is not None
+        # W8: prefer BrainAccessFacade when bound — do not bypass Brain with private stores.
+        used_brain = False
+        if self.brain_access is not None and hasattr(self.brain_access, "gather"):
+            try:
+                from Data.modules.brain.contracts import BrainContextRequest
+
+                brain_ctx = self.brain_access.gather(
+                    BrainContextRequest(
+                        queries=[query],
+                        goal=query,
+                        result_limits={
+                            "knowledge": budgets["knowledge"],
+                            "memory": budgets["memory"],
+                            "evidence": budgets["evidence"],
+                            "experience": budgets.get("experience", 0),
+                        },
+                        include_evidence=budgets["evidence"] > 0,
+                        include_experience=False,
+                        include_capabilities=False,
+                        conversation_id=conversation_id,
+                        run_id=run_id,
+                        domain=domain,
+                    )
+                )
+                used_brain = True
+                for k in list(brain_ctx.knowledge or [])[: budgets["knowledge"]]:
+                    summary = str(
+                        getattr(k, "excerpt", None)
+                        or getattr(k, "content", None)
+                        or getattr(k, "title", None)
+                        or k
+                    )[:600]
+                    items.append(
+                        PerceptionItem(
+                            item_id=str(uuid.uuid4()),
+                            source_type=EpistemicType.KNOWLEDGE_SOURCE,
+                            summary=summary,
+                            source_ref=str(
+                                getattr(k, "ref_id", None)
+                                or getattr(k, "document_id", None)
+                                or getattr(k, "id", None)
+                                or ""
+                            ),
+                            trust=0.7,
+                            confidence=0.7,
+                            freshness="indexed",
+                            authority="brain/knowledge",
+                            verification_status="source",
+                            payload=k.public_dict() if hasattr(k, "public_dict") else {"via": "brain"},
+                        )
+                    )
+                for m in list(brain_ctx.memory or [])[: budgets["memory"]]:
+                    from Data.modules.memory.types import normalize_trust_state
+
+                    mem_trust = normalize_trust_state(
+                        getattr(m, "trust", None)
+                        or (m.get("trust") if isinstance(m, dict) else None)
+                    )
+                    items.append(
+                        PerceptionItem(
+                            item_id=str(uuid.uuid4()),
+                            source_type=EpistemicType.EXACT_FACT,
+                            summary=str(
+                                getattr(m, "content", None)
+                                or getattr(m, "excerpt", None)
+                                or m
+                            )[:500],
+                            source_ref=str(
+                                getattr(m, "ref_id", None)
+                                or getattr(m, "memory_id", None)
+                                or getattr(m, "id", None)
+                                or ""
+                            ),
+                            trust=0.85 if mem_trust.value == "VERIFIED" else 0.55,
+                            confidence=0.8 if mem_trust.value == "VERIFIED" else 0.5,
+                            freshness="stored",
+                            authority="brain/memory",
+                            verification_status=mem_trust.value,
+                            payload=m.public_dict() if hasattr(m, "public_dict") else {"via": "brain"},
+                        )
+                    )
+                for e in list(brain_ctx.evidence or [])[: budgets["evidence"]]:
+                    items.append(
+                        PerceptionItem(
+                            item_id=str(uuid.uuid4()),
+                            source_type=EpistemicType.EVIDENCE,
+                            summary=str(
+                                getattr(e, "summary", None)
+                                or getattr(e, "excerpt", None)
+                                or getattr(e, "content", None)
+                                or e
+                            )[:500],
+                            source_ref=str(
+                                getattr(e, "ref_id", None)
+                                or getattr(e, "evidence_id", None)
+                                or getattr(e, "id", None)
+                                or ""
+                            ),
+                            trust=0.9,
+                            confidence=0.85,
+                            freshness="verified",
+                            authority="brain/evidence",
+                            verification_status=str(getattr(e, "status", None) or "unknown"),
+                            payload=e.public_dict() if hasattr(e, "public_dict") else {"via": "brain"},
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                dropped.append(f"brain_error:{type(exc).__name__}")
+                used_brain = False
+
+        # Knowledge — prefer staged / hybrid retriever when wired (skipped if Brain already filled).
+        if (
+            not used_brain
+            and budgets["knowledge"] > 0
+            and (self.knowledge_retriever is not None or self.knowledge_store is not None)
         ):
             try:
                 matches = self._search_knowledge(
@@ -195,7 +310,7 @@ class PerceptionService:
                 dropped.append(f"knowledge_error:{type(exc).__name__}")
 
         # Exact memory
-        if self.memory_store is not None and budgets["memory"] > 0:
+        if (not used_brain) and self.memory_store is not None and budgets["memory"] > 0:
             try:
                 matches = self._safe_search(self.memory_store, query, budgets["memory"])
                 for match in matches[: budgets["memory"]]:
@@ -220,7 +335,7 @@ class PerceptionService:
                 dropped.append(f"memory_error:{type(exc).__name__}")
 
         # Evidence
-        if self.evidence_service is not None and budgets["evidence"] > 0:
+        if (not used_brain) and self.evidence_service is not None and budgets["evidence"] > 0:
             try:
                 matches = self._safe_list_evidence(budgets["evidence"])
                 for match in matches[: budgets["evidence"]]:

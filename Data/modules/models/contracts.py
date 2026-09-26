@@ -78,7 +78,13 @@ CapabilityName = Literal[
     "reasoning",
     "coding",
     "toolCalling",
+    "parallelToolCalls",
     "structuredOutput",
+    "jsonSchemaResponse",
+    "reasoningEffort",
+    "logprobs",
+    "streamingToolDeltas",
+    "multiCandidate",
     "vision",
     "embeddings",
     "streaming",
@@ -129,7 +135,13 @@ class ModelCapabilities:
     reasoning: CapabilityState = CapabilityState.UNKNOWN
     coding: CapabilityState = CapabilityState.UNKNOWN
     tool_calling: CapabilityState = CapabilityState.UNKNOWN
+    parallel_tool_calls: CapabilityState = CapabilityState.UNKNOWN
     structured_output: CapabilityState = CapabilityState.UNKNOWN
+    json_schema_response: CapabilityState = CapabilityState.UNKNOWN
+    reasoning_effort: CapabilityState = CapabilityState.UNKNOWN
+    logprobs: CapabilityState = CapabilityState.UNKNOWN
+    streaming_tool_deltas: CapabilityState = CapabilityState.UNKNOWN
+    multi_candidate: CapabilityState = CapabilityState.UNKNOWN
     vision: CapabilityState = CapabilityState.UNKNOWN
     embeddings: CapabilityState = CapabilityState.UNKNOWN
     streaming: CapabilityState = CapabilityState.UNKNOWN
@@ -140,7 +152,13 @@ class ModelCapabilities:
             "reasoning": self.reasoning.value,
             "coding": self.coding.value,
             "toolCalling": self.tool_calling.value,
+            "parallelToolCalls": self.parallel_tool_calls.value,
             "structuredOutput": self.structured_output.value,
+            "jsonSchemaResponse": self.json_schema_response.value,
+            "reasoningEffort": self.reasoning_effort.value,
+            "logprobs": self.logprobs.value,
+            "streamingToolDeltas": self.streaming_tool_deltas.value,
+            "multiCandidate": self.multi_candidate.value,
             "vision": self.vision.value,
             "embeddings": self.embeddings.value,
             "streaming": self.streaming.value,
@@ -166,7 +184,13 @@ class ModelCapabilities:
             reasoning=read("reasoning"),
             coding=read("coding"),
             tool_calling=read("toolCalling", "tool_calling"),
+            parallel_tool_calls=read("parallelToolCalls", "parallel_tool_calls"),
             structured_output=read("structuredOutput", "structured_output"),
+            json_schema_response=read("jsonSchemaResponse", "json_schema_response"),
+            reasoning_effort=read("reasoningEffort", "reasoning_effort"),
+            logprobs=read("logprobs"),
+            streaming_tool_deltas=read("streamingToolDeltas", "streaming_tool_deltas"),
+            multi_candidate=read("multiCandidate", "multi_candidate"),
             vision=read("vision"),
             embeddings=read("embeddings"),
             streaming=read("streaming"),

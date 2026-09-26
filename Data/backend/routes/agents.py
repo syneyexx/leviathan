@@ -7,11 +7,26 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from Data.modules.agents import AgentKind
 from Data.modules.agents.fleet import AgentFleetError, AgentFleetService
 
 
 def _raise(exc: AgentFleetError) -> None:
     raise HTTPException(status_code=exc.http_status, detail=exc.public_dict()) from exc
+
+
+class AgentExecuteRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=30_000)
+    kind: str = "GENERIC"
+    use_jobs: bool = False
+    conversation_id: str | None = None
+    capability_overrides: dict = Field(default_factory=dict)
+
+
+class MultiAgentRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=30_000)
+    kinds: list[str] = Field(default_factory=lambda: ["RESEARCH", "GENERIC"])
+    capability_overrides: dict = Field(default_factory=dict)
 
 
 class AgentCreateBody(BaseModel):
@@ -73,8 +88,48 @@ def build_agents_router(
     *,
     job_runtime: Any | None = None,
     database_path: Any | None = None,
+    agent_runtime: Any | None = None,
+    multi_agents: Any | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["agents"])
+
+    if agent_runtime is not None:
+
+        @router.post("/api/agents/execute")
+        def execute_agent(payload: AgentExecuteRequest) -> dict:
+            try:
+                kind = AgentKind(payload.kind.upper())
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid agent kind: {payload.kind}") from exc
+            result = agent_runtime.execute(
+                payload.request,
+                kind=kind,
+                use_jobs=payload.use_jobs,
+                conversation_id=payload.conversation_id,
+                capability_overrides=payload.capability_overrides or None,
+            )
+            if result.status == "DISABLED":
+                raise HTTPException(status_code=403, detail=result.public_dict())
+            return {"agent": result.public_dict()}
+
+    if multi_agents is not None:
+
+        @router.post("/api/agents/multi")
+        def execute_multi_agent(payload: MultiAgentRequest) -> dict:
+            kinds: list[AgentKind] = []
+            for raw in payload.kinds:
+                try:
+                    kinds.append(AgentKind(raw.upper()))
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=f"Invalid agent kind: {raw}") from exc
+            result = multi_agents.run(
+                payload.request,
+                kinds=kinds,
+                capability_overrides=payload.capability_overrides or None,
+            )
+            if result.status == "DISABLED":
+                raise HTTPException(status_code=403, detail=result.public_dict())
+            return {"multi_agent": result.public_dict()}
 
     def _workers_payload() -> dict | None:
         if database_path is None:

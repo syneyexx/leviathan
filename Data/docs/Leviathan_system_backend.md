@@ -2,7 +2,7 @@
 
 > **Canonical backend documentation.** This is the single human-readable backend architecture reference for LEVIATHAN.
 >
-> Documentation snapshot: **2026-09-25**, based on `main` after the Frontier Reasoning F0 baseline merge. Runtime code and tests remain the final authority when this document and executable behavior disagree.
+> Documentation snapshot: **2026-09-26**, based on `main` after External Execution Fabric (#163), General Assistant Fabric (#165), and Frontier Master Program W0A/W0B baseline. Runtime code and tests remain the final authority when this document and executable behavior disagree.
 >
 > Companion frontend reference: [`Leviathan_system_frontend.md`](./Leviathan_system_frontend.md).
 
@@ -74,7 +74,7 @@ The encoded ownership contract lives in `Data/modules/common/ownership.py`.
 | Orchestration action selection | ActionSelector | `Data/modules/cognition/action_selector.py` |
 | Model selection/routing/residency | Model Control Plane | `Data/modules/models/` |
 | Provider transport/inference | Model runtime | `Data/modules/model_runtime/` |
-| Prompt/context compilation | Context subsystem | `Data/modules/context/`, cognition `context_v3.py` |
+| Prompt/context compilation | Context subsystem | `Data/modules/context/` (canonical); cognition `context_v3.py` is adapter only |
 | Unified knowledge access | Brain facade | `Data/modules/brain/` |
 | Documents/RAG/retrieval | Knowledge | `Data/modules/knowledge/` |
 | Durable scoped memory | Memory | `Data/modules/memory/` |
@@ -109,7 +109,7 @@ The encoded ownership contract lives in `Data/modules/common/ownership.py`.
 
 ## 4.1 `Data/backend/main.py`
 
-`main.py` is the composition root. It creates and wires the shared instances used by routes and services. Domain logic should stay in modules rather than accumulate in the composition root.
+`main.py` is the composition root (**CURRENT**). It creates and wires the shared instances used by route modules and services. Domain HTTP handlers live in `Data/backend/routes/*` via `build_*_router(deps)`; `main.py` keeps composition, lifespan, middleware, **`POST /api/chat`**, SPA shell routes (`/`, `/chat`, `/{spa_path}`), and `/api/health`.
 
 Current wiring includes:
 
@@ -136,10 +136,10 @@ Current wiring includes:
 
 | File | Purpose |
 |---|---|
-| `Data/backend/main.py` | FastAPI app + system composition |
+| `Data/backend/main.py` | Composition root + chat + SPA + health (**CURRENT**) |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration 49 (`db_commit_receipts`) |
+| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **52** (`paper_portefeuille`) |
 | `Data/backend/llm.py` | compatibility/boundary helpers |
 | `Data/backend/reasoning.py` | compatibility import/boundary |
 
@@ -172,29 +172,55 @@ Canonical connection policy: `Data/modules/common/sqlite_policy.py` (busy_timeou
 
 # 5. API route map
 
-Dedicated route modules live in `Data/backend/routes/`:
+Dedicated route modules live in `Data/backend/routes/` (Wave 0D — domain routers extracted from `main.py`):
 
 | Route module | System |
 |---|---|
-| `agents.py` | Agent Fleet / agent operations |
+| `agents.py` | Agent Fleet / execute / multi-agent |
+| `agent_signals.py` | agent signal fabric |
 | `analytics.py` | analytics |
+| `approvals.py` | approval requests/decisions |
+| `artifacts.py` | artifacts + run lookup |
 | `brain.py` | Brain graph/search/status |
+| `browser.py` | legacy browser request + QA journey surfaces |
+| `browser_qa.py` | Browser QA crawls control plane |
+| `capabilities.py` | capability catalog / invoke / receipts |
 | `coding.py` | Coding Agent sessions/turns/actions |
 | `cognition.py` | cognition submit/status/events/cancel/resume |
+| `conversations.py` | conversation CRUD |
 | `datasets.py` | dataset management, ingest/index/offline workflows |
 | `efficiency.py` | efficiency/resource surfaces |
+| `evaluation.py` | evaluation harness / platform / residual |
+| `evidence.py` | evidence store |
+| `flywheel.py` | post-training challengers / promotions / lineage |
+| `functions.py` | function registry / invoke |
+| `jobs.py` | job runtime |
+| `knowledge.py` | knowledge / atlas / deep-recall / why / ingest |
 | `market_sim.py` | market simulation, strategies, data, paper trading |
 | `mcp.py` | MCP servers/sessions/tools |
+| `media.py` | media capability request |
+| `memory.py` | memory store |
 | `models.py` | model registry/providers/downloads/routing/runtime |
+| `modules.py` | module manager discover/execute |
+| `multimodal.py` | multimodal sessions |
+| `neuro.py` | Neuro / Cortex / residual operator surfaces |
 | `observability.py` | runtime events/observability |
+| `observations.py` | observation store |
+| `platform.py` | thin misc: architecture, metrics, telemetry, isolation, release, security, native, trading stub, backup, chaos, secrets, context preview, master gates |
+| `plugins.py` | plugin registry / invoke |
 | `research.py` | research projects/runs/sources |
+| `schedules.py` | schedule store / runner |
 | `settings.py` | Settings + BehaviorProfile operations |
 | `system.py` | telemetry/system status |
 | `tasks.py` | durable task orchestration |
 | `trading_orchestra.py` | trading-only orchestras/agents |
-| `training.py` | training jobs/recipes/state |
+| `training.py` | durable training jobs + preference/synthetic/active-learning surface |
+| `verification.py` | verification evaluate / reports |
+| `voice.py` | voice capability request |
+| `workers.py` | worker supervisor / admission |
+| `workflows.py` | workflow store / runtime |
 
-Some legacy or compact endpoints remain composed directly in `main.py`; route modules are the preferred domain boundary.
+`main.py` (**CURRENT**) retains composition + `POST /api/chat` + SPA shell + `/api/health`. Route modules are the preferred domain boundary.
 
 ---
 
@@ -238,7 +264,7 @@ POST /api/chat
 - `planner.py` — structured plans with acceptance conditions;
 - `action_selector.py` — value-based next action selection;
 - `capability_broker.py` — capability shortlist/discovery;
-- `context_v3.py` — cognition context pack;
+- `context_v3.py` — cognition **profile adapter** over canonical `ContextBuilder` (not a second compiler);
 - `completion.py` — completion decision logic;
 - `delegation.py` / `specialists.py` — agent/specialist delegation;
 - `domain_strategy.py` — domain-specialized cognition without a second runtime;
@@ -258,17 +284,49 @@ Current `ReasoningPolicy`/`MetaController` modes control **real orchestration bu
 | DEEP | 180s | 6 | 12,000 | 8 | 2 | 3 | 3 | 3 | 3 | 8,000 | 2 | 8 |
 | MAXIMUM | 300s | 10 | 20,000 | 12 | 3 | 4 | 4 | 4 | 4 | 12,000 | 3 | 12 |
 
-`ADAPTIVE` can escalate/de-escalate from uncertainty, evidence coverage, contradiction density, failures, information gain and resource pressure.
+`ADAPTIVE` can escalate/de-escalate from uncertainty, evidence coverage, contradiction density, failures, information gain and **measured** resource pressure (CPU/RAM/VRAM telemetry, queue depth, inflight model workloads — never a fake constant `0.0`).
 
-### Frontier Reasoning target — not yet a current-main claim
-
-The active master program extends this into **two-axis compute**:
+### Two-axis compute (W3 CURRENT)
 
 ```text
 ReasoningDepth = OrchestrationCompute + NeuralInferenceCompute
 ```
 
-Target additions include `NeuralComputeBudget`, provider reasoning capability profiles, native provider reasoning effort, test-time candidate search, hypothesis branching, neural task/planning advisors, critic mesh, stronger verification, CapabilityState, async cognition, verified-learning aggregation and training bridges. These are **TARGET** until their phase is merged and verified.
+- **Orchestration** — `CognitiveBudgets` (retrieval rounds, critics, tools, agents, model calls, iterations).
+- **Neural** — `NeuralComputeBudget` in `Data/modules/cognition/compute_axes.py` (reasoning effort, reasoning token allowance, candidate count, sampling, output allowance).
+
+`MetaController` is the single policy owner for both axes. `MetaDecision` exposes `requested_mode`, `effective_mode`, `orchestration`, `neural`, and `resource_pressure`. FAST / STANDARD / DEEP / MAXIMUM differ measurably on both axes.
+
+### Test-time compute (W4 CURRENT)
+
+`Data/modules/cognition/ttc.py` owns candidate search when `neural.candidate_count > 1`:
+
+- `Candidate` / `CandidateSet` — id, output, structured result, usage, hash, scores
+- Scorers: Schema, Grounding, Consistency, Constraint, ToolGrounding, Integrity
+- `IntegrityScorer` is **technical** only (injection boundary, unsupported capability claims, fabricated tool observations, secret leakage, authority confusion, schema) — not moral/political/ideological moderation
+- Prune weak candidates; bounded repair with explicit verifier feedback
+- Persist hashes/scores/public summaries/selected answer — not raw rejected private CoT
+
+`CognitiveRuntime` applies TTC on RESPOND/MODEL_CALL when the neural axis budgets multiple candidates.
+
+### Neural task advice + critic mesh (W5 CURRENT)
+
+- `neural_advisor.py` — `NeuralTaskModelAdvisor` emits structured TaskAdvice; heuristic fallback is always labeled `heuristic_fallback`
+- `hypotheses.py` — `HypothesisBoard` integrated into cognitive runs (support/contradiction/open questions)
+- `critics.py` — Critic mesh (Process, Factual, Plan, Integrity, Code, Consistency); critic output is **not** verification proof and cannot authorize side effects
+- Integrity critics remain technical-only (no ideological content layer)
+
+### Async cognition resume / steering (W7 CURRENT)
+
+- Durable checkpoints include plan, beliefs, working memory, budgets, neural axis, hypotheses, evidence refs, public events, pinned constraints
+- `steer` supports goal_change / constraint_add / correction / status_request (program aliases)
+- Pinned constraints re-applied on hydrate so compaction cannot drop them
+- API: `/api/cognition/runs/{id}/steer`, `/resume`, `/cancel`, `/events` — no raw CoT exposure
+- FAST may stay inline; DEEP/MAXIMUM remain budgeted for external-worker paths via JobRuntime when bound
+
+### Frontier Reasoning target — not yet a current-main claim
+
+The active master program continues beyond W7 into Brain/memory unification, agent recursion governance, coding/research expert systems, training/evaluation, trading lab, frontend, browser, multimodal, voice, and operations waves. Remaining items are **TARGET** until merged and verified.
 
 ---
 
@@ -287,13 +345,23 @@ Target additions include `NeuralComputeBudget`, provider reasoning capability pr
 - `multimodal.py` — multimodal session/parts;
 - `types.py` — ContextPack/section types.
 
-Cognition additionally uses `Data/modules/cognition/context_v3.py`.
+Cognition uses `Data/modules/cognition/context_v3.py` as a **thin adapter**: TaskModel / perception / beliefs / plan map into `ContextBuilder.build()` inputs. There is one compilation implementation.
 
-## 7.2 Current known F1 trust gap
+## 7.2 Context authority (W1 CURRENT)
 
-On the F0 baseline, `ContextBuilderV3` labels epistemic types (`KNOWLEDGE_SOURCE`, `EVIDENCE`, `TOOL_OBSERVATION`, `NEURAL_ASSOCIATION`, `HYPOTHESIS`, etc.) but still folds non-system sections into a system prompt. The active Frontier Reasoning F1 phase is intended to separate authority so Brain, Memory, web, files, MCP and tool output remain **data**, not system instructions.
+`ContextBuilder` is the sole compiler. Instruction authority contains BehaviorProfile identity, pinned constraints, and trusted runtime contract only.
 
-Likewise, cognition must converge on the same effective persisted BehaviorProfile as normal Chat instead of a separate seed fallback. Do not document F1 as complete until tests and gates prove it.
+Retrieved Knowledge, Memory, Evidence, web/tool/MCP/browser content, and Neuro associations remain **DATA** (reference_context / typed sections on the conversation path). They must not elevate into system authority.
+
+Invariants covered by tests:
+
+- prompt-injection payloads in knowledge stay out of `system_prompt` but remain available as data;
+- latest user turn is pinned and cannot disappear because the same string appeared earlier;
+- large retrieval degrades per-item under token budget (not one atomic all-or-nothing block);
+- BehaviorProfile / response language apply per operation via overlays (hot-apply / cross-process freshness owned by settings);
+- packs carry context fingerprints / snapshot identity.
+
+Epistemic trust labels (`KNOWLEDGE_SOURCE`, `EVIDENCE`, `TOOL_OBSERVATION`, `NEURAL_ASSOCIATION`, …) remain for model-facing DATA classification — not system instruction elevation.
 
 ---
 
@@ -307,7 +375,7 @@ Likewise, cognition must converge on the same effective persisted BehaviorProfil
 - `contracts.py` — Brain-facing data contracts;
 - `facade.py` — unified querying across knowledge, memory, evidence, experience and capabilities.
 
-`main.py` constructs `BrainAccessFacade` over the canonical stores.
+`main.py` constructs `BrainAccessFacade` over the canonical stores and binds it onto `PerceptionService` (W8). When Brain is bound, Perception gathers Knowledge/Memory/Evidence through Brain first and does **not** bypass Brain with private store calls.
 
 ## 8.2 Knowledge/RAG
 
@@ -333,7 +401,14 @@ Current behavior is RAG/Brain-based evidence acquisition with provenance and ret
 `Data/modules/memory/` owns **durable scoped memory**:
 
 - `store.py` — persistence/search;
-- `types.py` — kinds, scopes, states and contracts.
+- `types.py` — kinds, scopes, states and contracts;
+- `consolidation.py` — episodic → semantic candidates with provenance (W8).
+
+Explicit trust states (`MemoryTrustState`):
+
+`AGENT_PROPOSED` · `USER_STATED` · `SOURCE_DERIVED` · `VERIFIED` · `CONFLICTED` · `REVOKED`
+
+LLM confidence never becomes memory truth. Consolidation may admit semantic candidates as `AGENT_PROPOSED` until verification. Procedural skills derived from repeated VERIFIED cognition runs live in `cognition/skills.py` (`SkillLibrary`) — no hidden CoT.
 
 Keep these concepts separate:
 
@@ -341,7 +416,8 @@ Keep these concepts separate:
 2. cognition `WorkingMemory`;
 3. durable MemoryStore;
 4. Brain/Knowledge documents;
-5. VerifiedExperience.
+5. VerifiedExperience;
+6. SkillLibrary (procedural, measured success rate).
 
 They may be combined in perception/context, but they are not the same storage or trust class.
 
@@ -382,18 +458,23 @@ The Model Control Plane is the only model routing/residency owner. Key files:
 - `residency.py`, `resource_manager.py`, `placement.py` — physical placement/resource truth;
 - `runtime_manager.py`, `runtime_binding.py`, `worker_client.py` — runtime lifecycle/worker bridge;
 - `profiles.py` — persisted model profiles;
-- `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — capability truth;
+- `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — capability truth (probes measure behavior; config alone never upgrades to SUPPORTED);
 - `downloads.py`, `import_service.py` — model acquisition/import;
 - `benchmarks.py` — model benchmark support;
 - `providers/` — LM Studio, Ollama, OpenAI-compatible, llama.cpp boundary, vLLM-class/base adapters.
 
+`ModelCapabilities` includes frontier transport fields (`toolCalling`, `parallelToolCalls`, `jsonSchemaResponse`, `reasoningEffort`, `logprobs`, `streamingToolDeltas`, `multiCandidate`, …) with honest `supported` / `unsupported` / `unmeasured` / `unknown` / `unverified` states.
+
 Routing and model selection are not permission grants. Model state is reconciled with actual runtime discovery.
+
+Do **not** abbreviate Model Control Plane as MCP — in this repository MCP means Model Context Protocol.
 
 ## 11.2 Model runtime — `Data/modules/model_runtime/`
 
 Provider-facing execution lives here:
 
-- `openai_compatible.py` — OpenAI-compatible chat/completion client;
+- `openai_compatible.py` — OpenAI-compatible chat/completion client (frontier transport options: tools, response_format, logprobs, n/candidates, …);
+- `dialect.py` — provider dialect adaptation; requested capabilities are never silently dropped (`SUPPORTED` / `UNSUPPORTED` / `UNMEASURED`);
 - `serving.py` — serving supervisor/cancellation;
 - `streaming.py` — stream normalization;
 - `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `port_allocator.py`, `llama_cpp_command.py` — managed serving boundaries;
@@ -479,8 +560,11 @@ Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/C
 - Agents / Coding / Signal Fabric / Reasoning = ON
 - `network.allow_outbound` = ON (SSRF, private-network, and ExecutionGateway restrictions still apply)
 - Canonical launcher: `run_leviathan_workers.bat` → one consolidated supervisor terminal for **all** pools
-- Operator read-model: `GET /api/workers/dashboard` (pools + workers + job join + progress + resources)
+- Operator read-model: `GET /api/workers/dashboard` (+ `/api/workers/{id}`) — pools + workers + job join + progress + resources
 - Agents page → **Worker Fabric** monitor consumes that dashboard (never agentCount as “Active Workers”)
+- Process topology: API = control plane; WorkerSupervisor = spawn/lease/restart/drain; specialist workers = one OS process per slot; model serving remains a separate residency plane
+
+Pool catalog (CURRENT shape): ~25 pools; optional/FEATURE_GATED include `rerank`, `document_ai`, `telemetry`; legacy `knowledge_commit` desired=0 (db_commit owns bulk writes).
 
 When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
 
@@ -549,13 +633,23 @@ Files include:
 
 - `runtime.py` — AgentRuntime;
 - `fleet.py`, `fleet_types.py`, `store.py` — AgentFleet;
+- `governance.py` — DelegationGovernor (W9): depth, cycle detection, authority inheritance, child budget from parent;
 - `planner.py` — structured agent planning;
 - `multi.py` — DAG multi-agent coordination;
 - `blackboard.py` — shared agent result state;
 - `system_inventory.py` — truthful runtime component inventory;
-- `types.py` — contracts.
+- `types.py` — contracts;
+- `signals/` — Signal Fabric for durable async coordination (not all sync subresults).
 
-CognitiveRuntime may delegate, but parent cognition remains orchestration authority.
+CognitiveRuntime may delegate via `DelegationService`, but parent cognition remains orchestration authority.
+
+W9 governance invariants:
+
+- `parent_run_id`, `delegation_depth`, `max_delegation_depth` on every hop;
+- child authority ≤ parent authority (`clamp_authority`);
+- child compute budget derived from remaining parent budget;
+- lineage cycle detection blocks Cognition→Agent→Cognition→same-Agent recursion;
+- agent memory: `AGENT_PRIVATE` plus optional `ORCHESTRATOR_SHARED` scope.
 
 ## 14.2 Coding — `Data/modules/coding/`
 
@@ -565,6 +659,14 @@ Coding is a dedicated specialist control plane, not a second general assistant. 
 
 Writes/executes remain capability/approval gated; tests and receipts are used for verification.
 
+W10 hardening:
+
+- Native provider tool_calls preferred when offered (`CodingLLMAdapter` + `capabilities_from_native_tool_calls`); text XML/JSON is fallback only.
+- Repo semantic map injected into loop context as advisory DATA.
+- Workspace snapshots before mutating writes; restore on verify/test failure.
+- Any completed write requires `coding.run_tests` evidence before COMPLETED (no "fixed" without tests).
+- Post-write `StepKind.CRITIC` with structured `HunkReview` findings.
+
 ## 14.3 Research — `Data/modules/research/`
 
 Research supports local evidence and optional outbound/web sources:
@@ -572,6 +674,14 @@ Research supports local evidence and optional outbound/web sources:
 `service.py`, `runner.py`, `worker.py`, `worker_context.py`, `planner.py`, `coordinator.py`, `question_model.py`, `sources.py`, `source_quality.py`, `web.py`, `ssrf.py`, `uploads.py`, `local_retrieval.py`, `claims.py`, `evidence.py`, `conflicts.py`, `citation_audit.py`, `coverage.py`, `gaps.py`, `graph.py`, `reports.py`, `quality_scorecard.py`, `brain_sync.py`, `assignments.py`, `budgets.py`, `store.py`, `types.py`.
 
 Important truth: outbound network permission and a configured web-search provider are separate conditions. Research must not fabricate browsing.
+
+W10 web policy:
+
+- Real `robots.txt` enforcement when `respect_robots_txt=True` (refuse Disallow).
+- Per-host rate limiting + Retry-After honor.
+- Readability extraction prefers `article`/`main`/paragraph clusters.
+- `published_at` extracted from HTML meta when present; citation resolution includes `location`.
+- Long Research remains external-first via cognition specialists (`background=True`).
 
 ---
 
@@ -614,9 +724,23 @@ Files include `service.py`, `store.py`, `registry.py`, `recipes.py`, `planner.py
 
 Do not infer that every recipe is production GPU-ready on every machine. Availability is provider/hardware/config dependent. Candidate promotion is explicit; silent active-model replacement is not the architecture.
 
+W11 learning flywheel (CURRENT):
+
+- `ExperienceStore.aggregate_stats` / `search` — admitted-only training truth rollups.
+- Active-learning kinds cover verification failure, low TTC agreement, user correction, critic high severity, tool failure patterns, retrieval miss (`training/active_learning.py`).
+- Lifecycle: `CANDIDATE → EVALUATED → ELIGIBLE → PROMOTED` via govern (never auto-promote).
+- `trajectory_export.export_training_trajectory` — public states/messages/answer/verified only; no private CoT.
+- GRPO / RL / reward-model / HF-DPO reported as `FEATURE_GATED` until operational trainers exist.
+
 ## 16.2 Evaluation — `Data/modules/evaluation/`
 
-`harness.py`, `platform.py`, `store.py`, `types.py`, `scorecard.py`, `paired.py`, `ablations.py`, `assistant_benchmark.py` implement evaluation/reporting. `UNMEASURED` is not treated as PASS.
+`harness.py`, `platform.py`, `store.py`, `types.py`, `scorecard.py`, `paired.py`, `compute_paired.py`, `judge_calibration.py`, `ablations.py`, `assistant_benchmark.py` implement evaluation/reporting. `UNMEASURED` is not treated as PASS.
+
+W12 CURRENT:
+
+- Paired compute FAST vs DEEP uses bootstrap of paired quality deltas (`compute_paired.py`); DEEP need not beat FAST on every easy task; hard suites require mean delta ≥ min useful effect with CI lower bound > 0.
+- LLM judge calibration (`judge_calibration.py`): below reliability threshold → `UNMEASURED`.
+- Assistant benchmark families include reasoning, prompt-injection resistance, language following, browser, multimodal honesty, trading live-block, research grounding.
 
 ## 16.3 VerifiedExperience
 
@@ -629,6 +753,8 @@ Do not infer that every recipe is production GPU-ready on every machine. Availab
 - `Data/modules/evidence/` — evidence store/service/types;
 - `Data/modules/observations/` — durable observations;
 - `Data/modules/verification/` — verification engine/report store/types;
+  - tiers (W6): `DETERMINISTIC_VERIFICATION`, `CROSS_MODEL_VERIFICATION`, `SELF_CRITIQUE` — same-model critique is never labelled independent verification;
+  - `capability_state.py` — `SystemCapabilityState` self-knowledge (available capabilities, workers, web/browser/network, GPU when measured; brain percentage stays UNMEASURED);
 - `Data/modules/artifacts/` — artifact store/types/validation.
 
 System invariant:
@@ -638,6 +764,8 @@ model output != observation
 request != authority
 execution request != successful effect
 model says done != verified completion
+SELF_CRITIQUE != CROSS_MODEL_VERIFICATION
+UNMEASURED != PASS
 ```
 
 ---
@@ -684,9 +812,21 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 - **QaRepairBridge** (`Data/modules/browser/qa_repair.py`) is an optional operator-triggered finding → `CodingCognitiveStrategy` → tests/replay path; never marks fixed without evidence.
 - Chat returns `assistant_telemetry` assembled from cognition public status (tool_calls with receipts/duration, agent_delegations, web_sources, context budget/used, behavior hash/version, latency). No hidden CoT.
 
-### Assistant evaluation (GI16)
+### Capability contract (CURRENT)
 
-`Data/modules/evaluation/assistant_benchmark.py` extends Round-5 families with deterministic GI checks: hallucination resistance (brain %), current-info freshness routing, tool honesty, fake evidence rejection, web failure honesty, orchestra/complex routing.
+`CapabilityCatalog` (`Data/modules/execution/`) is the sole executable capability registry. Declared/planned capability ids in coding prompts, coding tool gates, cognition planner `likely_capabilities`, AgentFleet seeds, and `EXTERNAL_WORKER_CAPABILITIES` must be ⊆ catalog (`Data/backend/tests/test_capability_contract_drift.py`).
+
+- Fictional prompt ids (`git.commit`, `coding.run_command`) are rejected — not registered.
+- Real worker aliases registered: `knowledge.ingest_document`, `knowledge.ingest_path`, `rerank.batch` (FEATURE_GATED pool), `market_sim.mandate.loosen` (approval identity).
+- Trading role labels (`market_sim.observe`, …) and agent inventory abstracts remain descriptors, not gateway capabilities.
+
+### Behavior / Chat integrity (CURRENT)
+
+- Behavior identity is BehaviorProfile → immutable BehaviorSnapshot per turn (`Data/modules/settings/`); ContextBuilder must not invent a second identity.
+- Language follows the latest user turn when configured (`auto_follow_user`).
+- Retrieved Knowledge/Memory/Evidence/Web/tool output remain **DATA**, never system instruction authority.
+- Stream frames are snapshot-safe (no cumulative `message.content` appended as deltas).
+- Heavy domain work stays on JobRuntime/workers; Chat/model stream stays on the Model Control Plane by design.
 
 ---
 
@@ -699,7 +839,11 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 - market state / features (T2): `features.py` (deterministic OHLCV indicator library + provenance), `market_state.py` (`MarketState`, `MultiTimeframeView`, causal higher-TF aggregation);
 - reproducibility: `knowledge_snapshot.py` (`TradingKnowledgeSnapshot` persisted per run);
 - engine: `engine.py` (WalletLedger + RiskGuard + NextBarFillModel), `multi_engine.py`, `fill_model.py` (legacy shim), `execution.py` (TIF / Limit / Stop / IntrabarPathPolicy; prepare verifies `data_hash`; multi-agent rounds attach `MarketState`);
-- accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
+- accounting/risk: `accounting.py` (W13 multi-symbol WalletBook), `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
+- data realism (W13): `universe.py` (PIT membership), `costs.py` (CostModelPack provenance), `stats_inferential.py` (DSR/PBO/FDR/bootstrap/CPCV geometry);
+- strategy governance (W14): `strategy_asset.py`, `strategy_dsl.py` (v3), `regimes.py`, `hpo.py`, `curriculum.py`;
+- agent lab (W15): `agent_lab.py` (scientific search / tournaments / lesson trust);
+- paper ops (W16): `paper_deployment.py`;
 - strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py` (`resolve_periods_per_year`), `position_episodes.py` (`ClosedTrade` / `PositionEpisodeTracker`);
 - multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py` (as_of / firewall filtering);
 - paper path: `paper_broker.py`;
@@ -737,6 +881,30 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 **P4B (sim-to-paper gap + Gateway + leases):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
 
 **P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
+
+**W24 Final integration (CURRENT):** Backend lab/computer-use/multimodal/voice/security helpers covered by wave tests; frontend typecheck green on W18 surfaces; live trading BLOCKED; A5 IMPOSSIBLE; parallel runtimes created: NONE. Playwright E2E/MSW and full OS sandbox remain honest FEATURE_GATED / UNMEASURED where not measured.
+
+**W23 Security / multi-user / ops (CURRENT):** `common/security_ops.py` auth posture + RBAC role vocabulary; unmeasured OS enforcement is not called secure; secrets-broker honesty; rate-limit/OTel FEATURE_GATED.
+
+**W22 Automations / plugins / MCP / data analysis (CURRENT):** `execution/data_analysis.py` safe AST calculator + CSV summarize; MCP content untrusted; no AutomationRuntime2 (JobRuntime/schedules).
+
+**W21 Voice (CURRENT):** `voice/transport.py` — voice is transport into Chat/CognitiveRuntime; ASR/TTS MEASURED/UNAVAILABLE/NOT_CONFIGURED honesty; no duplicate conversation memory.
+
+**W20 Multimodal / documents (CURRENT):** `documents/intelligence.py` vision capability declaration + document structure refs; eval families FEATURE_GATED until measured; not an independent multimodal runtime.
+
+**W19 Web / Browser / Computer-use (CURRENT):** Computer-use loop (`execution/computer_use.py`) enforces proposal→authority→execute→observe→verify; free-form OS text refused; click success ≠ task completion. Existing Playwright readiness, localhost QA crawler (no stealth), and QaRepairBridge retained. Web search unconfigured → WEB_SEARCH_UNAVAILABLE, never fabricated.
+
+**W18 Frontend Platform (CURRENT):** ErrorBoundary + lazy trading routes; `api/http.ts` + `api/domains/marketSimLab.ts`; chat Stop abort; DEMO banners for decorative mocks; Playwright/MSW FEATURE_GATED until CI dependency.
+
+**W17 Trading Center UI (CURRENT):** `/trading/lab` + `/api/market-sim/lab/overview|cost-pack|feed-health|trials` expose real lab truth (curriculum, roles, Trial Ledger, cost provenance, feed probe). Broker/live remains BLOCKED. No mock KPIs.
+
+**W16 Trading Lab IV (CURRENT):** `paper_deployment.py` PaperDeployment with compatibility validation, environment fingerprint, feed health (staleness/gaps), kill switch, and modelled/shadow/paper gap comparison. Paper does not prove live profitability; LIVE BLOCKED; A5 impossible.
+
+**W15 Trading Lab III (CURRENT):** `agent_lab.py` scientific search loop with pre-registered `AcceptanceCriteria` (threshold relaxation forbidden). Terminal outcomes `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED` (valid PASS). Lessons default `AGENT_PROPOSED`; sealed lineage contamination refused; tournaments VAL-first with Elo that does not prove profitability; public trajectory→dataset bridge (no hidden CoT). Live BLOCKED; A5 impossible.
+
+**W14 Trading Lab II (CURRENT):** `strategy_asset.py` StrategyAsset + ExecutionCompatibilityManifest (live_compatible always false; promotion requires evidence). DSL v3 extends `strategy_dsl.py` (stop/take-profit/trailing/time-stop/sizing/universe/session/portfolio; no eval/exec). `regimes.py` volatility/trend/correlation/changepoint + synthetic fixtures; HMM FEATURE_GATED. `hpo.py` grid/random/evolutionary with mandatory Trial Ledger; sealed tuning forbidden; Bayesian/TPE FEATURE_GATED. `curriculum.py` logged reproducible stage progression through sealed/paper.
+
+**W13 Trading Lab I (CURRENT):** Point-in-time universe membership (`universe.py`: IPO/delist/rename/exchange events, corporate actions, session calendars, `DatasetRevisionIdentity`) — default `point_in_time`; today's universe must be labelled. Canonical `WalletLedger`/`WalletBook` multi-symbol `positions` with gross/net exposure and equity-at-marks; single-currency restriction refuses silent FX mix. `CostModelPack` (`costs.py`) labels Spread/Impact/Latency/Fee/Funding/Borrow as MEASURED/ASSUMED/UNMEASURED with provenance. Inferential honesty (`stats_inferential.py`): block bootstrap CIs, Monte Carlo resample, Deflated Sharpe (trial ledger N), PBO, Benjamini–Hochberg FDR, purge/embargo, CPCV path geometry, minimum useful sample. Live remains BLOCKED.
 
 **Slice 16 (final gates + verifier):** A0–A4 Trading Center Master Program complete on this branch. `LiveTradingGuard` = BLOCKED; A5 = impossible; long work is `market_sim` worker EXTERNAL_REQUIRED; no second trading runtime. Verifier: `scripts/verify_trading_100.py --run-tests`. Remaining honest non-PASS gates (e.g. CPCV/FDR/Windows/corporate-actions) stay NOT_STARTED / IN_PROGRESS / NOT_TESTED_IN_CI — never false PASS.
 
@@ -958,14 +1126,19 @@ Key verification manifests/harnesses live outside `Data/docs` so canonical docum
 
 - Frontier reasoning: `Data/backend/tests/frontier_reasoning_gates.json`, `scripts/verify_frontier_reasoning.py`.
 - Trading program: `Data/backend/tests/trading_gates.json`, `scripts/verify_trading_100.py`.
+- Aggregate runner: `scripts/verify_leviathan.py` (frontier + trading).
+- Capability contract: `Data/backend/tests/test_capability_contract_drift.py`.
 - Backend tests: `Data/backend/tests/`.
 - Frontend tests/build: see companion frontend document.
 
-Typical backend test entry:
-
 ```bash
 python -m pytest Data/backend/tests -q
+python scripts/verify_leviathan.py --allow-incomplete --write-report
+python scripts/verify_frontier_reasoning.py --allow-f0-skeleton-only
+python scripts/verify_trading_100.py --allow-incomplete
 ```
+
+Incomplete / NOT_STARTED / UNMEASURED / FEATURE_GATED are **not** PASS. Baseline-green CI must not coerce frontier or trading program gates to PASS. `--allow-incomplete` only permits an honest incomplete report without FAIL/crash.
 
 Run targeted suites first during phased implementation, then the impacted broader suites.
 

@@ -16,6 +16,18 @@ class SteerKind(str, Enum):
     STATUS_REQUEST = "status_request"
     UNKNOWN = "unknown"
 
+    # Program aliases (W7) — same values via public mapping.
+    @property
+    def program_alias(self) -> str:
+        return {
+            SteerKind.GOAL_REPLACEMENT: "goal_change",
+            SteerKind.NEW_CONSTRAINT: "constraint_add",
+            SteerKind.CORRECTION: "correction",
+            SteerKind.STATUS_REQUEST: "status_request",
+            SteerKind.CLARIFICATION: "clarification",
+            SteerKind.UNKNOWN: "unknown",
+        }[self]
+
 
 @dataclass(frozen=True)
 class SteerClassification:
@@ -28,6 +40,7 @@ class SteerClassification:
     def public_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
+            "program_kind": self.kind.program_alias,
             "text": self.text,
             "preserves_existing_constraints": self.preserves_existing_constraints,
             "replaces_goal": self.replaces_goal,
@@ -35,6 +48,7 @@ class SteerClassification:
             "truth": {
                 "steering_is_not_blind_append": True,
                 "valid_constraints_are_preserved": self.preserves_existing_constraints,
+                "pinned_constraints_survive_compaction": True,
             },
         }
 

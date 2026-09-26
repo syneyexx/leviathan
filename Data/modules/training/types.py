@@ -129,6 +129,14 @@ class TrainingCapabilities:
     ready: bool
     missing_for_lora: tuple[str, ...]
     notes: tuple[str, ...] = ()
+    # W11 honest method availability — never imply operational RL/GRPO without a trainer.
+    can_run_reward_model: bool = False
+    can_run_grpo: bool = False
+    can_run_rl: bool = False
+    reward_model_status: str = "FEATURE_GATED"
+    grpo_status: str = "FEATURE_GATED"
+    rl_status: str = "FEATURE_GATED"
+    dpo_hf_status: str = "FEATURE_GATED"
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -137,10 +145,20 @@ class TrainingCapabilities:
             "canRunLora": self.can_run_lora,
             "canRunQlora": self.can_run_qlora,
             "canRunDpo": self.can_run_dpo,
+            "canRunRewardModel": self.can_run_reward_model,
+            "canRunGrpo": self.can_run_grpo,
+            "canRunRl": self.can_run_rl,
+            "rewardModelStatus": self.reward_model_status,
+            "grpoStatus": self.grpo_status,
+            "rlStatus": self.rl_status,
+            "dpoHfStatus": self.dpo_hf_status,
             "ready": self.ready,
             "missingForLora": list(self.missing_for_lora),
             "notes": list(self.notes),
-            "truth": {"optional_ml_deps_do_not_crash_imports": True},
+            "truth": {
+                "optional_ml_deps_do_not_crash_imports": True,
+                "recipe_registered_is_not_operational_trainer": True,
+            },
         }
 
 

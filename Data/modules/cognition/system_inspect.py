@@ -248,6 +248,10 @@ class SystemInspectService:
                     "status": UNMEASURED,
                     "reason": "brain_percentage_is_not_a_supported_metric",
                 },
+                "capability_self_knowledge_truth": {
+                    "never_invents_brain_percentage": True,
+                    "same_model_critique_is_not_independent_verification": True,
+                },
             }
         status = value
         hits = None

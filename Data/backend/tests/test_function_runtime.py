@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from Data.modules.function_runtime import (
     FunctionCallStatus,
@@ -71,13 +72,37 @@ class FunctionRuntimeTests(unittest.TestCase):
     def test_pdf_parser_honest_failure_without_pypdf(self) -> None:
         path = self.root / "doc.pdf"
         path.write_bytes(b"%PDF-1.4\n%fake\n")
+        # Simulate missing optional dependency — do not assume developer env packages.
+        import builtins
+        import Data.functions.pdf_parser as pdf_mod
+
+        real_import = builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "pypdf" or name.startswith("pypdf."):
+                raise ImportError("simulated missing pypdf")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(builtins, "__import__", side_effect=_fake_import):
+            # Clear any cached pypdf module so the function re-imports.
+            import sys
+
+            sys.modules.pop("pypdf", None)
+            result = self.runtime.execute("pdf_parser", {"path": str(path)})
+        self.assertEqual(result.status, FunctionCallStatus.FAILED)
+        self.assertIn("pypdf", (result.error or "").lower())
+        _ = pdf_mod  # keep import for module presence
+
+    def test_pdf_parser_honest_failure_on_corrupt_pdf(self) -> None:
+        path = self.root / "corrupt.pdf"
+        path.write_bytes(b"%PDF-1.4\n%fake\n")
         result = self.runtime.execute("pdf_parser", {"path": str(path)})
-        # Either COMPLETED (if pypdf installed) or FAILED with honest message.
+        # With pypdf installed, corrupt bytes must fail honestly (not crash silently).
         if result.status == FunctionCallStatus.COMPLETED:
             self.assertIsNotNone(result.output)
         else:
             self.assertEqual(result.status, FunctionCallStatus.FAILED)
-            self.assertIn("pypdf", (result.error or "").lower())
+            self.assertTrue(result.error)
 
     def test_timeout(self) -> None:
         registry = FunctionRegistry()

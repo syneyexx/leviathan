@@ -117,5 +117,6 @@ describe("G66 — trading cards render only backend truth", () => {
   it("registers the Onderzoek page under TradingCenter", () => {
     const trading = MAIN_MENU.find((m) => m.id === "trading");
     expect(trading?.submenu?.some((s) => s.to === "/trading/onderzoek")).toBe(true);
+    expect(trading?.submenu?.some((s) => s.to === "/trading/lab")).toBe(true);
   });
 });

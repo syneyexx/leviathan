@@ -264,11 +264,15 @@ class BrainAccessFacade:
             d = hit
         else:
             d = {"id": str(getattr(hit, "id", "mem")), "content": str(hit)}
+        from Data.modules.memory.types import normalize_trust_state
+
+        trust_raw = d.get("trust_state") or d.get("trust") or "AGENT_PROPOSED"
         return BrainMemoryRef(
             ref_id=str(d.get("id") or d.get("memory_id") or d.get("refId") or "memory"),
             content=str(d.get("content") or d.get("text") or "")[:800],
             kind=str(d.get("kind") or d.get("memory_kind") or ""),
             scope=str(d.get("scope") or d.get("memory_scope") or ""),
+            trust=normalize_trust_state(trust_raw).value,
             score=float(d["score"]) if d.get("score") is not None else None,
             metadata={k: v for k, v in d.items() if k not in {"content", "text"}},
         )
