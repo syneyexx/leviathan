@@ -197,5 +197,50 @@ class CitationValidityHonestyTests(unittest.TestCase):
             self.assertIsNone(cit.score)
 
 
+class DeploymentCompatibilityAdversarialTests(unittest.TestCase):
+    def test_t14_missing_available_features_blocks_deployment(self) -> None:
+        from Data.modules.market_sim.features import FEATURE_PIPELINE_VERSION
+        from Data.modules.market_sim.paper_deployment import create_paper_deployment
+        from Data.modules.market_sim.strategy_asset import ExecutionCompatibilityManifest, StrategyAsset
+        from Data.modules.market_sim.types import StrategyStatus
+
+        asset = StrategyAsset(
+            asset_id="a1",
+            name="x",
+            version=1,
+            status=StrategyStatus.VALIDATED.value,
+            compatibility=ExecutionCompatibilityManifest(
+                required_feature_pipeline_version=FEATURE_PIPELINE_VERSION,
+                required_features=["sma", "rsi"],
+                paper_compatible=True,
+            ),
+        )
+        with self.assertRaises(MarketSimError) as ctx:
+            create_paper_deployment(
+                asset=asset,
+                universe=["AAA"],
+                feed_id="feed-1",
+                available_features=None,
+            )
+        self.assertEqual(ctx.exception.code, "INCOMPATIBLE_DEPLOYMENT")
+        with self.assertRaises(MarketSimError) as ctx2:
+            create_paper_deployment(
+                asset=asset,
+                universe=["AAA"],
+                feed_id="feed-1",
+                available_features={"sma"},  # missing rsi
+            )
+        self.assertEqual(ctx2.exception.code, "INCOMPATIBLE_DEPLOYMENT")
+
+    def test_t15_live_order_from_lab_blocked(self) -> None:
+        from Data.modules.market_sim.trading_live_guard import LiveTradingGuard
+
+        guard = LiveTradingGuard()
+        self.assertEqual(guard.public_status()["LIVE_TRADING_AVAILABLE"], "BLOCKED")
+        with self.assertRaises(MarketSimError) as ctx:
+            guard.place_live_order(symbol="BTCUSDT", side="buy", qty=1)
+        self.assertEqual(ctx.exception.code, "LIVE_TRADING_BLOCKED")
+
+
 if __name__ == "__main__":
     unittest.main()
