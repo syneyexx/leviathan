@@ -46,6 +46,31 @@
   gap: 8px;
 }
 
+.lv-ritual-shell[data-lv-route="/"] .lv-hero {
+  isolation: isolate;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-hero::before {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  right: clamp(5px, 5vw, 90px);
+  bottom: -41%;
+  width: clamp(220px, 24vw, 420px);
+  aspect-ratio: 4 / 5;
+  pointer-events: none;
+  background: url("/assets/leviathan-guardian.svg") center bottom / contain no-repeat;
+  opacity: .43;
+  filter: contrast(1.08) saturate(.72);
+  mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%);
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-hero-content,
+.lv-ritual-shell[data-lv-route="/"] .lv-hero-rail {
+  position: relative;
+  z-index: 4;
+}
+
 .lv-ritual-shell[data-lv-route="/"] .lv-card-head {
   min-height: 25px;
   padding-bottom: 6px;
@@ -139,6 +164,84 @@
   filter: sepia(.10) saturate(.70);
 }
 
+/* Dedicated system status now reads as a real control-room page, not a generic card dump. */
+.lv-ritual-shell[data-lv-route="/status"] .lv-main {
+  background:
+    radial-gradient(circle at 82% 4%, rgba(190,139,58,.045), transparent 30%),
+    transparent;
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-main > .lv-panel:first-child {
+  position: relative;
+  min-height: 128px;
+  overflow: hidden;
+  border-color: rgba(181,132,56,.58);
+  background:
+    linear-gradient(90deg, rgba(3,5,4,.96) 0%, rgba(3,5,4,.72) 52%, rgba(3,5,4,.86) 100%),
+    url("/assets/leviathan-ritual-skyline.svg") center 47% / cover no-repeat;
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-main > .lv-panel:first-child::after {
+  content: "SYSTEM · TRUTH · READINESS";
+  position: absolute;
+  right: 20px;
+  top: 17px;
+  font-family: var(--lv-font-display);
+  font-size: 8px;
+  letter-spacing: .28em;
+  color: rgba(224,192,127,.48);
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-grid-2 {
+  gap: 8px;
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-grid-2 > .lv-panel {
+  position: relative;
+  min-height: 178px;
+  border-color: rgba(145,105,49,.44);
+  background:
+    linear-gradient(180deg, rgba(201,154,80,.018), transparent 30%),
+    linear-gradient(180deg, rgba(10,13,10,.97), rgba(5,7,6,.99));
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-world-stats {
+  gap: 4px;
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-world-stat {
+  border-radius: 2px;
+  border: 1px solid rgba(148,108,50,.20);
+  background: rgba(2,5,3,.40);
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-world-stat span {
+  font-family: var(--lv-font-mono);
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: rgba(190,184,168,.52);
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-world-stat strong {
+  color: #e5d4ad;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-agent-row {
+  border-radius: 2px;
+  border-bottom-color: rgba(255,255,255,.045);
+  background: transparent;
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-agent-row strong {
+  color: #d9d4c7;
+}
+
+.lv-ritual-shell[data-lv-route="/status"] .lv-agent-row small {
+  color: rgba(163,159,149,.62);
+}
+
 /* Make all status lights deliberate, not neon arcade lights. */
 .lv-ritual-shell .lv-status-online,
 .lv-ritual-shell .lv-chip-dot--ok,
@@ -184,5 +287,11 @@
 
   .lv-ritual-shell .lv-dock::-webkit-scrollbar {
     display: none;
+  }
+
+  .lv-ritual-shell[data-lv-route="/"] .lv-hero::before {
+    right: -44px;
+    width: 260px;
+    opacity: .26;
   }
 }
