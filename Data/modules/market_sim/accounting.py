@@ -379,6 +379,41 @@ class WalletLedger:
             payload["net_exposure"] = str(self.net_exposure(marks))
         return payload
 
+    @classmethod
+    def from_public_dict(cls, payload: dict[str, Any] | None) -> "WalletLedger":
+        """Rebuild a ledger from a persisted public_dict (W18 paper restart)."""
+        data = dict(payload or {})
+        positions: dict[str, PositionLot] = {}
+        raw_positions = data.get("positions") or {}
+        if isinstance(raw_positions, dict):
+            for sym, lot in raw_positions.items():
+                if not isinstance(lot, dict):
+                    continue
+                positions[str(sym)] = PositionLot(
+                    symbol=str(lot.get("symbol") or sym),
+                    qty=money(lot.get("qty") or 0),
+                    avg_entry=money(lot.get("avg_entry") or 0),
+                )
+        txs = list(data.get("transactions") or data.get("transactions_tail") or [])
+        wallet = cls(
+            wallet_id=str(data.get("wallet_id") or "wal-restored"),
+            owner_id=str(data.get("owner_id") or "paper"),
+            owner_kind=str(data.get("owner_kind") or "paper_session"),
+            cash=money(data.get("cash") or 0),
+            reserved_cash=money(data.get("reserved_cash") or 0),
+            position_qty=money(data.get("position_qty") or 0),
+            avg_entry=money(data.get("avg_entry") or 0),
+            realized_pnl=money(data.get("realized_pnl") or 0),
+            fees_paid=money(data.get("fees_paid") or 0),
+            peak_equity=money(data.get("peak_equity") or data.get("cash") or 0),
+            currency=str(data.get("currency") or "USD"),
+            currency_mode=str(data.get("currency_mode") or "single"),
+            primary_symbol=data.get("primary_symbol"),
+            positions=positions,
+            transactions=[dict(t) for t in txs if isinstance(t, dict)],
+        )
+        return wallet
+
 
 @dataclass
 class WalletBook:

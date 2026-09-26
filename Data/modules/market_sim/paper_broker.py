@@ -174,6 +174,57 @@ class LocalPaperBroker(PaperBroker):
         self.sessions[sid] = wal
         return wal
 
+    def restore_session(
+        self,
+        session_id: str,
+        *,
+        wallet_payload: dict[str, Any] | None,
+        orders: list[dict[str, Any]] | None = None,
+    ) -> WalletLedger:
+        """Hydrate in-memory wallet + order index from a durable paper session (W18).
+
+        Idempotent: if the session wallet already exists, keep it. Restored orders
+        re-seed client_order_id idempotency so reconnect/restart cannot double-fill.
+        """
+        sid = str(session_id)
+        if sid not in self.sessions:
+            if wallet_payload:
+                wal = WalletLedger.from_public_dict(wallet_payload)
+                wal.owner_id = sid
+                wal.owner_kind = "paper_session"
+                self.sessions[sid] = wal
+            else:
+                self.wallet_for_session(sid, create=True)
+        for raw in orders or []:
+            if not isinstance(raw, dict):
+                continue
+            cid = str(raw.get("client_order_id") or "").strip()
+            oid = str(raw.get("order_id") or "").strip() or str(uuid.uuid4())
+            if not cid:
+                continue
+            # Skip if already indexed under this client id.
+            if any(o.client_order_id == cid for o in self._orders.values()):
+                continue
+            order = PaperOrder(
+                order_id=oid,
+                client_order_id=cid,
+                symbol=str(raw.get("symbol") or ""),
+                side=str(raw.get("side") or "BUY").upper(),
+                qty=float(raw.get("qty") or 0),
+                status=str(raw.get("status") or "filled"),
+                broker_order_id=raw.get("broker_order_id"),
+                fill_price=float(raw["fill_price"]) if raw.get("fill_price") is not None else None,
+                fee=float(raw.get("fee") or 0),
+                submitted_at=str(raw.get("submitted_at") or ""),
+                updated_at=str(raw.get("updated_at") or ""),
+                reject_reason=str(raw.get("reject_reason") or ""),
+                strategy_id=raw.get("strategy_id"),
+                strategy_version=raw.get("strategy_version"),
+                metadata=dict(raw.get("metadata") or {}),
+            )
+            self._orders[order.order_id] = order
+        return self.sessions[sid]
+
     def place(
         self,
         *,

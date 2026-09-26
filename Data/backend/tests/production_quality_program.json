@@ -21,7 +21,7 @@
     {"id": "W05", "status": "PASS", "title": "Greeting single model call (A07)", "notes": "DIRECT path skips neural advice"},
     {"id": "W07", "status": "PASS", "title": "TTC weak lexical scorers; schema nested validation"},
     {"id": "W16", "status": "PASS", "title": "Durable agent lab lifecycle wired to campaigns", "notes": "create/start/pause/resume/cancel + real sims; full role orchestra still TARGET"},
-    {"id": "W18", "status": "IN_PROGRESS", "title": "Paper deployment compatibility", "notes": "T14/T15 done; full restart paper reuse still open"},
+    {"id": "W18", "status": "IN_PROGRESS", "title": "Paper deployment compatibility", "notes": "T09/T14/T15 + paper session hydrate after restart; long-horizon paper soak still open"},
     {"id": "W04", "status": "NOT_STARTED", "title": "Model capability and inference contract"},
     {"id": "W06", "status": "IN_PROGRESS", "title": "Planning and steering", "notes": "cancel propagates to child_run_ids; observation-linked replan still open"},
     {"id": "W08", "status": "IN_PROGRESS", "title": "Context memory Brain", "notes": "A08 correct_preference supersession landed; compaction/Brain breadth still open"},

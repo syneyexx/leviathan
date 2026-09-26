@@ -1356,6 +1356,30 @@ class MarketSimControlPlane:
 
     # --- Paper trading ---
 
+    def _hydrate_paper_broker_session(self, session: dict[str, Any]) -> None:
+        """Restore broker wallet/orders after process restart (W18)."""
+        broker_id = str(session.get("broker_id") or "local_paper")
+        broker = self._paper_broker(broker_id)
+        if not hasattr(broker, "restore_session"):
+            return
+        sid = str(session.get("session_id") or "")
+        if not sid:
+            return
+        sessions = getattr(broker, "sessions", {})
+        if sid in sessions:
+            # Still re-seed order idempotency index from durable orders.
+            broker.restore_session(
+                sid,
+                wallet_payload=None,
+                orders=list(session.get("orders") or []),
+            )
+            return
+        broker.restore_session(
+            sid,
+            wallet_payload=session.get("wallet") if isinstance(session.get("wallet"), dict) else None,
+            orders=list(session.get("orders") or []),
+        )
+
     def _paper_broker(self, broker_id: str = "local_paper") -> Any:
         if broker_id not in self._paper_brokers:
             self._paper_brokers[broker_id] = build_paper_broker(
@@ -1451,6 +1475,8 @@ class MarketSimControlPlane:
         session = self.store.get_paper_session(session_id)
         if session is None:
             raise MarketSimError("PAPER_SESSION_NOT_FOUND", session_id, http_status=404)
+        # W18: durable session → in-memory broker wallet/order index after restart.
+        self._hydrate_paper_broker_session(session)
         # Refresh quote
         try:
             provider = self.providers.get(session["provider_id"])
