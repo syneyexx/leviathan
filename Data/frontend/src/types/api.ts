@@ -774,6 +774,14 @@ export type DatasetLearningState = {
 export type DatasetRecord = {
   datasetId: string;
   name: string;
+  displayName?: string | null;
+  displayNameSource?: string | null;
+  primaryCategory?: string | null;
+  secondaryCategory?: string | null;
+  semanticTags?: string[];
+  semanticReviewRequired?: boolean;
+  semanticProfile?: DatasetSemanticProfileSummary | null;
+  recoveryState?: string | null;
   sourceType: string;
   status: string;
   description: string;
@@ -798,6 +806,37 @@ export type DatasetRecord = {
   indexes?: DatasetIndex[];
   learningState?: DatasetLearningState;
   canonicalState?: string;
+};
+
+export type DatasetSemanticProfileSummary = {
+  displayName?: string | null;
+  displayNameSource?: string | null;
+  primaryCategory?: string | null;
+  secondaryCategory?: string | null;
+  categoryPath?: string[];
+  tags?: string[];
+  summary?: string | null;
+  confidence?: number | null;
+  reviewRequired?: boolean;
+  classificationMethod?: string | null;
+};
+
+export type DatasetRecoveryAssessment = {
+  datasetId: string;
+  recoveryState: string;
+  state?: string;
+  evidenceSource?: string | null;
+  sourcePresent?: boolean;
+  metadataRestored?: boolean;
+  contentHashOk?: boolean | null;
+  brainLearned?: boolean;
+  reindexRequired?: boolean;
+  tombstoned?: boolean;
+  conflicts?: Record<string, unknown>[];
+  detail?: string;
+  learningCanonicalState?: string | null;
+  displayName?: string | null;
+  truth?: Record<string, unknown>;
 };
 
 export type DatasetVersion = {
@@ -889,6 +928,21 @@ export type DatasetActivityEntry = {
   retryCount?: number;
 };
 
+export type DatasetComputeBackend = "PYTHON_STREAMING" | "RUST_NATIVE" | "python_streaming" | "rust_native" | string;
+
+export type DatasetJobComputeProgress = {
+  backend?: string | null;
+  phase?: string | null;
+  recordsProcessed?: number | null;
+  peakMemory?: number | string | null;
+  memoryBudget?: number | string | null;
+  spillBytes?: number | string | null;
+  throughput?: number | string | null;
+  durationMs?: number | string | null;
+  fallbackReason?: string | null;
+  resumed?: boolean;
+};
+
 export type DatasetJob = {
   jobId: string;
   datasetId?: string | null;
@@ -909,12 +963,23 @@ export type DatasetJob = {
   startedAt?: string | null;
   updatedAt: string;
   finishedAt?: string | null;
-  /** Derived download summary from backend public_job (HF imports). */
   download?: DatasetJobDownloadSummary | null;
-  datasetName?: string | null;
-  learning?: DatasetLearningLadder | null;
-  activity?: DatasetLearningJobActivity | null;
+  compute?: DatasetJobComputeProgress | null;
+  backend?: DatasetComputeBackend | null;
+  fallbackReason?: string | null;
+  recordsProcessed?: number | null;
+  peakMemory?: number | string | null;
+  memoryBudget?: number | string | null;
+  peakRssBytes?: number | null;
+  spillBytes?: number | string | null;
+  throughput?: number | string | null;
+  recordsIn?: number | null;
+  recordsOut?: number | null;
+  durationMs?: number | string | null;
+  memoryEnforcement?: string | null;
+  resumed?: boolean;
 };
+
 
 export type DatasetLearningLadder = {
   filesDiscovered?: boolean;
@@ -2412,8 +2477,24 @@ export type PerformanceSnapshot = {
   }>;
   observability: Record<string, unknown>;
   inferenceEfficiency?: InferenceEfficiencySnapshot | null;
+  dbContention?: {
+    dbFileSize?: number | string | null;
+    walSize?: number | string | null;
+    busyRetries?: number | string | null;
+    commitQueueDepth?: number | string | null;
+    truth?: Record<string, boolean>;
+  } | null;
+  nativeDataPlane?: {
+    status?: string | null;
+    protocolVersion?: number | null;
+    operations?: string[];
+    binaryPath?: string | null;
+    detail?: string | null;
+    truth?: Record<string, boolean>;
+  } | null;
   truth?: Record<string, boolean>;
 };
+
 
 /** Provenance-aware inference efficiency snapshot (never mock zeros as measured). */
 export type EfficiencyCapabilityState = "supported" | "unsupported" | "unknown" | "unverified" | "unmeasured";
@@ -3035,6 +3116,13 @@ export type WorkerFabricPool = {
   workers?: WorkerFabricWorker[];
 };
 
+export type WorkerFabricNativeCompute = {
+  status: string;
+  binaryVersion?: string | null;
+  operations?: string[];
+  detail?: string | null;
+};
+
 export type WorkerFabricDashboard = {
   generated_at: string;
   summary: {
@@ -3051,6 +3139,8 @@ export type WorkerFabricDashboard = {
   };
   control_plane?: { role: string; status: string };
   supervisor: Record<string, unknown>;
+  /** Bounded NativeComputeRunner.probe summary when backend includes it. */
+  nativeCompute?: WorkerFabricNativeCompute | null;
   pools: WorkerFabricPool[];
   workers: WorkerFabricWorker[];
   queues: Array<{ pool_id: string; queued: number }>;

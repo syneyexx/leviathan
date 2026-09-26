@@ -3,6 +3,7 @@ import type { DatasetActivityEntry, DatasetJob } from "../../types/api";
 import {
   type ActivityFilter,
   type TransferSample,
+  computeBackendLabel,
   downloadSummary,
   entriesToPlainText,
   estimatedRemainingSeconds,
@@ -10,11 +11,13 @@ import {
   formatBytes,
   formatClock,
   formatDuration,
+  formatMemoryMetric,
   formatRate,
   isActiveJob,
   isCancelledJob,
   isCompletedJob,
   isErrorJob,
+  jobComputeFields,
   jobTypeLabel,
   observedTransferRate,
   pickActiveJob,
@@ -218,6 +221,62 @@ export function DatasetActivityConsole({
           </div>
 
           <dl className="lv-dac-stats">
+            {(() => {
+              const compute = jobComputeFields(summaryJob);
+              const backendLabel = computeBackendLabel(compute.backend);
+              const durationSec =
+                typeof compute.durationMs === "number" ? compute.durationMs / 1000 : null;
+              const throughputLabel =
+                typeof compute.throughput === "number"
+                  ? `${compute.throughput.toLocaleString()} rec/s`
+                  : "UNMEASURED";
+              return (
+                <>
+                  {backendLabel ? (
+                    <div>
+                      <dt>Backend</dt>
+                      <dd>{backendLabel}</dd>
+                    </div>
+                  ) : null}
+                  {compute.fallbackReason ? (
+                    <div>
+                      <dt>Fallback</dt>
+                      <dd>{compute.fallbackReason}</dd>
+                    </div>
+                  ) : null}
+                  {compute.recordsProcessed != null ? (
+                    <div>
+                      <dt>Records</dt>
+                      <dd>{compute.recordsProcessed.toLocaleString()}</dd>
+                    </div>
+                  ) : null}
+                  {backendLabel ? (
+                    <div>
+                      <dt>Peak memory</dt>
+                      <dd>{formatMemoryMetric(compute.peakMemory)}</dd>
+                    </div>
+                  ) : null}
+                  {backendLabel ? (
+                    <div>
+                      <dt>Spill</dt>
+                      <dd>{formatMemoryMetric(compute.spillBytes)}</dd>
+                    </div>
+                  ) : null}
+                  {backendLabel ? (
+                    <div>
+                      <dt>Throughput</dt>
+                      <dd>{throughputLabel}</dd>
+                    </div>
+                  ) : null}
+                  {backendLabel ? (
+                    <div>
+                      <dt>Duration</dt>
+                      <dd>{durationSec != null ? formatDuration(durationSec) : "UNMEASURED"}</dd>
+                    </div>
+                  ) : null}
+                </>
+              );
+            })()}
             {dl?.bytesDownloaded != null ? (
               <div>
                 <dt>Progress</dt>

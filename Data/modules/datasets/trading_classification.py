@@ -73,7 +73,10 @@ _KNOWLEDGE_NAME_RX = re.compile(
     r"(book|paper|research|strategy|microstructure|quant|risk.?manag|whitepaper|pdf|textbook)",
     re.I,
 )
-_OHLCV_NAME_RX = re.compile(r"(ohlc|ohlcv|bars?|candles?|kline|1m|5m|15m|1h|1d|daily|intraday)", re.I)
+_OHLCV_NAME_RX = re.compile(
+    r"(ohlc|ohlcv|bars?|candles?|kline|\b1m\b|\b5m\b|\b15m\b|\b1h\b|\b1d\b|daily|intraday)",
+    re.I,
+)
 _TRADE_NAME_RX = re.compile(r"(trades?|ticks?|prints?|executions?)", re.I)
 _QUOTE_NAME_RX = re.compile(r"(quotes?|nbbo|bbo|top.?of.?book)", re.I)
 _ORDERBOOK_NAME_RX = re.compile(r"(orderbook|order.?book|lob|l2|l3|depth)", re.I)

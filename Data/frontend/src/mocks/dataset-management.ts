@@ -123,6 +123,18 @@ export const DM_ACTIONS = [
 export const DM_TYPE_FILTERS = ["Alle types", "Tekst", "Code", "Chat", "PDF", "Logs"];
 export const DM_SOURCE_FILTERS = ["Alle bronnen", "Open Data", "Hugging Face", "Lokaal", "Synthetic"];
 export const DM_SPLIT_FILTERS = ["Alle splits", "train", "validation", "test"];
+export const DM_CATEGORY_FILTERS = [
+  "Alle categorieën",
+  "GENERAL",
+  "FINANCE_TRADING",
+  "CRYPTO_BLOCKCHAIN",
+  "ANIMALS_BIOLOGY",
+  "TECHNOLOGY_SOFTWARE",
+  "SCIENCE_ENGINEERING",
+  "HEALTH_MEDICINE",
+  "RESEARCH_PUBLICATIONS",
+  "EDUCATION_LANGUAGE",
+];
 export const DM_STATUS_FILTERS = ["Alle statussen", "Klaar", "Verwerkt", "Bezig", "Wachtrij", "Waarschuwing"];
 
 export const DM_TAG_OPTIONS = ["nl", "wiki", "kennis", "code", "instruct", "medisch", "chat", "legal", "eu", "news"];

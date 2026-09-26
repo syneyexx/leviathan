@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from Data.modules.common.secrets import redact_secrets, scan_pii_flags
 
@@ -19,30 +19,41 @@ def scan_record_pii(record: CanonicalRecord) -> list[dict[str, Any]]:
                 texts.append(content)
     for text in texts:
         for finding in scan_pii_flags(text):
-            findings.append({**finding, "recordId": record.id})
+            # Redact any mirrored sample text in findings
+            item = {**finding, "recordId": record.id}
+            if "sample" in item and isinstance(item["sample"], str):
+                item["sample"] = redact_secrets(item["sample"])
+            if "match" in item and isinstance(item["match"], str):
+                item["match"] = redact_secrets(item["match"])
+            findings.append(item)
     return findings
 
 
 def scan_records_pii(
-    records: list[CanonicalRecord],
+    records: Iterable[CanonicalRecord],
     *,
     max_findings: int = 100,
 ) -> dict[str, Any]:
+    """Scan an iterable of records — does not require a complete corpus list."""
     findings: list[dict[str, Any]] = []
     records_with = 0
+    record_count = 0
+    total_finding_count = 0
     for rec in records:
+        record_count += 1
         hit = scan_record_pii(rec)
         if hit:
             records_with += 1
+            total_finding_count += len(hit)
             for item in hit:
                 if len(findings) < max_findings:
                     findings.append(item)
     return {
-        "recordCount": len(records),
+        "recordCount": record_count,
         "recordsWithFindings": records_with,
-        "findingCount": len(findings),
+        "findingCount": total_finding_count,
         "findings": findings,
-        "truncated": records_with > 0 and len(findings) >= max_findings,
+        "truncated": total_finding_count > len(findings),
         "note": "Detections are flags, not proof of PII",
     }
 

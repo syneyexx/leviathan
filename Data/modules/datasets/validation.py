@@ -67,32 +67,40 @@ def validate_record(record: CanonicalRecord, *, index: int = 0) -> list[dict[str
 
 
 def validate_records(
-    records: list[CanonicalRecord] | Iterable[CanonicalRecord],
+    records: Iterable[CanonicalRecord],
     *,
     max_issues: int = 200,
 ) -> dict[str, Any]:
-    """Validate records incrementally — works for lists or streaming iterables."""
+    """Validate records incrementally — works for lists or streaming iterables.
+
+    ``errorCount`` / ``warningCount`` are true totals even when the issue sample
+    is truncated at ``max_issues``.
+    """
     all_issues: list[dict[str, Any]] = []
     empty = 0
     row_count = 0
+    error_count = 0
+    warning_count = 0
     for idx, rec in enumerate(records):
         row_count += 1
         issues = validate_record(rec, index=idx)
         if any(i.get("code") == "empty_content" for i in issues):
             empty += 1
         for issue in issues:
+            if issue.get("severity") == "warning":
+                warning_count += 1
+            else:
+                error_count += 1
             if len(all_issues) < max_issues:
                 all_issues.append(issue)
-    errors = [i for i in all_issues if i.get("severity") != "warning"]
-    warnings = [i for i in all_issues if i.get("severity") == "warning"]
-    truncated = row_count > 0 and len(all_issues) >= max_issues
-    valid = len(errors) == 0
+    truncated = (error_count + warning_count) > len(all_issues)
     return {
-        "valid": valid,
+        "valid": error_count == 0,
         "rowCount": row_count,
-        "errorCount": len(errors),
-        "warningCount": len(warnings),
+        "errorCount": error_count,
+        "warningCount": warning_count,
         "emptyContentCount": empty,
         "issues": all_issues,
+        "issuesTruncated": truncated,
         "truncated": truncated,
     }

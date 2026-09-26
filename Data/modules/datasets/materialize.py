@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from Data.modules.common.atomic import atomic_write_text, ensure_dir
-from Data.modules.common.hashing import sha256_file, sha256_text
+from Data.modules.common.hashing import sha256_text
 
 from .canonicalize import canonical_schema_dict, iter_canonical_from_path, iter_canonical_from_sources
-from .types import CanonicalRecord, DetectedFormat
+from .memory_policy import resolve_dataset_memory_policy
+from .streaming_io import iter_bounded_text_lines
+from .types import CanonicalRecord, DatasetError, DetectedFormat
 from .validation import validate_record
 
 
@@ -33,6 +35,8 @@ def write_canonical_jsonl_stream(
     byte_size = 0
     empty = 0
     all_issues: list[dict[str, Any]] = []
+    error_count = 0
+    warning_count = 0
 
     try:
         with tmp.open("wb") as handle:
@@ -42,6 +46,10 @@ def write_canonical_jsonl_stream(
                     if any(i.get("code") == "empty_content" for i in issues):
                         empty += 1
                     for issue in issues:
+                        if issue.get("severity") == "warning":
+                            warning_count += 1
+                        else:
+                            error_count += 1
                         if len(all_issues) < max_issues:
                             all_issues.append(issue)
                 line = json.dumps(rec.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
@@ -62,16 +70,15 @@ def write_canonical_jsonl_stream(
         tmp.unlink(missing_ok=True)
         raise
 
-    errors = [i for i in all_issues if i.get("severity") != "warning"]
-    warnings = [i for i in all_issues if i.get("severity") == "warning"]
     validation = {
-        "valid": len(errors) == 0,
+        "valid": error_count == 0,
         "rowCount": row_count,
-        "errorCount": len(errors),
-        "warningCount": len(warnings),
+        "errorCount": error_count,
+        "warningCount": warning_count,
         "emptyContentCount": empty,
         "issues": all_issues,
-        "truncated": row_count > 0 and len(all_issues) >= max_issues,
+        "issuesTruncated": error_count + warning_count > len(all_issues),
+        "truncated": error_count + warning_count > len(all_issues),
     }
     return {
         "storagePath": str(dest),
@@ -80,11 +87,12 @@ def write_canonical_jsonl_stream(
         "rowCount": row_count,
         "schema": canonical_schema_dict(),
         "validation": validation,
+        "publishState": "PUBLISHED",
     }
 
 
-def write_canonical_jsonl(records: list[CanonicalRecord], dest: Path) -> tuple[str, int, int]:
-    """Compatibility wrapper — streams the list; does not join a giant payload string."""
+def write_canonical_jsonl(records: Iterable[CanonicalRecord], dest: Path) -> tuple[str, int, int]:
+    """Compatibility wrapper — streams the iterable; does not join a giant payload string."""
     outcome = write_canonical_jsonl_stream(records, dest, validate=False)
     return outcome["contentHash"], outcome["byteSize"], outcome["rowCount"]
 
@@ -102,7 +110,6 @@ def materialize_from_raw(
         raw_path, fmt=fmt, split=split, provenance=provenance
     )
     outcome = write_canonical_jsonl_stream(iterator, dest_path)
-    # Keep key name used by older callers; do NOT include full records list.
     return outcome
 
 
@@ -144,32 +151,92 @@ def materialize_from_sources(
     return write_canonical_jsonl_stream(_progressive(), dest_path)
 
 
-def load_materialized_jsonl(path: Path) -> list[CanonicalRecord]:
-    """Load entire materialized file — only for small preview/test use."""
+def load_materialized_jsonl(
+    path: Path,
+    *,
+    max_bytes: int | None = None,
+    allow_large: bool = False,
+) -> list[CanonicalRecord]:
+    """Load entire materialized file — only for small preview/test use.
+
+    Production handlers must use ``iter_version_records`` / ``iter_materialized_jsonl``.
+    Refuses files larger than the configured full-load refuse threshold unless
+    ``allow_large=True`` (tests only).
+    """
+    path = Path(path)
+    policy = resolve_dataset_memory_policy()
+    refuse_at = int(max_bytes) if max_bytes is not None else policy.full_load_refuse_bytes
+    size = path.stat().st_size if path.exists() else 0
+    if not allow_large and size > refuse_at:
+        raise DatasetError(
+            f"Full materialization refused for {size} byte file (limit {refuse_at})",
+            code="DATASET_FULL_MATERIALIZATION_REFUSED",
+            details={"byteSize": size, "limitBytes": refuse_at, "path": str(path)},
+        )
     records: list[CanonicalRecord] = []
-    with Path(path).open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            records.append(CanonicalRecord.from_dict(json.loads(line)))
+    for _idx, line in iter_bounded_text_lines(path, max_record_bytes=policy.max_record_bytes):
+        line = line.strip()
+        if not line:
+            continue
+        records.append(CanonicalRecord.from_dict(json.loads(line)))
     return records
 
 
-def iter_materialized_jsonl(path: Path) -> Iterator[CanonicalRecord]:
-    with Path(path).open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            yield CanonicalRecord.from_dict(json.loads(line))
+def iter_materialized_jsonl(
+    path: Path,
+    *,
+    max_record_bytes: int | None = None,
+) -> Iterator[CanonicalRecord]:
+    """Stream canonical records from materialized JSONL with bounded line reads."""
+    policy = resolve_dataset_memory_policy()
+    limit = max_record_bytes if max_record_bytes is not None else policy.max_record_bytes
+    for _idx, line in iter_bounded_text_lines(path, max_record_bytes=limit):
+        line = line.strip()
+        if not line:
+            continue
+        yield CanonicalRecord.from_dict(json.loads(line))
 
 
-def records_content_hash(records: list[CanonicalRecord]) -> str:
-    payload = "\n".join(
-        json.dumps(r.to_dict(), ensure_ascii=False, sort_keys=True) for r in records
-    )
-    return sha256_text(payload + ("\n" if records else ""))
+def iter_version_records(
+    storage_path: Path,
+    *,
+    max_record_bytes: int | None = None,
+    format_hint: str | None = None,
+) -> Iterator[CanonicalRecord]:
+    """Canonical version iterator — no complete corpus list.
+
+    Primary production representation is canonical JSONL. Parquet is supported
+    when ``format_hint`` is ``parquet`` or the path suffix is ``.parquet``.
+    Heterogeneous text corpora remain JSONL — this does not force Parquet.
+    """
+    path = Path(storage_path)
+    if not path.exists():
+        raise DatasetError(f"Version storage missing: {path}", code="no_storage", http_status=404)
+    fmt = (format_hint or "").strip().lower()
+    if not fmt and path.is_file() and path.suffix.lower() == ".parquet":
+        fmt = "parquet"
+    if fmt in {"", "jsonl", "canonical_jsonl"}:
+        yield from iter_materialized_jsonl(path, max_record_bytes=max_record_bytes)
+        return
+    if fmt == "parquet":
+        from .canonicalize import iter_parquet_canonical
+
+        yield from iter_parquet_canonical(path, source=path.name)
+        return
+    raise DatasetError(f"Unsupported version storage format: {fmt}", code="unsupported_format")
+
+
+def records_content_hash(records: Iterable[CanonicalRecord]) -> str:
+    """Hash records incrementally — does not join a giant string of the full corpus."""
+    digest = hashlib.sha256()
+    count = 0
+    for rec in records:
+        line = json.dumps(rec.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
+        digest.update(line.encode("utf-8"))
+        count += 1
+    if count == 0:
+        return sha256_text("")
+    return digest.hexdigest()
 
 
 def write_manifest(path: Path, manifest: dict[str, Any]) -> None:

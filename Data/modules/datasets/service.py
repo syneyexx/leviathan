@@ -22,8 +22,36 @@ if TYPE_CHECKING:
 
 from .annotation import AnnotationQueue
 from .canonicalize import canonical_schema_dict
+from .catalog import (
+    CatalogError,
+    build_catalog_from_store,
+    catalog_path,
+    read_catalog,
+    read_catalog_status,
+    refresh_catalog_entry,
+    write_catalog,
+)
+from .checkpoint import (
+    BACKEND_PYTHON_STREAMING,
+    BACKEND_RUST_NATIVE,
+    DEFAULT_CHECKPOINT_EVERY,
+    UNMEASURED as CKPT_UNMEASURED,
+    build_checkpoint,
+    can_resume,
+    compute_input_hash,
+    compute_operation_fingerprint,
+    invalidate_checkpoint,
+    iter_skip_then_count,
+    load_checkpoint,
+    normalize_backend_label,
+    observability_fields,
+    resolve_resume_skip,
+    save_checkpoint,
+    throughput_records_per_sec,
+)
+from .compute_planner import BackendPlan, ComputeBackend, ComputeBackendPlanner
 from .contamination import scan_contamination
-from .dedupe import exact_dedupe
+from .dedupe import exact_dedupe, iter_exact_dedupe_external
 from .export import export_jsonl, preview_jsonl
 from .formats import detect_format
 from .huggingface import (
@@ -43,28 +71,43 @@ from .importers import copy_immutable_raw, inspect_local_file, reject_traversal_
 from .indexing import index_version_file
 from .jobs import DatasetJobRunner, enqueue_kernel_for_domain_job, kernel_idempotency_key
 from .materialize import (
+    iter_version_records,
     load_materialized_jsonl,
     materialize_from_raw,
     materialize_from_sources,
     write_canonical_jsonl,
+    write_canonical_jsonl_stream,
     write_manifest,
 )
+from .memory_policy import resolve_dataset_memory_policy
 from .mixtures import MixtureComponent, build_mixture_manifest
 from .packing_sim import simulate_packing
 from .pii import scan_records_pii
+from .publish import prepare_output_path, publish_atomic, reconcile_orphans
+from .recovery import DatasetRecoveryAssessment, RecoveryState, default_recovery_truth
+from .scratch import ScratchManager
+from .semantic_enrichment import (
+    build_idempotency_key,
+    enrich_from_evidence,
+    merge_operator_overrides,
+    profile_to_metadata_patch,
+)
+from .semantic_profiler import BoundedDatasetEvidence, BoundedDatasetProfiler, ProfilerLimits
 from .shards import ShardIngestCheckpoint, build_shard_plan, ingest_shards
 from .sidecar import (
     SIDECAR_FILENAME,
+    TOMBSTONE_FILENAME,
     build_sidecar_payload,
     find_sidecars_under_roots,
     read_sidecar,
+    tombstone_path_for,
     write_sidecar,
     write_tombstone,
 )
-from .splits import deterministic_split
+from .splits import deterministic_split, iter_deterministic_split
 from .store import DatasetStore, utc_now
 from .tokenize_stats import compute_token_stats
-from .transforms import apply_transforms
+from .transforms import apply_transforms, apply_transforms_streaming
 from .types import (
     CAPABILITY_PROCESS,
     DatasetError,
@@ -112,6 +155,48 @@ def _elapsed_seconds(started_at: str | None, ended_at: str | None) -> float | No
         return max(0.0, delta.total_seconds())
     except (TypeError, ValueError):
         return None
+
+
+def _honest_storage_format(
+    *,
+    path: Path | str | None = None,
+    detected: DetectedFormat | str | None = None,
+) -> str | None:
+    """Return ``jsonl`` or ``parquet`` when the on-disk format is unambiguous.
+
+    Does not force Parquet for heterogeneous text — JSONL remains the default
+    materialized representation.
+    """
+    if detected is not None:
+        value = detected.value if isinstance(detected, DetectedFormat) else str(detected)
+        value = value.strip().lower()
+        if value == "parquet":
+            return "parquet"
+        if value in {"jsonl", "ndjson", "canonical_jsonl"}:
+            return "jsonl"
+    if path is not None:
+        suffix = Path(path).suffix.lower()
+        if suffix == ".parquet":
+            return "parquet"
+        if suffix in {".jsonl", ".ndjson"}:
+            return "jsonl"
+    return None
+
+
+def _raw_version_schema(
+    *,
+    detected: DetectedFormat | str | None = None,
+    path: Path | str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "raw", **(extra or {})}
+    if detected is not None:
+        fmt = detected.value if isinstance(detected, DetectedFormat) else str(detected)
+        schema.setdefault("format", fmt)
+    storage = _honest_storage_format(path=path, detected=detected)
+    if storage:
+        schema["storageFormat"] = storage
+    return schema
 
 
 class DatasetService:
@@ -162,6 +247,37 @@ class DatasetService:
         )
         self.extract_relations_on_index = bool(
             getattr(ri, "dataset_extract_relations", True)
+        )
+        self.datasets_recovery_auto_reindex = bool(
+            getattr(ri, "datasets_recovery_auto_reindex", False)
+        )
+        self.datasets_recovery_max_auto_jobs = max(
+            0,
+            int(getattr(ri, "datasets_recovery_max_auto_jobs", None) or 8),
+        )
+        self.memory_policy = resolve_dataset_memory_policy(settings=self.settings)
+        scratch_root = Path(self.corpus.root) / "scratch"
+        self.scratch_manager = ScratchManager(
+            scratch_root,
+            max_scratch_bytes=self.memory_policy.spill_budget_bytes,
+        )
+        self._compute_planner: ComputeBackendPlanner | None = None
+        self._native_runner = None
+
+    def iter_version_records(self, version_id: str):
+        """Canonical streaming access to a version's records (no full list)."""
+        ver = self.get_version(version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        fmt_hint = None
+        if isinstance(ver.schema, dict):
+            fmt_hint = ver.schema.get("storageFormat") or ver.schema.get("format")
+        meta = ver.metadata if isinstance(ver.metadata, dict) else {}
+        fmt_hint = fmt_hint or meta.get("storageFormat") or meta.get("detectedFormat")
+        return iter_version_records(
+            Path(ver.storage_path),
+            max_record_bytes=self.memory_policy.max_record_bytes,
+            format_hint=str(fmt_hint) if fmt_hint else None,
         )
 
     @classmethod
@@ -224,6 +340,7 @@ class DatasetService:
             DatasetJobType.DUPLICATE.value: self._handle_duplicate,
             DatasetJobType.SHARD_INGEST.value: self._handle_shard_ingest,
             DatasetJobType.CONTAMINATION_SCAN.value: self._handle_contamination_scan,
+            DatasetJobType.ENRICH_METADATA.value: self._handle_enrich_metadata,
         }
 
     # --- Queries ---
@@ -236,6 +353,50 @@ class DatasetService:
         if ds is None:
             raise DatasetError("Dataset not found", code="not_found", http_status=404)
         return ds
+
+    def public_dataset(self, dataset_id: str | DatasetRecord) -> dict[str, Any]:
+        """Dataset public dict with displayName / semantic summary (backwards compatible)."""
+        ds = dataset_id if isinstance(dataset_id, DatasetRecord) else self.get_dataset(dataset_id)
+        return self._enrich_dataset_public(ds.public_dict(), ds)
+
+    @staticmethod
+    def _enrich_dataset_public(entry: dict[str, Any], ds: DatasetRecord | None = None) -> dict[str, Any]:
+        meta = dict(entry.get("metadata") or {})
+        if ds is not None and isinstance(ds.metadata, dict):
+            meta = {**meta, **dict(ds.metadata)}
+        semantic = meta.get("semanticProfile") if isinstance(meta.get("semanticProfile"), dict) else {}
+        display_name = (
+            meta.get("displayName")
+            or semantic.get("displayName")
+            or entry.get("name")
+            or (ds.name if ds is not None else None)
+        )
+        entry["displayName"] = display_name
+        entry["displayNameSource"] = meta.get("displayNameSource") or semantic.get("displayNameSource")
+        entry["primaryCategory"] = meta.get("primaryCategory") or semantic.get("primaryCategory")
+        entry["secondaryCategory"] = meta.get("secondaryCategory") or semantic.get("secondaryCategory")
+        entry["semanticTags"] = list(
+            semantic.get("tags") or meta.get("semanticTags") or meta.get("tags") or []
+        )
+        entry["semanticReviewRequired"] = bool(
+            semantic.get("reviewRequired")
+            if semantic.get("reviewRequired") is not None
+            else meta.get("semanticReviewRequired", False)
+        )
+        if semantic:
+            entry["semanticProfile"] = {
+                "displayName": semantic.get("displayName") or display_name,
+                "displayNameSource": semantic.get("displayNameSource") or entry.get("displayNameSource"),
+                "primaryCategory": semantic.get("primaryCategory") or entry.get("primaryCategory"),
+                "secondaryCategory": semantic.get("secondaryCategory") or entry.get("secondaryCategory"),
+                "categoryPath": list(semantic.get("categoryPath") or []),
+                "tags": list(semantic.get("tags") or []),
+                "summary": semantic.get("summary"),
+                "confidence": semantic.get("confidence"),
+                "reviewRequired": bool(semantic.get("reviewRequired", False)),
+                "classificationMethod": semantic.get("classificationMethod"),
+            }
+        return entry
 
     def list_versions(self, dataset_id: str) -> list[DatasetVersion]:
         self.get_dataset(dataset_id)
@@ -640,8 +801,20 @@ class DatasetService:
                     kind=VersionKind.RAW,
                     status=VersionStatus.READY,
                     storage_path=path_str,
-                    schema={"type": "raw", "format": (fmt or DetectedFormat.UNKNOWN).value, "discovered": True},
-                    metadata={"pathKey": path_key, "noCopy": True},
+                    schema=_raw_version_schema(
+                        detected=fmt or DetectedFormat.UNKNOWN,
+                        path=path_str,
+                        extra={"discovered": True},
+                    ),
+                    metadata={
+                        "pathKey": path_key,
+                        "noCopy": True,
+                        **(
+                            {"storageFormat": sf}
+                            if (sf := _honest_storage_format(path=path_str, detected=fmt))
+                            else {}
+                        ),
+                    },
                 )
                 if size is not None:
                     self.store.update_version(ver.version_id, byte_size=size)
@@ -676,8 +849,20 @@ class DatasetService:
                 kind=VersionKind.RAW,
                 status=VersionStatus.READY,
                 storage_path=path_str,
-                schema={"type": "raw", "format": (fmt or DetectedFormat.UNKNOWN).value, "discovered": True},
-                metadata={"pathKey": path_key, "noCopy": True},
+                schema=_raw_version_schema(
+                    detected=fmt or DetectedFormat.UNKNOWN,
+                    path=path_str,
+                    extra={"discovered": True},
+                ),
+                metadata={
+                    "pathKey": path_key,
+                    "noCopy": True,
+                    **(
+                        {"storageFormat": sf}
+                        if (sf := _honest_storage_format(path=path_str, detected=fmt))
+                        else {}
+                    ),
+                },
             )
             if size is not None:
                 self.store.update_version(ver.version_id, byte_size=size)
@@ -829,9 +1014,7 @@ class DatasetService:
         return updated
 
     def brain_library_entry(self, ds: DatasetRecord) -> dict[str, Any]:
-        entry = ds.public_dict()
-        learning = self.learning_state_for_dataset(ds.dataset_id)
-        # brain projection is embedded in learning state; avoid double recompute.
+        entry = self._enrich_dataset_public(ds.public_dict(), ds)
         from .learning_state import compute_dataset_learning_state
 
         state = compute_dataset_learning_state(
@@ -1484,7 +1667,47 @@ class DatasetService:
                     continue
         except Exception:  # noqa: BLE001
             pass
+        # W170: sweep orphan prepared temps under corpus data-plane roots.
+        try:
+            self.reconcile_data_plane_orphans()
+        except Exception:  # noqa: BLE001 — orphan sweep must not block job reconcile
+            pass
         return updated
+
+    def reconcile_data_plane_orphans(
+        self,
+        *,
+        grace_seconds: int | None = None,
+        max_scan: int = 10_000,
+    ) -> dict[str, Any]:
+        """Delete unreferenced ``.*.prepared.tmp`` (and similar) under corpus roots."""
+        import os
+
+        if grace_seconds is None:
+            raw = (os.getenv("LEVIATHAN_DATASET_ORPHAN_GRACE_SECONDS") or "").strip()
+            try:
+                grace_seconds = int(raw) if raw else 3600
+            except ValueError:
+                grace_seconds = 3600
+        referenced: set[str] = set()
+        try:
+            for ds in self.store.list_datasets(limit=5_000):
+                for ver in self.store.list_versions(ds.dataset_id):
+                    if ver.storage_path:
+                        referenced.add(str(ver.storage_path))
+        except Exception:  # noqa: BLE001
+            pass
+        roots = [
+            Path(self.corpus.datasets_processed),
+            Path(self.corpus.datasets_exports),
+            Path(self.corpus.datasets_materialized),
+        ]
+        return reconcile_orphans(
+            roots,
+            referenced_paths=referenced,
+            grace_seconds=max(0, int(grace_seconds)),
+            max_scan=max_scan,
+        )
 
     # --- Synchronous helpers for tests / API ---
 
@@ -1513,8 +1736,10 @@ class DatasetService:
         ver = self.get_version(version_id)
         if not ver.storage_path:
             raise DatasetError("Version has no storage path", code="no_storage", http_status=400)
-        records = load_materialized_jsonl(Path(ver.storage_path))
-        return scan_records_pii(records)
+        return scan_records_pii(
+            self.iter_version_records(version_id),
+            max_findings=self.memory_policy.max_findings,
+        )
 
     # --- Job handlers ---
 
@@ -1545,6 +1770,22 @@ class DatasetService:
                 break
         if preferred is None and versions:
             preferred = versions[0]
+        meta = ds.metadata if isinstance(ds.metadata, dict) else {}
+        semantic = meta.get("semanticProfile") if isinstance(meta.get("semanticProfile"), dict) else None
+        display_name = meta.get("displayName") or (semantic or {}).get("displayName") or ds.name
+        display_source = meta.get("displayNameSource") or (semantic or {}).get("displayNameSource")
+        versions_summary = [
+            {
+                "versionId": v.version_id,
+                "versionLabel": v.version_label,
+                "status": v.status.value if hasattr(v.status, "value") else str(v.status),
+                "kind": v.kind.value if hasattr(v.kind, "value") else str(v.kind),
+                "contentHash": v.content_hash,
+                "rowCount": v.row_count,
+                "byteSize": v.byte_size,
+            }
+            for v in versions[:20]
+        ]
         directory = self._sidecar_directory_for(ds)
         payload = build_sidecar_payload(
             dataset_id=ds.dataset_id,
@@ -1562,8 +1803,507 @@ class DatasetService:
             provenance=ds.provenance,
             created_at=ds.created_at,
             updated_at=ds.updated_at,
+            display_name=str(display_name) if display_name else ds.name,
+            display_name_source=str(display_source) if display_source else None,
+            semantic_profile=semantic,
+            versions=versions_summary,
         )
         return write_sidecar(directory, payload)
+
+    def build_bounded_profile(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        limits: ProfilerLimits | None = None,
+    ) -> BoundedDatasetEvidence:
+        """Collect bounded streaming evidence for semantic enrichment."""
+        ds = self.get_dataset(dataset_id)
+        ver = self.get_version(version_id)
+        if ver.dataset_id != dataset_id:
+            raise DatasetError(
+                "Version does not belong to dataset",
+                code="version_dataset_mismatch",
+                http_status=400,
+            )
+        classification = None
+        try:
+            existing = self.get_dataset_classification(dataset_id, version_id=version_id)
+            if existing is not None:
+                classification = existing.public_dict()
+        except Exception:  # noqa: BLE001
+            classification = None
+        files = [f.public_dict() for f in self.store.list_files(dataset_id)]
+        profiler = BoundedDatasetProfiler(limits or ProfilerLimits())
+        return profiler.profile(
+            dataset=ds,
+            version=ver,
+            record_iter=self.iter_version_records(version_id) if ver.storage_path else None,
+            trading_classification=classification,
+            files=files,
+            max_record_bytes=self.memory_policy.max_record_bytes,
+        )
+
+    def enrich_semantic_deterministic(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        sync_artifacts: bool = False,
+    ) -> dict[str, Any]:
+        """Deterministic semantic enrichment — persists profile into dataset metadata."""
+        evidence = self.build_bounded_profile(dataset_id, version_id)
+        profile = enrich_from_evidence(evidence, model=None, prefer_model=False)
+        patch = profile_to_metadata_patch(profile)
+        ds = self.get_dataset(dataset_id)
+        meta = dict(ds.metadata or {})
+        meta.update(patch)
+        self.store.update_dataset(dataset_id, metadata=meta)
+        ver = self.get_version(version_id)
+        vmeta = dict(ver.metadata or {})
+        vmeta["semanticProfile"] = profile.public_dict()
+        self.store.update_version(version_id, metadata=vmeta)
+        result = {
+            "datasetId": dataset_id,
+            "versionId": version_id,
+            "semanticProfile": profile.public_dict(),
+            "idempotencyKey": build_idempotency_key(
+                dataset_id,
+                version_id,
+                evidence.content_hash or ds.content_hash,
+            ),
+        }
+        if sync_artifacts:
+            result["recovery"] = self.sync_recovery_artifacts(dataset_id)
+        return result
+
+    def sync_recovery_artifacts(self, dataset_id: str) -> dict[str, Any]:
+        """Write sidecar + refresh derived global catalog entry/snapshot."""
+        ds = self.get_dataset(dataset_id)
+        sidecar_path = self.write_dataset_sidecar(dataset_id)
+        versions = [v.public_dict() for v in self.store.list_versions(dataset_id)]
+        try:
+            catalog_doc = refresh_catalog_entry(
+                self.corpus,
+                ds.public_dict(),
+                versions=versions,
+                store=self.store,
+            )
+            catalog_ok = True
+            catalog_error = None
+        except Exception as exc:  # noqa: BLE001 — catalog is derived; never corrupt DB
+            catalog_doc = None
+            catalog_ok = False
+            catalog_error = redact_secrets(str(exc))
+        return {
+            "datasetId": dataset_id,
+            "sidecarPath": str(sidecar_path) if sidecar_path else None,
+            "catalogPath": str(catalog_path(self.corpus)),
+            "catalogOk": catalog_ok,
+            "catalogError": catalog_error,
+            "catalogEntryCount": (catalog_doc or {}).get("entryCount"),
+            "truth": {
+                "catalogIsDerived": True,
+                "datasetStoreIsCanonical": True,
+                "sidecarsAreRecoveryEvidence": True,
+            },
+        }
+
+    def enqueue_enrich_metadata(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        sync_artifacts: bool = True,
+    ) -> DatasetJob:
+        """Queue deterministic semantic enrichment for a dataset version."""
+        self.get_dataset(dataset_id)
+        ver = self.get_version(version_id)
+        if ver.dataset_id != dataset_id:
+            raise DatasetError(
+                "Version does not belong to dataset",
+                code="version_dataset_mismatch",
+                http_status=400,
+            )
+        return self._queue_domain_job(
+            job_type=DatasetJobType.ENRICH_METADATA,
+            dataset_id=dataset_id,
+            version_id=version_id,
+            config={"sync_artifacts": bool(sync_artifacts)},
+        )
+
+    def apply_semantic_override(
+        self,
+        dataset_id: str,
+        overrides: dict[str, Any],
+        *,
+        version_id: str | None = None,
+        sync_artifacts: bool = True,
+    ) -> dict[str, Any]:
+        """Operator PATCH for displayName / category / tags — precedence over model/heuristic."""
+        ds = self.get_dataset(dataset_id)
+        meta = dict(ds.metadata or {})
+        existing = meta.get("semanticProfile") if isinstance(meta.get("semanticProfile"), dict) else {}
+        if existing:
+            profile = merge_operator_overrides(existing, overrides)
+        else:
+            from .semantic_types import DatasetCategory, DatasetSemanticProfile, DisplayNameSource
+
+            base = DatasetSemanticProfile(
+                display_name=str(overrides.get("displayName") or ds.name)[:160],
+                display_name_source=DisplayNameSource.OPERATOR,
+                primary_category=DatasetCategory.GENERAL,
+                secondary_category=None,
+                category_path=[DatasetCategory.GENERAL.value],
+                tags=[],
+                subjects=[],
+                summary="",
+                confidence=1.0,
+                review_required=False,
+                classification_method="OPERATOR",
+                model_status="NOT_REQUESTED",
+                model_provenance={},
+                operator_overrides={},
+                truth={"operatorOverridesWin": True},
+                source_dataset_id=dataset_id,
+                source_version_id=version_id,
+                source_content_hash=ds.content_hash,
+            )
+            profile = merge_operator_overrides(base, overrides)
+        patch = profile_to_metadata_patch(profile)
+        meta.update(patch)
+        self.store.update_dataset(dataset_id, metadata=meta)
+        ver = None
+        if version_id:
+            ver = self.get_version(version_id)
+        else:
+            ver = self.pick_usable_version(dataset_id)
+        if ver is not None:
+            vmeta = dict(ver.metadata or {})
+            vmeta["semanticProfile"] = profile.public_dict()
+            self.store.update_version(ver.version_id, metadata=vmeta)
+        result = {
+            "datasetId": dataset_id,
+            "versionId": ver.version_id if ver else None,
+            "semanticProfile": profile.public_dict(),
+            "dataset": self.public_dataset(dataset_id),
+            "truth": {"operatorOverridesWin": True},
+        }
+        if sync_artifacts:
+            result["recovery"] = self.sync_recovery_artifacts(dataset_id)
+        return result
+
+    def catalog_status(self) -> dict[str, Any]:
+        """Soft-read derived global catalog status (never mutates DB)."""
+        path = catalog_path(self.corpus)
+        status = read_catalog_status(path)
+        status["truth"] = {
+            **default_recovery_truth(),
+            **dict(status.get("truth") or {}),
+        }
+        return status
+
+    def reconcile_catalog(self, *, rebuild: bool = False) -> dict[str, Any]:
+        """Refresh derived catalog from DatasetStore (optional full rebuild)."""
+        if rebuild:
+            return self.rebuild_dataset_catalog()
+        document = build_catalog_from_store(self.store, self.corpus)
+        path = write_catalog(catalog_path(self.corpus), document)
+        return {
+            "path": str(path),
+            "entryCount": document.get("entryCount"),
+            "schemaVersion": document.get("schemaVersion"),
+            "truth": document.get("truth"),
+        }
+
+    def assess_dataset_recovery(self, dataset_id: str) -> dict[str, Any]:
+        """Typed recovery assessment. Brain state from DatasetLearningState only."""
+        assessment = self._assess_dataset_recovery(dataset_id)
+        return assessment.public_dict()
+
+    def _assess_dataset_recovery(self, dataset_id: str) -> DatasetRecoveryAssessment:
+        ds = self.store.get_dataset(dataset_id)
+        sidecar_dir = self._dataset_dirs(dataset_id)["raw"]
+        tomb = tombstone_path_for(sidecar_dir)
+        if tomb.is_file() and ds is None:
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.UNSUPPORTED,
+                evidence_source="tombstone",
+                tombstoned=True,
+                detail="Tombstone present; resurrection blocked",
+                truth=default_recovery_truth(),
+            )
+
+        catalog_entry = None
+        catalog_ok = False
+        try:
+            cat = read_catalog(catalog_path(self.corpus))
+            catalog_ok = True
+            for entry in cat.get("entries") or []:
+                if str(entry.get("datasetId") or "") == dataset_id:
+                    catalog_entry = entry
+                    break
+        except CatalogError:
+            catalog_ok = False
+            catalog_entry = None
+
+        sidecar = read_sidecar(sidecar_dir / SIDECAR_FILENAME)
+        if sidecar is None and ds is not None and ds.raw_path:
+            try:
+                raw = Path(ds.raw_path)
+                parent = raw if raw.is_dir() else raw.parent
+                sidecar = read_sidecar(parent / SIDECAR_FILENAME)
+            except OSError:
+                sidecar = None
+
+        # Precedence: DB → sidecar → catalog → filesystem
+        evidence_source = None
+        if ds is not None:
+            evidence_source = "db"
+        elif sidecar is not None:
+            evidence_source = "sidecar"
+        elif catalog_entry is not None:
+            evidence_source = "catalog"
+        else:
+            evidence_source = "filesystem"
+
+        display_name = None
+        content_hash = None
+        raw_path = None
+        if ds is not None:
+            meta = ds.metadata if isinstance(ds.metadata, dict) else {}
+            semantic = meta.get("semanticProfile") if isinstance(meta.get("semanticProfile"), dict) else {}
+            display_name = meta.get("displayName") or semantic.get("displayName") or ds.name
+            content_hash = ds.content_hash
+            raw_path = ds.raw_path
+        if display_name is None and sidecar:
+            display_name = sidecar.get("displayName") or sidecar.get("name")
+            content_hash = content_hash or sidecar.get("contentHash")
+            raw_path = raw_path or sidecar.get("rawPath")
+        if display_name is None and catalog_entry:
+            display_name = catalog_entry.get("displayName") or catalog_entry.get("name")
+            content_hash = content_hash or catalog_entry.get("contentHash")
+            raw_path = raw_path or catalog_entry.get("rawPath")
+
+        source_present = False
+        if raw_path:
+            try:
+                source_present = Path(raw_path).exists()
+            except OSError:
+                source_present = False
+        if not source_present and ds is not None:
+            files = self.store.list_files(dataset_id)
+            source_present = any(Path(f.path).exists() for f in files if f.path)
+
+        hash_ok: bool | None = None
+        conflicts: list[dict[str, Any]] = []
+        hashes = []
+        if ds is not None and ds.content_hash:
+            hashes.append(("db", ds.content_hash))
+        if sidecar and sidecar.get("contentHash"):
+            hashes.append(("sidecar", str(sidecar["contentHash"])))
+        if catalog_entry and catalog_entry.get("contentHash"):
+            hashes.append(("catalog", str(catalog_entry["contentHash"])))
+        if len(hashes) >= 2:
+            unique = {h for _, h in hashes}
+            if len(unique) > 1:
+                hash_ok = False
+                conflicts.append(
+                    {
+                        "reason": "content_hash_conflict",
+                        "hashes": {src: h for src, h in hashes},
+                    }
+                )
+            else:
+                hash_ok = True
+
+        if tomb.is_file():
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.UNSUPPORTED,
+                evidence_source=evidence_source,
+                source_present=source_present,
+                tombstoned=True,
+                conflicts=conflicts,
+                display_name=display_name,
+                detail="Tombstone present; dataset was deleted",
+                truth=default_recovery_truth(),
+            )
+
+        if ds is None and sidecar is None and catalog_entry is None:
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.UNSUPPORTED,
+                evidence_source=evidence_source,
+                source_present=source_present,
+                detail="No DB, sidecar, or catalog evidence",
+                truth={**default_recovery_truth(), "catalogReadable": catalog_ok},
+            )
+
+        if hash_ok is False:
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.HASH_MISMATCH,
+                evidence_source=evidence_source,
+                source_present=source_present,
+                content_hash_ok=False,
+                conflicts=conflicts,
+                display_name=display_name,
+                detail="Content hash conflict across recovery evidence",
+                truth=default_recovery_truth(),
+            )
+
+        if ds is not None and not source_present:
+            learning = self.learning_state_for_dataset(dataset_id)
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.SOURCE_MISSING,
+                evidence_source="db",
+                source_present=False,
+                content_hash_ok=hash_ok,
+                brain_learned=bool(learning.get("learned")),
+                reindex_required=False,
+                display_name=display_name,
+                learning_canonical_state=learning.get("canonicalState"),
+                detail="Catalog/DB row present but source files missing",
+                truth=default_recovery_truth(),
+            )
+
+        # Brain state MUST come from DatasetLearningState — never catalog.
+        brain_learned = False
+        learning_canonical = None
+        reindex_required = False
+        if ds is not None:
+            learning = self.learning_state_for_dataset(dataset_id)
+            brain_learned = bool(learning.get("learned"))
+            learning_canonical = learning.get("canonicalState")
+            indexes = self.store.list_indexes(dataset_id)
+            ready_indexes = [i for i in indexes if i.status == IndexStatus.READY]
+            if not ready_indexes and not brain_learned:
+                reindex_required = True
+            elif not ready_indexes:
+                reindex_required = True
+                brain_learned = False
+
+        metadata_restored = bool(
+            (ds is not None)
+            and (
+                (ds.provenance or {}).get("restoredFromSidecar")
+                or (ds.metadata or {}).get("restoredFromSidecar")
+                or (ds.metadata or {}).get("restoredFromCatalog")
+                or (ds.provenance or {}).get("restoredFromCatalog")
+            )
+        )
+
+        if ds is None:
+            # Evidence exists but not yet in DB — caller should reconcile.
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.UNSUPPORTED,
+                evidence_source=evidence_source,
+                source_present=source_present,
+                content_hash_ok=hash_ok,
+                display_name=display_name,
+                detail="Evidence present off-DB; run catalog/sidecar reconcile to restore",
+                truth={
+                    **default_recovery_truth(),
+                    "needsReconcile": True,
+                    "catalogReadable": catalog_ok,
+                },
+            )
+
+        if reindex_required:
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.REINDEX_REQUIRED,
+                evidence_source=evidence_source,
+                source_present=source_present,
+                metadata_restored=metadata_restored,
+                content_hash_ok=hash_ok if hash_ok is not None else True,
+                brain_learned=False,
+                reindex_required=True,
+                display_name=display_name,
+                learning_canonical_state=learning_canonical,
+                detail="Metadata present; Brain index missing — REINDEX_REQUIRED ≠ LEARNED",
+                truth=default_recovery_truth(),
+            )
+
+        if metadata_restored:
+            return DatasetRecoveryAssessment(
+                dataset_id=dataset_id,
+                state=RecoveryState.METADATA_RESTORED,
+                evidence_source=evidence_source,
+                source_present=source_present,
+                metadata_restored=True,
+                content_hash_ok=hash_ok if hash_ok is not None else True,
+                brain_learned=brain_learned,
+                reindex_required=False,
+                display_name=display_name,
+                learning_canonical_state=learning_canonical,
+                detail="Restored from sidecar/catalog evidence",
+                truth=default_recovery_truth(),
+            )
+
+        return DatasetRecoveryAssessment(
+            dataset_id=dataset_id,
+            state=RecoveryState.READY,
+            evidence_source="db",
+            source_present=source_present,
+            metadata_restored=False,
+            content_hash_ok=hash_ok if hash_ok is not None else True,
+            brain_learned=brain_learned,
+            reindex_required=False,
+            display_name=display_name,
+            learning_canonical_state=learning_canonical,
+            detail="Dataset present in DatasetStore with source available",
+            truth=default_recovery_truth(),
+        )
+
+    def enqueue_missing_semantic_profiles(self, *, limit: int = 25) -> dict[str, Any]:
+        """Bounded backfill: enqueue enrich_metadata for datasets lacking semanticProfile."""
+        limit = max(1, min(int(limit), 200))
+        enqueued: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        for ds in self.store.list_datasets(limit=10_000):
+            if len(enqueued) >= limit:
+                break
+            meta = ds.metadata if isinstance(ds.metadata, dict) else {}
+            semantic = meta.get("semanticProfile")
+            if isinstance(semantic, dict) and semantic.get("displayName") and semantic.get("primaryCategory"):
+                skipped.append({"datasetId": ds.dataset_id, "reason": "already_enriched"})
+                continue
+            ver = self.pick_usable_version(ds.dataset_id)
+            if ver is None or not ver.storage_path:
+                skipped.append({"datasetId": ds.dataset_id, "reason": "no_usable_version"})
+                continue
+            job = self.enqueue_enrich_metadata(ds.dataset_id, ver.version_id, sync_artifacts=True)
+            enqueued.append(
+                {
+                    "datasetId": ds.dataset_id,
+                    "versionId": ver.version_id,
+                    "jobId": job.job_id,
+                }
+            )
+        return {
+            "enqueued": enqueued,
+            "enqueuedCount": len(enqueued),
+            "skippedCount": len(skipped),
+            "skipped": skipped[:50],
+            "limit": limit,
+            "truth": {"boundedBackfill": True, "deterministicEnrichment": True},
+        }
+
+    def rebuild_dataset_catalog(self) -> dict[str, Any]:
+        """Full derived catalog rebuild from DatasetStore (never writes to DB)."""
+        document = build_catalog_from_store(self.store, self.corpus)
+        path = write_catalog(catalog_path(self.corpus), document)
+        return {
+            "path": str(path),
+            "entryCount": document.get("entryCount"),
+            "schemaVersion": document.get("schemaVersion"),
+            "truth": document.get("truth"),
+        }
 
     def learning_ladder_for_dataset(self, dataset_id: str) -> dict[str, Any]:
         """Honest capability ladder: disk file ≠ learned knowledge."""
@@ -1689,7 +2429,11 @@ class DatasetService:
         }
 
     def reconcile_sidecars(self, *, max_files: int = 2000) -> dict[str, Any]:
-        """Restore catalog rows from validated sidecars under allowed roots only."""
+        """Restore catalog rows from validated sidecars + derived catalog under allowed roots.
+
+        Precedence: existing DB wins; sidecars restore missing rows; catalog fills gaps;
+        tombstones still block resurrection. Brain state is never taken from catalog.
+        """
         from Data.modules.common.paths import normalize_path_key
 
         roots = [
@@ -1712,6 +2456,9 @@ class DatasetService:
         skipped_tombstone = 0
         conflicts: list[dict[str, Any]] = []
         restored_ids: list[str] = []
+        catalog_restored = 0
+        assessments: list[dict[str, Any]] = []
+        auto_reindex_jobs: list[str] = []
 
         for item in found:
             if item.get("tombstoned"):
@@ -1736,7 +2483,7 @@ class DatasetService:
                 data_files = [
                     p
                     for p in Path(raw_path).iterdir()
-                    if p.is_file() and p.name not in {SIDECAR_FILENAME, ".leviathan-dataset.deleted"}
+                    if p.is_file() and p.name not in {SIDECAR_FILENAME, TOMBSTONE_FILENAME}
                 ]
                 if len(data_files) == 1:
                     raw_path = str(data_files[0])
@@ -1754,6 +2501,20 @@ class DatasetService:
                         fmt = DetectedFormat(str(sidecar["detectedFormat"]))
                     except ValueError:
                         fmt = None
+                semantic = sidecar.get("semanticProfile") if isinstance(sidecar.get("semanticProfile"), dict) else None
+                meta: dict[str, Any] = {
+                    "restoredFromSidecar": True,
+                    "pathKey": normalize_path_key(raw_path),
+                    "sourcePath": raw_path,
+                }
+                if sidecar.get("displayName"):
+                    meta["displayName"] = sidecar["displayName"]
+                if sidecar.get("displayNameSource"):
+                    meta["displayNameSource"] = sidecar["displayNameSource"]
+                if semantic:
+                    meta["semanticProfile"] = semantic
+                    meta["primaryCategory"] = semantic.get("primaryCategory")
+                    meta["semanticTags"] = list(semantic.get("tags") or [])
                 ds = self.store.create_dataset(
                     name=name,
                     source_type=source_type,
@@ -1765,11 +2526,7 @@ class DatasetService:
                         "restoredFromSidecar": True,
                         "sidecarPath": item.get("path"),
                     },
-                    metadata={
-                        "restoredFromSidecar": True,
-                        "pathKey": normalize_path_key(raw_path),
-                        "sourcePath": raw_path,
-                    },
+                    metadata=meta,
                     status=DatasetStatus.RAW,
                     dataset_id=dataset_id,
                 )
@@ -1790,7 +2547,7 @@ class DatasetService:
                         storage_path=raw_path,
                         version_id=sidecar.get("versionId"),
                         schema={"type": "raw", "restoredFromSidecar": True},
-                        metadata={"restoredFromSidecar": True},
+                        metadata={"restoredFromSidecar": True, "semanticProfile": semantic},
                     )
                 created += 1
                 restored_ids.append(dataset_id)
@@ -1825,21 +2582,160 @@ class DatasetService:
                 continue
             meta = dict(existing.metadata or {})
             meta["sidecarPath"] = item.get("path")
+            # Fill missing semantic fields from sidecar without clobbering operator locks.
+            if sidecar.get("displayName") and not meta.get("displayName"):
+                meta["displayName"] = sidecar["displayName"]
+            if isinstance(sidecar.get("semanticProfile"), dict) and not meta.get("semanticProfile"):
+                meta["semanticProfile"] = sidecar["semanticProfile"]
+                meta.setdefault("primaryCategory", sidecar["semanticProfile"].get("primaryCategory"))
             self.store.update_dataset(existing.dataset_id, metadata=meta)
             updated += 1
+
+        # Catalog gap-fill: restore entries missing from DB when source/sidecar evidence exists.
+        try:
+            cat_status = read_catalog_status(catalog_path(self.corpus))
+            if cat_status.get("valid"):
+                for entry in cat_status["catalog"].get("entries") or []:
+                    ds_id = str(entry.get("datasetId") or "").strip()
+                    if not ds_id or self.store.get_dataset(ds_id) is not None:
+                        continue
+                    raw_rel = entry.get("rawPath")
+                    raw_candidate = None
+                    if raw_rel:
+                        cand = Path(self.corpus.root) / str(raw_rel)
+                        if not cand.exists():
+                            cand = Path(str(raw_rel))
+                        raw_candidate = cand if cand.exists() else None
+                    # Prefer sidecar under datasets_raw/{id}
+                    raw_dir = self.corpus.datasets_raw / ds_id
+                    if tombstone_path_for(raw_dir).is_file():
+                        skipped_tombstone += 1
+                        continue
+                    sc = read_sidecar(raw_dir / SIDECAR_FILENAME)
+                    if sc is None and raw_candidate is not None:
+                        parent = raw_candidate if raw_candidate.is_dir() else raw_candidate.parent
+                        if tombstone_path_for(parent).is_file():
+                            skipped_tombstone += 1
+                            continue
+                        sc = read_sidecar(parent / SIDECAR_FILENAME)
+                    if sc is None and raw_candidate is None:
+                        conflicts.append(
+                            {
+                                "datasetId": ds_id,
+                                "reason": "catalog_entry_source_missing",
+                                "rawPath": raw_rel,
+                            }
+                        )
+                        continue
+                    name = str((sc or {}).get("name") or entry.get("name") or ds_id)
+                    raw_path = str(
+                        (sc or {}).get("rawPath")
+                        or (raw_candidate if raw_candidate else raw_dir)
+                    )
+                    source_type_raw = (sc or {}).get("sourceType") or entry.get("sourceType") or "local"
+                    try:
+                        source_type = SourceType(str(source_type_raw))
+                    except ValueError:
+                        source_type = SourceType.LOCAL
+                    semantic = None
+                    if sc and isinstance(sc.get("semanticProfile"), dict):
+                        semantic = sc["semanticProfile"]
+                    meta = {
+                        "restoredFromCatalog": True,
+                        "restoredFromSidecar": bool(sc),
+                        "pathKey": normalize_path_key(raw_path),
+                        "sourcePath": raw_path,
+                        "displayName": (sc or {}).get("displayName") or entry.get("displayName") or name,
+                        "displayNameSource": (sc or {}).get("displayNameSource")
+                        or entry.get("displayNameSource"),
+                        "primaryCategory": entry.get("primaryCategory"),
+                        "semanticTags": list(entry.get("tags") or []),
+                    }
+                    if semantic:
+                        meta["semanticProfile"] = semantic
+                    self.store.create_dataset(
+                        name=name,
+                        source_type=source_type,
+                        description="Restored from derived catalog + recovery evidence",
+                        original_filename=(sc or {}).get("originalFilename")
+                        or entry.get("originalFilename"),
+                        original_uri=(sc or {}).get("originalUri"),
+                        provenance={
+                            "restoredFromCatalog": True,
+                            "restoredFromSidecar": bool(sc),
+                        },
+                        metadata=meta,
+                        status=DatasetStatus.RAW,
+                        dataset_id=ds_id,
+                    )
+                    self.store.update_dataset(
+                        ds_id,
+                        raw_path=raw_path,
+                        content_hash=(sc or {}).get("contentHash") or entry.get("contentHash"),
+                        byte_size=(sc or {}).get("byteSize") or entry.get("byteSize"),
+                        row_count=(sc or {}).get("rowCount") or entry.get("rowCount"),
+                    )
+                    if Path(raw_path).exists():
+                        self.store.create_version(
+                            dataset_id=ds_id,
+                            version_label=str((sc or {}).get("versionLabel") or "catalog-restored"),
+                            kind=VersionKind.RAW,
+                            status=VersionStatus.READY,
+                            storage_path=raw_path,
+                            schema={"type": "raw", "restoredFromCatalog": True},
+                            metadata={"restoredFromCatalog": True, "semanticProfile": semantic},
+                        )
+                    created += 1
+                    catalog_restored += 1
+                    restored_ids.append(ds_id)
+            elif cat_status.get("valid") is False:
+                conflicts.append(
+                    {
+                        "reason": "corrupt_catalog",
+                        "code": cat_status.get("code"),
+                        "error": cat_status.get("error"),
+                        "path": cat_status.get("path"),
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 — catalog is derived; never corrupt DB
+            conflicts.append({"reason": "catalog_reconcile_error", "error": redact_secrets(str(exc))})
+
+        # Assess restored / known datasets; optionally enqueue reindex (default off).
+        for ds_id in restored_ids[:50]:
+            try:
+                assessment = self.assess_dataset_recovery(ds_id)
+                assessments.append(assessment)
+                if (
+                    self.datasets_recovery_auto_reindex
+                    and assessment.get("reindexRequired")
+                    and len(auto_reindex_jobs) < self.datasets_recovery_max_auto_jobs
+                ):
+                    ver = self.pick_usable_version(ds_id)
+                    if ver is not None:
+                        job = self.enqueue_index(ds_id, ver.version_id)
+                        auto_reindex_jobs.append(job.job_id)
+            except DatasetError:
+                continue
 
         return {
             "scanned": len(found),
             "created": created,
             "updated": updated,
             "skippedTombstone": skipped_tombstone,
+            "catalogRestored": catalog_restored,
             "conflicts": conflicts,
             "restoredDatasetIds": restored_ids,
+            "assessments": assessments,
+            "autoReindexJobIds": auto_reindex_jobs,
             "truth": {
                 "sidecar_does_not_replace_catalog": True,
                 "tombstones_block_auto_restore": True,
                 "allowed_roots_only": True,
                 "no_invented_names_or_provenance": True,
+                "recoveryPrecedence": ["db", "sidecar", "catalog", "filesystem"],
+                "brainStateNotFromCatalog": True,
+                "catalogIsDerived": True,
+                "autoReindexDefaultOff": not self.datasets_recovery_auto_reindex,
             },
         }
 
@@ -1924,7 +2820,7 @@ class DatasetService:
             kind=VersionKind.RAW,
             status=VersionStatus.READY,
             storage_path=str(dest),
-            schema={"type": "raw", "format": detection.format.value},
+            schema=_raw_version_schema(detected=detection.format, path=dest),
         )
         self.store.update_version(
             raw_version.version_id,
@@ -2115,7 +3011,7 @@ class DatasetService:
             kind=VersionKind.RAW,
             status=VersionStatus.READY,
             storage_path=str(downloaded.path),
-            schema={"type": "raw", "format": detection.format.value},
+            schema=_raw_version_schema(detected=detection.format, path=downloaded.path),
         )
         self.store.update_version(raw_version.version_id, content_hash=digest, byte_size=size)
         result: dict[str, Any] = {
@@ -2264,14 +3160,26 @@ class DatasetService:
             },
         )
         write_repo_manifest(manifest_path, manifest)
+        repo_extra: dict[str, Any] = {
+            "formats": sorted(formats_seen),
+            "fileCount": len(sources),
+        }
+        # Honest storageFormat only when the repository is unambiguously one plane.
+        if formats_seen == {"parquet"}:
+            repo_extra["storageFormat"] = "parquet"
+        elif formats_seen and formats_seen <= {"jsonl", "ndjson"}:
+            repo_extra["storageFormat"] = "jsonl"
         raw_version = self.store.create_version(
             dataset_id=job.dataset_id,
             version_label="raw-v1",
             kind=VersionKind.RAW,
             status=VersionStatus.READY,
             storage_path=str(raw_root),
-            schema={"type": "raw", "formats": sorted(formats_seen), "fileCount": len(sources)},
-            metadata={"files": [s["relativePath"] for s in sources]},
+            schema={"type": "raw", **repo_extra},
+            metadata={
+                "files": [s["relativePath"] for s in sources],
+                **({"storageFormat": repo_extra["storageFormat"]} if "storageFormat" in repo_extra else {}),
+            },
         )
         self.store.update_version(raw_version.version_id, byte_size=total_bytes)
         result: dict[str, Any] = {
@@ -2345,7 +3253,9 @@ class DatasetService:
             kind=VersionKind.MATERIALIZED,
             status=VersionStatus.READY if validation.get("valid") else VersionStatus.FAILED,
             storage_path=str(dest),
-            schema=canonical_schema_dict(),
+            # Materialize always publishes canonical JSONL (never force Parquet).
+            schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
+            metadata={"storageFormat": "jsonl"},
         )
         self.store.update_version(
             version.version_id,
@@ -2522,28 +3432,36 @@ class DatasetService:
         return self._materialize_dataset(job.dataset_id, raw_path=Path(ds.raw_path), fmt=fmt)
 
     def _load_version_records(self, version_id: str) -> tuple[DatasetVersion, list]:
+        """Compatibility helper — refused for large files; prefer ``iter_version_records``."""
         ver = self.get_version(version_id)
         if not ver.storage_path:
             raise DatasetError("Version has no storage", code="no_storage")
-        return ver, load_materialized_jsonl(Path(ver.storage_path))
+        return ver, load_materialized_jsonl(
+            Path(ver.storage_path),
+            max_bytes=self.memory_policy.full_load_refuse_bytes,
+        )
 
-    def _write_derived_version(
+    def _write_derived_version_stream(
         self,
         *,
         dataset_id: str,
         parent: DatasetVersion,
         label: str,
         kind: VersionKind,
-        records: list,
+        records,
         lineage_extra: list[dict[str, Any]] | None = None,
         split: dict[str, Any] | None = None,
         token_stats: dict[str, Any] | None = None,
         validation: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> DatasetVersion:
+        """Stream-write a derived version from an iterable (no full corpus list required)."""
         dirs = self._dataset_dirs(dataset_id)
         dest = dirs["processed"] / f"{label}.jsonl"
-        content_hash, byte_size, row_count = write_canonical_jsonl(records, dest)
+        outcome = write_canonical_jsonl_stream(records, dest, validate=False)
+        content_hash = outcome["contentHash"]
+        byte_size = outcome["byteSize"]
+        row_count = outcome["rowCount"]
         lineage = list(parent.transform_lineage) + list(lineage_extra or [])
         version = self.store.create_version(
             dataset_id=dataset_id,
@@ -2552,10 +3470,18 @@ class DatasetService:
             parent_version_id=parent.version_id,
             status=VersionStatus.READY,
             storage_path=str(dest),
-            schema=canonical_schema_dict(),
+            schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
             transform_lineage=lineage,
             metadata=metadata,
         )
+        val_report = validation
+        if val_report is None:
+            val_report = validate_records(
+                iter_version_records(
+                    dest,
+                    max_record_bytes=self.memory_policy.max_record_bytes,
+                )
+            )
         self.store.update_version(
             version.version_id,
             content_hash=content_hash,
@@ -2563,7 +3489,7 @@ class DatasetService:
             row_count=row_count,
             split=split or {},
             token_stats=token_stats or {},
-            validation=validation or validate_records(records),
+            validation=val_report,
             transform_lineage=lineage,
         )
         self.store.add_file(
@@ -2582,12 +3508,598 @@ class DatasetService:
         )
         return ready
 
+    def _write_derived_version(
+        self,
+        *,
+        dataset_id: str,
+        parent: DatasetVersion,
+        label: str,
+        kind: VersionKind,
+        records: list,
+        lineage_extra: list[dict[str, Any]] | None = None,
+        split: dict[str, Any] | None = None,
+        token_stats: dict[str, Any] | None = None,
+        validation: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> DatasetVersion:
+        return self._write_derived_version_stream(
+            dataset_id=dataset_id,
+            parent=parent,
+            label=label,
+            kind=kind,
+            records=records,
+            lineage_extra=lineage_extra,
+            split=split,
+            token_stats=token_stats,
+            validation=validation,
+            metadata=metadata,
+        )
+
+    def _compute_backend_planner(self) -> ComputeBackendPlanner:
+        if self._compute_planner is None:
+            self._compute_planner = ComputeBackendPlanner(
+                policy=self.memory_policy,
+                settings=self.settings,
+            )
+        return self._compute_planner
+
+    def _native_compute_runner(self):
+        from Data.modules.workers.native_compute import NativeComputeRunner
+
+        if self._native_runner is None:
+            self._native_runner = NativeComputeRunner()
+        return self._native_runner
+
+    def _scratch_root_for_job(self, job: DatasetJob) -> Path | None:
+        try:
+            return self.scratch_manager.open_session(job.job_id).root
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _begin_streaming_checkpoint(
+        self,
+        job: DatasetJob,
+        *,
+        operation: str,
+        input_path: Path,
+        options: dict[str, Any] | None = None,
+        input_hash: str | None = None,
+        backend: str = BACKEND_PYTHON_STREAMING,
+    ) -> tuple[Any, Path | None, int, bool]:
+        digest = input_hash or compute_input_hash(input_path)
+        fingerprint = compute_operation_fingerprint(
+            input_hash=digest, operation=operation, options=options
+        )
+        root = self._scratch_root_for_job(job)
+        existing = load_checkpoint(root) if root is not None else None
+        if existing is not None and existing.input_hash and existing.input_hash != digest:
+            if root is not None:
+                invalidate_checkpoint(root)
+            existing = None
+        skip, resumed = resolve_resume_skip(
+            existing, fingerprint=fingerprint, input_hash=digest
+        )
+        if existing is not None and not can_resume(
+            existing, fingerprint=fingerprint, input_hash=digest
+        ):
+            if root is not None:
+                invalidate_checkpoint(root)
+            skip, resumed = 0, False
+        ckpt = build_checkpoint(
+            input_hash=digest,
+            operation=operation,
+            options=options,
+            phase="streaming",
+            records_processed=skip if resumed else 0,
+            backend=backend,
+            memory_budget=self.memory_policy.memory_budget_bytes,
+            spill_bytes=CKPT_UNMEASURED,
+            peak_memory=CKPT_UNMEASURED,
+            throughput=CKPT_UNMEASURED,
+            resumed=resumed,
+        )
+        if root is not None:
+            save_checkpoint(root, ckpt)
+        self.store.update_job(
+            job.job_id,
+            phase=ckpt.phase,
+            checkpoint={**(job.checkpoint or {}), "streaming": ckpt.to_dict()},
+            progress=0.05 if not resumed else min(0.95, 0.05 + skip * 1e-6),
+        )
+        return ckpt, root, skip, resumed
+
+    def _persist_streaming_progress(
+        self,
+        job: DatasetJob,
+        ckpt: Any,
+        root: Path | None,
+        *,
+        records_processed: int,
+        phase: str | None = None,
+        started_at: float | None = None,
+    ) -> None:
+        import time as _time
+
+        ckpt.records_processed = int(records_processed)
+        if phase:
+            ckpt.phase = phase
+        if started_at is not None:
+            elapsed_ms = max(0.0, (_time.monotonic() - started_at) * 1000.0)
+            ckpt.duration_ms = elapsed_ms
+            ckpt.throughput = throughput_records_per_sec(records_processed, elapsed_ms)
+        if root is not None:
+            save_checkpoint(root, ckpt)
+        progress = min(0.95, 0.05 + (records_processed / max(records_processed + 1, 1)) * 0.9)
+        self.store.update_job(
+            job.job_id,
+            phase=ckpt.phase,
+            progress=progress,
+            checkpoint={**(job.checkpoint or {}), "streaming": ckpt.to_dict()},
+        )
+
+    def _finish_streaming_checkpoint(
+        self,
+        job: DatasetJob,
+        ckpt: Any,
+        root: Path | None,
+        *,
+        records_processed: int,
+        phase: str = "done",
+        started_at: float | None = None,
+        peak_memory: int | str | None = None,
+        spill_bytes: int | str | None = None,
+    ) -> dict[str, Any]:
+        import time as _time
+
+        ckpt.records_processed = int(records_processed)
+        ckpt.phase = phase
+        if started_at is not None:
+            elapsed_ms = max(0.0, (_time.monotonic() - started_at) * 1000.0)
+            ckpt.duration_ms = elapsed_ms
+            ckpt.throughput = throughput_records_per_sec(records_processed, elapsed_ms)
+        if peak_memory is not None:
+            ckpt.peak_memory = peak_memory
+        if spill_bytes is not None:
+            ckpt.spill_bytes = spill_bytes
+        if root is not None:
+            save_checkpoint(root, ckpt)
+        obs = observability_fields(
+            backend=ckpt.backend,
+            phase=ckpt.phase,
+            records_processed=ckpt.records_processed,
+            peak_memory=ckpt.peak_memory,
+            memory_budget=ckpt.memory_budget,
+            spill_bytes=ckpt.spill_bytes,
+            throughput=ckpt.throughput,
+            duration_ms=ckpt.duration_ms,
+            resumed=ckpt.resumed,
+        )
+        self.store.update_job(
+            job.job_id,
+            phase=phase,
+            checkpoint={**(job.checkpoint or {}), "streaming": ckpt.to_dict()},
+        )
+        return obs
+
+    @staticmethod
+    def _observability_from_native(
+        *,
+        plan: BackendPlan,
+        native_info: dict[str, Any] | None,
+        fallback_reason: str | None,
+        phase: str,
+    ) -> dict[str, Any]:
+        receipt = {}
+        if native_info and isinstance(native_info.get("receipt"), dict):
+            receipt = native_info["receipt"]
+        backend = (
+            BACKEND_RUST_NATIVE
+            if native_info
+            else normalize_backend_label(plan.backend.value) or BACKEND_PYTHON_STREAMING
+        )
+        records = receipt.get("recordsOut")
+        if records is None:
+            records = receipt.get("recordsIn")
+        peak = receipt.get("peakRssBytes")
+        spill = receipt.get("spillBytes")
+        duration = receipt.get("durationMs")
+        return observability_fields(
+            backend=backend,
+            phase=phase,
+            records_processed=int(records) if records is not None else None,
+            peak_memory=peak if peak is not None else CKPT_UNMEASURED,
+            memory_budget=CKPT_UNMEASURED,
+            spill_bytes=spill if spill is not None else CKPT_UNMEASURED,
+            throughput=throughput_records_per_sec(
+                int(records or 0),
+                float(duration) if duration is not None else None,
+            )
+            if records is not None and duration is not None
+            else CKPT_UNMEASURED,
+            duration_ms=duration if duration is not None else CKPT_UNMEASURED,
+            fallback_reason=fallback_reason,
+        )
+
+    def _plan_compute_backend(
+        self,
+        operation: str,
+        *,
+        input_path: str | Path | None = None,
+        input_bytes: int | None = None,
+        force_backend: str | None = None,
+    ) -> BackendPlan:
+        return self._compute_backend_planner().plan(
+            operation,
+            input_path=input_path,
+            input_bytes=input_bytes,
+            force_backend=force_backend,
+        )
+
+    def _semantic_metadata_for_derived(
+        self,
+        parent: DatasetVersion,
+        *,
+        content_preserving: bool,
+        op_name: str,
+    ) -> dict[str, Any]:
+        """Copy parent semantic profile for content-preserving ops; else mark enrichment."""
+        parent_meta = dict(parent.metadata or {})
+        parent_semantic = parent_meta.get("semanticProfile")
+        if not isinstance(parent_semantic, dict):
+            ds = self.store.get_dataset(parent.dataset_id)
+            if ds is not None:
+                ds_meta = ds.metadata if isinstance(ds.metadata, dict) else {}
+                parent_semantic = ds_meta.get("semanticProfile")
+        out: dict[str, Any] = {
+            "parentVersionId": parent.version_id,
+            "derivedOperation": op_name,
+        }
+        if content_preserving and isinstance(parent_semantic, dict):
+            out["semanticProfile"] = dict(parent_semantic)
+            out["semanticCopiedFromParent"] = True
+            out["enrichmentEligible"] = False
+        else:
+            out["enrichmentEligible"] = True
+            out["semanticNeedsEnrichment"] = True
+            if isinstance(parent_semantic, dict):
+                # Keep display hints but flag for re-analysis.
+                out["semanticProfileInherited"] = {
+                    "displayName": parent_semantic.get("displayName"),
+                    "primaryCategory": parent_semantic.get("primaryCategory"),
+                    "tags": list(parent_semantic.get("tags") or [])[:8],
+                }
+        return out
+
+    def _try_native_operation(
+        self,
+        *,
+        job: DatasetJob,
+        operation: str,
+        input_path: Path,
+        dest: Path,
+        options: dict[str, Any] | None = None,
+        force_backend: str | None = None,
+    ) -> tuple[dict[str, Any] | None, BackendPlan]:
+        """Attempt Rust native path. Returns (publish_info|None, plan).
+
+        On success: temporary output verified + atomically published to dest.
+        On failure/unavailable: returns (None, plan) with fallbackReason set.
+        """
+        plan = self._plan_compute_backend(
+            operation,
+            input_path=input_path,
+            force_backend=force_backend or (job.config or {}).get("forceBackend"),
+        )
+        if plan.backend != ComputeBackend.RUST_NATIVE:
+            return None, plan
+
+        runner = self._native_compute_runner()
+        if not runner.available:
+            return None, BackendPlan(
+                backend=ComputeBackend.PYTHON_STREAMING,
+                operation=operation,
+                native_mode=plan.native_mode,
+                input_bytes=plan.input_bytes,
+                rust_threshold_bytes=plan.rust_threshold_bytes,
+                native_status=plan.native_status,
+                fallback_reason=plan.fallback_reason or "native_unavailable",
+                detail=runner.capabilities().detail,
+            )
+
+        tmp = prepare_output_path(dest)
+        allowed = [
+            str(Path(self.corpus.root).resolve()),
+            str(Path(input_path).resolve().parent),
+            str(Path(dest).resolve().parent),
+        ]
+        limits = {
+            "memoryBytes": self.memory_policy.memory_budget_bytes,
+            "batchRows": self.memory_policy.batch_rows,
+            "maxRecordBytes": self.memory_policy.max_record_bytes,
+            "threads": self.memory_policy.thread_limit,
+            "spillBytes": self.memory_policy.spill_budget_bytes,
+        }
+        work_dir = None
+        try:
+            session = self.scratch_manager.open_session(job.job_id)
+            work_dir = session.root / "native"
+            ensure_dir(work_dir)
+        except Exception:  # noqa: BLE001
+            work_dir = None
+
+        # W169: poll domain cancel into cancel_event so NativeComputeRunner kills the Rust child.
+        import threading
+
+        cancel_event = threading.Event()
+
+        def _watch_cancel() -> None:
+            while not cancel_event.wait(0.05):
+                try:
+                    if self.runner.is_cancel_requested(job.job_id):
+                        cancel_event.set()
+                        return
+                except Exception:  # noqa: BLE001
+                    return
+
+        watcher = threading.Thread(
+            target=_watch_cancel,
+            name=f"native-cancel-{job.job_id[:8]}",
+            daemon=True,
+        )
+        watcher.start()
+        try:
+            result = runner.run(
+                task_id=f"{job.job_id}:{operation}",
+                operation=operation,
+                input_path=input_path,
+                temporary_path=tmp,
+                limits=limits,
+                options=options or {},
+                content_hash=None,
+                allowed_roots=allowed,
+                work_dir=work_dir,
+                cancel_event=cancel_event,
+            )
+        except Exception as exc:  # noqa: BLE001
+            cancel_event.set()
+            tmp.unlink(missing_ok=True)
+            return None, BackendPlan(
+                backend=ComputeBackend.PYTHON_STREAMING,
+                operation=operation,
+                native_mode=plan.native_mode,
+                input_bytes=plan.input_bytes,
+                rust_threshold_bytes=plan.rust_threshold_bytes,
+                native_status=plan.native_status,
+                fallback_reason=f"native_exception:{type(exc).__name__}",
+                detail=redact_secrets(str(exc))[:500],
+            )
+        finally:
+            cancel_event.set()
+
+        if result.error_code == "NATIVE_CANCELLED" or self.runner.is_cancel_requested(job.job_id):
+            tmp.unlink(missing_ok=True)
+            raise DatasetError("cancelled", code="cancelled", http_status=409)
+
+        verified = runner.verify_output(result, temporary_path=tmp)
+        if not verified.get("ok"):
+            tmp.unlink(missing_ok=True)
+            return None, BackendPlan(
+                backend=ComputeBackend.PYTHON_STREAMING,
+                operation=operation,
+                native_mode=plan.native_mode,
+                input_bytes=plan.input_bytes,
+                rust_threshold_bytes=plan.rust_threshold_bytes,
+                native_status=plan.native_status,
+                fallback_reason=str(verified.get("errorCode") or result.error_code or "native_verify_failed"),
+                detail=str(verified.get("errorMessage") or result.error_message or "")[:500],
+            )
+
+        try:
+            published = publish_atomic(
+                tmp,
+                dest,
+                expected_hash=str(verified["contentHash"]),
+            )
+        except DatasetError as exc:
+            tmp.unlink(missing_ok=True)
+            return None, BackendPlan(
+                backend=ComputeBackend.PYTHON_STREAMING,
+                operation=operation,
+                native_mode=plan.native_mode,
+                input_bytes=plan.input_bytes,
+                rust_threshold_bytes=plan.rust_threshold_bytes,
+                native_status=plan.native_status,
+                fallback_reason=exc.code or "native_publish_failed",
+                detail=exc.message[:500] if hasattr(exc, "message") else str(exc)[:500],
+            )
+
+        info = {
+            **published,
+            "recordsOut": verified.get("recordsOut"),
+            "receipt": verified.get("receipt"),
+            "backend": ComputeBackend.RUST_NATIVE.value,
+            "backendPlan": plan.public_dict(),
+            "memoryEnforcement": getattr(result, "memory_enforcement", None)
+            or (verified.get("receipt") or {}).get("memoryEnforcement")
+            or self.memory_policy.enforcement,
+        }
+        return info, plan
+
+    def _commit_derived_version_from_file(
+        self,
+        *,
+        dataset_id: str,
+        parent: DatasetVersion,
+        label: str,
+        kind: VersionKind,
+        dest: Path,
+        content_hash: str,
+        byte_size: int,
+        row_count: int | None,
+        lineage_extra: list[dict[str, Any]] | None = None,
+        split: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        backend_info: dict[str, Any] | None = None,
+    ) -> DatasetVersion:
+        """Create BUILDING version, commit metadata, then mark READY (never READY early)."""
+        lineage = list(parent.transform_lineage) + list(lineage_extra or [])
+        meta = dict(metadata or {})
+        if backend_info:
+            meta["computeBackend"] = backend_info.get("backend")
+            meta["backendPlan"] = backend_info.get("backendPlan")
+            meta["nativeReceipt"] = {
+                k: backend_info.get("receipt", {}).get(k)
+                for k in (
+                    "protocolVersion",
+                    "taskId",
+                    "operation",
+                    "status",
+                    "recordsIn",
+                    "recordsOut",
+                    "durationMs",
+                    "contentHash",
+                )
+                if isinstance(backend_info.get("receipt"), dict)
+            }
+        version = self.store.create_version(
+            dataset_id=dataset_id,
+            version_label=label,
+            kind=kind,
+            parent_version_id=parent.version_id,
+            status=VersionStatus.BUILDING,
+            storage_path=str(dest),
+            schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
+            transform_lineage=lineage,
+            metadata=meta,
+        )
+        val_report = validate_records(
+            iter_version_records(
+                dest,
+                max_record_bytes=self.memory_policy.max_record_bytes,
+            )
+        )
+        # Metadata commit BEFORE READY.
+        self.store.update_version(
+            version.version_id,
+            content_hash=content_hash,
+            byte_size=byte_size,
+            row_count=row_count if row_count is not None else val_report.get("rowCount"),
+            split=split or {},
+            validation=val_report,
+            transform_lineage=lineage,
+            metadata=meta,
+        )
+        self.store.add_file(
+            dataset_id=dataset_id,
+            version_id=version.version_id,
+            role="processed",
+            path=str(dest),
+            content_hash=content_hash,
+            byte_size=byte_size,
+        )
+        ready = self.store.update_version(version.version_id, status=VersionStatus.READY)
+        self._maybe_auto_index_ready_version(
+            dataset_id,
+            ready.version_id,
+            validation=dict(ready.validation or {}),
+        )
+        return ready
+
     def _handle_validate(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        ver, records = self._load_version_records(job.version_id)
-        report = validate_records(records)
+        ver = self.get_version(job.version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        input_path = Path(ver.storage_path)
+        force_backend = (job.config or {}).get("forceBackend")
+        plan = self._plan_compute_backend(
+            "dataset.validate",
+            input_path=input_path,
+            force_backend=force_backend,
+        )
+        native_info = None
+        fallback_reason = plan.fallback_reason
+        if plan.backend == ComputeBackend.RUST_NATIVE:
+            # Validate does not publish a new artifact; run against a scratch temp.
+            try:
+                session = self.scratch_manager.open_session(job.job_id)
+                dest = session.root / "validate.out.jsonl"
+            except Exception:  # noqa: BLE001
+                dest = input_path.parent / f".validate-{job.job_id}.tmp"
+            ensure_dir(dest.parent)
+            native_info, plan = self._try_native_operation(
+                job=job,
+                operation="dataset.validate",
+                input_path=input_path,
+                dest=dest,
+                force_backend=force_backend,
+            )
+            fallback_reason = plan.fallback_reason
+            if native_info and dest.exists() and dest != input_path:
+                dest.unlink(missing_ok=True)
+
+        if native_info and isinstance(native_info.get("receipt"), dict):
+            receipt = native_info["receipt"]
+            obs = self._observability_from_native(
+                plan=plan, native_info=native_info, fallback_reason=None, phase="done"
+            )
+            report = {
+                "valid": str(receipt.get("status")) == "ok",
+                "rowCount": receipt.get("recordsIn") or receipt.get("recordsOut"),
+                "errorCount": 0 if str(receipt.get("status")) == "ok" else 1,
+                "warningCount": 0,
+                "emptyContentCount": 0,
+                "issues": [],
+                "backend": ComputeBackend.RUST_NATIVE.value,
+                "backendPlan": plan.public_dict(),
+                "fallbackReason": None,
+                **obs,
+            }
+        else:
+            import time as _time
+
+            started = _time.monotonic()
+            ckpt, root, skip, resumed = self._begin_streaming_checkpoint(
+                job,
+                operation="dataset.validate",
+                input_path=input_path,
+                options={},
+                input_hash=ver.content_hash or compute_input_hash(input_path),
+                backend=BACKEND_PYTHON_STREAMING,
+            )
+
+            def _on_progress(n: int) -> None:
+                self._persist_streaming_progress(
+                    job, ckpt, root, records_processed=n, phase="validating", started_at=started
+                )
+
+            records = iter_skip_then_count(
+                self.iter_version_records(job.version_id),
+                skip=skip,
+                on_progress=_on_progress,
+                every=DEFAULT_CHECKPOINT_EVERY,
+            )
+            report = validate_records(records)
+            if resumed and skip:
+                report["rowCount"] = int(report.get("rowCount") or 0) + int(skip)
+                report["resumedFrom"] = skip
+            obs = self._finish_streaming_checkpoint(
+                job,
+                ckpt,
+                root,
+                records_processed=int(report.get("rowCount") or ckpt.records_processed or 0),
+                phase="done",
+                started_at=started,
+            )
+            report = {
+                **report,
+                "backend": ComputeBackend.PYTHON_STREAMING.value,
+                "backendPlan": plan.public_dict(),
+                "fallbackReason": fallback_reason,
+                **obs,
+            }
+
         updates: dict[str, Any] = {"validation": report}
-        # Promote to READY when validation passes for indexable versions still building/pending.
         if report.get("valid") and ver.status in {
             VersionStatus.PENDING,
             VersionStatus.BUILDING,
@@ -2608,78 +4120,386 @@ class DatasetService:
 
     def _handle_dedupe(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        parent, records = self._load_version_records(job.version_id)
-        kept, stats = exact_dedupe(records)
-        version = self._write_derived_version(
+        parent = self.get_version(job.version_id)
+        if not parent.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        input_path = Path(parent.storage_path)
+        dirs = self._dataset_dirs(job.dataset_id)
+        label = f"deduped-from-{parent.version_label}"
+        dest = dirs["processed"] / f"{label}.jsonl"
+        semantic_meta = self._semantic_metadata_for_derived(
+            parent, content_preserving=False, op_name="exact_dedupe"
+        )
+
+        native_info, plan = self._try_native_operation(
+            job=job,
+            operation="dataset.dedupe",
+            input_path=input_path,
+            dest=dest,
+        )
+        if native_info:
+            stats = {
+                "backend": ComputeBackend.RUST_NATIVE.value,
+                "recordsOut": native_info.get("recordsOut"),
+                "receipt": native_info.get("receipt"),
+            }
+            version = self._commit_derived_version_from_file(
+                dataset_id=job.dataset_id,
+                parent=parent,
+                label=label,
+                kind=VersionKind.TRANSFORMED,
+                dest=dest,
+                content_hash=str(native_info["contentHash"]),
+                byte_size=int(native_info["byteSize"]),
+                row_count=native_info.get("recordsOut"),
+                lineage_extra=[
+                    {
+                        "name": "exact_dedupe",
+                        "params": {},
+                        "stats": stats,
+                        "appliedAt": utc_now(),
+                        "backend": ComputeBackend.RUST_NATIVE.value,
+                    }
+                ],
+                metadata={**semantic_meta, "dedupe": stats},
+                backend_info=native_info,
+            )
+            return {
+                "versionId": version.version_id,
+                "dedupe": stats,
+                "backend": ComputeBackend.RUST_NATIVE.value,
+                "backendPlan": plan.public_dict(),
+                "fallbackReason": None,
+            }
+
+        it, stats = iter_exact_dedupe_external(
+            self.iter_version_records(job.version_id),
+            scratch_manager=self.scratch_manager,
+            job_id=job.job_id,
+        )
+        version = self._write_derived_version_stream(
             dataset_id=job.dataset_id,
             parent=parent,
-            label=f"deduped-from-{parent.version_label}",
+            label=label,
             kind=VersionKind.TRANSFORMED,
-            records=kept,
+            records=it,
             lineage_extra=[{"name": "exact_dedupe", "params": {}, "stats": stats, "appliedAt": utc_now()}],
-            metadata={"dedupe": stats},
+            metadata={**semantic_meta, "dedupe": stats, "computeBackend": ComputeBackend.PYTHON_STREAMING.value},
         )
-        return {"versionId": version.version_id, "dedupe": stats}
+        return {
+            "versionId": version.version_id,
+            "dedupe": stats,
+            "backend": ComputeBackend.PYTHON_STREAMING.value,
+            "backendPlan": plan.public_dict(),
+            "fallbackReason": plan.fallback_reason,
+        }
 
     def _handle_transform(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        parent, records = self._load_version_records(job.version_id)
+        parent = self.get_version(job.version_id)
+        if not parent.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
         transforms = list(job.config.get("transforms") or [])
-        out, lineage = apply_transforms(records, transforms)
-        version = self._write_derived_version(
+        input_path = Path(parent.storage_path)
+        dirs = self._dataset_dirs(job.dataset_id)
+        label = f"xform-{parent.version_label}"
+        dest = dirs["processed"] / f"{label}.jsonl"
+        semantic_meta = self._semantic_metadata_for_derived(
+            parent, content_preserving=False, op_name="transform"
+        )
+
+        native_info, plan = self._try_native_operation(
+            job=job,
+            operation="dataset.transform",
+            input_path=input_path,
+            dest=dest,
+            options={"transforms": transforms},
+        )
+        if native_info:
+            lineage = [{"name": t.get("name"), "params": t.get("params") or {}, "appliedAt": utc_now(), "backend": ComputeBackend.RUST_NATIVE.value} for t in transforms]
+            version = self._commit_derived_version_from_file(
+                dataset_id=job.dataset_id,
+                parent=parent,
+                label=label,
+                kind=VersionKind.TRANSFORMED,
+                dest=dest,
+                content_hash=str(native_info["contentHash"]),
+                byte_size=int(native_info["byteSize"]),
+                row_count=native_info.get("recordsOut"),
+                lineage_extra=lineage,
+                metadata=semantic_meta,
+                backend_info=native_info,
+            )
+            full_lineage = list(parent.transform_lineage) + lineage
+            self.store.update_version(version.version_id, transform_lineage=full_lineage)
+            version = self.get_version(version.version_id)
+            obs = self._observability_from_native(
+                plan=plan, native_info=native_info, fallback_reason=None, phase="done"
+            )
+            return {
+                "versionId": version.version_id,
+                "lineage": lineage,
+                "rowCount": version.row_count,
+                "backend": ComputeBackend.RUST_NATIVE.value,
+                "backendPlan": plan.public_dict(),
+                "fallbackReason": None,
+                **obs,
+            }
+
+        import time as _time
+
+        started = _time.monotonic()
+        options = {"transforms": transforms}
+        ckpt, root, _skip, _resumed = self._begin_streaming_checkpoint(
+            job,
+            operation="dataset.transform",
+            input_path=input_path,
+            options=options,
+            input_hash=parent.content_hash or compute_input_hash(input_path),
+            backend=BACKEND_PYTHON_STREAMING,
+        )
+        # Full rewrite is the safe path (no partial-output append yet).
+        ckpt.resumed = False
+        ckpt.records_processed = 0
+
+        def _on_progress(n: int) -> None:
+            self._persist_streaming_progress(
+                job, ckpt, root, records_processed=n, phase="transforming", started_at=started
+            )
+
+        source = iter_skip_then_count(
+            self.iter_version_records(job.version_id),
+            skip=0,
+            on_progress=_on_progress,
+            every=DEFAULT_CHECKPOINT_EVERY,
+        )
+        stream, lineage_fn = apply_transforms_streaming(source, transforms)
+        version = self._write_derived_version_stream(
             dataset_id=job.dataset_id,
             parent=parent,
-            label=f"xform-{parent.version_label}",
+            label=label,
             kind=VersionKind.TRANSFORMED,
-            records=out,
-            lineage_extra=lineage,
+            records=stream,
+            lineage_extra=[],
+            metadata={**semantic_meta, "computeBackend": ComputeBackend.PYTHON_STREAMING.value},
         )
-        return {"versionId": version.version_id, "lineage": lineage, "rowCount": version.row_count}
+        lineage = lineage_fn()
+        full_lineage = list(parent.transform_lineage) + lineage
+        self.store.update_version(version.version_id, transform_lineage=full_lineage)
+        version = self.get_version(version.version_id)
+        obs = self._finish_streaming_checkpoint(
+            job,
+            ckpt,
+            root,
+            records_processed=int(version.row_count or ckpt.records_processed or 0),
+            phase="done",
+            started_at=started,
+        )
+        return {
+            "versionId": version.version_id,
+            "lineage": lineage,
+            "rowCount": version.row_count,
+            "backend": ComputeBackend.PYTHON_STREAMING.value,
+            "backendPlan": plan.public_dict(),
+            "fallbackReason": plan.fallback_reason,
+            **obs,
+        }
 
     def _handle_split(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        parent, records = self._load_version_records(job.version_id)
-        out, summary = deterministic_split(
-            records,
-            seed=int(job.config.get("seed", 42)),
-            train_ratio=float(job.config.get("trainRatio", 0.8)),
-            val_ratio=float(job.config.get("valRatio", 0.1)),
-            test_ratio=float(job.config.get("testRatio", 0.1)),
+        parent = self.get_version(job.version_id)
+        if not parent.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        seed = int(job.config.get("seed", 42))
+        train_ratio = float(job.config.get("trainRatio", 0.8))
+        val_ratio = float(job.config.get("valRatio", 0.1))
+        test_ratio = float(job.config.get("testRatio", 0.1))
+        input_path = Path(parent.storage_path)
+        dirs = self._dataset_dirs(job.dataset_id)
+        label = f"split-{parent.version_label}"
+        dest = dirs["processed"] / f"{label}.jsonl"
+        semantic_meta = self._semantic_metadata_for_derived(
+            parent, content_preserving=True, op_name="deterministic_split"
         )
-        version = self._write_derived_version(
+        options = {
+            "seed": seed,
+            "trainRatio": train_ratio,
+            "valRatio": val_ratio,
+            "testRatio": test_ratio,
+        }
+
+        native_info, plan = self._try_native_operation(
+            job=job,
+            operation="dataset.split",
+            input_path=input_path,
+            dest=dest,
+            options=options,
+        )
+        if native_info:
+            summary = {
+                **options,
+                "rowCount": native_info.get("recordsOut"),
+                "backend": ComputeBackend.RUST_NATIVE.value,
+            }
+            # Prefer receipt split counts when present.
+            receipt = native_info.get("receipt") if isinstance(native_info.get("receipt"), dict) else {}
+            if isinstance(receipt.get("split"), dict):
+                summary.update(receipt["split"])
+            version = self._commit_derived_version_from_file(
+                dataset_id=job.dataset_id,
+                parent=parent,
+                label=label,
+                kind=VersionKind.SPLIT,
+                dest=dest,
+                content_hash=str(native_info["contentHash"]),
+                byte_size=int(native_info["byteSize"]),
+                row_count=native_info.get("recordsOut"),
+                split=summary,
+                lineage_extra=[
+                    {
+                        "name": "deterministic_split",
+                        "params": summary,
+                        "appliedAt": utc_now(),
+                        "backend": ComputeBackend.RUST_NATIVE.value,
+                    }
+                ],
+                metadata=semantic_meta,
+                backend_info=native_info,
+            )
+            return {
+                "versionId": version.version_id,
+                "split": summary,
+                "backend": ComputeBackend.RUST_NATIVE.value,
+                "backendPlan": plan.public_dict(),
+                "fallbackReason": None,
+            }
+
+        stream, summary = iter_deterministic_split(
+            self.iter_version_records(job.version_id),
+            seed=seed,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            test_ratio=test_ratio,
+        )
+        version = self._write_derived_version_stream(
             dataset_id=job.dataset_id,
             parent=parent,
-            label=f"split-{parent.version_label}",
+            label=label,
             kind=VersionKind.SPLIT,
-            records=out,
+            records=stream,
             split=summary,
             lineage_extra=[{"name": "deterministic_split", "params": summary, "appliedAt": utc_now()}],
+            metadata={**semantic_meta, "computeBackend": ComputeBackend.PYTHON_STREAMING.value},
         )
-        return {"versionId": version.version_id, "split": summary}
+        return {
+            "versionId": version.version_id,
+            "split": summary,
+            "backend": ComputeBackend.PYTHON_STREAMING.value,
+            "backendPlan": plan.public_dict(),
+            "fallbackReason": plan.fallback_reason,
+        }
 
     def _handle_tokenize_stats(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id
-        ver, records = self._load_version_records(job.version_id)
-        stats = compute_token_stats(records)
+        ver = self.get_version(job.version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        stats = compute_token_stats(self.iter_version_records(job.version_id))
         self.store.update_version(ver.version_id, token_stats=stats)
         return stats
 
     def _handle_export(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        ver, records = self._load_version_records(job.version_id)
+        ver = self.get_version(job.version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
         split = job.config.get("split")
         dirs = self._dataset_dirs(job.dataset_id)
         name = f"export-{ver.version_id}" + (f"-{split}" if split else "") + ".jsonl"
         dest = dirs["exports"] / name
-        result = export_jsonl(records, dest, split=split)
+        input_path = Path(ver.storage_path)
+        semantic_meta = self._semantic_metadata_for_derived(
+            ver, content_preserving=True, op_name="export"
+        )
+
+        native_info, plan = self._try_native_operation(
+            job=job,
+            operation="dataset.export",
+            input_path=input_path,
+            dest=dest,
+            options={"split": split} if split else {},
+        )
+        if native_info:
+            # Create BUILDING then READY after metadata commit.
+            export_version = self.store.create_version(
+                dataset_id=job.dataset_id,
+                version_label=f"export-{ver.version_label}",
+                kind=VersionKind.EXPORT,
+                parent_version_id=ver.version_id,
+                status=VersionStatus.BUILDING,
+                storage_path=str(dest),
+                schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
+                metadata={**semantic_meta, "computeBackend": ComputeBackend.RUST_NATIVE.value},
+            )
+            self.store.update_version(
+                export_version.version_id,
+                content_hash=str(native_info["contentHash"]),
+                byte_size=int(native_info["byteSize"]),
+                row_count=native_info.get("recordsOut"),
+                metadata={**semantic_meta, "computeBackend": ComputeBackend.RUST_NATIVE.value},
+            )
+            self.store.update_version(export_version.version_id, status=VersionStatus.READY)
+            obs = self._observability_from_native(
+                plan=plan, native_info=native_info, fallback_reason=None, phase="done"
+            )
+            return {
+                "versionId": export_version.version_id,
+                "contentHash": native_info["contentHash"],
+                "byteSize": native_info["byteSize"],
+                "rowCount": native_info.get("recordsOut"),
+                "path": str(dest),
+                "backend": ComputeBackend.RUST_NATIVE.value,
+                "backendPlan": plan.public_dict(),
+                "fallbackReason": None,
+                **obs,
+            }
+
+        import time as _time
+
+        started = _time.monotonic()
+        options = {"split": split} if split else {}
+        ckpt, root, _skip, _resumed = self._begin_streaming_checkpoint(
+            job,
+            operation="dataset.export",
+            input_path=input_path,
+            options=options,
+            input_hash=ver.content_hash or compute_input_hash(input_path),
+            backend=BACKEND_PYTHON_STREAMING,
+        )
+        ckpt.resumed = False
+        ckpt.records_processed = 0
+
+        def _on_progress(n: int) -> None:
+            self._persist_streaming_progress(
+                job, ckpt, root, records_processed=n, phase="exporting", started_at=started
+            )
+
+        source = iter_skip_then_count(
+            self.iter_version_records(job.version_id),
+            skip=0,
+            on_progress=_on_progress,
+            every=DEFAULT_CHECKPOINT_EVERY,
+        )
+        result = export_jsonl(source, dest, split=split)
         export_version = self.store.create_version(
             dataset_id=job.dataset_id,
             version_label=f"export-{ver.version_label}",
             kind=VersionKind.EXPORT,
             parent_version_id=ver.version_id,
-            status=VersionStatus.READY,
+            status=VersionStatus.BUILDING,
             storage_path=str(dest),
-            schema=canonical_schema_dict(),
+            schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
+            metadata={**semantic_meta, "computeBackend": ComputeBackend.PYTHON_STREAMING.value},
         )
         self.store.update_version(
             export_version.version_id,
@@ -2687,7 +4507,20 @@ class DatasetService:
             byte_size=result["byteSize"],
             row_count=result["rowCount"],
         )
+        self.store.update_version(export_version.version_id, status=VersionStatus.READY)
+        obs = self._finish_streaming_checkpoint(
+            job,
+            ckpt,
+            root,
+            records_processed=int(result.get("rowCount") or 0),
+            phase="done",
+            started_at=started,
+        )
         result["versionId"] = export_version.version_id
+        result["backend"] = ComputeBackend.PYTHON_STREAMING.value
+        result["backendPlan"] = plan.public_dict()
+        result["fallbackReason"] = plan.fallback_reason
+        result.update(obs)
         return result
 
     def _cleanup_duplicate_target(self, target_dataset_id: str) -> None:
@@ -3323,8 +5156,11 @@ class DatasetService:
         )
 
     def packing_simulation(self, version_id: str, *, max_seq_length: int = 512) -> dict[str, Any]:
-        _, records = self._load_version_records(version_id)
-        return simulate_packing(records, max_seq_length=max_seq_length).public_dict()
+        self.get_version(version_id)
+        return simulate_packing(
+            self.iter_version_records(version_id),
+            max_seq_length=max_seq_length,
+        ).public_dict()
 
     def enqueue_annotation(
         self,
@@ -3386,7 +5222,7 @@ class DatasetService:
 
     def _handle_contamination_scan(self, job: DatasetJob) -> dict[str, Any]:
         version_id = job.version_id or ""
-        _, records = self._load_version_records(version_id)
+        records = self.iter_version_records(version_id)
         sealed = list(job.config.get("sealed_cases") or [])
         if not sealed:
             # Fall back to empty sealed set — report passes with honesty note.
@@ -3400,6 +5236,23 @@ class DatasetService:
             threshold=float(job.config.get("threshold") or 0.35),
         )
         return report.public_dict()
+
+    def _handle_enrich_metadata(self, job: DatasetJob) -> dict[str, Any]:
+        dataset_id = job.dataset_id or ""
+        version_id = job.version_id or ""
+        if not dataset_id or not version_id:
+            raise DatasetError(
+                "enrich_metadata requires dataset_id and version_id",
+                code="enrich_missing_ids",
+                http_status=400,
+            )
+        sync_artifacts = bool((job.config or {}).get("sync_artifacts", True))
+        result = self.enrich_semantic_deterministic(
+            dataset_id,
+            version_id,
+            sync_artifacts=sync_artifacts,
+        )
+        return result
 
     def public_job(self, job: DatasetJob) -> dict[str, Any]:
         """Redact secrets from job payload for API responses."""
@@ -3422,7 +5275,106 @@ class DatasetService:
         data["checkpoint"] = checkpoint
         # Derived download summary for the activity console (view aid, not a second store).
         data["download"] = self._public_download_summary(job.job_type.value, cfg, checkpoint)
+        data.update(self._public_compute_summary(data.get("result") or {}, checkpoint, phase=job.phase))
+        data["compute"] = {
+            k: data.get(k)
+            for k in (
+                "backend",
+                "phase",
+                "recordsProcessed",
+                "peakMemory",
+                "memoryBudget",
+                "spillBytes",
+                "throughput",
+                "durationMs",
+                "fallbackReason",
+                "resumed",
+            )
+            if k in data
+        }
         return data
+
+    @staticmethod
+    def _public_compute_summary(
+        result: dict[str, Any],
+        checkpoint: dict[str, Any],
+        *,
+        phase: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(result, dict):
+            result = {}
+        if not isinstance(checkpoint, dict):
+            checkpoint = {}
+        streaming = checkpoint.get("streaming") if isinstance(checkpoint.get("streaming"), dict) else {}
+        receipt = result.get("receipt") if isinstance(result.get("receipt"), dict) else {}
+        plan = result.get("backendPlan") if isinstance(result.get("backendPlan"), dict) else {}
+
+        def _metric(*candidates: Any) -> Any:
+            for value in candidates:
+                if value is None or value == "":
+                    continue
+                if isinstance(value, str) and value.upper() == CKPT_UNMEASURED:
+                    return CKPT_UNMEASURED
+                if isinstance(value, bool):
+                    continue
+                try:
+                    return float(value) if isinstance(value, float) else int(value)
+                except (TypeError, ValueError):
+                    if isinstance(value, str):
+                        return value
+            return CKPT_UNMEASURED
+
+        backend = normalize_backend_label(
+            result.get("backend")
+            or plan.get("backend")
+            or streaming.get("backend")
+            or checkpoint.get("backend")
+        )
+        fallback = result.get("fallbackReason")
+        if fallback is None and "fallbackReason" in plan:
+            fallback = plan.get("fallbackReason")
+        records = (
+            result.get("recordsProcessed")
+            if result.get("recordsProcessed") is not None
+            else streaming.get("recordsProcessed")
+            if streaming.get("recordsProcessed") is not None
+            else result.get("rowCount")
+            if result.get("rowCount") is not None
+            else result.get("recordsOut")
+            if result.get("recordsOut") is not None
+            else receipt.get("recordsOut")
+        )
+        peak = _metric(
+            result.get("peakMemory"),
+            result.get("peakRssBytes"),
+            streaming.get("peakMemory"),
+            receipt.get("peakRssBytes"),
+        )
+        spill = _metric(result.get("spillBytes"), streaming.get("spillBytes"), receipt.get("spillBytes"))
+        return {
+            "backend": backend,
+            "phase": result.get("phase") or streaming.get("phase") or phase,
+            "recordsProcessed": int(records) if records is not None else None,
+            "peakMemory": peak,
+            "memoryBudget": _metric(
+                result.get("memoryBudget"), result.get("memoryBudgetBytes"), streaming.get("memoryBudget")
+            ),
+            "spillBytes": spill,
+            "throughput": _metric(result.get("throughput"), streaming.get("throughput")),
+            "durationMs": _metric(
+                result.get("durationMs"), streaming.get("durationMs"), receipt.get("durationMs")
+            ),
+            "fallbackReason": fallback,
+            "resumed": bool(result.get("resumed") or streaming.get("resumed")),
+            "peakRssBytes": None if peak == CKPT_UNMEASURED else peak,
+            "recordsIn": None
+            if _metric(result.get("recordsIn"), receipt.get("recordsIn")) == CKPT_UNMEASURED
+            else _metric(result.get("recordsIn"), receipt.get("recordsIn")),
+            "recordsOut": None
+            if _metric(result.get("recordsOut"), receipt.get("recordsOut")) == CKPT_UNMEASURED
+            else _metric(result.get("recordsOut"), receipt.get("recordsOut")),
+            "memoryEnforcement": result.get("memoryEnforcement") or receipt.get("memoryEnforcement"),
+        }
 
     @staticmethod
     def _public_download_summary(

@@ -175,6 +175,13 @@ class WorkerFabricDashboardTests(unittest.TestCase):
         self.assertIn("rerank", disabled)
         self.assertIn("document_ai", disabled)
         self.assertIn("knowledge_commit", disabled)
+        nc = dash.get("nativeCompute")
+        self.assertIsInstance(nc, dict)
+        self.assertIn("status", nc)
+        self.assertIn("binaryVersion", nc)
+        self.assertIn("operations", nc)
+        self.assertIsInstance(nc.get("operations"), list)
+        self.assertTrue(dash.get("truth", {}).get("native_compute_probed"))
 
     def test_console_banner_and_pool_inventory_dynamic(self) -> None:
         buf = io.StringIO()

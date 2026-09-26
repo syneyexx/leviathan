@@ -344,6 +344,42 @@ export function PerformancePage() {
           })()}
         </Panel>
 
+        <Panel title="Native data plane · DB contention" className="lv-pr-panel">
+          {(() => {
+            const native = snap?.nativeDataPlane;
+            const db = snap?.dbContention;
+            const fmt = (v: number | string | null | undefined) => {
+              if (v == null) return "UNMEASURED";
+              if (typeof v === "string") return v.toUpperCase() === "UNMEASURED" ? "UNMEASURED" : v;
+              if (!Number.isFinite(v)) return "UNMEASURED";
+              if (v >= 1024 ** 3) return `${(v / 1024 ** 3).toFixed(2)} GB`;
+              if (v >= 1024 ** 2) return `${(v / 1024 ** 2).toFixed(1)} MB`;
+              if (v >= 1024) return `${(v / 1024).toFixed(1)} KB`;
+              return String(v);
+            };
+            return (
+              <div className="lv-pr-kpi-grid" aria-label="Native compute and DB contention">
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Native status</div>
+                  <div className="lv-pr-kpi-value">{native?.status ?? "UNMEASURED"}</div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">DB file size</div>
+                  <div className="lv-pr-kpi-value">{fmt(db?.dbFileSize)}</div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Busy retries</div>
+                  <div className="lv-pr-kpi-value">{fmt(db?.busyRetries)}</div>
+                </article>
+                <article className="lv-pr-kpi">
+                  <div className="lv-pr-kpi-label">Commit queue</div>
+                  <div className="lv-pr-kpi-value">{fmt(db?.commitQueueDepth)}</div>
+                </article>
+              </div>
+            );
+          })()}
+        </Panel>
+
         <div className="lv-pr-grid">
           <Panel title="Component health" className="lv-pr-panel">
             <div className="lv-pr-filters">

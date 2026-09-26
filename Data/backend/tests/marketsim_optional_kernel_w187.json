@@ -1,0 +1,18 @@
+{
+  "wave": "W187",
+  "decision": "NOT_REQUIRED_BY_EVIDENCE",
+  "generated_at": "2026-09-26T21:59:00+00:00",
+  "profile_evidence": "Data/backend/tests/marketsim_hotspot_profile.json",
+  "profile_wave": "W186",
+  "rationale": [
+    "W186 cProfile of TradingGym reset+step (240 synthetic bars) shows cumulative time dominated by SQLite persistence and gym/engine orchestration — not a pure deterministic OHLCV kernel.",
+    "Leading non-wrapper frames: gym.py:step, store.py:connect, sqlite3.Connection.commit, engine.py:step_once, store.py:add_event / add_equity_point / update_run / execute.",
+    "Pure OHLCV markers (ohlcv.py / iter_ohlcv / validate_ohlcv / _normalize_ts) did not appear among top cumulative functions; classification.pure_ohlcv_marker_cumulative_seconds_top15 == 0.0.",
+    "Porting a tiny native kernel would not address the measured hotspot (DB I/O + RiskGuard/engine side effects). A pure deterministic hotspot suitable for a no-DB/no-risk/no-agent kernel is not evidenced."
+  ],
+  "truth": {
+    "no_kernel_ported": true,
+    "based_on_real_profile": true,
+    "valid_success_criteria": "NOT_REQUIRED_BY_EVIDENCE with real profile evidence"
+  }
+}

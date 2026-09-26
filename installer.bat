@@ -9,7 +9,7 @@ echo  ============================================
 echo.
 
 REM ---- Prerequisites: Python 3.11+ ----
-echo [1/7] Checking Python...
+echo [1/8] Checking Python...
 where python >nul 2>&1
 if errorlevel 1 (
   echo.
@@ -32,7 +32,7 @@ if errorlevel 1 (
 echo        OK - Python %PY_VER%
 
 REM ---- Prerequisites: Node.js 20+ ----
-echo [2/7] Checking Node.js...
+echo [2/8] Checking Node.js...
 where node >nul 2>&1
 if errorlevel 1 (
   echo.
@@ -56,7 +56,7 @@ if !NODE_MAJOR! LSS 20 (
 echo        OK - Node.js %NODE_VER%
 
 REM ---- Python virtual environment ----
-echo [3/7] Python virtual environment...
+echo [3/8] Python virtual environment...
 if not exist ".venv\Scripts\python.exe" (
   echo        Creating .venv ...
   python -m venv .venv
@@ -84,7 +84,7 @@ if errorlevel 1 (
 echo        OK - Python packages installed
 
 REM ---- Environment file ----
-echo [4/7] Environment file...
+echo [4/8] Environment file...
 if not exist ".env" (
   if not exist ".env.example" (
     echo  [ERROR] .env.example missing
@@ -98,7 +98,7 @@ if not exist ".env" (
 )
 
 REM ---- Local data directories ----
-echo [5/7] Data directories...
+echo [5/8] Data directories...
 if not exist "Data\backend\data" mkdir "Data\backend\data"
 if not exist "Data\backend\data\artifacts" mkdir "Data\backend\data\artifacts"
 if not exist "Data\backend\data\backups" mkdir "Data\backend\data\backups"
@@ -128,7 +128,7 @@ if not exist "%MODEL_DATA%" (
 )
 
 REM ---- Frontend dependencies ----
-echo [6/7] Frontend npm install...
+echo [6/8] Frontend npm install...
 pushd "Data\frontend"
 call npm install
 if errorlevel 1 (
@@ -139,7 +139,7 @@ if errorlevel 1 (
 echo        OK - node_modules ready
 
 REM ---- Frontend production build ----
-echo [7/7] Frontend build...
+echo [7/8] Frontend build...
 call npm run build
 if errorlevel 1 (
   popd
@@ -154,10 +154,42 @@ if not exist "Data\frontend\dist\index.html" (
 )
 echo        OK - Data\frontend\dist ready
 
+REM ---- Optional native data-plane build (does not fail install) ----
+echo [8/8] Native data-plane ^(optional^)...
+set "NATIVE_STATUS=NATIVE_COMPUTE_UNAVAILABLE"
+where cargo >nul 2>&1
+if errorlevel 1 (
+  if exist "%USERPROFILE%\.cargo\bin\cargo.exe" (
+    set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+  )
+)
+where cargo >nul 2>&1
+if errorlevel 1 (
+  echo        Cargo not found — skipping native build.
+  echo        NATIVE_COMPUTE_UNAVAILABLE — Python streaming fallback remains active.
+) else (
+  if exist "scripts\build_native_data_plane.py" (
+    echo        Building leviathan-data-plane via scripts\build_native_data_plane.py ...
+    ".venv\Scripts\python.exe" scripts\build_native_data_plane.py
+    if errorlevel 1 (
+      echo        Native build failed — continuing install.
+      echo        NATIVE_COMPUTE_UNAVAILABLE — Python streaming fallback remains active.
+    ) else (
+      set "NATIVE_STATUS=NATIVE_COMPUTE_READY"
+      echo        OK - native data-plane installed under Data\native\bin
+    )
+  ) else (
+    echo        Build script missing — skipping.
+    echo        NATIVE_COMPUTE_UNAVAILABLE
+  )
+)
+
 echo.
 echo  ============================================
 echo    Install complete
 echo  ============================================
+echo.
+echo  Native compute: %NATIVE_STATUS%
 echo.
 echo  Start Leviathan with:
 echo    run_leviathan.bat

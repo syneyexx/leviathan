@@ -39,6 +39,7 @@ from typing import Any
 
 RUNNER_ENV = "LEVIATHAN_DATASET_JOBS_RUNNER"
 LOCK_ENV = "LEVIATHAN_DATASET_WORKER_LOCK"
+RECYCLE_ENV = "LEVIATHAN_DATASET_WORKER_MAX_JOBS_BEFORE_RECYCLE"
 
 
 def resolve_runner_mode(settings: Any | None = None) -> str:
@@ -166,6 +167,38 @@ def build_runner_from_env():
     return service.runner
 
 
+def _max_jobs_before_recycle() -> int | None:
+    """Optional supervisor recycle budget (W152 light). None = no recycle exit."""
+    raw = (os.environ.get(RECYCLE_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _clear_large_job_refs(service: Any, job: Any | None = None) -> None:
+    """Drop large transient refs after a job so RSS can return to the OS (best-effort)."""
+    try:
+        if job is not None and getattr(job, "job_id", None):
+            service.scratch_manager.cleanup_session(str(job.job_id))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        # Planner/capabilities may retain large probe state across jobs.
+        service._compute_planner = None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import gc
+
+        gc.collect()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_worker_loop(
     *,
     poll_seconds: float = 0.5,
@@ -176,6 +209,7 @@ def run_worker_loop(
     service, _settings = build_service_from_env()
     lock_path = acquire_worker_lock(service.store.db_path)
     stop = {"flag": False}
+    recycle_after = _max_jobs_before_recycle()
 
     def _stop(*_args: Any) -> None:
         stop["flag"] = True
@@ -187,7 +221,8 @@ def run_worker_loop(
     processed = 0
     print(
         f"[dataset-worker] start pid={os.getpid()} claim_owner=job_kernel "
-        f"capability=dataset.process pool=dataset",
+        f"capability=dataset.process pool=dataset"
+        + (f" recycle_after={recycle_after}" if recycle_after else ""),
         flush=True,
     )
     try:
@@ -211,7 +246,15 @@ def run_worker_loop(
                 f"status={job.status.value} phase={job.phase}",
                 flush=True,
             )
+            _clear_large_job_refs(service, job)
             if max_jobs is not None and processed >= max_jobs:
+                break
+            if recycle_after is not None and processed >= recycle_after:
+                print(
+                    f"[dataset-worker] recycle exit after {processed} jobs "
+                    f"({RECYCLE_ENV}={recycle_after}) — supervisor should respawn",
+                    flush=True,
+                )
                 break
             if once:
                 break

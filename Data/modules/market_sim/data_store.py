@@ -11,7 +11,14 @@ from Data.modules.common.hashing import sha256_file
 from Data.modules.common.paths import PathEscapeError, safe_join, safe_relpath
 
 from .dataset_pipeline import MarketDatasetPipeline, SealedMarketDataset, analyze_bars
-from .ohlcv import infer_symbol_timeframe, load_ohlcv, validate_ohlcv_file
+from .ohlcv import (
+    infer_symbol_timeframe,
+    iter_ohlcv,
+    load_ohlcv,
+    storage_format_for_path,
+    validate_ohlcv_file,
+    write_ohlcv_analytical,
+)
 from .pit_fabric import quality_with_pit_labels
 from .store import MarketSimStore
 from .types import DataKind, MarketDataSource, MarketSimError, SourceStatus
@@ -143,6 +150,11 @@ class MarketDataStore:
                 "gap_count": validation.gap_count,
                 "quality": quality_payload,
                 "qualityVerdict": quality_verdict,
+                **(
+                    {"storageFormat": sf}
+                    if (sf := storage_format_for_path(path))
+                    else {}
+                ),
             },
             created_at=existing.created_at if existing else now,
             updated_at=now,
@@ -367,6 +379,34 @@ class MarketDataStore:
 
     def absolute_path_for(self, source: MarketDataSource) -> Path:
         return self._abs_under_root(source.path)
+
+    def export_analytical(
+        self,
+        source_id: str,
+        dest_dir: str | Path,
+        *,
+        prefer_parquet: bool = True,
+    ) -> dict[str, Any]:
+        """Export OHLCV for analytical use; prefer Parquet when pyarrow is present."""
+        source = self.get_source(source_id)
+        path = self.absolute_path_for(source)
+        bars = list(iter_ohlcv(path))
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{source.symbol}_{source.timeframe}"
+        dest = dest_dir / stem  # suffix chosen by write_ohlcv_analytical
+        written = write_ohlcv_analytical(
+            dest,
+            bars,
+            prefer_parquet=prefer_parquet,
+            symbol=source.symbol,
+        )
+        return {
+            "source_id": source_id,
+            "symbol": source.symbol,
+            "timeframe": source.timeframe,
+            **written,
+        }
 
     def health(self) -> dict[str, Any]:
         root = self.markets_root

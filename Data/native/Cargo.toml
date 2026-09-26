@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["leviathan_data_plane"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Proprietary"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sha2 = "0.10"
+tempfile = "3"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+# Minimal Arrow/Parquet plane — no default compression/IPC stack; enable arrow
+# bridge only (writer/reader for record-batch conversion).
+arrow-array = { version = "60", default-features = false }
+arrow-schema = { version = "60", default-features = false }
+parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }

@@ -1,0 +1,271 @@
+{
+  "wave": "W186",
+  "generated_at": "2026-09-26T21:58:30+00:00",
+  "tool": "cProfile",
+  "workload": {
+    "description": "TradingGym reset+step over synthetic OHLCV + streaming validate",
+    "bars": 240,
+    "streamed_bars": 240,
+    "validation_ok": true,
+    "gym_steps": 239,
+    "gym_done": true
+  },
+  "totals": {
+    "profiled_total_time_seconds": 6.293325,
+    "top_entries": 40,
+    "top_call_count_sum": 15597
+  },
+  "top_cumulative_functions": [
+    {
+      "function": "profile_marketsim_hotspots.py:40:_run_workload",
+      "cumulative_seconds": 6.300513,
+      "total_seconds": 0.001738,
+      "call_count": 1
+    },
+    {
+      "function": "gym.py:276:step",
+      "cumulative_seconds": 5.918006,
+      "total_seconds": 0.009005,
+      "call_count": 239
+    },
+    {
+      "function": "~:0:<built-in method builtins.next>",
+      "cumulative_seconds": 4.201855,
+      "total_seconds": 0.003218,
+      "call_count": 2397
+    },
+    {
+      "function": "store.py:43:connect",
+      "cumulative_seconds": 4.198536,
+      "total_seconds": 0.003994,
+      "call_count": 1668
+    },
+    {
+      "function": "contextlib.py:141:__exit__",
+      "cumulative_seconds": 4.105679,
+      "total_seconds": 0.002235,
+      "call_count": 834
+    },
+    {
+      "function": "~:0:<method 'commit' of 'sqlite3.Connection' objects>",
+      "cumulative_seconds": 3.967529,
+      "total_seconds": 3.967529,
+      "call_count": 835
+    },
+    {
+      "function": "engine.py:227:step_once",
+      "cumulative_seconds": 2.464349,
+      "total_seconds": 0.012118,
+      "call_count": 239
+    },
+    {
+      "function": "store.py:943:add_event",
+      "cumulative_seconds": 2.198051,
+      "total_seconds": 0.003113,
+      "call_count": 304
+    },
+    {
+      "function": "store.py:912:add_equity_point",
+      "cumulative_seconds": 1.613051,
+      "total_seconds": 0.001979,
+      "call_count": 239
+    },
+    {
+      "function": "~:0:<method 'execute' of 'sqlite3.Connection' objects>",
+      "cumulative_seconds": 1.607051,
+      "total_seconds": 1.607051,
+      "call_count": 3105
+    },
+    {
+      "function": "store.py:416:update_run",
+      "cumulative_seconds": 1.585606,
+      "total_seconds": 0.003549,
+      "call_count": 240
+    },
+    {
+      "function": "__init__.py:1:<module>",
+      "cumulative_seconds": 0.326271,
+      "total_seconds": 0.004539,
+      "call_count": 16
+    },
+    {
+      "function": "store.py:688:add_fill",
+      "cumulative_seconds": 0.305655,
+      "total_seconds": 0.000357,
+      "call_count": 50
+    },
+    {
+      "function": "migrations.py:4475:apply_all",
+      "cumulative_seconds": 0.187532,
+      "total_seconds": 0.000209,
+      "call_count": 1
+    },
+    {
+      "function": "<frozen importlib._bootstrap>:1349:_find_and_load",
+      "cumulative_seconds": 0.178874,
+      "total_seconds": 0.000812,
+      "call_count": 7
+    },
+    {
+      "function": "<frozen importlib._bootstrap>:1304:_find_and_load_unlocked",
+      "cumulative_seconds": 0.178656,
+      "total_seconds": 0.000574,
+      "call_count": 7
+    },
+    {
+      "function": "<frozen importlib._bootstrap>:911:_load_unlocked",
+      "cumulative_seconds": 0.177833,
+      "total_seconds": 0.000411,
+      "call_count": 11
+    },
+    {
+      "function": "<frozen importlib._bootstrap_external>:989:exec_module",
+      "cumulative_seconds": 0.177598,
+      "total_seconds": 0.000282,
+      "call_count": 10
+    },
+    {
+      "function": "<frozen importlib._bootstrap>:480:_call_with_frames_removed",
+      "cumulative_seconds": 0.176131,
+      "total_seconds": 0.00025,
+      "call_count": 19
+    },
+    {
+      "function": "~:0:<built-in method builtins.exec>",
+      "cumulative_seconds": 0.168061,
+      "total_seconds": 0.029074,
+      "call_count": 10
+    },
+    {
+      "function": "~:0:<method 'close' of 'sqlite3.Connection' objects>",
+      "cumulative_seconds": 0.144924,
+      "total_seconds": 0.144924,
+      "call_count": 835
+    },
+    {
+      "function": "~:0:<built-in method builtins.__import__>",
+      "cumulative_seconds": 0.128652,
+      "total_seconds": 0.000187,
+      "call_count": 7
+    },
+    {
+      "function": "gym.py:505:_observe",
+      "cumulative_seconds": 0.10797,
+      "total_seconds": 0.011109,
+      "call_count": 240
+    },
+    {
+      "function": "contextlib.py:132:__enter__",
+      "cumulative_seconds": 0.098661,
+      "total_seconds": 0.000788,
+      "call_count": 834
+    },
+    {
+      "function": "sqlite_policy.py:96:open_sqlite_connection",
+      "cumulative_seconds": 0.094984,
+      "total_seconds": 0.003948,
+      "call_count": 834
+    },
+    {
+      "function": "ohlcv.py:364:validate_ohlcv_file",
+      "cumulative_seconds": 0.085369,
+      "total_seconds": 0.000125,
+      "call_count": 1
+    },
+    {
+      "function": "features.py:505:compute",
+      "cumulative_seconds": 0.083251,
+      "total_seconds": 0.005929,
+      "call_count": 960
+    },
+    {
+      "function": "ohlcv.py:184:_parquet_available",
+      "cumulative_seconds": 0.082181,
+      "total_seconds": 3e-06,
+      "call_count": 1
+    },
+    {
+      "function": "~:0:<built-in method _sqlite3.connect>",
+      "cumulative_seconds": 0.079702,
+      "total_seconds": 0.068052,
+      "call_count": 835
+    },
+    {
+      "function": "<frozen importlib._bootstrap_external>:1295:exec_module",
+      "cumulative_seconds": 0.07297,
+      "total_seconds": 1.1e-05,
+      "call_count": 4
+    },
+    {
+      "function": "~:0:<built-in method _imp.exec_dynamic>",
+      "cumulative_seconds": 0.07296,
+      "total_seconds": 0.006553,
+      "call_count": 4
+    },
+    {
+      "function": "features.py:204:adx",
+      "cumulative_seconds": 0.0658,
+      "total_seconds": 0.017423,
+      "call_count": 212
+    },
+    {
+      "function": "dataclasses.py:1257:wrap",
+      "cumulative_seconds": 0.057247,
+      "total_seconds": 0.00011,
+      "call_count": 82
+    },
+    {
+      "function": "dataclasses.py:921:_process_class",
+      "cumulative_seconds": 0.057137,
+      "total_seconds": 0.003066,
+      "call_count": 82
+    },
+    {
+      "function": "<frozen importlib._bootstrap>:1390:_handle_fromlist",
+      "cumulative_seconds": 0.054817,
+      "total_seconds": 0.000224,
+      "call_count": 22
+    },
+    {
+      "function": "dataclasses.py:1240:dataclass",
+      "cumulative_seconds": 0.035614,
+      "total_seconds": 0.000118,
+      "call_count": 82
+    },
+    {
+      "function": "migrations.py:1168:_m17_mcp_bridge",
+      "cumulative_seconds": 0.032509,
+      "total_seconds": 6e-06,
+      "call_count": 1
+    },
+    {
+      "function": "~:0:<method 'executescript' of 'sqlite3.Connection' objects>",
+      "cumulative_seconds": 0.032504,
+      "total_seconds": 0.032504,
+      "call_count": 1
+    },
+    {
+      "function": "dataclasses.py:449:_create_fn",
+      "cumulative_seconds": 0.031882,
+      "total_seconds": 0.00147,
+      "call_count": 327
+    },
+    {
+      "function": "__config__.py:1:<module>",
+      "cumulative_seconds": 0.031243,
+      "total_seconds": 1.9e-05,
+      "call_count": 1
+    }
+  ],
+  "classification": {
+    "pure_ohlcv_marker_cumulative_seconds_top15": 0.0,
+    "sim_engine_marker_cumulative_seconds_top15": 23.857834,
+    "leading_function": "profile_marketsim_hotspots.py:40:_run_workload",
+    "leading_cumulative_seconds": 6.300513,
+    "notes": "Shares are heuristic marker sums over top-15 cumulative entries; overlapping call stacks can double-count. Use as evidence, not proof."
+  },
+  "truth": {
+    "does_not_assume_simulation_is_bottleneck": true,
+    "evidence_only": true
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "binary": "/workspace/Data/native/bin/leviathan-data-plane",
+  "metrics": {
+    "export": {
+      "backend": "RUST_NATIVE",
+      "ok": true,
+      "rssDeltaBytes": 53248,
+      "wallSeconds": 0.2244
+    },
+    "hash": {
+      "backend": "RUST_NATIVE",
+      "ok": true,
+      "rssDeltaBytes": 0,
+      "wallSeconds": 0.1018
+    },
+    "validate": {
+      "backend": "RUST_NATIVE",
+      "ok": true,
+      "rssDeltaBytes": 729088,
+      "wallSeconds": 0.1649
+    }
+  },
+  "rows": 5000,
+  "wave": "W182"
+}

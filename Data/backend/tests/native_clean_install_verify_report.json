@@ -1,0 +1,77 @@
+{
+  "checks": [
+    {
+      "evidence": {
+        "loaded": [
+          "Data.modules.datasets.service",
+          "Data.modules.datasets.compute_planner",
+          "Data.modules.datasets.memory_policy",
+          "Data.modules.datasets.storage_authority",
+          "Data.modules.workers.native_compute",
+          "Data.modules.workers.dashboard",
+          "Data.backend.config"
+        ]
+      },
+      "id": "python_imports",
+      "status": "PASS"
+    },
+    {
+      "evidence": {
+        "hasTypecheck": true,
+        "name": "leviathan-frontend",
+        "path": "Data/frontend/package.json"
+      },
+      "id": "frontend_package_json",
+      "status": "PASS"
+    },
+    {
+      "evidence": {
+        "buildScript": "scripts/build_native_data_plane.py",
+        "crateCargo": true,
+        "workspaceCargo": true
+      },
+      "id": "native_build_script",
+      "status": "PASS"
+    },
+    {
+      "evidence": {
+        "binaryVersion": "0.1.0",
+        "honestBuildMissingAccepted": false,
+        "operationCount": 10,
+        "status": "AVAILABLE"
+      },
+      "id": "native_handshake_or_build_missing",
+      "status": "PASS"
+    },
+    {
+      "evidence": {
+        "backend": "PYTHON_STREAMING",
+        "datasetId": "2e809368-9482-4791-a7f9-772b579ffdd5",
+        "fallbackReason": "below_rust_threshold",
+        "peakRssBytes": null
+      },
+      "id": "dataset_python_job_temp_corpus",
+      "status": "PASS"
+    },
+    {
+      "evidence": {
+        "cargoAudit": "UNAVAILABLE",
+        "directDepCount": 10,
+        "path": "Data/backend/tests/native_cargo_supply_chain.json"
+      },
+      "id": "supply_chain_json",
+      "status": "PASS"
+    }
+  ],
+  "failedCount": 0,
+  "generatedAt": "2026-09-26T22:07:40Z",
+  "overall": "PASS",
+  "program": "LOCAL_CLEAN_CHECK",
+  "schemaVersion": 1,
+  "scope": "Not a full Windows VM \u2014 honest local clean-install surface check.",
+  "truth": {
+    "buildMissingAcceptedAsHonest": true,
+    "hardcodedPassForbidden": true,
+    "windowsVmNotClaimed": true
+  }
+}

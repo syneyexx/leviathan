@@ -7,7 +7,10 @@ import {
   estimatedRemainingSeconds,
   filterEntries,
   formatBytes,
+  formatMemoryMetric,
+  computeBackendLabel,
   isActiveJob,
+  jobComputeFields,
   mergeActivityEntries,
   observedTransferRate,
   pickActiveJob,
@@ -202,6 +205,27 @@ describe("datasetActivity helpers", () => {
   it("formats bytes without inventing values", () => {
     expect(formatBytes(null)).toBe("—");
     expect(formatBytes(1024)).toBe("1.0 KB");
+  });
+
+  it("shows UNMEASURED for missing memory metrics and labels compute backends", () => {
+    expect(formatMemoryMetric(null)).toBe("UNMEASURED");
+    expect(formatMemoryMetric(undefined)).toBe("UNMEASURED");
+    expect(formatMemoryMetric(2048)).toBe("2.0 KB");
+    expect(computeBackendLabel("PYTHON_STREAMING")).toBe("Python Streaming");
+    expect(computeBackendLabel("RUST_NATIVE")).toBe("Rust Native");
+    expect(computeBackendLabel("python_streaming")).toBe("Python Streaming");
+    const fields = jobComputeFields(
+      job({
+        jobId: "c1",
+        jobType: "validate",
+        status: "completed",
+        backend: "RUST_NATIVE",
+        result: { fallbackReason: null, peakRssBytes: null },
+      }),
+    );
+    expect(fields.backend).toBe("RUST_NATIVE");
+    expect(fields.peakMemory).toBe("UNMEASURED");
+    expect(formatMemoryMetric(fields.peakMemory)).toBe("UNMEASURED");
   });
 
   it("handles empty job list", () => {

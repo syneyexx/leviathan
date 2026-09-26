@@ -40,6 +40,8 @@ import type {
   DatasetLearningStatus,
   DatasetPreviewRow,
   DatasetRecord,
+  DatasetRecoveryAssessment,
+  DatasetSemanticProfileSummary,
   DatasetVersion,
   DownloadJob,
   GatewaySnapshot,
@@ -1080,6 +1082,66 @@ export const api = {
     truth?: Record<string, unknown>;
   }> {
     return request(`/api/datasets/${encodeURIComponent(datasetId)}/learning-state`);
+  },
+
+  getDatasetRecovery(datasetId: string): Promise<{ recovery: DatasetRecoveryAssessment }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/recovery`);
+  },
+
+  analyzeDatasetSemantic(
+    datasetId: string,
+    payload?: {
+      versionId?: string | null;
+      syncArtifacts?: boolean;
+      enqueue?: boolean;
+    },
+  ): Promise<{
+    datasetId?: string;
+    versionId?: string;
+    semanticProfile?: DatasetSemanticProfileSummary & Record<string, unknown>;
+    dataset?: DatasetRecord;
+    job?: DatasetJob;
+    recovery?: Record<string, unknown>;
+  }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/semantic/analyze`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
+
+  patchDatasetSemantic(
+    datasetId: string,
+    payload: {
+      displayName?: string | null;
+      primaryCategory?: string | null;
+      secondaryCategory?: string | null;
+      tags?: string[] | null;
+      summary?: string | null;
+      versionId?: string | null;
+      syncArtifacts?: boolean;
+    },
+  ): Promise<{
+    datasetId: string;
+    versionId?: string | null;
+    semanticProfile: DatasetSemanticProfileSummary & Record<string, unknown>;
+    dataset: DatasetRecord;
+    recovery?: Record<string, unknown>;
+    truth?: Record<string, unknown>;
+  }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/semantic`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getDatasetCatalogStatus(): Promise<Record<string, unknown>> {
+    return request("/api/datasets/catalog");
+  },
+
+  reconcileDatasetCatalog(rebuild = false): Promise<Record<string, unknown>> {
+    return request(`/api/datasets/catalog/reconcile?rebuild=${encodeURIComponent(String(rebuild))}`, {
+      method: "POST",
+    });
   },
 
   reconcileDatasetLearning(): Promise<{

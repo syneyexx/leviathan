@@ -178,7 +178,7 @@ function recordToRow(ds: DatasetRecord, jobs: DatasetJob[]): DhRow {
         : null;
   return {
     id: ds.datasetId,
-    name: ds.name,
+    name: ds.displayName || ds.semanticProfile?.displayName || ds.name,
     description: detail || ds.description || ds.originalFilename || ds.datasetId,
     source: mapSourceLabel(ds.sourceType, sourceKind),
     sourceKind,
@@ -294,6 +294,32 @@ function jobProgressDetail(job: DatasetJob | undefined): string | null {
 
   const parts: string[] = [phase];
   if (pct != null) parts[0] = `${phase} · ${pct}%`;
+  const backendRaw =
+    job.backend ||
+    (typeof job.compute?.backend === "string" ? job.compute.backend : null) ||
+    (typeof job.result?.backend === "string" ? (job.result.backend as string) : null);
+  const bn = (backendRaw || "").toLowerCase().replace(/-/g, "_");
+  if (bn === "rust_native" || backendRaw === "RUST_NATIVE") parts.push("Rust Native");
+  else if (bn === "python_streaming" || backendRaw === "PYTHON_STREAMING") parts.push("Python Streaming");
+  const recordsProcessed =
+    typeof job.recordsProcessed === "number"
+      ? job.recordsProcessed
+      : typeof job.compute?.recordsProcessed === "number"
+        ? job.compute.recordsProcessed
+        : typeof job.result?.recordsProcessed === "number"
+          ? (job.result.recordsProcessed as number)
+          : null;
+  if (recordsProcessed != null) parts.push(`${recordsProcessed.toLocaleString()} records`);
+  const peak = job.peakMemory ?? job.peakRssBytes ?? job.compute?.peakMemory ?? null;
+  if (backendRaw) {
+    parts.push(
+      peak == null || peak === "UNMEASURED" || (typeof peak === "number" && !Number.isFinite(peak))
+        ? "RSS UNMEASURED"
+        : typeof peak === "number"
+          ? `RSS ${formatBytes(peak)}`
+          : `RSS ${String(peak)}`,
+    );
+  }
   if (filesTotal != null && filesCompleted != null) {
     parts.push(`${filesCompleted} / ${filesTotal} files`);
   }

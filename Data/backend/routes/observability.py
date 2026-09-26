@@ -29,6 +29,7 @@ def build_observability_router(
     timeseries: TimeSeriesStore,
     sampler: SystemTelemetrySampler,
     component_health_fn: Any | None = None,
+    database_path: Any | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["observability"])
 
@@ -160,6 +161,37 @@ def build_observability_router(
                 "metrics": None,
                 "truth": {"unmeasured": True, "unavailable": True},
             }
+        try:
+            from Data.modules.common.db_contention import db_contention_snapshot
+            db_contention = db_contention_snapshot(database_path)
+        except Exception:  # noqa: BLE001
+            db_contention = {
+                "dbFileSize": "UNMEASURED",
+                "walSize": "UNMEASURED",
+                "busyRetries": "UNMEASURED",
+                "commitQueueDepth": "UNMEASURED",
+                "truth": {"unmeasured": True},
+            }
+        try:
+            from Data.modules.workers.native_compute import probe_capabilities
+            caps = probe_capabilities()
+            native_data_plane = {
+                "status": caps.status.value if hasattr(caps.status, "value") else str(caps.status),
+                "protocolVersion": caps.protocol_version,
+                "operations": list(caps.operations or [])[:32],
+                "binaryPath": caps.binary_path,
+                "detail": (caps.detail or "")[:300],
+                "truth": {"workerFabricAccelerator": True, "notSecondControlPlane": True},
+            }
+        except Exception:  # noqa: BLE001
+            native_data_plane = {
+                "status": "UNMEASURED",
+                "protocolVersion": None,
+                "operations": [],
+                "binaryPath": None,
+                "detail": "probe_failed",
+                "truth": {"unmeasured": True},
+            }
         return {
             "system": system,
             "metrics": metrics_snap,
@@ -169,6 +201,8 @@ def build_observability_router(
             "components": health,
             "observability": observability.snapshot(),
             "inferenceEfficiency": inference_efficiency,
+            "dbContention": db_contention,
+            "nativeDataPlane": native_data_plane,
             "product_truth": {
                 "vocabulary": [
                     "operational",

@@ -65,6 +65,7 @@ class DatasetJobType(str, Enum):
     DUPLICATE = "duplicate"
     SHARD_INGEST = "shard_ingest"
     CONTAMINATION_SCAN = "contamination_scan"
+    ENRICH_METADATA = "enrich_metadata"
 
 
 class DatasetJobStatus(str, Enum):

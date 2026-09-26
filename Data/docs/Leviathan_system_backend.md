@@ -139,7 +139,7 @@ Current wiring includes:
 | `Data/backend/main.py` | Composition root + chat + SPA + health (**CURRENT**) |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **54** (`market_sim_learning_runs`) |
+| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **56** (`institutional_runtime` / institutional repositories) |
 | `Data/backend/llm.py` | compatibility/boundary helpers |
 | `Data/backend/reasoning.py` | compatibility import/boundary |
 
@@ -713,7 +713,51 @@ Dataset lifecycle covers ingest, validation, canonicalization, dedupe, PII/conta
 
 Key files include:
 
-`service.py`, `store.py`, `types.py`, `formats.py`, `importers.py`, `huggingface.py`, `offline.py`, `materialize.py`, `shards.py`, `validation.py`, `quality.py`, `canonicalize.py`, `dedupe.py`, `pii.py`, `contamination.py`, `splits.py`, `mixtures.py`, `packing_sim.py`, `tokenize_stats.py`, `indexing.py`, `relations.py`, `transforms.py`, `annotation.py`, `export.py`, `jobs.py`, `worker.py`, `sidecar.py`.
+`service.py`, `store.py`, `types.py`, `formats.py`, `importers.py`, `huggingface.py`, `offline.py`, `materialize.py`, `shards.py`, `validation.py`, `quality.py`, `canonicalize.py`, `dedupe.py`, `pii.py`, `contamination.py`, `splits.py`, `mixtures.py`, `packing_sim.py`, `tokenize_stats.py`, `indexing.py`, `relations.py`, `transforms.py`, `annotation.py`, `export.py`, `jobs.py`, `worker.py`, `sidecar.py`, `streaming_io.py`, `memory_policy.py`, `scratch.py`, `publish.py`, `storage_authority.py`, `semantic_types.py`, `semantic_profiler.py`, `semantic_engine.py`, `semantic_enrichment.py`, `catalog.py`, `recovery.py`, `compute_planner.py`, `learning_state.py`.
+
+### Streaming data plane (Stage 1)
+
+Materialize/transform/split/dedupe/export/validate operate as **bounded streaming** jobs: record iterators, scratch spill, and atomic publish. Full in-memory corpus loads are refused above policy thresholds (`DatasetMemoryPolicy`). Python streaming remains the default fallback path.
+
+### Semantic profile + display names (Stage 2)
+
+Deterministic enrichment (`enrich_semantic_deterministic` / `ENRICH_METADATA` jobs) writes a governed `semanticProfile` into dataset metadata: `displayName`, `primaryCategory`, tags, summary, confidence. Operator PATCH overrides win over model/heuristic fields. Sidecar schema **2** and the derived global catalog (`dataset-catalog.json`) carry compact semantic fields for recovery/browse — they are **not** Brain truth.
+
+### Catalog + recovery
+
+Recovery evidence precedence: **DB → sidecar → catalog → filesystem**. `assess_dataset_recovery(dataset_id)` returns typed states: `READY`, `METADATA_RESTORED`, `REINDEX_REQUIRED`, `SOURCE_MISSING`, `HASH_MISMATCH`, `CONFLICT`, `UNSUPPORTED`. Tombstones (`.leviathan-dataset.deleted`) block resurrection. **Brain readiness is never derived from the catalog** — use `DatasetLearningState`; missing indexes surface as `REINDEX_REQUIRED` (≠ `LEARNED`). Optional settings: `datasets.recovery_auto_reindex` (default false), `datasets.recovery_max_auto_jobs`.
+
+### Streaming checkpoints (W171)
+
+Large native/Python streaming jobs (`validate` / `transform` / `export`) write **bounded** checkpoint metadata under job scratch (`streaming-checkpoint.json`): input hash, operation, phase, records processed, optional safe byte offset, and protocol version. Fingerprint mismatch or input-hash change invalidates resume. Checkpoints are files — not huge DB blobs. Job `result` / `public_job.compute` expose `backend` (`python_streaming`|`rust_native`), `phase`, `recordsProcessed`, `peakMemory`, `memoryBudget`, `spillBytes`, `throughput` with **UNMEASURED** (never invented 0) when not measured.
+
+### DB contention telemetry (W176)
+
+`GET /api/performance/snapshot` and `GET /api/metrics` include a bounded `dbContention` object: DB file size, WAL size, busy retries (from `sqlite_policy`), and commit queue depth when the spool is available.
+
+### Native compute behind Worker Fabric
+
+`ComputeBackendPlanner` selects `PYTHON_STREAMING` vs `RUST_NATIVE` for allowlisted ops (`dataset.validate|hash|transform|split|export|dedupe` plus Parquet: `dataset.parquet_validate|parquet_hash|parquet_to_jsonl`). When Rust is selected and `NativeComputeRunner` is `AVAILABLE`, DatasetService invokes the allowlisted `leviathan-data-plane` binary, verifies receipt + content hash, then atomically publishes and commits metadata — **never** marking a version `READY` before the Python metadata commit. Unavailable/failure paths fall back to streaming Python and expose `fallbackReason`. Native compute is a Worker Fabric data-plane accelerator, not a second control plane.
+
+**Admission / memory / cancel (P0 safety):** Heavy data-plane job types enqueue as Worker Fabric `MEMORY_HEAVY` with `reservedRamBytes` from `DatasetMemoryPolicy` (settings `native_compute.memory_budget_mb`). Soft RSS watchdog samples the native child (`MEMORY_RSS_GRACE_FACTOR`); over-budget runs fail closed with honest enforcement markers (not silent OOM). Job cancel propagates to the native child (SIGTERM/kill). Orphan `.prepared.tmp` / publish temps are reconciled via `reconcile_orphans` / `DatasetService.reconcile_data_plane_orphans` on job reconcile.
+
+**Settings (catalog-driven):** `native_compute.mode`, `native_compute.memory_budget_mb`, `native_compute.max_record_mb`, `native_compute.batch_rows`, `native_compute.threads`, `native_compute.rust_threshold_mb` — exposed on the Settings page through the Settings Control Plane catalog.
+
+**Worker Fabric dashboard:** `GET /api/workers/dashboard` includes a bounded `nativeCompute: { status, binaryVersion, operations }` summary from `NativeComputeRunner.probe` (honest `BUILD_MISSING` when the binary is absent).
+
+**Supply chain:** Direct crate inventory + justification lives in `Data/backend/tests/native_cargo_supply_chain.json` (from `cargo tree -p leviathan_data_plane`). `cargo audit` is recorded AVAILABLE/UNAVAILABLE honestly — never as a silent PASS.
+
+**Market-data native pilot:** Present when `market.ohlcv_validate` is registered in the native binary; otherwise NOT_IMPLEMENTED. Do not claim unbuilt pilot ingest.
+
+**Backup truth:** Local backup/restore (`Data/modules/backup/`) snapshots the canonical SQLite + manifest under `backup_root`. Truth flags include `backup_is_not_cloud_sync` — backup is not a competing domain DB and is not cloud sync. Schema head is migration **56** (`institutional_runtime`); learning runs remain migration **54**.
+
+**Adversarial / clean-install evidence:** `test_native_adversarial_w188.py`, admission/cancel/orphan tests (`test_native_admission_cancel_w167.py`), supply-chain JSON, `scripts/verify_native_data_plane.py`, and `scripts/verify_clean_install_native.py` (`LOCAL_CLEAN_CHECK` — not a Windows VM claim).
+
+### Storage authority
+
+DatasetStore (SQLite) remains canonical for catalog rows and version metadata. Corpus paths under `CorpusLayout` hold immutable raw / materialized / processed / export artifacts. Sidecars and the global catalog are recovery/browse aids only. Competing permanent domain DB filenames (`knowledge.db`, `trading.db`, `datasets.db`, …) are forbidden (`storage_authority.assert_no_competing_domain_db`). File-backed corpus data survives DatasetService reconstruction on the same canonical DB.
+
+API surfaces (backwards compatible): `GET/POST /api/datasets/catalog`, `POST /api/datasets/{id}/semantic/analyze`, `PATCH /api/datasets/{id}/semantic`, `GET /api/datasets/{id}/recovery`; list/get responses include `displayName` and semantic summary fields without removing legacy keys.
 
 ## 15.2 Source ingestion — `Data/modules/source_ingestion/`
 

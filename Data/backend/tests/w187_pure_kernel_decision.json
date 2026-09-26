@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "decision": "NOT_REQUIRED_BY_EVIDENCE",
+  "rationale": "Top cumulative time for the measured OHLCV validate workload is dominated by I/O/parsing or already-streaming Python paths; no pure numerical kernel without DB/risk/agent semantics justified a separate Rust port beyond market.ohlcv_validate.",
+  "evidence": "Data/backend/tests/marketsim_hotspot_profile.json",
+  "relatedNativeOp": "market.ohlcv_validate"
+}

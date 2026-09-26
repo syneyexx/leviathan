@@ -76,6 +76,98 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+/** Missing / UNMEASURED memory metrics stay UNMEASURED (never invent 0). */
+export function formatMemoryMetric(bytes: number | string | null | undefined): string {
+  if (bytes == null) return "UNMEASURED";
+  if (typeof bytes === "string") {
+    const u = bytes.trim().toUpperCase();
+    if (!u || u === "UNMEASURED") return "UNMEASURED";
+    const n = Number(bytes);
+    if (!Number.isFinite(n)) return "UNMEASURED";
+    return formatBytes(n);
+  }
+  if (!Number.isFinite(bytes)) return "UNMEASURED";
+  return formatBytes(bytes);
+}
+
+export function computeBackendLabel(backend: string | null | undefined): string | null {
+  if (!backend) return null;
+  const b = backend.toUpperCase().replace(/-/g, "_");
+  if (b === "PYTHON_STREAMING" || b === "PYTHON") return "Python Streaming";
+  if (b === "RUST_NATIVE" || b === "RUST") return "Rust Native";
+  const lower = backend.toLowerCase();
+  if (lower === "python_streaming") return "Python Streaming";
+  if (lower === "rust_native") return "Rust Native";
+  return backend;
+}
+
+export function jobComputeFields(job: DatasetJob): {
+  backend: string | null;
+  phase: string | null;
+  fallbackReason: string | null;
+  peakMemory: number | string | null;
+  spillBytes: number | string | null;
+  throughput: number | string | null;
+  recordsProcessed: number | null;
+  durationMs: number | string | null;
+} {
+  const result = (job.result && typeof job.result === "object" ? job.result : {}) as Record<string, unknown>;
+  const compute = (job.compute && typeof job.compute === "object" ? job.compute : {}) as Record<string, unknown>;
+  const asNum = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const asMetric = (v: unknown): number | string | null => {
+    if (v == null) return null;
+    if (typeof v === "string") {
+      const u = v.trim().toUpperCase();
+      if (!u || u === "UNMEASURED") return "UNMEASURED";
+      const n = Number(v);
+      return Number.isFinite(n) ? n : "UNMEASURED";
+    }
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    return null;
+  };
+  return {
+    backend:
+      (typeof job.backend === "string" ? job.backend : null) ??
+      (typeof compute.backend === "string" ? compute.backend : null) ??
+      (typeof result.backend === "string" ? result.backend : null),
+    phase:
+      (typeof compute.phase === "string" ? compute.phase : null) ??
+      (typeof job.phase === "string" ? job.phase : null),
+    fallbackReason:
+      (typeof job.fallbackReason === "string" ? job.fallbackReason : null) ??
+      (typeof compute.fallbackReason === "string" ? compute.fallbackReason : null) ??
+      (typeof result.fallbackReason === "string" ? result.fallbackReason : null),
+    peakMemory:
+      asMetric(job.peakMemory) ??
+      asMetric(compute.peakMemory) ??
+      asMetric(job.peakRssBytes) ??
+      asMetric(result.peakMemory) ??
+      asMetric(result.peakRssBytes) ??
+      "UNMEASURED",
+    spillBytes:
+      asMetric(job.spillBytes) ??
+      asMetric(compute.spillBytes) ??
+      asMetric(result.spillBytes) ??
+      "UNMEASURED",
+    throughput:
+      asMetric(job.throughput) ??
+      asMetric(compute.throughput) ??
+      asMetric(result.throughput) ??
+      "UNMEASURED",
+    recordsProcessed:
+      asNum(job.recordsProcessed) ??
+      asNum(compute.recordsProcessed) ??
+      asNum(result.recordsProcessed) ??
+      asNum(result.rowCount),
+    durationMs:
+      asMetric(job.durationMs) ??
+      asMetric(compute.durationMs) ??
+      asMetric(result.durationMs) ??
+      "UNMEASURED",
+  };
+}
+
 export function formatClock(iso: string | null | undefined): string {
   if (!iso) return "—";
   const t = Date.parse(iso);

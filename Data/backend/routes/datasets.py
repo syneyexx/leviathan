@@ -45,6 +45,8 @@ DATASETS_STATIC_SEGMENTS = frozenset(
         "huggingface",
         "upload",
         "sidecars",
+        "catalog",
+        "semantic",
     }
 )
 
@@ -140,6 +142,22 @@ class ClassifyBody(BaseModel):
     modelAdvisory: dict[str, Any] | None = None
 
 
+class SemanticAnalyzeBody(BaseModel):
+    versionId: str | None = None
+    syncArtifacts: bool = True
+    enqueue: bool = False
+
+
+class SemanticOverrideBody(BaseModel):
+    displayName: str | None = None
+    primaryCategory: str | None = None
+    secondaryCategory: str | None = None
+    tags: list[str] | None = None
+    summary: str | None = None
+    versionId: str | None = None
+    syncArtifacts: bool = True
+
+
 class MixtureCreateBody(BaseModel):
     name: str
     components: list[dict[str, Any]] = Field(default_factory=list)
@@ -194,7 +212,7 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         if includeBrain:
             return {"datasets": service.list_library_datasets(limit=limit)}
         items = service.list_datasets(limit=limit)
-        return {"datasets": [d.public_dict() for d in items]}
+        return {"datasets": [service.public_dataset(d) for d in items]}
 
     @router.post("/api/datasets")
     def create_dataset(body: CreateDatasetBody) -> dict:
@@ -204,7 +222,7 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             license=body.license,
             metadata=body.metadata,
         )
-        return {"dataset": ds.public_dict()}
+        return {"dataset": service.public_dataset(ds)}
 
     @router.post("/api/datasets/library/refresh")
     def refresh_library(maxFiles: int = 500) -> dict:
@@ -247,6 +265,26 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     def reconcile_sidecars(maxFiles: int = 2000) -> dict:
         try:
             return service.reconcile_sidecars(max_files=max(1, min(maxFiles, 5000)))
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.get("/api/datasets/catalog")
+    def get_catalog_status() -> dict:
+        return service.catalog_status()
+
+    @router.post("/api/datasets/catalog/reconcile")
+    def reconcile_catalog(rebuild: bool = False) -> dict:
+        try:
+            return service.reconcile_catalog(rebuild=bool(rebuild))
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.post("/api/datasets/semantic/backfill")
+    def semantic_backfill(limit: int = 25) -> dict:
+        try:
+            return service.enqueue_missing_semantic_profiles(limit=max(1, min(limit, 200)))
         except DatasetError as exc:
             _raise(exc)
             raise
@@ -535,7 +573,7 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             _raise(exc)
         learning = service.learning_state_for_dataset(dataset_id)
         return {
-            "dataset": ds.public_dict(),
+            "dataset": service.public_dataset(ds),
             "versions": [v.public_dict() for v in service.list_versions(dataset_id)],
             "files": [f.public_dict() for f in service.store.list_files(dataset_id)],
             "indexes": [i.public_dict() for i in service.store.list_indexes(dataset_id)],
@@ -615,6 +653,72 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             ),
             "truth": {"operator_override": True},
         }
+
+    @router.get("/api/datasets/{dataset_id}/recovery")
+    def get_recovery(dataset_id: str) -> dict:
+        try:
+            return {"recovery": service.assess_dataset_recovery(dataset_id)}
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.post("/api/datasets/{dataset_id}/semantic/analyze")
+    def semantic_analyze(dataset_id: str, body: SemanticAnalyzeBody | None = None) -> dict:
+        body = body or SemanticAnalyzeBody()
+        try:
+            ver = None
+            if body.versionId:
+                ver = service.get_version(body.versionId)
+            else:
+                ver = service.pick_usable_version(dataset_id)
+            if ver is None:
+                raise DatasetError("No usable version for semantic analyze", code="no_usable_version")
+            if body.enqueue:
+                job = service.enqueue_enrich_metadata(
+                    dataset_id,
+                    ver.version_id,
+                    sync_artifacts=body.syncArtifacts,
+                )
+                return {"job": service.public_job(job), "versionId": ver.version_id}
+            result = service.enrich_semantic_deterministic(
+                dataset_id,
+                ver.version_id,
+                sync_artifacts=body.syncArtifacts,
+            )
+            result["dataset"] = service.public_dataset(dataset_id)
+            return result
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+
+    @router.patch("/api/datasets/{dataset_id}/semantic")
+    def semantic_override(dataset_id: str, body: SemanticOverrideBody) -> dict:
+        overrides: dict[str, Any] = {}
+        if body.displayName is not None:
+            overrides["displayName"] = body.displayName
+        if body.primaryCategory is not None:
+            overrides["primaryCategory"] = body.primaryCategory
+        if body.secondaryCategory is not None:
+            overrides["secondaryCategory"] = body.secondaryCategory
+        if body.tags is not None:
+            overrides["tags"] = body.tags
+        if body.summary is not None:
+            overrides["summary"] = body.summary
+        if not overrides:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "empty_override", "message": "No semantic fields provided"},
+            )
+        try:
+            return service.apply_semantic_override(
+                dataset_id,
+                overrides,
+                version_id=body.versionId,
+                sync_artifacts=body.syncArtifacts,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
 
     @router.delete("/api/datasets/{dataset_id}")
     def delete_dataset(dataset_id: str) -> dict:

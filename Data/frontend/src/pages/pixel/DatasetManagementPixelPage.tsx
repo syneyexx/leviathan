@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
 import { AppShell } from "../../layouts/AppShell";
 import {
+  DM_CATEGORY_FILTERS,
   DM_FOOTER_ACTIONS,
   DM_PAGE_COPY,
   DM_SAMPLE_TABS,
@@ -14,7 +15,13 @@ import {
   type DatasetSampleTab,
 } from "../../mocks/dataset-management";
 import { useAppToast } from "../../state/useAppToast";
-import type { DatasetJob, DatasetPreviewRow, DatasetRecord, DatasetVersion } from "../../types/api";
+import type {
+  DatasetJob,
+  DatasetPreviewRow,
+  DatasetRecord,
+  DatasetRecoveryAssessment,
+  DatasetVersion,
+} from "../../types/api";
 import { DatasetActivityConsole } from "../datasets/DatasetActivityConsole";
 import { isActiveJob, isCompletedJob } from "../datasets/datasetActivity";
 import { useDatasetActivity } from "../datasets/useDatasetActivity";
@@ -143,6 +150,19 @@ function mapTypeLabel(ds: DatasetRecord): string {
   return "Tekst";
 }
 
+function categoryForDataset(ds: DatasetRecord): string {
+  return String(
+    ds.primaryCategory
+      ?? ds.semanticProfile?.primaryCategory
+      ?? (ds.metadata as Record<string, unknown> | undefined)?.primaryCategory
+      ?? "",
+  );
+}
+
+function displayNameForDataset(ds: DatasetRecord): string {
+  return String(ds.displayName || ds.semanticProfile?.displayName || ds.name || ds.datasetId);
+}
+
 function typeToneForLabel(type: string): "cyan" | "gold" | "green" | "purple" | "blue" {
   if (type === "Code") return "gold";
   if (type === "Chat") return "purple";
@@ -152,12 +172,28 @@ function typeToneForLabel(type: string): "cyan" | "gold" | "green" | "purple" | 
 }
 
 function tagsForDataset(ds: DatasetRecord): string[] {
+  const semanticTags = ds.semanticTags ?? ds.semanticProfile?.tags;
+  if (Array.isArray(semanticTags) && semanticTags.length) {
+    return semanticTags.map((t) => String(t)).filter(Boolean).slice(0, 6);
+  }
   const meta = ds.metadata as Record<string, unknown> | undefined;
-  const raw = meta?.tags;
+  const raw = meta?.semanticTags ?? meta?.tags;
   if (Array.isArray(raw)) return raw.map((t) => String(t)).filter(Boolean).slice(0, 6);
   const lang = meta?.language ?? meta?.lang;
   if (typeof lang === "string" && lang) return [lang];
   return [];
+}
+
+function recoveryLabel(state: string | null | undefined): string {
+  const s = (state || "").toUpperCase();
+  if (s === "READY") return "Gereed";
+  if (s === "METADATA_RESTORED") return "Metadata hersteld";
+  if (s === "REINDEX_REQUIRED") return "Herindexeren vereist";
+  if (s === "SOURCE_MISSING") return "Bron ontbreekt";
+  if (s === "HASH_MISMATCH") return "Hash conflict";
+  if (s === "CONFLICT") return "Conflict";
+  if (s === "UNSUPPORTED") return "Niet ondersteund";
+  return s || "—";
 }
 
 function splitLabelFromVersion(v: DatasetVersion | null): string {
@@ -228,8 +264,15 @@ export function DatasetManagementPixelPage() {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState(DM_TYPE_FILTERS[0]);
   const [sourceFilter, setSourceFilter] = useState(DM_SOURCE_FILTERS[0]);
+  const [categoryFilter, setCategoryFilter] = useState(DM_CATEGORY_FILTERS[0]);
   const [splitFilter, setSplitFilter] = useState(DM_SPLIT_FILTERS[0]);
   const [statusFilter, setStatusFilter] = useState(DM_STATUS_FILTERS[0]);
+
+  const [recovery, setRecovery] = useState<DatasetRecoveryAssessment | null>(null);
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [semanticEditing, setSemanticEditing] = useState(false);
 
   const [modal, setModal] = useState<ModalKind>(null);
   const [createName, setCreateName] = useState("");
@@ -335,13 +378,18 @@ export function DatasetManagementPixelPage() {
       setVersions([]);
       setSelectedVersionId(null);
       setDetailError(null);
+      setRecovery(null);
+      setSemanticEditing(false);
       return;
     }
     let cancelled = false;
     (async () => {
       setDetailError(null);
       try {
-        const res = await api.getDataset(selectedId);
+        const [res, recoveryRes] = await Promise.all([
+          api.getDataset(selectedId),
+          api.getDatasetRecovery(selectedId).catch(() => null),
+        ]);
         if (cancelled) return;
         setDetail(res.dataset);
         setVersions(res.versions);
@@ -349,11 +397,17 @@ export function DatasetManagementPixelPage() {
           if (prev && res.versions.some((v) => v.versionId === prev)) return prev;
           return pickUsableVersion(res.versions)?.versionId ?? null;
         });
+        setRecovery(recoveryRes?.recovery ?? null);
+        setEditDisplayName(displayNameForDataset(res.dataset));
+        setEditCategory(categoryForDataset(res.dataset));
+        setEditTags(tagsForDataset(res.dataset).join(", "));
+        setSemanticEditing(false);
       } catch (err) {
         if (!cancelled) {
           setDetail(null);
           setVersions([]);
           setSelectedVersionId(null);
+          setRecovery(null);
           setDetailError(errMsg(err, "Details laden mislukt"));
         }
       }
@@ -409,8 +463,10 @@ export function DatasetManagementPixelPage() {
         ds.brainStatus ?? ds.brain?.brainStatus,
         ds.canonicalState ?? ds.learningState?.canonicalState ?? ds.brain?.canonicalState,
       );
+      const category = categoryForDataset(ds);
       if (typeFilter !== "Alle types" && typeLabel !== typeFilter) return false;
       if (!sourceMatchesFilter(ds.sourceType, sourceFilter)) return false;
+      if (categoryFilter !== "Alle categorieën" && category !== categoryFilter) return false;
       if (statusFilter !== "Alle statussen" && statusNl !== statusFilter) return false;
       if (splitFilter !== "Alle splits") {
         const split =
@@ -422,14 +478,27 @@ export function DatasetManagementPixelPage() {
       }
       if (!q) return true;
       const tags = tagsForDataset(ds);
+      const display = displayNameForDataset(ds).toLowerCase();
       return (
         ds.name.toLowerCase().includes(q) ||
+        display.includes(q) ||
+        category.toLowerCase().includes(q) ||
         ds.sourceType.toLowerCase().includes(q) ||
         ds.description.toLowerCase().includes(q) ||
         tags.some((t) => t.toLowerCase().includes(q))
       );
     });
-  }, [datasets, query, typeFilter, sourceFilter, splitFilter, statusFilter, selected, selectedVersion]);
+  }, [
+    datasets,
+    query,
+    typeFilter,
+    sourceFilter,
+    categoryFilter,
+    splitFilter,
+    statusFilter,
+    selected,
+    selectedVersion,
+  ]);
 
   const totalBytes = useMemo(
     () => datasets.reduce((acc, d) => acc + (d.byteSize ?? 0), 0),
@@ -1004,6 +1073,15 @@ export function DatasetManagementPixelPage() {
                     <option key={f} value={f}>{f}</option>
                   ))}
                 </select>
+                <select
+                  className="lv-px-select"
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                >
+                  {DM_CATEGORY_FILTERS.map((f) => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
                 <select className="lv-px-select" value={splitFilter} onChange={(e) => setSplitFilter(e.target.value)}>
                   {DM_SPLIT_FILTERS.map((f) => (
                     <option key={f} value={f}>{f}</option>
@@ -1033,6 +1111,7 @@ export function DatasetManagementPixelPage() {
                     <thead>
                       <tr>
                         <th>Naam</th>
+                        <th>Categorie</th>
                         <th>Type</th>
                         <th>Bron</th>
                         <th>Split</th>
@@ -1045,6 +1124,7 @@ export function DatasetManagementPixelPage() {
                     <tbody>
                       {filtered.map((row) => {
                         const typeLabel = mapTypeLabel(row);
+                        const category = categoryForDataset(row) || "—";
                         const statusNl = mapDatasetStatus(
                           row.status,
                           row.brainStatus ?? row.brain?.brainStatus,
@@ -1070,7 +1150,8 @@ export function DatasetManagementPixelPage() {
                             className={row.datasetId === selectedId ? "is-active" : ""}
                             onClick={() => setSelectedId(row.datasetId)}
                           >
-                            <td><strong>{row.name}</strong></td>
+                            <td><strong>{displayNameForDataset(row)}</strong></td>
+                            <td><span className="lv-px-pill">{category}</span></td>
                             <td>
                               <span className={`lv-px-pill is-${typeToneForLabel(typeLabel)}`}>{typeLabel}</span>
                             </td>
@@ -1108,7 +1189,14 @@ export function DatasetManagementPixelPage() {
                   <p style={{ fontSize: 10, color: "var(--lv-text-muted)" }}>{detailError}</p>
                 ) : selected ? (
                   <>
-                    <p style={{ fontSize: 11, color: "var(--lv-text-bright)", margin: "8px 0" }}>{selected.name}</p>
+                    <p style={{ fontSize: 11, color: "var(--lv-text-bright)", margin: "8px 0" }}>
+                      {displayNameForDataset(selected)}
+                    </p>
+                    {displayNameForDataset(selected) !== selected.name ? (
+                      <p style={{ fontSize: 9, color: "var(--lv-text-muted)", margin: 0 }}>
+                        Intern: {selected.name}
+                      </p>
+                    ) : null}
                     <p style={{ fontSize: 10, color: "var(--lv-text-secondary)" }}>
                       {selected.description || "Geen beschrijving"}
                     </p>
@@ -1118,6 +1206,8 @@ export function DatasetManagementPixelPage() {
                       </p>
                     ) : null}
                     <dl className="lv-px-meta-grid" style={{ marginTop: 8 }}>
+                      <dt>Categorie</dt>
+                      <dd>{dash(categoryForDataset(selected) || null)}</dd>
                       <dt>Bron</dt>
                       <dd>{mapSourceLabel(selected.sourceType)}</dd>
                       <dt>Type</dt>
@@ -1142,33 +1232,123 @@ export function DatasetManagementPixelPage() {
                           dash(selectedVersion?.versionLabel)
                         )}
                       </dd>
-                      <dt>Taal</dt>
+                      <dt>Brain</dt>
                       <dd>
-                        {dash(
-                          String(
-                            (selected.metadata as Record<string, unknown> | undefined)?.language ??
-                              (selected.metadata as Record<string, unknown> | undefined)?.lang ??
-                              "",
-                          ),
-                        )}
+                        {selected.learningState?.canonicalState === "LEARNED" || selected.learned
+                          ? "Geleerd"
+                          : recovery?.reindexRequired || recovery?.recoveryState === "REINDEX_REQUIRED"
+                            ? "Herindexeren vereist (≠ geleerd)"
+                            : dash(selected.learningState?.label ?? selected.brainStatus ?? "niet geleerd")}
                       </dd>
+                      <dt>Recovery</dt>
+                      <dd>{recoveryLabel(recovery?.recoveryState ?? selected.recoveryState)}</dd>
                       <dt>Licentie</dt>
                       <dd>{dash(selected.license)}</dd>
                     </dl>
+                    {selected.semanticProfile?.summary ? (
+                      <p style={{ fontSize: 10, color: "var(--lv-text-secondary)", marginTop: 8 }}>
+                        {String(selected.semanticProfile.summary).slice(0, 280)}
+                      </p>
+                    ) : null}
+                    {recovery?.detail ? (
+                      <p style={{ fontSize: 9, color: "var(--lv-text-muted)", marginTop: 6 }}>
+                        {recovery.detail}
+                      </p>
+                    ) : null}
                     {selectedVersion?.validation ? (
                       <pre className="lv-px-code" style={{ marginTop: 8, maxHeight: 120 }}>
                         {JSON.stringify(selectedVersion.validation, null, 2)}
                       </pre>
                     ) : null}
+                    {semanticEditing ? (
+                      <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                        <label style={{ fontSize: 9, color: "var(--lv-text-muted)" }}>
+                          Weergavenaam
+                          <input
+                            className="lv-px-input"
+                            value={editDisplayName}
+                            onChange={(e) => setEditDisplayName(e.target.value)}
+                            style={{ display: "block", width: "100%", marginTop: 2 }}
+                          />
+                        </label>
+                        <label style={{ fontSize: 9, color: "var(--lv-text-muted)" }}>
+                          Categorie
+                          <select
+                            className="lv-px-select"
+                            value={editCategory}
+                            onChange={(e) => setEditCategory(e.target.value)}
+                            style={{ display: "block", width: "100%", marginTop: 2 }}
+                          >
+                            {DM_CATEGORY_FILTERS.filter((c) => c !== "Alle categorieën").map((c) => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label style={{ fontSize: 9, color: "var(--lv-text-muted)" }}>
+                          Tags (komma-gescheiden)
+                          <input
+                            className="lv-px-input"
+                            value={editTags}
+                            onChange={(e) => setEditTags(e.target.value)}
+                            style={{ display: "block", width: "100%", marginTop: 2 }}
+                          />
+                        </label>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            type="button"
+                            disabled={busy || !selectedId}
+                            onClick={() =>
+                              void withBusy(async () => {
+                                if (!selectedId) return;
+                                await api.patchDatasetSemantic(selectedId, {
+                                  displayName: editDisplayName.trim() || undefined,
+                                  primaryCategory: editCategory || undefined,
+                                  tags: editTags
+                                    .split(",")
+                                    .map((t) => t.trim())
+                                    .filter(Boolean),
+                                  versionId: selectedVersionId,
+                                });
+                                setSemanticEditing(false);
+                                setDetailEpoch((n) => n + 1);
+                                await loadDatasets({ quiet: true, preferId: selectedId });
+                              }, "Semantiek bijgewerkt")
+                            }
+                          >
+                            Opslaan
+                          </button>
+                          <button type="button" onClick={() => setSemanticEditing(false)}>
+                            Annuleren
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                     <div className="lv-px-action-list" style={{ marginTop: 8 }}>
                       <button
                         type="button"
                         disabled={busy || !selectedId}
-                        title="Nog niet ondersteund via API"
-                        onClick={() => toast("Metagegevens bewerken is nog niet beschikbaar via de API.")}
+                        onClick={() => setSemanticEditing((v) => !v)}
                       >
                         <PxIcon name="sliders" />
                         <span>Metagegevens bewerken</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || !selectedId || !selectedVersionId}
+                        onClick={() =>
+                          void withBusy(async () => {
+                            if (!selectedId) return;
+                            await api.analyzeDatasetSemantic(selectedId, {
+                              versionId: selectedVersionId,
+                              syncArtifacts: true,
+                            });
+                            setDetailEpoch((n) => n + 1);
+                            await loadDatasets({ quiet: true, preferId: selectedId });
+                          }, "Semantische analyse voltooid")
+                        }
+                      >
+                        <PxIcon name="refresh" />
+                        <span>Opnieuw analyseren</span>
                       </button>
                       <button
                         type="button"

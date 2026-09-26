@@ -1,11 +1,11 @@
-"""Dataset transforms with explicit lineage."""
+"""Dataset transforms with explicit lineage — streaming pipeline."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Iterator
 
 from .types import CanonicalRecord, DatasetError
 
@@ -22,14 +22,23 @@ class TransformSpec:
     name: str
     params: dict[str, Any]
 
-    def lineage_entry(self, *, input_count: int, output_count: int) -> dict[str, Any]:
-        return {
+    def lineage_entry(
+        self,
+        *,
+        input_count: int,
+        output_count: int,
+        drop_count: int | None = None,
+    ) -> dict[str, Any]:
+        entry = {
             "name": self.name,
             "params": dict(self.params),
             "inputCount": input_count,
             "outputCount": output_count,
             "appliedAt": utc_now(),
         }
+        if drop_count is not None:
+            entry["dropCount"] = drop_count
+        return entry
 
 
 def _strip_whitespace(rec: CanonicalRecord, params: dict[str, Any]) -> CanonicalRecord | None:
@@ -102,13 +111,10 @@ TRANSFORM_REGISTRY: dict[str, Callable[[CanonicalRecord, dict[str, Any]], Canoni
 }
 
 
-def apply_transforms(
-    records: list[CanonicalRecord],
+def _compile_pipeline(
     transforms: list[dict[str, Any]],
-) -> tuple[list[CanonicalRecord], list[dict[str, Any]]]:
-    """Apply named transforms sequentially; return records + lineage entries."""
-    current = list(records)
-    lineage: list[dict[str, Any]] = []
+) -> list[tuple[str, dict[str, Any], Callable[[CanonicalRecord, dict[str, Any]], CanonicalRecord | None]]]:
+    compiled: list[tuple[str, dict[str, Any], Callable[[CanonicalRecord, dict[str, Any]], CanonicalRecord | None]]] = []
     for spec_raw in transforms:
         name = str(spec_raw.get("name") or "").strip()
         if not name:
@@ -116,16 +122,86 @@ def apply_transforms(
         if name not in TRANSFORM_REGISTRY:
             raise DatasetError(f"Unknown transform: {name}", code="unknown_transform")
         params = dict(spec_raw.get("params") or {})
-        fn = TRANSFORM_REGISTRY[name]
-        next_rows: list[CanonicalRecord] = []
-        for rec in current:
-            out = fn(rec, params)
-            if out is not None:
-                next_rows.append(out)
-        entry = TransformSpec(name=name, params=params).lineage_entry(
-            input_count=len(current),
-            output_count=len(next_rows),
+        compiled.append((name, params, TRANSFORM_REGISTRY[name]))
+    return compiled
+
+
+def iter_apply_transforms(
+    records: Iterable[CanonicalRecord],
+    transforms: list[dict[str, Any]],
+) -> tuple[Iterator[CanonicalRecord], list[dict[str, Any]]]:
+    """Build a streaming transform pipeline.
+
+    Returns (iterator, lineage_holders). Lineage counters are filled while the
+    iterator is consumed; call ``finalize_transform_lineage(lineage_holders)``
+    after exhaustion, or use ``apply_transforms_to_sink``.
+    """
+    compiled = _compile_pipeline(transforms)
+    # Per-stage counters mutated during iteration
+    counters = [{"input": 0, "output": 0, "drop": 0, "name": n, "params": p} for n, p, _ in compiled]
+    lineage_refs = counters  # same objects
+
+    def _pipeline() -> Iterator[CanonicalRecord]:
+        for rec in records:
+            current: CanonicalRecord | None = rec
+            for idx, (name, params, fn) in enumerate(compiled):
+                counters[idx]["input"] += 1
+                if current is None:
+                    counters[idx]["drop"] += 1
+                    break
+                try:
+                    current = fn(current, params)
+                except DatasetError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — surface as transform error
+                    raise DatasetError(
+                        f"Transform {name} failed on record {rec.id}: {exc}",
+                        code="transform_error",
+                        details={"recordId": rec.id, "transform": name},
+                    ) from exc
+                if current is None:
+                    counters[idx]["drop"] += 1
+                    break
+                counters[idx]["output"] += 1
+            if current is not None:
+                yield current
+
+    return _pipeline(), lineage_refs
+
+
+def finalize_transform_lineage(lineage_holders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        TransformSpec(name=h["name"], params=h["params"]).lineage_entry(
+            input_count=h["input"],
+            output_count=h["output"],
+            drop_count=h["drop"],
         )
-        lineage.append(entry)
-        current = next_rows
-    return current, lineage
+        for h in lineage_holders
+    ]
+
+
+def apply_transforms_streaming(
+    records: Iterable[CanonicalRecord],
+    transforms: list[dict[str, Any]],
+) -> tuple[Iterator[CanonicalRecord], Callable[[], list[dict[str, Any]]]]:
+    """Return streaming iterator + callable that builds lineage after consumption."""
+    it, holders = iter_apply_transforms(records, transforms)
+
+    def _lineage() -> list[dict[str, Any]]:
+        return finalize_transform_lineage(holders)
+
+    return it, _lineage
+
+
+def apply_transforms(
+    records: Iterable[CanonicalRecord],
+    transforms: list[dict[str, Any]],
+) -> tuple[list[CanonicalRecord], list[dict[str, Any]]]:
+    """Compatibility wrapper — materializes output list (for small/tests).
+
+    Production handlers should stream via ``apply_transforms_streaming`` into
+    ``write_canonical_jsonl_stream`` instead of calling this for large corpora.
+    """
+    it, lineage_fn = apply_transforms_streaming(records, transforms)
+    out = list(it)
+    return out, lineage_fn()
