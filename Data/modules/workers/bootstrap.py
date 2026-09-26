@@ -55,6 +55,12 @@ def run_api(*, host: str | None = None, port: int | None = None) -> int:
 
 def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
     from Data.backend.config import load_settings
+    from Data.modules.workers.console import (
+        FabricConsole,
+        print_pool_inventory,
+        print_startup_banner,
+        print_worker_inventory,
+    )
     from Data.modules.workers.settings import load_worker_settings
     from Data.modules.workers.supervisor import (
         SupervisorFatalError,
@@ -64,20 +70,34 @@ def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
 
     settings = load_settings()
     wsettings = load_worker_settings()
+    root = _repo_root()
     if not wsettings.enabled or not wsettings.supervisor_enabled:
         print("[supervisor] disabled by settings", flush=True)
         return 0
+
+    # Force external production posture for this process.
+    os.environ.setdefault("LEVIATHAN_WORKERS_EXTERNALIZE_API", "1")
+    os.environ.setdefault("LEVIATHAN_DATASET_JOBS_RUNNER", "external")
+    os.environ.setdefault("LEVIATHAN_SOURCE_INGESTION_RUNNER", "external")
+
+    print_startup_banner(
+        install_root=root,
+        database_path=Path(settings.database_path),
+        settings=wsettings,
+    )
+    print_pool_inventory(settings=wsettings)
 
     restart_count = int(os.environ.get("LEVIATHAN_SUPERVISOR_RESTART_COUNT") or "0")
     supervisor = WorkerSupervisor(
         settings.database_path,
         settings=wsettings,
-        repo_root=_repo_root(),
+        repo_root=root,
         restart_count=restart_count,
     )
     stop = {"flag": False}
     exit_code = 0
     fatal_exc: BaseException | None = None
+    fabric_console = FabricConsole(settings.database_path)
 
     def _stop(*_a: object) -> None:
         stop["flag"] = True
@@ -89,12 +109,38 @@ def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
     try:
         supervisor.start()
     except RuntimeError as exc:
+        msg = str(exc)
+        if "WORKER_SUPERVISOR_LEASE_HELD" in msg:
+            lease_pid = None
+            try:
+                from Data.modules.workers.registry import WorkerRegistry
+
+                reg = WorkerRegistry(settings.database_path)
+                reg.initialize()
+                lease = reg.get_supervisor_lease() or {}
+                lease_pid = lease.get("holder_pid")
+            except Exception:  # noqa: BLE001
+                lease_pid = None
+            print(
+                f"[WORKER] Supervisor already active"
+                + (f": PID {lease_pid}" if lease_pid else "")
+                + " — not starting a duplicate fabric.",
+                flush=True,
+            )
         print(f"[supervisor] {exc}", flush=True)
         return 1
     print(
-        f"[supervisor] started holder={supervisor.holder_id} generation={supervisor.generation}",
+        f"[supervisor] started holder={supervisor.holder_id} generation={supervisor.generation} "
+        f"pid={os.getpid()}",
         flush=True,
     )
+    # Allow a brief grace so spawned workers register before inventory.
+    time.sleep(0.8 if not once else 0.1)
+    try:
+        print_worker_inventory(db_path=Path(settings.database_path))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[FABRIC] worker inventory unavailable: {exc}", flush=True)
+
     try:
         while not stop["flag"]:
             try:
@@ -135,6 +181,10 @@ def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
                     f"health={status.get('health')}",
                     flush=True,
                 )
+            try:
+                fabric_console.maybe_print()
+            except Exception:  # noqa: BLE001
+                pass
             if once:
                 break
             time.sleep(max(0.2, float(tick_seconds)))
@@ -155,7 +205,7 @@ def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
                     f"{type(fatal_exc).__name__}: {fatal_exc}",
                     flush=True,
                 )
-        print("[supervisor] stopped", flush=True)
+        print("[supervisor] stopped — fabric shutdown complete", flush=True)
     return exit_code
 
 

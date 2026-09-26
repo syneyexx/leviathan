@@ -56,6 +56,7 @@ class WorkerSettings:
     supervisor_lease_ttl_seconds: float = 20.0
     ram_headroom_mb: float = 512.0
     vram_headroom_mb: float = 256.0
+    terminal_summary_seconds: float = 30.0
 
     pool_counts: dict[str, int] = field(default_factory=default_pool_counts)
 
@@ -68,6 +69,7 @@ class WorkerSettings:
             "lease_ttl_seconds": self.lease_ttl_seconds,
             "poll_seconds": self.poll_seconds,
             "shutdown_grace_seconds": self.shutdown_grace_seconds,
+            "terminal_summary_seconds": self.terminal_summary_seconds,
             "restart": {
                 "max_attempts": self.restart_max_attempts,
                 "window_seconds": self.restart_window_seconds,
@@ -111,5 +113,8 @@ def load_worker_settings() -> WorkerSettings:
         ),
         ram_headroom_mb=_env_float("LEVIATHAN_RESOURCE_BACKGROUND_RAM_HEADROOM", 512.0),
         vram_headroom_mb=_env_float("LEVIATHAN_RESOURCE_BACKGROUND_VRAM_HEADROOM", 256.0),
+        terminal_summary_seconds=_env_float(
+            "LEVIATHAN_WORKERS_TERMINAL_SUMMARY_SECONDS", 30.0
+        ),
         pool_counts=counts,
     )

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from Data.modules.knowledge import KnowledgeStore
 from Data.modules.research import (
@@ -20,6 +22,18 @@ from Data.modules.research.web import HttpWebProvider
 
 class ResearchSystemTests(unittest.TestCase):
     def setUp(self) -> None:
+        # Unit tests exercise the in-process ResearchCoordinator (TEST/LEGACY).
+        # Production defaults externalize research to workers.
+        self._ext_patch = mock.patch.dict(
+            os.environ,
+            {
+                "LEVIATHAN_WORKERS_EXTERNALIZE_API": "0",
+                "LEVIATHAN_RESEARCH_RUNNER": "inprocess",
+            },
+            clear=False,
+        )
+        self._ext_patch.start()
+        self.addCleanup(self._ext_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db_path = self.root / "leviathan.db"

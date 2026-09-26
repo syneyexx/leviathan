@@ -551,13 +551,13 @@ class ResearchIntegrationSettings:
     corpus_root: str = ""
     auto_promote_verified_knowledge: bool = True
     datasets_auto_index_ready_to_knowledge: bool = True
-    # Dataset learning / job runner: inprocess | external | none
-    dataset_jobs_runner: str = "inprocess"
+    # Dataset learning / job runner: external (production) | inprocess (test/legacy) | none
+    dataset_jobs_runner: str = "external"
     dataset_index_batch_size: int = 50
     dataset_max_relations_per_doc: int = 24
     dataset_extract_relations: bool = True
-    # Source ingestion worker: inprocess | external | none
-    source_ingestion_runner: str = "inprocess"
+    # Source ingestion worker: external (production) | inprocess (test/legacy) | none
+    source_ingestion_runner: str = "external"
 
 
 @dataclass(frozen=True)
@@ -931,7 +931,7 @@ class Settings:
         if chaos_error_rate > 1.0:
             raise ConfigurationError("LEVIATHAN_CHAOS_ERROR_RATE must be <= 1.0")
 
-        coding_enabled = _env_bool("LEVIATHAN_FEATURE_CODING", False)
+        coding_enabled = _env_bool("LEVIATHAN_FEATURE_CODING", True)
         mcp_enabled = _env_bool("LEVIATHAN_FEATURE_MCP", False)
         # Hierarchical children: default true only when parent is enabled; explicit
         # child=true with parent=false is rejected in validate().
@@ -1175,7 +1175,7 @@ class Settings:
                 neuro_training_real_worker=_env_bool("LEVIATHAN_NEURO_TRAINING_REAL_WORKER", False),
                 module_manager_enabled=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER", False),
                 module_manager_subprocess=_env_bool("LEVIATHAN_FEATURE_MODULE_MANAGER_SUBPROCESS", False),
-                agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", False),
+                agents_enabled=_env_bool("LEVIATHAN_FEATURE_AGENTS", True),
                 coding_enabled=coding_enabled,
                 signal_fabric_enabled=_env_bool("LEVIATHAN_FEATURE_SIGNAL_FABRIC", True),
                 mcp_enabled=mcp_enabled,
@@ -1417,7 +1417,7 @@ class Settings:
                 ).strip().lower(),
                 observability_enabled=_env_bool("LEVIATHAN_INFERENCE_OBSERVABILITY", True),
             ),
-            network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", False)),
+            network=NetworkSettings(allow_outbound=_env_bool("LEVIATHAN_NETWORK_ALLOW_OUTBOUND", True)),
             artifacts=ArtifactSettings(root=artifacts_root),
             backup=BackupSettings(root=backup_root),
             chaos=ChaosSettings(
@@ -1443,7 +1443,7 @@ class Settings:
                     "LEVIATHAN_DATASETS_AUTO_INDEX_READY_TO_KNOWLEDGE", True
                 ),
                 dataset_jobs_runner=(
-                    (_env_raw("LEVIATHAN_DATASET_JOBS_RUNNER", "inprocess") or "inprocess")
+                    (_env_raw("LEVIATHAN_DATASET_JOBS_RUNNER", "external") or "external")
                     .strip()
                     .lower()
                 ),
@@ -1457,7 +1457,7 @@ class Settings:
                     "LEVIATHAN_DATASET_EXTRACT_RELATIONS", True
                 ),
                 source_ingestion_runner=(
-                    (_env_raw("LEVIATHAN_SOURCE_INGESTION_RUNNER", "inprocess") or "inprocess")
+                    (_env_raw("LEVIATHAN_SOURCE_INGESTION_RUNNER", "external") or "external")
                     .strip()
                     .lower()
                 ),

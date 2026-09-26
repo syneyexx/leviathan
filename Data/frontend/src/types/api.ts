@@ -2861,6 +2861,117 @@ export type AgentsDashboardWorkers = {
   truth?: Record<string, boolean>;
 };
 
+/* ---------- Worker Fabric dashboard (GET /api/workers/dashboard) ---------- */
+
+export type WorkerFabricJobSummary = {
+  job_id: string;
+  capability_id: string;
+  state?: string | null;
+  human_title?: string | null;
+  phase?: string | null;
+  message?: string | null;
+  domain?: string | null;
+  domain_entity_type?: string | null;
+  domain_entity_id?: string | null;
+  parent_job_id?: string | null;
+  root_job_id?: string | null;
+  trace_id?: string | null;
+  progress?: number | null;
+  progress_current?: number | null;
+  progress_total?: number | null;
+  progress_percent?: number | null;
+  started_at?: string | null;
+  elapsed_seconds?: number | null;
+  elapsed_display?: string | null;
+  worker_pool?: string | null;
+  attempt_number?: number | null;
+  error_code?: string | null;
+  finished_at?: string | null;
+};
+
+export type WorkerFabricWorker = {
+  worker_id: string;
+  pool_id: string;
+  slot: number;
+  pid: number;
+  state: string;
+  current_job_id: string | null;
+  restart_count: number;
+  degraded_reason?: string | null;
+  display_name?: string;
+  current_work?: string;
+  current_job?: WorkerFabricJobSummary | null;
+  current_capability?: string | null;
+  progress_current?: number | null;
+  progress_total?: number | null;
+  progress_percent?: number | null;
+  elapsed_seconds?: number | null;
+  elapsed_display?: string | null;
+  heartbeat_age_seconds?: number | null;
+  cpu_percent?: number | null;
+  rss_mb?: number | null;
+  gpu_percent?: number | null;
+  vram_mb?: number | null;
+  last_heartbeat_at?: string | null;
+  started_at?: string | null;
+  process_start_identity?: string;
+  supported_job_kinds?: string[];
+  resource_class?: string[];
+};
+
+export type WorkerFabricPool = {
+  pool_id: string;
+  entrypoint: string;
+  default_count: number;
+  job_kinds: string[];
+  resource_classes: string[];
+  description: string;
+  max_count: number;
+  desired: number;
+  env_desired?: number;
+  override?: boolean;
+  instances: number;
+  running?: number;
+  ready: number;
+  idle?: number;
+  busy: number;
+  draining: number;
+  degraded: number;
+  failed?: number;
+  starting?: number;
+  queued?: number;
+  restarts?: number;
+  status: string;
+  status_reason?: string | null;
+  optional?: boolean;
+  workers?: WorkerFabricWorker[];
+};
+
+export type WorkerFabricDashboard = {
+  generated_at: string;
+  summary: {
+    pools_total: number;
+    pools_enabled: number;
+    desired_workers: number;
+    running_workers: number;
+    busy_workers: number;
+    idle_workers: number;
+    failed_workers: number;
+    queue_depth: number;
+    degraded_pools: number;
+    fabric_status: string;
+  };
+  control_plane?: { role: string; status: string };
+  supervisor: Record<string, unknown>;
+  pools: WorkerFabricPool[];
+  workers: WorkerFabricWorker[];
+  queues: Array<{ pool_id: string; queued: number }>;
+  queued_jobs: WorkerFabricJobSummary[];
+  failures: WorkerFabricJobSummary[];
+  settings?: Record<string, unknown>;
+  truth?: Record<string, boolean>;
+};
+
 export type AgentsDashboardBucket = {
   start: string;
   end: string;

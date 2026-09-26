@@ -24,7 +24,12 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(cfg.features.cognition_enabled)
         self.assertFalse(cfg.features.cognition_shadow)
         self.assertFalse(cfg.features.neuro_soak_long)
-        self.assertFalse(cfg.network.allow_outbound)
+        self.assertTrue(cfg.network.allow_outbound)
+        self.assertTrue(cfg.features.agents_enabled)
+        self.assertTrue(cfg.features.coding_enabled)
+        self.assertTrue(cfg.features.signal_fabric_enabled)
+        self.assertEqual(cfg.research_integration.dataset_jobs_runner, "external")
+        self.assertEqual(cfg.research_integration.source_ingestion_runner, "external")
         self.assertEqual(cfg.knowledge.data_root, PROJECT_ROOT / "ModelData")
         self.assertEqual(cfg.coding.workspace, PROJECT_ROOT / "codingworkspace")
         summary = cfg.public_summary()
@@ -71,7 +76,7 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(cfg.verification.factual_grounding)
         self.assertTrue(cfg.research_integration.auto_promote_verified_knowledge)
         self.assertTrue(cfg.research_integration.datasets_auto_index_ready_to_knowledge)
-        self.assertFalse(cfg.network.allow_outbound)
+        self.assertTrue(cfg.network.allow_outbound)
 
     def test_invalid_boolean_fails_clearly(self) -> None:
         with mock.patch.dict(os.environ, {"LEVIATHAN_REASONING_ENABLED": "maybe"}, clear=False):

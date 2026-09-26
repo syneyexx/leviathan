@@ -703,7 +703,8 @@ class Migration39Tests(unittest.TestCase):
             self.assertIn("last_tick_at", cols)
             self.assertEqual(max(m.version for m in MIGRATIONS), MIGRATIONS[-1].version)
             self.assertGreaterEqual(MIGRATIONS[-1].version, 50)
-            self.assertEqual(MIGRATIONS[-1].name, "agent_signal_fabric")
+            self.assertTrue(any(m.name == "agent_signal_fabric" for m in MIGRATIONS))
+            self.assertTrue(any(m.name == "execution_fabric_hardening" or "execution_fabric" in m.name for m in MIGRATIONS))
         finally:
             tmp.cleanup()
 

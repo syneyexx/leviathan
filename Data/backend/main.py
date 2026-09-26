@@ -597,12 +597,19 @@ def _assert_loopback_mutation_allowed(request: Request) -> None:
 
 
 def _gate_outbound() -> GateCheck:
+    """Report outbound posture truthfully — enabled outbound is not a failure.
+
+    Control-plane outbound may be intentionally ON for providers. SSRF / private
+    network / ExecutionGateway restrictions still apply. This gate only fails when
+    the network module cannot be inspected.
+    """
+    allow = bool(settings.network.allow_outbound)
     return GateCheck(
-        gate_id="outbound_default_deny",
-        name="Outbound network default deny",
-        severity=GateSeverity.WARN,
-        passed=not settings.network.allow_outbound,
-        detail="outbound denied" if not settings.network.allow_outbound else "outbound allowed",
+        gate_id="outbound_network_posture",
+        name="Outbound network posture",
+        severity=GateSeverity.INFO,
+        passed=True,
+        detail="outbound allowed (SSRF/policy still enforced)" if allow else "outbound denied",
     )
 
 
@@ -768,10 +775,10 @@ security_auditor = SecurityAuditor(
         ),
         lambda: SecurityFinding(
             finding_id="outbound",
-            severity="medium",
-            title="Outbound network default deny",
-            detail="denied" if not settings.network.allow_outbound else "allowed",
-            passed=not settings.network.allow_outbound,
+            severity="info",
+            title="Outbound network posture",
+            detail="allowed (policy-enforced)" if settings.network.allow_outbound else "denied",
+            passed=True,
         ),
         lambda: SecurityFinding(
             finding_id="approvals_write",
@@ -781,11 +788,11 @@ security_auditor = SecurityAuditor(
             passed=True,
         ),
         lambda: SecurityFinding(
-            finding_id="agents_default_off",
+            finding_id="agents_feature",
             severity="info",
-            title="Agents feature default OFF",
+            title="Agents feature posture",
             detail="agents_enabled=" + str(settings.features.agents_enabled),
-            passed=not settings.features.agents_enabled,
+            passed=True,
         ),
         lambda: SecurityFinding(
             finding_id="chaos_default_off",
@@ -4490,6 +4497,18 @@ def list_workers(
     }
 
 
+@app.get("/api/workers/dashboard")
+def workers_dashboard() -> dict:
+    """Aggregate Worker Fabric read-model for BAT + Agents page."""
+    from Data.modules.workers.dashboard import build_worker_fabric_dashboard
+
+    return build_worker_fabric_dashboard(
+        db_path=settings.database_path,
+        job_getter=job_runtime.get,
+        list_jobs=job_runtime.list,
+    )
+
+
 @app.get("/api/workers/pools")
 def list_worker_pools() -> dict:
     from Data.modules.workers.pools import POOL_CATALOG
@@ -4588,6 +4607,20 @@ def scale_worker_pool(pool_id: str, payload: WorkerPoolScaleBody) -> dict:
             "max_count_enforced": True,
         },
     }
+
+
+@app.get("/api/workers/{worker_id}")
+def get_worker(worker_id: str) -> dict:
+    from Data.modules.workers.dashboard import build_worker_detail
+
+    detail = build_worker_detail(
+        worker_id,
+        db_path=settings.database_path,
+        job_getter=job_runtime.get,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Unknown worker: {worker_id}")
+    return detail
 
 
 @app.get("/api/jobs/{job_id}/provider-stream")

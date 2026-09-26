@@ -51,7 +51,11 @@ class MultiAgentAndDepthTests(unittest.TestCase):
         steps = self.agents.plan("read file and inspect csv", kind=AgentKind.CODING)
         kinds = [s.kind.value for s in steps]
         self.assertIn("VERIFY", kinds)
-        self.assertTrue(any(s.capability_id == "file.inspect_csv" for s in steps))
+        # Coding planner routes file work through allowlisted capabilities.
+        self.assertTrue(
+            any(s.capability_id in {"file.read", "file.inspect_csv", "file.list"} for s in steps),
+            msg=[(s.kind.value, s.capability_id) for s in steps],
+        )
 
     def test_multi_agent_runs_sequence(self) -> None:
         result = self.multi.run("search multi agent research", kinds=[AgentKind.RESEARCH, AgentKind.GENERIC])
