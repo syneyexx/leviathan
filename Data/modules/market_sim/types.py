@@ -54,8 +54,12 @@ class SourceStatus(str, Enum):
 
 class StrategyStatus(str, Enum):
     DRAFT = "DRAFT"
-    ACTIVE = "ACTIVE"
-    ARCHIVED = "ARCHIVED"
+    RESEARCH = "RESEARCH"  # W14: under evaluation
+    VALIDATED = "VALIDATED"  # W14: passed pre-registered criteria
+    CHAMPION = "CHAMPION"  # W14: promoted with evidence
+    ACTIVE = "ACTIVE"  # legacy alias retained
+    RETIRED = "RETIRED"  # W14
+    ARCHIVED = "ARCHIVED"  # legacy alias retained
 
 
 class RunStatus(str, Enum):

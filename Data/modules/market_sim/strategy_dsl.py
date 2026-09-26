@@ -1,7 +1,8 @@
-"""Strategy DSL v2 — structured specs over FeatureEngine (P2A).
+"""Strategy DSL v2/v3 — structured specs over FeatureEngine (P2A / W14).
 
 No arbitrary code execution. Unknown kinds → HOLD with honest rationale.
 Filters (e.g. regime_filter) gate entries without peeking at future bars.
+V3 adds declarative risk exits, sizing, universe/session/portfolio constraints.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from .types import MarketSimError, OrderSide
 
 
 DSL_V2_VERSION = 2
+DSL_V3_VERSION = 3
+DSL_CURRENT_VERSION = DSL_V3_VERSION
 
 SUPPORTED_KINDS = frozenset(
     {
@@ -28,12 +31,12 @@ SUPPORTED_KINDS = frozenset(
     }
 )
 
-SUPPORTED_FILTERS = frozenset({"regime_filter"})
+SUPPORTED_FILTERS = frozenset({"regime_filter", "universe_filter", "session_filter"})
 
 
 @dataclass(frozen=True)
 class StrategySpecV2:
-    """Validated Strategy Spec v2 document."""
+    """Validated Strategy Spec v2/v3 document (v3 fields optional, default empty)."""
 
     version: int
     kind: str
@@ -43,6 +46,17 @@ class StrategySpecV2:
     filters: list[dict[str, Any]] = field(default_factory=list)
     required_timeframes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # W14 DSL v3 declarative extensions (no eval/exec)
+    stop_loss: dict[str, Any] = field(default_factory=dict)
+    take_profit: dict[str, Any] = field(default_factory=dict)
+    trailing_stop: dict[str, Any] = field(default_factory=dict)
+    time_stop: dict[str, Any] = field(default_factory=dict)
+    position_sizing: dict[str, Any] = field(default_factory=dict)
+    risk_conditions: list[dict[str, Any]] = field(default_factory=list)
+    universe_filters: list[dict[str, Any]] = field(default_factory=list)
+    portfolio_constraints: dict[str, Any] = field(default_factory=dict)
+    session_schedule: dict[str, Any] = field(default_factory=dict)
+    composite_signals: list[dict[str, Any]] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -54,12 +68,42 @@ class StrategySpecV2:
             "filters": list(self.filters),
             "required_timeframes": list(self.required_timeframes),
             "metadata": dict(self.metadata),
+            "stop_loss": dict(self.stop_loss),
+            "take_profit": dict(self.take_profit),
+            "trailing_stop": dict(self.trailing_stop),
+            "time_stop": dict(self.time_stop),
+            "position_sizing": dict(self.position_sizing),
+            "risk_conditions": list(self.risk_conditions),
+            "universe_filters": list(self.universe_filters),
+            "portfolio_constraints": dict(self.portfolio_constraints),
+            "session_schedule": dict(self.session_schedule),
+            "composite_signals": list(self.composite_signals),
             "truth": {
-                "dsl_v2": True,
+                "dsl_v2": self.version >= 2,
+                "dsl_v3": self.version >= 3,
                 "no_arbitrary_code": True,
                 "feature_engine_backed": True,
             },
         }
+
+
+# Backward-compatible alias — same dataclass, not a parallel system.
+StrategySpecV3 = StrategySpecV2
+
+
+def _v3_fields(src: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stop_loss": dict(src.get("stop_loss") or {}),
+        "take_profit": dict(src.get("take_profit") or {}),
+        "trailing_stop": dict(src.get("trailing_stop") or {}),
+        "time_stop": dict(src.get("time_stop") or {}),
+        "position_sizing": dict(src.get("position_sizing") or {}),
+        "risk_conditions": list(src.get("risk_conditions") or []),
+        "universe_filters": list(src.get("universe_filters") or []),
+        "portfolio_constraints": dict(src.get("portfolio_constraints") or {}),
+        "session_schedule": dict(src.get("session_schedule") or {}),
+        "composite_signals": list(src.get("composite_signals") or []),
+    }
 
 
 def parse_strategy_spec(
@@ -68,15 +112,21 @@ def parse_strategy_spec(
     exit_rules: dict[str, Any] | None = None,
     parameters: dict[str, Any] | None = None,
 ) -> StrategySpecV2:
-    """Accept v2 documents or legacy entry_rules.kind forms."""
+    """Accept v2/v3 documents or legacy entry_rules.kind forms."""
     entry_rules = dict(entry_rules or {})
     exit_rules = dict(exit_rules or {})
     parameters = dict(parameters or {})
 
-    if int(entry_rules.get("version") or 0) >= 2 or entry_rules.get("spec_version") == 2:
+    ver = int(entry_rules.get("version") or entry_rules.get("spec_version") or 0)
+    if ver >= 2:
         kind = str(entry_rules.get("kind") or "hold").lower()
+        version = DSL_V3_VERSION if ver >= 3 else DSL_V2_VERSION
+        # Promote to v3 document shape when v3 fields present even if version==2
+        v3 = _v3_fields(entry_rules)
+        if any(v3.values()):
+            version = DSL_V3_VERSION
         return StrategySpecV2(
-            version=DSL_V2_VERSION,
+            version=version,
             kind=kind,
             parameters={**parameters, **dict(entry_rules.get("parameters") or {})},
             entry=dict(entry_rules.get("entry") or entry_rules),
@@ -84,6 +134,7 @@ def parse_strategy_spec(
             filters=list(entry_rules.get("filters") or []),
             required_timeframes=list(entry_rules.get("required_timeframes") or []),
             metadata=dict(entry_rules.get("metadata") or {}),
+            **v3,
         )
 
     # Legacy: promote entry_rules.kind into v2 shell
@@ -100,7 +151,7 @@ def parse_strategy_spec(
 
 
 def validate_strategy_spec(spec: StrategySpecV2) -> tuple[bool, str]:
-    if spec.version != DSL_V2_VERSION:
+    if spec.version not in {DSL_V2_VERSION, DSL_V3_VERSION}:
         return False, f"unsupported spec version {spec.version}"
     if spec.kind not in SUPPORTED_KINDS:
         return False, f"unsupported kind {spec.kind}"
@@ -114,7 +165,48 @@ def validate_strategy_spec(spec: StrategySpecV2) -> tuple[bool, str]:
             # allow right as feature name via right_feature
             if not (entry.get("left") and entry.get("op") and entry.get("right_feature")):
                 return False, "feature_compare requires left, op, and right|right_feature"
+    # V3 declarative field sanity — refuse code/eval keys
+    for blob in (spec.stop_loss, spec.take_profit, spec.trailing_stop, spec.time_stop, spec.position_sizing, spec.portfolio_constraints, spec.session_schedule):
+        if any(k in blob for k in ("eval", "exec", "code", "__import__")):
+            return False, "arbitrary code keys forbidden in DSL"
     return True, "ok"
+
+
+def apply_risk_exits(
+    *,
+    position_qty: float,
+    entry_price: float | None,
+    last_price: float,
+    bars_held: int,
+    spec: StrategySpecV2,
+) -> dict[str, Any]:
+    """Evaluate declarative stop / take-profit / trailing / time-stop (v3).
+
+    Returns action HOLD|SELL with reasons. No arbitrary code.
+    """
+    if position_qty <= 0 or entry_price is None:
+        return {"side": OrderSide.HOLD.value, "reason": "flat", "triggered": None}
+    pnl_pct = (last_price - float(entry_price)) / float(entry_price) if entry_price else 0.0
+    if spec.stop_loss:
+        pct = spec.stop_loss.get("pct")
+        if pct is not None and pnl_pct <= -abs(float(pct)):
+            return {"side": OrderSide.SELL.value, "reason": f"stop_loss pct={pct}", "triggered": "stop_loss"}
+    if spec.take_profit:
+        pct = spec.take_profit.get("pct")
+        if pct is not None and pnl_pct >= abs(float(pct)):
+            return {"side": OrderSide.SELL.value, "reason": f"take_profit pct={pct}", "triggered": "take_profit"}
+    if spec.trailing_stop:
+        trail = spec.trailing_stop.get("pct")
+        peak = spec.trailing_stop.get("peak_price") or entry_price
+        if trail is not None and peak:
+            dd = (float(peak) - last_price) / float(peak)
+            if dd >= abs(float(trail)):
+                return {"side": OrderSide.SELL.value, "reason": f"trailing_stop pct={trail}", "triggered": "trailing_stop"}
+    if spec.time_stop:
+        max_bars = spec.time_stop.get("max_bars")
+        if max_bars is not None and bars_held >= int(max_bars):
+            return {"side": OrderSide.SELL.value, "reason": f"time_stop bars={bars_held}", "triggered": "time_stop"}
+    return {"side": OrderSide.HOLD.value, "reason": "no_risk_exit", "triggered": None}
 
 
 def _feat(engine: FeatureEngine, bars: list[Any], name: str, as_of: str, period: int | None) -> float | None:
@@ -260,7 +352,7 @@ def evaluate_dsl_v2(
     side = OrderSide.HOLD.value
     rationale = "no setup"
     confidence = 0.4
-    used: dict[str, Any] = {"kind": kind, "dsl_version": DSL_V2_VERSION}
+    used: dict[str, Any] = {"kind": kind, "dsl_version": spec.version}
 
     if kind == "hold":
         return DslSignal(side=OrderSide.HOLD.value, qty=None, confidence=0.0, rationale="hold", parameters_used=used)
@@ -395,7 +487,7 @@ def evaluate_dsl_v2(
             qty=legacy.qty,
             confidence=legacy.confidence,
             rationale=legacy.rationale,
-            parameters_used={**legacy.parameters_used, "dsl_version": DSL_V2_VERSION},
+            parameters_used={**legacy.parameters_used, "dsl_version": spec.version},
             filter_passed=allowed,
         )
 
