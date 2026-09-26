@@ -301,6 +301,14 @@ def bind_default_consumers(
                 dataset_service, "datasets_auto_index_ready_to_knowledge"
             ):
                 dataset_service.datasets_auto_index_ready_to_knowledge = bool(value)
+            if key == "datasets.recovery_auto_reindex" and hasattr(
+                dataset_service, "datasets_recovery_auto_reindex"
+            ):
+                dataset_service.datasets_recovery_auto_reindex = bool(value)
+            if key == "datasets.recovery_max_auto_jobs" and hasattr(
+                dataset_service, "datasets_recovery_max_auto_jobs"
+            ):
+                dataset_service.datasets_recovery_max_auto_jobs = max(0, int(value))
 
         if isolation_guard is not None and key == "network.allow_outbound":
             if hasattr(isolation_guard, "settings"):

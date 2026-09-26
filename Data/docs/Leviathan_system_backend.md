@@ -139,7 +139,7 @@ Current wiring includes:
 | `Data/backend/main.py` | Composition root + chat + SPA + health (**CURRENT**) |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **54** (`market_sim_learning_runs`) |
+| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **56** (`institutional_runtime` / institutional repositories) |
 | `Data/backend/llm.py` | compatibility/boundary helpers |
 | `Data/backend/reasoning.py` | compatibility import/boundary |
 
@@ -713,7 +713,29 @@ Dataset lifecycle covers ingest, validation, canonicalization, dedupe, PII/conta
 
 Key files include:
 
-`service.py`, `store.py`, `types.py`, `formats.py`, `importers.py`, `huggingface.py`, `offline.py`, `materialize.py`, `shards.py`, `validation.py`, `quality.py`, `canonicalize.py`, `dedupe.py`, `pii.py`, `contamination.py`, `splits.py`, `mixtures.py`, `packing_sim.py`, `tokenize_stats.py`, `indexing.py`, `relations.py`, `transforms.py`, `annotation.py`, `export.py`, `jobs.py`, `worker.py`, `sidecar.py`.
+`service.py`, `store.py`, `types.py`, `formats.py`, `importers.py`, `huggingface.py`, `offline.py`, `materialize.py`, `shards.py`, `validation.py`, `quality.py`, `canonicalize.py`, `dedupe.py`, `pii.py`, `contamination.py`, `splits.py`, `mixtures.py`, `packing_sim.py`, `tokenize_stats.py`, `indexing.py`, `relations.py`, `transforms.py`, `annotation.py`, `export.py`, `jobs.py`, `worker.py`, `sidecar.py`, `streaming_io.py`, `memory_policy.py`, `scratch.py`, `publish.py`, `storage_authority.py`, `semantic_types.py`, `semantic_profiler.py`, `semantic_engine.py`, `semantic_enrichment.py`, `catalog.py`, `recovery.py`, `compute_planner.py`, `learning_state.py`.
+
+### Streaming data plane (Stage 1)
+
+Materialize/transform/split/dedupe/export/validate operate as **bounded streaming** jobs: record iterators, scratch spill, and atomic publish. Full in-memory corpus loads are refused above policy thresholds (`DatasetMemoryPolicy`). Python streaming remains the default fallback path.
+
+### Semantic profile + display names (Stage 2)
+
+Deterministic enrichment (`enrich_semantic_deterministic` / `ENRICH_METADATA` jobs) writes a governed `semanticProfile` into dataset metadata: `displayName`, `primaryCategory`, tags, summary, confidence. Operator PATCH overrides win over model/heuristic fields. Sidecar schema **2** and the derived global catalog (`dataset-catalog.json`) carry compact semantic fields for recovery/browse — they are **not** Brain truth.
+
+### Catalog + recovery
+
+Recovery evidence precedence: **DB → sidecar → catalog → filesystem**. `assess_dataset_recovery(dataset_id)` returns typed states: `READY`, `METADATA_RESTORED`, `REINDEX_REQUIRED`, `SOURCE_MISSING`, `HASH_MISMATCH`, `CONFLICT`, `UNSUPPORTED`. Tombstones (`.leviathan-dataset.deleted`) block resurrection. **Brain readiness is never derived from the catalog** — use `DatasetLearningState`; missing indexes surface as `REINDEX_REQUIRED` (≠ `LEARNED`). Optional settings: `datasets.recovery_auto_reindex` (default false), `datasets.recovery_max_auto_jobs`.
+
+### Native compute behind Worker Fabric
+
+`ComputeBackendPlanner` selects `PYTHON_STREAMING` vs `RUST_NATIVE` for allowlisted ops (`dataset.validate|hash|transform|split|export|dedupe`). When Rust is selected and `NativeComputeRunner` is `AVAILABLE`, DatasetService invokes the allowlisted `leviathan-data-plane` binary, verifies receipt + content hash, then atomically publishes and commits metadata — **never** marking a version `READY` before the Python metadata commit. Unavailable/failure paths fall back to streaming Python and expose `fallbackReason`. Native compute is a Worker Fabric data-plane accelerator, not a second control plane.
+
+### Storage authority
+
+DatasetStore (SQLite) remains canonical for catalog rows and version metadata. Corpus paths under `CorpusLayout` hold immutable raw / materialized / processed / export artifacts. Sidecars and the global catalog are recovery/browse aids only.
+
+API surfaces (backwards compatible): `GET/POST /api/datasets/catalog`, `POST /api/datasets/{id}/semantic/analyze`, `PATCH /api/datasets/{id}/semantic`, `GET /api/datasets/{id}/recovery`; list/get responses include `displayName` and semantic summary fields without removing legacy keys.
 
 ## 15.2 Source ingestion — `Data/modules/source_ingestion/`
 

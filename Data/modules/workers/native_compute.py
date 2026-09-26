@@ -554,11 +554,124 @@ def _terminate(proc: subprocess.Popen[Any], *, force: bool = False) -> None:
                 pass
 
 
+class NativeComputeRunner:
+    """Allowlisted native data-plane runner used by DatasetService handlers.
+
+    Python always verifies the receipt and content hash before atomic publish.
+    Callers must not mark a derived version READY until metadata is committed.
+    """
+
+    def __init__(
+        self,
+        *,
+        binary: Path | None = None,
+        capabilities: NativeCapabilities | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self.binary = binary
+        self._capabilities = capabilities
+        self.timeout_seconds = float(timeout_seconds)
+
+    @property
+    def available(self) -> bool:
+        caps = self.capabilities()
+        return caps.status == NativeStatus.AVAILABLE
+
+    def capabilities(self) -> NativeCapabilities:
+        if self._capabilities is None:
+            self._capabilities = probe_capabilities(binary=self.binary)
+        return self._capabilities
+
+    def run(
+        self,
+        *,
+        task_id: str,
+        operation: str,
+        input_path: str | Path,
+        temporary_path: str | Path,
+        limits: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
+        content_hash: str | None = None,
+        allowed_roots: list[str] | None = None,
+        input_format: str = "jsonl",
+        cancel_event: threading.Event | None = None,
+        work_dir: Path | None = None,
+    ) -> NativeRunResult:
+        task = build_task_document(
+            task_id=task_id,
+            operation=operation,
+            input_path=input_path,
+            temporary_path=temporary_path,
+            limits=limits,
+            options=options,
+            content_hash=content_hash,
+            allowed_roots=allowed_roots,
+            input_format=input_format,
+        )
+        return run_native_task(
+            task,
+            binary=self.binary,
+            timeout_seconds=self.timeout_seconds,
+            cancel_event=cancel_event,
+            work_dir=work_dir,
+        )
+
+    def verify_output(
+        self,
+        result: NativeRunResult,
+        *,
+        temporary_path: str | Path,
+        expected_hash: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate receipt + optional content hash of native temporary output."""
+        from Data.modules.common.hashing import sha256_file
+
+        if not result.ok or not isinstance(result.receipt, dict):
+            return {
+                "ok": False,
+                "errorCode": result.error_code or "NATIVE_FAILED",
+                "errorMessage": result.error_message or "native task failed",
+            }
+        path = Path(temporary_path)
+        if not path.is_file():
+            return {
+                "ok": False,
+                "errorCode": "NATIVE_OUTPUT_MISSING",
+                "errorMessage": f"native temporary output missing: {path}",
+            }
+        digest = sha256_file(path)
+        receipt_hash = result.receipt.get("contentHash") or result.receipt.get("outputContentHash")
+        if receipt_hash and str(receipt_hash) != digest:
+            return {
+                "ok": False,
+                "errorCode": "NATIVE_OUTPUT_HASH_MISMATCH",
+                "errorMessage": "receipt contentHash does not match output file",
+                "expected": str(receipt_hash),
+                "actual": digest,
+            }
+        if expected_hash and expected_hash != digest:
+            return {
+                "ok": False,
+                "errorCode": "NATIVE_OUTPUT_HASH_MISMATCH",
+                "errorMessage": "expected content hash mismatch",
+                "expected": expected_hash,
+                "actual": digest,
+            }
+        return {
+            "ok": True,
+            "contentHash": digest,
+            "byteSize": path.stat().st_size,
+            "recordsOut": result.receipt.get("recordsOut"),
+            "receipt": result.receipt,
+        }
+
+
 __all__ = [
     "BINARY_NAME",
     "PROTOCOL_VERSION",
     "SUPPORTED_OPERATIONS",
     "NativeCapabilities",
+    "NativeComputeRunner",
     "NativeRunResult",
     "NativeStatus",
     "build_task_document",

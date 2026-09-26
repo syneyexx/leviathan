@@ -178,7 +178,7 @@ function recordToRow(ds: DatasetRecord, jobs: DatasetJob[]): DhRow {
         : null;
   return {
     id: ds.datasetId,
-    name: ds.name,
+    name: ds.displayName || ds.semanticProfile?.displayName || ds.name,
     description: detail || ds.description || ds.originalFilename || ds.datasetId,
     source: mapSourceLabel(ds.sourceType, sourceKind),
     sourceKind,

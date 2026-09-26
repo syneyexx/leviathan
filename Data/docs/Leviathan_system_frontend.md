@@ -358,9 +358,14 @@ Search hit ≠ fetched source ≠ evidence ≠ supported claim ≠ knowledge.
 - `useDatasetActivity.ts`;
 - `datasetsInventory.ts`;
 - `datasetActivity.test.ts`;
-- `datasetManagementActions.test.ts`.
+- `datasetManagementActions.test.ts`;
+- `datasetLearningState.ts`.
 
 The LLM navigation also exposes dedicated Dataset Management and Offline Datasets pixel pages wired through `App.tsx`.
+
+### Dataset Management (pixel)
+
+`pages/pixel/DatasetManagementPixelPage.tsx` shows `displayName ?? name` as the primary label, a **category** column + filter, and search across displayName/tags/category. Details expose semantic summary fields and recovery honesty: `REINDEX_REQUIRED` is never shown as learned Brain state. Operators can PATCH displayName/category/tags and trigger semantic re-analyze via `/api/datasets/{id}/semantic`.
 
 ## Training
 

@@ -553,6 +553,9 @@ class ResearchIntegrationSettings:
     corpus_root: str = ""
     auto_promote_verified_knowledge: bool = True
     datasets_auto_index_ready_to_knowledge: bool = True
+    # Recovery: optionally auto-enqueue index jobs after sidecar/catalog restore (default off).
+    datasets_recovery_auto_reindex: bool = False
+    datasets_recovery_max_auto_jobs: int = 8
     # Dataset learning / job runner: external (production) | inprocess (test/legacy) | none
     dataset_jobs_runner: str = "external"
     dataset_index_batch_size: int = 50
@@ -881,6 +884,12 @@ class Settings:
                 ),
                 "datasets_auto_index_ready_to_knowledge": (
                     self.research_integration.datasets_auto_index_ready_to_knowledge
+                ),
+                "datasets_recovery_auto_reindex": (
+                    self.research_integration.datasets_recovery_auto_reindex
+                ),
+                "datasets_recovery_max_auto_jobs": (
+                    self.research_integration.datasets_recovery_max_auto_jobs
                 ),
                 "dataset_jobs_runner": self.research_integration.dataset_jobs_runner,
                 "dataset_index_batch_size": self.research_integration.dataset_index_batch_size,
@@ -1447,6 +1456,12 @@ class Settings:
                 ),
                 datasets_auto_index_ready_to_knowledge=_env_bool(
                     "LEVIATHAN_DATASETS_AUTO_INDEX_READY_TO_KNOWLEDGE", True
+                ),
+                datasets_recovery_auto_reindex=_env_bool(
+                    "LEVIATHAN_DATASETS_RECOVERY_AUTO_REINDEX", False
+                ),
+                datasets_recovery_max_auto_jobs=_env_int(
+                    "LEVIATHAN_DATASETS_RECOVERY_MAX_AUTO_JOBS", 8, minimum=0, maximum=200
                 ),
                 dataset_jobs_runner=(
                     (_env_raw("LEVIATHAN_DATASET_JOBS_RUNNER", "external") or "external")

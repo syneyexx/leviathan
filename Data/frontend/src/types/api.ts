@@ -774,6 +774,14 @@ export type DatasetLearningState = {
 export type DatasetRecord = {
   datasetId: string;
   name: string;
+  displayName?: string | null;
+  displayNameSource?: string | null;
+  primaryCategory?: string | null;
+  secondaryCategory?: string | null;
+  semanticTags?: string[];
+  semanticReviewRequired?: boolean;
+  semanticProfile?: DatasetSemanticProfileSummary | null;
+  recoveryState?: string | null;
   sourceType: string;
   status: string;
   description: string;
@@ -798,6 +806,37 @@ export type DatasetRecord = {
   indexes?: DatasetIndex[];
   learningState?: DatasetLearningState;
   canonicalState?: string;
+};
+
+export type DatasetSemanticProfileSummary = {
+  displayName?: string | null;
+  displayNameSource?: string | null;
+  primaryCategory?: string | null;
+  secondaryCategory?: string | null;
+  categoryPath?: string[];
+  tags?: string[];
+  summary?: string | null;
+  confidence?: number | null;
+  reviewRequired?: boolean;
+  classificationMethod?: string | null;
+};
+
+export type DatasetRecoveryAssessment = {
+  datasetId: string;
+  recoveryState: string;
+  state?: string;
+  evidenceSource?: string | null;
+  sourcePresent?: boolean;
+  metadataRestored?: boolean;
+  contentHashOk?: boolean | null;
+  brainLearned?: boolean;
+  reindexRequired?: boolean;
+  tombstoned?: boolean;
+  conflicts?: Record<string, unknown>[];
+  detail?: string;
+  learningCanonicalState?: string | null;
+  displayName?: string | null;
+  truth?: Record<string, unknown>;
 };
 
 export type DatasetVersion = {
