@@ -12,12 +12,65 @@ from Data.modules.market_sim.data_store import MarketDataStore
 from Data.modules.market_sim.feed.ordering import EventOrderer
 from Data.modules.market_sim.feed.types import OrderingDisposition
 from Data.modules.market_sim.market_event import MarketEvent, MarketEventType
-from Data.modules.market_sim.paper_broker import LocalPaperBroker
+from Data.modules.market_sim.feed.runtime import FeedSession
+from Data.modules.market_sim.feed.types import FeedSubscription
+from Data.modules.market_sim.paper_broker import (
+    LocalPaperBroker,
+    apply_paper_fill_from_feed_event,
+)
 from Data.modules.market_sim.service import MarketSimControlPlane
 from Data.modules.market_sim.store import MarketSimStore
 
 
 class FeedDuplicateT09Tests(unittest.TestCase):
+    def test_feed_event_fill_key_idempotent_across_reconnect(self) -> None:
+        broker = LocalPaperBroker(fee_bps=0, slippage_bps=0)
+        broker.wallet_for_session("sess-feed", initial_cash=10_000.0)
+        first = apply_paper_fill_from_feed_event(
+            broker,
+            session_id="sess-feed",
+            event_id="evt-42",
+            symbol="BTCUSDT",
+            side="BUY",
+            qty=1,
+            price=100.0,
+        )
+        second = apply_paper_fill_from_feed_event(
+            broker,
+            session_id="sess-feed",
+            event_id="evt-42",
+            symbol="BTCUSDT",
+            side="BUY",
+            qty=1,
+            price=100.0,
+        )
+        self.assertEqual(first.order_id, second.order_id)
+        self.assertEqual(len(broker.wallet_for_session("sess-feed").transactions), 1)
+
+        sub = FeedSubscription(
+            feed_id="f1",
+            provider_id="binance_public",
+            connection_id="conn-old",
+            symbols=["BTCUSDT"],
+        )
+        session = FeedSession(sub=sub)
+        event = MarketEvent(
+            event_id="evt-42",
+            provider_id="binance_public",
+            connection_id="conn-old",
+            symbol="BTCUSDT",
+            event_type=MarketEventType.TRADE,
+            price=100.0,
+            size=1.0,
+            sequence=1,
+        )
+        self.assertTrue(session.ingest(event).get("accepted"))
+        recon = session.begin_reconnect(reason="socket_drop")
+        self.assertTrue(recon["truth"]["seen_ids_preserved"])
+        replay = session.ingest(event)
+        self.assertFalse(replay.get("accepted"))
+        self.assertEqual(replay.get("disposition"), OrderingDisposition.DUPLICATE_DROPPED.value)
+
     def test_reconnect_replay_drops_duplicate_event_and_fill(self) -> None:
         orderer = EventOrderer()
         event = MarketEvent(

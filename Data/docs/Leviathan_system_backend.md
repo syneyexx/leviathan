@@ -1168,7 +1168,7 @@ Citation audit includes Dutch factual/hedging cues; hedging does not clear evide
 
 ### Production-quality cognition / memory / sealed / web (W06 / W08 / W17 CURRENT)
 
-- **W06:** `CognitiveRuntime.cancel` propagates to registered `child_run_ids` (delegation metadata `child_run_id` / `run_id` auto-registers). Parent stop does not leave children running in-process.
+- **W06:** `CognitiveRuntime.cancel` propagates to registered `child_run_ids` (delegation metadata `child_run_id` / `run_id` auto-registers). Parent stop does not leave children running in-process. `CognitivePlanner.replan` records `observation_linked` / `observation_refs`; adaptive reasons without observation ids are marked `observation_trace:MISSING` (strict mode raises `COGNITION_REPLAN_MISSING_OBSERVATION_TRACE`).
 - **W08 / A08:** `MemoryStore.correct_preference` writes a new `PREFERENCE`, supersedes every ACTIVE matching `preference_key` (`PREFERENCE` or legacy `FACT`), stays in-scope (no silent GLOBAL wipe from a conversation edit), and ACTIVE search/list return only the current preference.
 - **W17 / T08:** Sealed holdout contamination keys use a rename-stable root via `lineage_aliases` / `register_lineage_rename` / optional `root_lineage_id`. Renamed descendants cannot claim a fresh sealed holdout after revelation.
 - **Web (GI7):** `HttpWebProvider` search/fetch tolerate thin response doubles (`status_code` / `.text` via getattr + `content` fallback) so rate-limit and robots paths do not turn real provider results into `UNAVAILABLE`/`FAILED` under mocks. Fabrication remains forbidden.
