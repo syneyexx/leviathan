@@ -139,6 +139,48 @@ def _elapsed_seconds(started_at: str | None, ended_at: str | None) -> float | No
         return None
 
 
+def _honest_storage_format(
+    *,
+    path: Path | str | None = None,
+    detected: DetectedFormat | str | None = None,
+) -> str | None:
+    """Return ``jsonl`` or ``parquet`` when the on-disk format is unambiguous.
+
+    Does not force Parquet for heterogeneous text — JSONL remains the default
+    materialized representation.
+    """
+    if detected is not None:
+        value = detected.value if isinstance(detected, DetectedFormat) else str(detected)
+        value = value.strip().lower()
+        if value == "parquet":
+            return "parquet"
+        if value in {"jsonl", "ndjson", "canonical_jsonl"}:
+            return "jsonl"
+    if path is not None:
+        suffix = Path(path).suffix.lower()
+        if suffix == ".parquet":
+            return "parquet"
+        if suffix in {".jsonl", ".ndjson"}:
+            return "jsonl"
+    return None
+
+
+def _raw_version_schema(
+    *,
+    detected: DetectedFormat | str | None = None,
+    path: Path | str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "raw", **(extra or {})}
+    if detected is not None:
+        fmt = detected.value if isinstance(detected, DetectedFormat) else str(detected)
+        schema.setdefault("format", fmt)
+    storage = _honest_storage_format(path=path, detected=detected)
+    if storage:
+        schema["storageFormat"] = storage
+    return schema
+
+
 class DatasetService:
     """Production dataset control plane (local + HF import through indexing)."""
 
@@ -741,8 +783,20 @@ class DatasetService:
                     kind=VersionKind.RAW,
                     status=VersionStatus.READY,
                     storage_path=path_str,
-                    schema={"type": "raw", "format": (fmt or DetectedFormat.UNKNOWN).value, "discovered": True},
-                    metadata={"pathKey": path_key, "noCopy": True},
+                    schema=_raw_version_schema(
+                        detected=fmt or DetectedFormat.UNKNOWN,
+                        path=path_str,
+                        extra={"discovered": True},
+                    ),
+                    metadata={
+                        "pathKey": path_key,
+                        "noCopy": True,
+                        **(
+                            {"storageFormat": sf}
+                            if (sf := _honest_storage_format(path=path_str, detected=fmt))
+                            else {}
+                        ),
+                    },
                 )
                 if size is not None:
                     self.store.update_version(ver.version_id, byte_size=size)
@@ -777,8 +831,20 @@ class DatasetService:
                 kind=VersionKind.RAW,
                 status=VersionStatus.READY,
                 storage_path=path_str,
-                schema={"type": "raw", "format": (fmt or DetectedFormat.UNKNOWN).value, "discovered": True},
-                metadata={"pathKey": path_key, "noCopy": True},
+                schema=_raw_version_schema(
+                    detected=fmt or DetectedFormat.UNKNOWN,
+                    path=path_str,
+                    extra={"discovered": True},
+                ),
+                metadata={
+                    "pathKey": path_key,
+                    "noCopy": True,
+                    **(
+                        {"storageFormat": sf}
+                        if (sf := _honest_storage_format(path=path_str, detected=fmt))
+                        else {}
+                    ),
+                },
             )
             if size is not None:
                 self.store.update_version(ver.version_id, byte_size=size)
@@ -2696,7 +2762,7 @@ class DatasetService:
             kind=VersionKind.RAW,
             status=VersionStatus.READY,
             storage_path=str(dest),
-            schema={"type": "raw", "format": detection.format.value},
+            schema=_raw_version_schema(detected=detection.format, path=dest),
         )
         self.store.update_version(
             raw_version.version_id,
@@ -2887,7 +2953,7 @@ class DatasetService:
             kind=VersionKind.RAW,
             status=VersionStatus.READY,
             storage_path=str(downloaded.path),
-            schema={"type": "raw", "format": detection.format.value},
+            schema=_raw_version_schema(detected=detection.format, path=downloaded.path),
         )
         self.store.update_version(raw_version.version_id, content_hash=digest, byte_size=size)
         result: dict[str, Any] = {
@@ -3036,14 +3102,26 @@ class DatasetService:
             },
         )
         write_repo_manifest(manifest_path, manifest)
+        repo_extra: dict[str, Any] = {
+            "formats": sorted(formats_seen),
+            "fileCount": len(sources),
+        }
+        # Honest storageFormat only when the repository is unambiguously one plane.
+        if formats_seen == {"parquet"}:
+            repo_extra["storageFormat"] = "parquet"
+        elif formats_seen and formats_seen <= {"jsonl", "ndjson"}:
+            repo_extra["storageFormat"] = "jsonl"
         raw_version = self.store.create_version(
             dataset_id=job.dataset_id,
             version_label="raw-v1",
             kind=VersionKind.RAW,
             status=VersionStatus.READY,
             storage_path=str(raw_root),
-            schema={"type": "raw", "formats": sorted(formats_seen), "fileCount": len(sources)},
-            metadata={"files": [s["relativePath"] for s in sources]},
+            schema={"type": "raw", **repo_extra},
+            metadata={
+                "files": [s["relativePath"] for s in sources],
+                **({"storageFormat": repo_extra["storageFormat"]} if "storageFormat" in repo_extra else {}),
+            },
         )
         self.store.update_version(raw_version.version_id, byte_size=total_bytes)
         result: dict[str, Any] = {
@@ -3117,7 +3195,9 @@ class DatasetService:
             kind=VersionKind.MATERIALIZED,
             status=VersionStatus.READY if validation.get("valid") else VersionStatus.FAILED,
             storage_path=str(dest),
-            schema=canonical_schema_dict(),
+            # Materialize always publishes canonical JSONL (never force Parquet).
+            schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
+            metadata={"storageFormat": "jsonl"},
         )
         self.store.update_version(
             version.version_id,

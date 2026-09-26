@@ -3,6 +3,7 @@
 mod dedupe;
 mod export;
 mod hash;
+mod parquet;
 mod split;
 mod transform;
 mod validate;
@@ -21,6 +22,7 @@ use crate::protocol::{assert_path_allowed, NativeTask, TaskReceipt};
 pub use dedupe::run_dedupe;
 pub use export::run_export;
 pub use hash::run_hash;
+pub use parquet::{run_parquet_hash, run_parquet_to_jsonl, run_parquet_validate};
 pub use split::run_split;
 pub use transform::run_transform;
 pub use validate::run_validate;
@@ -56,6 +58,15 @@ pub fn dispatch(task: &NativeTask, metrics: Arc<Metrics>) -> Result<TaskReceipt>
         "dataset.split" => run_split(task, &input_path, &output_path, metrics.clone())?,
         "dataset.export" => run_export(task, &input_path, &output_path, metrics.clone())?,
         "dataset.dedupe" => run_dedupe(task, &input_path, &output_path, metrics.clone())?,
+        "dataset.parquet_validate" => {
+            run_parquet_validate(task, &input_path, &output_path, metrics.clone())?
+        }
+        "dataset.parquet_hash" => {
+            run_parquet_hash(task, &input_path, &output_path, metrics.clone())?
+        }
+        "dataset.parquet_to_jsonl" => {
+            run_parquet_to_jsonl(task, &input_path, &output_path, metrics.clone())?
+        }
         other => {
             return Err(DataPlaneError::coded(
                 NATIVE_UNSUPPORTED_OPERATION,
@@ -71,7 +82,13 @@ pub fn dispatch(task: &NativeTask, metrics: Arc<Metrics>) -> Result<TaskReceipt>
         ri
     };
     let records_out = if outcome.records_out > 0
-        || matches!(task.operation.as_str(), "dataset.validate" | "dataset.hash")
+        || matches!(
+            task.operation.as_str(),
+            "dataset.validate"
+                | "dataset.hash"
+                | "dataset.parquet_validate"
+                | "dataset.parquet_hash"
+        )
     {
         outcome.records_out
     } else {

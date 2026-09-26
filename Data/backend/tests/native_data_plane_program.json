@@ -38,7 +38,7 @@
     "W162": {"status": "COMPLETE", "evidence": "dataset.dedupe native op"},
     "W163": {"status": "COMPLETE", "evidence": "ComputeBackendPlanner + DatasetService wiring"},
     "W164": {"status": "COMPLETE", "evidence": "scripts/build_native_data_plane.py + installer optional step"},
-    "W165": {"status": "NOT_IMPLEMENTED", "notes": "Parquet native reader/writer path"},
+    "W165": {"status": "COMPLETE", "evidence": "parquet io + dataset.parquet_* ops; test_native_parquet_w165.py"},
     "W166": {"status": "NOT_IMPLEMENTED", "notes": "Arrow IPC batch bridge"},
     "W167": {"status": "NOT_IMPLEMENTED", "notes": "GPU/accelerated hash/dedupe"},
     "W168": {"status": "FEATURE_GATED", "notes": "Native mode settings exist; operator must build binary"},
@@ -92,7 +92,6 @@
   ],
   "remainingScopeHonesty": {
     "NOT_IMPLEMENTED": [
-      "Parquet native",
       "market-data pilot",
       "simulation profiling",
       "HARD_ENFORCED cgroups",

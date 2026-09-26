@@ -205,13 +205,16 @@ def iter_version_records(
 ) -> Iterator[CanonicalRecord]:
     """Canonical version iterator — no complete corpus list.
 
-    Currently supports canonical JSONL (primary production representation).
-    Format extensibility preserved via ``format_hint``.
+    Primary production representation is canonical JSONL. Parquet is supported
+    when ``format_hint`` is ``parquet`` or the path suffix is ``.parquet``.
+    Heterogeneous text corpora remain JSONL — this does not force Parquet.
     """
     path = Path(storage_path)
     if not path.exists():
         raise DatasetError(f"Version storage missing: {path}", code="no_storage", http_status=404)
     fmt = (format_hint or "").strip().lower()
+    if not fmt and path.is_file() and path.suffix.lower() == ".parquet":
+        fmt = "parquet"
     if fmt in {"", "jsonl", "canonical_jsonl"}:
         yield from iter_materialized_jsonl(path, max_record_bytes=max_record_bytes)
         return

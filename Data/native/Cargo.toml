@@ -16,3 +16,8 @@ sha2 = "0.10"
 tempfile = "3"
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+# Minimal Arrow/Parquet plane — no default compression/IPC stack; enable arrow
+# bridge only (writer/reader for record-batch conversion).
+arrow-array = { version = "60", default-features = false }
+arrow-schema = { version = "60", default-features = false }
+parquet = { version = "60", default-features = false, features = ["arrow"] }

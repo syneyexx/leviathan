@@ -9,6 +9,7 @@ from typing import Any
 
 from Data.modules.datasets.memory_policy import DatasetMemoryPolicy, resolve_dataset_memory_policy
 from Data.modules.workers.native_compute import (
+    PARQUET_OPERATIONS,
     SUPPORTED_OPERATIONS,
     NativeCapabilities,
     NativeStatus,
@@ -169,8 +170,27 @@ class ComputeBackendPlanner:
                 detail="native_mode_rust",
             )
 
-        # auto: prefer Rust when input is large enough (or size unknown + available)
+        # auto: prefer Rust when input is large enough (or size unknown + available).
+        # Parquet-native ops: large parquet inputs (or unknown size / .parquet path)
+        # prefer RUST_NATIVE whenever the binary is available.
         threshold = self.policy.rust_threshold_bytes
+        looks_parquet = _input_looks_parquet(input_path)
+        is_parquet_op = op in PARQUET_OPERATIONS
+        if is_parquet_op and (size is None or size >= threshold or looks_parquet):
+            return BackendPlan(
+                backend=ComputeBackend.RUST_NATIVE,
+                operation=op,
+                native_mode=mode,
+                input_bytes=size,
+                rust_threshold_bytes=threshold,
+                native_status=caps.status.value,
+                fallback_reason=None,
+                detail=(
+                    "auto: parquet_* prefers RUST_NATIVE for large/parquet inputs"
+                    if looks_parquet or (size is not None and size >= threshold)
+                    else "auto: parquet_* size unknown, native available"
+                ),
+            )
         if size is None:
             return BackendPlan(
                 backend=ComputeBackend.RUST_NATIVE,
@@ -203,6 +223,15 @@ class ComputeBackendPlanner:
             fallback_reason="below_rust_threshold",
             detail=f"auto: input_bytes={size} < threshold={threshold}",
         )
+
+
+def _input_looks_parquet(input_path: str | Path | None) -> bool:
+    if input_path is None:
+        return False
+    try:
+        return Path(input_path).suffix.lower() == ".parquet"
+    except (TypeError, ValueError):
+        return False
 
 
 __all__ = [

@@ -17,6 +17,9 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "dataset.split",
     "dataset.export",
     "dataset.dedupe",
+    "dataset.parquet_validate",
+    "dataset.parquet_hash",
+    "dataset.parquet_to_jsonl",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,6 +232,7 @@ pub struct CapabilitiesFeatures {
     pub progress_stderr: bool,
     pub canonical_jsonl: bool,
     pub path_allowlist: bool,
+    pub parquet: bool,
 }
 
 pub fn capabilities_document() -> CapabilitiesDocument {
@@ -245,6 +249,7 @@ pub fn capabilities_document() -> CapabilitiesDocument {
             progress_stderr: true,
             canonical_jsonl: true,
             path_allowlist: true,
+            parquet: true,
         },
     }
 }

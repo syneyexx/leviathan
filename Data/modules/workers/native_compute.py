@@ -32,6 +32,17 @@ SUPPORTED_OPERATIONS = frozenset(
         "dataset.split",
         "dataset.export",
         "dataset.dedupe",
+        "dataset.parquet_validate",
+        "dataset.parquet_hash",
+        "dataset.parquet_to_jsonl",
+    }
+)
+
+PARQUET_OPERATIONS = frozenset(
+    {
+        "dataset.parquet_validate",
+        "dataset.parquet_hash",
+        "dataset.parquet_to_jsonl",
     }
 )
 
@@ -669,6 +680,7 @@ class NativeComputeRunner:
 __all__ = [
     "BINARY_NAME",
     "PROTOCOL_VERSION",
+    "PARQUET_OPERATIONS",
     "SUPPORTED_OPERATIONS",
     "NativeCapabilities",
     "NativeComputeRunner",
