@@ -351,6 +351,46 @@ export type BackupManifest = {
   size_bytes: number;
   schema_version: number;
   artifacts_copied: number;
+  databases?: Record<
+    string,
+    {
+      domain: string;
+      sourcePath?: string;
+      backupFile?: string;
+      sha256?: string;
+      sizeBytes?: number;
+      schemaVersion?: number;
+    }
+  >;
+  backupSetComplete?: boolean;
+  backupKind?: string;
+};
+
+export type SqliteDatabaseStatus = {
+  domain: string;
+  path: string;
+  exists: boolean;
+  sizeBytes: number;
+  walExists: boolean;
+  walSizeBytes: number;
+  shmExists: boolean;
+  schemaVersion: number;
+};
+
+export type SqliteTableInfo = {
+  name: string;
+  type: string;
+  columns: Array<{ name: string; type: string; notnull: boolean; pk: boolean }>;
+  indexes: Array<{ name: string; unique: boolean }>;
+};
+
+export type SqliteQueryResult = {
+  domain: string;
+  columns: string[];
+  rows: unknown[][];
+  rowCount: number;
+  truncated: boolean;
+  limit: number;
 };
 
 export type NeuroResidualStatus = {

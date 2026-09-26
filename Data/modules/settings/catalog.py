@@ -721,15 +721,19 @@ def build_catalog() -> tuple[SettingDefinition, ...]:
         SettingDefinition(
             key="database_path",
             category="opslag",
-            label="Database path",
-            description="SQLite database path. Bootstrap-critical — managed via environment only.",
+            label="Control Plane database path",
+            description=(
+                "Control Plane SQLite path (compat alias for settings.database_path). "
+                "Canonical set: LEVIATHAN_CONTROL/KNOWLEDGE/MARKET_DATABASE_PATH. "
+                "LEVIATHAN_DATABASE_PATH is legacy upgrade input only — not post-cutover authority."
+            ),
             value_type=SettingType.PATH,
-            default="Data/backend/data/leviathan.db",
-            env_name="LEVIATHAN_DATABASE_PATH",
+            default="Data/backend/data/leviathan_control.db",
+            env_name="LEVIATHAN_CONTROL_DATABASE_PATH",
             path=("database_path",),
             editable=False,
             apply_mode=ApplyMode.BOOTSTRAP_ONLY,
-            consumer="SQLite / MigrationRunner",
+            consumer="SQLite / Control Plane / upgrade_leviathan_databases",
             experimental=False,
         ),
         SettingDefinition(

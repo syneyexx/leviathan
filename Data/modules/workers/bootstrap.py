@@ -93,6 +93,7 @@ def run_supervisor(*, once: bool = False, tick_seconds: float = 1.0) -> int:
         settings=wsettings,
         repo_root=root,
         restart_count=restart_count,
+        database_paths=settings.database_paths,
     )
     stop = {"flag": False}
     exit_code = 0

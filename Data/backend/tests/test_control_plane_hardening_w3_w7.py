@@ -113,6 +113,7 @@ class KnowledgePrepareWorkerTests(unittest.TestCase):
 
         class _S:
             database_path = self.db
+            knowledge_database_path = self.db  # test fixture: single-file compat
             knowledge = _K()
 
         self.ctx = {

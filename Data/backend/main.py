@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from .config import DATA_ROOT, FRONTEND_DIST, FRONTEND_ROOT, PROJECT_ROOT, settings
 from .database import Database
-from .migrations import MigrationRunner
+from .migrations import MigrationRunner  # noqa: F401 — retained for test/compat importers
 from Data.backend.routes.settings import build_behavior_router, build_settings_router
 from Data.modules.settings import DEFAULT_BEHAVIOR_PROFILE, SettingsControlPlane
 from Data.modules.settings.behavior_store import BehaviorProfileStore
@@ -216,10 +216,16 @@ from Data.modules.execution import CapabilityReceiptStore
 from Data.modules.native import NativeRuntimeStub
 from Data.modules.trading import TradingStub
 from Data.modules.backup import BackupError, BackupService
+from Data.modules.sqlite_manager import SqliteManager
+from .routes.sqlite_manager import build_sqlite_manager_router
 from Data.modules.chaos import ChaosInjector, ChaosPlan
 from Data.modules.master import MasterGateCheck, MasterGateRunner, MasterGateStatus
 
-db = Database(settings.database_path)
+CONTROL_DB = settings.control_database_path
+KNOWLEDGE_DB = settings.knowledge_database_path
+MARKET_DB = settings.market_database_path
+
+db = Database(CONTROL_DB)
 runs = RunStore(settings.database_path)
 artifacts = ArtifactStore(settings.database_path, settings.artifacts.root)
 embedding_provider = build_embedding_provider(
@@ -233,7 +239,7 @@ reranker_provider = (
     else None
 )
 knowledge = KnowledgeStore(
-    settings.database_path,
+    KNOWLEDGE_DB,
     data_root=settings.knowledge.data_root,
     chunk_max_chars=settings.knowledge.chunk_max_chars,
     chunk_overlap=settings.knowledge.chunk_overlap,
@@ -253,8 +259,8 @@ staged_retriever = StagedRetriever(
     query_expansion=bool(settings.knowledge.query_expansion),
     max_query_expansions=int(settings.knowledge.max_query_expansions),
 )
-atlas_store = AtlasStore(settings.database_path)
-why_library = WhyLibrary(settings.database_path, enabled=settings.features.why_library)
+atlas_store = AtlasStore(KNOWLEDGE_DB)
+why_library = WhyLibrary(KNOWLEDGE_DB, enabled=settings.features.why_library)
 economy_governor = CognitiveEconomyGovernor(
     enabled=True,
     default_deep_recall_budget=settings.knowledge.deep_recall_budget,
@@ -263,12 +269,12 @@ deep_recall_service = DeepRecallService(
     knowledge=knowledge,
     atlas=atlas_store,
     retriever=retriever,
-    db_path=settings.database_path,
+    db_path=KNOWLEDGE_DB,
     enabled=settings.features.deep_recall,
 )
 staged_retriever.deep_recall = deep_recall_service
 assimilation_service = KnowledgeAssimilationService(
-    database_path=settings.database_path,
+    database_path=KNOWLEDGE_DB,
     knowledge_store=knowledge,
     atlas_store=atlas_store,
 )
@@ -504,7 +510,7 @@ agent_runtime.coding = coding_service
 agent_runtime.coding_enabled = settings.features.coding_enabled
 market_sim_service = MarketSimControlPlane.from_settings(
     settings,
-    db_path=settings.database_path,
+    db_path=MARKET_DB,
     knowledge=knowledge,
     memory=memory_store,
     evidence=evidence_store,
@@ -875,11 +881,13 @@ def _backup_corpus_root() -> Path | None:
         return Path(raw) if raw else None
 
 
+sqlite_manager = SqliteManager(settings.database_paths)
 backup_service = BackupService(
     database_path=settings.database_path,
     artifacts_root=settings.artifacts.root,
     backup_root=settings.backup.root,
     corpus_root=_backup_corpus_root(),
+    database_paths=settings.database_paths,
 )
 chaos = ChaosInjector(
     ChaosPlan(
@@ -1004,7 +1012,7 @@ master_gates = MasterGateRunner(
         _master_neuro_posture_check,
     ]
 )
-migrations = MigrationRunner(settings.database_path)
+migrations = None  # replaced by upgrade_all_databases in lifespan
 reasoner = ReasoningEngine()
 llm = OpenAICompatibleLLM(settings)
 model_plane = ModelControlPlane(settings, observability=observability)
@@ -1255,7 +1263,7 @@ from Data.modules.market_sim.orchestra.store import OrchestraStore
 
 _trading_brain_adapter = getattr(getattr(market_sim_service, "brain", None), "trading_brain_adapter", None)
 trading_orchestra_service = TradingOrchestraService(
-    store=OrchestraStore(settings.database_path),
+    store=OrchestraStore(MARKET_DB),
     market_plane=market_sim_service,
     model=TradingModelAdapter(model_plane, llm),
     job_runtime=job_runtime,
@@ -1792,7 +1800,10 @@ def live_settings():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    migrations.apply_all()
+    from Data.backend.db_upgrade import upgrade_all_databases
+    _upgrade_report = upgrade_all_databases(settings.database_paths)
+    if not _upgrade_report.completed:
+        raise RuntimeError(f"database upgrade incomplete: {_upgrade_report.public_dict()}")
     settings_plane.start()
     bind_default_consumers(
         settings_plane,
@@ -2121,6 +2132,7 @@ app.include_router(
 )
 app.include_router(build_analytics_router(analytics_service))
 app.include_router(build_system_telemetry_router(system_telemetry_sampler))
+app.include_router(build_sqlite_manager_router(sqlite_manager))
 app.include_router(
     build_observability_router(
         observability=observability,

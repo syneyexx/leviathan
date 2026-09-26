@@ -191,6 +191,11 @@ class TestStreamingFoundations(unittest.TestCase):
         self.assertIn("knowledge.db", FORBIDDEN_COMPETING_DB_NAMES)
         truth = storage_authority_public_dict()
         self.assertTrue(truth["truth"]["competingDomainDatabasesForbidden"])
+        self.assertEqual(truth["truth"]["canonicalDatabaseCount"], 3)
+        self.assertEqual(
+            truth["truth"]["canonicalTransactionalAuthority"],
+            "three_sqlite_databases_control_knowledge_market",
+        )
         self.assertEqual(StorageClass.EPHEMERAL_SCRATCH.value, "EPHEMERAL_SCRATCH")
 
     def test_file_backed_data_survives_dataset_service_reconstruction(self) -> None:

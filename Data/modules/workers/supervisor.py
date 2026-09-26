@@ -60,8 +60,10 @@ class WorkerSupervisor:
         admission: ResourceAdmission | None = None,
         log_dir: Path | None = None,
         restart_count: int = 0,
+        database_paths: Any | None = None,
     ) -> None:
         self.db_path = Path(db_path)
+        self.database_paths = database_paths
         self.settings = settings or load_worker_settings()
         self.repo_root = repo_root or Path(__file__).resolve().parents[3]
         self.registry = WorkerRegistry(self.db_path)
@@ -90,6 +92,27 @@ class WorkerSupervisor:
         self._announced_pools: set[str] = set()
         self._restart_attempts: dict[str, int] = {}
         self._events = get_worker_event_emitter()
+
+    def _worker_database_env(self) -> dict[str, str]:
+        """Pass three canonical DB paths into worker processes (not legacy-only)."""
+        paths = self.database_paths
+        if paths is None:
+            try:
+                from Data.backend.config import load_settings
+
+                paths = load_settings().database_paths
+            except Exception:  # noqa: BLE001
+                paths = None
+        if paths is None:
+            return {"LEVIATHAN_CONTROL_DATABASE_PATH": str(self.db_path)}
+        env = {
+            "LEVIATHAN_CONTROL_DATABASE_PATH": str(paths.control),
+            "LEVIATHAN_KNOWLEDGE_DATABASE_PATH": str(paths.knowledge),
+            "LEVIATHAN_MARKET_DATABASE_PATH": str(paths.market),
+        }
+        # Avoid re-introducing legacy single-path authority in child processes.
+        env["LEVIATHAN_DATABASE_PATH"] = ""
+        return env
 
     def _apply_desired_overrides(self) -> None:
         """Hot-apply durable API/operator pool desired counts before reconcile."""
@@ -440,7 +463,7 @@ class WorkerSupervisor:
             cwd=self.repo_root,
             log_dir=self.log_dir,
             env={
-                "LEVIATHAN_DATABASE_PATH": str(self.db_path),
+                **self._worker_database_env(),
                 "LEVIATHAN_WORKER_SUPERVISOR_GENERATION": self.generation,
                 "LEVIATHAN_WORKERS_LEASE_TTL_SECONDS": str(self.settings.lease_ttl_seconds),
                 "LEVIATHAN_WORKERS_HEARTBEAT_SECONDS": str(self.settings.heartbeat_seconds),

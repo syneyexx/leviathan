@@ -1,4 +1,4 @@
-"""Persistence for trade orchestras (central leviathan.db, migration 43)."""
+"""Persistence for trade orchestras (Market DB; legacy schema from migration 43)."""
 
 from __future__ import annotations
 
@@ -54,12 +54,13 @@ class OrchestraStore:
 
 
     def initialize(self) -> None:
-        from Data.backend.migrations import MigrationRunner
+        from Data.backend.db_upgrade import ensure_domain_schema
+        from Data.modules.common.database_domains import DatabaseDomain
         from Data.modules.common.sqlite_policy import ensure_wal
 
         with self.connect() as conn:
             ensure_wal(conn)
-        MigrationRunner(self.db_path).apply_all()
+        ensure_domain_schema(self.db_path, DatabaseDomain.MARKET)
 
     # --- News feeds ---
 

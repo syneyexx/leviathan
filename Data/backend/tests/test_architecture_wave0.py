@@ -91,8 +91,8 @@ class SingletonClassOwnerConformanceTests(unittest.TestCase):
     def test_forbidden_private_db_filenames_not_hardcoded(self) -> None:
         hits: list[str] = []
         for py_path in MODULES_ROOT.rglob("*.py"):
-            # Ownership module documents the ban list itself.
-            if py_path.name == "ownership.py":
+            # Ownership / storage-authority modules document ban lists themselves.
+            if py_path.name in {"ownership.py", "storage_authority.py"}:
                 continue
             text = py_path.read_text(encoding="utf-8")
             for name in FORBIDDEN_PRIVATE_DB_FILENAMES:

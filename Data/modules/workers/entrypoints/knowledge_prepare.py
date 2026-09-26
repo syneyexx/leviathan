@@ -15,8 +15,10 @@ def _knowledge_store(ctx: dict[str, Any]) -> Any:
     from Data.modules.knowledge import KnowledgeStore
 
     settings = ctx["settings"]
+    # Knowledge domain authority — never the Control Plane compat alias alone.
+    db_path = getattr(settings, "knowledge_database_path", None) or settings.database_path
     store = KnowledgeStore(
-        settings.database_path,
+        db_path,
         data_root=settings.knowledge.data_root,
         chunk_max_chars=settings.knowledge.chunk_max_chars,
         chunk_overlap=settings.knowledge.chunk_overlap,

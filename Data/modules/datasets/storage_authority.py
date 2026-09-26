@@ -1,10 +1,10 @@
-"""Storage authority classification — canonical DB vs data plane vs scratch."""
+"""Storage authority classification — three canonical DBs vs data plane vs scratch."""
 
 from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 class StorageClass(str, Enum):
@@ -15,6 +15,7 @@ class StorageClass(str, Enum):
     EPHEMERAL_SCRATCH = "EPHEMERAL_SCRATCH"
 
 
+# Competing *product* authorities — not the three canonical LEVIATHAN DB files.
 FORBIDDEN_COMPETING_DB_NAMES = frozenset(
     {
         "knowledge.db",
@@ -31,27 +32,69 @@ FORBIDDEN_COMPETING_DB_NAMES = frozenset(
     }
 )
 
+# Allowed product SQLite filenames (basename). Paths may vary; names must not
+# introduce a fourth authority under a competing domain filename.
+CANONICAL_PRODUCT_DB_BASENAMES = frozenset(
+    {
+        "leviathan_control.db",
+        "leviathan_knowledge.db",
+        "leviathan_market.db",
+        # Legacy single-DB artifact (upgrade input / preserved backup only).
+        "leviathan.db",
+    }
+)
+
 
 STORAGE_AUTHORITY_TRUTH = {
-    "canonicalTransactionalAuthority": "central_sqlite",
+    "canonicalTransactionalAuthority": "three_sqlite_databases_control_knowledge_market",
+    "canonicalDatabaseCount": 3,
+    "canonicalDomains": ["CONTROL", "KNOWLEDGE", "MARKET"],
     "immutableDataPlaneAllowed": True,
     "indexesAreRebuildable": True,
     "cachesAreDisposable": True,
     "ephemeralScratchAllowed": True,
     "competingDomainDatabasesForbidden": True,
     "scratchIsNotBusinessAuthority": True,
+    "legacySingleDbIsNotProductAuthority": True,
 }
+
+
+def _canonical_path_set(
+    *,
+    canonical_db: Path | None = None,
+    canonical_dbs: Iterable[Path] | None = None,
+    database_paths: Any | None = None,
+) -> set[Path]:
+    out: set[Path] = set()
+    if canonical_db is not None:
+        out.add(Path(canonical_db).resolve())
+    if canonical_dbs is not None:
+        for p in canonical_dbs:
+            out.add(Path(p).resolve())
+    if database_paths is not None:
+        for attr in ("control", "knowledge", "market"):
+            p = getattr(database_paths, attr, None)
+            if p is not None:
+                out.add(Path(p).resolve())
+    return out
 
 
 def classify_path(
     path: Path,
     *,
     canonical_db: Path | None = None,
+    canonical_dbs: Iterable[Path] | None = None,
+    database_paths: Any | None = None,
     corpus_root: Path | None = None,
     scratch_root: Path | None = None,
 ) -> StorageClass:
     resolved = Path(path).resolve()
-    if canonical_db is not None and resolved == Path(canonical_db).resolve():
+    canonical = _canonical_path_set(
+        canonical_db=canonical_db,
+        canonical_dbs=canonical_dbs,
+        database_paths=database_paths,
+    )
+    if resolved in canonical:
         return StorageClass.CANONICAL_TRANSACTIONAL
     if scratch_root is not None:
         try:
@@ -62,6 +105,8 @@ def classify_path(
     name = resolved.name.lower()
     if name.endswith(".db") and name in FORBIDDEN_COMPETING_DB_NAMES:
         # Detected as competing authority candidate — caller must refuse.
+        return StorageClass.CANONICAL_TRANSACTIONAL
+    if name in CANONICAL_PRODUCT_DB_BASENAMES:
         return StorageClass.CANONICAL_TRANSACTIONAL
     if corpus_root is not None:
         try:
@@ -81,7 +126,9 @@ def assert_no_competing_domain_db(path: Path) -> None:
     if name in FORBIDDEN_COMPETING_DB_NAMES:
         raise ValueError(
             f"Forbidden competing domain database authority: {name}. "
-            "Use the central transactional metadata store or governed ephemeral scratch."
+            "Use the three canonical LEVIATHAN databases "
+            "(leviathan_control.db / leviathan_knowledge.db / leviathan_market.db) "
+            "or governed ephemeral scratch."
         )
 
 
@@ -89,5 +136,6 @@ def storage_authority_public_dict() -> dict[str, Any]:
     return {
         "storageClasses": [c.value for c in StorageClass],
         "forbiddenCompetingDatabases": sorted(FORBIDDEN_COMPETING_DB_NAMES),
+        "canonicalProductDatabaseBasenames": sorted(CANONICAL_PRODUCT_DB_BASENAMES),
         "truth": dict(STORAGE_AUTHORITY_TRUTH),
     }

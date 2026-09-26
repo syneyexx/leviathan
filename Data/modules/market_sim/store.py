@@ -59,12 +59,13 @@ class MarketSimStore:
 
 
     def initialize(self) -> None:
-        from Data.backend.migrations import MigrationRunner
+        from Data.backend.db_upgrade import ensure_domain_schema
+        from Data.modules.common.database_domains import DatabaseDomain
         from Data.modules.common.sqlite_policy import ensure_wal
 
         with self.connect() as conn:
             ensure_wal(conn)
-        MigrationRunner(self.db_path).apply_all()
+        ensure_domain_schema(self.db_path, DatabaseDomain.MARKET)
 
     # --- Sources ---
 

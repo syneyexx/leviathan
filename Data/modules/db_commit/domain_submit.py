@@ -10,8 +10,17 @@ from Data.modules.db_commit.settings import DbCommitSettings, load_db_commit_set
 from Data.modules.db_commit.types import CommitPriority
 
 
-def producer_for(db_path: Path | str, *, settings: DbCommitSettings | None = None) -> CommitProducer:
-    return CommitProducer(db_path, settings=settings or load_db_commit_settings())
+def producer_for(
+    db_path: Path | str,
+    *,
+    settings: DbCommitSettings | None = None,
+    domain: str | None = None,
+) -> CommitProducer:
+    return CommitProducer(
+        db_path,
+        settings=settings or load_db_commit_settings(),
+        domain=domain,
+    )
 
 
 def submit_research_evidence(
@@ -23,7 +32,7 @@ def submit_research_evidence(
     source_job_id: str = "",
     idempotency_key: str | None = None,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="control").submit(
         operation="research.commit_evidence",
         domain="research",
         payload={"project_id": project_id, "evidence": evidence},
@@ -46,7 +55,7 @@ def submit_research_report(
     source_job_id: str = "",
     idempotency_key: str | None = None,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="control").submit(
         operation="research.commit_report",
         domain="research",
         payload={"project_id": project_id, "report": report},
@@ -71,7 +80,7 @@ def submit_dataset_index_batch(
     batch_index: int = 0,
     batch_count: int = 1,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="knowledge").submit(
         operation="dataset.commit_index_batch",
         domain="dataset",
         payload={"dataset_id": dataset_id, "rows": rows},
@@ -96,7 +105,7 @@ def submit_source_ingestion_batch(
     source_job_id: str = "",
     idempotency_key: str | None = None,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="knowledge").submit(
         operation="source_ingestion.commit_batch",
         domain="source_ingestion",
         payload={"source_id": source_id, "records": records},
@@ -121,7 +130,7 @@ def submit_market_sim_events(
     idempotency_key: str | None = None,
     sequence_number: int = 0,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="market").submit(
         operation="market_sim.commit_events",
         domain="market_sim",
         payload={
@@ -152,7 +161,7 @@ def submit_evaluation_results(
     source_job_id: str = "",
     idempotency_key: str | None = None,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="control").submit(
         operation="evaluation.commit_results",
         domain="evaluation",
         payload={
@@ -179,7 +188,7 @@ def submit_training_lineage(
     source_job_id: str = "",
     idempotency_key: str | None = None,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="control").submit(
         operation="training.commit_lineage",
         domain="training",
         payload={
@@ -205,7 +214,7 @@ def submit_knowledge_prepared(
     source_job_id: str = "",
     idempotency_key: str | None = None,
 ) -> SubmitResult:
-    return producer_for(db_path).submit(
+    return producer_for(db_path, domain="knowledge").submit(
         operation="knowledge.commit_prepared",
         domain="knowledge",
         payload={"artifact": artifact},

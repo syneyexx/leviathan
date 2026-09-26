@@ -180,14 +180,27 @@ CANONICAL_OWNERSHIP: tuple[OwnershipRule, ...] = (
     OwnershipRule(
         concern="canonical_metadata_database",
         owner_module="backend",
-        rule="One canonical metadata database per local deployment; no competing truth DB",
-        forbidden_duplicates=("research.db", "memory.db", "training.db", "agent.db"),
+        rule=(
+            "Exactly three canonical product SQLite databases "
+            "(Control / Knowledge / Market); no competing fourth product DB"
+        ),
+        forbidden_duplicates=(
+            "research.db",
+            "memory.db",
+            "training.db",
+            "agent.db",
+            "agents.db",
+            "risk.db",
+            "portfolio.db",
+            "knowledge2.db",
+            "market2.db",
+        ),
     ),
     OwnershipRule(
         concern="db_commit_coordinator",
         owner_module="db_commit",
         rule=(
-            "One physical COMMIT_WRITE authority via DB Commit Coordinator; "
+            "One DB Commit Coordinator with independent Control/Knowledge/Market write lanes; "
             "CONTROL_WRITE remains tiny direct SQLite; no second metadata DB or queue DB"
         ),
         forbidden_duplicates=(
@@ -231,6 +244,9 @@ FORBIDDEN_PRIVATE_DB_FILENAMES: frozenset[str] = frozenset(
         "voice.db",
         "db_commit.db",
         "commit_queue.db",
+        "risk.db",
+        "knowledge2.db",
+        "market2.db",
     }
 )
 

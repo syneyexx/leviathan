@@ -61,11 +61,16 @@ def _ingest_knowledge_commit_job(ctx: dict[str, Any], job: Any, coordinator: Any
     if hasattr(store, "update_progress"):
         store.update_progress(job.job_id, phase="COMMIT_QUEUED", message="ingested by db_commit")
 
+    from Data.modules.common.database_domains import DatabaseDomain
+
+    # Knowledge commits must use the Knowledge lane spool/receipts/IPC — not Control.
+    knowledge_lane = coordinator._lanes[DatabaseDomain.KNOWLEDGE]
     producer = CommitProducer(
-        ctx["settings"].database_path,
+        knowledge_lane.db_path,
         settings=coordinator.settings,
-        spool=coordinator.spool,
-        receipts=coordinator.receipts,
+        spool=knowledge_lane.spool,
+        receipts=knowledge_lane.receipts,
+        domain="knowledge",
     )
     result = producer.submit(
         operation="knowledge.commit_prepared",
@@ -85,9 +90,9 @@ def _ingest_knowledge_commit_job(ctx: dict[str, Any], job: Any, coordinator: Any
     )
     # Process immediately in this writer so the job can complete.
     coordinator.process_until_idle(max_items=32)
-    receipt = coordinator.receipts.get_by_commit_id(result.commit_id)
+    receipt = knowledge_lane.receipts.get_by_commit_id(result.commit_id)
     if receipt is None and idem:
-        receipt = coordinator.receipts.get_by_idempotency_key(str(idem))
+        receipt = knowledge_lane.receipts.get_by_idempotency_key(str(idem))
     if receipt is not None:
         store.transition(
             job.job_id,

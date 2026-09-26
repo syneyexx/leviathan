@@ -26,6 +26,7 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
             artifacts_root=settings.artifacts.root,
             backup_root=settings.backup.root,
             corpus_root=corpus_root,
+            database_paths=getattr(settings, "database_paths", None),
         )
         manifest = service.create(
             note=str(note) if note else None,
