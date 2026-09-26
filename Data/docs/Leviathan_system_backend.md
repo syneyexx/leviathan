@@ -1158,9 +1158,16 @@ Production-quality program ledger (machine state): `Data/backend/tests/productio
 - **W03:** See production-quality W03 bullet above (typed `AcceptanceCriterion`, trusted test receipts, A04).
 - **W16:** Durable `market_sim_agent_labs` (migration 53). Control-plane methods create/start/pause/resume/cancel labs bound to research campaigns; worker path runs real simulations. HTTP: `/api/market-sim/lab/runs` (+ start/pause/resume/cancel). Valid outcomes remain `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED`.
 
-Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05, T14–T15); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_adversarial_w09_w19.py` (T16 + NL citation/hedging); `test_trading_lab_w16_lifecycle.py`.
+Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05, T14–T15); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_adversarial_w08_w17.py` (A08 preference supersession + T08 sealed rename inheritance); `test_adversarial_w09_w19.py` (T16 + NL citation/hedging); `test_trading_lab_w16_lifecycle.py`.
 
 Citation audit includes Dutch factual/hedging cues; hedging does not clear evidence duty when factual markers remain. `instruments.support_matrix()` / `family_capability()` keep options/futures/forex as explicit `NOT_IMPLEMENTED` (no silent equity fallback).
+
+### Production-quality cognition / memory / sealed / web (W06 / W08 / W17 CURRENT)
+
+- **W06:** `CognitiveRuntime.cancel` propagates to registered `child_run_ids` (delegation metadata `child_run_id` / `run_id` auto-registers). Parent stop does not leave children running in-process.
+- **W08 / A08:** `MemoryStore.correct_preference` writes the new FACT, marks the prior matching `preference_key` SUPERSEDED, and ACTIVE search/list return only the current preference.
+- **W17 / T08:** Sealed holdout contamination keys use a rename-stable root via `lineage_aliases` / `register_lineage_rename` / optional `root_lineage_id`. Renamed descendants cannot claim a fresh sealed holdout after revelation.
+- **Web (GI7):** `HttpWebProvider` search/fetch tolerate thin response doubles (`status_code` / `.text` via getattr + `content` fallback) so rate-limit and robots paths do not turn real provider results into `UNAVAILABLE`/`FAILED` under mocks. Fabrication remains forbidden.
 
 Run targeted suites first during phased implementation, then the impacted broader suites.
 
