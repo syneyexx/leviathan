@@ -127,7 +127,18 @@ def build_platform_router(
                 "observations": float(len(observation_store.list_observations(limit=500))),
             },
         )
-        return {"metrics": snap.public_dict()}
+        payload = {"metrics": snap.public_dict()}
+        try:
+            from Data.modules.common.db_contention import db_contention_snapshot
+            payload["dbContention"] = db_contention_snapshot(settings.database_path)
+        except Exception:  # noqa: BLE001
+            payload["dbContention"] = {
+                "dbFileSize": "UNMEASURED",
+                "walSize": "UNMEASURED",
+                "busyRetries": "UNMEASURED",
+                "commitQueueDepth": "UNMEASURED",
+            }
+        return payload
 
     @router.get("/api/telemetry")
     def get_telemetry(

@@ -2129,6 +2129,7 @@ app.include_router(
         timeseries=timeseries,
         sampler=system_telemetry_sampler,
         component_health_fn=_component_health,
+        database_path=settings.database_path,
     )
 )
 app.include_router(build_brain_router(brain_facade))
