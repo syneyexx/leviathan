@@ -17,7 +17,9 @@ def _canon(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def content_hash(payload: Mapping[str, Any] | Sequence[Any] | str) -> str:
+def content_hash(payload: Mapping[str, Any] | Sequence[Any] | str | bytes) -> str:
+    if isinstance(payload, bytes):
+        return hashlib.sha256(payload).hexdigest()
     if isinstance(payload, str):
         raw = payload
     else:
@@ -161,3 +163,85 @@ def fault_inject(
         if key in out:
             out[key] = {**out[key], "_corrupted": True}
     return out
+
+
+# --- W99 local DB backup / restore (extends helper; not production DR claim) ---
+
+def backup_sqlite_database(
+    db_path,
+    *,
+    backup_dir,
+    manifest_id=None,
+):
+    """Copy canonical SQLite DB into an isolated backup directory and hash it."""
+    import shutil
+    from pathlib import Path as _Path
+    from .timeutil import now_canonical
+
+    src = _Path(db_path)
+    dest_dir = _Path(backup_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    created = now_canonical()
+    mid = manifest_id or f"bak-{created}"
+    dest = dest_dir / f"{mid}.sqlite"
+    shutil.copy2(src, dest)
+    digest = content_hash(dest.read_bytes())
+    artifact = BackupArtifact(
+        artifact_id="central_sqlite",
+        kind="sqlite",
+        digest=digest,
+        bytes_len=dest.stat().st_size,
+        created_at=created,
+    )
+    # Attach path via notes/public extension without breaking dataclass
+    manifest = BackupManifest(
+        manifest_id=mid,
+        created_at=created,
+        artifacts=[artifact],
+        notes=[f"local_sqlite_file_copy path={dest}"],
+    )
+    manifest._sqlite_path = str(dest)  # type: ignore[attr-defined]
+    return manifest
+
+
+def restore_and_verify_institutional(*, backup_manifest, restore_dir):
+    """Restore DB copy into isolated dir and verify institutional integrity."""
+    import shutil
+    import time
+    from pathlib import Path as _Path
+
+    t0 = time.perf_counter()
+    restore_dir = _Path(restore_dir)
+    restore_dir.mkdir(parents=True, exist_ok=True)
+    sqlite_art = next((a for a in backup_manifest.artifacts if a.kind == "sqlite"), None)
+    path_note = None
+    for note in backup_manifest.notes:
+        if "path=" in note:
+            path_note = note.split("path=", 1)[1].strip()
+    src_path = getattr(backup_manifest, "_sqlite_path", None) or path_note
+    if sqlite_art is None or not src_path:
+        return {"ok": False, "status": "FAIL", "reason": "no_sqlite_artifact"}
+    src = _Path(src_path)
+    if not src.exists():
+        return {"ok": False, "status": "FAIL", "reason": "backup_file_missing"}
+    if content_hash(src.read_bytes()) != sqlite_art.digest:
+        return {"ok": False, "status": "FAIL", "reason": "backup_digest_mismatch"}
+    dest = restore_dir / "restored.sqlite"
+    shutil.copy2(src, dest)
+    from .runtime import InstitutionalRuntime
+
+    rt = InstitutionalRuntime(dest)
+    audit = rt.repo.verify_audit_chain()
+    elapsed = time.perf_counter() - t0
+    ok = bool(audit.get("ok"))
+    return {
+        "ok": ok,
+        "status": "PASS" if ok else "FAIL",
+        "restoredPath": str(dest),
+        "audit": audit,
+        "measuredRtoSec": elapsed,
+        "truth": {
+            "local_measured_rto_not_guaranteed_production_rto": True,
+            "not_production_dr_claim": True,
+        },
+    }

@@ -7,9 +7,20 @@ Extends PortfolioBook owner — does not replace it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
+from ..accounting import money, ZERO
 from .status import MeasurementState, DEFAULT_TRUTH
+from .timeutil import ts_gt
+
+SUPPORTED_IBOR_KINDS: frozenset[str] = frozenset(
+    {"UPSERT_NODE", "CASH", "TRANSFER_CASH", "OPEN_LOT", "ADJUST_QTY", "CLOSE_LOT"}
+)
+
+
+class UnsupportedIborEvent(ValueError):
+    """Unknown economic event kinds must not silently no-op."""
 
 
 HIERARCHY_LEVELS: tuple[str, ...] = (
@@ -47,8 +58,8 @@ class LotState:
     lot_id: str
     position_id: str
     instrument_id: str
-    qty: float
-    cost_basis: float
+    qty: Decimal
+    cost_basis: Decimal
     opened_at: str
     side: str = "LONG"
 
@@ -57,8 +68,8 @@ class LotState:
             "lotId": self.lot_id,
             "positionId": self.position_id,
             "instrumentId": self.instrument_id,
-            "qty": self.qty,
-            "costBasis": self.cost_basis,
+            "qty": str(money(self.qty)),
+            "costBasis": str(money(self.cost_basis)),
             "openedAt": self.opened_at,
             "side": self.side,
         }
@@ -69,8 +80,8 @@ class PositionState:
     position_id: str
     sleeve_id: str
     instrument_id: str
-    qty: float = 0.0
-    avg_cost: float = 0.0
+    qty: Decimal = ZERO
+    avg_cost: Decimal = ZERO
     side: str = "FLAT"
     lots: dict[str, LotState] = field(default_factory=dict)
 
@@ -79,8 +90,8 @@ class PositionState:
             "positionId": self.position_id,
             "sleeveId": self.sleeve_id,
             "instrumentId": self.instrument_id,
-            "qty": self.qty,
-            "avgCost": self.avg_cost,
+            "qty": str(money(self.qty)),
+            "avgCost": str(money(self.avg_cost)),
             "side": self.side,
             "lots": [lot.public_dict() for lot in self.lots.values()],
         }
@@ -89,7 +100,7 @@ class PositionState:
 @dataclass
 class IborSnapshot:
     enterprise_id: str
-    cash_by_account: dict[str, float]
+    cash_by_account: dict[str, Decimal]
     positions: dict[str, PositionState]
     nodes: dict[str, HierarchyNode]
     event_count: int
@@ -98,7 +109,7 @@ class IborSnapshot:
     def public_dict(self) -> dict[str, Any]:
         return {
             "enterpriseId": self.enterprise_id,
-            "cashByAccount": dict(self.cash_by_account),
+            "cashByAccount": {k: str(money(v)) for k, v in self.cash_by_account.items()},
             "positions": {k: v.public_dict() for k, v in self.positions.items()},
             "nodes": {k: v.public_dict() for k, v in self.nodes.items()},
             "eventCount": self.event_count,
@@ -107,6 +118,7 @@ class IborSnapshot:
                 **DEFAULT_TRUTH.public_dict(),
                 "extends_portfolio_book": True,
                 "reconstruction_is_deterministic": True,
+                "unknown_events_fail": True,
             },
         }
 
@@ -161,16 +173,26 @@ def reconstruct_ibor(
     nodes: dict[str, HierarchyNode] = {
         enterprise_id: HierarchyNode(enterprise_id, "enterprise", enterprise_id),
     }
-    cash_by_account: dict[str, float] = {}
+    cash_by_account: dict[str, Decimal] = {}
     positions: dict[str, PositionState] = {}
     applied = 0
+    seen_ids: set[str] = set()
 
     for event in normalized:
-        if as_of is not None and event.ts and event.ts > as_of:
+        if event.event_id and event.event_id in seen_ids:
+            continue  # idempotent skip of duplicate event ids
+        if event.event_id:
+            seen_ids.add(event.event_id)
+        if as_of is not None and event.ts and ts_gt(event.ts, as_of):
             break
         applied += 1
         p = event.payload
         kind = event.kind
+
+        if kind not in SUPPORTED_IBOR_KINDS:
+            raise UnsupportedIborEvent(
+                f"unsupported IBOR event kind {kind!r} (event_id={event.event_id})"
+            )
 
         if kind == "UPSERT_NODE":
             node = HierarchyNode(
@@ -186,23 +208,23 @@ def reconstruct_ibor(
 
         elif kind == "CASH":
             account_id = str(p["account_id"])
-            delta = float(p.get("delta") or 0.0)
-            cash_by_account[account_id] = cash_by_account.get(account_id, 0.0) + delta
+            delta = money(p.get("delta") or 0)
+            cash_by_account[account_id] = money(cash_by_account.get(account_id, ZERO) + delta)
 
         elif kind == "TRANSFER_CASH":
             src = str(p["from_account_id"])
             dst = str(p["to_account_id"])
-            amount = float(p["amount"])
-            cash_by_account[src] = cash_by_account.get(src, 0.0) - amount
-            cash_by_account[dst] = cash_by_account.get(dst, 0.0) + amount
+            amount = money(p["amount"])
+            cash_by_account[src] = money(cash_by_account.get(src, ZERO) - amount)
+            cash_by_account[dst] = money(cash_by_account.get(dst, ZERO) + amount)
 
         elif kind == "OPEN_LOT":
             sleeve_id = str(p["sleeve_id"])
             instrument_id = str(p["instrument_id"])
             pos_id = str(p.get("position_id") or _position_key(sleeve_id, instrument_id))
             lot_id = str(p["lot_id"])
-            qty = float(p["qty"])
-            cost = float(p.get("cost_basis") or p.get("avg_cost") or 0.0)
+            qty = money(p["qty"])
+            cost = money(p.get("cost_basis") or p.get("avg_cost") or 0)
             side = str(p.get("side") or "LONG").upper()
             pos = positions.get(pos_id)
             if pos is None:
@@ -229,9 +251,12 @@ def reconstruct_ibor(
             lot_id = str(p["lot_id"])
             pos = positions[pos_id]
             lot = pos.lots[lot_id]
-            lot.qty = float(p.get("qty", lot.qty + float(p.get("delta") or 0.0)))
+            if "qty" in p:
+                lot.qty = money(p["qty"])
+            else:
+                lot.qty = money(lot.qty + money(p.get("delta") or 0))
             if "cost_basis" in p:
-                lot.cost_basis = float(p["cost_basis"])
+                lot.cost_basis = money(p["cost_basis"])
             _recompute_position(pos)
 
         elif kind == "CLOSE_LOT":
@@ -241,10 +266,6 @@ def reconstruct_ibor(
             if lot_id in pos.lots:
                 del pos.lots[lot_id]
             _recompute_position(pos)
-
-        else:
-            # Unknown kinds are recorded as no-ops but still count for determinism.
-            continue
 
     return IborSnapshot(
         enterprise_id=enterprise_id,
@@ -258,19 +279,19 @@ def reconstruct_ibor(
 
 def _recompute_position(pos: PositionState) -> None:
     if not pos.lots:
-        pos.qty = 0.0
-        pos.avg_cost = 0.0
+        pos.qty = ZERO
+        pos.avg_cost = ZERO
         pos.side = "FLAT"
         return
-    total_qty = sum(lot.qty for lot in pos.lots.values())
-    if total_qty == 0:
-        pos.qty = 0.0
-        pos.avg_cost = 0.0
+    total_qty = sum((lot.qty for lot in pos.lots.values()), ZERO)
+    if total_qty == ZERO:
+        pos.qty = ZERO
+        pos.avg_cost = ZERO
         pos.side = "FLAT"
         return
-    weighted = sum(lot.qty * lot.cost_basis for lot in pos.lots.values())
-    pos.qty = total_qty
-    pos.avg_cost = weighted / total_qty
+    weighted = sum((lot.qty * lot.cost_basis for lot in pos.lots.values()), ZERO)
+    pos.qty = money(total_qty)
+    pos.avg_cost = money(weighted / total_qty)
     sides = {lot.side for lot in pos.lots.values()}
     pos.side = next(iter(sides)) if len(sides) == 1 else "MIXED"
 

@@ -178,7 +178,15 @@ def evaluate_acceptance_from_run(
     meta = dict(payload.get("metadata") or {})
     crit = dict(criteria or meta.get("acceptance_criteria") or payload.get("acceptance_criteria") or {})
     if not crit:
-        crit = {"min_trades": 1, "max_drawdown_pct": 100.0, "min_total_return_pct": -100.0}
+        # Fail closed: inventing pass-all thresholds fabricates wins==trials.
+        return SealedEvaluationResult(
+            passed=False,
+            reason="NO_ACCEPTANCE_CRITERIA",
+            run_id=run_id,
+            sealed_attempt_id=sealed_attempt_id or meta.get("sealed_attempt_id"),
+            metrics=metrics,
+            acceptance_criteria={},
+        )
     passed, reason = evaluate_acceptance(metrics, crit)
     return SealedEvaluationResult(
         passed=passed,

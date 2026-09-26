@@ -4,20 +4,23 @@
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
   "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026",
-  "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W36",
-  "notes": "CI skipped. Editor/HADES out of scope. W00\u2013W36 PASS (local suites).",
+  "branch": "cursor/institutional-runtime-w73-w108-a85d",
+  "active_wave": "W108",
+  "notes": "W37-W72 merged as domain foundation (PARTIAL runtime). W73+ Institutional Runtime Completion: InstitutionalRuntime wires persistence, mandate gates, IBOR/subledger on paper fills, recon/audit/control room. Migration head 56. Live trading BLOCKED. CI may be BLOCKED_EXTERNAL (billing).",
   "status_vocabulary": [
-    "NOT_STARTED",
-    "IN_PROGRESS",
-    "PASS",
-    "FAIL",
     "BLOCKED_EXTERNAL",
+    "DOMAIN_PRESENT",
+    "FAIL",
     "FEATURE_GATED",
+    "INTEGRATED",
+    "IN_PROGRESS",
+    "NOT_APPLICABLE",
     "NOT_IMPLEMENTED",
+    "NOT_STARTED",
+    "PARTIAL",
+    "PASS",
     "UNAVAILABLE",
-    "UNMEASURED",
-    "NOT_APPLICABLE"
+    "UNMEASURED"
   ],
   "excluded_trees": [
     "Data/HADES/",
@@ -28,8 +31,8 @@
     "Data/docs/Leviathan_system_frontend.md"
   ],
   "baseline": {
-    "highest_migration": 54,
-    "highest_migration_name": "market_sim_learning_runs",
+    "highest_migration": 56,
+    "highest_migration_name": "institutional_runtime",
     "strategy_learning_tests": {
       "command": "PYTHONPATH=Data python3 -m unittest Data.backend.tests.test_strategy_learning -v",
       "result": "PASS",
@@ -46,8 +49,7 @@
     },
     "frontend_typecheck": {
       "command": "cd Data/frontend && npm run typecheck",
-      "result": "FAIL",
-      "notes": "Pre-existing ResearchPage.tsx TS2367: 'normal'|'custom' vs 'team' \u2014 not introduced by this program; recorded honestly. CI skipped."
+      "result": "PASS"
     },
     "trading_verifier_ci": {
       "status": "SKIPPED",
@@ -73,6 +75,34 @@
       "db_commit": "db_commit",
       "market_sim": "market_sim / MarketSimControlPlane (module; not separate ownership row)",
       "strategy_learning": "market_sim.learning* + migration 54 market_sim_learning_runs"
+    },
+    "institutional_runtime": {
+      "module": "Data.modules.market_sim.institutional_core.runtime.InstitutionalRuntime",
+      "verifier": "scripts/verify_institutional_runtime.py",
+      "migration": 56
+    },
+    "frontend_lint": {
+      "command": "cd Data/frontend && npm run lint",
+      "result": "PASS",
+      "notes": "warnings only"
+    },
+    "frontend_test": {
+      "command": "cd Data/frontend && npm test",
+      "result": "PASS",
+      "ran": 169
+    },
+    "frontend_build": {
+      "command": "cd Data/frontend && npm run build",
+      "result": "PASS"
+    },
+    "institutional_verifier": {
+      "command": "PYTHONPATH=Data python3 scripts/verify_institutional_runtime.py",
+      "result": "PASS",
+      "sections": 20
+    },
+    "ci": {
+      "status": "BLOCKED_EXTERNAL",
+      "reason": "BILLING/ACTIONS_UNAVAILABLE assumed \u2014 local CI-equivalent executed"
     }
   },
   "capability_inventory": {
@@ -945,19 +975,1692 @@
       ],
       "blockers": [],
       "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
+    },
+    {
+      "id": "W37",
+      "title": "Capability gap ledger",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W38",
+      "title": "Instrument master domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W39",
+      "title": "Bitemporal store domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W40",
+      "title": "Data governance domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W41",
+      "title": "IBOR reconstruction domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W42",
+      "title": "Subledger domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W43",
+      "title": "Reconciliation domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W44",
+      "title": "Performance measurement domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W45",
+      "title": "Enterprise risk domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W46",
+      "title": "Stress engine domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W47",
+      "title": "Liquidity domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W48",
+      "title": "Leverage/margin domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W49",
+      "title": "Multi-asset truth pack",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W50",
+      "title": "Portfolio construction domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W51",
+      "title": "Mandates domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W52",
+      "title": "Decision ledger domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W53",
+      "title": "Model risk domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W54",
+      "title": "AI governance domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W55",
+      "title": "Strategy lifecycle domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W56",
+      "title": "Entitlements/SoD domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W57",
+      "title": "Order lifecycle domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W58",
+      "title": "TCA domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W59",
+      "title": "Corporate actions domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W60",
+      "title": "Durable workflow helpers",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W61",
+      "title": "Audit integrity domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W62",
+      "title": "Institutional SLO domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W63",
+      "title": "Exceptions ops domain",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W64",
+      "title": "Resilience helpers",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W65",
+      "title": "Security hardening helpers",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W66",
+      "title": "API catalog surface",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W67",
+      "title": "Event catalog",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W68",
+      "title": "Control room snapshot",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W69",
+      "title": "Reporting packs",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W70",
+      "title": "Illiquid valuations",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W71",
+      "title": "Scale bench smoke",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W72",
+      "title": "Assurance scan",
+      "status": "PARTIAL",
+      "implementation_state": "PRESENT",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "NONE_AT_MERGE",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_core_w37_w72.py"
+      ],
+      "evidence": [
+        "migration 55 schema",
+        "honest: domain-only at W37-W72 merge"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W37-W72 delivered domain modules + thin API; NOT automatically PASS for runtime completeness."
+    },
+    {
+      "id": "W73",
+      "title": "Baseline reconciliation & program truth repair",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W74",
+      "title": "Global baseline repair & clean build",
+      "status": "PASS",
+      "implementation_state": "IN_PROGRESS",
+      "runtime_integration": "IN_PROGRESS",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PASS",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "backend suite after fixes",
+        "frontend typecheck/lint/test/build PASS",
+        "fixed ResearchPage team mode typing",
+        "fixed OfflineDatasetsPixelPage DatasetBrainStatus typing",
+        "fixed capability catalog coding.test/file.list",
+        "fixed campaign wins fabrication",
+        "fixed D20 historical sim honesty"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W75",
+      "title": "Canonical ownership & runtime reachability",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W76",
+      "title": "Temporal foundation hardening",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W77",
+      "title": "Money/currency/units semantics",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W78",
+      "title": "Persistent instrument master",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W79",
+      "title": "Bitemporal data pipeline integration",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W80",
+      "title": "Data quality/quarantine integration",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W81",
+      "title": "Canonical IBOR via PortfolioBook path",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W82",
+      "title": "Integrated investment subledger",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W83",
+      "title": "Valuation/FX/PnL path",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W84",
+      "title": "Order lifecycle on paper path",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W85",
+      "title": "Persistent reconciliation & breaks",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W86",
+      "title": "Performance measurement integration",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W87",
+      "title": "Enterprise risk from canonical holdings",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W88",
+      "title": "Scenario/stress/liquidity/leverage",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W89",
+      "title": "Constrained portfolio construction",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W90",
+      "title": "Mandate/compliance runtime gate",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W91",
+      "title": "Entitlements maker-checker enforcement",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W92",
+      "title": "Operational decision ledger persistence",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W93",
+      "title": "Model risk into Model Control Plane",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W94",
+      "title": "Strategy governance closed loop",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W95",
+      "title": "Durable workflows on JobRuntime",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W96",
+      "title": "Audit chain persistence",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W97",
+      "title": "Unified exception model",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W98",
+      "title": "Real Control Room",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W99",
+      "title": "Backup/restore local DR",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W100",
+      "title": "Institutional API surface",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W101",
+      "title": "Institutional event fabric",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W102",
+      "title": "Reporting packs",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W103",
+      "title": "Multi-asset end-to-end semantics",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W104",
+      "title": "Security hardening & bypass tests",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W105",
+      "title": "Performance/capacity benchmarks",
+      "status": "PARTIAL",
+      "implementation_state": "PARTIAL",
+      "runtime_integration": "PARTIAL",
+      "persistence_state": "PARTIAL",
+      "verification_state": "PARTIAL",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W106",
+      "title": "Full investment lifecycle E2E",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W107",
+      "title": "Torture/adversarial suite",
+      "status": "PASS",
+      "implementation_state": "INTEGRATED",
+      "runtime_integration": "INTEGRATED",
+      "persistence_state": "PERSISTED",
+      "verification_state": "PASS",
+      "release_state": "CANDIDATE",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [],
+      "notes": "W73+ institutional runtime completion program."
+    },
+    {
+      "id": "W108",
+      "title": "Final institutional release assurance",
+      "status": "IN_PROGRESS",
+      "implementation_state": "IN_PROGRESS",
+      "runtime_integration": "IN_PROGRESS",
+      "persistence_state": "PARTIAL",
+      "verification_state": "IN_PROGRESS",
+      "release_state": "NOT_RELEASE_PASS",
+      "owner": "institutional_core + InstitutionalRuntime",
+      "required": true,
+      "tests": [
+        "Data/backend/tests/test_institutional_runtime_w73_plus.py"
+      ],
+      "evidence": [
+        "migration 56 + InstitutionalRuntime",
+        "runtime verifier PASS sections"
+      ],
+      "blockers": [
+        "remaining_integration_depth"
+      ],
+      "notes": "Local verifier PASS; remaining PARTIAL waves documented honestly in ledger; live BLOCKED; CI likely BLOCKED_EXTERNAL"
     }
   ],
   "final_gate": {
     "byStatus": {
-      "PASS": 37
+      "PASS": 59,
+      "PARTIAL": 49,
+      "IN_PROGRESS": 1
     },
-    "requiredOpen": [],
-    "programComplete": true,
+    "requiredOpen": [
+      "W37",
+      "W38",
+      "W39",
+      "W40",
+      "W41",
+      "W42",
+      "W43",
+      "W44",
+      "W45",
+      "W46",
+      "W47",
+      "W48",
+      "W49",
+      "W50",
+      "W51",
+      "W52",
+      "W53",
+      "W54",
+      "W55",
+      "W56",
+      "W57",
+      "W58",
+      "W59",
+      "W60",
+      "W61",
+      "W62",
+      "W63",
+      "W64",
+      "W65",
+      "W66",
+      "W67",
+      "W68",
+      "W69",
+      "W70",
+      "W71",
+      "W72",
+      "W83",
+      "W84",
+      "W86",
+      "W88",
+      "W93",
+      "W94",
+      "W95",
+      "W100",
+      "W101",
+      "W102",
+      "W103",
+      "W104",
+      "W105",
+      "W108"
+    ],
+    "programComplete": false,
     "liveTrading": "BLOCKED",
+    "migrationHead": 56,
     "truth": {
-      "ci_skipped_per_operator": true,
-      "editor_hades_out_of_scope": true,
-      "no_fake_pass": true
+      "w37_w72_domain_not_auto_pass": true,
+      "w73_plus_runtime_in_progress": true,
+      "no_fake_pass": true,
+      "ci_may_be_blocked_external": true
     }
-  }
+  },
+  "integration_matrix_ref": "Data/backend/tests/institutional_runtime_verifier_report.json"
 }

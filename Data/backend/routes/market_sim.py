@@ -1284,6 +1284,85 @@ def build_market_sim_router(
                 numeric_tolerance=float(
                     payload.get("numericTolerance") or payload.get("numeric_tolerance") or 0.0
                 ),
+                allow_both_empty=bool(
+                    payload.get("allowBothEmpty") or payload.get("allow_both_empty") or False
+                ),
+                expected_population=payload.get("expectedPopulation")
+                if payload.get("expectedPopulation") is not None
+                else payload.get("expected_population"),
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/instruments")
+    def institutional_instruments() -> dict:
+        try:
+            return service.institutional_instruments()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/portfolio/{portfolio_id}")
+    def institutional_portfolio_state(portfolio_id: str) -> dict:
+        try:
+            return service.institutional_portfolio_state(portfolio_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/audit/verify")
+    def institutional_audit_verify() -> dict:
+        try:
+            return service.institutional_runtime().repo.verify_audit_chain()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/exceptions")
+    def institutional_exceptions() -> dict:
+        try:
+            items = service.institutional_runtime().repo.list_exceptions(limit=200)
+            return {"items": items, "count": len(items)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/institutional/authority/request")
+    def institutional_authority_request(payload: dict[str, Any]) -> dict:
+        try:
+            rt = service.institutional_runtime()
+            return rt.request_protected_change(
+                kind=str(payload.get("kind") or ""),
+                maker_id=str(payload.get("makerId") or payload.get("maker_id") or ""),
+                payload=dict(payload.get("payload") or {}),
+                change_id=payload.get("changeId") or payload.get("change_id"),
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/institutional/authority/approve")
+    def institutional_authority_approve(payload: dict[str, Any]) -> dict:
+        try:
+            rt = service.institutional_runtime()
+            return rt.approve_protected_change(
+                change_id=str(payload.get("changeId") or payload.get("change_id") or ""),
+                checker_id=str(payload.get("checkerId") or payload.get("checker_id") or ""),
+                checker_roles=list(payload.get("checkerRoles") or payload.get("checker_roles") or []),
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/institutional/lifecycle")
+    def institutional_lifecycle(payload: dict[str, Any]) -> dict:
+        """Deterministic paper lifecycle harness for operator/tests — not live trading."""
+        try:
+            rt = service.institutional_runtime()
+            return rt.full_paper_lifecycle(
+                portfolio_id=str(payload.get("portfolioId") or payload.get("portfolio_id") or "demo"),
+                symbol=str(payload.get("symbol") or "AAPL"),
+                side=str(payload.get("side") or "BUY"),
+                qty=float(payload.get("qty") or 1),
+                price=float(payload.get("price") or 100),
+                fee=float(payload.get("fee") or 0),
+                currency=str(payload.get("currency") or "USD"),
+                actor=str(payload.get("actor") or "api"),
+                mandate=payload.get("mandate"),
             )
         except MarketSimError as exc:
             raise_market_sim_error(exc)

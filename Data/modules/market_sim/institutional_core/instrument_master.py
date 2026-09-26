@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from .status import MeasurementState, DEFAULT_TRUTH
+from .timeutil import window_contains, ts_le, parse_ts
 
 
 @dataclass(frozen=True)
@@ -17,11 +18,11 @@ class TemporalWindow:
     valid_to: str | None = None  # None = open-ended
 
     def contains(self, as_of: str) -> bool:
-        if as_of < self.valid_from:
-            return False
-        if self.valid_to is not None and as_of >= self.valid_to:
-            return False
-        return True
+        return window_contains(
+            valid_from=self.valid_from,
+            valid_to=self.valid_to,
+            as_of=as_of,
+        )
 
     def public_dict(self) -> dict[str, Any]:
         return {"validFrom": self.valid_from, "validTo": self.valid_to}

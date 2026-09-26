@@ -93,12 +93,25 @@ def build_multi_asset_truth_pack(
             source=source,
         )
 
-    # Static fallback aligned with instruments.SUPPORTED_SIM_FAMILIES honesty.
+    # Static fallback: equity/crypto_spot have real hist/paper paths; futures/forex
+    # have identity models only — HISTORICAL_SIM stays NOT_IMPLEMENTED (D20 honesty).
     families = [
         AssetClassCapability("equity", "AVAILABLE", "AVAILABLE", "BLOCKED"),
         AssetClassCapability("crypto_spot", "AVAILABLE", "AVAILABLE", "BLOCKED"),
-        AssetClassCapability("futures", "AVAILABLE", "AVAILABLE", "BLOCKED"),
-        AssetClassCapability("forex", "AVAILABLE", "AVAILABLE", "BLOCKED"),
+        AssetClassCapability(
+            "futures",
+            MeasurementState.NOT_IMPLEMENTED.value,
+            MeasurementState.NOT_IMPLEMENTED.value,
+            MeasurementState.BLOCKED.value,
+            notes="identity/multiplier only",
+        ),
+        AssetClassCapability(
+            "forex",
+            MeasurementState.NOT_IMPLEMENTED.value,
+            MeasurementState.NOT_IMPLEMENTED.value,
+            MeasurementState.BLOCKED.value,
+            notes="identity/pip only",
+        ),
         AssetClassCapability(
             "options",
             MeasurementState.NOT_IMPLEMENTED.value,

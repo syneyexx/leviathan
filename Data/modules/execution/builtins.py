@@ -158,6 +158,32 @@ def build_default_catalog() -> CapabilityCatalog:
     )
     catalog.register(
         CapabilityDefinition(
+            id="file.list",
+            name="List Files",
+            description=(
+                "List directory entries (alias of workspace.list). "
+                "Dispatches through the same workspace_list provider."
+            ),
+            side_effects=(SideEffect.READ,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="workspace_list",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "max_entries": {"type": "integer"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("filesystem.read",),
+            metadata={"alias_of": "workspace.list", "tags": ["filesystem"]},
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
             id="workspace.search",
             name="Search Workspace",
             description="Search coding workspace contents.",
@@ -199,6 +225,32 @@ def build_default_catalog() -> CapabilityCatalog:
             },
             output_schema={"type": "object"},
             required_permissions=("process.execute",),
+        )
+    )
+    catalog.register(
+        CapabilityDefinition(
+            id="coding.test",
+            name="Run Tests (alias)",
+            description=(
+                "Run pytest/npm tests and capture exit code (alias of coding.run_tests). "
+                "Dispatches through the same coding_run_tests provider."
+            ),
+            side_effects=(SideEffect.EXECUTE,),
+            provider_kind=CapabilityProviderKind.FUNCTION,
+            provider_ref="coding_run_tests",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {
+                    "selector": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                    "cwd": {"type": "string"},
+                    "workspace_root": {"type": "string"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute",),
+            metadata={"alias_of": "coding.run_tests", "tags": ["coding", "tests"]},
         )
     )
     catalog.register(

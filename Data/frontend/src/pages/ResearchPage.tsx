@@ -492,12 +492,8 @@ export function ResearchPage() {
     if (p.topic && !query.trim()) setQuery(p.topic);
     if (p.depth) setDepth(p.depth);
     if (typeof p.allow_web === "boolean") setContext((c) => ({ ...c, web: p.allow_web }));
-    if (p.execution_mode === "normal" || p.execution_mode === "custom") {
-      setExecutionMode(
-        p.execution_mode === "team" || p.execution_mode === "custom" || p.execution_mode === "normal"
-          ? p.execution_mode
-          : "normal",
-      );
+    if (p.execution_mode === "normal" || p.execution_mode === "custom" || p.execution_mode === "team") {
+      setExecutionMode(p.execution_mode);
     }
     if (p.budget?.research_workers) setCustomWorkers(p.budget.research_workers);
     if (p.budget?.rounds) setCustomRounds(p.budget.rounds);

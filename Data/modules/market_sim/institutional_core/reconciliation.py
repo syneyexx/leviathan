@@ -157,6 +157,9 @@ class CompareContract:
     fields: tuple[str, ...]
     key_field: str = "id"
     numeric_tolerance: float = 0.0
+    allow_both_empty: bool = False
+    expected_population: int | None = None
+    minimum_records: int = 0
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -167,6 +170,9 @@ class CompareContract:
             "fields": list(self.fields),
             "keyField": self.key_field,
             "numericTolerance": self.numeric_tolerance,
+            "allowBothEmpty": self.allow_both_empty,
+            "expectedPopulation": self.expected_population,
+            "minimumRecords": self.minimum_records,
         }
 
 
@@ -248,17 +254,30 @@ class ReconciliationRun:
     run_id: str
     contract: CompareContract
     breaks: list[Break]
+    left_count: int = 0
+    right_count: int = 0
     status: str = MeasurementState.OBSERVED.value
+    contract_violations: list[str] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         open_count = sum(1 for b in self.breaks if b.status not in TERMINAL_STATUSES)
+        status = self.status
+        if self.contract_violations:
+            status = MeasurementState.FAIL.value
+        elif open_count:
+            status = MeasurementState.FAIL.value
+        elif status == MeasurementState.OBSERVED.value:
+            status = MeasurementState.PASS.value
         return {
             "runId": self.run_id,
             "contract": self.contract.public_dict(),
             "breaks": [b.public_dict() for b in self.breaks],
             "openCount": open_count,
             "breakCount": len(self.breaks),
-            "status": MeasurementState.FAIL.value if open_count else MeasurementState.PASS.value,
+            "leftCount": self.left_count,
+            "rightCount": self.right_count,
+            "contractViolations": list(self.contract_violations),
+            "status": status,
             "truth": {
                 **DEFAULT_TRUTH.public_dict(),
                 "empty_left_and_right_is_not_pass_unless_expected": True,
@@ -274,5 +293,33 @@ def run_reconciliation(
     left_rows: Sequence[Mapping[str, Any]],
     right_rows: Sequence[Mapping[str, Any]],
 ) -> ReconciliationRun:
-    breaks = correlate_breaks(compare_maps(contract, left_rows, right_rows, id_prefix=run_id))
-    return ReconciliationRun(run_id=run_id, contract=contract, breaks=breaks)
+    left_list = list(left_rows)
+    right_list = list(right_rows)
+    breaks = correlate_breaks(compare_maps(contract, left_list, right_list, id_prefix=run_id))
+    violations: list[str] = []
+    both_empty = len(left_list) == 0 and len(right_list) == 0
+    if both_empty and not contract.allow_both_empty:
+        violations.append("both_empty_without_allow_both_empty")
+    if contract.expected_population is not None:
+        pop = max(len(left_list), len(right_list))
+        if pop != int(contract.expected_population):
+            violations.append(
+                f"expected_population:{contract.expected_population}:got:{pop}"
+            )
+    if contract.minimum_records > 0:
+        if max(len(left_list), len(right_list)) < int(contract.minimum_records):
+            violations.append(
+                f"minimum_records:{contract.minimum_records}"
+            )
+    status = MeasurementState.OBSERVED.value
+    if violations:
+        status = MeasurementState.FAIL.value
+    return ReconciliationRun(
+        run_id=run_id,
+        contract=contract,
+        breaks=breaks,
+        left_count=len(left_list),
+        right_count=len(right_list),
+        status=status,
+        contract_violations=violations,
+    )

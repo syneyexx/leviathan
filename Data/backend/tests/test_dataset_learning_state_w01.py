@@ -124,6 +124,12 @@ class DatasetLearningStateTests(unittest.TestCase):
         return result["dataset"]["datasetId"]
 
     def _learn(self, dataset_id: str) -> None:
+        # Test fixtures are text JSONL intended for Knowledge; force override when
+        # classification routes trading-like content away from RAG indexing.
+        ds = self.service.get_dataset(dataset_id)
+        meta = dict(ds.metadata or {})
+        meta["forceKnowledgeIndex"] = True
+        self.store.update_dataset(dataset_id, metadata=meta)
         job = self.service.enqueue_learn_to_brain(dataset_id)
         done_list = self.service.process_jobs(max_jobs=5)
         done = next((j for j in done_list if j.job_id == job.job_id), done_list[-1] if done_list else None)

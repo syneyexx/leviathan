@@ -998,7 +998,17 @@ class ApiSurfaceW66Tests(unittest.TestCase):
                 "/api/market-sim/data",
                 "/api/market-sim/institutional/gap-matrix",
                 "/api/market-sim/institutional/control-room",
+                "/api/market-sim/institutional/api-catalog",
+                "/api/market-sim/institutional/assurance",
+                "/api/market-sim/institutional/multi-asset",
                 "/api/market-sim/institutional/reconciliation",
+                "/api/market-sim/institutional/instruments",
+                "/api/market-sim/institutional/portfolio/{portfolio_id}",
+                "/api/market-sim/institutional/audit/verify",
+                "/api/market-sim/institutional/exceptions",
+                "/api/market-sim/institutional/authority/request",
+                "/api/market-sim/institutional/authority/approve",
+                "/api/market-sim/institutional/lifecycle",
             ]
         )
         self.assertTrue(check["ok"])
