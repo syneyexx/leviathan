@@ -74,7 +74,7 @@ The encoded ownership contract lives in `Data/modules/common/ownership.py`.
 | Orchestration action selection | ActionSelector | `Data/modules/cognition/action_selector.py` |
 | Model selection/routing/residency | Model Control Plane | `Data/modules/models/` |
 | Provider transport/inference | Model runtime | `Data/modules/model_runtime/` |
-| Prompt/context compilation | Context subsystem | `Data/modules/context/`, cognition `context_v3.py` |
+| Prompt/context compilation | Context subsystem | `Data/modules/context/` (canonical); cognition `context_v3.py` is adapter only |
 | Unified knowledge access | Brain facade | `Data/modules/brain/` |
 | Documents/RAG/retrieval | Knowledge | `Data/modules/knowledge/` |
 | Durable scoped memory | Memory | `Data/modules/memory/` |
@@ -264,7 +264,7 @@ POST /api/chat
 - `planner.py` — structured plans with acceptance conditions;
 - `action_selector.py` — value-based next action selection;
 - `capability_broker.py` — capability shortlist/discovery;
-- `context_v3.py` — cognition context pack;
+- `context_v3.py` — cognition **profile adapter** over canonical `ContextBuilder` (not a second compiler);
 - `completion.py` — completion decision logic;
 - `delegation.py` / `specialists.py` — agent/specialist delegation;
 - `domain_strategy.py` — domain-specialized cognition without a second runtime;
@@ -313,13 +313,23 @@ Target additions include `NeuralComputeBudget`, provider reasoning capability pr
 - `multimodal.py` — multimodal session/parts;
 - `types.py` — ContextPack/section types.
 
-Cognition additionally uses `Data/modules/cognition/context_v3.py`.
+Cognition uses `Data/modules/cognition/context_v3.py` as a **thin adapter**: TaskModel / perception / beliefs / plan map into `ContextBuilder.build()` inputs. There is one compilation implementation.
 
-## 7.2 Current known F1 trust gap
+## 7.2 Context authority (W1 CURRENT)
 
-On the F0 baseline, `ContextBuilderV3` labels epistemic types (`KNOWLEDGE_SOURCE`, `EVIDENCE`, `TOOL_OBSERVATION`, `NEURAL_ASSOCIATION`, `HYPOTHESIS`, etc.) but still folds non-system sections into a system prompt. The active Frontier Reasoning F1 phase is intended to separate authority so Brain, Memory, web, files, MCP and tool output remain **data**, not system instructions.
+`ContextBuilder` is the sole compiler. Instruction authority contains BehaviorProfile identity, pinned constraints, and trusted runtime contract only.
 
-Likewise, cognition must converge on the same effective persisted BehaviorProfile as normal Chat instead of a separate seed fallback. Do not document F1 as complete until tests and gates prove it.
+Retrieved Knowledge, Memory, Evidence, web/tool/MCP/browser content, and Neuro associations remain **DATA** (reference_context / typed sections on the conversation path). They must not elevate into system authority.
+
+Invariants covered by tests:
+
+- prompt-injection payloads in knowledge stay out of `system_prompt` but remain available as data;
+- latest user turn is pinned and cannot disappear because the same string appeared earlier;
+- large retrieval degrades per-item under token budget (not one atomic all-or-nothing block);
+- BehaviorProfile / response language apply per operation via overlays (hot-apply / cross-process freshness owned by settings);
+- packs carry context fingerprints / snapshot identity.
+
+Epistemic trust labels (`KNOWLEDGE_SOURCE`, `EVIDENCE`, `TOOL_OBSERVATION`, `NEURAL_ASSOCIATION`, …) remain for model-facing DATA classification — not system instruction elevation.
 
 ---
 
