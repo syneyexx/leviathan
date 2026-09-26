@@ -309,9 +309,16 @@ ReasoningDepth = OrchestrationCompute + NeuralInferenceCompute
 
 `CognitiveRuntime` applies TTC on RESPOND/MODEL_CALL when the neural axis budgets multiple candidates.
 
+### Neural task advice + critic mesh (W5 CURRENT)
+
+- `neural_advisor.py` — `NeuralTaskModelAdvisor` emits structured TaskAdvice; heuristic fallback is always labeled `heuristic_fallback`
+- `hypotheses.py` — `HypothesisBoard` integrated into cognitive runs (support/contradiction/open questions)
+- `critics.py` — Critic mesh (Process, Factual, Plan, Integrity, Code, Consistency); critic output is **not** verification proof and cannot authorize side effects
+- Integrity critics remain technical-only (no ideological content layer)
+
 ### Frontier Reasoning target — not yet a current-main claim
 
-The active master program continues beyond W4 into hypothesis branching, neural task/planning advisors, critic mesh, stronger verification, CapabilityState, async cognition, verified-learning aggregation and training bridges. These remaining items are **TARGET** until their phase is merged and verified.
+The active master program continues beyond W5 into CapabilityState / verification tiers, async cognition resume/steering, Brain memory unification, agent recursion governance, and later waves. Remaining items are **TARGET** until merged and verified.
 
 ---
 

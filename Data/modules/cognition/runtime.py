@@ -36,8 +36,11 @@ from .hydration import (
     usage_from_dict,
     working_memory_from_dict,
 )
+from .hypotheses import Hypothesis, HypothesisBoard, HypothesisStatus, confidence_to_band
 from .loop_detection import LoopDetector
 from .meta_controller import MetaController, MetaDecision
+from .neural_advisor import NeuralTaskModelAdvisor
+from .critics import CriticMesh
 from .perception import PerceptionService, PerceptionSnapshot
 from .planner import CognitivePlanner
 from .steering import SteerKind, classify_steer
@@ -116,6 +119,8 @@ class CognitiveRunState:
     experience: dict[str, Any] | None = None
     factuality: dict[str, Any] | None = None
     ttc: dict[str, Any] | None = None
+    hypotheses: HypothesisBoard = field(default_factory=HypothesisBoard)
+    critic_report: dict[str, Any] | None = None
     steering: list[str] = field(default_factory=list)
     trace_id: str | None = None
 
@@ -157,6 +162,8 @@ class CognitiveRunState:
             "completion": self.completion,
             "factuality": self.factuality,
             "ttc": self.ttc,
+            "hypotheses": self.hypotheses.public_dict() if self.hypotheses.items else None,
+            "critic_report": self.critic_report,
             "response_preview": (self.response_text or "")[:400],
             # Full response only when this run owns the user-visible answer (not shadow).
             "response": None if self.shadow else self.response_text,
@@ -434,6 +441,11 @@ class CognitiveRuntime:
         # Canonical BehaviorSettingsResolver — resolve current persisted profile
         # at each new submit/operation. Do not cache identity on the runtime.
         self.behavior_resolver = behavior_resolver
+        self.task_advisor = NeuralTaskModelAdvisor(
+            model_caller=model_caller,
+            builder=self.task_builder,
+        )
+        self.critic_mesh = CriticMesh()
 
         self._runs: dict[str, CognitiveRunState] = {}
         self._loops: dict[str, LoopDetector] = {}
@@ -522,6 +534,9 @@ class CognitiveRuntime:
             constraints=constraints,
             metadata=meta_payload,
         )
+        # W5: neural/heuristic task advice — fallback always labeled.
+        advice = self.task_advisor.advise(message, metadata=meta_payload)
+        task = self.task_advisor.apply_to_task(task, advice)
         # GI12: select bounded specialists for MULTI_DOMAIN / COMPLEX (not every request).
         self._assign_gi_specialists(task)
         run_id = str(uuid.uuid4())
@@ -1570,7 +1585,12 @@ class CognitiveRuntime:
                     source_type=EpistemicType.MODEL_INFERENCE,
                     status=BeliefStatus.INFERRED,
                 )
-                self._emit(state, "belief_added", {"proposition": state.response_text[:200]})
+                hyp = state.hypotheses.add(state.response_text[:400], prior_plausibility=0.55)
+                self._emit(
+                    state,
+                    "belief_added",
+                    {"proposition": state.response_text[:200], "hypothesis_id": hyp.hypothesis_id},
+                )
             return CognitiveObservation(
                 kind=CognitiveObservationKind.MODEL_RESULT,
                 observation_id=str(uuid.uuid4()),
@@ -2060,7 +2080,35 @@ class CognitiveRuntime:
         elif state.working_memory.saturation() > 0.9:
             recommend = "compact"
             reason = "working memory saturated"
-        out = {"recommend": recommend, "reason": reason}
+
+        evidence_ids = [
+            ref for o in state.observations for ref in (o.evidence_refs or [])
+        ]
+        plan_steps = [
+            s.objective for s in (state.plan.steps if state.plan else [])
+        ]
+        acceptance = list(state.task.success_criteria or [])
+        mesh = self.critic_mesh.run(
+            text=state.response_text or "",
+            plan_steps=plan_steps,
+            acceptance=acceptance,
+            evidence_ids=evidence_ids,
+            require_evidence=bool(
+                getattr(state.task, "requires_research", False)
+                or getattr(state.task, "verification_mode", "") in {"REQUIRED", "CORROBORATED"}
+            ),
+            domain=state.task.domain,
+        )
+        state.critic_report = mesh.public_dict()
+        if mesh.recommend in {"replan", "verify", "stop"} and recommend == "continue":
+            recommend = mesh.recommend
+            reason = mesh.reason
+        out = {
+            "recommend": recommend,
+            "reason": reason,
+            "mesh": mesh.public_dict(),
+            "truth": mesh.public_dict()["truth"],
+        }
         self._transition(state, CognitiveRunStatus.REASONING)
         return out
 

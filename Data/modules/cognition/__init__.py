@@ -35,6 +35,8 @@ from .ttc import (
     IntegrityScorer,
     TestTimeComputeEngine,
 )
+from .neural_advisor import NeuralTaskModelAdvisor, TaskAdvice
+from .critics import CriticMesh, CriticReport
 from .types import (
     BeliefCategory,
     BeliefStatus,
@@ -65,7 +67,11 @@ __all__ = [
     "CognitionError",
     "CognitionFeatureDisabled",
     "CognitionStore",
+    "CriticMesh",
+    "CriticReport",
     "IntegrityScorer",
+    "NeuralTaskModelAdvisor",
+    "TaskAdvice",
     "TestTimeComputeEngine",
     "CognitiveAction",
     "CognitiveActionKind",
