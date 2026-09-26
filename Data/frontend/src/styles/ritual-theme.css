@@ -1,0 +1,976 @@
+/* ============================================================
+   LEVIATHAN — RITUAL OPERATOR THEME
+   Visual language: infernal restraint, divinity, spirituality,
+   ancient texts, occult symbolism, mathematics and Tartarian
+   monumentalism. Deliberately professional and low-noise.
+   Imported LAST so every existing route receives the same skin.
+   ============================================================ */
+
+:root {
+  --lv-bg: #030504;
+  --lv-bg-deep: #010201;
+  --lv-surface: #080a08;
+  --lv-surface-raised: #0c0f0c;
+  --lv-surface-hover: #11140f;
+  --lv-overlay: rgba(2, 3, 2, 0.9);
+  --lv-glass: rgba(7, 9, 7, 0.92);
+
+  --lv-gold: #c99a50;
+  --lv-gold-bright: #e3bd72;
+  --lv-gold-pale: #ead39c;
+  --lv-gold-dark: #6f5128;
+  --lv-gold-deep: #372817;
+
+  --lv-gold-gradient:
+    linear-gradient(135deg, #654722 0%, #aa7b39 31%, #d6ac61 50%, #9a6c31 72%, #513719 100%);
+  --lv-gold-gradient-soft:
+    linear-gradient(135deg, rgba(201, 154, 80, 0.14), rgba(201, 154, 80, 0.018));
+
+  --lv-border: rgba(132, 99, 50, 0.48);
+  --lv-border-soft: rgba(201, 154, 80, 0.12);
+  --lv-border-gold: rgba(181, 135, 62, 0.68);
+  --lv-border-active: #c7984e;
+  --lv-divider: rgba(224, 206, 169, 0.075);
+
+  --lv-text: #dedbd2;
+  --lv-text-bright: #f1ede3;
+  --lv-text-gold: #e8cf96;
+  --lv-text-secondary: #aaa59a;
+  --lv-text-muted: #75736c;
+  --lv-text-disabled: #494a45;
+
+  --lv-success: #39d99b;
+  --lv-success-glow: rgba(57, 217, 155, 0.22);
+  --lv-cyan: #51c9c6;
+  --lv-blue: #668dc5;
+  --lv-warning: #c98741;
+  --lv-danger: #c95549;
+
+  --lv-font-display: "Cinzel", "Palatino Linotype", "Book Antiqua", Constantia, Georgia, serif;
+  --lv-font-ui: Inter, "SF Pro Text", "Segoe UI", Arial, sans-serif;
+  --lv-font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  --lv-radius-xs: 2px;
+  --lv-radius-sm: 3px;
+  --lv-radius-md: 4px;
+  --lv-radius-lg: 6px;
+  --lv-radius-xl: 8px;
+
+  --lv-shadow-panel: 0 13px 34px rgba(0, 0, 0, 0.42);
+  --lv-shadow-deep: 0 26px 70px rgba(0, 0, 0, 0.68);
+  --lv-shadow-gold: 0 0 18px rgba(201, 154, 80, 0.07);
+  --lv-shadow-gold-active: 0 0 0 1px rgba(213, 172, 96, 0.12), 0 0 16px rgba(201, 154, 80, 0.10);
+  --lv-shadow-success: 0 0 10px rgba(57, 217, 155, 0.24);
+
+  --lv-glow-gold: 0 0 8px rgba(219, 178, 101, 0.20), 0 0 18px rgba(201, 154, 80, 0.08);
+  --lv-glow-green: 0 0 8px rgba(57, 217, 155, 0.34);
+
+  --lv-header-height: clamp(72px, 8.4vh, 92px);
+  --lv-sidebar-width: clamp(214px, 15.2vw, 252px);
+  --lv-right-panel-width: clamp(210px, 15.5vw, 272px);
+  --lv-footer-height: clamp(54px, 6.2vh, 64px);
+  --lv-content-gap: clamp(7px, 0.62vw, 11px);
+  --lv-card-gap: clamp(7px, 0.58vw, 10px);
+  --lv-page-pad-x: clamp(8px, 0.68vw, 12px);
+  --lv-page-pad-y: clamp(8px, 0.72vh, 12px);
+}
+
+html,
+body,
+#root {
+  background: #020302;
+}
+
+body {
+  color-scheme: dark;
+  background:
+    radial-gradient(ellipse at 63% -4%, rgba(195, 145, 63, 0.105) 0%, transparent 31%),
+    radial-gradient(circle at 18% 105%, rgba(92, 21, 14, 0.11), transparent 28%),
+    linear-gradient(180deg, #030504 0%, #020302 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  pointer-events: none;
+  opacity: 0.19;
+  mix-blend-mode: soft-light;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 4px),
+    radial-gradient(circle at 50% 30%, transparent 0 46%, rgba(0,0,0,.34) 100%);
+}
+
+::selection {
+  background: rgba(201, 154, 80, 0.3);
+  color: #fff9e8;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(183, 137, 65, 0.44) rgba(255, 255, 255, 0.025);
+}
+
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: rgba(255,255,255,.02); }
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(181,135,62,.58), rgba(95,70,37,.52));
+  border: 2px solid rgba(5,7,5,.9);
+}
+
+/* ---------- shell / monumental frame ---------- */
+
+.lv-app.lv-ritual-shell {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid rgba(151, 111, 52, 0.55);
+  background:
+    linear-gradient(rgba(2,4,3,.86), rgba(2,4,3,.96)),
+    url("/assets/leviathan-ritual-seal.svg") center 54% / min(68vw, 920px) no-repeat,
+    #030504;
+  box-shadow:
+    inset 0 0 0 1px rgba(229, 197, 127, 0.025),
+    inset 0 0 70px rgba(0,0,0,.7);
+}
+
+.lv-app.lv-ritual-shell::before,
+.lv-app.lv-ritual-shell::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.lv-app.lv-ritual-shell::before {
+  inset: var(--lv-header-height) 0 var(--lv-footer-height) var(--lv-sidebar-width);
+  opacity: .24;
+  background-image:
+    linear-gradient(rgba(203,156,81,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(203,156,81,.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 50% 45%, #000 0, transparent 74%);
+}
+
+.lv-app.lv-ritual-shell::after {
+  inset: 0;
+  box-shadow: inset 0 0 92px rgba(0,0,0,.64);
+}
+
+.lv-ritual-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- header / skyline ---------- */
+
+.lv-ritual-shell .lv-header {
+  position: relative;
+  grid-template-columns: minmax(260px, 430px) minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(180, 132, 57, 0.56);
+  background:
+    linear-gradient(90deg, rgba(3,5,4,.96) 0%, rgba(3,5,4,.64) 34%, rgba(3,5,4,.78) 76%, rgba(3,5,4,.98) 100%),
+    url("/assets/leviathan-ritual-skyline.svg") center 58% / cover no-repeat,
+    #030504;
+  box-shadow: 0 10px 30px rgba(0,0,0,.42), inset 0 -1px rgba(224,188,111,.05);
+}
+
+.lv-ritual-shell .lv-header::before {
+  content: "MENS  ·  RATIO  ·  MEMORIA  ·  POTENTIA";
+  position: absolute;
+  left: clamp(18px, 2vw, 34px);
+  top: 9px;
+  font-family: var(--lv-font-display);
+  font-size: 8px;
+  letter-spacing: .28em;
+  color: rgba(233, 209, 158, .46);
+  pointer-events: none;
+}
+
+.lv-ritual-shell .lv-header::after {
+  content: "ORDO EX TENEBRIS";
+  position: absolute;
+  right: clamp(18px, 2vw, 34px);
+  bottom: 8px;
+  font-family: var(--lv-font-display);
+  font-size: 7px;
+  letter-spacing: .34em;
+  color: rgba(211, 170, 93, .38);
+  pointer-events: none;
+}
+
+.lv-ritual-shell .lv-search {
+  height: 39px;
+  max-width: 430px;
+  margin-top: 13px;
+  border-radius: 3px;
+  border-color: rgba(191, 143, 67, 0.5);
+  background: linear-gradient(180deg, rgba(10,12,10,.94), rgba(5,7,6,.96));
+  box-shadow: inset 0 0 0 1px rgba(235,205,146,.025), 0 8px 20px rgba(0,0,0,.28);
+}
+
+.lv-ritual-shell .lv-search:focus-within {
+  border-color: rgba(223, 178, 94, .78);
+  box-shadow: 0 0 0 1px rgba(223,178,94,.09), 0 0 18px rgba(180,130,53,.09);
+}
+
+.lv-ritual-shell .lv-kbd {
+  border-radius: 2px;
+  border-color: rgba(208,164,83,.22);
+  background: rgba(3,5,4,.78);
+  color: rgba(219,207,184,.58);
+}
+
+.lv-ritual-shell .lv-header-chips {
+  margin-top: 13px;
+  gap: 6px;
+}
+
+.lv-ritual-shell .lv-header-chips .lv-chip {
+  min-height: 30px;
+  border-radius: 3px;
+  background: rgba(4,7,5,.84);
+  border-color: rgba(195,147,69,.24);
+  font-family: var(--lv-font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+
+.lv-ritual-shell .lv-header-chips .lv-chip--ok { border-color: rgba(57,217,155,.30); }
+.lv-ritual-shell .lv-header-chips .lv-chip--gold { border-color: rgba(201,154,80,.46); }
+.lv-ritual-shell .lv-header-chips .lv-chip--info { border-color: rgba(81,201,198,.30); }
+
+.lv-ritual-shell .lv-header-end { margin-top: 13px; }
+.lv-ritual-shell .lv-header-avatar {
+  border-radius: 3px;
+  border-color: rgba(201,154,80,.64);
+  filter: sepia(.24) saturate(.66) contrast(1.06);
+  box-shadow: none;
+}
+.lv-ritual-shell .lv-header-user-name {
+  font-family: var(--lv-font-display);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--lv-gold-pale);
+}
+.lv-ritual-shell .lv-header-user-role {
+  color: rgba(218,213,199,.56);
+  letter-spacing: .18em;
+}
+
+/* ---------- sidebar / codex navigation ---------- */
+
+.lv-ritual-shell .lv-sidebar {
+  padding: 12px 9px 10px;
+  gap: 10px;
+  border-right-color: rgba(163, 119, 53, 0.55);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(4,6,5,.97), rgba(2,4,3,.995)),
+    url("/assets/leviathan-ritual-manuscript.svg") center bottom / 100% auto no-repeat;
+  box-shadow: inset -1px 0 rgba(234,198,126,.025), 10px 0 28px rgba(0,0,0,.24);
+}
+
+.lv-ritual-shell .lv-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .16;
+  background: url("/assets/leviathan-ritual-seal.svg") center 69% / 145% auto no-repeat;
+  mask-image: linear-gradient(transparent 20%, #000 52%, transparent 100%);
+}
+
+.lv-ritual-shell .lv-sidebar > * { position: relative; z-index: 1; }
+
+.lv-ritual-shell .lv-sidebar-brand {
+  align-items: center;
+  padding: 4px 7px 12px;
+  border-bottom-color: rgba(182,135,61,.29);
+}
+
+.lv-ritual-shell .lv-sidebar-brand-mark {
+  width: 36px;
+  height: 36px;
+  color: #d5a75b;
+  filter: drop-shadow(0 0 8px rgba(207,157,75,.18));
+}
+
+.lv-ritual-shell .lv-sidebar-brand-title {
+  font-size: 15px;
+  letter-spacing: .30em;
+  color: #e1c985;
+}
+
+.lv-ritual-shell .lv-sidebar-brand-tag {
+  font-family: var(--lv-font-mono);
+  font-size: 7px;
+  gap: 0;
+  letter-spacing: .20em;
+  color: rgba(222,216,202,.53);
+}
+
+.lv-ritual-shell .lv-nav {
+  gap: 2px;
+  padding: 2px 0 6px;
+}
+
+.lv-ritual-shell .lv-nav-item {
+  min-height: 34px;
+  padding: 0 10px 0 12px;
+  border-radius: 2px;
+  border-left: 2px solid transparent;
+  font-size: 11px;
+  letter-spacing: .025em;
+  color: rgba(218,215,206,.76);
+}
+
+.lv-ritual-shell .lv-nav-item .lv-icon {
+  width: 15px;
+  height: 15px;
+  color: rgba(212,171,93,.82);
+  stroke-width: 1.35;
+}
+
+.lv-ritual-shell .lv-nav-item:hover {
+  color: #f1eee7;
+  background: linear-gradient(90deg, rgba(192,143,65,.09), rgba(192,143,65,.018));
+  border-left-color: rgba(199,152,76,.5);
+}
+
+.lv-ritual-shell .lv-nav-item.is-active {
+  color: #fff9e8;
+  background: linear-gradient(90deg, rgba(114, 27, 19, .56) 0%, rgba(112, 43, 25, .26) 44%, rgba(180, 132, 56, .055) 100%);
+  border: 1px solid rgba(155, 65, 38, .42);
+  border-left: 2px solid #d8aa5d;
+  box-shadow: inset 0 0 17px rgba(119,31,20,.12), 0 0 10px rgba(0,0,0,.28);
+}
+
+.lv-ritual-shell .lv-nav-item.is-active .lv-icon {
+  color: #e8c87e;
+  filter: drop-shadow(0 0 5px rgba(211,161,76,.25));
+}
+
+.lv-ritual-shell .lv-nav-item.is-active::after {
+  right: 5px;
+  top: 50%;
+  bottom: auto;
+  width: 4px;
+  height: 4px;
+  transform: translateY(-50%) rotate(45deg);
+  border-radius: 0;
+  background: #e2b45f;
+  box-shadow: 0 0 8px rgba(226,180,95,.52);
+}
+
+.lv-ritual-shell .lv-sidebar-footer {
+  padding-top: 7px;
+  border-top-color: rgba(180,132,57,.26);
+}
+
+.lv-ritual-shell .lv-sidebar-footer-art {
+  max-height: 118px;
+  opacity: .72;
+  filter: sepia(.35) saturate(.55) brightness(.72) contrast(1.14);
+  mask-image: linear-gradient(180deg, #000 0%, #000 64%, transparent 100%);
+}
+
+.lv-ritual-shell .lv-sidebar-footer-mark {
+  height: 154px;
+  object-position: center 12%;
+}
+
+.lv-ritual-shell .lv-sidebar-motto {
+  margin: 2px 6px 7px;
+  font-size: 7px;
+  line-height: 1.55;
+  letter-spacing: .25em;
+  color: rgba(214,175,100,.68);
+}
+
+.lv-ritual-shell .lv-sidebar-footer-sig span {
+  font-size: 7px;
+  letter-spacing: .34em;
+}
+
+/* ---------- shared content ---------- */
+
+.lv-ritual-shell .lv-main,
+.lv-ritual-shell .lv-right,
+.lv-ritual-shell .lv-chat-main,
+.lv-ritual-shell .lv-chat-right {
+  background-color: transparent;
+}
+
+.lv-ritual-shell .lv-main {
+  position: relative;
+}
+
+.lv-ritual-shell .lv-main::before {
+  content: "";
+  position: fixed;
+  right: -120px;
+  bottom: calc(var(--lv-footer-height) - 210px);
+  width: min(54vw, 760px);
+  aspect-ratio: 1;
+  background: url("/assets/leviathan-ritual-seal.svg") center / contain no-repeat;
+  opacity: .026;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.lv-ritual-shell .lv-panel,
+.lv-ritual-shell .lv-action-card,
+.lv-ritual-shell .lv-stat-card,
+.lv-ritual-shell .lv-card {
+  border-radius: 3px;
+  border-color: rgba(139, 101, 48, 0.46);
+  background:
+    linear-gradient(145deg, rgba(12,15,12,.945), rgba(5,7,6,.975));
+  box-shadow: 0 12px 28px rgba(0,0,0,.34), inset 0 1px rgba(241,216,160,.022);
+}
+
+.lv-ritual-shell .lv-panel-premium {
+  border-color: rgba(188,139,61,.67);
+  box-shadow: 0 13px 30px rgba(0,0,0,.40), inset 0 0 0 1px rgba(234,195,117,.018), 0 0 20px rgba(191,140,58,.045);
+}
+
+/* Catch the many domain-specific page cards without disturbing layout. */
+.lv-ritual-shell .lv-main [class^="lv-"][class*="-card"],
+.lv-ritual-shell .lv-main [class^="lv-"][class*="-panel"],
+.lv-ritual-shell .lv-right [class^="lv-"][class*="-card"],
+.lv-ritual-shell .lv-right [class^="lv-"][class*="-panel"] {
+  border-radius: 3px;
+}
+
+.lv-ritual-shell .lv-main [class^="lv-"][class*="-panel"],
+.lv-ritual-shell .lv-right [class^="lv-"][class*="-panel"] {
+  border-color: rgba(141,103,50,.44);
+}
+
+.lv-ritual-shell .lv-section-label,
+.lv-ritual-shell [class*="section-title"],
+.lv-ritual-shell [class*="panel-title"] {
+  font-family: var(--lv-font-display);
+  letter-spacing: .15em;
+  color: #dfc78f;
+  text-transform: uppercase;
+}
+
+.lv-ritual-shell .lv-section-label::before {
+  content: "✦";
+  margin-right: .55em;
+  font-size: .72em;
+  color: rgba(211,160,72,.66);
+}
+
+.lv-ritual-shell h1,
+.lv-ritual-shell h2,
+.lv-ritual-shell h3 {
+  text-wrap: balance;
+}
+
+.lv-ritual-shell .lv-hero-title,
+.lv-ritual-shell .lv-page-hero .lv-hero-title {
+  font-family: var(--lv-font-display);
+  color: #f0e8d6;
+  letter-spacing: .31em;
+  text-shadow: 0 2px 10px rgba(0,0,0,.72), 0 0 20px rgba(189,138,56,.08);
+}
+
+.lv-ritual-shell .lv-hero,
+.lv-ritual-shell .lv-page-hero {
+  border-radius: 3px;
+  border-color: rgba(173, 124, 52, .58);
+  box-shadow: 0 12px 30px rgba(0,0,0,.42);
+}
+
+.lv-ritual-shell .lv-hero::after,
+.lv-ritual-shell .lv-page-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(3,5,4,.78) 0%, rgba(3,5,4,.18) 43%, rgba(3,5,4,.42) 100%),
+    url("/assets/leviathan-ritual-seal.svg") 87% center / auto 142% no-repeat;
+  opacity: .60;
+  mix-blend-mode: normal;
+}
+
+.lv-ritual-shell .lv-hero-content,
+.lv-ritual-shell .lv-page-hero .lv-hero-content {
+  z-index: 3;
+}
+
+.lv-ritual-shell .lv-hero-media img,
+.lv-ritual-shell .lv-page-hero img,
+.lv-ritual-shell [class*="hero"] img {
+  filter: saturate(.38) sepia(.22) contrast(1.13) brightness(.70);
+}
+
+.lv-ritual-shell .lv-hero-kicker {
+  color: rgba(224,198,142,.78);
+  letter-spacing: .24em;
+}
+
+.lv-ritual-shell .lv-hero-sub,
+.lv-ritual-shell .lv-page-quote {
+  color: rgba(218,211,195,.62);
+}
+
+/* ---------- form controls ---------- */
+
+.lv-ritual-shell input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+.lv-ritual-shell textarea,
+.lv-ritual-shell select,
+.lv-ritual-shell .lv-field,
+.lv-ritual-shell .lv-select,
+.lv-ritual-shell .lv-input {
+  border-radius: 3px;
+  border-color: rgba(154,111,51,.40);
+  background: linear-gradient(180deg, rgba(6,9,7,.94), rgba(4,6,5,.98));
+  color: #e2ded4;
+  box-shadow: inset 0 1px rgba(255,255,255,.014);
+}
+
+.lv-ritual-shell input::placeholder,
+.lv-ritual-shell textarea::placeholder {
+  color: rgba(160,156,146,.48);
+}
+
+.lv-ritual-shell input:focus,
+.lv-ritual-shell textarea:focus,
+.lv-ritual-shell select:focus,
+.lv-ritual-shell .lv-field:focus,
+.lv-ritual-shell .lv-select:focus,
+.lv-ritual-shell .lv-input:focus {
+  outline: none;
+  border-color: rgba(218,168,79,.72);
+  box-shadow: 0 0 0 1px rgba(218,168,79,.07), 0 0 16px rgba(183,132,53,.06);
+}
+
+/* ---------- buttons / chips ---------- */
+
+.lv-ritual-shell .lv-btn,
+.lv-ritual-shell .lv-action-card,
+.lv-ritual-shell .lv-feature,
+.lv-ritual-shell button[class*="button"],
+.lv-ritual-shell button[class*="btn"] {
+  border-radius: 3px;
+}
+
+.lv-ritual-shell .lv-btn,
+.lv-ritual-shell .lv-feature {
+  border-color: rgba(148,108,53,.35);
+  background: linear-gradient(180deg, rgba(12,15,12,.9), rgba(6,8,7,.94));
+}
+
+.lv-ritual-shell .lv-btn:hover,
+.lv-ritual-shell .lv-feature:hover,
+.lv-ritual-shell .lv-action-card:hover {
+  border-color: rgba(207,158,74,.60);
+  background: linear-gradient(180deg, rgba(18,20,16,.94), rgba(8,10,8,.98));
+}
+
+.lv-ritual-shell .lv-button-primary,
+.lv-ritual-shell .lv-btn-gold {
+  border-radius: 3px;
+  border-color: rgba(224,180,92,.78);
+  background: linear-gradient(180deg, #b98a43, #7f5b2b);
+  color: #090705;
+  box-shadow: inset 0 1px rgba(255,240,205,.22), 0 6px 16px rgba(0,0,0,.25);
+  text-shadow: 0 1px rgba(255,231,174,.22);
+}
+
+.lv-ritual-shell .lv-button-primary:hover,
+.lv-ritual-shell .lv-btn-gold:hover {
+  filter: brightness(1.08) saturate(.94);
+}
+
+.lv-ritual-shell .lv-tag,
+.lv-ritual-shell [class*="pill"],
+.lv-ritual-shell [class*="badge"] {
+  border-radius: 2px;
+}
+
+.lv-ritual-shell .lv-switch {
+  border-radius: 12px;
+}
+
+/* ---------- tables / data density ---------- */
+
+.lv-ritual-shell table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.lv-ritual-shell th {
+  font-family: var(--lv-font-mono);
+  font-size: 9px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: rgba(220,199,156,.66);
+  border-bottom-color: rgba(168,123,56,.34) !important;
+}
+
+.lv-ritual-shell td {
+  border-bottom-color: rgba(255,255,255,.045) !important;
+}
+
+.lv-ritual-shell tbody tr:hover {
+  background-color: rgba(194,143,62,.035);
+}
+
+.lv-ritual-shell code,
+.lv-ritual-shell pre,
+.lv-ritual-shell .lv-mono {
+  font-family: var(--lv-font-mono);
+}
+
+/* ---------- graph / mathematical surfaces ---------- */
+
+.lv-ritual-shell .lv-graph-canvas,
+.lv-ritual-shell [class*="graph"],
+.lv-ritual-shell [class*="canvas"] {
+  background-color: rgba(4,7,5,.72);
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(204,155,77,.10), transparent 38%),
+    linear-gradient(rgba(201,154,80,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201,154,80,.03) 1px, transparent 1px);
+  background-size: auto, 28px 28px, 28px 28px;
+}
+
+.lv-ritual-shell svg text {
+  font-family: var(--lv-font-ui);
+}
+
+/* ---------- command / cognitive runtime ---------- */
+
+.lv-ritual-shell .lv-command {
+  border-color: rgba(151,109,51,.43);
+}
+
+.lv-ritual-shell .lv-prompt {
+  border-radius: 3px;
+  border-color: rgba(174,127,55,.47);
+  background: rgba(4,7,5,.92);
+}
+
+.lv-ritual-shell .lv-feature-row {
+  gap: 6px;
+}
+
+.lv-ritual-shell .lv-feature {
+  min-height: 54px;
+}
+
+.lv-ritual-shell .lv-feature-icon {
+  color: #cf9e50;
+}
+
+/* ---------- right rail ---------- */
+
+.lv-ritual-shell .lv-right {
+  padding: var(--lv-page-pad-y) var(--lv-page-pad-x) var(--lv-page-pad-y) 0;
+}
+
+.lv-ritual-shell .lv-right::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(199,150,72,.018));
+}
+
+/* ---------- footer / route dock ---------- */
+
+.lv-ritual-shell .lv-footer {
+  border-top: 1px solid rgba(164,119,53,.50);
+  background:
+    linear-gradient(180deg, rgba(5,7,6,.97), rgba(2,4,3,.995));
+  box-shadow: 0 -12px 28px rgba(0,0,0,.26), inset 0 1px rgba(226,191,119,.025);
+}
+
+.lv-ritual-shell .lv-avatar {
+  border-radius: 3px;
+  filter: sepia(.3) saturate(.55) brightness(.80);
+  border-color: rgba(195,146,67,.55);
+}
+
+.lv-ritual-shell .lv-user-name {
+  font-family: var(--lv-font-display);
+  letter-spacing: .16em;
+  color: var(--lv-gold-pale);
+}
+
+.lv-ritual-shell .lv-user-meta {
+  font-family: var(--lv-font-mono);
+  font-size: 8px;
+  color: rgba(181,177,165,.50);
+}
+
+.lv-ritual-shell .lv-dock {
+  gap: 3px;
+}
+
+.lv-ritual-shell .lv-dock-item {
+  border-radius: 2px;
+  color: rgba(206,202,191,.67);
+}
+
+.lv-ritual-shell .lv-dock-item:hover {
+  background: rgba(187,137,58,.065);
+  color: #eee8dc;
+}
+
+.lv-ritual-shell .lv-dock-item.is-active {
+  background: linear-gradient(180deg, rgba(113,33,22,.42), rgba(79,28,19,.28));
+  border-color: rgba(164,78,43,.40);
+  color: #f4e8d3;
+}
+
+.lv-ritual-shell .lv-dock-item.is-active .lv-icon {
+  color: #e0b766;
+}
+
+.lv-ritual-shell .lv-ops {
+  border-radius: 2px;
+  border-color: rgba(164,119,53,.32);
+  background: rgba(4,7,5,.84);
+  font-family: var(--lv-font-mono);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+/* ---------- trading ---------- */
+
+.lv-ritual-shell.lv-section-trading {
+  --lv-success: #3bd99e;
+  --lv-danger: #c8574b;
+}
+
+.lv-ritual-shell [class^="lv-tp-"][class*="panel"],
+.lv-ritual-shell [class^="lv-trading-"][class*="panel"] {
+  border-color: rgba(139,102,49,.48);
+  background: linear-gradient(145deg, rgba(10,13,10,.96), rgba(4,7,5,.98));
+}
+
+.lv-ritual-shell [class*="candlestick"],
+.lv-ritual-shell [class*="market-chart"] {
+  background-image:
+    linear-gradient(rgba(201,154,80,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201,154,80,.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* ---------- media control ---------- */
+
+.lv-ritual-shell.lv-section-media .lv-main [class*="hero"] img,
+.lv-ritual-shell.lv-section-media .lv-main [class*="thumb"] img,
+.lv-ritual-shell.lv-section-media .lv-main [class*="cover"] img {
+  filter: saturate(.62) contrast(1.07) brightness(.78);
+}
+
+.lv-ritual-shell.lv-section-media [class*="platform"] {
+  border-radius: 3px;
+}
+
+/* ---------- research / brain / memory ---------- */
+
+.lv-ritual-shell.lv-section-research .lv-main {
+  background-image: radial-gradient(circle at 73% 36%, rgba(182,132,55,.036), transparent 34%);
+}
+
+.lv-ritual-shell .lv-filter-item {
+  border-radius: 2px;
+}
+
+.lv-ritual-shell .lv-filter-item:hover,
+.lv-ritual-shell .lv-filter-item.is-active {
+  background: rgba(184,135,58,.07);
+}
+
+/* ---------- plugin/runtime / console ---------- */
+
+.lv-ritual-shell.lv-section-runtime pre,
+.lv-ritual-shell.lv-section-runtime [class*="console"],
+.lv-ritual-shell.lv-section-runtime [class*="terminal"] {
+  background-color: #030604;
+  color: #bfc8ba;
+}
+
+/* ---------- settings ---------- */
+
+.lv-ritual-shell.lv-section-settings .lv-main [class*="settings"] {
+  --settings-accent: #c99a50;
+}
+
+/* ---------- density / typography ---------- */
+
+.lv-ritual-shell .lv-muted,
+.lv-ritual-shell small {
+  color: rgba(156,153,145,.70);
+}
+
+.lv-ritual-shell strong {
+  font-weight: 600;
+}
+
+.lv-ritual-shell .lv-status-online,
+.lv-ritual-shell .lv-status-dot.ready {
+  box-shadow: 0 0 8px rgba(57,217,155,.28);
+}
+
+.lv-ritual-shell .lv-progress {
+  height: 6px;
+  border-radius: 1px;
+  background: rgba(255,255,255,.045);
+  border-color: rgba(153,111,51,.24);
+}
+
+.lv-ritual-shell .lv-progress > span {
+  border-radius: 1px;
+  background: linear-gradient(90deg, #8d632b, #d0a052);
+  box-shadow: none;
+}
+
+/* ---------- focus / accessibility ---------- */
+
+.lv-ritual-shell :focus-visible {
+  outline: 1px solid rgba(225,179,91,.85);
+  outline-offset: 2px;
+}
+
+/* ---------- responsive: normal desktop ---------- */
+
+@media (max-width: 1480px) {
+  :root {
+    --lv-sidebar-width: clamp(204px, 15vw, 230px);
+    --lv-right-panel-width: clamp(190px, 15vw, 238px);
+  }
+
+  .lv-ritual-shell .lv-header {
+    grid-template-columns: minmax(230px, 360px) minmax(0,1fr) auto;
+    gap: 10px;
+  }
+
+  .lv-ritual-shell .lv-header-chips .lv-chip {
+    padding-inline: 8px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .lv-ritual-shell .lv-header {
+    grid-template-columns: minmax(210px, 1fr) auto;
+  }
+
+  .lv-ritual-shell .lv-header-chips {
+    display: none;
+  }
+
+  .lv-ritual-shell .lv-sidebar-footer-art {
+    display: none;
+  }
+
+  .lv-ritual-shell .lv-sidebar-motto {
+    display: none;
+  }
+}
+
+@media (max-width: 920px) {
+  :root {
+    --lv-header-height: 64px;
+    --lv-footer-height: 58px;
+  }
+
+  .lv-app.lv-ritual-shell {
+    border: 0;
+  }
+
+  .lv-ritual-shell .lv-header {
+    grid-template-columns: minmax(0,1fr) auto;
+    padding-inline: 10px;
+  }
+
+  .lv-ritual-shell .lv-header::before,
+  .lv-ritual-shell .lv-header::after,
+  .lv-ritual-shell .lv-header-user-copy {
+    display: none;
+  }
+
+  .lv-ritual-shell .lv-search {
+    margin-top: 0;
+  }
+
+  .lv-ritual-shell .lv-header-end {
+    margin-top: 0;
+  }
+
+  .lv-ritual-shell .lv-sidebar {
+    width: min(82vw, 280px);
+  }
+
+  .lv-ritual-shell .lv-dock-item span {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .lv-ritual-shell .lv-header-avatar,
+  .lv-ritual-shell .lv-user {
+    display: none;
+  }
+
+  .lv-ritual-shell .lv-footer {
+    grid-template-columns: minmax(0,1fr) auto;
+  }
+
+  .lv-ritual-shell .lv-ops strong {
+    display: none;
+  }
+
+  .lv-ritual-shell .lv-page-hero .lv-hero-content {
+    max-width: 86%;
+  }
+}
+
+/* ---------- ultrawide: use the space without giant UI ---------- */
+
+@media (min-width: 2200px) {
+  :root {
+    --lv-sidebar-width: 254px;
+    --lv-right-panel-width: 286px;
+    --lv-header-height: 92px;
+    --lv-footer-height: 64px;
+    --lv-page-pad-x: 14px;
+    --lv-page-pad-y: 12px;
+    --lv-content-gap: 11px;
+    --lv-card-gap: 10px;
+  }
+
+  body { font-size: 14px; }
+
+  .lv-ritual-shell .lv-main,
+  .lv-ritual-shell .lv-right {
+    font-size: 13px;
+  }
+
+  .lv-ritual-shell .lv-header {
+    background-size: cover;
+  }
+}
+
+@media (min-width: 3200px) {
+  :root {
+    --lv-sidebar-width: 268px;
+    --lv-right-panel-width: 310px;
+  }
+
+  .lv-ritual-shell .lv-main,
+  .lv-ritual-shell .lv-right {
+    font-size: 14px;
+  }
+}
