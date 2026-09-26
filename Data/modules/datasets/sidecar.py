@@ -2,6 +2,9 @@
 
 Sidecars are a recovery aid for catalog reconciliation after clean installs.
 They do **not** replace DatasetStore or KnowledgeStore as sources of truth.
+
+schemaVersion 2 adds displayName / semanticProfile / versions summary / truth
+fields while remaining backward-compatible with v1 payloads on read.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from Data.modules.common.paths import normalize_path_key
 
 SIDECAR_FILENAME = ".leviathan-dataset.json"
 TOMBSTONE_FILENAME = ".leviathan-dataset.deleted"
-SIDECAR_SCHEMA_VERSION = 1
+SIDECAR_SCHEMA_VERSION = 2
 
 
 class SidecarError(Exception):
@@ -31,6 +34,18 @@ def sidecar_path_for(directory: Path) -> Path:
 
 def tombstone_path_for(directory: Path) -> Path:
     return Path(directory) / TOMBSTONE_FILENAME
+
+
+def _default_truth() -> dict[str, Any]:
+    return {
+        "sidecar_is_not_catalog": True,
+        "sidecar_is_not_knowledge_store": True,
+        "catalog_remains_authoritative": True,
+        "datasetStoreIsCanonical": True,
+        "sidecarsAreRecoveryEvidence": True,
+        "brainStateMustBeVerified": True,
+        "noSecretsOrEmbeddings": True,
+    }
 
 
 def build_sidecar_payload(
@@ -50,16 +65,28 @@ def build_sidecar_payload(
     provenance: dict[str, Any] | None = None,
     created_at: str | None = None,
     updated_at: str | None = None,
+    display_name: str | None = None,
+    display_name_source: str | None = None,
+    semantic_profile: dict[str, Any] | None = None,
+    versions: list[dict[str, Any]] | None = None,
+    truth: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not dataset_id or not str(dataset_id).strip():
         raise SidecarError("datasetId is required", code="sidecar_missing_id")
     if not name or not str(name).strip():
         raise SidecarError("name is required", code="sidecar_missing_name")
+
+    safe_profile = _sanitize_semantic_profile(semantic_profile)
+    display = (display_name or (safe_profile or {}).get("displayName") or name or "").strip()
+    display_source = display_name_source or (safe_profile or {}).get("displayNameSource")
+
     payload: dict[str, Any] = {
         "schemaVersion": SIDECAR_SCHEMA_VERSION,
         "datasetId": str(dataset_id).strip(),
         "name": str(name).strip(),
+        "displayName": display or str(name).strip(),
+        "displayNameSource": display_source,
         "sourceType": source_type,
         "contentHash": content_hash,
         "originalUri": original_uri,
@@ -70,18 +97,48 @@ def build_sidecar_payload(
         "detectedFormat": detected_format,
         "rowCount": row_count,
         "byteSize": byte_size,
-        "provenance": dict(provenance or {}),
+        "provenance": _sanitize_provenance(provenance),
+        "semanticProfile": safe_profile,
+        "versions": _sanitize_versions(versions),
         "createdAt": created_at,
         "updatedAt": updated_at,
         "truth": {
-            "sidecar_is_not_catalog": True,
-            "sidecar_is_not_knowledge_store": True,
-            "catalog_remains_authoritative": True,
+            **_default_truth(),
+            **{
+                k: v
+                for k, v in dict(truth or {}).items()
+                if k
+                not in {
+                    "chain_of_thought",
+                    "chainOfThought",
+                    "embeddings",
+                    "embedding",
+                    "secrets",
+                }
+            },
         },
     }
     if extra:
-        payload["extra"] = dict(extra)
+        payload["extra"] = _sanitize_extra(dict(extra))
     return payload
+
+
+def hydrate_sidecar_v1_to_current(payload: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade a validated-shape v1 payload dict to current schema fields."""
+    schema = int(payload.get("schemaVersion") or payload.get("schema_version") or 1)
+    if schema >= SIDECAR_SCHEMA_VERSION:
+        return payload
+    # v1 → v2: fill display/semantic/versions defaults without inventing facts.
+    upgraded = dict(payload)
+    upgraded["schemaVersion"] = SIDECAR_SCHEMA_VERSION
+    name = str(upgraded.get("name") or "").strip()
+    upgraded.setdefault("displayName", name)
+    upgraded.setdefault("displayNameSource", None)
+    upgraded.setdefault("semanticProfile", None)
+    upgraded.setdefault("versions", [])
+    truth = dict(upgraded.get("truth") or {}) if isinstance(upgraded.get("truth"), dict) else {}
+    upgraded["truth"] = {**_default_truth(), **truth}
+    return upgraded
 
 
 def write_sidecar(directory: Path, payload: dict[str, Any]) -> Path:
@@ -110,7 +167,10 @@ def write_tombstone(directory: Path, *, dataset_id: str, reason: str = "deleted"
         "schemaVersion": SIDECAR_SCHEMA_VERSION,
         "datasetId": dataset_id,
         "reason": reason,
-        "truth": {"intentional_delete_blocks_auto_restore": True},
+        "truth": {
+            "intentional_delete_blocks_auto_restore": True,
+            **_default_truth(),
+        },
     }
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     return path
@@ -144,7 +204,15 @@ def validate_sidecar(payload: dict[str, Any]) -> dict[str, Any]:
     schema = int(payload.get("schemaVersion") or payload.get("schema_version") or 1)
     if schema < 1 or schema > SIDECAR_SCHEMA_VERSION:
         raise SidecarError(f"unsupported sidecar schemaVersion={schema}", code="sidecar_schema")
-    # Normalize to canonical keys; do not invent missing provenance fields.
+
+    # Hydrate older payloads before normalizing.
+    if schema < SIDECAR_SCHEMA_VERSION:
+        payload = hydrate_sidecar_v1_to_current(payload)
+
+    semantic = payload.get("semanticProfile") or payload.get("semantic_profile")
+    versions = payload.get("versions")
+    truth = payload.get("truth") if isinstance(payload.get("truth"), dict) else None
+
     out = build_sidecar_payload(
         dataset_id=dataset_id,
         name=name,
@@ -163,6 +231,13 @@ def validate_sidecar(payload: dict[str, Any]) -> dict[str, Any]:
         provenance=payload.get("provenance") if isinstance(payload.get("provenance"), dict) else {},
         created_at=_opt_str(payload.get("createdAt") or payload.get("created_at")),
         updated_at=_opt_str(payload.get("updatedAt") or payload.get("updated_at")),
+        display_name=_opt_str(payload.get("displayName") or payload.get("display_name")),
+        display_name_source=_opt_str(
+            payload.get("displayNameSource") or payload.get("display_name_source")
+        ),
+        semantic_profile=semantic if isinstance(semantic, dict) else None,
+        versions=versions if isinstance(versions, list) else None,
+        truth=truth,
         extra=payload.get("extra") if isinstance(payload.get("extra"), dict) else None,
     )
     return out
@@ -209,6 +284,83 @@ def find_sidecars_under_roots(
                 }
             )
     return found
+
+
+def _sanitize_semantic_profile(profile: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(profile, dict):
+        return None
+    banned = {
+        "embedding",
+        "embeddings",
+        "vector",
+        "vectors",
+        "secret",
+        "secrets",
+        "token",
+        "apiKey",
+        "api_key",
+        "chain_of_thought",
+        "chainOfThought",
+        "reasoning_trace",
+        "reasoningTrace",
+        "rawContent",
+        "raw_content",
+        "samples",
+        "sampleRows",
+    }
+    out: dict[str, Any] = {}
+    for key, value in profile.items():
+        if key in banned or "embedding" in key.lower() or "secret" in key.lower():
+            continue
+        if key in {"modelProvenance", "model_provenance"} and isinstance(value, dict):
+            clean = {
+                k: v
+                for k, v in value.items()
+                if k
+                not in {
+                    "chain_of_thought",
+                    "chainOfThought",
+                    "reasoning_trace",
+                    "reasoningTrace",
+                }
+            }
+            out[key] = clean
+            continue
+        out[key] = value
+    return out
+
+
+def _sanitize_versions(versions: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if not isinstance(versions, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in versions[:50]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "versionId": _opt_str(item.get("versionId") or item.get("version_id")),
+                "versionLabel": _opt_str(item.get("versionLabel") or item.get("version_label")),
+                "status": _opt_str(item.get("status")),
+                "kind": _opt_str(item.get("kind")),
+                "contentHash": _opt_str(item.get("contentHash") or item.get("content_hash")),
+                "rowCount": _opt_int(item.get("rowCount") if item.get("rowCount") is not None else item.get("row_count")),
+                "byteSize": _opt_int(item.get("byteSize") if item.get("byteSize") is not None else item.get("byte_size")),
+            }
+        )
+    return out
+
+
+def _sanitize_provenance(provenance: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(provenance, dict):
+        return {}
+    banned = {"token", "api_key", "apiKey", "secret", "password", "embedding", "embeddings"}
+    return {k: v for k, v in provenance.items() if k not in banned and "embedding" not in str(k).lower()}
+
+
+def _sanitize_extra(extra: dict[str, Any]) -> dict[str, Any]:
+    banned = {"embedding", "embeddings", "rawContent", "raw_content", "secret", "token"}
+    return {k: v for k, v in extra.items() if k not in banned}
 
 
 def _opt_str(value: Any) -> str | None:

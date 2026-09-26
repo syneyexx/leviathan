@@ -22,6 +22,12 @@ if TYPE_CHECKING:
 
 from .annotation import AnnotationQueue
 from .canonicalize import canonical_schema_dict
+from .catalog import (
+    build_catalog_from_store,
+    catalog_path,
+    refresh_catalog_entry,
+    write_catalog,
+)
 from .contamination import scan_contamination
 from .dedupe import exact_dedupe, iter_exact_dedupe_external
 from .export import export_jsonl, preview_jsonl
@@ -56,6 +62,12 @@ from .mixtures import MixtureComponent, build_mixture_manifest
 from .packing_sim import simulate_packing
 from .pii import scan_records_pii
 from .scratch import ScratchManager
+from .semantic_enrichment import (
+    build_idempotency_key,
+    enrich_from_evidence,
+    profile_to_metadata_patch,
+)
+from .semantic_profiler import BoundedDatasetEvidence, BoundedDatasetProfiler, ProfilerLimits
 from .shards import ShardIngestCheckpoint, build_shard_plan, ingest_shards
 from .sidecar import (
     SIDECAR_FILENAME,
@@ -250,6 +262,7 @@ class DatasetService:
             DatasetJobType.DUPLICATE.value: self._handle_duplicate,
             DatasetJobType.SHARD_INGEST.value: self._handle_shard_ingest,
             DatasetJobType.CONTAMINATION_SCAN.value: self._handle_contamination_scan,
+            DatasetJobType.ENRICH_METADATA.value: self._handle_enrich_metadata,
         }
 
     # --- Queries ---
@@ -1573,6 +1586,22 @@ class DatasetService:
                 break
         if preferred is None and versions:
             preferred = versions[0]
+        meta = ds.metadata if isinstance(ds.metadata, dict) else {}
+        semantic = meta.get("semanticProfile") if isinstance(meta.get("semanticProfile"), dict) else None
+        display_name = meta.get("displayName") or (semantic or {}).get("displayName") or ds.name
+        display_source = meta.get("displayNameSource") or (semantic or {}).get("displayNameSource")
+        versions_summary = [
+            {
+                "versionId": v.version_id,
+                "versionLabel": v.version_label,
+                "status": v.status.value if hasattr(v.status, "value") else str(v.status),
+                "kind": v.kind.value if hasattr(v.kind, "value") else str(v.kind),
+                "contentHash": v.content_hash,
+                "rowCount": v.row_count,
+                "byteSize": v.byte_size,
+            }
+            for v in versions[:20]
+        ]
         directory = self._sidecar_directory_for(ds)
         payload = build_sidecar_payload(
             dataset_id=ds.dataset_id,
@@ -1590,8 +1619,145 @@ class DatasetService:
             provenance=ds.provenance,
             created_at=ds.created_at,
             updated_at=ds.updated_at,
+            display_name=str(display_name) if display_name else ds.name,
+            display_name_source=str(display_source) if display_source else None,
+            semantic_profile=semantic,
+            versions=versions_summary,
         )
         return write_sidecar(directory, payload)
+
+    def build_bounded_profile(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        limits: ProfilerLimits | None = None,
+    ) -> BoundedDatasetEvidence:
+        """Collect bounded streaming evidence for semantic enrichment."""
+        ds = self.get_dataset(dataset_id)
+        ver = self.get_version(version_id)
+        if ver.dataset_id != dataset_id:
+            raise DatasetError(
+                "Version does not belong to dataset",
+                code="version_dataset_mismatch",
+                http_status=400,
+            )
+        classification = None
+        try:
+            existing = self.get_dataset_classification(dataset_id, version_id=version_id)
+            if existing is not None:
+                classification = existing.public_dict()
+        except Exception:  # noqa: BLE001
+            classification = None
+        files = [f.public_dict() for f in self.store.list_files(dataset_id)]
+        profiler = BoundedDatasetProfiler(limits or ProfilerLimits())
+        return profiler.profile(
+            dataset=ds,
+            version=ver,
+            record_iter=self.iter_version_records(version_id) if ver.storage_path else None,
+            trading_classification=classification,
+            files=files,
+            max_record_bytes=self.memory_policy.max_record_bytes,
+        )
+
+    def enrich_semantic_deterministic(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        sync_artifacts: bool = False,
+    ) -> dict[str, Any]:
+        """Deterministic semantic enrichment — persists profile into dataset metadata."""
+        evidence = self.build_bounded_profile(dataset_id, version_id)
+        profile = enrich_from_evidence(evidence, model=None, prefer_model=False)
+        patch = profile_to_metadata_patch(profile)
+        ds = self.get_dataset(dataset_id)
+        meta = dict(ds.metadata or {})
+        meta.update(patch)
+        self.store.update_dataset(dataset_id, metadata=meta)
+        ver = self.get_version(version_id)
+        vmeta = dict(ver.metadata or {})
+        vmeta["semanticProfile"] = profile.public_dict()
+        self.store.update_version(version_id, metadata=vmeta)
+        result = {
+            "datasetId": dataset_id,
+            "versionId": version_id,
+            "semanticProfile": profile.public_dict(),
+            "idempotencyKey": build_idempotency_key(
+                dataset_id,
+                version_id,
+                evidence.content_hash or ds.content_hash,
+            ),
+        }
+        if sync_artifacts:
+            result["recovery"] = self.sync_recovery_artifacts(dataset_id)
+        return result
+
+    def sync_recovery_artifacts(self, dataset_id: str) -> dict[str, Any]:
+        """Write sidecar + refresh derived global catalog entry/snapshot."""
+        ds = self.get_dataset(dataset_id)
+        sidecar_path = self.write_dataset_sidecar(dataset_id)
+        versions = [v.public_dict() for v in self.store.list_versions(dataset_id)]
+        try:
+            catalog_doc = refresh_catalog_entry(
+                self.corpus,
+                ds.public_dict(),
+                versions=versions,
+                store=self.store,
+            )
+            catalog_ok = True
+            catalog_error = None
+        except Exception as exc:  # noqa: BLE001 — catalog is derived; never corrupt DB
+            catalog_doc = None
+            catalog_ok = False
+            catalog_error = redact_secrets(str(exc))
+        return {
+            "datasetId": dataset_id,
+            "sidecarPath": str(sidecar_path) if sidecar_path else None,
+            "catalogPath": str(catalog_path(self.corpus)),
+            "catalogOk": catalog_ok,
+            "catalogError": catalog_error,
+            "catalogEntryCount": (catalog_doc or {}).get("entryCount"),
+            "truth": {
+                "catalogIsDerived": True,
+                "datasetStoreIsCanonical": True,
+                "sidecarsAreRecoveryEvidence": True,
+            },
+        }
+
+    def enqueue_enrich_metadata(
+        self,
+        dataset_id: str,
+        version_id: str,
+        *,
+        sync_artifacts: bool = True,
+    ) -> DatasetJob:
+        """Queue deterministic semantic enrichment for a dataset version."""
+        self.get_dataset(dataset_id)
+        ver = self.get_version(version_id)
+        if ver.dataset_id != dataset_id:
+            raise DatasetError(
+                "Version does not belong to dataset",
+                code="version_dataset_mismatch",
+                http_status=400,
+            )
+        return self._queue_domain_job(
+            job_type=DatasetJobType.ENRICH_METADATA,
+            dataset_id=dataset_id,
+            version_id=version_id,
+            config={"sync_artifacts": bool(sync_artifacts)},
+        )
+
+    def rebuild_dataset_catalog(self) -> dict[str, Any]:
+        """Full derived catalog rebuild from DatasetStore (never writes to DB)."""
+        document = build_catalog_from_store(self.store, self.corpus)
+        path = write_catalog(catalog_path(self.corpus), document)
+        return {
+            "path": str(path),
+            "entryCount": document.get("entryCount"),
+            "schemaVersion": document.get("schemaVersion"),
+            "truth": document.get("truth"),
+        }
 
     def learning_ladder_for_dataset(self, dataset_id: str) -> dict[str, Any]:
         """Honest capability ladder: disk file ≠ learned knowledge."""
@@ -3497,6 +3663,23 @@ class DatasetService:
             threshold=float(job.config.get("threshold") or 0.35),
         )
         return report.public_dict()
+
+    def _handle_enrich_metadata(self, job: DatasetJob) -> dict[str, Any]:
+        dataset_id = job.dataset_id or ""
+        version_id = job.version_id or ""
+        if not dataset_id or not version_id:
+            raise DatasetError(
+                "enrich_metadata requires dataset_id and version_id",
+                code="enrich_missing_ids",
+                http_status=400,
+            )
+        sync_artifacts = bool((job.config or {}).get("sync_artifacts", True))
+        result = self.enrich_semantic_deterministic(
+            dataset_id,
+            version_id,
+            sync_artifacts=sync_artifacts,
+        )
+        return result
 
     def public_job(self, job: DatasetJob) -> dict[str, Any]:
         """Redact secrets from job payload for API responses."""
