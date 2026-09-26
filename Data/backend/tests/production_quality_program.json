@@ -13,149 +13,31 @@
     "PASS",
     "NOT_APPLICABLE"
   ],
-  "wave_gate_map": {
-    "W00": ["R30", "F0"],
-    "W01": ["R24", "G_eval"],
-    "W02": ["G25", "G28"],
-    "W03": ["R14"],
-    "W04": ["R05", "R06", "R15"],
-    "W05": ["R08", "R10"],
-    "W06": ["R11", "R18"],
-    "W07": ["R07", "R13"],
-    "W08": ["R02", "R20"],
-    "W09": ["research"],
-    "W10": ["R16", "R17"],
-    "W11": ["R17", "R19"],
-    "W12": ["coding", "multimodal"],
-    "W13": ["trading_data"],
-    "W14": ["trading_kernel"],
-    "W15": ["strategy_assets"],
-    "W16": ["G25", "lab"],
-    "W17": ["WFA", "sealed"],
-    "W18": ["paper"],
-    "W19": ["instruments"],
-    "W20": ["R22", "R23"],
-    "W21": ["R25", "R26"],
-    "W22": ["ops"],
-    "W23": ["R24", "R30"]
-  },
   "waves": [
-    {
-      "id": "W00",
-      "title": "Baseline, integration inventory and compatibility",
-      "status": "PASS",
-      "owner": "composition",
-      "dependencies": [],
-      "implementation_paths": [
-        "Data/frontend/vite.config.ts",
-        "Data/backend/tests/production_quality_program.json",
-        "scripts/verify_trading_100.py"
-      ],
-      "tests": [
-        "npm run typecheck",
-        "npm test",
-        "npm run build (with and without editor/)"
-      ],
-      "evidence": [
-        {
-          "kind": "integration",
-          "command": "npm run build (editor absent)",
-          "exit": 0,
-          "notes": "default build does not import editor plugin"
-        },
-        {
-          "kind": "integration",
-          "command": "LEVIATHAN_EDITOR=1 npm run build (editor absent)",
-          "exit": 1,
-          "notes": "precise configuration error"
-        }
-      ],
-      "blocker": null
-    },
-    {
-      "id": "W01",
-      "title": "Repair measurement integrity",
-      "status": "PASS",
-      "owner": "evaluation",
-      "dependencies": ["W00"],
-      "implementation_paths": [
-        "Data/modules/evaluation/assistant_benchmark.py",
-        "scripts/verify_trading_100.py",
-        "Data/modules/research/quality_scorecard.py",
-        "Data/modules/cognition/ttc.py"
-      ],
-      "tests": [
-        "Data/backend/tests/test_adversarial_w01_w02.py",
-        "Data/backend/tests/test_round5_evaluation_platform.py::AssistantBenchmarkTests"
-      ],
-      "evidence": [
-        {
-          "kind": "unit",
-          "command": "pytest test_adversarial_w01_w02.py test_round5...AssistantBenchmarkTests",
-          "exit": 0
-        }
-      ],
-      "blocker": null
-    },
-    {
-      "id": "W02",
-      "title": "Close trading false-success defects",
-      "status": "PASS",
-      "owner": "market_sim",
-      "dependencies": ["W00"],
-      "implementation_paths": [
-        "Data/modules/market_sim/service.py",
-        "Data/modules/market_sim/agent_lab.py",
-        "Data/modules/market_sim/readiness.py",
-        "Data/modules/market_sim/strategy_asset.py",
-        "Data/modules/market_sim/causality.py",
-        "Data/modules/market_sim/experiments.py",
-        "Data/modules/market_sim/promotion.py"
-      ],
-      "tests": [
-        "Data/backend/tests/test_adversarial_w01_w02.py",
-        "Data/backend/tests/test_market_sim_p3_campaigns.py::P3BResearchCampaignTests"
-      ],
-      "evidence": [
-        {
-          "kind": "integration",
-          "command": "pytest P3BResearchCampaignTests + adversarial T01-T05",
-          "exit": 0,
-          "notes": "campaign worker runs gym episodes; no fabricated wins"
-        }
-      ],
-      "blocker": null
-    },
-    {
-      "id": "W03",
-      "title": "Typed completion, evidence and independent verification",
-      "status": "PASS",
-      "owner": "verification",
-      "dependencies": ["W01"],
-      "acceptance": [
-        "typed predicates with criterion IDs",
-        "unrelated receipts do not pass tests",
-        "required verification failures visible"
-      ],
-      "implementation_paths": [
-        "Data/modules/cognition/completion.py",
-        "Data/modules/cognition/task_model.py",
-        "Data/modules/verification/types.py"
-      ],
-      "tests": [
-        "Data/backend/tests/test_adversarial_w03_completion.py",
-        "Data/backend/tests/test_round1_trust_foundation.py::CompletionFalsePositiveTests"
-      ],
-      "evidence": [
-        {
-          "kind": "unit",
-          "command": "pytest test_adversarial_w03_completion.py CompletionFalsePositiveTests",
-          "exit": 0,
-          "notes": "A04 unrelated shell; stale/fake/model-authored rejected; legacy unverified"
-        }
-      ],
-      "blocker": null
-    }
+    {"id": "W00", "status": "PASS", "title": "Baseline, editor-optional build"},
+    {"id": "W01", "status": "PASS", "title": "Measurement integrity"},
+    {"id": "W02", "status": "PASS", "title": "Trading false-success defects"},
+    {"id": "W03", "status": "PASS", "title": "Typed completion and verification"},
+    {"id": "W05", "status": "PASS", "title": "Greeting single model call (A07)", "notes": "DIRECT path skips neural advice"},
+    {"id": "W07", "status": "PASS", "title": "TTC weak lexical scorers; schema nested validation"},
+    {"id": "W16", "status": "PASS", "title": "Durable agent lab lifecycle wired to campaigns", "notes": "create/start/pause/resume/cancel + real sims; full role orchestra still TARGET"},
+    {"id": "W18", "status": "IN_PROGRESS", "title": "Paper deployment compatibility", "notes": "T14/T15 done; full restart paper reuse still open"},
+    {"id": "W04", "status": "NOT_STARTED", "title": "Model capability and inference contract"},
+    {"id": "W06", "status": "NOT_STARTED", "title": "Planning and steering"},
+    {"id": "W08", "status": "NOT_STARTED", "title": "Context memory Brain"},
+    {"id": "W09", "status": "IN_PROGRESS", "title": "Research evidence workflow", "notes": "citation UNMEASURED without audit done"},
+    {"id": "W10", "status": "NOT_STARTED", "title": "Tools plugins agents"},
+    {"id": "W11", "status": "NOT_STARTED", "title": "Durable execution recovery"},
+    {"id": "W12", "status": "NOT_STARTED", "title": "Coding documents multimodal"},
+    {"id": "W13", "status": "NOT_STARTED", "title": "Trading data temporal integrity"},
+    {"id": "W14", "status": "NOT_STARTED", "title": "Simulation accounting"},
+    {"id": "W15", "status": "NOT_STARTED", "title": "Strategy DSL portability"},
+    {"id": "W17", "status": "NOT_STARTED", "title": "Sealed evaluation stats"},
+    {"id": "W19", "status": "NOT_STARTED", "title": "Broader market families"},
+    {"id": "W20", "status": "NOT_STARTED", "title": "Training loop"},
+    {"id": "W21", "status": "NOT_STARTED", "title": "Operator experience"},
+    {"id": "W22", "status": "NOT_STARTED", "title": "Performance packaging"},
+    {"id": "W23", "status": "NOT_STARTED", "title": "Independent product evaluation"}
   ],
   "findings_revalidation": {
     "P0_campaign_fabricated_trials": "FIXED",
@@ -166,11 +48,29 @@
     "P1_marketview_cache": "FIXED",
     "P1_editor_vite_import": "FIXED",
     "P1_citation_fallback": "FIXED",
-    "P1_schema_scorer_keys_only": "FIXED"
+    "P1_schema_scorer_keys_only": "FIXED",
+    "A07_greeting_double_call": "FIXED"
   },
   "excluded_trees": ["Data/HADES/", "editor/"],
   "canonical_docs": [
     "Data/docs/Leviathan_system_backend.md",
     "Data/docs/Leviathan_system_frontend.md"
+  ],
+  "blockers": [
+    {
+      "id": "web_search_tests",
+      "status": "UNRESOLVED",
+      "notes": "Audit baseline had 4 web UNAVAILABLE/FAILED tests — diagnose product vs env; do not delete"
+    },
+    {
+      "id": "live_trading",
+      "status": "NOT_APPLICABLE",
+      "notes": "Live remains blocked by design for this program"
+    },
+    {
+      "id": "gpu_training",
+      "status": "BLOCKED_EXTERNAL",
+      "notes": "Not measured in this environment"
+    }
   ]
 }
