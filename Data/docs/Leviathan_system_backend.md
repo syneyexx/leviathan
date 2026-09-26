@@ -297,9 +297,21 @@ ReasoningDepth = OrchestrationCompute + NeuralInferenceCompute
 
 `MetaController` is the single policy owner for both axes. `MetaDecision` exposes `requested_mode`, `effective_mode`, `orchestration`, `neural`, and `resource_pressure`. FAST / STANDARD / DEEP / MAXIMUM differ measurably on both axes.
 
+### Test-time compute (W4 CURRENT)
+
+`Data/modules/cognition/ttc.py` owns candidate search when `neural.candidate_count > 1`:
+
+- `Candidate` / `CandidateSet` — id, output, structured result, usage, hash, scores
+- Scorers: Schema, Grounding, Consistency, Constraint, ToolGrounding, Integrity
+- `IntegrityScorer` is **technical** only (injection boundary, unsupported capability claims, fabricated tool observations, secret leakage, authority confusion, schema) — not moral/political/ideological moderation
+- Prune weak candidates; bounded repair with explicit verifier feedback
+- Persist hashes/scores/public summaries/selected answer — not raw rejected private CoT
+
+`CognitiveRuntime` applies TTC on RESPOND/MODEL_CALL when the neural axis budgets multiple candidates.
+
 ### Frontier Reasoning target — not yet a current-main claim
 
-The active master program continues beyond W3 into test-time candidate search, hypothesis branching, neural task/planning advisors, critic mesh, stronger verification, CapabilityState, async cognition, verified-learning aggregation and training bridges. These remaining items are **TARGET** until their phase is merged and verified.
+The active master program continues beyond W4 into hypothesis branching, neural task/planning advisors, critic mesh, stronger verification, CapabilityState, async cognition, verified-learning aggregation and training bridges. These remaining items are **TARGET** until their phase is merged and verified.
 
 ---
 

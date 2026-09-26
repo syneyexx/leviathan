@@ -43,6 +43,7 @@ from .planner import CognitivePlanner
 from .steering import SteerKind, classify_steer
 from .store import CognitionStore
 from .task_model import TaskModel, TaskModelBuilder
+from .ttc import Candidate, TestTimeComputeEngine
 from .types import (
     BeliefCategory,
     BeliefStatus,
@@ -114,6 +115,7 @@ class CognitiveRunState:
     completion: dict[str, Any] | None = None
     experience: dict[str, Any] | None = None
     factuality: dict[str, Any] | None = None
+    ttc: dict[str, Any] | None = None
     steering: list[str] = field(default_factory=list)
     trace_id: str | None = None
 
@@ -124,6 +126,16 @@ class CognitiveRunState:
             "status": self.status.value,
             "stage": self.status.value,
             "mode": self.decision.mode.value if self.decision else None,
+            "requested_mode": (
+                self.decision.requested_mode.value
+                if self.decision and self.decision.requested_mode
+                else None
+            ),
+            "effective_mode": (
+                (self.decision.effective_mode or self.decision.mode).value
+                if self.decision
+                else None
+            ),
             "strategy": self.decision.strategy.value if self.decision else None,
             "goal": self.task.goal,
             "domain": self.task.domain,
@@ -132,6 +144,7 @@ class CognitiveRunState:
             "working_memory_count": len(self.working_memory.items),
             "working_memory_saturation": self.working_memory.saturation(),
             "budgets": self.decision.budgets.public_dict() if self.decision else None,
+            "neural": self.decision.neural.public_dict() if self.decision and self.decision.neural else None,
             "usage": self.usage.public_dict(),
             "plan": self.plan.public_dict() if self.plan else None,
             "observations": [o.public_dict() for o in self.observations[-12:]],
@@ -143,6 +156,7 @@ class CognitiveRunState:
             "verification_passed": self.verification_passed,
             "completion": self.completion,
             "factuality": self.factuality,
+            "ttc": self.ttc,
             "response_preview": (self.response_text or "")[:400],
             # Full response only when this run owns the user-visible answer (not shadow).
             "response": None if self.shadow else self.response_text,
@@ -1014,6 +1028,12 @@ class CognitiveRuntime:
         self._emit(state, "context_built", ctx.pack.public_dict())
         text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role="responder")
         state.response_text = self._sanitize_response_text(text)
+        self._maybe_apply_ttc(
+            state,
+            system_prompt=ctx.pack.system_prompt,
+            messages=list(ctx.pack.messages),
+            role="responder",
+        )
         state.observations.append(
             CognitiveObservation(
                 kind=CognitiveObservationKind.MODEL_RESULT,
@@ -1536,6 +1556,12 @@ class CognitiveRuntime:
             role = str(action.arguments.get("role") or "responder")
             text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role=role)
             state.response_text = self._sanitize_response_text(text)
+            self._maybe_apply_ttc(
+                state,
+                system_prompt=ctx.pack.system_prompt,
+                messages=list(ctx.pack.messages),
+                role=role,
+            )
             if action.arguments.get("purpose") == "hypothesis" and state.response_text and self.belief_enabled:
                 state.beliefs.add(
                     state.response_text[:400],
@@ -1623,6 +1649,64 @@ class CognitiveRuntime:
         except Exception as exc:  # noqa: BLE001
             self._emit(state, "model_error", {"error": f"{type(exc).__name__}: {exc}"})
             return None
+
+    def _maybe_apply_ttc(
+        self,
+        state: CognitiveRunState,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+        role: str,
+    ) -> None:
+        """When neural candidate_count > 1, run bounded test-time candidate search."""
+        decision = state.decision
+        if decision is None or getattr(decision, "neural", None) is None:
+            return
+        want = int(decision.neural.candidate_count or 1)
+        if want <= 1 or not state.response_text:
+            return
+        remaining = self._budgets_remaining(state)
+        extra = min(want - 1, max(0, int(remaining.get("model_calls", 0))))
+        outputs: list[str] = [state.response_text]
+        for _ in range(extra):
+            alt = self._call_model(state, system_prompt, messages, role=role)
+            alt_s = self._sanitize_response_text(alt)
+            if alt_s:
+                outputs.append(alt_s)
+        if len(outputs) < 2:
+            return
+        tool_receipts: list[str] = []
+        for o in state.observations:
+            payload = o.payload or {}
+            if payload.get("receipt_id"):
+                tool_receipts.append(str(payload["receipt_id"]))
+            cap = str(payload.get("capability_id") or "")
+            if cap:
+                tool_receipts.append(cap)
+        context = {
+            "constraints": list(state.task.constraints or []),
+            "required_evidence_refs": [
+                ref for o in state.observations for ref in (o.evidence_refs or [])
+            ],
+            "tool_receipts": tool_receipts,
+            "unsupported_capabilities": [],
+        }
+        engine = TestTimeComputeEngine(max_candidates=want)
+        result = engine.run(outputs, context=context, keep=2)
+        state.ttc = result.public_dict()
+        selected = result.selected
+        if selected is not None and selected.output:
+            state.response_text = selected.output
+        self._emit(
+            state,
+            "ttc_candidate_search",
+            {
+                "candidate_count": len(result.candidates),
+                "selected_id": result.selected_id,
+                "evaluation": result.evaluation,
+                "truth": result.public_dict()["truth"],
+            },
+        )
 
     def _record_token_usage(
         self,

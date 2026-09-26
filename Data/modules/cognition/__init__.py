@@ -29,6 +29,12 @@ from .system_inspect import (
     get_system_inspect_service,
 )
 from .task_model import TaskModel, TaskModelBuilder
+from .ttc import (
+    Candidate,
+    CandidateSet,
+    IntegrityScorer,
+    TestTimeComputeEngine,
+)
 from .types import (
     BeliefCategory,
     BeliefStatus,
@@ -52,11 +58,15 @@ __all__ = [
     "BeliefItem",
     "BeliefState",
     "BeliefStatus",
+    "Candidate",
+    "CandidateSet",
     "CapabilityBroker",
     "CapabilityShortlist",
     "CognitionError",
     "CognitionFeatureDisabled",
     "CognitionStore",
+    "IntegrityScorer",
+    "TestTimeComputeEngine",
     "CognitiveAction",
     "CognitiveActionKind",
     "CognitiveBudgets",
