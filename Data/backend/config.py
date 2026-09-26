@@ -1818,11 +1818,15 @@ def _load_database_paths() -> DatabasePaths:
 
     # Explicit three-path configuration (or defaults).
     if control_raw or knowledge_raw or market_raw:
+        # Empty legacy env from worker supervisor must not resurrect a path.
+        legacy_for_resolve = legacy_raw
+        if legacy_raw is not None and not str(legacy_raw).strip():
+            legacy_for_resolve = None
         paths = resolve_database_paths(
             control_raw=control_raw,
             knowledge_raw=knowledge_raw,
             market_raw=market_raw,
-            legacy_raw=legacy_raw or DEFAULT_LEGACY_DB_REL,
+            legacy_raw=legacy_for_resolve,
             resolve_path=_resolve_path,
         )
         # Only keep legacy if the file exists (or operator set a custom legacy path).
