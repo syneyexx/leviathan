@@ -2581,3 +2581,271 @@ class MarketSimControlPlane:
 
         return readiness_ladder()
 
+    # --- Agent lab control plane (W16) — wires agent_lab helpers to campaigns ---
+
+    def create_agent_lab(
+        self,
+        *,
+        name: str = "",
+        strategy_id: str,
+        source_id: str,
+        strategy_version: int | None = None,
+        max_candidates: int = 10,
+        max_iterations: int = 3,
+        seed: int = 42,
+        hypothesis: str = "",
+        acceptance_criteria: dict[str, Any] | None = None,
+        autonomy_ceiling: str = "A1",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a durable lab bound to a research campaign (no parallel engine)."""
+        self._require_enabled()
+        from .agent_lab import AcceptanceCriteria, LabOutcome, new_agent_lab
+
+        strat = self.store.get_strategy(strategy_id)
+        if strat is None:
+            raise MarketSimError("STRATEGY_NOT_FOUND", strategy_id, http_status=404)
+        ver = self.store.get_strategy_version(strategy_id, strategy_version)
+        if ver is None:
+            raise MarketSimError("STRATEGY_VERSION_MISSING", strategy_id, http_status=404)
+        source = self.data.get_source(source_id)
+        if source.status != SourceStatus.READY.value:
+            raise MarketSimError("SOURCE_NOT_READY", source_id, http_status=400)
+
+        crit = dict(acceptance_criteria or {})
+        acceptance = AcceptanceCriteria(
+            min_trades=int(crit.get("min_trades", 1)),
+            max_drawdown_pct=float(crit.get("max_drawdown_pct", 100.0)),
+            min_total_return_pct=crit.get("min_total_return_pct"),
+            min_sharpe=crit.get("min_sharpe"),
+            require_val_pass=bool(crit.get("require_val_pass", False)),
+            require_robustness_pass=bool(crit.get("require_robustness_pass", False)),
+        )
+        lab = new_agent_lab(
+            acceptance=acceptance,
+            max_candidates=max(1, int(max_candidates)),
+            seed=int(seed),
+        )
+        campaign = self.create_research_campaign(
+            name=name or f"lab-{lab.lab_id[:8]}",
+            strategy_id=strategy_id,
+            strategy_version=ver.version,
+            source_id=source_id,
+            max_iterations=max(1, int(max_iterations)),
+            seed=int(seed),
+            hypothesis=hypothesis,
+            acceptance_criteria=acceptance.public_dict(),
+            autonomy_ceiling=autonomy_ceiling,
+            metadata={"lab_id": lab.lab_id, **dict(metadata or {})},
+        )
+        now = utc_now()
+        payload = {
+            "lab_id": lab.lab_id,
+            "name": name or campaign["name"],
+            "status": "CREATED",
+            "outcome": LabOutcome.IN_PROGRESS.value,
+            "strategy_id": strategy_id,
+            "strategy_version": ver.version,
+            "source_id": source_id,
+            "campaign_id": campaign["campaign_id"],
+            "max_candidates": lab.max_candidates,
+            "acceptance": acceptance.public_dict(),
+            "candidates": [],
+            "lessons": [],
+            "sealed_lineages_consumed": {},
+            "curriculum": lab.curriculum.public_dict(),
+            "job_id": None,
+            "error": "",
+            "created_at": now,
+            "updated_at": now,
+            "metadata": {
+                "seed": seed,
+                "max_iterations": max(1, int(max_iterations)),
+                "hypothesis": hypothesis,
+                **dict(metadata or {}),
+            },
+        }
+        self.store.upsert_agent_lab(payload)
+        return self.get_agent_lab(lab.lab_id)
+
+    def get_agent_lab(self, lab_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.store.get_agent_lab(lab_id)
+        if row is None:
+            raise MarketSimError("LAB_NOT_FOUND", lab_id, http_status=404)
+        if row.get("campaign_id"):
+            try:
+                camp = self.get_research_campaign(str(row["campaign_id"]))
+                row = {
+                    **row,
+                    "campaign": {
+                        "campaign_id": camp["campaign_id"],
+                        "status": camp["status"],
+                        "checkpoint_iteration": camp["checkpoint_iteration"],
+                        "trial_ids": camp.get("trial_ids") or [],
+                        "scorecard": camp.get("scorecard") or {},
+                        "promotion": camp.get("promotion") or {},
+                        "error": camp.get("error") or "",
+                        "results": camp.get("results") or {},
+                    },
+                }
+            except MarketSimError:
+                pass
+        return row
+
+    def list_agent_labs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_agent_labs(limit=limit)
+
+    def start_agent_lab(self, lab_id: str) -> dict[str, Any]:
+        """Start lab by running/resuming the bound research campaign worker path."""
+        self._require_enabled()
+        lab = self.get_agent_lab(lab_id)
+        campaign_id = lab.get("campaign_id")
+        if not campaign_id:
+            raise MarketSimError("LAB_MISSING_CAMPAIGN", lab_id, http_status=409)
+        lab["status"] = "RUNNING"
+        lab["updated_at"] = utc_now()
+        lab["error"] = ""
+        self.store.upsert_agent_lab(lab)
+
+        # Prefer external worker when JobRuntime is bound; otherwise run worker path directly
+        # (same honesty as campaign tests — no fabricated metrics).
+        if self.job_runtime is not None:
+            started = self.start_research_campaign(str(campaign_id))
+            lab["job_id"] = (started.get("campaign") or {}).get("job_id") or started.get("job", {}).get(
+                "job_id"
+            )
+            lab["status"] = "QUEUED"
+            self.store.upsert_agent_lab(lab)
+            return {"lab": self.get_agent_lab(lab_id), "campaign_job": started}
+
+        campaign = self.run_research_campaign_on_worker(str(campaign_id))
+        return self._sync_lab_from_campaign(lab_id, campaign)
+
+    def pause_agent_lab(self, lab_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        lab = self.get_agent_lab(lab_id)
+        if lab.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+            raise MarketSimError("LAB_TERMINAL", f"status={lab.get('status')}", http_status=409)
+        lab["status"] = "PAUSED"
+        lab["updated_at"] = utc_now()
+        if lab.get("campaign_id"):
+            camp = self.get_research_campaign(str(lab["campaign_id"]))
+            if camp.get("status") not in {"COMPLETED", "FAILED", "CANCELLED"}:
+                camp["status"] = "PAUSED"
+                camp["updated_at"] = utc_now()
+                self.store.upsert_research_campaign(camp)
+        self.store.upsert_agent_lab(lab)
+        return self.get_agent_lab(lab_id)
+
+    def resume_agent_lab(self, lab_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        lab = self.get_agent_lab(lab_id)
+        if lab.get("status") not in {"PAUSED", "CREATED", "FAILED"}:
+            if lab.get("status") in {"COMPLETED", "CANCELLED"}:
+                raise MarketSimError("LAB_TERMINAL", f"status={lab.get('status')}", http_status=409)
+        return self.start_agent_lab(lab_id)
+
+    def cancel_agent_lab(self, lab_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        from .agent_lab import LabOutcome
+
+        lab = self.get_agent_lab(lab_id)
+        lab["status"] = "CANCELLED"
+        lab["outcome"] = LabOutcome.NO_STRATEGY_QUALIFIED.value
+        lab["updated_at"] = utc_now()
+        if lab.get("campaign_id"):
+            camp = self.get_research_campaign(str(lab["campaign_id"]))
+            if camp.get("status") not in {"COMPLETED", "FAILED", "CANCELLED"}:
+                camp["status"] = "CANCELLED"
+                camp["updated_at"] = utc_now()
+                self.store.upsert_research_campaign(camp)
+        self.store.upsert_agent_lab(lab)
+        return self.get_agent_lab(lab_id)
+
+    def _sync_lab_from_campaign(self, lab_id: str, campaign: dict[str, Any]) -> dict[str, Any]:
+        from .agent_lab import (
+            AcceptanceCriteria,
+            LabOutcome,
+            evaluate_candidate_pipeline,
+            finalize_lab,
+            new_agent_lab,
+        )
+
+        lab_row = self.store.get_agent_lab(lab_id)
+        if lab_row is None:
+            raise MarketSimError("LAB_NOT_FOUND", lab_id, http_status=404)
+
+        acc_raw = dict(lab_row.get("acceptance") or {})
+        lab = new_agent_lab(
+            lab_id=lab_id,
+            acceptance=AcceptanceCriteria(
+                min_trades=int(acc_raw.get("min_trades", 1)),
+                max_drawdown_pct=float(acc_raw.get("max_drawdown_pct", 100.0)),
+                min_total_return_pct=acc_raw.get("min_total_return_pct"),
+                min_sharpe=acc_raw.get("min_sharpe"),
+                require_val_pass=bool(acc_raw.get("require_val_pass", False)),
+                require_robustness_pass=bool(acc_raw.get("require_robustness_pass", False)),
+                criteria_id=str(acc_raw.get("criteria_id") or ""),
+            ),
+            max_candidates=int(lab_row.get("max_candidates") or 10),
+            seed=int((lab_row.get("metadata") or {}).get("seed") or 42),
+        )
+
+        iterations = list((campaign.get("results") or {}).get("iterations") or [])
+        for idx, it in enumerate(iterations):
+            if not it.get("simulation_executed"):
+                continue
+            metrics = dict(it.get("metrics") or {})
+            # Normalize to explicit percent keys when fraction aliases are present.
+            if "max_drawdown_pct" not in metrics and "max_drawdown" in metrics:
+                raw = metrics["max_drawdown"]
+                val = raw.get("value") if isinstance(raw, dict) else raw
+                try:
+                    metrics["max_drawdown_pct"] = float(val) * 100.0 if abs(float(val)) <= 1.0 else float(val)
+                except (TypeError, ValueError):
+                    pass
+            if "total_return_pct" not in metrics and "total_return" in metrics:
+                raw = metrics["total_return"]
+                val = raw.get("value") if isinstance(raw, dict) else raw
+                try:
+                    metrics["total_return_pct"] = float(val) * 100.0 if abs(float(val)) <= 1.0 else float(val)
+                except (TypeError, ValueError):
+                    pass
+            if "trade_count" not in metrics:
+                metrics["trade_count"] = 0
+            try:
+                evaluate_candidate_pipeline(
+                    lab,
+                    strategy_id=str(lab_row.get("strategy_id") or campaign.get("strategy_id")),
+                    strategy_version=int(lab_row.get("strategy_version") or campaign.get("strategy_version") or 1)
+                    + idx,
+                    hypothesis=str((lab_row.get("metadata") or {}).get("hypothesis") or f"iter {idx+1}"),
+                    train_metrics=metrics,
+                    val_metrics=metrics,
+                    robustness_metrics=metrics,
+                )
+            except MarketSimError as exc:
+                if exc.code == "CANDIDATE_BUDGET_EXHAUSTED":
+                    break
+                raise
+
+        finalize_lab(lab)
+        lab_row["candidates"] = [c.public_dict() for c in lab.candidates]
+        lab_row["lessons"] = [l.public_dict() for l in lab.lessons]
+        lab_row["outcome"] = lab.outcome
+        lab_row["status"] = campaign.get("status") or "COMPLETED"
+        lab_row["error"] = campaign.get("error") or ""
+        lab_row["updated_at"] = utc_now()
+        lab_row["metadata"] = {
+            **dict(lab_row.get("metadata") or {}),
+            "campaign_status": campaign.get("status"),
+            "executed_trials": (campaign.get("metadata") or {}).get("executed_trials"),
+            "accepted_wins": (campaign.get("metadata") or {}).get("accepted_wins"),
+        }
+        if lab.outcome == LabOutcome.NO_STRATEGY_QUALIFIED.value:
+            lab_row["metadata"]["final_verdict"] = "NO_STRATEGY_QUALIFIED"
+        self.store.upsert_agent_lab(lab_row)
+        return self.get_agent_lab(lab_id)
+

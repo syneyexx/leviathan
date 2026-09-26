@@ -1741,6 +1741,110 @@ class MarketSimStore:
             "metadata": _loads(row["metadata_json"], {}),
         }
 
+    # --- Agent labs (W16) ---
+
+    def upsert_agent_lab(self, lab: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_agent_labs(
+                    lab_id, name, status, outcome, strategy_id, strategy_version, source_id,
+                    campaign_id, max_candidates, acceptance_json, candidates_json, lessons_json,
+                    sealed_lineages_json, curriculum_json, job_id, error, created_at, updated_at,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(lab_id) DO UPDATE SET
+                    name=excluded.name,
+                    status=excluded.status,
+                    outcome=excluded.outcome,
+                    strategy_id=excluded.strategy_id,
+                    strategy_version=excluded.strategy_version,
+                    source_id=excluded.source_id,
+                    campaign_id=excluded.campaign_id,
+                    max_candidates=excluded.max_candidates,
+                    acceptance_json=excluded.acceptance_json,
+                    candidates_json=excluded.candidates_json,
+                    lessons_json=excluded.lessons_json,
+                    sealed_lineages_json=excluded.sealed_lineages_json,
+                    curriculum_json=excluded.curriculum_json,
+                    job_id=excluded.job_id,
+                    error=excluded.error,
+                    updated_at=excluded.updated_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    lab["lab_id"],
+                    lab.get("name") or "",
+                    lab.get("status") or "CREATED",
+                    lab.get("outcome") or "IN_PROGRESS",
+                    lab.get("strategy_id"),
+                    lab.get("strategy_version"),
+                    lab.get("source_id"),
+                    lab.get("campaign_id"),
+                    int(lab.get("max_candidates") or 10),
+                    json.dumps(lab.get("acceptance") or {}),
+                    json.dumps(lab.get("candidates") or []),
+                    json.dumps(lab.get("lessons") or []),
+                    json.dumps(lab.get("sealed_lineages_consumed") or {}),
+                    json.dumps(lab.get("curriculum") or {}),
+                    lab.get("job_id"),
+                    lab.get("error") or "",
+                    lab.get("created_at") or utc_now(),
+                    lab.get("updated_at") or utc_now(),
+                    json.dumps(lab.get("metadata") or {}),
+                ),
+            )
+        return lab
+
+    def get_agent_lab(self, lab_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sim_agent_labs WHERE lab_id=?",
+                (lab_id,),
+            ).fetchone()
+        return self._row_agent_lab(row)
+
+    def list_agent_labs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_sim_agent_labs
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._row_agent_lab(r) for r in rows if r]
+
+    def _row_agent_lab(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "lab_id": row["lab_id"],
+            "name": row["name"] or "",
+            "status": row["status"] or "CREATED",
+            "outcome": row["outcome"] or "IN_PROGRESS",
+            "strategy_id": row["strategy_id"],
+            "strategy_version": row["strategy_version"],
+            "source_id": row["source_id"],
+            "campaign_id": row["campaign_id"],
+            "max_candidates": int(row["max_candidates"] or 10),
+            "acceptance": _loads(row["acceptance_json"], {}),
+            "candidates": _loads(row["candidates_json"], []),
+            "lessons": _loads(row["lessons_json"], []),
+            "sealed_lineages_consumed": _loads(row["sealed_lineages_json"], {}),
+            "curriculum": _loads(row["curriculum_json"], {}),
+            "job_id": row["job_id"],
+            "error": row["error"] or "",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "metadata": _loads(row["metadata_json"], {}),
+            "truth": {
+                "scientific_search_not_profit_hunting": True,
+                "no_strategy_qualified_is_valid_pass": True,
+                "live_trading": "BLOCKED",
+            },
+        }
+
     # --- Paper Portefeuille ---
 
     def upsert_portfolio(self, row: dict[str, Any]) -> dict[str, Any]:

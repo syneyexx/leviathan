@@ -172,7 +172,8 @@ def evaluate_acceptance(
 
     min_trades = int(criteria.get("min_trades", 5))
     max_dd = float(criteria.get("max_drawdown_pct", 25.0))
-    min_return = float(criteria.get("min_total_return_pct", 0.0))
+    raw_min_return = criteria.get("min_total_return_pct", 0.0)
+    min_return = float(0.0 if raw_min_return is None else raw_min_return)
     require_beat_benchmark = bool(criteria.get("beat_benchmark", False))
 
     def _raw(name: str) -> Any:

@@ -15,11 +15,13 @@ from .claims import (
 from .engine import VerificationEngine
 from .store import VerificationReportStore
 from .types import (
+    CriterionVerificationStatus,
     RequirementResult,
     VerificationOutcome,
     VerificationReport,
     VerificationRequirement,
     VerificationTier,
+    VerifierKind,
 )
 
 __all__ = [
@@ -28,6 +30,7 @@ __all__ = [
     "ClaimKind",
     "ClaimSupportStatus",
     "ClaimVerifier",
+    "CriterionVerificationStatus",
     "FactualityGate",
     "FactualityMode",
     "FactualityResult",
@@ -40,5 +43,6 @@ __all__ = [
     "VerificationReportStore",
     "VerificationRequirement",
     "VerificationTier",
+    "VerifierKind",
     "build_system_capability_state",
 ]

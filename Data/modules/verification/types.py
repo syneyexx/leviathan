@@ -23,6 +23,33 @@ class VerificationTier(str, Enum):
     SELF_CRITIQUE = "SELF_CRITIQUE"
 
 
+class CriterionVerificationStatus(str, Enum):
+    """Per-criterion independent verification outcomes (W03).
+
+    ``met``/completion pass is allowed only for SUPPORTED.
+    """
+
+    SUPPORTED = "supported"
+    CONTRADICTED = "contradicted"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    UNAVAILABLE_VERIFIER = "unavailable_verifier"
+    FAILED_EXECUTION = "failed_execution"
+    UNVERIFIED = "unverified"
+
+
+class VerifierKind(str, Enum):
+    """How a typed acceptance criterion is independently checked."""
+
+    TEST_RECEIPT = "test_receipt"
+    EVIDENCE_STORE = "evidence_store"
+    OBSERVATION = "observation"
+    RESPONSE_PRESENCE = "response_presence"
+    ARTIFACT = "artifact"
+    HONESTY = "honesty"
+    UNAVAILABLE = "unavailable"
+    LEGACY_UNSUPPORTED = "legacy_unsupported"
+
+
 @dataclass(frozen=True)
 class VerificationRequirement:
     requirement_id: str

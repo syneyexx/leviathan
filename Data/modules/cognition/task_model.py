@@ -2,15 +2,208 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from Data.modules.context.compaction import extract_hard_constraints
 from Data.modules.reasoning import ReasoningEngine, ReasoningPlan
+from Data.modules.verification.types import (
+    CriterionVerificationStatus,
+    VerifierKind,
+)
 
 from .types import RiskClass
+
+
+@dataclass(frozen=True)
+class AcceptanceCriterion:
+    """Typed acceptance predicate — completion authority is evidence-based.
+
+    Legacy free-text ``success_criteria`` strings remain for compatibility readers;
+    unsupported legacy semantics stay UNVERIFIED and never auto-pass.
+    """
+
+    criterion_id: str
+    predicate: str
+    description: str
+    expected_artifact: str | None = None
+    expected_effect: str | None = None
+    verifier_kind: VerifierKind = VerifierKind.OBSERVATION
+    scope: str = "run"
+    required_evidence: tuple[str, ...] = ()
+    status: CriterionVerificationStatus = CriterionVerificationStatus.UNVERIFIED
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "criterion_id": self.criterion_id,
+            "predicate": self.predicate,
+            "description": self.description,
+            "expected_artifact": self.expected_artifact,
+            "expected_effect": self.expected_effect,
+            "verifier_kind": self.verifier_kind.value,
+            "scope": self.scope,
+            "required_evidence": list(self.required_evidence),
+            "status": self.status.value,
+            "truth": {
+                "model_text_does_not_satisfy_criterion": True,
+                "legacy_string_is_not_typed_predicate": True,
+            },
+        }
+
+
+def acceptance_criterion_from_mapping(raw: Mapping[str, Any] | AcceptanceCriterion) -> AcceptanceCriterion:
+    if isinstance(raw, AcceptanceCriterion):
+        return raw
+    data = dict(raw or {})
+    try:
+        verifier = VerifierKind(str(data.get("verifier_kind") or VerifierKind.OBSERVATION.value))
+    except ValueError:
+        verifier = VerifierKind.LEGACY_UNSUPPORTED
+    try:
+        status = CriterionVerificationStatus(
+            str(data.get("status") or CriterionVerificationStatus.UNVERIFIED.value)
+        )
+    except ValueError:
+        status = CriterionVerificationStatus.UNVERIFIED
+    criterion_id = str(data.get("criterion_id") or data.get("id") or "").strip()
+    description = str(data.get("description") or data.get("criterion") or criterion_id or "criterion")
+    if not criterion_id:
+        criterion_id = f"crit:{description[:48]}"
+    return AcceptanceCriterion(
+        criterion_id=criterion_id,
+        predicate=str(data.get("predicate") or "unknown"),
+        description=description,
+        expected_artifact=data.get("expected_artifact"),
+        expected_effect=data.get("expected_effect"),
+        verifier_kind=verifier,
+        scope=str(data.get("scope") or "run"),
+        required_evidence=tuple(str(x) for x in (data.get("required_evidence") or ())),
+        status=status,
+    )
+
+
+def coerce_acceptance_criteria(
+    raw: Sequence[Any] | None,
+    *,
+    legacy_strings: Sequence[str] | None = None,
+) -> list[AcceptanceCriterion]:
+    """Compatibility reader: typed dicts/objects preferred; legacy strings mapped or UNVERIFIED."""
+    out: list[AcceptanceCriterion] = []
+    if raw:
+        for item in raw:
+            if isinstance(item, AcceptanceCriterion):
+                out.append(item)
+            elif isinstance(item, Mapping):
+                out.append(acceptance_criterion_from_mapping(item))
+            elif isinstance(item, str) and item.strip():
+                out.append(legacy_string_to_criterion(item.strip()))
+    elif legacy_strings:
+        for item in legacy_strings:
+            if item and str(item).strip():
+                out.append(legacy_string_to_criterion(str(item).strip()))
+    return out
+
+
+def legacy_string_to_criterion(text: str) -> AcceptanceCriterion:
+    """Map known legacy string criteria; unsupported semantics → unverified."""
+    c_low = text.lower().strip()
+    cid = f"legacy:{hashlib.sha1(c_low.encode('utf-8')).hexdigest()[:10]}"
+    if "helpful direct reply" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="helpful_reply",
+            description=text,
+            verifier_kind=VerifierKind.RESPONSE_PRESENCE,
+            scope="conversation",
+        )
+    if "test" in c_low or "regression covered" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="tests_passed",
+            description=text,
+            expected_effect="tests_passed",
+            verifier_kind=VerifierKind.TEST_RECEIPT,
+            scope="workspace",
+            required_evidence=("trusted_test_receipt",),
+        )
+    if "source" in c_low or "evidence" in c_low or "grounded" in c_low or "claim" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="claim_supported",
+            description=text,
+            verifier_kind=VerifierKind.EVIDENCE_STORE,
+            scope="run",
+            required_evidence=("independent_claim_support",),
+        )
+    if "conflict" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="conflict_surfaced",
+            description=text,
+            verifier_kind=VerifierKind.OBSERVATION,
+            scope="run",
+        )
+    if "unverif" in c_low or "silent" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="honesty_no_silent_success",
+            description=text,
+            verifier_kind=VerifierKind.HONESTY,
+            scope="run",
+        )
+    if "artifact" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="artifact_present",
+            description=text,
+            verifier_kind=VerifierKind.ARTIFACT,
+            scope="artifact",
+            required_evidence=("artifact_receipt",),
+        )
+    if "approval" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="approval_respected",
+            description=text,
+            verifier_kind=VerifierKind.OBSERVATION,
+            scope="run",
+        )
+    if "observation" in c_low or "workspace" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="observations_recorded",
+            description=text,
+            verifier_kind=VerifierKind.OBSERVATION,
+            scope="workspace",
+        )
+    if "goal" in c_low or "address" in c_low or "answer" in c_low or "root cause" in c_low or "change identified" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="goal_addressed",
+            description=text,
+            verifier_kind=VerifierKind.RESPONSE_PRESENCE,
+            scope="conversation",
+        )
+    if "hard constraints" in c_low or "fake certainty" in c_low or "flattened" in c_low:
+        return AcceptanceCriterion(
+            criterion_id=cid,
+            predicate="honesty_no_silent_success",
+            description=text,
+            verifier_kind=VerifierKind.HONESTY,
+            scope="run",
+        )
+    # Unsupported legacy free-text — never word-match to a pass.
+    return AcceptanceCriterion(
+        criterion_id=cid,
+        predicate="unknown",
+        description=text,
+        verifier_kind=VerifierKind.LEGACY_UNSUPPORTED,
+        scope="run",
+        status=CriterionVerificationStatus.UNVERIFIED,
+    )
 
 
 _FRESHNESS_TERMS = {
@@ -94,6 +287,7 @@ class TaskModel:
     hard_constraints: list[str] = field(default_factory=list)
     preferences: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
+    acceptance_criteria: list[AcceptanceCriterion] = field(default_factory=list)
     required_outputs: list[str] = field(default_factory=list)
     entities: list[str] = field(default_factory=list)
     time_scope: str | None = None
@@ -155,6 +349,7 @@ class TaskModel:
             "hard_constraints": list(self.hard_constraints),
             "preferences": list(self.preferences),
             "success_criteria": list(self.success_criteria),
+            "acceptance_criteria": [c.public_dict() for c in self.acceptance_criteria],
             "entities": list(self.entities),
             "time_scope": self.time_scope,
             "location_scope": self.location_scope,
@@ -277,6 +472,7 @@ class TaskModelBuilder:
         risk = self._risk_class(text, domain)
         uncertainty = self._uncertainty(text, plan)
         criteria = self._success_criteria(domain, task_type, text)
+        typed_criteria = self._acceptance_criteria(domain, task_type, text, criteria)
         side_effects = self._side_effects(text, domain)
         unknowns = self._unknowns(text, domain)
         ambiguities = self._ambiguities(text)
@@ -409,6 +605,7 @@ class TaskModelBuilder:
             hard_constraints=list(extracted),
             preferences=preferences,
             success_criteria=criteria,
+            acceptance_criteria=typed_criteria,
             entities=entities,
             time_scope="current" if requires_current else None,
             location_scope=None,
@@ -559,6 +756,114 @@ class TaskModelBuilder:
         if domain == "knowledge":
             return ["answer grounded in retrieved knowledge when available"]
         return ["answer addresses the stated goal"]
+
+    def _acceptance_criteria(
+        self,
+        domain: str,
+        task_type: str,
+        text: str,
+        legacy: list[str],
+    ) -> list[AcceptanceCriterion]:
+        """Typed predicates with stable IDs — preferred completion authority."""
+        typed: list[AcceptanceCriterion] = []
+        if task_type == "simple_chat":
+            typed.append(
+                AcceptanceCriterion(
+                    criterion_id="crit:helpful_reply",
+                    predicate="helpful_reply",
+                    description="helpful direct reply",
+                    verifier_kind=VerifierKind.RESPONSE_PRESENCE,
+                    scope="conversation",
+                )
+            )
+            return typed
+        if domain == "coding":
+            typed.append(
+                AcceptanceCriterion(
+                    criterion_id="crit:coding_root_cause",
+                    predicate="goal_addressed",
+                    description="root cause or change identified",
+                    verifier_kind=VerifierKind.RESPONSE_PRESENCE,
+                    scope="conversation",
+                )
+            )
+            if any(t in text.lower() for t in ("test", "fix", "bug")):
+                typed.append(
+                    AcceptanceCriterion(
+                        criterion_id="crit:tests_passed",
+                        predicate="tests_passed",
+                        description="regression covered or tests observed",
+                        expected_effect="tests_passed",
+                        verifier_kind=VerifierKind.TEST_RECEIPT,
+                        scope="workspace",
+                        required_evidence=("trusted_test_receipt",),
+                    )
+                )
+                typed.append(
+                    AcceptanceCriterion(
+                        criterion_id="crit:no_silent_success",
+                        predicate="honesty_no_silent_success",
+                        description="no silent unverified success",
+                        verifier_kind=VerifierKind.HONESTY,
+                        scope="run",
+                    )
+                )
+            else:
+                typed.append(
+                    AcceptanceCriterion(
+                        criterion_id="crit:workspace_observations",
+                        predicate="observations_recorded",
+                        description="workspace observations recorded",
+                        verifier_kind=VerifierKind.OBSERVATION,
+                        scope="workspace",
+                    )
+                )
+            return typed
+        if domain == "research" or task_type.startswith("research"):
+            return [
+                AcceptanceCriterion(
+                    criterion_id="crit:claim_supported",
+                    predicate="claim_supported",
+                    description="sources or evidence referenced",
+                    verifier_kind=VerifierKind.EVIDENCE_STORE,
+                    scope="run",
+                    required_evidence=("independent_claim_support",),
+                ),
+                AcceptanceCriterion(
+                    criterion_id="crit:conflicts_surfaced",
+                    predicate="conflict_surfaced",
+                    description="conflicts surfaced when present",
+                    verifier_kind=VerifierKind.OBSERVATION,
+                    scope="run",
+                ),
+                AcceptanceCriterion(
+                    criterion_id="crit:no_fake_certainty",
+                    predicate="honesty_no_silent_success",
+                    description="claims not flattened into fake certainty",
+                    verifier_kind=VerifierKind.HONESTY,
+                    scope="run",
+                ),
+                AcceptanceCriterion(
+                    criterion_id="crit:hard_constraints",
+                    predicate="honesty_no_silent_success",
+                    description="hard constraints preserved",
+                    verifier_kind=VerifierKind.HONESTY,
+                    scope="run",
+                ),
+            ]
+        if domain == "knowledge":
+            return [
+                AcceptanceCriterion(
+                    criterion_id="crit:knowledge_grounded",
+                    predicate="claim_supported",
+                    description="answer grounded in retrieved knowledge when available",
+                    verifier_kind=VerifierKind.EVIDENCE_STORE,
+                    scope="run",
+                    required_evidence=("independent_claim_support",),
+                )
+            ]
+        # Prefer typed mapping of legacy strings so unknown free-text stays unverified.
+        return coerce_acceptance_criteria(None, legacy_strings=legacy)
 
     def _side_effects(self, text: str, domain: str) -> list[str]:
         lowered = text.lower()

@@ -3927,6 +3927,39 @@ def _m45_p0a_kernel_honesty(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m53_market_sim_agent_labs(conn: sqlite3.Connection) -> None:
+    """Durable AgentLabRun records wired to research campaigns (W16)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_agent_labs (
+            lab_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'CREATED',
+            outcome TEXT NOT NULL DEFAULT 'IN_PROGRESS',
+            strategy_id TEXT,
+            strategy_version INTEGER,
+            source_id TEXT,
+            campaign_id TEXT,
+            max_candidates INTEGER NOT NULL DEFAULT 10,
+            acceptance_json TEXT NOT NULL DEFAULT '{}',
+            candidates_json TEXT NOT NULL DEFAULT '[]',
+            lessons_json TEXT NOT NULL DEFAULT '[]',
+            sealed_lineages_json TEXT NOT NULL DEFAULT '{}',
+            curriculum_json TEXT NOT NULL DEFAULT '{}',
+            job_id TEXT,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_agent_labs_status "
+        "ON market_sim_agent_labs(status, updated_at)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4019,6 +4052,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=52,
         name="paper_portefeuille",
         apply=_m52_paper_portefeuille,
+    ),
+    Migration(
+        version=53,
+        name="market_sim_agent_labs",
+        apply=_m53_market_sim_agent_labs,
     ),
 )
 

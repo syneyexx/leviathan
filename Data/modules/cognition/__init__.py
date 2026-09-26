@@ -7,7 +7,7 @@ validation authority for evidence-backed claims.
 
 from .belief_state import BeliefItem, BeliefState
 from .capability_broker import CapabilityBroker, CapabilityShortlist
-from .completion import CompletionDecision, CompletionEngine, CriterionResult
+from .completion import CompletionDecision, CompletionEngine, CriterionResult, evaluate_test_receipt
 from .context_v3 import ContextBuilderV3, ContextV3Result
 from .delegation import DelegateRequest, DelegateResult, DelegationService
 from .domain_strategy import DomainCognitiveStrategy, DomainUnderstandResult, StrategyRegistry
@@ -29,7 +29,13 @@ from .system_inspect import (
     bind_system_inspect_service,
     get_system_inspect_service,
 )
-from .task_model import TaskModel, TaskModelBuilder
+from .task_model import (
+    AcceptanceCriterion,
+    TaskModel,
+    TaskModelBuilder,
+    coerce_acceptance_criteria,
+    legacy_string_to_criterion,
+)
 from .trajectory_export import export_training_trajectory, trajectories_to_dataset_rows
 from .ttc import (
     Candidate,
@@ -58,6 +64,7 @@ from .types import (
 from .working_memory import WorkingMemory, WorkingMemoryItem
 
 __all__ = [
+    "AcceptanceCriterion",
     "BeliefCategory",
     "BeliefItem",
     "BeliefState",
@@ -128,9 +135,12 @@ __all__ = [
     "build_control_plane_model_caller",
     "classify_failure",
     "classify_steer",
+    "coerce_acceptance_criteria",
     "confidence_to_band",
+    "evaluate_test_receipt",
     "export_training_trajectory",
     "get_system_inspect_service",
+    "legacy_string_to_criterion",
     "register_specialist_handlers",
     "should_blind_retry",
     "trajectories_to_dataset_rows",

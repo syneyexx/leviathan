@@ -1103,4 +1103,68 @@ def build_market_sim_router(
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    # --- W16 autonomous lab lifecycle (create/start/pause/resume/cancel/status) ---
+
+    @router.post("/api/market-sim/lab/runs")
+    def lab_create(payload: dict[str, Any]) -> dict:
+        try:
+            lab = service.create_agent_lab(
+                name=str(payload.get("name") or ""),
+                strategy_id=str(payload.get("strategyId") or payload.get("strategy_id") or ""),
+                source_id=str(payload.get("sourceId") or payload.get("source_id") or ""),
+                strategy_version=payload.get("strategyVersion") or payload.get("strategy_version"),
+                max_candidates=int(payload.get("maxCandidates") or payload.get("max_candidates") or 10),
+                max_iterations=int(payload.get("maxIterations") or payload.get("max_iterations") or 3),
+                seed=int(payload.get("seed") or 42),
+                hypothesis=str(payload.get("hypothesis") or ""),
+                acceptance_criteria=payload.get("acceptanceCriteria") or payload.get("acceptance_criteria"),
+                autonomy_ceiling=str(payload.get("autonomyCeiling") or payload.get("autonomy_ceiling") or "A1"),
+                metadata=payload.get("metadata"),
+            )
+            return {"lab": lab}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs")
+    def lab_list(limit: int = Query(50, ge=1, le=200)) -> dict:
+        try:
+            return {"labs": service.list_agent_labs(limit=limit)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}")
+    def lab_get(lab_id: str) -> dict:
+        try:
+            return {"lab": service.get_agent_lab(lab_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/lab/runs/{lab_id}/start")
+    def lab_start(lab_id: str) -> dict:
+        try:
+            return service.start_agent_lab(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/lab/runs/{lab_id}/pause")
+    def lab_pause(lab_id: str) -> dict:
+        try:
+            return {"lab": service.pause_agent_lab(lab_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/lab/runs/{lab_id}/resume")
+    def lab_resume(lab_id: str) -> dict:
+        try:
+            return service.resume_agent_lab(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/lab/runs/{lab_id}/cancel")
+    def lab_cancel(lab_id: str) -> dict:
+        try:
+            return {"lab": service.cancel_agent_lab(lab_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     return router
