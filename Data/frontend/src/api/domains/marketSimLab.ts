@@ -81,4 +81,53 @@ export const marketSimLabApi = {
     });
   },
 
+  marketSimLabLearning(labId: string): Promise<{
+    lab_id: string;
+    learning: Record<string, unknown>;
+    truth: Record<string, unknown>;
+  }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/learning`);
+  },
+
+  marketSimLabGenerations(labId: string): Promise<{
+    lab_id: string;
+    learning_run_id?: string;
+    current_generation?: number;
+    generation_summaries: Record<string, unknown>[];
+    family_probabilities: Record<string, number>;
+  }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/generations`);
+  },
+
+  marketSimLabCandidates(labId: string): Promise<{
+    lab_id: string;
+    learning_run_id?: string;
+    candidates: Record<string, unknown>[];
+    qualified_candidate?: string | null;
+    best_train_candidate?: string | null;
+    best_validation_candidate?: string | null;
+  }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/candidates`);
+  },
+
+  marketSimLabRunTrials(
+    labId: string,
+    limit = 100,
+  ): Promise<{
+    lab_id: string;
+    learning_run_id?: string;
+    trials: Record<string, unknown>[];
+    count: number;
+    truth: Record<string, unknown>;
+  }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/trials?limit=${limit}`);
+  },
+
+  marketSimLabLessons(labId: string): Promise<{
+    lab_id: string;
+    lessons: Record<string, unknown>[];
+    truth: Record<string, unknown>;
+  }> {
+    return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/lessons`);
+  },
 } as const;

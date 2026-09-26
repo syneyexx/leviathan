@@ -182,6 +182,43 @@ def _handle_scan_batch(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _handle_learning_run(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
+    """market_sim.learning_run — durable/resumable Strategy Learning Loop on worker."""
+    from Data.modules.jobs.states import JobState
+
+    args = dict(getattr(job, "arguments", None) or {})
+    learning_run_id = str(args.get("learning_run_id") or "")
+    try:
+        from Data.modules.market_sim.service import MarketSimControlPlane
+
+        plane = MarketSimControlPlane.from_settings(ctx["settings"])
+        if ctx.get("job_runtime") is not None and hasattr(plane, "bind_job_runtime"):
+            plane.bind_job_runtime(ctx["job_runtime"])
+        if not learning_run_id:
+            raise ValueError("learning_run_id required for learning_run")
+        print(
+            f"[WORKER:market_sim] Strategy Learning '{learning_run_id[:8]}' gestart",
+            flush=True,
+        )
+        result = plane.run_learning_on_worker(learning_run_id)
+        result["executed_via"] = "market_sim_worker"
+        print(
+            f"[WORKER:market_sim] Strategy Learning '{learning_run_id[:8]}' voltooid — "
+            f"stage={result.get('stage')} gen={result.get('current_generation')}",
+            flush=True,
+        )
+        ctx["job_store"].transition(job.job_id, JobState.COMPLETED, result=result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[WORKER:market_sim] Strategy Learning "
+            f"'{learning_run_id[:8] if learning_run_id else '?'}' MISLUKT — {exc}",
+            flush=True,
+        )
+        ctx["job_store"].transition(job.job_id, JobState.FAILED, error=str(exc)[:500])
+        return {"error": str(exc)}
+
+
 def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     from Data.modules.jobs.states import JobState
     from Data.modules.market_sim.types import RunStatus, TERMINAL_RUN_STATUSES
@@ -193,6 +230,8 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         return _handle_gym_episode(ctx, job)
     if cap == "market_sim.research_campaign":
         return _handle_research_campaign(ctx, job)
+    if cap == "market_sim.learning_run":
+        return _handle_learning_run(ctx, job)
     if cap == "market_sim.scan_batch":
         return _handle_scan_batch(ctx, job)
     if cap == "market_sim.portfolio_tick":

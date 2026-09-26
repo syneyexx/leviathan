@@ -3960,6 +3960,59 @@ def _m53_market_sim_agent_labs(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m54_market_sim_learning_runs(conn: sqlite3.Connection) -> None:
+    """Durable Strategy Learning Loop state (adaptive DSL search)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_sim_learning_runs (
+            learning_run_id TEXT PRIMARY KEY,
+            lab_id TEXT,
+            campaign_id TEXT,
+            status TEXT NOT NULL DEFAULT 'CREATED',
+            stage TEXT NOT NULL DEFAULT 'CREATED',
+            strategy_id TEXT NOT NULL,
+            parent_strategy_version INTEGER NOT NULL DEFAULT 1,
+            source_id TEXT NOT NULL,
+            algorithm TEXT NOT NULL DEFAULT 'adaptive_evolutionary_strategy_search',
+            algorithm_version TEXT NOT NULL DEFAULT '1.0.0',
+            seed INTEGER NOT NULL DEFAULT 42,
+            current_generation INTEGER NOT NULL DEFAULT 0,
+            generation_budget INTEGER NOT NULL DEFAULT 8,
+            trial_budget INTEGER NOT NULL DEFAULT 96,
+            trials_used INTEGER NOT NULL DEFAULT 0,
+            population_size INTEGER NOT NULL DEFAULT 12,
+            objective_hash TEXT NOT NULL DEFAULT '',
+            input_fingerprint TEXT NOT NULL DEFAULT '',
+            objective_json TEXT NOT NULL DEFAULT '{}',
+            learner_state_json TEXT NOT NULL DEFAULT '{}',
+            candidates_json TEXT NOT NULL DEFAULT '[]',
+            generation_summaries_json TEXT NOT NULL DEFAULT '[]',
+            split_refs_json TEXT NOT NULL DEFAULT '{}',
+            best_train_candidate TEXT,
+            best_validation_candidate TEXT,
+            qualified_candidate TEXT,
+            job_id TEXT,
+            error TEXT NOT NULL DEFAULT '',
+            pause_requested INTEGER NOT NULL DEFAULT 0,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            rng_state_json TEXT NOT NULL DEFAULT 'null',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_checkpoint_at TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_learning_runs_status "
+        "ON market_sim_learning_runs(status, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_market_sim_learning_runs_lab "
+        "ON market_sim_learning_runs(lab_id)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4057,6 +4110,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=53,
         name="market_sim_agent_labs",
         apply=_m53_market_sim_agent_labs,
+    ),
+    Migration(
+        version=54,
+        name="market_sim_learning_runs",
+        apply=_m54_market_sim_learning_runs,
     ),
 )
 

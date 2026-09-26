@@ -596,11 +596,11 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 8. Update the backend companion document when a UI change adds or changes an API contract.
 
 
-### Trading Center Lab (W17)
+### Trading Center Lab (W17 / W25)
 
-`/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials). Live broker remains explicitly blocked. No mock KPIs.
+`/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials, runs lifecycle, learning/generations/candidates/lessons). Shows real Learning Run status/stage/generation/budgets, family probabilities, candidate lineage, and evidence-linked lessons. Labels use TRAIN LEADER / VALIDATION PASSED / SEALED PASSED / QUALIFIED / UNMEASURED / NOT RUN — never fake profitability claims. Live broker remains explicitly blocked. No mock KPIs.
 
-**W16 lifecycle (CURRENT):** client helpers in `api/domains/marketSimLab.ts` also cover `/api/market-sim/lab/runs` create/list/get/start/pause/resume/cancel for durable autonomous labs bound to research campaigns.
+**W16 lifecycle (CURRENT):** client helpers in `api/domains/marketSimLab.ts` cover `/api/market-sim/lab/runs` create/list/get/start/pause/resume/cancel plus learning inspection endpoints.
 
 
 ### Frontend Platform (W18 CURRENT)

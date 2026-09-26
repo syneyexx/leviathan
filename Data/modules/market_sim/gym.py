@@ -81,6 +81,10 @@ class GymAction:
         }
 
 
+OBSERVATION_SPEC_V1 = 1
+ACTION_SPEC_V1 = 1
+
+
 @dataclass
 class GymObservation:
     bar_index: int
@@ -94,22 +98,57 @@ class GymObservation:
     split_role: str
     done: bool
     truth: dict[str, Any] = field(default_factory=dict)
+    # ObservationSpec v1 extensions (causal only)
+    symbol: str = ""
+    timeframe: str = ""
+    causal_as_of: str | None = None
+    unrealized_pnl: float | None = None
+    drawdown_context: dict[str, Any] = field(default_factory=dict)
+    position_avg_entry: float | None = None
+    bars_held: int = 0
+    regime_state: dict[str, Any] = field(default_factory=dict)
+    transaction_cost_state: dict[str, Any] = field(default_factory=dict)
+    feature_snapshot: dict[str, Any] = field(default_factory=dict)
+    feature_statuses: dict[str, str] = field(default_factory=dict)
+    dataset_fingerprint: str = ""
+    strategy_identity: dict[str, Any] = field(default_factory=dict)
+    environment_version: str = "market_sim.gym.v1"
+    observation_spec_version: int = OBSERVATION_SPEC_V1
 
     def public_dict(self) -> dict[str, Any]:
         return {
+            "observation_spec_version": self.observation_spec_version,
             "bar_index": self.bar_index,
+            "timestamp": self.ts,
             "ts": self.ts,
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "causal_as_of": self.causal_as_of or self.ts,
             "visible_bar_count": self.visible_bar_count,
+            "current_ohlcv": self.last_bar,
             "last_bar": self.last_bar,
+            "feature_snapshot": dict(self.feature_snapshot),
+            "feature_statuses": dict(self.feature_statuses),
+            "position": self.position_qty,
+            "position_qty": self.position_qty,
             "cash": self.cash,
             "equity": self.equity,
-            "position_qty": self.position_qty,
             "realized_pnl": self.realized_pnl,
+            "unrealized_pnl": self.unrealized_pnl,
+            "drawdown_context": dict(self.drawdown_context),
+            "position_avg_entry": self.position_avg_entry,
+            "bars_held": self.bars_held,
+            "regime_state": dict(self.regime_state),
+            "transaction_cost_state": dict(self.transaction_cost_state),
             "split_role": self.split_role,
+            "dataset_fingerprint": self.dataset_fingerprint,
+            "strategy_identity": dict(self.strategy_identity),
+            "environment_version": self.environment_version,
             "done": self.done,
             "truth": {
                 "via_market_view": True,
                 "no_future_bars": True,
+                "observation_spec_version": self.observation_spec_version,
                 **dict(self.truth or {}),
             },
         }
@@ -158,10 +197,17 @@ class TradingGym:
         self._prev_realized: float | None = None
         self._reward_spec: RewardSpec = RewardSpec()
         self._trajectory: TrajectoryBuilder | None = None
+        self._policy_context: dict[str, Any] = {}
+        self._bars_held: int = 0
+        self._peak_equity: float | None = None
 
     @property
     def state(self) -> EngineState | None:
         return self._state
+
+    def bind_policy_context(self, **kwargs: Any) -> None:
+        """Attach ObservationSpec identity fields for subsequent observations."""
+        self._policy_context.update(kwargs)
 
     def reset(
         self,
@@ -222,6 +268,8 @@ class TradingGym:
                 run.cash = float(self._state.wallet.cash)
                 self._prev_equity = eq
                 self._prev_realized = float(self._state.wallet.realized_pnl)
+                self._peak_equity = eq
+        self._bars_held = 0
         self.store.update_run(run)
         return self._observe()
 
@@ -236,7 +284,15 @@ class TradingGym:
             obs = self._observe()
             return GymStepResult(
                 observation=obs,
-                reward=self._reward(None),
+                reward=compute_step_reward(
+                    self._reward_spec,
+                    prev_equity=self._prev_equity,
+                    equity=float(run.equity),
+                    prev_realized_pnl=self._prev_realized,
+                    realized_pnl=float(state.wallet.realized_pnl),
+                    done=True,
+                    initial_cash=float(run.initial_cash),
+                ),
                 done=True,
                 info={"reason": "episode_complete"},
             )
@@ -329,8 +385,56 @@ class TradingGym:
         entry_rules: dict[str, Any] | None = None,
         exit_rules: dict[str, Any] | None = None,
         reward_spec: RewardSpec | dict[str, Any] | None = None,
+        require_policy: bool = False,
+        policy_id: str | None = None,
     ) -> dict[str, Any]:
-        """Run a complete episode (worker path). ``policy`` is callable(obs)->action or None=HOLD."""
+        """Run a complete episode (worker path).
+
+        ``policy`` is callable(obs)->action, a TradingPolicy-like object with ``act``,
+        or None. When ``require_policy`` is True (strategy-bound episode), ``policy``
+        must be provided — silent HOLD is refused.
+        """
+        if require_policy and policy is None:
+            raise MarketSimError(
+                "POLICY_REQUIRED",
+                "complete gym episode with bound strategy cannot use policy=None HOLD",
+                http_status=400,
+            )
+        # Normalize TradingPolicy → callable
+        act_fn = policy
+        policy_meta: dict[str, Any] = {"policy_id": policy_id}
+        if policy is not None and not callable(policy) and hasattr(policy, "act"):
+            from .policy import PolicyContext, policy_callable
+
+            ctx = PolicyContext(
+                symbol=str(run.symbol or ""),
+                timeframe=str(run.timeframe or ""),
+                split_role=str(split_role or SplitRole.TRAIN),
+                dataset_fingerprint=str((run.metadata or {}).get("input_fingerprint") or ""),
+                strategy_id=run.strategy_id,
+                strategy_version=run.strategy_version,
+            )
+            # engine_state bound after reset
+            def _bound(obs: GymObservation) -> GymAction:
+                ctx.engine_state = self._state
+                return policy.act(obs, ctx)  # type: ignore[union-attr]
+
+            act_fn = _bound
+            policy_meta = {
+                "policy_id": getattr(policy, "policy_id", policy_id),
+                "policy_version": getattr(policy, "policy_version", None),
+            }
+        elif callable(policy):
+            act_fn = policy
+
+        self.bind_policy_context(
+            symbol=str(run.symbol or ""),
+            timeframe=str(run.timeframe or ""),
+            dataset_fingerprint=str((run.metadata or {}).get("input_fingerprint") or ""),
+            strategy_id=run.strategy_id,
+            strategy_version=run.strategy_version,
+            **policy_meta,
+        )
         obs = self.reset(
             run,
             bars_path=bars_path,
@@ -344,12 +448,18 @@ class TradingGym:
         )
         steps = 0
         last: GymStepResult | None = None
+        non_hold_actions = 0
         limit = max_steps if max_steps is not None else max(1, run.bar_count or 10_000_000)
         while steps < limit:
-            if policy is None:
+            if act_fn is None:
                 action: GymAction | dict[str, Any] = GymAction(kind=GymActionKind.HOLD)
             else:
-                action = policy(obs)
+                action = act_fn(obs)
+            if isinstance(action, GymAction):
+                if action.kind != GymActionKind.HOLD:
+                    non_hold_actions += 1
+            elif isinstance(action, dict) and str(action.get("kind") or "").upper() != GymActionKind.HOLD:
+                non_hold_actions += 1
             last = self.step(action)
             steps += 1
             obs = last.observation
@@ -362,6 +472,8 @@ class TradingGym:
             meta = dict(run.metadata or {})
             meta["trajectory_id"] = sealed.trajectory_id
             meta["trajectory_hash"] = sealed.trajectory_hash
+            meta["policy"] = policy_meta
+            meta["non_hold_actions"] = non_hold_actions
             run.metadata = meta
             self.store.update_run(run)
         return {
@@ -378,9 +490,15 @@ class TradingGym:
             "status": run.status,
             "split_role": self._split_role,
             "trajectory": artifact,
+            "non_hold_actions": non_hold_actions,
+            "policy": policy_meta,
+            "action_spec_version": ACTION_SPEC_V1,
+            "observation_spec_version": OBSERVATION_SPEC_V1,
             "truth": {
                 "worker_owned_complete_episode": True,
                 "via_trading_gym": True,
+                "policy_driven": act_fn is not None,
+                "silent_hold_forbidden_when_strategy_bound": True,
             },
         }
 
@@ -390,14 +508,51 @@ class TradingGym:
         view = MarketView(clock=state.clock)
         visible = view.visible_bars()
         last = visible[-1] if visible else None
+        qty = float(state.wallet.position_qty)
+        if abs(qty) > 1e-12:
+            self._bars_held += 1
+        else:
+            self._bars_held = 0
+        equity = float(state.run.equity)
+        if self._peak_equity is None or equity > self._peak_equity:
+            self._peak_equity = equity
+        peak = float(self._peak_equity or equity or 1.0)
+        dd = (peak - equity) / peak if peak else 0.0
+        avg_entry = getattr(state.wallet, "avg_entry", None)
+        if avg_entry is None:
+            avg_entry = getattr(state.wallet, "average_entry", None)
+        unrealized = None
+        if last is not None and avg_entry is not None and abs(qty) > 1e-12:
+            try:
+                unrealized = (float(last.close) - float(avg_entry)) * float(qty)
+            except (TypeError, ValueError):
+                unrealized = None
+        ctx = dict(self._policy_context or {})
+        # Causal feature snapshot (best-effort; statuses labeled)
+        feature_snapshot: dict[str, Any] = {}
+        feature_statuses: dict[str, str] = {}
+        try:
+            from .features import FeatureEngine
+
+            engine = FeatureEngine()
+            as_of = view.as_of or state.clock.current_ts
+            if as_of and visible:
+                for name, period in (("sma", 10), ("sma", 30), ("rsi", 14), ("adx", 14)):
+                    key = f"{name}_{period}"
+                    res = engine.compute(visible, name, as_of=as_of, period=period)
+                    feature_statuses[key] = str(getattr(res, "status", None) or "UNMEASURED")
+                    feature_snapshot[key] = res.value if feature_statuses[key] == "MEASURED" else None
+        except Exception:  # noqa: BLE001 — observation enrichment must not break episode
+            feature_statuses["feature_engine"] = "UNMEASURED"
+
         return GymObservation(
             bar_index=state.clock.index,
             ts=state.clock.current_ts,
             visible_bar_count=len(visible),
             last_bar=_bar_public(last) if last else None,
             cash=float(state.wallet.cash),
-            equity=float(state.run.equity),
-            position_qty=float(state.wallet.position_qty),
+            equity=equity,
+            position_qty=qty,
             realized_pnl=float(state.wallet.realized_pnl),
             split_role=self._split_role,
             done=state.clock.done or state.run.status in {
@@ -406,6 +561,27 @@ class TradingGym:
                 RunStatus.CANCELLED.value,
             },
             truth={"via_market_view": True, "no_future_bars": True},
+            symbol=str(ctx.get("symbol") or state.run.symbol or ""),
+            timeframe=str(ctx.get("timeframe") or state.run.timeframe or ""),
+            causal_as_of=view.as_of or state.clock.current_ts,
+            unrealized_pnl=unrealized,
+            drawdown_context={"peak_equity": peak, "drawdown_pct": dd * 100.0},
+            position_avg_entry=float(avg_entry) if avg_entry is not None else None,
+            bars_held=int(self._bars_held),
+            regime_state={},
+            transaction_cost_state={
+                "fee_bps": getattr(state.run, "fee_bps", None),
+                "slippage_bps": getattr(state.run, "slippage_bps", None),
+            },
+            feature_snapshot=feature_snapshot,
+            feature_statuses=feature_statuses,
+            dataset_fingerprint=str(ctx.get("dataset_fingerprint") or ""),
+            strategy_identity={
+                "strategy_id": ctx.get("strategy_id") or state.run.strategy_id,
+                "strategy_version": ctx.get("strategy_version") or state.run.strategy_version,
+                "policy_id": ctx.get("policy_id"),
+            },
+            environment_version=str(ctx.get("environment_version") or "market_sim.gym.v1"),
         )
 
     def seal_trajectory(self) -> Any:

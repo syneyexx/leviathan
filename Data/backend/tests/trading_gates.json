@@ -7,9 +7,9 @@
     "test_module": "Data/backend/tests/test_market_sim_characterization.py",
     "defects": "D1-D31",
     "last_run": {
-      "date": "2026-09-25",
-      "result": "Slice 16: A0-A4 complete; 43 PASS + G16 FEATURE_GATED; LiveTradingGuard BLOCKED; verifier honest non-zero while G04/G07/G13-14/G18/G20/G36/G40/G46/G49-60 remain non-PASS",
-      "command": "python3 scripts/verify_trading_100.py --run-tests"
+      "date": "2026-09-26",
+      "result": "W25 Strategy Learning Loop: L01-L15 PASS via test_strategy_learning.py; policy HOLD bug fixed; migration 54",
+      "command": "python3 -m unittest Data.backend.tests.test_strategy_learning -v"
     }
   },
   "live_integrations_never_pass_offline": [
@@ -29,7 +29,7 @@
   ],
   "gates": {
     "G01": {
-      "title": "Streaming ingest 5y\u00d71m within memory budget",
+      "title": "Streaming ingest 5y×1m within memory budget",
       "phase": "T2A/T3C/P1A",
       "status": "PASS",
       "required": true,
@@ -37,7 +37,7 @@
         "Data/modules/market_sim/ohlcv.py::iter_ohlcv / stream_ohlcv",
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests",
         "Streaming peak RSS bounded vs materialize on 120k 1m bars",
-        "Full 5y\u00d71m product target uses same streaming API; absolute CI fixture uses 120k for runtime"
+        "Full 5y×1m product target uses same streaming API; absolute CI fixture uses 120k for runtime"
       ],
       "test_node_ids": [
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests"
@@ -368,7 +368,7 @@
       "evidence": [
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize",
         "Streaming RSS delta bounded vs materialize on 120k bars",
-        "Full 5y\u00d71m absolute no-OOM soak not yet CI-measured"
+        "Full 5y×1m absolute no-OOM soak not yet CI-measured"
       ],
       "test_node_ids": [
         "Data/backend/tests/test_market_sim_p1_gym.py::P1AStreamingOhlcvTests::test_streaming_peak_rss_bounded_vs_materialize"
@@ -771,7 +771,7 @@
       "notes": "P3B: kernel-derived scorecards with violation penalties"
     },
     "G28": {
-      "title": "Readiness ladder A0\u2013A4; A5 blocked",
+      "title": "Readiness ladder A0–A4; A5 blocked",
       "phase": "T8D/P3B",
       "status": "PASS",
       "required": true,
@@ -798,7 +798,7 @@
           "timeout_sec": 60
         }
       ],
-      "notes": "P3B: A0\u2013A4 ladder; A5 impossible; promotion kernel-gated"
+      "notes": "P3B: A0–A4 ladder; A5 impossible; promotion kernel-gated"
     },
     "G29": {
       "title": "Trajectory export via Datasets/Training",
@@ -1204,7 +1204,7 @@
       "notes": "Slice 16 completion report path"
     },
     "G45": {
-      "title": "All T0 characterization \u2192 regressions",
+      "title": "All T0 characterization → regressions",
       "phase": "T11/P5",
       "status": "PASS",
       "required": true,
@@ -1433,7 +1433,7 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
       ],
-      "notes": "Frontier Program F1/F4 \u2014 offline evidence only; live feed fetch through provider_io not exercised in CI",
+      "notes": "Frontier Program F1/F4 — offline evidence only; live feed fetch through provider_io not exercised in CI",
       "assertions": [
         "available_at = max(published, fetched) + declared latency",
         "content_hash dedupe",
@@ -1463,7 +1463,7 @@
       "test_node_ids": [
         "Data/backend/tests/test_trading_orchestra.py::NewsPipelineTests"
       ],
-      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) \u2014 PARTIAL scope, see notes in frontier_program.md",
+      "notes": "MarketView/strategy-feature reachability for news is not yet wired (news signals are consumed only by trade agents) — PARTIAL scope, see notes in frontier_program.md",
       "assertions": [
         "list_items(as_of) hides future items",
         "news_digest at early as_of makes zero model calls",
@@ -1483,7 +1483,7 @@
       ]
     },
     "G63": {
-      "title": "News-reader safety (schema \u2192 repair \u2192 honest failure; article text is reference context)",
+      "title": "News-reader safety (schema → repair → honest failure; article text is reference context)",
       "phase": "F4",
       "status": "PASS",
       "required": true,
@@ -1526,8 +1526,8 @@
       "notes": "Frontier Program F1",
       "assertions": [
         "_execution_kind(TRADING) raises TRADING_EXECUTOR_REQUIRED",
-        "TRADING member outside trade orchestra \u2192 TRADING_MEMBER_ISOLATION",
-        "trade orchestra with non-trading member \u2192 422",
+        "TRADING member outside trade orchestra → TRADING_MEMBER_ISOLATION",
+        "trade orchestra with non-trading member → 422",
         "Mandate.cannot_enable_live immutable; A5 does not parse"
       ],
       "checks": [
@@ -1542,7 +1542,7 @@
       ]
     },
     "G65": {
-      "title": "Decision record completeness (proposal \u2192 critique \u2192 risk \u2192 intent, as_of + model id, append-only)",
+      "title": "Decision record completeness (proposal → critique → risk → intent, as_of + model id, append-only)",
       "phase": "F2",
       "status": "PASS",
       "required": true,
@@ -1555,7 +1555,7 @@
       ],
       "notes": "fill and post_mortem links exist as stages; paper routing (fill) is not produced by the orchestra yet (execution_agent records intents only)",
       "assertions": [
-        "parent chain proposal\u2192critique\u2192risk\u2192intent",
+        "parent chain proposal→critique→risk→intent",
         "as_of + mandateFingerprint on every record",
         "SQLite triggers refuse UPDATE/DELETE on market_decisions"
       ],
@@ -1581,7 +1581,7 @@
       "test_node_ids": [
         "Data/frontend/src/pages/tradingOrchestraContracts.test.ts"
       ],
-      "notes": "vitest contract test; visual check recorded in PR \u2014 vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
+      "notes": "vitest contract test; visual check recorded in PR — vitest not run by verify_trading_100.py; run `npm test` in Data/frontend",
       "assertions": [
         "readiness label never inferred client-side",
         "PnL UNMEASURED without fill records",
@@ -1598,6 +1598,479 @@
           "path": "Data/frontend/src/pages/agents/TradeOrchestraSection.tsx"
         }
       ]
+    },
+    "L01": {
+      "title": "Policy executes real strategy in TradingGym",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/policy.py::DslStrategyPolicy",
+        "Data/modules/market_sim/service.py::run_gym_episode_on_worker",
+        "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L02": {
+      "title": "Generation N+1 depends on prior TRAIN outcomes",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/learning_candidates.py::update_learner_from_outcomes",
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_generation_2_depends_on_generation_1_outcomes"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L03": {
+      "title": "Learner state durable in SQLite",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "migration 54 market_sim_learning_runs",
+        "Data/modules/market_sim/store.py::upsert_learning_run",
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L04": {
+      "title": "Crash resume idempotent",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_crash_resume_no_duplicate_versions"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_crash_resume_no_duplicate_versions"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_crash_resume_no_duplicate_versions"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L05": {
+      "title": "Immutable strategy lineage for candidates",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/modules/market_sim/learning.py::materialize_candidates",
+        "version_strategy lineage_metadata",
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L06": {
+      "title": "All trials retained including failures",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "append_trial in learning_runtime",
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L07": {
+      "title": "TRAIN/VAL isolation",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "learning_runtime VAL stage",
+        "learner updates TRAIN-only",
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L08": {
+      "title": "SEALED never trains learner",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "reject_sealed_learner_update",
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_sealed_update_forbidden"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L09": {
+      "title": "Failure learning operational",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "failure_statistics in update_learner_from_outcomes",
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_state_changes_after_generation_update"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_state_changes_after_generation_update"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests::test_state_changes_after_generation_update"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L10": {
+      "title": "Adaptive proposal distributions operational",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "family_probabilities update",
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearnerAdaptationTests"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L11": {
+      "title": "RiskGuard remains authoritative",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "DslStrategyPolicy emits GymAction intents only",
+        "gym step uses engine RiskGuard path",
+        "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::PolicyExecutionTests"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L12": {
+      "title": "Worker-owned heavy learning execution",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "market_sim.learning_run capability",
+        "Data/modules/workers/entrypoints/market_sim.py::_handle_learning_run"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "JobRuntime EXTERNAL_REQUIRED when bound; inline worker path for tests"
+    },
+    "L13": {
+      "title": "Frontend uses real learning data",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "Data/frontend/src/pages/trading/ResearchLabPage.tsx",
+        "Data/frontend/src/api/domains/marketSimLab.ts"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "UI binds marketSimLabLearning/Generations/Candidates; no mock KPIs"
+    },
+    "L14": {
+      "title": "Promotion evidence required / no bare boolean",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "AcceptanceCriteria fail-closed",
+        "Data/backend/tests/test_strategy_learning.py::FitnessHonestyTests",
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_no_strategy_qualified_is_valid_completion"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::FitnessHonestyTests",
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_no_strategy_qualified_is_valid_completion"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::FitnessHonestyTests",
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_no_strategy_qualified_is_valid_completion"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "W25 Strategy Learning Loop"
+    },
+    "L15": {
+      "title": "Live trading remains BLOCKED",
+      "phase": "W25",
+      "status": "PASS",
+      "required": true,
+      "evidence": [
+        "LiveTradingGuard",
+        "lab overview truth.live_trading=BLOCKED",
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_strategy_learning.py::LearningLifecycleTests::test_create_start_learning_run_end_to_end"
+          ],
+          "timeout_sec": 300
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/policy.py"
+        },
+        {
+          "kind": "file_exists",
+          "path": "Data/modules/market_sim/learning.py"
+        }
+      ],
+      "notes": "Learning never enables live; A5 impossible"
     }
   },
   "frontier_program": {

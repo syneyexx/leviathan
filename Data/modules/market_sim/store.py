@@ -1850,6 +1850,195 @@ class MarketSimStore:
             },
         }
 
+    # --- Strategy Learning Runs ---
+
+    def upsert_learning_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_sim_learning_runs(
+                    learning_run_id, lab_id, campaign_id, status, stage, strategy_id,
+                    parent_strategy_version, source_id, algorithm, algorithm_version, seed,
+                    current_generation, generation_budget, trial_budget, trials_used,
+                    population_size, objective_hash, input_fingerprint, objective_json,
+                    learner_state_json, candidates_json, generation_summaries_json,
+                    split_refs_json, best_train_candidate, best_validation_candidate,
+                    qualified_candidate, job_id, error, pause_requested, cancel_requested,
+                    rng_state_json, created_at, updated_at, last_checkpoint_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(learning_run_id) DO UPDATE SET
+                    lab_id=excluded.lab_id,
+                    campaign_id=excluded.campaign_id,
+                    status=excluded.status,
+                    stage=excluded.stage,
+                    strategy_id=excluded.strategy_id,
+                    parent_strategy_version=excluded.parent_strategy_version,
+                    source_id=excluded.source_id,
+                    algorithm=excluded.algorithm,
+                    algorithm_version=excluded.algorithm_version,
+                    seed=excluded.seed,
+                    current_generation=excluded.current_generation,
+                    generation_budget=excluded.generation_budget,
+                    trial_budget=excluded.trial_budget,
+                    trials_used=excluded.trials_used,
+                    population_size=excluded.population_size,
+                    objective_hash=excluded.objective_hash,
+                    input_fingerprint=excluded.input_fingerprint,
+                    objective_json=excluded.objective_json,
+                    learner_state_json=excluded.learner_state_json,
+                    candidates_json=excluded.candidates_json,
+                    generation_summaries_json=excluded.generation_summaries_json,
+                    split_refs_json=excluded.split_refs_json,
+                    best_train_candidate=excluded.best_train_candidate,
+                    best_validation_candidate=excluded.best_validation_candidate,
+                    qualified_candidate=excluded.qualified_candidate,
+                    job_id=excluded.job_id,
+                    error=excluded.error,
+                    pause_requested=excluded.pause_requested,
+                    cancel_requested=excluded.cancel_requested,
+                    rng_state_json=excluded.rng_state_json,
+                    updated_at=excluded.updated_at,
+                    last_checkpoint_at=excluded.last_checkpoint_at,
+                    metadata_json=excluded.metadata_json
+                """,
+                (
+                    run["learning_run_id"],
+                    run.get("lab_id"),
+                    run.get("campaign_id"),
+                    run.get("status") or "CREATED",
+                    run.get("stage") or "CREATED",
+                    run.get("strategy_id") or "",
+                    int(run.get("parent_strategy_version") or 1),
+                    run.get("source_id") or "",
+                    run.get("algorithm") or "adaptive_evolutionary_strategy_search",
+                    run.get("algorithm_version") or "1.0.0",
+                    int(run.get("seed") or 42),
+                    int(run.get("current_generation") or 0),
+                    int(run.get("generation_budget") or 8),
+                    int(run.get("trial_budget") or 96),
+                    int(run.get("trials_used") or 0),
+                    int(run.get("population_size") or 12),
+                    run.get("objective_hash") or "",
+                    run.get("input_fingerprint") or "",
+                    json.dumps(run.get("objective_spec") or {}),
+                    json.dumps(run.get("learner_state") or {}),
+                    json.dumps(run.get("candidates") or []),
+                    json.dumps(run.get("generation_summaries") or []),
+                    json.dumps(
+                        {
+                            "train": run.get("train_split_ref") or {},
+                            "val": run.get("validation_split_ref") or {},
+                            "robustness": run.get("robustness_split_ref") or {},
+                            "sealed": run.get("sealed_split_ref") or {},
+                        }
+                    ),
+                    run.get("best_train_candidate"),
+                    run.get("best_validation_candidate"),
+                    run.get("qualified_candidate"),
+                    run.get("job_id"),
+                    run.get("error") or "",
+                    1 if run.get("pause_requested") else 0,
+                    1 if run.get("cancel_requested") else 0,
+                    json.dumps(run.get("rng_state")),
+                    run.get("created_at") or utc_now(),
+                    run.get("updated_at") or utc_now(),
+                    run.get("last_checkpoint_at") or "",
+                    json.dumps(run.get("metadata") or {}),
+                ),
+            )
+        return run
+
+    def get_learning_run(self, learning_run_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM market_sim_learning_runs WHERE learning_run_id=?",
+                (learning_run_id,),
+            ).fetchone()
+        return self._row_learning_run(row)
+
+    def get_learning_run_by_lab(self, lab_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM market_sim_learning_runs
+                WHERE lab_id=?
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (lab_id,),
+            ).fetchone()
+        return self._row_learning_run(row)
+
+    def list_learning_runs(self, *, lab_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if lab_id:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM market_sim_learning_runs
+                    WHERE lab_id=?
+                    ORDER BY updated_at DESC LIMIT ?
+                    """,
+                    (lab_id, max(1, int(limit))),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM market_sim_learning_runs
+                    ORDER BY updated_at DESC LIMIT ?
+                    """,
+                    (max(1, int(limit)),),
+                ).fetchall()
+        return [self._row_learning_run(r) for r in rows if r]
+
+    def _row_learning_run(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        splits = _loads(row["split_refs_json"], {})
+        return {
+            "learning_run_id": row["learning_run_id"],
+            "lab_id": row["lab_id"],
+            "campaign_id": row["campaign_id"],
+            "status": row["status"] or "CREATED",
+            "stage": row["stage"] or "CREATED",
+            "strategy_id": row["strategy_id"],
+            "parent_strategy_version": int(row["parent_strategy_version"] or 1),
+            "source_id": row["source_id"],
+            "algorithm": row["algorithm"],
+            "algorithm_version": row["algorithm_version"],
+            "seed": int(row["seed"] or 42),
+            "current_generation": int(row["current_generation"] or 0),
+            "generation_budget": int(row["generation_budget"] or 8),
+            "trial_budget": int(row["trial_budget"] or 96),
+            "trials_used": int(row["trials_used"] or 0),
+            "population_size": int(row["population_size"] or 12),
+            "objective_hash": row["objective_hash"] or "",
+            "input_fingerprint": row["input_fingerprint"] or "",
+            "objective_spec": _loads(row["objective_json"], {}),
+            "learner_state": _loads(row["learner_state_json"], {}),
+            "candidates": _loads(row["candidates_json"], []),
+            "generation_summaries": _loads(row["generation_summaries_json"], []),
+            "train_split_ref": dict(splits.get("train") or {}),
+            "validation_split_ref": dict(splits.get("val") or {}),
+            "robustness_split_ref": dict(splits.get("robustness") or {}),
+            "sealed_split_ref": dict(splits.get("sealed") or {}),
+            "best_train_candidate": row["best_train_candidate"],
+            "best_validation_candidate": row["best_validation_candidate"],
+            "qualified_candidate": row["qualified_candidate"],
+            "job_id": row["job_id"],
+            "error": row["error"] or "",
+            "pause_requested": bool(row["pause_requested"]),
+            "cancel_requested": bool(row["cancel_requested"]),
+            "rng_state": _loads(row["rng_state_json"], None),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_checkpoint_at": row["last_checkpoint_at"] or "",
+            "metadata": _loads(row["metadata_json"], {}),
+            "truth": {
+                "adaptive_dsl_learning": True,
+                "sealed_never_trains_learner": True,
+                "live_trading": "BLOCKED",
+            },
+        }
+
     # --- Paper Portefeuille ---
 
     def upsert_portfolio(self, row: dict[str, Any]) -> dict[str, Any]:

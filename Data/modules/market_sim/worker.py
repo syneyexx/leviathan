@@ -140,6 +140,18 @@ class MarketSimWorker:
                 gym = TradingGym(self.store, self.engine)
                 strat = self.resolve_strategy(run) if self.resolve_strategy else {}
                 bars_path = self.resolve_bars_path(run)
+                from Data.modules.market_sim.policy import (
+                    resolve_gym_policy,
+                    strategy_requires_policy,
+                )
+
+                requires = strategy_requires_policy(strat, strategy_id=getattr(run, "strategy_id", None))
+                policy = resolve_gym_policy(
+                    strat,
+                    strategy_id=getattr(run, "strategy_id", None),
+                    strategy_version=getattr(run, "strategy_version", None),
+                    allow_missing_as_hold=not requires,
+                )
                 result = gym.run_episode(
                     run,
                     bars_path=bars_path,
@@ -149,7 +161,10 @@ class MarketSimWorker:
                     strategy_params=(strat or {}).get("parameters"),
                     entry_rules=(strat or {}).get("entry_rules") or {"kind": "hold"},
                     exit_rules=(strat or {}).get("exit_rules") or {"kind": "hold"},
-                    policy=None,
+                    policy=policy,
+                    require_policy=requires,
+                    policy_id=getattr(policy, "policy_id", None),
+                    max_steps=meta.get("max_episode_bars") or meta.get("max_steps"),
                 )
                 out = self.store.get_run(run.run_id) or run
                 out.worker_pid = None

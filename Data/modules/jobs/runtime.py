@@ -38,6 +38,7 @@ EXTERNAL_WORKER_CAPABILITIES: frozenset[str] = frozenset(
         "market_sim.advance",
         "market_sim.gym_episode",
         "market_sim.research_campaign",
+        "market_sim.learning_run",
         "market_sim.news.poll",
         "backup.create",
         "maintenance.reconcile",

@@ -522,6 +522,7 @@ class MarketSimControlPlane:
         name: str | None = None,
         description: str | None = None,
         tags: list[str] | None = None,
+        lineage_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._require_enabled()
         record = self.store.get_strategy(strategy_id)
@@ -554,6 +555,13 @@ class MarketSimControlPlane:
         )
         now = utc_now()
         new_version_num = record.current_version + 1
+        meta = attach_lineage_metadata(
+            parent_version=current.version,
+            parent_content_hash=current.content_hash,
+            changelog=changelog or f"v{new_version_num}",
+        )
+        if lineage_metadata:
+            meta.update(dict(lineage_metadata))
         version = StrategyVersion(
             version_id=str(uuid.uuid4()),
             strategy_id=strategy_id,
@@ -567,11 +575,7 @@ class MarketSimControlPlane:
             brain_dependencies=brain_dependencies,
             created_at=now,
             changelog=changelog or f"v{new_version_num}",
-            metadata=attach_lineage_metadata(
-                parent_version=current.version,
-                parent_content_hash=current.content_hash,
-                changelog=changelog or f"v{new_version_num}",
-            ),
+            metadata=meta,
         )
         record.current_version = new_version_num
         record.content_hash = content_hash
@@ -1094,6 +1098,7 @@ class MarketSimControlPlane:
     def run_gym_episode_on_worker(self, run_id: str) -> dict[str, Any]:
         """Execute a complete gym episode (called only from market_sim worker)."""
         from .gym import TradingGym
+        from .policy import resolve_gym_policy, strategy_requires_policy
 
         run = self._get_run(run_id)
         meta = dict(run.metadata or {})
@@ -1102,6 +1107,29 @@ class MarketSimControlPlane:
         gym = TradingGym(self.store, self.engine)
         strat = self._resolve_strategy_payload(run)
         bars_path = self._resolve_bars_path(run)
+        content_hash = ""
+        if run.strategy_id:
+            ver = self.store.get_strategy_version(run.strategy_id, run.strategy_version)
+            if ver is not None:
+                content_hash = str(ver.content_hash or "")
+        requires = strategy_requires_policy(strat, strategy_id=run.strategy_id)
+        try:
+            policy = resolve_gym_policy(
+                strat,
+                strategy_id=run.strategy_id,
+                strategy_version=run.strategy_version,
+                content_hash=content_hash,
+                allow_missing_as_hold=not requires,
+            )
+        except MarketSimError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — fail closed, never silent HOLD
+            raise MarketSimError(
+                "POLICY_LOAD_FAILED",
+                f"cannot load strategy policy for gym episode: {exc}",
+                http_status=400,
+            ) from exc
+        max_steps = meta.get("max_episode_bars") or meta.get("max_steps")
         result = gym.run_episode(
             run,
             bars_path=bars_path,
@@ -1111,13 +1139,20 @@ class MarketSimControlPlane:
             strategy_params=strat.get("parameters"),
             entry_rules=strat.get("entry_rules") or {"kind": "hold"},
             exit_rules=strat.get("exit_rules") or {"kind": "hold"},
-            # Default policy: hold — strategy-driven gym uses engine path via advance.
-            policy=None,
+            policy=policy,
+            require_policy=requires,
+            policy_id=getattr(policy, "policy_id", None),
+            max_steps=int(max_steps) if max_steps is not None else None,
         )
         self.store.add_event(
             run_id,
             kind="gym_episode_finished",
-            payload={"steps": result.get("steps"), "status": result.get("status")},
+            payload={
+                "steps": result.get("steps"),
+                "status": result.get("status"),
+                "policy": result.get("policy"),
+                "non_hold_actions": result.get("non_hold_actions"),
+            },
         )
         return result
 
@@ -2664,10 +2699,16 @@ class MarketSimControlPlane:
         acceptance_criteria: dict[str, Any] | None = None,
         autonomy_ceiling: str = "A1",
         metadata: dict[str, Any] | None = None,
+        learning: dict[str, Any] | None = None,
+        enable_learning: bool = True,
     ) -> dict[str, Any]:
-        """Create a durable lab bound to a research campaign (no parallel engine)."""
+        """Create a durable lab bound to a research campaign + optional Strategy Learning Run."""
         self._require_enabled()
         from .agent_lab import AcceptanceCriteria, LabOutcome, new_agent_lab
+        from .features import FEATURE_PIPELINE_VERSION
+        from .learning import create_learning_run
+        from .learning_runtime import persist_learning_run
+        from .learning_types import LearningObjectiveSpec
 
         strat = self.store.get_strategy(strategy_id)
         if strat is None:
@@ -2680,13 +2721,16 @@ class MarketSimControlPlane:
             raise MarketSimError("SOURCE_NOT_READY", source_id, http_status=400)
 
         crit = dict(acceptance_criteria or {})
+        learning_cfg = dict(learning or {})
         acceptance = AcceptanceCriteria(
-            min_trades=int(crit.get("min_trades", 1)),
-            max_drawdown_pct=float(crit.get("max_drawdown_pct", 100.0)),
+            min_trades=int(crit.get("min_trades", learning_cfg.get("min_trades", 1))),
+            max_drawdown_pct=float(crit.get("max_drawdown_pct", learning_cfg.get("max_drawdown_pct", 100.0))),
             min_total_return_pct=crit.get("min_total_return_pct"),
             min_sharpe=crit.get("min_sharpe"),
-            require_val_pass=bool(crit.get("require_val_pass", False)),
-            require_robustness_pass=bool(crit.get("require_robustness_pass", False)),
+            require_val_pass=bool(crit.get("require_val_pass", learning_cfg.get("require_val_pass", False))),
+            require_robustness_pass=bool(
+                crit.get("require_robustness_pass", learning_cfg.get("require_robustness_pass", False))
+            ),
         )
         lab = new_agent_lab(
             acceptance=acceptance,
@@ -2729,11 +2773,80 @@ class MarketSimControlPlane:
                 "seed": seed,
                 "max_iterations": max(1, int(max_iterations)),
                 "hypothesis": hypothesis,
+                "enable_learning": bool(enable_learning),
                 **dict(metadata or {}),
             },
         }
         self.store.upsert_agent_lab(payload)
-        return self.get_agent_lab(lab.lab_id)
+
+        learning_run_id = None
+        if enable_learning:
+            parent_family = str((ver.entry_rules or {}).get("kind") or "ma_cross")
+            obj_raw = {
+                "min_trades": acceptance.min_trades,
+                "max_drawdown_pct": acceptance.max_drawdown_pct,
+                "require_val_pass": acceptance.require_val_pass,
+                "require_robustness_pass": acceptance.require_robustness_pass,
+                "require_sealed_pass": bool(learning_cfg.get("require_sealed_pass", False)),
+                "generation_budget": int(
+                    learning_cfg.get("generation_budget")
+                    or learning_cfg.get("max_generations")
+                    or max(1, int(max_iterations))
+                ),
+                "trial_budget": int(learning_cfg.get("trial_budget") or learning_cfg.get("max_trials") or max_candidates * max(1, int(max_iterations))),
+                "population_size": int(learning_cfg.get("population_size") or min(max_candidates, 12)),
+                "elite_count": int(learning_cfg.get("elite_count") or 3),
+                "seed": int(seed),
+                "exploration_rate": float(learning_cfg.get("exploration_rate", 0.15)),
+                "mutation_rate": float(learning_cfg.get("mutation_rate", 0.35)),
+                "crossover_rate": float(learning_cfg.get("crossover_rate", 0.25)),
+                "max_episode_bars": learning_cfg.get("max_episode_bars"),
+                "universe": list(learning_cfg.get("universe") or []),
+            }
+            # Merge fitness weights if provided
+            if learning_cfg.get("fitness_weights"):
+                obj_raw["fitness_weights"] = dict(learning_cfg["fitness_weights"])
+            if learning_cfg.get("early_stop_rules"):
+                obj_raw["early_stop_rules"] = dict(learning_cfg["early_stop_rules"])
+            objective = LearningObjectiveSpec.from_dict(obj_raw)
+            # Prior trials excluding SEALED
+            prior_trials = []
+            try:
+                prior_trials = [
+                    t
+                    for t in self.store.list_experiments(strategy_id=strategy_id, limit=50)
+                    if str((t.get("split") or {}).get("role") or "").upper() != "SEALED"
+                ]
+            except Exception:  # noqa: BLE001
+                prior_trials = []
+            lrun = create_learning_run(
+                lab_id=lab.lab_id,
+                campaign_id=campaign["campaign_id"],
+                strategy_id=strategy_id,
+                parent_strategy_version=ver.version,
+                source_id=source_id,
+                objective=objective,
+                seed=int(seed),
+                parent_family=parent_family,
+                trial_history=prior_trials,
+                lessons=list(payload.get("lessons") or []),
+                feature_pipeline_version=str(FEATURE_PIPELINE_VERSION),
+                now=now,
+            )
+            persist_learning_run(self.store, lrun)
+            learning_run_id = lrun.learning_run_id
+            payload["metadata"]["learning_run_id"] = learning_run_id
+            self.store.upsert_agent_lab(payload)
+            self._emit_event(
+                "learning_run.created",
+                {"learning_run_id": learning_run_id, "lab_id": lab.lab_id},
+            )
+
+        out = self.get_agent_lab(lab.lab_id)
+        if learning_run_id:
+            out["learning_run_id"] = learning_run_id
+            out["learning"] = self.get_learning_run(learning_run_id)
+        return out
 
     def get_agent_lab(self, lab_id: str) -> dict[str, Any]:
         self._require_enabled()
@@ -2758,6 +2871,20 @@ class MarketSimControlPlane:
                 }
             except MarketSimError:
                 pass
+        learning_run_id = (row.get("metadata") or {}).get("learning_run_id")
+        if learning_run_id:
+            lrun = self.store.get_learning_run(str(learning_run_id))
+            if lrun:
+                row = {**row, "learning_run_id": learning_run_id, "learning": lrun}
+        else:
+            # Fallback: latest learning run for lab
+            lrun = self.store.get_learning_run_by_lab(lab_id)
+            if lrun:
+                row = {
+                    **row,
+                    "learning_run_id": lrun["learning_run_id"],
+                    "learning": lrun,
+                }
         return row
 
     def list_agent_labs(self, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -2765,26 +2892,34 @@ class MarketSimControlPlane:
         return self.store.list_agent_labs(limit=limit)
 
     def start_agent_lab(self, lab_id: str) -> dict[str, Any]:
-        """Start lab by running/resuming the bound research campaign worker path."""
+        """Start lab — prefers Strategy Learning Loop when a learning run is bound."""
         self._require_enabled()
         lab = self.get_agent_lab(lab_id)
+        learning_run_id = lab.get("learning_run_id") or (lab.get("metadata") or {}).get("learning_run_id")
+        enable_learning = bool((lab.get("metadata") or {}).get("enable_learning", True))
+
+        lab_row = self.store.get_agent_lab(lab_id)
+        if lab_row is None:
+            raise MarketSimError("LAB_NOT_FOUND", lab_id, http_status=404)
+        lab_row["status"] = "RUNNING"
+        lab_row["updated_at"] = utc_now()
+        lab_row["error"] = ""
+        self.store.upsert_agent_lab(lab_row)
+
+        if enable_learning and learning_run_id:
+            return self.start_learning_run(str(learning_run_id))
+
         campaign_id = lab.get("campaign_id")
         if not campaign_id:
             raise MarketSimError("LAB_MISSING_CAMPAIGN", lab_id, http_status=409)
-        lab["status"] = "RUNNING"
-        lab["updated_at"] = utc_now()
-        lab["error"] = ""
-        self.store.upsert_agent_lab(lab)
 
-        # Prefer external worker when JobRuntime is bound; otherwise run worker path directly
-        # (same honesty as campaign tests — no fabricated metrics).
         if self.job_runtime is not None:
             started = self.start_research_campaign(str(campaign_id))
-            lab["job_id"] = (started.get("campaign") or {}).get("job_id") or started.get("job", {}).get(
+            lab_row["job_id"] = (started.get("campaign") or {}).get("job_id") or started.get("job", {}).get(
                 "job_id"
             )
-            lab["status"] = "QUEUED"
-            self.store.upsert_agent_lab(lab)
+            lab_row["status"] = "QUEUED"
+            self.store.upsert_agent_lab(lab_row)
             return {"lab": self.get_agent_lab(lab_id), "campaign_job": started}
 
         campaign = self.run_research_campaign_on_worker(str(campaign_id))
@@ -2795,15 +2930,23 @@ class MarketSimControlPlane:
         lab = self.get_agent_lab(lab_id)
         if lab.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
             raise MarketSimError("LAB_TERMINAL", f"status={lab.get('status')}", http_status=409)
-        lab["status"] = "PAUSED"
-        lab["updated_at"] = utc_now()
-        if lab.get("campaign_id"):
-            camp = self.get_research_campaign(str(lab["campaign_id"]))
+        lab_row = self.store.get_agent_lab(lab_id)
+        assert lab_row is not None
+        lab_row["status"] = "PAUSED"
+        lab_row["updated_at"] = utc_now()
+        if lab_row.get("campaign_id"):
+            camp = self.get_research_campaign(str(lab_row["campaign_id"]))
             if camp.get("status") not in {"COMPLETED", "FAILED", "CANCELLED"}:
                 camp["status"] = "PAUSED"
                 camp["updated_at"] = utc_now()
                 self.store.upsert_research_campaign(camp)
-        self.store.upsert_agent_lab(lab)
+        learning_run_id = lab.get("learning_run_id") or (lab_row.get("metadata") or {}).get("learning_run_id")
+        if learning_run_id:
+            try:
+                self.pause_learning_run(str(learning_run_id))
+            except MarketSimError:
+                pass
+        self.store.upsert_agent_lab(lab_row)
         return self.get_agent_lab(lab_id)
 
     def resume_agent_lab(self, lab_id: str) -> dict[str, Any]:
@@ -2812,6 +2955,11 @@ class MarketSimControlPlane:
         if lab.get("status") not in {"PAUSED", "CREATED", "FAILED"}:
             if lab.get("status") in {"COMPLETED", "CANCELLED"}:
                 raise MarketSimError("LAB_TERMINAL", f"status={lab.get('status')}", http_status=409)
+        learning_run_id = lab.get("learning_run_id") or (lab.get("metadata") or {}).get("learning_run_id")
+        if learning_run_id:
+            lrun = self.store.get_learning_run(str(learning_run_id))
+            if lrun and lrun.get("status") == "PAUSED":
+                return self.resume_learning_run(str(learning_run_id))
         return self.start_agent_lab(lab_id)
 
     def cancel_agent_lab(self, lab_id: str) -> dict[str, Any]:
@@ -2819,16 +2967,24 @@ class MarketSimControlPlane:
         from .agent_lab import LabOutcome
 
         lab = self.get_agent_lab(lab_id)
-        lab["status"] = "CANCELLED"
-        lab["outcome"] = LabOutcome.NO_STRATEGY_QUALIFIED.value
-        lab["updated_at"] = utc_now()
-        if lab.get("campaign_id"):
-            camp = self.get_research_campaign(str(lab["campaign_id"]))
+        lab_row = self.store.get_agent_lab(lab_id)
+        assert lab_row is not None
+        lab_row["status"] = "CANCELLED"
+        lab_row["outcome"] = LabOutcome.NO_STRATEGY_QUALIFIED.value
+        lab_row["updated_at"] = utc_now()
+        if lab_row.get("campaign_id"):
+            camp = self.get_research_campaign(str(lab_row["campaign_id"]))
             if camp.get("status") not in {"COMPLETED", "FAILED", "CANCELLED"}:
                 camp["status"] = "CANCELLED"
                 camp["updated_at"] = utc_now()
                 self.store.upsert_research_campaign(camp)
-        self.store.upsert_agent_lab(lab)
+        learning_run_id = lab.get("learning_run_id") or (lab_row.get("metadata") or {}).get("learning_run_id")
+        if learning_run_id:
+            try:
+                self.cancel_learning_run(str(learning_run_id))
+            except MarketSimError:
+                pass
+        self.store.upsert_agent_lab(lab_row)
         return self.get_agent_lab(lab_id)
 
     def _sync_lab_from_campaign(self, lab_id: str, campaign: dict[str, Any]) -> dict[str, Any]:
@@ -2916,3 +3072,162 @@ class MarketSimControlPlane:
         self.store.upsert_agent_lab(lab_row)
         return self.get_agent_lab(lab_id)
 
+
+    # --- Strategy Learning Loop control plane ---
+
+    def get_learning_run(self, learning_run_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.store.get_learning_run(learning_run_id)
+        if row is None:
+            raise MarketSimError("LEARNING_RUN_NOT_FOUND", learning_run_id, http_status=404)
+        return row
+
+    def list_learning_runs(self, *, lab_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        self._require_enabled()
+        return self.store.list_learning_runs(lab_id=lab_id, limit=limit)
+
+    def start_learning_run(self, learning_run_id: str) -> dict[str, Any]:
+        """Queue or execute a learning run (EXTERNAL_REQUIRED when JobRuntime bound)."""
+        self._require_enabled()
+        row = self.get_learning_run(learning_run_id)
+        if row.get("status") in {"COMPLETED", "CANCELLED"}:
+            raise MarketSimError("LEARNING_TERMINAL", f"status={row.get('status')}", http_status=409)
+        row["pause_requested"] = False
+        row["cancel_requested"] = False
+        row["error"] = ""
+        row["updated_at"] = utc_now()
+        if self.job_runtime is not None:
+            row["status"] = "QUEUED"
+            row["stage"] = "QUEUED"
+            self.store.upsert_learning_run(row)
+            job = self.enqueue_learning_run(learning_run_id, requested_by="market_sim.start_learning_run")
+            row["job_id"] = getattr(job, "job_id", None) or (job.get("job_id") if isinstance(job, dict) else None)
+            self.store.upsert_learning_run(row)
+            if row.get("lab_id"):
+                lab = self.store.get_agent_lab(str(row["lab_id"]))
+                if lab:
+                    lab["status"] = "QUEUED"
+                    lab["job_id"] = row["job_id"]
+                    lab["updated_at"] = utc_now()
+                    self.store.upsert_agent_lab(lab)
+            self._emit_event("learning_run.started", {"learning_run_id": learning_run_id, "queued": True})
+            return {"learning": self.get_learning_run(learning_run_id), "job": {"job_id": row["job_id"]}}
+
+        result = self.run_learning_on_worker(learning_run_id)
+        return {"learning": result, "lab": self.get_agent_lab(str(result["lab_id"])) if result.get("lab_id") else None}
+
+    def pause_learning_run(self, learning_run_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.get_learning_run(learning_run_id)
+        if row.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+            raise MarketSimError("LEARNING_TERMINAL", f"status={row.get('status')}", http_status=409)
+        row["pause_requested"] = True
+        row["status"] = "PAUSED"
+        row["stage"] = "PAUSED"
+        row["updated_at"] = utc_now()
+        self.store.upsert_learning_run(row)
+        self._emit_event("learning_run.paused", {"learning_run_id": learning_run_id})
+        return self.get_learning_run(learning_run_id)
+
+    def resume_learning_run(self, learning_run_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.get_learning_run(learning_run_id)
+        if row.get("status") not in {"PAUSED", "CREATED", "FAILED", "QUEUED"}:
+            if row.get("status") in {"COMPLETED", "CANCELLED"}:
+                raise MarketSimError("LEARNING_TERMINAL", f"status={row.get('status')}", http_status=409)
+        row["pause_requested"] = False
+        row["cancel_requested"] = False
+        self.store.upsert_learning_run(row)
+        self._emit_event("learning_run.resumed", {"learning_run_id": learning_run_id})
+        return self.start_learning_run(learning_run_id)
+
+    def cancel_learning_run(self, learning_run_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        row = self.get_learning_run(learning_run_id)
+        row["cancel_requested"] = True
+        row["status"] = "CANCELLED"
+        row["stage"] = "CANCELLED"
+        row["updated_at"] = utc_now()
+        self.store.upsert_learning_run(row)
+        self._emit_event("learning_run.cancelled", {"learning_run_id": learning_run_id})
+        return self.get_learning_run(learning_run_id)
+
+    def enqueue_learning_run(
+        self,
+        learning_run_id: str,
+        *,
+        requested_by: str = "market_sim",
+        parent_job_id: str | None = None,
+    ) -> Any:
+        if self.job_runtime is None:
+            raise MarketSimError(
+                "TRADING_WORKER_UNAVAILABLE",
+                "learning runs require job_runtime / market_sim worker",
+                http_status=503,
+            )
+        row = self.get_learning_run(learning_run_id)
+        gen = str(row.get("current_generation") or 0)
+        idem = f"market_sim:learning_run:{learning_run_id}:{gen}:{row.get('input_fingerprint') or ''}"
+        return self.job_runtime.enqueue(
+            capability_id="market_sim.learning_run",
+            arguments={"learning_run_id": learning_run_id},
+            requested_by=requested_by,
+            idempotency_key=idem,
+            domain="market_sim",
+            domain_entity_type="market_sim_learning_run",
+            domain_entity_id=learning_run_id,
+            worker_pool="market_sim",
+            parent_job_id=parent_job_id,
+        )
+
+    def run_learning_on_worker(self, learning_run_id: str) -> dict[str, Any]:
+        """Execute/resume learning run (market_sim worker only)."""
+        from .learning_runtime import run_learning_on_worker
+
+        return run_learning_on_worker(self, learning_run_id)
+
+    def get_lab_learning(self, lab_id: str) -> dict[str, Any]:
+        lab = self.get_agent_lab(lab_id)
+        learning = lab.get("learning")
+        if not learning:
+            raise MarketSimError("LEARNING_RUN_NOT_FOUND", lab_id, http_status=404)
+        return {
+            "lab_id": lab_id,
+            "learning": learning,
+            "truth": {
+                "server_side_fitness": True,
+                "no_mock_kpis": True,
+                "live_trading": "BLOCKED",
+            },
+        }
+
+    def get_lab_generations(self, lab_id: str) -> dict[str, Any]:
+        data = self.get_lab_learning(lab_id)
+        learning = data["learning"]
+        return {
+            "lab_id": lab_id,
+            "learning_run_id": learning.get("learning_run_id"),
+            "current_generation": learning.get("current_generation"),
+            "generation_summaries": learning.get("generation_summaries") or [],
+            "family_probabilities": (learning.get("learner_state") or {}).get("family_probabilities") or {},
+        }
+
+    def get_lab_candidates(self, lab_id: str) -> dict[str, Any]:
+        data = self.get_lab_learning(lab_id)
+        learning = data["learning"]
+        return {
+            "lab_id": lab_id,
+            "learning_run_id": learning.get("learning_run_id"),
+            "candidates": learning.get("candidates") or [],
+            "qualified_candidate": learning.get("qualified_candidate"),
+            "best_train_candidate": learning.get("best_train_candidate"),
+            "best_validation_candidate": learning.get("best_validation_candidate"),
+        }
+
+    def get_lab_lessons(self, lab_id: str) -> dict[str, Any]:
+        lab = self.get_agent_lab(lab_id)
+        return {
+            "lab_id": lab_id,
+            "lessons": lab.get("lessons") or [],
+            "truth": {"agent_proposed_is_not_proof": True},
+        }
