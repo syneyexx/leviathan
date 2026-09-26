@@ -6,7 +6,7 @@ import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator  # Any used by parquet column helpers
+from typing import Any, Iterator, Sequence  # Any used by parquet column helpers
 
 from Data.modules.common.hashing import sha256_file
 
@@ -432,3 +432,90 @@ def infer_symbol_timeframe(path: Path) -> tuple[str, str]:
             timeframe = "1D" if part.lower() in {"1d", "d1"} else part
             break
     return symbol, timeframe
+
+
+def storage_format_for_path(path: Path | str) -> str | None:
+    """Honest on-disk storageFormat for market artifacts (csv/jsonl/parquet)."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".parquet":
+        return "parquet"
+    if suffix in {".jsonl", ".ndjson"}:
+        return "jsonl"
+    if suffix in {".csv", ".txt"}:
+        return "csv"
+    return None
+
+
+def write_ohlcv_analytical(
+    dest: Path | str,
+    bars: Sequence[Bar],
+    *,
+    prefer_parquet: bool = True,
+    symbol: str | None = None,
+) -> dict[str, Any]:
+    """Write structured OHLCV for analytical use; prefer Parquet when available.
+
+    Falls back to CSV when pyarrow is unavailable. Does not rewrite MarketSim
+    ingest paths — this is an explicit analytical export surface.
+    """
+    if not bars:
+        raise MarketSimError("EMPTY_WINDOW", "No bars to export")
+
+    dest = Path(dest)
+    suffix = dest.suffix.lower()
+    want_parquet = prefer_parquet and _parquet_available()
+    if suffix == ".csv" or suffix == ".txt":
+        want_parquet = False
+    elif suffix == ".parquet":
+        if not _parquet_available():
+            raise MarketSimError(
+                "PARQUET_UNAVAILABLE",
+                "Parquet export requires optional dependency pyarrow",
+                http_status=503,
+            )
+        want_parquet = True
+    elif want_parquet:
+        dest = dest if suffix == ".parquet" else dest.with_suffix(".parquet")
+    else:
+        dest = dest if suffix in {".csv", ".txt"} else dest.with_suffix(".csv")
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if want_parquet:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        arrays: dict[str, Any] = {
+            "timestamp": [b.ts for b in bars],
+            "open": [float(b.open) for b in bars],
+            "high": [float(b.high) for b in bars],
+            "low": [float(b.low) for b in bars],
+            "close": [float(b.close) for b in bars],
+            "volume": [float(b.volume) for b in bars],
+        }
+        if symbol:
+            arrays["symbol"] = [symbol] * len(bars)
+        pq.write_table(pa.table(arrays), dest)
+        fmt = "parquet"
+    else:
+        with dest.open("w", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            header = list(REQUIRED_OHLCV_COLUMNS)
+            if symbol:
+                header = [*header, "symbol"]
+            writer.writerow(header)
+            for b in bars:
+                row: list[Any] = [b.ts, b.open, b.high, b.low, b.close, b.volume]
+                if symbol:
+                    row.append(symbol)
+                writer.writerow(row)
+        fmt = "csv"
+    return {
+        "path": str(dest),
+        "storageFormat": fmt,
+        "bar_count": len(bars),
+        "start_ts": bars[0].ts,
+        "end_ts": bars[-1].ts,
+        "byte_size": dest.stat().st_size,
+        "content_hash": sha256_file(dest),
+        "parquet_available": _parquet_available(),
+    }

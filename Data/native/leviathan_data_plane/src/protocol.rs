@@ -20,6 +20,7 @@ pub const SUPPORTED_OPERATIONS: &[&str] = &[
     "dataset.parquet_validate",
     "dataset.parquet_hash",
     "dataset.parquet_to_jsonl",
+    "market.ohlcv_validate",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

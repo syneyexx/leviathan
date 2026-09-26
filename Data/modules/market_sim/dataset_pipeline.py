@@ -25,6 +25,7 @@ from .ohlcv import (
     REQUIRED_OHLCV_COLUMNS,
     _parquet_available,
     iter_ohlcv,
+    storage_format_for_path,
     validate_ohlcv_file,
 )
 from .types import Bar, CausalityViolation, DataKind, MarketSimError, SourceStatus
@@ -176,6 +177,10 @@ class SealedMarketDataset:
         return f"{self.dataset_id}@{self.version}"
 
     def public_dict(self) -> dict[str, Any]:
+        storage = storage_format_for_path(self.path)
+        meta = dict(self.metadata or {})
+        if storage and "storageFormat" not in meta:
+            meta["storageFormat"] = storage
         return {
             "dataset_id": self.dataset_id,
             "version": self.version,
@@ -202,7 +207,8 @@ class SealedMarketDataset:
             "parent_version": self.parent_version,
             "role": self.role,
             "created_at": self.created_at,
-            "metadata": self.metadata,
+            "metadata": meta,
+            **({"storageFormat": storage} if storage else {}),
             "truth": {
                 "sealed_versions_immutable": True,
                 "correction_creates_new_version": True,
@@ -595,7 +601,14 @@ class MarketDatasetPipeline:
             path=rel,
             role=role,
             created_at=now,
-            metadata={"byte_size": report.byte_size},
+            metadata={
+                "byte_size": report.byte_size,
+                **(
+                    {"storageFormat": sf}
+                    if (sf := storage_format_for_path(dest))
+                    else {}
+                ),
+            },
         )
         if seal:
             report.state = DatasetQualityState.SEALED.value

@@ -38,6 +38,7 @@ SUPPORTED_OPERATIONS = frozenset(
         "dataset.parquet_validate",
         "dataset.parquet_hash",
         "dataset.parquet_to_jsonl",
+        "market.ohlcv_validate",
     }
 )
 
@@ -46,6 +47,12 @@ PARQUET_OPERATIONS = frozenset(
         "dataset.parquet_validate",
         "dataset.parquet_hash",
         "dataset.parquet_to_jsonl",
+    }
+)
+
+MARKET_OPERATIONS = frozenset(
+    {
+        "market.ohlcv_validate",
     }
 )
 
@@ -742,6 +749,20 @@ class NativeComputeRunner:
             self._capabilities = probe_capabilities(binary=self.binary)
         return self._capabilities
 
+    def probe(self) -> dict[str, Any]:
+        """Bounded Worker Fabric summary: status, binaryVersion, operations."""
+        caps = self.capabilities()
+        backend = caps.backend if isinstance(caps.backend, dict) else {}
+        version = backend.get("version")
+        return {
+            "status": caps.status.value,
+            "binaryVersion": str(version) if version is not None else None,
+            "operations": list(caps.operations)[:64],
+            "protocolVersion": caps.protocol_version,
+            "detail": (caps.detail or "")[:500],
+            "binaryPath": caps.binary_path,
+        }
+
     def run(
         self,
         *,
@@ -836,6 +857,7 @@ __all__ = [
     "MEMORY_RSS_GRACE_FACTOR",
     "PROTOCOL_VERSION",
     "PARQUET_OPERATIONS",
+    "MARKET_OPERATIONS",
     "SUPPORTED_OPERATIONS",
     "NativeCapabilities",
     "NativeComputeRunner",

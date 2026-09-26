@@ -9,6 +9,7 @@ from typing import Any
 
 from Data.modules.datasets.memory_policy import DatasetMemoryPolicy, resolve_dataset_memory_policy
 from Data.modules.workers.native_compute import (
+    MARKET_OPERATIONS,
     PARQUET_OPERATIONS,
     SUPPORTED_OPERATIONS,
     NativeCapabilities,
@@ -176,6 +177,7 @@ class ComputeBackendPlanner:
         threshold = self.policy.rust_threshold_bytes
         looks_parquet = _input_looks_parquet(input_path)
         is_parquet_op = op in PARQUET_OPERATIONS
+        is_market_op = op in MARKET_OPERATIONS
         if is_parquet_op and (size is None or size >= threshold or looks_parquet):
             return BackendPlan(
                 backend=ComputeBackend.RUST_NATIVE,
@@ -190,6 +192,17 @@ class ComputeBackendPlanner:
                     if looks_parquet or (size is not None and size >= threshold)
                     else "auto: parquet_* size unknown, native available"
                 ),
+            )
+        if is_market_op and (size is None or size >= threshold or looks_parquet or _input_looks_ohlcv(input_path)):
+            return BackendPlan(
+                backend=ComputeBackend.RUST_NATIVE,
+                operation=op,
+                native_mode=mode,
+                input_bytes=size,
+                rust_threshold_bytes=threshold,
+                native_status=caps.status.value,
+                fallback_reason=None,
+                detail="auto: market.ohlcv_* prefers RUST_NATIVE for high-volume OHLCV",
             )
         if size is None:
             return BackendPlan(
@@ -230,6 +243,15 @@ def _input_looks_parquet(input_path: str | Path | None) -> bool:
         return False
     try:
         return Path(input_path).suffix.lower() == ".parquet"
+    except (TypeError, ValueError):
+        return False
+
+
+def _input_looks_ohlcv(input_path: str | Path | None) -> bool:
+    if input_path is None:
+        return False
+    try:
+        return Path(input_path).suffix.lower() in {".csv", ".txt", ".jsonl", ".ndjson", ".parquet"}
     except (TypeError, ValueError):
         return False
 
