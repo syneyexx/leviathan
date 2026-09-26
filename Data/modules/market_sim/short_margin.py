@@ -62,6 +62,7 @@ def short_open_allowed(
     *,
     supports_short: bool,
     margin_policy: ShortMarginPolicy | None,
+    borrow: Any | None = None,
 ) -> tuple[bool, str]:
     if not supports_short:
         return False, "INSTRUMENT_RULE: short not supported for instrument"
@@ -69,4 +70,14 @@ def short_open_allowed(
         return False, "MARGIN_POLICY_REQUIRED: short blocked without ShortMarginPolicy"
     if margin_policy.initial_margin_pct <= 0 or margin_policy.maintenance_margin_pct <= 0:
         return False, "MARGIN_POLICY_REQUIRED: invalid margin percentages"
+    # W08 — optional borrow constraints (equity/ETF). Absent borrow ⇒ prior behaviour.
+    if borrow is not None:
+        if callable(getattr(borrow, "allows_short_open", None)):
+            ok, reason = borrow.allows_short_open()
+            if not ok:
+                return False, reason
+        elif not getattr(borrow, "locatable", True):
+            return False, "BORROW_CONSTRAINT: not locatable"
+        if getattr(borrow, "hard_to_borrow", False) and margin_policy.borrow_fee_bps_per_day is None:
+            return False, "BORROW_CONSTRAINT: hard-to-borrow requires measured borrow fee"
     return True, "short_allowed"

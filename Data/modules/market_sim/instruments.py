@@ -135,6 +135,38 @@ def assert_family_implemented(family: InstrumentFamily | str) -> InstrumentFamil
 
 
 @dataclass(frozen=True)
+class BorrowConstraints:
+    """Equity/ETF borrow honesty (W08). Fee unset ⇒ borrow cost UNMEASURED."""
+
+    locatable: bool = True
+    hard_to_borrow: bool = False
+    borrow_fee_bps_per_day: float | None = None
+    status: str = "UNMEASURED"  # MEASURED | UNMEASURED
+
+    def resolved_status(self) -> str:
+        if self.borrow_fee_bps_per_day is not None:
+            return "MEASURED"
+        return self.status if self.status in {"MEASURED", "UNMEASURED"} else "UNMEASURED"
+
+    def allows_short_open(self) -> tuple[bool, str]:
+        if not self.locatable:
+            return False, "BORROW_CONSTRAINT: not locatable"
+        return True, "borrow_ok"
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "locatable": self.locatable,
+            "hardToBorrow": self.hard_to_borrow,
+            "borrowFeeBpsPerDay": self.borrow_fee_bps_per_day,
+            "borrowCost": self.resolved_status(),
+            "truth": {
+                "supports_short_is_not_borrow_inventory": True,
+                "unset_borrow_fee_is_UNMEASURED": self.borrow_fee_bps_per_day is None,
+            },
+        }
+
+
+@dataclass(frozen=True)
 class InstrumentSpec:
     instrument_id: str
     symbol: str
@@ -153,6 +185,11 @@ class InstrumentSpec:
     isin: str | None = None
     figi: str | None = None
     exchange_symbol: str | None = None
+    # W08 — equities/ETF hardening (ETF remains InstrumentFamily.EQUITY).
+    is_etf: bool = False
+    adjustment_mode: str = "as_traded"
+    session_calendar_id: str | None = None
+    borrow: BorrowConstraints | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def resolved_settlement_currency(self) -> str:
@@ -177,6 +214,11 @@ class InstrumentSpec:
                 pass
         return family_capability_status(self.family)
 
+    def normalized_adjustment_mode(self) -> str:
+        from .pit_fabric import normalize_adjustment_mode
+
+        return normalize_adjustment_mode(self.adjustment_mode)
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "instrument_id": self.instrument_id,
@@ -192,6 +234,10 @@ class InstrumentSpec:
             "multiplier": self.multiplier,
             "supports_short": self.supports_short,
             "data_level": self.data_level.value,
+            "is_etf": self.is_etf,
+            "adjustment_mode": self.normalized_adjustment_mode(),
+            "session_calendar_id": self.session_calendar_id,
+            "borrow": self.borrow.public_dict() if self.borrow else None,
             "identifiers": self.identifiers().public_dict(),
             "capability": self.capability_status().value,
             "metadata": self.metadata,
@@ -202,6 +248,9 @@ class InstrumentSpec:
                 ),
                 "enum_exists_is_not_market_support": True,
                 "multiplier_required_for_contract_notional": True,
+                "etf_is_equity_family_not_separate_enum": True,
+                "adjusted_vs_unadjusted_must_be_labeled": True,
+                "supports_short_is_not_borrow_inventory": True,
             },
         }
 
@@ -219,6 +268,29 @@ EQUITY_AAPL = InstrumentSpec(
     multiplier="1",
     isin="US0378331005",
     exchange_symbol="AAPL",
+    is_etf=False,
+    adjustment_mode="as_traded",
+    session_calendar_id="XNYS",
+    borrow=BorrowConstraints(locatable=True, hard_to_borrow=False),
+)
+
+EQUITY_SPY = InstrumentSpec(
+    instrument_id="equity:SPY:ARCA",
+    symbol="SPY",
+    family=InstrumentFamily.EQUITY,
+    venue="ARCA",
+    quote_currency="USD",
+    timezone="America/New_York",
+    tick_size="0.01",
+    lot_size="1",
+    min_notional="1",
+    multiplier="1",
+    isin="US78462F1030",
+    exchange_symbol="SPY",
+    is_etf=True,
+    adjustment_mode="as_traded",
+    session_calendar_id="XNYS",
+    borrow=BorrowConstraints(locatable=True, hard_to_borrow=False),
 )
 
 CRYPTO_BTCUSDT = InstrumentSpec(
@@ -264,10 +336,12 @@ FIXED_INCOME_US10Y_STUB = InstrumentSpec(
 
 _REGISTRY: dict[str, InstrumentSpec] = {
     EQUITY_AAPL.instrument_id: EQUITY_AAPL,
+    EQUITY_SPY.instrument_id: EQUITY_SPY,
     CRYPTO_BTCUSDT.instrument_id: CRYPTO_BTCUSDT,
     FUTURES_ES_STUB.instrument_id: FUTURES_ES_STUB,
     FIXED_INCOME_US10Y_STUB.instrument_id: FIXED_INCOME_US10Y_STUB,
     EQUITY_AAPL.symbol: EQUITY_AAPL,
+    EQUITY_SPY.symbol: EQUITY_SPY,
     CRYPTO_BTCUSDT.symbol: CRYPTO_BTCUSDT,
     FUTURES_ES_STUB.symbol: FUTURES_ES_STUB,
     FIXED_INCOME_US10Y_STUB.symbol: FIXED_INCOME_US10Y_STUB,
@@ -324,6 +398,9 @@ def infer_family(
             raise ValueError(f"INSTRUMENT_RULE: unknown family {meta['family']!r}") from exc
     sym = symbol.upper().replace("/", "").replace("-", "")
     itype = str(meta.get("instrument_type") or "").lower()
+    # ETF is equity family with is_etf flag — not a separate InstrumentFamily.
+    if itype in {"etf", "exchange_traded_fund"} or meta.get("is_etf") is True:
+        return InstrumentFamily.EQUITY
     if itype in {"bond", "fixed_income", "treasury", "govvie"}:
         return InstrumentFamily.FIXED_INCOME
     if any(tok in sym for tok in ("BOND", "US10Y", "TNOTE", "TBILL")):
@@ -417,6 +494,25 @@ def spec_for_symbol(
             },
         )
     venue = str(meta.get("venue") or "NASDAQ")
+    is_etf = bool(meta.get("is_etf")) or str(meta.get("instrument_type") or "").lower() in {
+        "etf",
+        "exchange_traded_fund",
+    }
+    borrow = None
+    if "borrow" in meta and isinstance(meta["borrow"], BorrowConstraints):
+        borrow = meta["borrow"]
+    elif meta.get("borrow") and isinstance(meta["borrow"], dict):
+        raw_b = meta["borrow"]
+        borrow = BorrowConstraints(
+            locatable=bool(raw_b.get("locatable", True)),
+            hard_to_borrow=bool(raw_b.get("hard_to_borrow", raw_b.get("hardToBorrow", False))),
+            borrow_fee_bps_per_day=(
+                None
+                if raw_b.get("borrow_fee_bps_per_day", raw_b.get("borrowFeeBpsPerDay")) is None
+                else float(raw_b.get("borrow_fee_bps_per_day", raw_b.get("borrowFeeBpsPerDay")))
+            ),
+            status=str(raw_b.get("status") or "UNMEASURED"),
+        )
     return InstrumentSpec(
         instrument_id=make_instrument_id(InstrumentFamily.EQUITY, symbol, venue),
         symbol=symbol.upper(),
@@ -432,6 +528,10 @@ def spec_for_symbol(
         isin=meta.get("isin"),
         figi=meta.get("figi"),
         exchange_symbol=str(meta.get("exchange_symbol") or symbol.upper()),
+        is_etf=is_etf,
+        adjustment_mode=str(meta.get("adjustment_mode") or "as_traded"),
+        session_calendar_id=meta.get("session_calendar_id") or meta.get("sessionCalendarId"),
+        borrow=borrow,
         metadata={"timeframe": timeframe, **meta},
     )
 
@@ -527,7 +627,40 @@ def validate_intent_rules(
         policy = short_margin_policy
         if isinstance(policy, dict):
             policy = ShortMarginPolicy.from_dict(policy)
-        ok, reason = short_open_allowed(supports_short=spec.supports_short, margin_policy=policy)
+        ok, reason = short_open_allowed(
+            supports_short=spec.supports_short,
+            margin_policy=policy,
+            borrow=spec.borrow,
+        )
         if not ok:
             return False, reason, rounded_qty
     return True, "ok", rounded_qty
+
+
+def equity_session_is_open(
+    spec: InstrumentSpec,
+    date: str,
+    *,
+    universe: Any | None = None,
+) -> dict[str, Any]:
+    """Session calendar hook for equity/ETF (W08). Missing calendar ⇒ default open + UNMEASURED."""
+    from .universe import PointInTimeUniverse
+
+    calendar_id = spec.session_calendar_id or "UNMEASURED"
+    if universe is None:
+        return {
+            "date": date,
+            "isOpen": True,
+            "sessionCalendarId": calendar_id,
+            "status": "UNMEASURED",
+            "truth": {"missing_calendar_defaults_open_labelled": True},
+        }
+    uni = universe if isinstance(universe, PointInTimeUniverse) else universe
+    open_ = bool(uni.is_trading_day(date, exchange=spec.venue))
+    return {
+        "date": date,
+        "isOpen": open_,
+        "sessionCalendarId": calendar_id,
+        "status": "MEASURED" if uni.calendar else "UNMEASURED",
+        "truth": {"missing_calendar_defaults_open_labelled": not bool(uni.calendar)},
+    }

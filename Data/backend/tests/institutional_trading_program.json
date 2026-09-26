@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "2d57d7742f3e48f586ad10da7214135e9236c2a1",
+  "last_verified_commit": "f39c2e376135ca65613905d8c7d1c342d54dac4f",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W07",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01–W06 PASS. W07 instrument model foundation.",
+  "active_wave": "W08",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01\u2013W07 PASS. W08 equities/ETF hardening.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -454,9 +454,22 @@
     {
       "id": "W08",
       "title": "Equities and ETF institutional hardening",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim instruments",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_equities_etf_w08",
+        "Data.backend.tests.test_instrument_model_w07"
+      ],
+      "evidence": [
+        "EQUITY_SPY is_etf under InstrumentFamily.EQUITY",
+        "BorrowConstraints locatable/HTB gates short opens",
+        "equity_session_is_open calendar hook",
+        "adjustment_mode labelled on equity/ETF specs",
+        "8/8 W08 PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "f39c2e376135ca65613905d8c7d1c342d54dac4f"
     },
     {
       "id": "W09",
