@@ -39,6 +39,7 @@ import type {
   DatasetIndex,
   DatasetJob,
   DatasetBrainStatus,
+  DatasetLearningEnrichedJob,
   DatasetLearningState,
   DatasetLearningStatus,
   DatasetPreviewRow,
@@ -1371,8 +1372,8 @@ export const api = {
     agentSystemKey?: string;
     agentName?: string;
     activeCount: number;
-    active: DatasetJob[];
-    recent: DatasetJob[];
+    active: DatasetLearningEnrichedJob[];
+    recent: DatasetLearningEnrichedJob[];
     truth?: Record<string, boolean>;
   }> {
     return request(`/api/datasets/learning/activity?limit=${encodeURIComponent(String(limit))}`);
