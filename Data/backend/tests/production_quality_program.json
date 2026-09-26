@@ -21,7 +21,7 @@
     {"id": "W05", "status": "PASS", "title": "Greeting single model call (A07)", "notes": "DIRECT path skips neural advice"},
     {"id": "W07", "status": "PASS", "title": "TTC weak lexical scorers; schema nested validation"},
     {"id": "W16", "status": "PASS", "title": "Durable agent lab lifecycle wired to campaigns", "notes": "create/start/pause/resume/cancel + real sims; full role orchestra still TARGET"},
-    {"id": "W18", "status": "IN_PROGRESS", "title": "Paper deployment compatibility", "notes": "T09/T14/T15 + paper session hydrate after restart; long-horizon paper soak still open"},
+    {"id": "W18", "status": "IN_PROGRESS", "title": "Paper deployment compatibility", "notes": "T09 reconnect+event fill_key; T14/T15; market_paper_sessions hydrate/resume; PaperDeployment rows still in-memory only; long-horizon soak open"},
     {"id": "W04", "status": "NOT_STARTED", "title": "Model capability and inference contract"},
     {"id": "W06", "status": "IN_PROGRESS", "title": "Planning and steering", "notes": "cancel→children + observation-linked replan honesty; authority recheck still open"},
     {"id": "W08", "status": "IN_PROGRESS", "title": "Context memory Brain", "notes": "A08 correct_preference supersession landed; compaction/Brain breadth still open"},
@@ -55,7 +55,8 @@
     "web_search_fetch_mock_regressions": "FIXED",
     "W06_cancel_to_children": "FIXED",
     "T09_feed_duplicate_no_double_fill": "FIXED",
-    "W18_paper_session_restart_hydrate": "FIXED"
+    "W18_paper_session_restart_hydrate": "FIXED",
+    "W18_strategy_paper_session_resume": "FIXED"
   },
   "excluded_trees": ["Data/HADES/", "editor/"],
   "canonical_docs": [
@@ -67,6 +68,11 @@
       "id": "web_search_tests",
       "status": "RESOLVED",
       "notes": "Product regression: search/fetch assumed httpx Response attrs (status_code/text). Hardened getattr + content fallback; 9/9 test_assistant_web pass"
+    },
+    {
+      "id": "paper_deployment_table",
+      "status": "INCOMPLETE",
+      "notes": "PaperDeployment dataclass is not SQLite-persisted; durable resume uses market_paper_sessions + resume_paper_sessions_for_strategy. Not marked SUCCESS for deployment-row reload."
     },
     {
       "id": "live_trading",

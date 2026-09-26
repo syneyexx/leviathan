@@ -979,6 +979,11 @@ class MarketSimStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     status=excluded.status,
+                    strategy_id=excluded.strategy_id,
+                    strategy_version=excluded.strategy_version,
+                    broker_id=excluded.broker_id,
+                    provider_id=excluded.provider_id,
+                    symbol=excluded.symbol,
                     kill_switch=excluded.kill_switch,
                     feed_status=excluded.feed_status,
                     wallet_json=excluded.wallet_json,
