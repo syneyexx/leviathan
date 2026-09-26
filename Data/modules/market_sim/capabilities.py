@@ -119,33 +119,59 @@ def build_market_capabilities(
             verified_by="market_sim.capabilities + e2e crypto demos",
         ),
         MarketModeStatus(
+            family=InstrumentFamily.FUTURES.value,
+            historical_sim="AVAILABLE" if feature_enabled else "UNAVAILABLE",
+            live_paper="AVAILABLE" if feature_enabled and local_paper else "UNAVAILABLE",
+            live_trading=live_trading,
+            data_providers=["csv_local"] if feature_enabled else [],
+            paper_brokers=["local_paper"] if feature_enabled and local_paper else [],
+            notes=(
+                "Futures/perps OHLCV sim with contract multiplier. "
+                "Funding rate UNMEASURED unless provided. Live money blocked."
+            ),
+            verified_by="market_sim.futures_contracts + instruments W10",
+        ),
+        MarketModeStatus(
+            family=InstrumentFamily.FOREX.value,
+            historical_sim="AVAILABLE" if feature_enabled else "UNAVAILABLE",
+            live_paper="AVAILABLE" if feature_enabled and local_paper else "UNAVAILABLE",
+            live_trading=live_trading,
+            data_providers=["csv_local"] if feature_enabled else [],
+            paper_brokers=["local_paper"] if feature_enabled and local_paper else [],
+            notes=(
+                "FX spot currency-pair model with pip/tick conventions. "
+                "OHLCV paper only — no order-book FX realism. Live money blocked."
+            ),
+            verified_by="market_sim.fx + instruments W09",
+        ),
+        MarketModeStatus(
             family=InstrumentFamily.OPTIONS.value,
             historical_sim="NOT_IMPLEMENTED",
             live_paper="NOT_IMPLEMENTED",
             live_trading="BLOCKED",
             data_providers=[],
             paper_brokers=[],
-            notes="Options require contract rules, greeks, and E2E proof before claiming support.",
-            verified_by="explicitly not implemented",
+            notes="Options contract identity exists; greeks/vol UNMEASURED; trading NOT_IMPLEMENTED.",
+            verified_by="market_sim.options_contracts W11",
         ),
         MarketModeStatus(
-            family=InstrumentFamily.FUTURES.value,
+            family=InstrumentFamily.FIXED_INCOME.value,
             historical_sim="NOT_IMPLEMENTED",
             live_paper="NOT_IMPLEMENTED",
             live_trading="BLOCKED",
             data_providers=[],
             paper_brokers=[],
-            notes="Futures not implemented — no contract/margin accounting yet.",
-            verified_by="explicitly not implemented",
+            notes="Fixed income identity/yield stubs; accrual UNMEASURED; trading NOT_IMPLEMENTED.",
+            verified_by="market_sim.fixed_income W12",
         ),
         MarketModeStatus(
-            family=InstrumentFamily.FOREX.value,
+            family=InstrumentFamily.OTHER.value,
             historical_sim="NOT_IMPLEMENTED",
             live_paper="NOT_IMPLEMENTED",
             live_trading="BLOCKED",
             data_providers=[],
             paper_brokers=[],
-            notes="Forex not implemented.",
+            notes="Catch-all family — never silently treated as equity.",
             verified_by="explicitly not implemented",
         ),
     ]

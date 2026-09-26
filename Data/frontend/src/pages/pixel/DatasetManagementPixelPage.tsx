@@ -81,7 +81,16 @@ function formatCompactCount(n: number | null | undefined): string {
   return String(n);
 }
 
-function mapDatasetStatus(status: string, brainStatus?: string | null): DatasetMgmtStatus {
+function mapDatasetStatus(
+  status: string,
+  brainStatus?: string | null,
+  canonicalState?: string | null,
+): DatasetMgmtStatus {
+  const canonical = (canonicalState || "").toUpperCase();
+  if (canonical === "LEARNED" || canonical === "STALE_JOB") return "Klaar";
+  if (canonical === "REBUILDING" || canonical === "INDEXING") return "Bezig";
+  if (canonical === "INDEX_QUEUED") return "Wachtrij";
+  if (canonical === "FAILED") return "Fout";
   const brain = (brainStatus || "").toLowerCase();
   if (brain === "learned") return "Klaar";
   if (brain === "indexing" || brain === "queued") return brain === "queued" ? "Wachtrij" : "Bezig";
@@ -395,7 +404,11 @@ export function DatasetManagementPixelPage() {
     const q = query.trim().toLowerCase();
     return datasets.filter((ds) => {
       const typeLabel = mapTypeLabel(ds);
-      const statusNl = mapDatasetStatus(ds.status, ds.brainStatus ?? ds.brain?.brainStatus);
+      const statusNl = mapDatasetStatus(
+        ds.status,
+        ds.brainStatus ?? ds.brain?.brainStatus,
+        ds.canonicalState ?? ds.learningState?.canonicalState ?? ds.brain?.canonicalState,
+      );
       if (typeFilter !== "Alle types" && typeLabel !== typeFilter) return false;
       if (!sourceMatchesFilter(ds.sourceType, sourceFilter)) return false;
       if (statusFilter !== "Alle statussen" && statusNl !== statusFilter) return false;
@@ -1032,7 +1045,11 @@ export function DatasetManagementPixelPage() {
                     <tbody>
                       {filtered.map((row) => {
                         const typeLabel = mapTypeLabel(row);
-                        const statusNl = mapDatasetStatus(row.status, row.brainStatus ?? row.brain?.brainStatus);
+                        const statusNl = mapDatasetStatus(
+                          row.status,
+                          row.brainStatus ?? row.brain?.brainStatus,
+                          row.canonicalState ?? row.learningState?.canonicalState ?? row.brain?.canonicalState,
+                        );
                         const split =
                           row.datasetId === selectedId && selectedVersion
                             ? splitLabelFromVersion(selectedVersion)

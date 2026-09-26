@@ -6,6 +6,14 @@ import { formatElapsed, isActiveJobStatus } from "../../lib/jobStatus";
 import { OFFLINE_PAGE_COPY } from "../../mocks/offline-datasets";
 import { useAppToast } from "../../state/useAppToast";
 import type { DatasetJob, DatasetRecord } from "../../types/api";
+import {
+  displayStatusFromLearning,
+  honestLearningProgress,
+  learningStatusLabel,
+  resolveLearningState,
+  shouldShowJobAsLearningTruth,
+  type LearningDisplayStatus,
+} from "../datasets/datasetLearningState";
 import { PxIcon, PxKpi } from "./pixel-shared";
 
 type OfflineStatus = "ready" | "indexing" | "queued" | "failed" | "unknown";
@@ -27,6 +35,7 @@ type OfflineRow = {
   documentCount: number | null;
   indexId: string | null;
   sourceMissing: boolean;
+  canonicalState?: string;
 };
 
 const DAYS = ["Zondag", "Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag"];
@@ -54,6 +63,14 @@ function statusTone(status: OfflineStatus) {
   if (status === "queued") return "gold";
   if (status === "failed") return "red";
   return "orange";
+}
+
+function mapDisplayToOffline(status: LearningDisplayStatus): OfflineStatus {
+  if (status === "learned" || status === "ready_for_index") return "ready";
+  if (status === "rebuilding" || status === "indexing") return "indexing";
+  if (status === "queued") return "queued";
+  if (status === "failed") return "failed";
+  return "unknown";
 }
 
 function mapBrainToOffline(status: string | undefined): OfflineStatus {
@@ -102,19 +119,23 @@ export function OfflineDatasetsPixelPage() {
         if (!job.datasetId || byId.has(job.datasetId)) continue;
         try {
           const detail = await api.getDataset(job.datasetId);
+          // Canonical backend learningState dominates — do not invent INDEXING from the job alone.
+          const learning = resolveLearningState({
+            learningState: detail.learningState ?? null,
+            brain: detail.brain ?? detail.dataset.brain ?? null,
+            brainStatus: detail.brainStatus ?? detail.dataset.brainStatus,
+            learned: detail.learned ?? detail.dataset.learned,
+            canonicalState: detail.canonicalState ?? detail.dataset.canonicalState,
+          });
           byId.set(job.datasetId, {
             ...detail.dataset,
-            brainStatus: job.status === "queued" ? "queued" : "indexing",
-            learned: false,
-            brain: {
-              brainStatus: job.status === "queued" ? "queued" : "indexing",
-              learned: false,
-              jobId: job.jobId,
-              progress: job.progress ?? null,
-              phase: job.phase ?? null,
-              label: job.status === "queued" ? "In wachtrij" : "Bezig met leren",
-            },
-          });
+            ...detail.learningState,
+            learningState: detail.learningState ?? learning ?? undefined,
+            brainStatus: learning?.brainStatus ?? detail.brainStatus ?? detail.dataset.brainStatus,
+            learned: learning?.learned ?? detail.learned ?? detail.dataset.learned,
+            canonicalState: learning?.canonicalState ?? detail.canonicalState,
+            brain: learning ?? detail.brain ?? detail.dataset.brain,
+          } as DatasetRecord);
         } catch {
           /* skip unavailable */
         }
@@ -137,46 +158,60 @@ export function OfflineDatasetsPixelPage() {
 
   const rows: OfflineRow[] = useMemo(() => {
     return datasets.map((ds) => {
+      const learning = resolveLearningState({
+        learningState: ds.learningState ?? null,
+        brain: ds.brain ?? null,
+        brainStatus: ds.brainStatus,
+        learned: ds.learned,
+        canonicalState: ds.canonicalState,
+      });
       const brain = ds.brain;
       const idx = (ds.indexes ?? [])[0];
       const activeJob = jobs.find(
         (j) => j.datasetId === ds.datasetId && j.jobType === "index" && isActiveJobStatus(j.status),
       );
-      let status: OfflineStatus = mapBrainToOffline(ds.brainStatus ?? brain?.brainStatus);
-      let statusLabel = brain?.label || "Geleerd in Brain";
-      if (activeJob) {
+      // Job list is detail only — never override LEARNED with a stale INDEXING job.
+      const display = displayStatusFromLearning(learning);
+      let status: OfflineStatus = learning
+        ? mapDisplayToOffline(display)
+        : mapBrainToOffline(ds.brainStatus ?? brain?.brainStatus);
+      let statusLabel = learningStatusLabel(learning, brain?.label || "Geleerd in Brain");
+      if (shouldShowJobAsLearningTruth(learning) && activeJob) {
         status = activeJob.status === "queued" ? "queued" : "indexing";
         statusLabel = `${activeJob.phase || activeJob.jobType} · ${activeJob.status}`;
-      } else if (ds.sourceMissing || brain?.sourceMissing) {
+      } else if (ds.sourceMissing || brain?.sourceMissing || learning?.sourceMissing) {
         statusLabel = status === "ready" ? "Geleerd (bron ontbreekt)" : statusLabel;
       }
+      const progressPct =
+        shouldShowJobAsLearningTruth(learning) && activeJob?.progress != null
+          ? Math.round(Number(activeJob.progress) * 100)
+          : honestLearningProgress(learning) ?? undefined;
       return {
         id: ds.datasetId,
         datasetId: ds.datasetId,
-        versionId: brain?.versionId ?? idx?.versionId ?? null,
+        versionId: learning?.versionId ?? brain?.versionId ?? idx?.versionId ?? null,
         name: ds.name,
         source: ds.sourceType || "local",
         size: formatBytes(ds.byteSize),
         status,
         statusLabel,
-        progress:
-          activeJob?.progress != null
-            ? Math.round(Number(activeJob.progress) * 100)
-            : brain?.progress != null
-              ? Math.round(Number(brain.progress) * 100)
-              : undefined,
+        progress: progressPct,
         localPath: ds.rawPath || ds.originalUri || "—",
         checksum: ds.contentHash || "—",
-        lastSynced: brain?.updatedAt || idx?.updatedAt || ds.updatedAt,
-        chunkCount: brain?.chunkCount ?? idx?.chunkCount ?? null,
+        lastSynced: learning?.updatedAt || brain?.updatedAt || idx?.updatedAt || ds.updatedAt,
+        chunkCount: learning?.chunkCount ?? brain?.chunkCount ?? idx?.chunkCount ?? null,
         documentCount:
-          brain?.documentCount != null
-            ? Number(brain.documentCount)
-            : idx?.provenance && typeof idx.provenance.documentCount === "number"
-              ? idx.provenance.documentCount
-              : null,
-        indexId: brain?.indexId ?? idx?.indexId ?? null,
-        sourceMissing: Boolean(ds.sourceMissing || brain?.sourceMissing),
+          learning?.documentCount != null
+            ? Number(learning.documentCount)
+            : brain?.documentCount != null
+              ? Number(brain.documentCount)
+              : idx?.provenance && typeof idx.provenance.documentCount === "number"
+                ? idx.provenance.documentCount
+                : null,
+        indexId:
+          learning?.usableIndexId ?? learning?.indexId ?? brain?.indexId ?? idx?.indexId ?? null,
+        sourceMissing: Boolean(ds.sourceMissing || brain?.sourceMissing || learning?.sourceMissing),
+        canonicalState: learning?.canonicalState,
       };
     });
   }, [datasets, jobs]);

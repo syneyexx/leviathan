@@ -858,22 +858,27 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 
 `Data/modules/market_sim/` is the current trading research/simulation owner. It includes:
 
-- market/data models: `ohlcv.py`, `data_store.py`, `dataset_pipeline.py`, `instruments.py`, providers;
+- market/data models: `ohlcv.py`, `data_store.py`, `dataset_pipeline.py`, `pit_fabric.py`, `instruments.py`, `fx.py`, `futures_contracts.py`, `options_contracts.py`, `fixed_income.py`, providers;
 - causality / epistemic time: `causality.py` (`SimulationClock`, `MarketView`), `epistemic.py` (`EpistemicFirewall`, `available_at <= as_of`);
-- market state / features (T2): `features.py` (deterministic OHLCV indicator library + provenance), `market_state.py` (`MarketState`, `MultiTimeframeView`, causal higher-TF aggregation);
+- market state / features (T2): `features.py` (deterministic OHLCV indicator library + provenance), `market_state.py` (`MarketState`, `MultiTimeframeView`, `build_multi_horizon_state`);
 - reproducibility: `knowledge_snapshot.py` (`TradingKnowledgeSnapshot` persisted per run);
-- engine: `engine.py` (WalletLedger + RiskGuard + NextBarFillModel), `multi_engine.py`, `fill_model.py` (legacy shim), `execution.py` (TIF / Limit / Stop / IntrabarPathPolicy; prepare verifies `data_hash`; multi-agent rounds attach `MarketState`);
-- accounting/risk: `accounting.py` (W13 multi-symbol WalletBook), `portfolio.py`, `risk_guard.py`, `trading_live_guard.py`;
-- data realism (W13): `universe.py` (PIT membership), `costs.py` (CostModelPack provenance), `stats_inferential.py` (DSR/PBO/FDR/bootstrap/CPCV geometry);
-- strategy governance (W14): `strategy_asset.py`, `strategy_dsl.py` (v3), `regimes.py`, `hpo.py`, `curriculum.py`;
-- agent lab (W15): `agent_lab.py` (scientific search / tournaments / lesson trust);
-- strategy learning (W25): `policy.py`, `learning_types.py`, `learning_fitness.py`, `learning_candidates.py`, `learning.py`, `learning_runtime.py`;
-- paper ops (W16): `paper_deployment.py`;
-- strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py` (`resolve_periods_per_year`), `position_episodes.py` (`ClosedTrade` / `PositionEpisodeTracker`);
-- multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py` (as_of / firewall filtering);
+- engine: `engine.py` (WalletLedger + RiskGuard + NextBarFillModel), `multi_engine.py`, `fill_model.py` (legacy shim), `execution.py` (TIF / Limit / Stop / IntrabarPathPolicy; W13 TWAP/VWAP schedule lab with ASSUMED impact);
+- accounting/risk: `accounting.py`, `portfolio.py`, `risk_guard.py`, `risk_analytics.py`, `scenario_risk.py`, `trading_live_guard.py`;
+- event intelligence: `event_intel.py` (PIT fundamentals/earnings/CA; no auto price adjust);
+- institutional ops: `institutional_ops.py`, `champion_challenger.py`, `research_director.py`, `institutional_team.py`, `paper_forward_drift.py`, `learning_multi_asset.py`;
+- data realism: `universe.py` (PIT membership), `costs.py` (CostModelPack provenance), `stats_inferential.py` (DSR/PBO/FDR/bootstrap/CPCV geometry);
+- strategy governance: `strategy_asset.py`, `strategy_dsl.py` (v3), `regimes.py`, `hpo.py`, `curriculum.py`;
+- agent lab: `agent_lab.py` (scientific search / tournaments / lesson trust);
+- strategy learning: `policy.py`, `learning_types.py`, `learning_fitness.py`, `learning_candidates.py`, `learning.py`, `learning_runtime.py`;
+- paper ops: `paper_deployment.py`, `paper_forward.py`;
+- portefeuille: `portefeuille/` including `intelligence.py` institutional exposure + `attribution.py` contributions;
+- strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py`, `position_episodes.py`;
+- multi-agent hooks: `roles.py`, `role_knowledge.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py`, `trading_brain.py`;
 - paper path: `paper_broker.py`;
 - service/store/worker/types/capabilities;
 - `orchestra/` — trading-only orchestration on the existing Agent Fleet and Model Control Plane.
+
+**Institutional Trading Program:** sequential waves W00–W36 are tracked in `Data/backend/tests/institutional_trading_program.json`. Editor/`Data/HADES` are out of scope. Live trading remains **BLOCKED**. Options and fixed income remain **NOT_IMPLEMENTED** for trading; FX/futures OHLCV paper is AVAILABLE with honest labels.
 
 **T1 (causality + data foundation):** historical agents observe markets through `MarketView`; information sources must respect `available_at <= simulation as_of`; sealed market dataset versions are content-addressed and immutable (corrections create a new version); every run stores a `TradingKnowledgeSnapshot`.
 

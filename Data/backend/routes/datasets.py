@@ -127,6 +127,19 @@ class LearnBody(BaseModel):
     offlineOnly: bool = True
 
 
+class ClassificationOverrideBody(BaseModel):
+    domain: str
+    tradingKind: str | None = None
+    reason: str = ""
+    versionId: str | None = None
+
+
+class ClassifyBody(BaseModel):
+    versionId: str | None = None
+    force: bool = False
+    modelAdvisory: dict[str, Any] | None = None
+
+
 class MixtureCreateBody(BaseModel):
     name: str
     components: list[dict[str, Any]] = Field(default_factory=list)
@@ -215,6 +228,20 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
     def learning_activity(limit: int = 40) -> dict:
         """Live Dataset Learning activity (real dataset_jobs) for Agents/Dataset UIs."""
         return service.learning_activity(limit=limit)
+
+    @router.post("/api/datasets/learning/reconcile")
+    def reconcile_learning_state() -> dict:
+        """Reconcile dead workers + stale INDEX jobs against READY Brain indexes."""
+        interrupted = service.runner.reconcile_interrupted()
+        stale = service.reconcile_stale_learning_jobs()
+        return {
+            "interrupted": [j.public_dict() for j in interrupted],
+            "staleReconciled": [j.public_dict() for j in stale],
+            "truth": {
+                "ready_brain_index_dominates_stale_job": True,
+                "dead_worker_cannot_fake_running": True,
+            },
+        }
 
     @router.post("/api/datasets/sidecars/reconcile")
     def reconcile_sidecars(maxFiles: int = 2000) -> dict:
@@ -506,11 +533,87 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             ds = service.get_dataset(dataset_id)
         except DatasetError as exc:
             _raise(exc)
+        learning = service.learning_state_for_dataset(dataset_id)
         return {
             "dataset": ds.public_dict(),
             "versions": [v.public_dict() for v in service.list_versions(dataset_id)],
             "files": [f.public_dict() for f in service.store.list_files(dataset_id)],
             "indexes": [i.public_dict() for i in service.store.list_indexes(dataset_id)],
+            "learningState": learning,
+            "brain": learning,  # canonical learning state is Brain-readiness truth
+            "brainStatus": learning.get("brainStatus"),
+            "learned": learning.get("learned"),
+            "canonicalState": learning.get("canonicalState"),
+        }
+
+    @router.get("/api/datasets/{dataset_id}/learning-state")
+    def get_learning_state(dataset_id: str) -> dict:
+        if dataset_id in DATASETS_STATIC_SEGMENTS:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "route_not_found",
+                    "message": f"/{dataset_id} is a reserved datasets path; no handler matched",
+                },
+            )
+        try:
+            learning = service.learning_state_for_dataset(dataset_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {
+            "learningState": learning,
+            "truth": learning.get("truth") or {},
+        }
+
+    @router.get("/api/datasets/{dataset_id}/classification")
+    def get_classification(dataset_id: str, versionId: str | None = None) -> dict:
+        try:
+            plan = service.classification_routing_plan(dataset_id, version_id=versionId)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return plan
+
+    @router.post("/api/datasets/{dataset_id}/classification/classify")
+    def classify_dataset(dataset_id: str, body: ClassifyBody | None = None) -> dict:
+        body = body or ClassifyBody()
+        try:
+            classification = service.ensure_dataset_classification(
+                dataset_id,
+                version_id=body.versionId,
+                force=body.force,
+                model_advisory=body.modelAdvisory,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {
+            "classification": classification.public_dict(),
+            "routing": service.classification_routing_plan(
+                dataset_id, version_id=body.versionId
+            ),
+        }
+
+    @router.post("/api/datasets/{dataset_id}/classification/override")
+    def override_classification(dataset_id: str, body: ClassificationOverrideBody) -> dict:
+        try:
+            classification = service.override_dataset_classification(
+                dataset_id,
+                domain=body.domain,
+                trading_kind=body.tradingKind,
+                reason=body.reason,
+                version_id=body.versionId,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {
+            "classification": classification.public_dict(),
+            "routing": service.classification_routing_plan(
+                dataset_id, version_id=body.versionId
+            ),
+            "truth": {"operator_override": True},
         }
 
     @router.delete("/api/datasets/{dataset_id}")

@@ -125,3 +125,79 @@ def generate_insights(
         )
 
     return insights[:6]
+
+
+def institutional_exposure_intelligence(
+    *,
+    book: PortfolioBook,
+    marks: dict[str, Any],
+    settings: dict[str, Any],
+    allocations: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """W16 — structured exposure / allocation / constraint utilization facts."""
+    eq = float(book.equity(marks))
+    positions = book.open_positions_public(marks)
+    by_symbol = {
+        p["symbol"]: {
+            "marketValue": float(p["market_value"]),
+            "allocationPct": float(p["allocation_pct"]),
+            "strategyId": p.get("strategy_id"),
+        }
+        for p in positions
+    }
+    by_strategy: dict[str, float] = {}
+    for p in positions:
+        sid = str(p.get("strategy_id") or "unattributed")
+        by_strategy[sid] = by_strategy.get(sid, 0.0) + abs(float(p["market_value"]))
+    targets = dict(allocations or {})
+    drifts: list[dict[str, Any]] = []
+    for sym, tgt in targets.items():
+        actual = by_symbol.get(sym, {}).get("allocationPct", 0.0)
+        drifts.append(
+            {
+                "symbol": sym,
+                "targetPct": float(tgt),
+                "actualPct": float(actual),
+                "driftPct": float(actual) - float(tgt),
+                "status": "MEASURED",
+            }
+        )
+    conc_limit = float(settings.get("asset_concentration_pct", 40.0))
+    cash_tgt = float(settings.get("cash_reserve_pct", 10.0))
+    dd_limit = float(settings.get("max_drawdown_pct", 20.0))
+    cash_pct = (float(book.cash) / eq * 100.0) if eq > 0 else 0.0
+    dd = float(book.drawdown_pct(marks))
+    max_alloc = max((float(p["allocation_pct"]) for p in positions), default=0.0)
+    constraints = {
+        "concentration": {
+            "limitPct": conc_limit,
+            "utilizationPct": max_alloc,
+            "breached": max_alloc > conc_limit,
+            "status": "MEASURED",
+        },
+        "cashReserve": {
+            "targetPct": cash_tgt,
+            "actualPct": cash_pct,
+            "breached": cash_pct < cash_tgt,
+            "status": "MEASURED",
+        },
+        "drawdown": {
+            "limitPct": dd_limit,
+            "actualPct": dd,
+            "utilizationPct": (dd / dd_limit * 100.0) if dd_limit else 0.0,
+            "breached": dd >= dd_limit,
+            "status": "MEASURED",
+        },
+    }
+    return {
+        "equity": eq,
+        "bySymbol": by_symbol,
+        "byStrategy": {k: {"marketValue": v, "pctEquity": (v / eq * 100.0) if eq else 0.0} for k, v in by_strategy.items()},
+        "allocationDrifts": drifts,
+        "constraints": constraints,
+        "truth": {
+            "from_real_portfolio_book": True,
+            "no_factor_risk_engine": True,
+            "heuristic_insights_are_separate": True,
+        },
+    }

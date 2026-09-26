@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .epistemic import EpistemicFirewall, is_available, resolve_available_at
+from .epistemic import EpistemicFirewall, filter_hits_for_as_of, is_available, resolve_available_at
 
 
 class BrainMiss:
@@ -90,27 +90,21 @@ class BrainFacade:
             boundary = fw.as_of
         if not boundary:
             return retrieval
-        kept: list[dict[str, Any]] = []
-        dropped = 0
-        for hit in retrieval.hits:
-            # Neuro assessments are advisory hypotheses generated at decision time.
-            if hit.get("source") == "neuro":
-                kept.append(hit)
-                continue
-            stamp = resolve_available_at(hit)
-            if stamp is None:
-                # Untimestamped material is treated as general / timeless knowledge.
-                kept.append(hit)
-                continue
-            if not is_available(available_at=stamp, as_of=boundary):
-                dropped += 1
-                if fw is not None:
-                    fw.violations += 1
-                continue
-            kept.append(hit)
+        kept, receipts = filter_hits_for_as_of(
+            [h for h in retrieval.hits if isinstance(h, dict)],
+            as_of=str(boundary),
+            time_sensitive_default=bool(time_sensitive),
+            allow_timeless_reference=True,
+            firewall=fw,
+        )
         notes = list(retrieval.notes)
-        if dropped:
-            notes.append(f"as_of filter dropped {dropped} hit(s) newer than {boundary}")
+        if receipts:
+            notes.append(f"as_of filter dropped {len(receipts)} hit(s) vs {boundary}")
+            # Bound leakage receipts — never attach huge content blobs.
+            notes.append(
+                "leakage_receipts="
+                + str([r.public_dict() for r in receipts[:12]])
+            )
         return BrainRetrieval(hits=kept, miss=len(kept) == 0, notes=notes)
 
     def _retrieve(
@@ -177,6 +171,46 @@ class BrainFacade:
 
         return BrainRetrieval(hits=hits, miss=len(hits) == 0, notes=notes)
 
+    def retrieve_trading(self, request: Any, *, firewall: EpistemicFirewall | None = None) -> Any:
+        """Typed trading retrieval via canonical adapter when knowledge supports it."""
+        knowledge = self.knowledge
+        if knowledge is not None and hasattr(knowledge, "retrieve_trading"):
+            return knowledge.retrieve_trading(request, firewall=firewall)
+        # Fallback: plain query through existing retrieve path.
+        from .trading_brain import TradingRetrievalRequest, TradingRetrievalResult, TradingRetrievalHit
+
+        if not isinstance(request, TradingRetrievalRequest):
+            request = TradingRetrievalRequest(query=str(getattr(request, "query", request)))
+        raw = self.retrieve(
+            request.expanded_query(),
+            limit=request.max_hits,
+            as_of=request.decision_as_of,
+            firewall=firewall,
+        )
+        hits = [
+            TradingRetrievalHit(
+                source_kind=str(h.get("source") or "knowledge"),
+                document_id=h.get("document_id") or h.get("documentId"),
+                title=str(h.get("title") or ""),
+                content_excerpt=str(h.get("content") or h.get("contentExcerpt") or "")[:800],
+                score=h.get("score"),
+                published_at=h.get("published_at") or h.get("publishedAt"),
+                available_at=h.get("available_at") or h.get("availableAt"),
+                retrieval_mode=str(h.get("retrievalMode") or "lexical"),
+                embeddings_semantic=h.get("embeddingsSemantic"),
+            )
+            for h in raw.hits
+            if isinstance(h, dict)
+        ]
+        return TradingRetrievalResult(
+            hits=hits,
+            retrieval_mode="lexical",
+            embeddings_semantic=False,
+            notes=list(raw.notes) + ["retrieve_trading_fallback_plain"],
+            miss=len(hits) == 0,
+            request=request.public_dict(),
+        )
+
 
 class NullKnowledge:
     def search(self, query: str, *, limit: int = 3) -> list[dict[str, Any]]:
@@ -193,7 +227,37 @@ class NullEvidence:
         return []
 
 
-def adapt_knowledge_store(store: Any) -> KnowledgeSearcher:
+def adapt_knowledge_store(
+    store: Any,
+    *,
+    hybrid_retriever: Any | None = None,
+    staged_retriever: Any | None = None,
+    brain_access: Any | None = None,
+) -> KnowledgeSearcher:
+    """Adapt KnowledgeStore (and optional canonical retrievers) for BrainFacade.
+
+    Prefer Hybrid/Staged/BrainAccess when provided — never invent a second owner.
+    """
+    # Lazy-build HybridRetriever from KnowledgeStore when embeddings exist.
+    retriever = hybrid_retriever
+    if retriever is None and store is not None:
+        try:
+            from Data.modules.knowledge.retrieval import HybridRetriever
+
+            retriever = HybridRetriever(store)
+        except Exception:  # noqa: BLE001
+            retriever = None
+
+    if retriever is not None or staged_retriever is not None or brain_access is not None:
+        from .trading_brain import adapt_canonical_knowledge
+
+        return adapt_canonical_knowledge(
+            knowledge_store=store,
+            hybrid_retriever=retriever,
+            staged_retriever=staged_retriever,
+            brain_access=brain_access,
+        )
+
     class Adapter:
         def search(self, query: str, *, limit: int = 3) -> list[dict[str, Any]]:
             if hasattr(store, "search_lexical"):
@@ -201,7 +265,10 @@ def adapt_knowledge_store(store: Any) -> KnowledgeSearcher:
                 out = []
                 for row in rows:
                     if isinstance(row, dict):
-                        out.append(row)
+                        item = dict(row)
+                        item.setdefault("retrievalMode", "lexical")
+                        item.setdefault("embeddingsSemantic", False)
+                        out.append(item)
                     else:
                         out.append(
                             {
@@ -210,12 +277,32 @@ def adapt_knowledge_store(store: Any) -> KnowledgeSearcher:
                                 "title": getattr(row, "title", ""),
                                 "content": (getattr(row, "content", "") or "")[:500],
                                 "score": getattr(row, "score", 0.0),
+                                "retrievalMode": "lexical",
+                                "embeddingsSemantic": False,
                             }
                         )
                 return out
             return []
 
     return Adapter()
+
+
+def attach_trading_brain_adapter(
+    facade: BrainFacade,
+    *,
+    knowledge_store: Any | None = None,
+    hybrid_retriever: Any | None = None,
+    staged_retriever: Any | None = None,
+    brain_access: Any | None = None,
+) -> BrainFacade:
+    """Replace facade.knowledge with canonical TradingBrainAdapter searcher."""
+    facade.knowledge = adapt_knowledge_store(
+        knowledge_store,
+        hybrid_retriever=hybrid_retriever,
+        staged_retriever=staged_retriever,
+        brain_access=brain_access,
+    )
+    return facade
 
 
 def adapt_memory_store(store: Any) -> MemorySearcher:

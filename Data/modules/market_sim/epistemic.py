@@ -24,6 +24,14 @@ class EvaluationWindow(str, Enum):
     LIVE_PAPER = "LIVE_PAPER"
 
 
+class TemporalClass(str, Enum):
+    """Information temporal class for historical decision access."""
+
+    TIME_SENSITIVE = "TIME_SENSITIVE"
+    TIMELESS_REFERENCE = "TIMELESS_REFERENCE"
+    UNKNOWN = "UNKNOWN"
+
+
 # Keys inspected when resolving availability on heterogeneous records.
 _AVAILABLE_AT_KEYS = (
     "available_at",
@@ -33,6 +41,12 @@ _FALLBACK_TIME_KEYS = (
     "publication_time",
     "published_at",
     "publishedAt",
+    "effective_at",
+    "effectiveAt",
+    "observed_at",
+    "observedAt",
+    "ingested_at",
+    "ingestedAt",
     "received_at",
     "receivedAt",
     "provider_time",
@@ -43,6 +57,14 @@ _FALLBACK_TIME_KEYS = (
     "ts",
     "event_time",
     "eventTime",
+)
+
+_TIMELESS_MARKERS = (
+    "timeless",
+    "TIMELESS_REFERENCE",
+    "reference_definition",
+    "educational_reference",
+    "general_reference",
 )
 
 
@@ -122,6 +144,146 @@ def resolve_available_at(record: Mapping[str, Any]) -> str | None:
     # Latest of known stamps is the conservative availability bound.
     parsed.sort(key=lambda item: item[0])
     return parsed[-1][1]
+
+
+def resolve_temporal_class(record: Mapping[str, Any]) -> TemporalClass:
+    """Classify whether content may be treated as timeless reference knowledge.
+
+    Missing timestamp must NOT automatically imply timeless.
+    Only explicitly marked reference/general educational content is timeless.
+    """
+    for key in ("temporal_class", "temporalClass", "knowledge_class", "knowledgeClass"):
+        raw = record.get(key)
+        if raw:
+            try:
+                return TemporalClass(str(raw).upper())
+            except ValueError:
+                pass
+    meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    for key in ("temporal_class", "temporalClass", "knowledge_class", "knowledgeClass"):
+        raw = meta.get(key)
+        if raw:
+            try:
+                return TemporalClass(str(raw).upper())
+            except ValueError:
+                pass
+    for marker in _TIMELESS_MARKERS:
+        if record.get(marker) is True or meta.get(marker) is True:
+            return TemporalClass.TIMELESS_REFERENCE
+        if str(record.get("kind") or "").lower() == marker.lower():
+            return TemporalClass.TIMELESS_REFERENCE
+        if str(meta.get("kind") or "").lower() == marker.lower():
+            return TemporalClass.TIMELESS_REFERENCE
+    # Explicit content-type hints for trading/news/fundamentals are time-sensitive.
+    source_kind = str(record.get("source_kind") or record.get("sourceKind") or record.get("source") or "").lower()
+    title = str(record.get("title") or "").lower()
+    if any(tok in source_kind or tok in title for tok in ("news", "filing", "earnings", "fundamental", "macro", "quote", "trade")):
+        return TemporalClass.TIME_SENSITIVE
+    if resolve_available_at(record) is not None:
+        return TemporalClass.TIME_SENSITIVE
+    return TemporalClass.UNKNOWN
+
+
+@dataclass
+class LeakageReceipt:
+    """Bounded truth metadata when future information is excluded."""
+
+    reason: str
+    as_of: str
+    available_at: str | None = None
+    temporal_class: str | None = None
+    document_id: str | None = None
+    source_kind: str | None = None
+    title: str | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "reason": self.reason,
+            "asOf": self.as_of,
+            "availableAt": self.available_at,
+            "temporalClass": self.temporal_class,
+            "documentId": self.document_id,
+            "sourceKind": self.source_kind,
+            "title": (self.title or "")[:120],
+            "truth": {
+                "content_blob_not_logged": True,
+                "available_at_is_primary_boundary": True,
+            },
+        }
+
+
+def filter_hits_for_as_of(
+    hits: Sequence[Mapping[str, Any]],
+    *,
+    as_of: str,
+    time_sensitive_default: bool = True,
+    allow_timeless_reference: bool = True,
+    firewall: EpistemicFirewall | None = None,
+) -> tuple[list[dict[str, Any]], list[LeakageReceipt]]:
+    """Fail-closed filter for historical trading knowledge/data access.
+
+    Rules:
+    - TIMELESS_REFERENCE may pass without available_at when explicitly marked.
+    - TIME_SENSITIVE / UNKNOWN without available_at are blocked by default.
+    - available_at > as_of is blocked.
+    """
+    kept: list[dict[str, Any]] = []
+    receipts: list[LeakageReceipt] = []
+    for raw in hits:
+        item = dict(raw)
+        # Neuro assessments generated at decision time are not historical docs.
+        if str(item.get("source") or "") == "neuro":
+            kept.append(item)
+            continue
+        temporal = resolve_temporal_class(item)
+        stamp = resolve_available_at(item)
+        doc_id = item.get("document_id") or item.get("documentId") or item.get("refId")
+        title = item.get("title")
+        source_kind = item.get("source_kind") or item.get("sourceKind") or item.get("source")
+
+        if stamp is None:
+            if temporal == TemporalClass.TIMELESS_REFERENCE and allow_timeless_reference:
+                kept.append(item)
+                continue
+            # Missing timestamp: NOT timeless by default.
+            if time_sensitive_default or temporal in {
+                TemporalClass.TIME_SENSITIVE,
+                TemporalClass.UNKNOWN,
+            }:
+                if firewall is not None:
+                    firewall.violations += 1
+                receipts.append(
+                    LeakageReceipt(
+                        reason="missing_available_at_blocked",
+                        as_of=as_of,
+                        available_at=None,
+                        temporal_class=temporal.value,
+                        document_id=str(doc_id) if doc_id else None,
+                        source_kind=str(source_kind) if source_kind else None,
+                        title=str(title) if title else None,
+                    )
+                )
+                continue
+            kept.append(item)
+            continue
+
+        if not is_available(available_at=stamp, as_of=as_of):
+            if firewall is not None:
+                firewall.violations += 1
+            receipts.append(
+                LeakageReceipt(
+                    reason="available_at_after_as_of",
+                    as_of=as_of,
+                    available_at=str(stamp),
+                    temporal_class=temporal.value,
+                    document_id=str(doc_id) if doc_id else None,
+                    source_kind=str(source_kind) if source_kind else None,
+                    title=str(title) if title else None,
+                )
+            )
+            continue
+        kept.append(item)
+    return kept, receipts
 
 
 @dataclass(frozen=True)

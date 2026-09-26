@@ -10,8 +10,9 @@ from typing import Any
 from Data.modules.common.hashing import sha256_file
 from Data.modules.common.paths import PathEscapeError, safe_join, safe_relpath
 
-from .dataset_pipeline import MarketDatasetPipeline, SealedMarketDataset
-from .ohlcv import infer_symbol_timeframe, validate_ohlcv_file
+from .dataset_pipeline import MarketDatasetPipeline, SealedMarketDataset, analyze_bars
+from .ohlcv import infer_symbol_timeframe, load_ohlcv, validate_ohlcv_file
+from .pit_fabric import quality_with_pit_labels
 from .store import MarketSimStore
 from .types import DataKind, MarketDataSource, MarketSimError, SourceStatus
 
@@ -77,6 +78,49 @@ class MarketDataStore:
         validation = validate_ohlcv_file(path)
         now = utc_now()
         status = SourceStatus.READY.value if validation.ok else SourceStatus.INVALID.value
+        validation_error = validation.error
+        quality_payload: dict[str, Any] | None = validation.quality
+        quality_verdict = "UNMEASURED"
+        # Institutional W06 — schema parse is not a quality PASS; run full report.
+        if validation.ok:
+            try:
+                bars = load_ohlcv(path)
+                report = analyze_bars(
+                    bars,
+                    timeframe=timeframe,
+                    content_hash=validation.content_hash,
+                    byte_size=validation.byte_size,
+                    adjustment_mode="as_traded",
+                    survivorship_bias_risk="UNMEASURED",
+                )
+                quality_payload = quality_with_pit_labels(
+                    report,
+                    adjustment_mode="as_traded",
+                    survivorship_mode="UNMEASURED",
+                )
+                quality_verdict = report.quality_verdict
+                if not report.ok:
+                    status = SourceStatus.INVALID.value
+                    validation_error = "; ".join(report.errors[:3]) or "quality FAIL"
+            except MarketSimError as exc:
+                status = SourceStatus.INVALID.value
+                validation_error = exc.message
+                quality_verdict = "FAIL"
+                quality_payload = {
+                    "quality": "FAIL",
+                    "qualityVerdict": "FAIL",
+                    "errors": [exc.message],
+                    "truth": {"parsed_csv_is_not_quality_pass": True},
+                }
+        elif validation.error:
+            quality_verdict = "FAIL"
+            quality_payload = {
+                "quality": "FAIL",
+                "qualityVerdict": "FAIL",
+                "errors": [validation.error],
+                "gap_count": validation.gap_count,
+                "truth": {"parsed_csv_is_not_quality_pass": True},
+            }
         existing = self.store.get_source_by_path(rel)
         source_id = existing.source_id if existing else str(uuid.uuid4())
         source = MarketDataSource(
@@ -91,13 +135,14 @@ class MarketDataStore:
             start_ts=validation.start_ts,
             end_ts=validation.end_ts,
             byte_size=validation.byte_size,
-            validation_error=validation.error,
+            validation_error=validation_error,
             metadata={
                 "parquet_available": validation.parquet_available,
                 "absolute_path": str(path),
                 "duplicate_count": validation.duplicate_count,
                 "gap_count": validation.gap_count,
-                "quality": validation.quality,
+                "quality": quality_payload,
+                "qualityVerdict": quality_verdict,
             },
             created_at=existing.created_at if existing else now,
             updated_at=now,

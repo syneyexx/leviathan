@@ -35,6 +35,8 @@ import type {
   DatasetFile,
   DatasetIndex,
   DatasetJob,
+  DatasetBrainStatus,
+  DatasetLearningState,
   DatasetLearningStatus,
   DatasetPreviewRow,
   DatasetRecord,
@@ -1062,8 +1064,28 @@ export const api = {
     versions: DatasetVersion[];
     files: DatasetFile[];
     indexes: DatasetIndex[];
+    learningState?: DatasetLearningState;
+    brain?: DatasetLearningState | DatasetBrainStatus;
+    brainStatus?: string;
+    learned?: boolean;
+    canonicalState?: string;
   }> {
     return request(`/api/datasets/${encodeURIComponent(datasetId)}`);
+  },
+
+  getDatasetLearningState(datasetId: string): Promise<{
+    learningState: DatasetLearningState;
+    truth?: Record<string, unknown>;
+  }> {
+    return request(`/api/datasets/${encodeURIComponent(datasetId)}/learning-state`);
+  },
+
+  reconcileDatasetLearning(): Promise<{
+    interrupted: DatasetJob[];
+    staleReconciled: DatasetJob[];
+    truth?: Record<string, boolean>;
+  }> {
+    return request("/api/datasets/learning/reconcile", { method: "POST" });
   },
 
   deleteDataset(datasetId: string): Promise<{ deleted: boolean; datasetId: string }> {

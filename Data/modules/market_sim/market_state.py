@@ -364,6 +364,81 @@ class MultiTimeframeView:
             "truth": {"shared_as_of": True, "no_future_frames": True},
         }
 
+    def multi_horizon_pack(
+        self,
+        *,
+        portfolio: Mapping[str, Any] | None = None,
+        lookback: int = 120,
+        feature_names: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """W14 — aligned multi-horizon state pack with incomplete higher-TF honesty."""
+        return build_multi_horizon_state(
+            self,
+            portfolio=portfolio,
+            lookback=lookback,
+            feature_names=feature_names,
+        )
+
+
+def build_multi_horizon_state(
+    view: MultiTimeframeView,
+    *,
+    portfolio: Mapping[str, Any] | None = None,
+    lookback: int = 120,
+    feature_names: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Shared as_of multi-TF pack: per-frame states + cross-TF feature alignment."""
+    names = list(feature_names or ("return", "realized_volatility"))
+    states = view.states(portfolio=portfolio, lookback=lookback)
+    aligned: dict[str, dict[str, Any]] = {}
+    incomplete: list[str] = []
+    for tf, state in states.items():
+        row: dict[str, Any] = {}
+        for name in names:
+            feat = state.features.get(name) if isinstance(state.features, dict) else None
+            if feat is None:
+                try:
+                    fv = view.feature(name, timeframe=None if tf in {view.base.timeframe, "base"} else tf)
+                    row[name] = fv.public_dict() if hasattr(fv, "public_dict") else {"value": fv.value, "status": fv.status}
+                except Exception:  # noqa: BLE001 — honest gap
+                    row[name] = {"status": "UNMEASURED", "reason": "feature_unavailable"}
+            else:
+                row[name] = feat
+        aligned[tf] = row
+        bar_count = int((state.provenance or {}).get("bar_count") or 0)
+        if tf != (view.base.timeframe or "base") and bar_count and bar_count < max(3, lookback // 8):
+            incomplete.append(tf)
+    agreement: dict[str, Any] = {"status": "UNMEASURED", "pairs": []}
+    base_key = view.base.timeframe or "base"
+    base_ret = aligned.get(base_key, {}).get("return")
+    if isinstance(base_ret, dict) and base_ret.get("value") is not None:
+        pairs = []
+        for tf, row in aligned.items():
+            if tf == base_key:
+                continue
+            other = row.get("return")
+            if isinstance(other, dict) and other.get("value") is not None:
+                same = (float(base_ret["value"]) >= 0) == (float(other["value"]) >= 0)
+                pairs.append({"base": base_key, "other": tf, "sameSign": same})
+        if pairs:
+            agreement = {
+                "status": "MEASURED",
+                "pairs": pairs,
+                "allAgree": all(p["sameSign"] for p in pairs),
+            }
+    return {
+        "asOf": view.as_of,
+        "states": {k: v.public_dict() for k, v in states.items()},
+        "alignedFeatures": aligned,
+        "incompleteHigherTf": incomplete,
+        "crossTfAgreement": agreement,
+        "truth": {
+            "shared_as_of": True,
+            "incomplete_higher_tf_labelled": True,
+            "ohlcv_is_not_orderbook": True,
+        },
+    }
+
 
 def aggregate_bars(bars: Sequence[Bar], *, target_seconds: int) -> list[Bar]:
     """Aggregate finer bars into coarser OHLCV buckets (causal, left-closed)."""
