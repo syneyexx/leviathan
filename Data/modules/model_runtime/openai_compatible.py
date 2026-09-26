@@ -289,13 +289,28 @@ class OpenAICompatibleLLM:
         prompt_cache_key: str | None = None,
         cache_control: dict[str, Any] | None = None,
         reject_unsupported: bool = True,
+        context_window: int | None = None,
+        on_context_overflow: str = "refuse",
+        enforce_structured: bool = True,
+        structured_fail_closed: bool = True,
     ) -> dict[str, Any]:
         """Low-level completion for cognition / tool loops — no ContextBuilder rewrite.
 
         Frontier transport options are dialect-adapted. Unsupported *requested*
         capabilities are never silently dropped (CAPABILITY_NOT_SUPPORTED).
+
+        W04 inference contract:
+        - tool-calling is probed/recorded; tools never silently omitted from payload
+        - json_schema / structured responses repair or fail closed (UNAVAILABLE)
+        - context overflow refuses or truncates with an explicit signal
         """
         from .dialect import InferenceTransportOptions, adapt_transport
+        from .inference_contract import (
+            enforce_context_bounds,
+            enforce_structured_response,
+            probe_tool_calling_transport,
+            record_tool_calling_response,
+        )
 
         model = model_id or await self.resolve_model(endpoint=endpoint, api_key=api_key)
         options = transport or InferenceTransportOptions(
@@ -313,9 +328,24 @@ class OpenAICompatibleLLM:
             reject_unsupported=reject_unsupported,
         )
         adaptation = adapt_transport(options, dialect_id=dialect_id)
+
+        tool_record = probe_tool_calling_transport(
+            tools=getattr(options, "tools", tools),
+            tool_choice=getattr(options, "tool_choice", tool_choice),
+            payload_fields=adaptation.payload_fields,
+            feature_states=adaptation.feature_states,
+        )
+
+        bounded_messages, context_signal = enforce_context_bounds(
+            list(messages),
+            context_window=context_window,
+            max_output_tokens=max_tokens,
+            policy=on_context_overflow,
+        )
+
         payload = self._completion_payload(
             model=model,
-            messages=messages,
+            messages=bounded_messages,
             temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
@@ -343,6 +373,20 @@ class OpenAICompatibleLLM:
             content = message.get("content")
             finish_reason = choice0.get("finish_reason")
             tool_calls = message.get("tool_calls")
+            reasoning_text = None
+            for key in ("reasoning_content", "reasoning", "thinking"):
+                raw_r = message.get(key)
+                if isinstance(raw_r, str) and raw_r:
+                    reasoning_text = raw_r
+                    break
+                if isinstance(raw_r, dict):
+                    for sub in ("content", "text", "summary"):
+                        inner = raw_r.get(sub)
+                        if isinstance(inner, str) and inner:
+                            reasoning_text = inner
+                            break
+                if reasoning_text:
+                    break
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMUnavailable("LLM server returned an unexpected chat-completion payload.") from exc
 
@@ -361,6 +405,12 @@ class OpenAICompatibleLLM:
         )
         if tool_calls:
             result["tool_calls"] = tool_calls
+        if reasoning_text:
+            result["reasoning"] = reasoning_text
+            result["reasoning_channel"] = {
+                "separation": "separated",
+                "truth": {"reasoning_not_merged_into_content": True},
+            }
         if isinstance(data, dict) and isinstance(data.get("choices"), list) and len(data["choices"]) > 1:
             result["candidates"] = data["choices"]
         # Attach dialect feature report (honest support states).
@@ -368,6 +418,36 @@ class OpenAICompatibleLLM:
         # Surface logprobs when provider returned them.
         if isinstance(choice0, dict) and choice0.get("logprobs") is not None:
             result["logprobs"] = choice0.get("logprobs")
+
+        tool_record = record_tool_calling_response(tool_record, tool_calls=tool_calls)
+        result["tool_calling"] = tool_record.public_dict()
+        result["context_bound"] = context_signal.public_dict()
+
+        # Structured / json_schema: repair or fail closed — never pretend success.
+        rf = getattr(options, "response_format", response_format)
+        if enforce_structured and rf is not None and not tool_calls:
+            structured = enforce_structured_response(
+                text,
+                rf if isinstance(rf, dict) else None,
+                fail_closed=structured_fail_closed,
+            )
+            result["structured"] = structured.public_dict()
+            if structured.schema_satisfied:
+                result["structured_output"] = structured.parsed
+            else:
+                # Explicit non-success — callers must not treat as structured OK.
+                result["structured_output"] = None
+        elif rf is not None and tool_calls:
+            result["structured"] = {
+                "requested": True,
+                "status": "deferred_tool_calls",
+                "schemaSatisfied": False,
+                "truth": {
+                    "structured_success_requires_schema_satisfaction": True,
+                    "tool_calls_skip_schema_enforcement_this_turn": True,
+                },
+            }
+
         return result
 
     async def chat(

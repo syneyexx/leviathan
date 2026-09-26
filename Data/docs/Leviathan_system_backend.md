@@ -477,12 +477,15 @@ Provider-facing execution lives here:
 
 - `openai_compatible.py` — OpenAI-compatible chat/completion client (frontier transport options: tools, response_format, logprobs, n/candidates, …);
 - `dialect.py` — provider dialect adaptation; requested capabilities are never silently dropped (`SUPPORTED` / `UNSUPPORTED` / `UNMEASURED`);
+- `inference_contract.py` — W04 inference contract: tool-calling probe/record, structured/json_schema repair-or-`UNAVAILABLE`, context refuse/truncate with explicit signal;
 - `serving.py` — serving supervisor/cancellation;
-- `streaming.py` — stream normalization;
+- `streaming.py` — stream normalization with separated `content` / `reasoning` / `tool` channels (partial separation is labeled honestly);
 - `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `port_allocator.py`, `llama_cpp_command.py` — managed serving boundaries;
 - `durable_requests.py`, `latency.py` — request/latency support.
 
 `Data/modules/cognition/model_adapter.py` bridges CognitiveRuntime to `ModelControlPlane.inference_session`; cognition must not call an independent private model client.
+
+**W04 inference contract (CURRENT):** Requested tools must appear in the provider payload or be recorded as rejected — never silently omitted (`TOOL_CALLING_DROPPED` if marked SUPPORTED but absent). `response_format` / `json_schema` responses are deterministically repaired (fence strip, span extract, trailing commas) then schema-validated; failure is `STRUCTURED_RESPONSE_UNAVAILABLE` — never a pretended structured success. Streaming keeps reasoning on `reasoning_delta` frames and tool calls on `tool_delta` frames; content reduction ignores reasoning. Context overflow either refuses (`CONTEXT_WINDOW_EXCEEDED`) or truncates with `CONTEXT_TRUNCATED` and an explicit `context_bound` signal.
 
 ---
 
@@ -1150,19 +1153,20 @@ Incomplete / NOT_STARTED / UNMEASURED / FEATURE_GATED are **not** PASS. Baseline
 
 Production-quality program ledger (machine state): `Data/backend/tests/production_quality_program.json` maps waves W00–W23 onto existing R/G/F identifiers. Status is never PASS without executed evidence.
 
-### Production-quality integrity repairs (W00–W03 CURRENT)
+### Production-quality integrity repairs (W00–W04 CURRENT)
 
 - **W00:** Default frontend Vite config no longer statically imports `editor/vite-plugin.mjs`. Editor mode loads only when `LEVIATHAN_EDITOR=1` and the plugin file exists; otherwise it raises a precise configuration error. Excluded trees (`Data/HADES/`, `editor/`) remain unmodified.
 - **W01:** `AssistantBenchmarkRunner` never fabricates `ACK` for a missing model or retry (`force_ack` removed). Absent model → `measured=False` / UNAVAILABLE. Retries re-invoke the real caller and preserve attempt evidence. `TaskRunResult.truth` is derived (component vs model-quality), not a fixed end-to-end claim. Token usage is provider-reported or an explicit estimate — never word-count mislabeled as tokens. Trading verifier frontend globs enumerate `.ts`/`.tsx` explicitly (no brace-expansion assumption).
 - **W02:** `run_research_campaign_on_worker` executes canonical gym episodes per iteration; trials complete only with simulation receipts; wins come from acceptance, not trial count; zero-risk promotion inputs are not fabricated. `AcceptanceCriteria.evaluate` and `experiments.evaluate_acceptance` fail closed on missing/NaN/infinite metrics and refuse unit inference from magnitude. `evaluate_candidate_pipeline` enforces `max_candidates` atomically (`CANDIDATE_BUDGET_EXHAUSTED`). `may_promote_to` / `promote_asset` reject caller booleans and enforce stage prerequisites. `MarketView.feature` cache keys include clock index/as_of. Citation validity without a report audit is `UNMEASURED`. `SchemaScorer` validates nested types (not keys only).
 - **W03:** `TaskModel.acceptance_criteria` are typed predicates (criterion ID, expected artifact/effect, verifier kind, scope, required evidence, status). `CompletionEngine` scores only `supported` as met; outcomes distinguish supported / contradicted / insufficient_evidence / unavailable_verifier / failed_execution. Legacy string `success_criteria` remain compatibility readers — unsupported semantics stay unverified. Trusted test receipts require suite/command, execution, workspace/artifact revision, and attempt id; unrelated shell `exit_code=0`, directory listings, stale receipts, fake artifact IDs, and model-authored evidence fields do not pass. Source refs alone do not satisfy claim support. Low-risk `simple_chat` may finish `COMPLETED_UNVERIFIED` without pretending verification.
+- **W04:** `model_runtime/inference_contract.py` + streaming channel honesty. Tool-calling is probed/recorded on every request; SUPPORTED-without-payload raises `TOOL_CALLING_DROPPED`. Structured/`json_schema` responses repair deterministically or fail closed with `STRUCTURED_RESPONSE_UNAVAILABLE` (never schemaSatisfied without validation). Reasoning stream frames stay on a separate channel; partial separation is labeled. Context overflow refuses or truncates with an explicit `context_bound` signal (`CONTEXT_WINDOW_EXCEEDED` / `CONTEXT_TRUNCATED`) — no silent overflow.
 
 ### Typed completion and autonomous lab lifecycle (W03 / W16 CURRENT)
 
 - **W03:** See production-quality W03 bullet above (typed `AcceptanceCriterion`, trusted test receipts, A04).
 - **W16:** Durable `market_sim_agent_labs` (migration 53). Control-plane methods create/start/pause/resume/cancel labs bound to research campaigns; worker path runs real simulations. HTTP: `/api/market-sim/lab/runs` (+ start/pause/resume/cancel). Valid outcomes remain `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED`.
 
-Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05, T14–T15); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_adversarial_w08_w17.py` (A08 preference supersession + T08 sealed rename inheritance); `test_adversarial_w09_w19.py` (T16 + NL citation/hedging); `test_trading_lab_w16_lifecycle.py`.
+Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05, T14–T15); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_adversarial_w04_inference_contract.py` (tool drop, structured UNAVAILABLE, reasoning channels, context bounds); `test_adversarial_w08_w17.py` (A08 preference supersession + T08 sealed rename inheritance); `test_adversarial_w09_w19.py` (T16 + NL citation/hedging); `test_trading_lab_w16_lifecycle.py`.
 
 Citation audit includes Dutch factual/hedging cues; hedging does not clear evidence duty when factual markers remain. `instruments.support_matrix()` / `family_capability()` keep options/futures/forex as explicit `NOT_IMPLEMENTED` (no silent equity fallback).
 
