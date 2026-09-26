@@ -1,4 +1,4 @@
-"""Persistence for trade orchestras (central leviathan.db, migration 43)."""
+"""Persistence for trade orchestras (Market DB; legacy schema from migration 43)."""
 
 from __future__ import annotations
 

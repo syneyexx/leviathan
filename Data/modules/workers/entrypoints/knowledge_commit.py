@@ -44,7 +44,9 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
     except Exception:  # noqa: BLE001
         pass
 
-    producer = CommitProducer(settings.database_path)
+    # Route producer + receipt polls to the Knowledge lane DB (not Control).
+    knowledge_db = getattr(settings, "knowledge_database_path", None) or settings.database_path
+    producer = CommitProducer(knowledge_db, domain="knowledge")
     result = producer.submit(
         operation="knowledge.commit_prepared",
         domain="knowledge",
@@ -80,7 +82,7 @@ def _handler(ctx: dict[str, Any], job: Any) -> dict[str, Any] | None:
         )
         return result.receipt.to_dict()
 
-    receipts = CommitReceiptStore(settings.database_path)
+    receipts = CommitReceiptStore(knowledge_db)
     deadline = time.time() + 600.0
     while time.time() < deadline:
         receipt = receipts.get_by_commit_id(result.commit_id)

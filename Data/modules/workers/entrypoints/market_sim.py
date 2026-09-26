@@ -21,7 +21,8 @@ def _handle_news_poll(ctx: dict[str, Any], job: Any) -> dict[str, Any]:
         from Data.modules.market_sim.orchestra.store import OrchestraStore
 
         settings = ctx["settings"]
-        store = OrchestraStore(Path(settings.database_path))
+        market_db = getattr(settings, "market_database_path", None) or settings.database_path
+        store = OrchestraStore(Path(market_db))
         service = TradingOrchestraService(store=store, job_runtime=ctx.get("job_runtime"))
         result = service.poll_now(feed_id=feed_id, job_runtime=ctx.get("job_runtime"))
         result["executed_via"] = "market_sim_worker"

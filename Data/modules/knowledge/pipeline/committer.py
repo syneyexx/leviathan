@@ -85,7 +85,8 @@ class KnowledgeCommitter:
     @classmethod
     def from_env(cls, ctx: dict[str, Any]) -> KnowledgeCommitter:
         settings = ctx["settings"]
-        return cls(settings.database_path)
+        db_path = getattr(settings, "knowledge_database_path", None) or settings.database_path
+        return cls(db_path)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

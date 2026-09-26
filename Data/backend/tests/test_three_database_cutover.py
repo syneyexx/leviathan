@@ -217,5 +217,84 @@ class FreshAndLegacyCutoverTests(unittest.TestCase):
             upgrade_all_databases(paths)
 
 
+class WorkerDomainPathRoutingTests(unittest.TestCase):
+    """Worker entrypoints must bind Knowledge/Market stores to owning DBs."""
+
+    def test_knowledge_prepare_uses_knowledge_path(self) -> None:
+        from Data.modules.workers.entrypoints import knowledge_prepare as kp
+
+        root = Path(tempfile.mkdtemp(prefix="lv_kp_"))
+        control = root / "control.db"
+        knowledge = root / "knowledge.db"
+        data_dir = root / "data"
+        data_dir.mkdir()
+
+        class _K:
+            chunk_max_chars = 200
+            chunk_overlap = 20
+
+        kcfg = _K()
+        kcfg.data_root = data_dir
+
+        class _S:
+            pass
+
+        settings = _S()
+        settings.database_path = control
+        settings.knowledge_database_path = knowledge
+        settings.knowledge = kcfg
+
+        store = kp._knowledge_store({"settings": settings})
+        self.assertEqual(Path(store.path).resolve(), knowledge.resolve())
+        self.assertTrue(knowledge.is_file())
+        self.assertFalse(control.is_file())
+
+    def test_market_sim_news_poll_uses_market_path(self) -> None:
+        from Data.modules.market_sim.orchestra.store import OrchestraStore
+
+        root = Path(tempfile.mkdtemp(prefix="lv_ms_"))
+        control = root / "control.db"
+        market = root / "market.db"
+
+        class _S:
+            database_path = control
+            market_database_path = market
+
+        settings = _S()
+        market_db = getattr(settings, "market_database_path", None) or settings.database_path
+        store = OrchestraStore(Path(market_db))
+        store.initialize()
+        self.assertEqual(Path(store.db_path).resolve(), market.resolve())
+        self.assertTrue(market.is_file())
+        self.assertFalse(control.is_file())
+
+    def test_storage_authority_three_db_truth(self) -> None:
+        from Data.modules.datasets.storage_authority import (
+            CANONICAL_PRODUCT_DB_BASENAMES,
+            classify_path,
+            storage_authority_public_dict,
+        )
+
+        truth = storage_authority_public_dict()
+        self.assertEqual(truth["truth"]["canonicalDatabaseCount"], 3)
+        self.assertEqual(
+            truth["truth"]["canonicalTransactionalAuthority"],
+            "three_sqlite_databases_control_knowledge_market",
+        )
+        self.assertIn("leviathan_knowledge.db", CANONICAL_PRODUCT_DB_BASENAMES)
+        root = Path(tempfile.mkdtemp(prefix="lv_sa_"))
+        paths = DatabasePaths(
+            control=root / "leviathan_control.db",
+            knowledge=root / "leviathan_knowledge.db",
+            market=root / "leviathan_market.db",
+        )
+        for _, p in paths:
+            p.write_bytes(b"")
+            self.assertEqual(
+                classify_path(p, database_paths=paths).value,
+                "CANONICAL_TRANSACTIONAL",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

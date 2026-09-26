@@ -771,7 +771,7 @@ Large native/Python streaming jobs (`validate` / `transform` / `export`) write *
 
 ### Storage authority
 
-DatasetStore (SQLite) remains canonical for catalog rows and version metadata. Corpus paths under `CorpusLayout` hold immutable raw / materialized / processed / export artifacts. Sidecars and the global catalog are recovery/browse aids only. Competing permanent domain DB filenames (`knowledge.db`, `trading.db`, `datasets.db`, …) are forbidden (`storage_authority.assert_no_competing_domain_db`). File-backed corpus data survives DatasetService reconstruction on the same canonical DB.
+DatasetStore (Knowledge DB SQLite) remains canonical for catalog rows and version metadata. Corpus paths under `CorpusLayout` hold immutable raw / materialized / processed / export artifacts. Sidecars and the global catalog are recovery/browse aids only. Competing permanent domain DB filenames (`knowledge.db`, `trading.db`, `datasets.db`, …) are forbidden (`storage_authority.assert_no_competing_domain_db`); only the three canonical product files (`leviathan_control.db` / `leviathan_knowledge.db` / `leviathan_market.db`) plus the legacy upgrade artifact `leviathan.db` are allowed product SQLite authorities. File-backed corpus data survives DatasetService reconstruction on the same Knowledge DB.
 
 API surfaces (backwards compatible): `GET/POST /api/datasets/catalog`, `POST /api/datasets/{id}/semantic/analyze`, `PATCH /api/datasets/{id}/semantic`, `GET /api/datasets/{id}/recovery`; list/get responses include `displayName` and semantic summary fields without removing legacy keys.
 
