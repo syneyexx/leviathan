@@ -492,6 +492,8 @@ class MemoryStore:
         if previous_memory_id:
             stale_ids.append(previous_memory_id)
         # Close every ACTIVE preference (PREFERENCE or legacy FACT) sharing the key.
+        # Stay in-scope: do not silently supersede GLOBAL prefs from a conversation edit.
+        scoped = bool(conversation_id or project_id or workspace_id or user_id or resolved_scope)
         for kind in (MemoryKind.PREFERENCE, MemoryKind.FACT):
             active = self.list(
                 status=MemoryStatus.ACTIVE,
@@ -501,6 +503,7 @@ class MemoryStore:
                 workspace_id=workspace_id,
                 user_id=user_id,
                 scope=resolved_scope,
+                include_global=not scoped,
                 limit=200,
             )
             for record in active:

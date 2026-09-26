@@ -410,6 +410,8 @@ Explicit trust states (`MemoryTrustState`):
 
 LLM confidence never becomes memory truth. Consolidation may admit semantic candidates as `AGENT_PROPOSED` until verification. Procedural skills derived from repeated VERIFIED cognition runs live in `cognition/skills.py` (`SkillLibrary`) — no hidden CoT.
 
+**A08 / W08 preference correction:** `MemoryStore.correct_preference` is the canonical write path when a user corrects an earlier stored preference. It persists a new `PREFERENCE` row, marks prior matching `PREFERENCE`/`FACT` rows (`preference_key` / tags) as `SUPERSEDED`, and leaves retrieval on ACTIVE-only so the current preference wins. No parallel preference store — BehaviorProfile remains conversational identity/settings; durable user preferences live here.
+
 Keep these concepts separate:
 
 1. conversation history;
@@ -906,6 +908,8 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 
 **W15 Trading Lab III (CURRENT):** `agent_lab.py` scientific search loop with pre-registered `AcceptanceCriteria` (threshold relaxation forbidden). Terminal outcomes `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED` (valid PASS). Lessons default `AGENT_PROPOSED`; sealed lineage contamination refused; tournaments VAL-first with Elo that does not prove profitability; public trajectory→dataset bridge (no hidden CoT). Live BLOCKED; A5 impossible.
 
+**T08 / W17 sealed rename inheritance:** `register_lineage_rename` / root lineage aliases keep sealed holdout exposure on the contamination root. Renamed or parent-lineage descendants still raise `HOLDOUT_LINEAGE_CONTAMINATED` for the same sealed dataset; a new holdout/version/epoch is required.
+
 **W14 Trading Lab II (CURRENT):** `strategy_asset.py` StrategyAsset + ExecutionCompatibilityManifest (live_compatible always false; promotion requires evidence). DSL v3 extends `strategy_dsl.py` (stop/take-profit/trailing/time-stop/sizing/universe/session/portfolio; no eval/exec). `regimes.py` volatility/trend/correlation/changepoint + synthetic fixtures; HMM FEATURE_GATED. `hpo.py` grid/random/evolutionary with mandatory Trial Ledger; sealed tuning forbidden; Bayesian/TPE FEATURE_GATED. `curriculum.py` logged reproducible stage progression through sealed/paper.
 
 **W13 Trading Lab I (CURRENT):** Point-in-time universe membership (`universe.py`: IPO/delist/rename/exchange events, corporate actions, session calendars, `DatasetRevisionIdentity`) — default `point_in_time`; today's universe must be labelled. Canonical `WalletLedger`/`WalletBook` multi-symbol `positions` with gross/net exposure and equity-at-marks; single-currency restriction refuses silent FX mix. `CostModelPack` (`costs.py`) labels Spread/Impact/Latency/Fee/Funding/Borrow as MEASURED/ASSUMED/UNMEASURED with provenance. Inferential honesty (`stats_inferential.py`): block bootstrap CIs, Monte Carlo resample, Deflated Sharpe (trial ledger N), PBO, Benjamini–Hochberg FDR, purge/embargo, CPCV path geometry, minimum useful sample. Live remains BLOCKED.
@@ -1165,7 +1169,7 @@ Citation audit includes Dutch factual/hedging cues; hedging does not clear evide
 ### Production-quality cognition / memory / sealed / web (W06 / W08 / W17 CURRENT)
 
 - **W06:** `CognitiveRuntime.cancel` propagates to registered `child_run_ids` (delegation metadata `child_run_id` / `run_id` auto-registers). Parent stop does not leave children running in-process.
-- **W08 / A08:** `MemoryStore.correct_preference` writes the new FACT, marks the prior matching `preference_key` SUPERSEDED, and ACTIVE search/list return only the current preference.
+- **W08 / A08:** `MemoryStore.correct_preference` writes a new `PREFERENCE`, supersedes every ACTIVE matching `preference_key` (`PREFERENCE` or legacy `FACT`), stays in-scope (no silent GLOBAL wipe from a conversation edit), and ACTIVE search/list return only the current preference.
 - **W17 / T08:** Sealed holdout contamination keys use a rename-stable root via `lineage_aliases` / `register_lineage_rename` / optional `root_lineage_id`. Renamed descendants cannot claim a fresh sealed holdout after revelation.
 - **Web (GI7):** `HttpWebProvider` search/fetch tolerate thin response doubles (`status_code` / `.text` via getattr + `content` fallback) so rate-limit and robots paths do not turn real provider results into `UNAVAILABLE`/`FAILED` under mocks. Fabrication remains forbidden.
 
