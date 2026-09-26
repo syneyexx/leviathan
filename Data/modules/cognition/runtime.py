@@ -88,6 +88,7 @@ class CognitiveRunState:
     context_public: dict[str, Any] | None = None
     completion: dict[str, Any] | None = None
     experience: dict[str, Any] | None = None
+    factuality: dict[str, Any] | None = None
     steering: list[str] = field(default_factory=list)
     trace_id: str | None = None
 
@@ -116,15 +117,46 @@ class CognitiveRunState:
             "error": self.error,
             "verification_passed": self.verification_passed,
             "completion": self.completion,
+            "factuality": self.factuality,
             "response_preview": (self.response_text or "")[:400],
             # Full response only when this run owns the user-visible answer (not shadow).
             "response": None if self.shadow else self.response_text,
             "response_ownership": "none" if self.shadow else ("cognition" if self.response_text else "none"),
+            "execution_class": getattr(self.task, "execution_class", None),
+            "verification_mode": getattr(self.task, "verification_mode", None),
+            "gi_specialists": list(
+                (self.task.metadata or {}).get("gi_specialists")
+                or getattr(self.task, "candidate_specialists", None)
+                or []
+            ),
+            "behavior_hash": (self.task.metadata or {}).get("behavior_hash")
+            or (self.task.metadata or {}).get("behavior_profile_hash"),
+            "behavior_profile_id": (self.task.metadata or {}).get("behavior_profile_id"),
+            "behavior_profile_version": (self.task.metadata or {}).get("behavior_profile_version"),
+            "context_budget": (
+                self.decision.budgets.max_context_tokens if self.decision else None
+            ),
+            "context_used": (
+                (self.context_public or {}).get("pack", {}).get("token_estimate")
+                if isinstance(self.context_public, dict)
+                else None
+            ),
+            "retrieval_hits": self._retrieval_hit_counts(),
+            "tools_invoked": [
+                str((o.payload or {}).get("capability_id") or "")
+                for o in self.observations
+                if o.kind == CognitiveObservationKind.TOOL_RESULT
+                and (o.payload or {}).get("capability_id")
+            ],
+            "tool_calls": self._tool_call_records(),
             "active_agents": [
                 o.payload.get("agent_kind")
                 for o in self.observations
                 if o.kind == CognitiveObservationKind.AGENT_RESULT
             ],
+            "agent_delegations": self._agent_delegation_records(),
+            "web_sources": self._web_source_records(),
+            "latency_ms": self._latency_ms(),
             "truth": {
                 "no_private_cot": True,
                 "status_is_backend_backed": True,
@@ -132,6 +164,157 @@ class CognitiveRunState:
                 "shadow_does_not_own_final_response": True,
             },
         }
+
+    def _retrieval_hit_counts(self) -> dict[str, int]:
+        if not self.perception:
+            return {"brain": 0, "memory": 0, "evidence": 0, "knowledge": 0}
+        return {
+            "brain": len(self.perception.by_type(EpistemicType.KNOWLEDGE_SOURCE)),
+            "knowledge": len(self.perception.by_type(EpistemicType.KNOWLEDGE_SOURCE)),
+            "memory": len(self.perception.by_type(EpistemicType.EXACT_FACT)),
+            "evidence": len(self.perception.by_type(EpistemicType.EVIDENCE)),
+        }
+
+    def _tool_call_records(self) -> list[dict[str, Any]]:
+        """Public tool-call telemetry — status/duration/receipts only (no payloads/CoT)."""
+        records: list[dict[str, Any]] = []
+        for o in self.observations:
+            if o.kind != CognitiveObservationKind.TOOL_RESULT:
+                continue
+            payload = o.payload or {}
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            telemetry = result.get("telemetry") if isinstance(result.get("telemetry"), dict) else {}
+            capability_id = str(
+                payload.get("capability_id") or result.get("capability_id") or ""
+            ).strip()
+            if not capability_id:
+                continue
+            receipt_id = (
+                telemetry.get("receipt_id")
+                or payload.get("receipt_id")
+                or result.get("receipt_id")
+            )
+            duration = telemetry.get("duration_ms")
+            if duration is None:
+                duration = result.get("duration_ms")
+            status = str(result.get("status") or ("OK" if o.success else "FAILED"))
+            records.append(
+                {
+                    "capability_id": capability_id,
+                    "status": status,
+                    "success": bool(o.success) if o.success is not None else status
+                    in {"COMPLETED", "OK", "SUCCESS"},
+                    "duration_ms": float(duration) if duration is not None else None,
+                    "receipt_id": str(receipt_id) if receipt_id else None,
+                    "error": o.error or result.get("error"),
+                    "summary": (o.summary or "")[:200],
+                }
+            )
+        return records
+
+    def _agent_delegation_records(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for o in self.observations:
+            if o.kind != CognitiveObservationKind.AGENT_RESULT:
+                continue
+            payload = o.payload or {}
+            agent_kind = str(
+                payload.get("agent_kind")
+                or payload.get("specialist")
+                or payload.get("kind")
+                or "unknown"
+            )
+            records.append(
+                {
+                    "agent_kind": agent_kind,
+                    "status": str(payload.get("status") or ("OK" if o.success else "FAILED")),
+                    "success": bool(o.success) if o.success is not None else None,
+                    "summary": (o.summary or "")[:200],
+                    "artifact_refs": list(o.artifact_refs or ())[:8],
+                    "evidence_refs": list(o.evidence_refs or ())[:8],
+                    "idempotent_reuse": bool(payload.get("idempotent_reuse")),
+                }
+            )
+        selected = list(
+            (self.task.metadata or {}).get("gi_specialists")
+            or getattr(self.task, "candidate_specialists", None)
+            or []
+        )
+        seen = {str(r.get("agent_kind") or "") for r in records}
+        for key in selected:
+            if key and key not in seen:
+                records.append(
+                    {
+                        "agent_kind": str(key),
+                        "status": "SELECTED",
+                        "success": None,
+                        "summary": "specialist selected for this turn",
+                        "artifact_refs": [],
+                        "evidence_refs": [],
+                        "idempotent_reuse": False,
+                    }
+                )
+        return records
+
+    def _web_source_records(self) -> list[dict[str, Any]]:
+        sources: list[dict[str, Any]] = []
+        for o in self.observations:
+            if o.kind != CognitiveObservationKind.TOOL_RESULT:
+                continue
+            payload = o.payload or {}
+            capability_id = str(payload.get("capability_id") or "")
+            if capability_id not in {"web.search", "web.fetch"}:
+                continue
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            output = result.get("output") if isinstance(result.get("output"), dict) else result
+            if not isinstance(output, dict):
+                continue
+            for item in output.get("results") or output.get("sources") or []:
+                if not isinstance(item, dict):
+                    continue
+                sources.append(
+                    {
+                        "title": item.get("title") or item.get("name"),
+                        "url": item.get("url") or item.get("href"),
+                        "source": capability_id,
+                        "snippet": (item.get("snippet") or item.get("summary") or "")[:160]
+                        or None,
+                    }
+                )
+            if capability_id == "web.fetch" and (output.get("url") or result.get("url")):
+                sources.append(
+                    {
+                        "title": output.get("title"),
+                        "url": output.get("url") or result.get("url"),
+                        "source": "web.fetch",
+                        "snippet": (output.get("excerpt") or "")[:160] or None,
+                    }
+                )
+            if result.get("error") or output.get("error_code"):
+                sources.append(
+                    {
+                        "title": None,
+                        "url": None,
+                        "source": capability_id,
+                        "snippet": None,
+                        "error": result.get("error") or output.get("error"),
+                        "error_code": output.get("error_code") or result.get("error_code"),
+                        "honest_failure": True,
+                    }
+                )
+        return sources[:20]
+
+    def _latency_ms(self) -> float | None:
+        if not self.events:
+            return None
+        times = [
+            float(e.get("created_at"))
+            for e in self.events
+            if isinstance(e, dict) and e.get("created_at") is not None
+        ]
+        if len(times) < 2:
+            return None
+        return round((max(times) - min(times)) * 1000.0, 3)
 
 
 class CognitiveRuntime:
@@ -163,6 +346,7 @@ class CognitiveRuntime:
         model_caller: ModelCaller | None = None,
         neuro_advisor: Any | None = None,
         verification_engine: Any | None = None,
+        factuality_mode: str | None = "LIGHT",
         execution_gateway: Any | None = None,
         observability: Any | None = None,
         resource_pressure_fn: Callable[[], float] | None = None,
@@ -198,6 +382,8 @@ class CognitiveRuntime:
         self.model_caller = model_caller
         self.neuro_advisor = neuro_advisor
         self.verification_engine = verification_engine
+        # Thin factuality hook — VerificationEngine owns claim checks; Cognition only applies.
+        self.factuality_mode = factuality_mode
         self.execution_gateway = execution_gateway
         self.observability = observability
         self.resource_pressure_fn = resource_pressure_fn or (lambda: 0.0)
@@ -292,6 +478,8 @@ class CognitiveRuntime:
             constraints=constraints,
             metadata=meta_payload,
         )
+        # GI12: select bounded specialists for MULTI_DOMAIN / COMPLEX (not every request).
+        self._assign_gi_specialists(task)
         run_id = str(uuid.uuid4())
         task.run_id = run_id
         state = CognitiveRunState(
@@ -322,6 +510,8 @@ class CognitiveRuntime:
                 priority=0.4,
                 source_type=EpistemicType.HYPOTHESIS,
             )
+        for key in list((task.metadata or {}).get("gi_specialists") or []):
+            state.working_memory.upsert("gi_specialist", str(key), priority=0.5)
         self._runs[run_id] = state
         self._loops[run_id] = LoopDetector()
         self._persist_create(state)
@@ -329,6 +519,35 @@ class CognitiveRuntime:
         if run:
             return self.run(run_id, history=history)
         return state.public_status()
+
+    def _assign_gi_specialists(self, task: TaskModel) -> None:
+        """Select GI orchestra specialists for complex/multi-domain work."""
+        from Data.modules.agents.general_orchestra import select_gi_specialists
+
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        if execution_class == "DIRECT":
+            task.metadata["gi_specialists"] = []
+            return
+        selected = select_gi_specialists(task.public_dict(), max_specialists=4)
+        # Always record on MULTI_DOMAIN / COMPLEX_REASONING even if heuristics empty.
+        if execution_class in {"MULTI_DOMAIN", "COMPLEX_REASONING", "WORK"} and not selected:
+            selected = ["gi_synthesis"]
+            if getattr(task, "requires_research", False) or getattr(
+                task, "requires_current_information", False
+            ):
+                selected.insert(0, "gi_web_research")
+        task.metadata["gi_specialists"] = list(selected)
+        if selected:
+            # Prefer GI keys as candidate specialists for telemetry / routing.
+            merged = list(dict.fromkeys([*selected, *list(task.candidate_specialists or [])]))
+            task.candidate_specialists = merged
+            task.needs_specialists = True
+
+    # --- public API continued ---
+
+    def run_placeholder_keep_order(self) -> None:
+        """Placeholder removed — keep structure for patch targeting."""
+        return None
 
     def run(self, run_id: str, *, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         state = self._require(run_id)
@@ -360,7 +579,25 @@ class CognitiveRuntime:
             state.plan = self.planner.plan(state.task, decision)
             self._emit(state, "plan_created", state.plan.public_dict())
 
-            if not self.iterative or decision.mode == ReasoningMode.FAST:
+            # GI4: DIRECT → short path. Tool/current/complex classes never skip iterative tools.
+            execution_class = str(getattr(state.task, "execution_class", None) or "DIRECT")
+            needs_instrumented_path = execution_class in {
+                "TOOL_REQUIRED",
+                "CURRENT_INFO",
+                "MULTI_DOMAIN",
+                "COMPLEX_REASONING",
+                "VERIFICATION_REQUIRED",
+                "WORK",
+            } or bool(
+                getattr(state.task, "requires_current_information", False)
+                or getattr(state.task, "needs_calculation", False)
+                or getattr(state.task, "needs_verification", False)
+            )
+            use_fast = execution_class == "DIRECT" or (
+                (not self.iterative or decision.mode == ReasoningMode.FAST)
+                and not needs_instrumented_path
+            )
+            if use_fast:
                 return self._fast_path(state, history=history)
 
             return self._iterative_loop(state, history=history)
@@ -746,16 +983,17 @@ class CognitiveRuntime:
         state.context_public = ctx.public_dict()
         self._emit(state, "context_built", ctx.pack.public_dict())
         text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role="responder")
-        state.response_text = text
+        state.response_text = self._sanitize_response_text(text)
         state.observations.append(
             CognitiveObservation(
                 kind=CognitiveObservationKind.MODEL_RESULT,
                 observation_id=str(uuid.uuid4()),
-                summary=(text or "")[:500],
+                summary=(state.response_text or "")[:500],
                 source_type=EpistemicType.MODEL_INFERENCE,
-                success=bool(text),
+                success=bool(state.response_text),
             )
         )
+        self._apply_factuality_gate(state)
         self._finalize(state)
         return state.public_status()
 
@@ -766,6 +1004,16 @@ class CognitiveRuntime:
                 raise CognitionCancelled("cancellation requested")
             remaining = self._budgets_remaining(state)
             if remaining.get("wall_ok", 1) <= 0 or remaining.get("iterations", 0) <= 0:
+                self._ensure_coherent_final_answer(state, reason="budget_exhausted")
+                self._finalize(state, budget_exhausted=True)
+                return state.public_status()
+            if (
+                remaining.get("tool_calls", 0) <= 0
+                and remaining.get("model_calls", 0) <= 0
+                and remaining.get("replans", 0) <= 0
+                and state.response_text
+            ):
+                self._ensure_coherent_final_answer(state, reason="tool_model_replan_exhausted")
                 self._finalize(state, budget_exhausted=True)
                 return state.public_status()
 
@@ -863,6 +1111,8 @@ class CognitiveRuntime:
                     }
                     self._persist_update(state)
                     return state.public_status()
+                if action.arguments.get("status") == "RESOURCE_EXHAUSTED":
+                    self._ensure_coherent_final_answer(state, reason="resource_exhausted")
                 self._finalize(
                     state,
                     failed_reason=action.arguments.get("status") if action.kind == CognitiveActionKind.FAIL else None,
@@ -1146,6 +1396,22 @@ class CognitiveRuntime:
                 )
                 return prior
 
+            remaining = self._budgets_remaining(state)
+            if remaining.get("tool_calls", 0) <= 0:
+                self._emit(
+                    state,
+                    "tool_budget_exhausted",
+                    {"capability_id": capability_id, "action_id": action.action_id},
+                )
+                return CognitiveObservation(
+                    kind=CognitiveObservationKind.ERROR,
+                    observation_id=str(uuid.uuid4()),
+                    summary="tool call budget exhausted — capability not invoked",
+                    success=False,
+                    error="COGNITION_TOOL_BUDGET_EXHAUSTED",
+                    payload={"capability_id": capability_id, "budget_exhausted": True},
+                )
+
             state.usage.tool_calls += 1
             self._transition(state, CognitiveRunStatus.EXECUTING)
             try:
@@ -1175,6 +1441,7 @@ class CognitiveRuntime:
                 status_value = str(result_dict.get("status") or "")
                 success = status_value in {"COMPLETED", "OK", "SUCCESS"}
                 self._transition(state, CognitiveRunStatus.OBSERVING)
+                self._ingest_tool_result(state, capability_id, result_dict, success=success)
                 return CognitiveObservation(
                     kind=CognitiveObservationKind.TOOL_RESULT,
                     observation_id=str(uuid.uuid4()),
@@ -1238,22 +1505,22 @@ class CognitiveRuntime:
             state.context_public = ctx.public_dict()
             role = str(action.arguments.get("role") or "responder")
             text = self._call_model(state, ctx.pack.system_prompt, list(ctx.pack.messages), role=role)
-            state.response_text = text
-            if action.arguments.get("purpose") == "hypothesis" and text and self.belief_enabled:
+            state.response_text = self._sanitize_response_text(text)
+            if action.arguments.get("purpose") == "hypothesis" and state.response_text and self.belief_enabled:
                 state.beliefs.add(
-                    text[:400],
+                    state.response_text[:400],
                     category=BeliefCategory.HYPOTHESIS,
                     confidence=0.55,
                     source_type=EpistemicType.MODEL_INFERENCE,
                     status=BeliefStatus.INFERRED,
                 )
-                self._emit(state, "belief_added", {"proposition": text[:200]})
+                self._emit(state, "belief_added", {"proposition": state.response_text[:200]})
             return CognitiveObservation(
                 kind=CognitiveObservationKind.MODEL_RESULT,
                 observation_id=str(uuid.uuid4()),
-                summary=(text or "")[:500],
+                summary=(state.response_text or "")[:500],
                 source_type=EpistemicType.MODEL_INFERENCE,
-                success=bool(text),
+                success=bool(state.response_text),
                 payload={"role": role},
             )
 
@@ -1356,7 +1623,232 @@ class CognitiveRuntime:
             if state.usage.token_usage_source != "provider":
                 state.usage.token_usage_source = "estimate"
 
+    def _apply_factuality_gate(self, state: CognitiveRunState) -> None:
+        """Thin hook: qualify draft claims via Verification owners (no second engine).
+
+        Uses TaskModel.verification_mode when REQUIRED/CORROBORATED; otherwise
+        falls back to runtime factuality_mode.
+        """
+        if not state.response_text:
+            return
+        task_mode = str(getattr(state.task, "verification_mode", None) or "").upper()
+        runtime_mode = str(self.factuality_mode or "").upper()
+        if task_mode in {"REQUIRED", "CORROBORATED"}:
+            mode = task_mode
+        elif runtime_mode in {"", "NONE", "FALSE", "0"} and task_mode in {"", "NONE"}:
+            return
+        else:
+            mode = runtime_mode or task_mode or "LIGHT"
+        if mode in {"", "NONE", "FALSE", "0"}:
+            return
+        try:
+            from Data.modules.verification import FactualityGate, VerificationPool
+
+            evidence_ids = [
+                ref
+                for o in state.observations
+                for ref in o.evidence_refs
+            ]
+            tool_receipt_ids: list[str] = []
+            for o in state.observations:
+                payload = o.payload or {}
+                rid = payload.get("receipt_id") or (payload.get("result") or {}).get("receipt_id")
+                if rid:
+                    tool_receipt_ids.append(str(rid))
+                for ref in payload.get("tool_receipt_refs") or ():
+                    tool_receipt_ids.append(str(ref))
+
+            pool = VerificationPool.from_inputs(
+                evidence_ids=evidence_ids,
+                tool_receipt_ids=tool_receipt_ids,
+                telemetry=(state.context_public or {}).get("telemetry")
+                if isinstance(state.context_public, dict)
+                else None,
+            )
+            for o in state.observations:
+                if o.kind != CognitiveObservationKind.TOOL_RESULT:
+                    continue
+                cap = str((o.payload or {}).get("capability_id") or "")
+                result = (o.payload or {}).get("result") or {}
+                if cap == "system.inspect" and isinstance(result, dict):
+                    pool_telem = dict(pool.telemetry or {})
+                    inspect_body = result.get("result") or result.get("output") or result
+                    if isinstance(inspect_body, dict):
+                        pool_telem.update(inspect_body)
+                    pool.telemetry = pool_telem
+
+            result = FactualityGate().apply(state.response_text, mode=mode, pool=pool)
+            if result.revised_text != state.response_text:
+                state.response_text = result.revised_text
+            state.factuality = result.public_dict()
+            self._emit(state, "factuality_gate", state.factuality)
+
+            if hasattr(self.verification_engine, "verify_claim_assessments") and result.assessments:
+                claim_report = self.verification_engine.verify_claim_assessments(
+                    result.assessments,
+                    run_id=state.run_id,
+                    tool_receipt_ids=tool_receipt_ids,
+                )
+                self._emit(
+                    state,
+                    "claim_assessment_report",
+                    claim_report.public_dict()
+                    if hasattr(claim_report, "public_dict")
+                    else {"outcome": str(getattr(claim_report, "outcome", None))},
+                )
+        except Exception as exc:  # noqa: BLE001
+            self._emit(state, "factuality_gate_error", {"error": str(exc)})
+
+    def _sanitize_response_text(self, text: str | None) -> str | None:
+        """Never surface raw tool-call JSON as the user-visible answer."""
+        if text is None:
+            return None
+        raw = str(text).strip()
+        if not raw:
+            return raw
+        import json
+        import re
+
+        cleaned = re.sub(
+            r"```(?:json|tool|tool_call|function)?\s*(\{[\s\S]*?\"(?:tool_calls|name|function)\"[\s\S]*?\})\s*```",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        ).strip()
+        if cleaned.startswith("{") and any(
+            k in cleaned for k in ('"tool_calls"', '"function_call"', '"name":', '"arguments"')
+        ):
+            try:
+                parsed = json.loads(cleaned)
+            except Exception:  # noqa: BLE001
+                parsed = None
+            if isinstance(parsed, dict) and (
+                "tool_calls" in parsed or "function_call" in parsed or "name" in parsed
+            ):
+                return None
+        if cleaned != raw and not cleaned:
+            return None
+        return cleaned or raw
+
+    def _ingest_tool_result(
+        self,
+        state: CognitiveRunState,
+        capability_id: str,
+        result_dict: dict[str, Any],
+        *,
+        success: bool,
+    ) -> None:
+        """Store tool receipts in working memory; seed prose from inspect/calc/web."""
+        body = result_dict.get("result") or result_dict.get("output") or result_dict
+        summary_bits: list[str] = []
+        if capability_id == "system.inspect" and isinstance(body, dict):
+            model = body.get("model") if isinstance(body.get("model"), dict) else {}
+            model_val = model.get("value") if isinstance(model.get("value"), dict) else model
+            active = None
+            if isinstance(model_val, dict):
+                active = model_val.get("active_model") or model_val.get("value") or model_val.get("model_id")
+                if isinstance(active, dict):
+                    active = active.get("value") or active.get("model_id")
+            if active:
+                summary_bits.append(f"Active model: {active}")
+            summary_bits.append(
+                "Brain utilization percentage is UNMEASURED when telemetry is absent — never invent brain-%."
+            )
+            state.working_memory.upsert(
+                "tool",
+                f"system.inspect: {'; '.join(summary_bits)}",
+                priority=0.75,
+                verified=success,
+                source_type=EpistemicType.TOOL_OBSERVATION,
+            )
+        elif capability_id == "web.search":
+            results = body.get("results") if isinstance(body, dict) else []
+            err = (body.get("error") or body.get("error_code")) if isinstance(body, dict) else None
+            if err and not results:
+                summary_bits.append(f"Web search unavailable: {err}")
+            for item in (results or [])[:3]:
+                if isinstance(item, dict):
+                    summary_bits.append(str(item.get("title") or item.get("url") or "result")[:160])
+            state.working_memory.upsert(
+                "tool",
+                f"web.search: {'; '.join(summary_bits) or ('ok' if success else 'failed')}",
+                priority=0.7,
+                verified=success,
+                source_type=EpistemicType.TOOL_OBSERVATION,
+            )
+        elif capability_id in {"math.calculate", "compute.numeric"}:
+            value = None
+            if isinstance(body, dict):
+                value = body.get("value")
+                if value is None and isinstance(body.get("result"), dict):
+                    value = body["result"].get("value")
+            if value is not None:
+                summary_bits.append(f"Result: {value}")
+            state.working_memory.upsert(
+                "tool",
+                f"{capability_id}: {summary_bits[0] if summary_bits else ('ok' if success else 'failed')}",
+                priority=0.8,
+                verified=success,
+                source_type=EpistemicType.TOOL_OBSERVATION,
+            )
+        else:
+            state.working_memory.upsert(
+                "tool",
+                f"{capability_id}: {'ok' if success else 'failed'}",
+                priority=0.45,
+                verified=success,
+                source_type=EpistemicType.TOOL_OBSERVATION,
+            )
+        if summary_bits and not state.response_text:
+            state.response_text = "\n".join(summary_bits)
+
+    def _ensure_coherent_final_answer(self, state: CognitiveRunState, *, reason: str) -> None:
+        """On budget exhaustion: coherent prose from observations — never raw tool JSON."""
+        sanitized = self._sanitize_response_text(state.response_text)
+        if sanitized:
+            state.response_text = sanitized
+        else:
+            state.response_text = None
+        if state.response_text and not self._looks_like_tool_json(state.response_text):
+            self._emit(state, "coherent_finalize", {"reason": reason, "source": "existing_response"})
+            self._apply_factuality_gate(state)
+            return
+        parts: list[str] = []
+        for item in state.working_memory.list_by_kind("tool"):
+            if item.content:
+                parts.append(str(item.content))
+        for o in state.observations:
+            if o.kind == CognitiveObservationKind.TOOL_RESULT and o.success and o.summary:
+                parts.append(o.summary)
+            if o.kind == CognitiveObservationKind.AGENT_RESULT and o.success and o.summary:
+                parts.append(o.summary)
+        if not parts:
+            parts.append(
+                "I reached a resource limit before finishing every step. "
+                "Here is what I can confirm from this run without inventing missing details."
+            )
+            if state.task.goal:
+                parts.append(f"Goal considered: {state.task.goal}")
+        prose = "\n".join(dict.fromkeys(parts))
+        state.response_text = self._sanitize_response_text(prose) or prose
+        self._emit(
+            state,
+            "coherent_finalize",
+            {"reason": reason, "source": "observations", "chars": len(state.response_text or "")},
+        )
+        self._apply_factuality_gate(state)
+
+    @staticmethod
+    def _looks_like_tool_json(text: str) -> bool:
+        t = (text or "").strip()
+        if not t.startswith("{"):
+            return False
+        return any(k in t for k in ('"tool_calls"', '"function_call"', '"name":', '"arguments"'))
+
     def _verify(self, state: CognitiveRunState) -> bool:
+        # Factuality gate runs at the verification call site when a draft exists.
+        self._apply_factuality_gate(state)
+
         if self.verification_engine is None:
             # Without VerificationEngine, never claim verified.
             return False
@@ -1467,6 +1959,18 @@ class CognitiveRuntime:
         failed_reason: str | None = None,
         timed_out: bool = False,
     ) -> None:
+        if not cancelled and not failed_reason:
+            if budget_exhausted or self._looks_like_tool_json(state.response_text or ""):
+                self._ensure_coherent_final_answer(
+                    state,
+                    reason="budget_exhausted" if budget_exhausted else "tool_json_stripped",
+                )
+            else:
+                state.response_text = self._sanitize_response_text(state.response_text)
+                mode = str(getattr(state.task, "verification_mode", "") or "")
+                if mode in {"REQUIRED", "CORROBORATED"} and state.factuality is None:
+                    self._apply_factuality_gate(state)
+
         decision = self.completion_engine.evaluate(
             state.task,
             observations=state.observations,

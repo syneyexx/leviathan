@@ -161,6 +161,7 @@ from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_m
 from Data.backend.routes.mcp import build_mcp_router
 from Data.backend.routes.cognition import build_cognition_router
 from Data.backend.routes.tasks import build_tasks_router
+from Data.backend.routes.browser_qa import build_browser_qa_router
 from Data.modules.tasks import TaskService, TaskStore
 from Data.modules.mcp.errors import McpError
 from Data.modules.cognition import (
@@ -488,7 +489,36 @@ browser_worker = BrowserWorker(
     artifact_store=artifacts,
     backend_kind="local_dom",
     filesystem_root=str(PROJECT_ROOT),
+    allow_network=True,  # localhost QA crawler probes; public crawl still host-scoped
 )
+# Shared GI9/GI10 journey crawler — JobRuntime owns durable cancel/checkpoint/resume.
+from Data.modules.browser import BrowserJourneyCrawler, CrawlBudget  # noqa: E402
+
+_qa_hosts = tuple(
+    h.strip().lower()
+    for h in str(getattr(settings.browser_qa, "allowed_hosts", "localhost,127.0.0.1,::1")).split(",")
+    if h.strip()
+)
+browser_qa_crawler = BrowserJourneyCrawler(
+    browser_worker=BrowserWorker(
+        artifact_store=artifacts,
+        backend_kind="local_dom",
+        filesystem_root=str(PROJECT_ROOT),
+        allow_network=True,
+        qa_crawler=False,  # type: ignore[arg-type]
+    ),
+    artifact_store=artifacts,
+    allowed_hosts=_qa_hosts or ("localhost", "127.0.0.1", "::1"),
+    budget=CrawlBudget(
+        max_pages=int(getattr(settings.browser_qa, "max_pages", 50)),
+        max_actions=int(getattr(settings.browser_qa, "max_actions", 200)),
+    ),
+    allow_destructive=bool(
+        getattr(settings.browser_qa, "allow_destructive_test_actions", False)
+    ),
+    observability=observability,
+)
+browser_worker._qa_crawler = browser_qa_crawler
 browser_stub = BrowserAutomationStub()  # honesty path when capability_world disabled
 if settings.features.capability_world:
     execution_gateway.browser_executor = browser_worker
@@ -1328,7 +1358,13 @@ def _assess_product_truth_report():
     elif browser_kind_val == "local_dom":
         browser_capable = True
     elif browser_kind_val == "playwright":
-        browser_capable = False
+        # Package alone is not READY — probe Chromium launch/navigate/observe.
+        readiness = getattr(browser_worker.backend, "readiness", None)
+        if callable(readiness):
+            info = readiness()
+            browser_capable = bool(info.get("ready"))
+        else:
+            browser_capable = False
 
     model_cards = model_plane.status_cards()
     # Media/voice services are real entry points but fixture/stub backends are not production.
@@ -1416,6 +1452,195 @@ brain_facade = BrainQueryFacade(
     relation_list=lambda: knowledge.list_relation_atoms(limit=200),
     max_nodes=250,
     max_edges=500,
+)
+
+# ---- GI2 system.inspect + GI7 web.search/web.fetch binding ------------------
+from Data.modules.cognition.system_inspect import (  # noqa: E402
+    SystemInspectService,
+    bind_system_inspect_service,
+)
+from Data.modules.research.web_capabilities import bind_web_provider  # noqa: E402
+
+
+def _application_commit() -> str | None:
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        if result.returncode == 0:
+            return (result.stdout or "").strip() or None
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _active_model_id() -> str | None:
+    try:
+        cards = model_plane.status_cards()
+        return cards.get("activeModel")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _model_role_backend() -> dict[str, Any]:
+    try:
+        active = model_plane.store.get_active_model_id()
+        if not active:
+            return {"role": None, "backend": None}
+        desc = None
+        for m in model_plane.registry.list_descriptors():
+            if m.id == active:
+                desc = m
+                break
+        role = getattr(desc, "preferred_role", None) if desc else None
+        backend = None
+        if desc is not None:
+            backend = getattr(desc, "backend_kind", None) or getattr(
+                desc, "provider_id", None
+            )
+        return {"role": role, "backend": backend, "model_id": active}
+    except Exception:  # noqa: BLE001
+        return {"role": None, "backend": None}
+
+
+def _context_window() -> int | None:
+    try:
+        active = model_plane.store.get_active_model_id()
+        if not active:
+            return None
+        for m in model_plane.registry.list_descriptors():
+            if m.id == active:
+                return getattr(m, "context_window", None)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _fleet_snapshot() -> dict[str, Any]:
+    from Data.modules.agents.fleet_types import ACTIVE_MISSION_STATUSES, AgentHealth
+
+    agents = agent_fleet.list_agents(include_archived=False)
+    live_health = {AgentHealth.IDLE, AgentHealth.BUSY}
+    active_agents = [a for a in agents if getattr(a, "health", None) in live_health]
+    missions = agent_fleet_store.list_missions(limit=200)
+    active_missions = []
+    for m in missions:
+        status = getattr(m, "status", None)
+        status_val = status.value if hasattr(status, "value") else str(status or "")
+        if status_val in ACTIVE_MISSION_STATUSES:
+            active_missions.append(m)
+    return {
+        "active_agents": len(active_agents),
+        "active_missions": len(active_missions),
+        "agents": len(agents),
+        "missions": len(missions),
+    }
+
+
+def _jobs_summary() -> dict[str, Any]:
+    queued = len(job_runtime.list(state=JobState.QUEUED, limit=500))
+    return {
+        "queued": queued,
+        "telemetry": dict(getattr(job_runtime, "telemetry", {}) or {}),
+    }
+
+
+def _tool_calls_summary() -> dict[str, Any]:
+    return {
+        "gateway": dict(getattr(execution_gateway, "telemetry", {}) or {}),
+        "function_runtime": dict(getattr(function_runtime, "telemetry", {}) or {}),
+    }
+
+
+def _web_usage_summary() -> dict[str, Any]:
+    provider = getattr(research_service, "web", None)
+    search_ready = False
+    if provider is not None and hasattr(provider, "search_configured"):
+        try:
+            search_ready = bool(provider.search_configured())
+        except Exception:  # noqa: BLE001
+            search_ready = False
+    return {
+        "provider": getattr(provider, "name", None),
+        "allow_outbound": bool(getattr(research_service, "allow_outbound", False)),
+        "search_configured": search_ready,
+        "configured": bool(provider.configured()) if provider is not None else False,
+    }
+
+
+def _knowledge_counts() -> dict[str, Any]:
+    docs = knowledge.list_documents(limit=10_000)
+    return {"count": len(docs), "turn_hits": None}
+
+
+def _memory_counts() -> dict[str, Any]:
+    items = memory_store.list(limit=10_000)
+    return {"count": len(items), "turn_hits": None}
+
+
+def _evidence_counts() -> dict[str, Any]:
+    items = evidence_store.list(limit=10_000)
+    return {"count": len(items), "turn_hits": None}
+
+
+def _brain_status() -> dict[str, Any]:
+    # Brain is a query facade — expose readiness + document hit counts, never a %.
+    try:
+        docs = knowledge.list_documents(limit=10_000)
+        hits = len(docs)
+    except Exception:  # noqa: BLE001
+        hits = None
+    return {
+        "status": "ready",
+        "hits": hits,
+    }
+
+
+def _application_version() -> str:
+    # FastAPI app is constructed later; fall back to the known release label.
+    try:
+        return str(getattr(globals().get("app"), "version", None) or "0.73.0-wave9-flywheel")
+    except Exception:  # noqa: BLE001
+        return "0.73.0-wave9-flywheel"
+
+
+system_inspect_service = SystemInspectService(
+    application_version_provider=_application_version,
+    application_commit_provider=_application_commit,
+    active_model_provider=_active_model_id,
+    model_role_backend_provider=_model_role_backend,
+    context_window_provider=_context_window,
+    cognition_runtime_provider=lambda: cognition_runtime,
+    behavior_profile_provider=lambda: behavior_store,
+    brain_status_provider=_brain_status,
+    knowledge_count_provider=_knowledge_counts,
+    memory_count_provider=_memory_counts,
+    evidence_count_provider=_evidence_counts,
+    verification_outcome_provider=lambda: {
+        "engine": "VerificationEngine",
+        "wired": verification_engine is not None,
+    },
+    agent_fleet_provider=_fleet_snapshot,
+    worker_pools_provider=None,  # API process: pools owned by WorkerSupervisor when externalized
+    jobs_provider=_jobs_summary,
+    tool_calls_provider=_tool_calls_summary,
+    web_usage_provider=_web_usage_summary,
+    context_budget_provider=None,  # turn-scoped; filled when turn context is available
+    telemetry_provider=lambda: system_telemetry_sampler.latest_public(),
+    turn_context_provider=None,
+)
+bind_system_inspect_service(system_inspect_service)
+bind_web_provider(
+    research_service.web,
+    allow_outbound=bool(getattr(research_service, "allow_outbound", False)),
+    allow_web=True,
 )
 
 
@@ -1775,6 +2000,7 @@ app.include_router(
 app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
 app.include_router(build_tasks_router(task_service))
+app.include_router(build_browser_qa_router(browser_worker))
 app.include_router(build_settings_router(settings_plane))
 app.include_router(build_behavior_router(behavior_store, observability=observability))
 app.include_router(build_efficiency_router())
@@ -2124,6 +2350,119 @@ def delete_conversation(conversation_id: str) -> dict:
     if not db.delete_conversation(conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"deleted": True, "id": conversation_id}
+
+
+def _build_assistant_telemetry(
+    *,
+    model: str | None,
+    behavior_snapshot: Any,
+    cognition_meta: dict | None,
+    knowledge_hits: list,
+    memory_hits: list,
+    evidence_hits: list | None = None,
+    run_started_at: Any = None,
+) -> dict:
+    """Assemble real turn telemetry for Chat Context/Tools/Agents — never fabricate."""
+    cog = cognition_meta if isinstance(cognition_meta, dict) else {}
+    hits = cog.get("retrieval_hits") if isinstance(cog.get("retrieval_hits"), dict) else {}
+    tools = list(cog.get("tools_invoked") or [])
+    agents = [a for a in (cog.get("active_agents") or []) if a]
+    gi = list(cog.get("gi_specialists") or [])
+    latency_ms = None
+    try:
+        if run_started_at is not None:
+            import time as _time
+
+            if isinstance(run_started_at, (int, float)):
+                latency_ms = round((_time.time() - float(run_started_at)) * 1000.0, 1)
+            elif hasattr(run_started_at, "timestamp"):
+                latency_ms = round((_time.time() - float(run_started_at.timestamp())) * 1000.0, 1)
+    except Exception:  # noqa: BLE001
+        latency_ms = None
+    usage = cog.get("usage") if isinstance(cog.get("usage"), dict) else None
+    if usage and usage.get("started_monotonic") and latency_ms is None:
+        # Prefer measured wall from cognition usage when available.
+        try:
+            import time as _time
+
+            started = float(usage.get("started_monotonic") or 0)
+            # started_monotonic is process-relative; cannot convert to wall without pairing.
+            # Leave latency from run timestamps only.
+            _ = started
+        except Exception:  # noqa: BLE001
+            pass
+    behavior_hash = None
+    behavior_profile_id = None
+    behavior_version = None
+    if behavior_snapshot is not None:
+        behavior_hash = getattr(behavior_snapshot, "settings_hash", None)
+        behavior_version = getattr(behavior_snapshot, "version", None)
+        profile = getattr(behavior_snapshot, "profile", None)
+        behavior_profile_id = getattr(profile, "id", None) if profile is not None else None
+        if behavior_version is None and profile is not None:
+            behavior_version = getattr(profile, "version", None)
+    behavior_hash = cog.get("behavior_hash") or behavior_hash
+    behavior_profile_id = cog.get("behavior_profile_id") or behavior_profile_id
+    behavior_version = (
+        cog.get("behavior_profile_version") or cog.get("behavior_version") or behavior_version
+    )
+    brain_hits = int(hits.get("brain") or hits.get("knowledge") or len(knowledge_hits) or 0)
+    memory_n = int(hits.get("memory") or len(memory_hits) or 0)
+    evidence_n = int(hits.get("evidence") or len(evidence_hits or []) or 0)
+    tool_calls = list(cog.get("tool_calls") or [])
+    if not tool_calls and tools:
+        tool_calls = [{"capability_id": t, "status": "INVOKED", "success": None} for t in tools]
+    agent_delegations = list(cog.get("agent_delegations") or [])
+    if not agent_delegations and (agents or gi):
+        agent_delegations = [
+            {"agent_kind": a, "status": "DELEGATED" if a in agents else "SELECTED", "success": None}
+            for a in list(dict.fromkeys([*agents, *gi]))
+        ]
+    web_sources = list(cog.get("web_sources") or [])
+    context_used = cog.get("context_used")
+    if context_used is None:
+        context_used = (
+            ((cog.get("context") or {}).get("pack") or {}).get("token_estimate")
+            if isinstance(cog.get("context"), dict)
+            else None
+        )
+    latency_ms = cog.get("latency_ms") if cog.get("latency_ms") is not None else latency_ms
+    return {
+        "model": model,
+        "behavior_hash": behavior_hash,
+        "behavior_profile_id": behavior_profile_id,
+        "behavior_version": behavior_version,
+        "context_budget": cog.get("context_budget"),
+        "context_used": context_used,
+        "context_tokens": context_used if context_used is not None else cog.get("context_budget"),
+        "brain_hits": brain_hits,
+        "knowledge_hits": int(hits.get("knowledge") or len(knowledge_hits) or 0),
+        "memory_hits": memory_n,
+        "evidence_hits": evidence_n,
+        "tools_invoked": tools,
+        "tool_calls": tool_calls,
+        "agents": agents,
+        "agent_delegations": agent_delegations,
+        "gi_specialists": gi,
+        "web_sources": web_sources,
+        "verification_mode": cog.get("verification_mode"),
+        "verification_passed": cog.get("verification_passed"),
+        "factuality": cog.get("factuality"),
+        "execution_class": cog.get("execution_class"),
+        "cognition_mode": cog.get("mode"),
+        "cognition_status": cog.get("status"),
+        "latency_ms": latency_ms,
+        "usage": usage,
+        "budgets": cog.get("budgets") if isinstance(cog.get("budgets"), dict) else None,
+        "web_used": bool(web_sources)
+        or any(t in {"web.search", "web.fetch"} for t in tools),
+        "truth": {
+            "telemetry_is_backend_backed": True,
+            "no_fabricated_brain_percent": True,
+            "no_hidden_cot": True,
+            "no_mock_tools_or_agents": True,
+        },
+    }
 
 
 @app.post("/api/chat")
@@ -3020,6 +3359,15 @@ async def chat(payload: ChatRequest, request: Request):
             },
             "cortex": cortex_report if behavior_profile.diagnostic_visibility else None,
             "cognition": cognition_meta,
+            "assistant_telemetry": _build_assistant_telemetry(
+                model=model,
+                behavior_snapshot=behavior_snapshot,
+                cognition_meta=cognition_meta,
+                knowledge_hits=knowledge_hits,
+                memory_hits=memory_hits,
+                evidence_hits=[],
+                run_started_at=getattr(run, "started_at", None) or getattr(run, "created_at", None),
+            ),
             "streamed": use_sse and not cognition_owns_response,
             "truth": chat_truth(
                 streaming_degraded=streaming_degraded,
@@ -5791,6 +6139,237 @@ def browser_request(payload: BrowserRequest) -> dict:
             "no_private_browser_bypass": True,
             "fixture_is_not_chromium": True,
         },
+    }
+
+
+class BrowserQaCrawlRequest(BaseModel):
+    seed_url: str = Field(min_length=1, max_length=2000)
+    persona: str = "DESKTOP_MOUSE"
+    seed: int = 42
+    budgets: dict | None = None
+    allow_destructive_test_actions: bool = False
+    allowed_hosts: list[str] | None = None
+    auth_secret_ref: str | None = None
+    auth_lease_id: str | None = None
+    journey_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    approval_id: str | None = None
+    via_job: bool = False
+
+
+class BrowserQaJourneyRef(BaseModel):
+    journey_id: str = Field(min_length=1, max_length=120)
+    seed: int | None = None
+    approval_id: str | None = None
+    run_id: str | None = None
+    trace_id: str | None = None
+    via_job: bool = False
+
+
+def _browser_qa_via_gateway(
+    *,
+    capability_id: str,
+    arguments: dict,
+    approval_id: str | None,
+    run_id: str | None,
+    trace_id: str | None,
+    via_job: bool,
+) -> dict:
+    if not settings.features.capability_world:
+        raise HTTPException(status_code=501, detail="capability_world disabled")
+    if via_job:
+        job = job_runtime.enqueue(
+            capability_id=capability_id,
+            arguments=arguments,
+            run_id=run_id,
+            approval_id=approval_id,
+            requested_by="api.browser.qa",
+            trace_id=trace_id,
+            metadata={"browser_qa": capability_id},
+        )
+        return {
+            "job": job.public_dict(),
+            "capability_id": capability_id,
+            "truth": {
+                "requires_capability_gateway": True,
+                "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+                "routed_via_job": True,
+            },
+        }
+    result = execution_gateway.execute(
+        CapabilityRequest(
+            capability_id=capability_id,
+            arguments=arguments,
+            approval_id=approval_id,
+            run_id=run_id,
+            requested_by="api.browser.qa",
+            trace_id=trace_id,
+        )
+    )
+    status_code = 200
+    if result.status == CapabilityStatus.REJECTED:
+        reason = (result.telemetry or {}).get("reason")
+        status_code = 403 if reason in {"approval_required", "approval_denied"} else 422
+    elif result.status == CapabilityStatus.FAILED:
+        status_code = 500
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=result.public_dict())
+    return {
+        "result": result.public_dict(),
+        "capability_id": capability_id,
+        "truth": {
+            "requires_capability_gateway": True,
+            "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+            "localhost_scoped_by_default": True,
+            "no_stealth_anti_bot": True,
+        },
+    }
+
+
+@app.post("/api/browser/qa/crawl")
+def browser_qa_crawl(payload: BrowserQaCrawlRequest) -> dict:
+    if not bool(getattr(settings.browser_qa, "enabled", True)):
+        raise HTTPException(status_code=503, detail="browser.qa disabled")
+    arguments: dict = {
+        "seed_url": payload.seed_url,
+        "persona": payload.persona,
+        "seed": payload.seed,
+        "allow_destructive_test_actions": payload.allow_destructive_test_actions,
+    }
+    if payload.budgets is not None:
+        arguments["budgets"] = payload.budgets
+    if payload.allowed_hosts is not None:
+        arguments["allowed_hosts"] = payload.allowed_hosts
+    if payload.auth_secret_ref is not None:
+        arguments["auth_secret_ref"] = payload.auth_secret_ref
+    if payload.auth_lease_id is not None:
+        arguments["auth_lease_id"] = payload.auth_lease_id
+    if payload.journey_id is not None:
+        arguments["journey_id"] = payload.journey_id
+    if payload.via_job:
+        return _browser_qa_via_gateway(
+            capability_id="browser.qa.crawl",
+            arguments=arguments,
+            approval_id=payload.approval_id,
+            run_id=payload.run_id,
+            trace_id=payload.trace_id,
+            via_job=True,
+        )
+    # Direct control-plane path for local/dev (worker path remains via_job=True).
+    from Data.modules.browser import JourneyPersona
+
+    persona_raw = str(payload.persona or "DESKTOP_MOUSE")
+    try:
+        persona = JourneyPersona(persona_raw.upper())
+    except ValueError:
+        persona = JourneyPersona.DESKTOP_MOUSE
+    if payload.allowed_hosts:
+        browser_qa_crawler.allowed_hosts = tuple(str(h).lower() for h in payload.allowed_hosts)
+    if payload.budgets:
+        from Data.modules.browser import CrawlBudget
+
+        b = payload.budgets
+        browser_qa_crawler.budget = CrawlBudget(
+            max_pages=int(b.get("max_pages", browser_qa_crawler.budget.max_pages)),
+            max_actions=int(b.get("max_actions", browser_qa_crawler.budget.max_actions)),
+            max_wall_time_seconds=float(
+                b.get(
+                    "max_wall_time_seconds",
+                    b.get("max_wall_time_s", browser_qa_crawler.budget.max_wall_time_seconds),
+                )
+            ),
+        )
+    browser_qa_crawler.allow_destructive = bool(payload.allow_destructive_test_actions)
+    report = browser_qa_crawler.run(
+        start_url=payload.seed_url,
+        persona=persona,
+        seed=int(payload.seed),
+        run_id=payload.run_id,
+    )
+    return {
+        "report": report.public_dict(),
+        "capability_id": "browser.qa.crawl",
+        "truth": {
+            "requires_capability_gateway": False,
+            "direct_crawler_control_plane": True,
+            "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+            "localhost_scoped_by_default": True,
+            "no_stealth_anti_bot": True,
+        },
+    }
+
+
+@app.get("/api/browser/qa/{journey_id}/status")
+def browser_qa_status(journey_id: str) -> dict:
+    if not bool(getattr(settings.browser_qa, "enabled", True)):
+        raise HTTPException(status_code=503, detail="browser.qa disabled")
+    try:
+        report = browser_qa_crawler.status(journey_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}") from exc
+    return {
+        "journey_id": journey_id,
+        "report": report.public_dict(),
+        "truth": {
+            "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+            "direct_crawler_control_plane": True,
+        },
+    }
+
+
+@app.post("/api/browser/qa/{journey_id}/cancel")
+def browser_qa_cancel(journey_id: str, payload: BrowserQaJourneyRef | None = None) -> dict:
+    if not bool(getattr(settings.browser_qa, "enabled", True)):
+        raise HTTPException(status_code=503, detail="browser.qa disabled")
+    body = payload or BrowserQaJourneyRef(journey_id=journey_id)
+    if body.via_job and body.run_id:
+        try:
+            job_runtime.request_cancel(body.run_id, reason="browser.qa.cancel")
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        report = browser_qa_crawler.cancel(journey_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}") from exc
+    return {
+        "journey_id": journey_id,
+        "report": report.public_dict(),
+        "truth": {
+            "cancelled_is_not_success": True,
+            "job_runtime_cancel_checkpoint_resume": "EXTERNAL_REQUIRED",
+        },
+    }
+
+
+@app.post("/api/browser/qa/{journey_id}/replay")
+def browser_qa_replay(journey_id: str, payload: BrowserQaJourneyRef | None = None) -> dict:
+    body = payload or BrowserQaJourneyRef(journey_id=journey_id)
+    arguments: dict = {"journey_id": journey_id}
+    if body.seed is not None:
+        arguments["seed"] = body.seed
+    return _browser_qa_via_gateway(
+        capability_id="browser.qa.replay",
+        arguments=arguments,
+        approval_id=body.approval_id,
+        run_id=body.run_id,
+        trace_id=body.trace_id,
+        via_job=body.via_job,
+    )
+
+
+@app.get("/api/browser/qa/{journey_id}/report")
+def browser_qa_report(journey_id: str) -> dict:
+    if not bool(getattr(settings.browser_qa, "enabled", True)):
+        raise HTTPException(status_code=503, detail="browser.qa disabled")
+    try:
+        payload = browser_qa_crawler.report_artifact(journey_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown QA journey: {journey_id}") from exc
+    return {
+        "journey_id": journey_id,
+        **payload,
+        "truth": {"direct_crawler_control_plane": True},
     }
 
 

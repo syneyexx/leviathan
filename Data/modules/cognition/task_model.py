@@ -114,6 +114,19 @@ class TaskModel:
     requires_actions: bool = False
     requires_research: bool = False
     requires_coding: bool = False
+    needs_brain_retrieval: bool = False
+    needs_memory: bool = False
+    needs_browser: bool = False
+    needs_code_execution: bool = False
+    needs_calculation: bool = False
+    needs_specialists: bool = False
+    needs_verification: bool = False
+    requires_side_effect: bool = False
+    freshness_requirement: str = "none"  # none | preferred | required
+    complexity: str = "low"
+    expected_answer_type: str = "prose"
+    verification_mode: str = "NONE"  # NONE | LIGHT | REQUIRED | CORROBORATED
+    execution_class: str = "DIRECT"  # DIRECT | CONTEXTUAL | TOOL_REQUIRED | CURRENT_INFO | COMPLEX_REASONING | MULTI_DOMAIN | VERIFICATION_REQUIRED | WORK
     candidate_specialists: list[str] = field(default_factory=list)
     language: str = "auto"
     output_format: str = "prose"
@@ -161,6 +174,19 @@ class TaskModel:
             "requires_actions": self.requires_actions,
             "requires_research": self.requires_research,
             "requires_coding": self.requires_coding,
+            "needs_brain_retrieval": self.needs_brain_retrieval,
+            "needs_memory": self.needs_memory,
+            "needs_browser": self.needs_browser,
+            "needs_code_execution": self.needs_code_execution,
+            "needs_calculation": self.needs_calculation,
+            "needs_specialists": self.needs_specialists,
+            "needs_verification": self.needs_verification,
+            "requires_side_effect": self.requires_side_effect,
+            "freshness_requirement": self.freshness_requirement,
+            "complexity": self.complexity,
+            "expected_answer_type": self.expected_answer_type,
+            "verification_mode": self.verification_mode,
+            "execution_class": self.execution_class,
             "candidate_specialists": list(self.candidate_specialists),
             "language": self.language,
             "output_format": self.output_format,
@@ -276,6 +302,82 @@ class TaskModelBuilder:
         elif requires_research or requires_current or (domain in {"knowledge", "question"} and plan.complexity != "low"):
             research_mode = "assisted"
 
+        needs_browser = any(t in lowered for t in ("browser", "klik", "click", "screenshot", "navigate", "webpage", "webpagina"))
+        needs_calculation = bool(
+            re.search(r"\b\d+\s*[\+\-\*/×÷]\s*\d+\b", text)
+            or any(t in lowered for t in ("bereken", "calculate", "som van", "percentage van", "sqrt", "gemiddelde"))
+        )
+        needs_code_execution = requires_coding or any(t in lowered for t in ("pytest", "npm test", "run script", "execute code"))
+        self_inspect = any(
+            t in lowered
+            for t in (
+                "welk model",
+                "which model",
+                "hoeveel %",
+                "how much of your brain",
+                "system inspect",
+                "wat gebruik je nu",
+                "how much ram",
+                "active agents",
+            )
+        )
+        needs_brain = (
+            plan.use_knowledge
+            or domain in {"knowledge", "research"}
+            or has_knowledge
+            or any(t in lowered for t in ("brain", "kennis", "knowledge", "onthoud", "herinner"))
+        ) and task_type != "simple_chat"
+        needs_memory = requires_personal or any(t in lowered for t in ("remember", "onthoud", "earlier", "previously", "earder", "vorige"))
+        needs_specialists = (
+            requires_research
+            or requires_coding
+            or research_mode == "deep"
+            or plan.complexity == "high"
+            or self_inspect
+        )
+        needs_verification = (
+            requires_current
+            or requires_research
+            or research_mode != "none"
+            or risk in {RiskClass.HIGH, RiskClass.CRITICAL}
+            or self_inspect
+            or requires_files
+        )
+        requires_side_effect = bool(side_effects)
+        freshness = "required" if requires_current else ("preferred" if requires_external else "none")
+        complexity = str(plan.complexity or "low")
+        # Self-inspect / calculation / current-info beat the short-message DIRECT path.
+        if self_inspect:
+            execution_class = "TOOL_REQUIRED"
+            verification_mode = "REQUIRED"
+        elif needs_calculation and not requires_research and task_type != "coding_repair":
+            execution_class = "TOOL_REQUIRED"
+            verification_mode = "LIGHT"
+        elif requires_current:
+            execution_class = "CURRENT_INFO"
+            verification_mode = "REQUIRED"
+        elif task_type == "simple_chat":
+            execution_class = "DIRECT"
+            verification_mode = "NONE"
+        elif requires_tools or needs_browser or needs_code_execution:
+            execution_class = "TOOL_REQUIRED"
+            verification_mode = "REQUIRED" if needs_verification else "LIGHT"
+        elif needs_specialists and (requires_research or requires_coding):
+            execution_class = "MULTI_DOMAIN" if (requires_research and requires_coding) else "COMPLEX_REASONING"
+            verification_mode = "CORROBORATED" if research_mode == "deep" else "REQUIRED"
+        elif needs_verification:
+            execution_class = "VERIFICATION_REQUIRED"
+            verification_mode = "REQUIRED"
+        elif needs_brain or needs_memory:
+            execution_class = "CONTEXTUAL"
+            verification_mode = "LIGHT"
+        else:
+            execution_class = "DIRECT"
+            verification_mode = "NONE"
+        if preferred == "external_worker" or research_mode == "deep":
+            if execution_class in {"DIRECT", "CONTEXTUAL"}:
+                execution_class = "WORK"
+
         if research_mode == "deep" and "research" not in allowed:
             allowed.append("research")
         if requires_coding and "coding" not in allowed:
@@ -326,6 +428,21 @@ class TaskModelBuilder:
             requires_actions=requires_tools or requires_coding,
             requires_research=requires_research or research_mode != "none",
             requires_coding=requires_coding,
+            needs_brain_retrieval=bool(needs_brain),
+            needs_memory=bool(needs_memory),
+            needs_browser=bool(needs_browser),
+            needs_code_execution=bool(needs_code_execution),
+            needs_calculation=bool(needs_calculation),
+            needs_specialists=bool(needs_specialists),
+            needs_verification=bool(needs_verification),
+            requires_side_effect=requires_side_effect,
+            freshness_requirement=freshness,
+            complexity=complexity,
+            expected_answer_type=(
+                "structured" if "vergelijk" in lowered or "compare" in lowered else "prose"
+            ),
+            verification_mode=verification_mode,
+            execution_class=execution_class,
             candidate_specialists=candidates,
             language=language,
             output_format="structured" if "vergelijk" in lowered or "compare" in lowered else "prose",

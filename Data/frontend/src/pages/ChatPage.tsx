@@ -7,12 +7,14 @@ import { AppShell } from "../layouts/AppShell";
 import { chatIneligibilityReason, partitionChatModels } from "../lib/chatModels";
 import { useAppToast } from "../state/useAppToast";
 import type {
+  AssistantTurnTelemetry,
   CapabilityListItem,
   Conversation,
   KnowledgeSource,
   ModelDescriptor,
   ReasoningSummary,
 } from "../types/api";
+import { buildDiagnosticStrip, deriveAssistantTelemetry } from "./chatTelemetry";
 
 type LocationState = {
   draft?: string;
@@ -42,6 +44,7 @@ type LastTurnMeta = {
   reasoningMode: string | null;
   memoryCount: number;
   verification: string | null;
+  telemetry: AssistantTurnTelemetry | null;
 };
 
 const EMPTY_TURN: LastTurnMeta = {
@@ -60,6 +63,7 @@ const EMPTY_TURN: LastTurnMeta = {
   reasoningMode: null,
   memoryCount: 0,
   verification: null,
+  telemetry: null,
 };
 
 function formatTime(value: string | null | undefined): string {
@@ -541,17 +545,31 @@ export function ChatPage() {
           : null;
       const cogStatus =
         cog && "status" in cog && typeof cog.status === "string" ? cog.status : null;
+      const telemetry = deriveAssistantTelemetry(data);
+      const verificationLabel =
+        telemetry.verification_mode && telemetry.verification_mode !== "NONE"
+          ? telemetry.verification_passed === true
+            ? `${telemetry.verification_mode} · passed`
+            : telemetry.verification_passed === false
+              ? `${telemetry.verification_mode} · failed`
+              : `${telemetry.verification_mode}`
+          : data.quality?.pass === false
+            ? "issues found"
+            : data.quality
+              ? "ok"
+              : "not required";
       setLastTurn({
-        model: data.model || null,
+        model: telemetry.model || data.model || null,
         intent: data.reasoning?.intent ?? null,
         complexity: data.reasoning?.complexity ?? null,
-        knowledgeCount: data.knowledge_sources?.length ?? 0,
+        knowledgeCount: telemetry.knowledge_hits ?? data.knowledge_sources?.length ?? 0,
         streaming: degraded ? "degraded" : "complete",
         reasoning: data.reasoning ?? null,
         knowledgeSources: data.knowledge_sources ?? [],
         cognitionMode:
-          cogDecision && typeof cogDecision.mode === "string" ? String(cogDecision.mode) : null,
-        cognitionStatus: cogStatus,
+          telemetry.cognition_mode ||
+          (cogDecision && typeof cogDecision.mode === "string" ? String(cogDecision.mode) : null),
+        cognitionStatus: telemetry.cognition_status || cogStatus,
         cognitionPhase:
           cogStatus && ["REASONING", "PERCEIVING", "VERIFYING", "EXECUTING"].includes(cogStatus)
             ? cogStatus.charAt(0) + cogStatus.slice(1).toLowerCase()
@@ -559,10 +577,9 @@ export function ChatPage() {
         language: data.language?.response_language ?? null,
         languageSource: data.language?.source ?? null,
         reasoningMode: data.reasoning?.mode?.effective ?? reasoningMode,
-        memoryCount: Array.isArray((data as { memory_sources?: unknown[] }).memory_sources)
-          ? ((data as { memory_sources?: unknown[] }).memory_sources?.length ?? 0)
-          : 0,
-        verification: data.quality?.pass === false ? "issues found" : data.quality ? "ok" : "not required",
+        memoryCount: telemetry.memory_hits ?? data.memory_sources?.length ?? 0,
+        verification: verificationLabel,
+        telemetry,
       });
       const list = await refreshConversations(data.conversation_id);
       const active = list.find((item) => item.id === data.conversation_id);
@@ -595,6 +612,10 @@ export function ChatPage() {
   }
 
   const pinned = Boolean(activeConversation?.pinned);
+  const diagnosticStrip = useMemo(
+    () => buildDiagnosticStrip(lastTurn.telemetry),
+    [lastTurn.telemetry],
+  );
 
   return (
     <AppShell activeMode="chat" chatApp searchPlaceholder="Search conversations, files, prompts...">
@@ -826,6 +847,28 @@ export function ChatPage() {
         </div>
 
         <div className="lv-composer-wrap">
+          {diagnosticStrip.length > 0 ? (
+            <div
+              className="lv-chat-diagnostic-strip"
+              aria-label="Turn diagnostics"
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "0.5rem 0.85rem",
+                padding: "0.4rem 0.75rem",
+                marginBottom: "0.35rem",
+                fontSize: "0.75rem",
+                opacity: 0.85,
+                borderTop: "1px solid color-mix(in srgb, currentColor 12%, transparent)",
+              }}
+            >
+              {diagnosticStrip.map((item) => (
+                <span key={item.label}>
+                  <strong style={{ fontWeight: 600 }}>{item.label}</strong> {item.value}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <div className="lv-composer">
             <textarea
               ref={composerRef}
@@ -1007,23 +1050,55 @@ export function ChatPage() {
               <strong>{activeConversation?.title ?? title}</strong>
               <small>
                 {lastTurn.model ? `Model ${lastTurn.model}` : selectedModelId ? modelLabel : "Auto model"}
+                {lastTurn.telemetry?.behavior_version
+                  ? ` · Behavior v${lastTurn.telemetry.behavior_version}`
+                  : lastTurn.telemetry?.behavior_hash
+                    ? ` · Behavior ${String(lastTurn.telemetry.behavior_hash).slice(0, 10)}`
+                    : ""}
                 {lastTurn.language
                   ? ` · Language ${lastTurn.language}${lastTurn.languageSource ? ` · ${lastTurn.languageSource}` : ""}`
                   : ""}
                 {lastTurn.reasoningMode ? ` · Reasoning ${lastTurn.reasoningMode}` : ""}
-                {` · Knowledge ${lastTurn.knowledgeCount}`}
-                {` · Memory ${lastTurn.memoryCount}`}
-                {lastTurn.verification ? ` · Verification ${lastTurn.verification}` : ""}
               </small>
               <small>
-                {lastTurn.intent && lastTurn.complexity
-                  ? `${lastTurn.intent} · ${lastTurn.complexity}`
-                  : conversationId
-                    ? "Persistent local session"
-                    : "No active conversation"}
+                {`Brain/Knowledge ${lastTurn.telemetry?.knowledge_hits ?? lastTurn.knowledgeCount}`}
+                {` · Memory ${lastTurn.telemetry?.memory_hits ?? lastTurn.memoryCount}`}
+                {` · Evidence ${lastTurn.telemetry?.evidence_hits ?? 0}`}
+                {` · Web ${
+                  lastTurn.telemetry?.web_sources?.length
+                    ? `${lastTurn.telemetry.web_sources.length} sources`
+                    : lastTurn.telemetry?.web_used
+                      ? "used"
+                      : "idle"
+                }`}
+                {` · Verification ${lastTurn.verification ?? "UNMEASURED"}`}
+              </small>
+              <small>
+                {lastTurn.telemetry?.context_used != null ||
+                lastTurn.telemetry?.context_tokens != null ||
+                lastTurn.telemetry?.context_budget != null
+                  ? `Context ${lastTurn.telemetry?.context_used ?? lastTurn.telemetry?.context_tokens ?? "—"} / ${lastTurn.telemetry?.context_budget ?? "—"}`
+                  : "Context budget unmeasured"}
+                {lastTurn.telemetry?.execution_class
+                  ? ` · Mode ${lastTurn.telemetry.execution_class}`
+                  : ""}
+                {lastTurn.telemetry?.latency_ms != null
+                  ? ` · ${Math.round(lastTurn.telemetry.latency_ms)} ms`
+                  : ""}
                 {lastTurn.cognitionMode ? ` · ${lastTurn.cognitionMode}` : ""}
                 {lastTurn.cognitionPhase ? ` · ${lastTurn.cognitionPhase}` : ""}
               </small>
+              {buildDiagnosticStrip(lastTurn.telemetry).length ? (
+                <small className="lv-context-diag">
+                  {buildDiagnosticStrip(lastTurn.telemetry)
+                    .map((item) => `${item.label}=${item.value}`)
+                    .join(" · ")}
+                </small>
+              ) : (
+                <small className="lv-context-diag">
+                  Diagnostics are backend-backed telemetry — never an invented “brain %”.
+                </small>
+              )}
             </div>
             {lastTurn.reasoning?.steps?.length ? (
               <div className="lv-context-list">
@@ -1072,11 +1147,61 @@ export function ChatPage() {
         {rightTab === "Tools" ? (
           <section className="lv-panel lv-side-card">
             <div className="lv-side-card-head">
-              <h3>Capabilities</h3>
+              <h3>Tool calls</h3>
+            </div>
+            <div className="lv-tool-list">
+              {(lastTurn.telemetry?.tool_calls?.length ??
+                lastTurn.telemetry?.tools_invoked?.length ??
+                0) === 0 ? (
+                <div className="lv-tool-item">
+                  <span>
+                    <strong>No tool calls this turn</strong>
+                    <small>Receipts appear only after ExecutionGateway invocations.</small>
+                  </span>
+                </div>
+              ) : (
+                (lastTurn.telemetry?.tool_calls?.length
+                  ? lastTurn.telemetry.tool_calls
+                  : (lastTurn.telemetry?.tools_invoked ?? []).map((id) => ({
+                      capability_id: id,
+                      status: "INVOKED",
+                      duration_ms: null,
+                      receipt_id: null,
+                      summary: null,
+                      success: null,
+                    }))
+                ).map((call) => (
+                  <div
+                    className="lv-tool-item"
+                    key={`${call.capability_id}:${call.receipt_id || call.status}`}
+                  >
+                    <span className="lv-mini-icon cyan">
+                      <svg className="lv-icon" viewBox="0 0 24 24">
+                        <path d="M14 7l3 3-8 8H6v-3l8-8z" />
+                      </svg>
+                    </span>
+                    <span>
+                      <strong>{call.capability_id}</strong>
+                      <small>
+                        {call.status}
+                        {call.duration_ms != null ? ` · ${Math.round(call.duration_ms)} ms` : ""}
+                        {call.receipt_id ? ` · receipt ${String(call.receipt_id).slice(0, 10)}` : ""}
+                        {call.success === false ? " · failed" : ""}
+                        {call.summary ? ` · ${call.summary}` : ""}
+                      </small>
+                    </span>
+                    <span className="lv-online-label">
+                      {call.success === false ? "Failed" : call.receipt_id ? "Receipt" : call.status}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="lv-side-card-head" style={{ marginTop: "1rem" }}>
+              <h3>Catalog (read-only)</h3>
             </div>
             <p style={{ margin: "0 0 0.75rem", fontSize: "0.85rem", opacity: 0.8 }}>
-              Read-only catalog. Invocation goes through ExecutionGateway elsewhere — not from this
-              panel.
+              Invocation goes through ExecutionGateway — not from this panel.
             </p>
             <div className="lv-tool-list">
               {capabilities.length === 0 ? (
@@ -1087,22 +1212,16 @@ export function ChatPage() {
                   </span>
                 </div>
               ) : (
-                capabilities.map((cap) => (
+                capabilities.slice(0, 24).map((cap) => (
                   <div className="lv-tool-item" key={cap.id}>
-                    <span className="lv-mini-icon cyan">
-                      <svg className="lv-icon" viewBox="0 0 24 24">
-                        <path d="M14 7l3 3-8 8H6v-3l8-8z" />
-                      </svg>
-                    </span>
                     <span>
                       <strong>{cap.name || cap.id}</strong>
                       <small>
-                        {cap.description || "No description"}
                         {cap.available === false
-                          ? " · unavailable"
+                          ? "unavailable"
                           : cap.enabled === false
-                            ? " · disabled"
-                            : " · registered"}
+                            ? "disabled"
+                            : "registered"}
                         {cap.side_effects?.length ? ` · ${cap.side_effects.join(", ")}` : ""}
                       </small>
                     </span>
@@ -1122,6 +1241,46 @@ export function ChatPage() {
               </Link>
             </div>
             <div className="lv-agent-side-list">
+              {(lastTurn.telemetry?.agent_delegations?.length ||
+                lastTurn.telemetry?.gi_specialists?.length ||
+                lastTurn.telemetry?.agents?.length) ? (
+                (lastTurn.telemetry?.agent_delegations?.length
+                  ? lastTurn.telemetry.agent_delegations
+                  : [
+                      ...(lastTurn.telemetry?.gi_specialists ?? []).map((id) => ({
+                        agent_kind: id,
+                        status: "SELECTED",
+                        summary: "GI specialist selected",
+                        success: null as boolean | null,
+                      })),
+                      ...(lastTurn.telemetry?.agents ?? []).map((id) => ({
+                        agent_kind: id,
+                        status: "DELEGATED",
+                        summary: "Agent result observed",
+                        success: null as boolean | null,
+                      })),
+                    ]
+                ).map((agent) => (
+                  <div className="lv-agent-side" key={`${agent.agent_kind}:${agent.status}`}>
+                    <span>
+                      <strong>{agent.agent_kind}</strong>
+                      <small>
+                        {agent.status}
+                        {agent.summary ? ` · ${agent.summary}` : ""}
+                        {agent.success === false ? " · failed" : ""}
+                      </small>
+                    </span>
+                    <span className="lv-online-label">{agent.status}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="lv-agent-side">
+                  <span>
+                    <strong>No specialist delegation this turn</strong>
+                    <small>Orchestra stays quiet on DIRECT / simple paths.</small>
+                  </span>
+                </div>
+              )}
               <div className="lv-agent-side">
                 <span className="lv-mini-icon blue">
                   <svg className="lv-icon" viewBox="0 0 24 24">

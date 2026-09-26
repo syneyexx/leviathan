@@ -208,6 +208,9 @@ Do not introduce page-local duplicate fetch wrappers when a canonical client met
 ## Current
 
 - `pages/ChatPage.tsx` is the user-facing conversation UI.
+- `pages/chatTelemetry.ts` derives **real** turn telemetry from `ChatResponse.assistant_telemetry` / cognition (never mocks tools, agents, brain %, or private CoT).
+- Context / Tools / Agents tabs show measured model, behavior version/hash, context used/budget, brain/memory/evidence hits, web sources, verification, tool calls (status/duration/receipt), and specialist delegations.
+- Optional diagnostic strip: mode / model / brain / web / tools / agents / verification / context / latency / behavior.
 - `pages/CognitionPage.tsx` exposes cognition/run state separately.
 - Chat consumes the backend chat/cognition/model systems; the frontend must not synthesize reasoning success, tool execution or citations.
 

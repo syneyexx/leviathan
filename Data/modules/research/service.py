@@ -186,6 +186,7 @@ class ResearchService:
         endpoint = search_endpoint
         api_key = search_api_key
         auto_promote = True
+        search_provider = None
         if hasattr(settings, "research_integration"):
             endpoint = endpoint or settings.research_integration.web_search_endpoint
             api_key = api_key if api_key is not None else settings.research_integration.web_search_api_key
@@ -196,10 +197,14 @@ class ResearchService:
                     True,
                 )
             )
+            search_provider = getattr(
+                settings.research_integration, "web_search_provider", None
+            )
         provider = web or build_web_provider(
             allow_outbound=allow_outbound,
             search_endpoint=endpoint,
             api_key=api_key,
+            search_provider=search_provider,
         )
         return cls(
             store,
@@ -222,15 +227,23 @@ class ResearchService:
         allow_outbound: bool,
         search_endpoint: str | None = None,
         api_key: str | None = None,
+        search_provider: str | None = None,
     ) -> None:
         """Hot-apply outbound / search provider settings from the Settings Control Plane."""
         from Data.modules.research.web import build_web_provider
+        from Data.modules.research.web_capabilities import bind_web_provider
 
         self.allow_outbound = bool(allow_outbound)
         self.web = build_web_provider(
             allow_outbound=self.allow_outbound,
             search_endpoint=search_endpoint,
             api_key=api_key,
+            search_provider=search_provider,
+        )
+        bind_web_provider(
+            self.web,
+            allow_outbound=self.allow_outbound,
+            allow_web=True,
         )
         if hasattr(self, "runner") and self.runner is not None:
             self.runner.allow_outbound = self.allow_outbound

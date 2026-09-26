@@ -148,10 +148,17 @@ class MetaController:
             information_gain_recent=information_gain_recent,
         )
 
-        if task.task_type == "simple_chat":
-            notes.append("simple request — keep FAST path")
-        if getattr(task, "requires_current_information", False):
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        if execution_class == "DIRECT" and task.task_type == "simple_chat":
+            notes.append("simple/DIRECT execution_class — keep FAST path")
+        elif execution_class == "DIRECT":
+            notes.append("DIRECT execution_class — keep FAST path")
+        if execution_class == "CURRENT_INFO" or getattr(task, "requires_current_information", False):
             notes.append("freshness required — external research valuable when permitted")
+        if execution_class in {"MULTI_DOMAIN", "COMPLEX_REASONING"}:
+            notes.append(f"execution_class={execution_class} — deeper orchestration")
+        if execution_class in {"TOOL_REQUIRED", "VERIFICATION_REQUIRED"}:
+            notes.append(f"execution_class={execution_class} — tool/verify path required")
         if getattr(task, "research_mode", "none") == "deep":
             notes.append("deep research mode indicated by task semantics")
         if resource_pressure >= 0.7:
@@ -317,6 +324,20 @@ class MetaController:
                 return forced
         deep_threshold = self._uncertainty_deep_threshold()
         allow_fast = self._allow_fast_path()
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        # Adaptive depth from TaskModel.execution_class (GI4) — beats short-message simple_chat.
+        if execution_class == "DIRECT" and task.risk_class == RiskClass.LOW:
+            return ReasoningMode.FAST if allow_fast else ReasoningMode.STANDARD
+        if execution_class in {"MULTI_DOMAIN", "COMPLEX_REASONING", "WORK"}:
+            if resource_pressure < 0.7:
+                return ReasoningMode.DEEP if uncertainty >= 0.4 else ReasoningMode.STANDARD
+            return ReasoningMode.STANDARD
+        if execution_class == "CURRENT_INFO" or (
+            getattr(task, "requires_current_information", False) and uncertainty >= 0.5
+        ):
+            return ReasoningMode.STANDARD if resource_pressure >= 0.6 else ReasoningMode.DEEP
+        if execution_class in {"TOOL_REQUIRED", "VERIFICATION_REQUIRED", "CONTEXTUAL"}:
+            return ReasoningMode.STANDARD
         if task.task_type == "simple_chat" and task.risk_class == RiskClass.LOW:
             return ReasoningMode.FAST if allow_fast else ReasoningMode.STANDARD
         if getattr(task, "research_mode", "none") == "deep" or getattr(task, "requires_research", False):
@@ -326,8 +347,6 @@ class MetaController:
             uncertainty >= deep_threshold and task.domain in {"coding", "research"}
         ):
             return ReasoningMode.DEEP if resource_pressure < 0.7 else ReasoningMode.STANDARD
-        if getattr(task, "requires_current_information", False) and uncertainty >= 0.5:
-            return ReasoningMode.STANDARD if resource_pressure >= 0.6 else ReasoningMode.DEEP
         if task.legacy_plan and task.legacy_plan.complexity == "high":
             return ReasoningMode.STANDARD if resource_pressure >= 0.6 else ReasoningMode.DEEP
         if uncertainty >= 0.55 or task.domain in {"coding", "research"}:
@@ -348,6 +367,40 @@ class MetaController:
         if self.policy is not None:
             min_evidence = float(self.policy.minimum_evidence_coverage)
 
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        # Coding / research domain strategies stay specialized even when execution_class is TOOL_REQUIRED.
+        if task.domain == "coding" and execution_class not in {"DIRECT", "CURRENT_INFO"}:
+            if "repair" in task.task_type or any("test" in c.lower() for c in task.success_criteria):
+                return ReasoningStrategy.CODING_REPAIR
+            return ReasoningStrategy.DEBUG_LOOP if uncertainty >= 0.55 else ReasoningStrategy.PLAN_EXECUTE_VERIFY
+        if (task.domain == "research" or getattr(task, "requires_research", False)) and execution_class not in {
+            "DIRECT",
+            "TOOL_REQUIRED",
+        }:
+            if contradiction_density >= contradiction_threshold:
+                return ReasoningStrategy.COMPARE_ALTERNATIVES
+            if task.task_type == "research_comparison":
+                return ReasoningStrategy.COMPARE_ALTERNATIVES
+            return ReasoningStrategy.RESEARCH_SYNTHESIS
+        # execution_class beats short-message simple_chat when tools/current-info are required.
+        if execution_class == "DIRECT":
+            return ReasoningStrategy.DIRECT
+        if execution_class == "MULTI_DOMAIN":
+            return ReasoningStrategy.MULTI_AGENT
+        if execution_class == "COMPLEX_REASONING":
+            return (
+                ReasoningStrategy.RESEARCH_SYNTHESIS
+                if getattr(task, "requires_research", False)
+                else ReasoningStrategy.PLAN_EXECUTE_VERIFY
+            )
+        if execution_class == "CURRENT_INFO" or getattr(task, "requires_current_information", False):
+            return ReasoningStrategy.TOOL_DRIVEN
+        if execution_class == "TOOL_REQUIRED" or getattr(task, "needs_calculation", False):
+            return ReasoningStrategy.TOOL_DRIVEN
+        if execution_class == "VERIFICATION_REQUIRED":
+            return ReasoningStrategy.HIGH_RISK_VERIFY
+        if execution_class == "CONTEXTUAL":
+            return ReasoningStrategy.RETRIEVE_THEN_ANSWER
         if task.task_type == "simple_chat":
             return ReasoningStrategy.DIRECT
         if task.domain == "coding":
@@ -509,6 +562,54 @@ class MetaController:
                 max_critic_passes=base.max_critic_passes,
                 max_iterations=base.max_iterations,
             )
+        # DIRECT short path — HADES lesson: hard ceilings, no tool burn.
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        if execution_class == "DIRECT":
+            base = CognitiveBudgets(
+                max_wall_time_seconds=min(base.max_wall_time_seconds, 30.0),
+                max_model_calls=min(1, base.max_model_calls),
+                max_model_tokens=min(2000, base.max_model_tokens),
+                max_tool_calls=0,
+                max_agent_delegations=0,
+                max_replans=0,
+                max_retries=min(1, base.max_retries),
+                max_retrieval_rounds=min(1, base.max_retrieval_rounds),
+                max_parallel_workers=1,
+                max_context_tokens=min(3000, base.max_context_tokens),
+                max_critic_passes=0,
+                max_iterations=min(2, base.max_iterations),
+            )
+        elif execution_class == "TOOL_REQUIRED":
+            # Ensure at least one tool call slot for inspect/calc/web.
+            base = CognitiveBudgets(
+                max_wall_time_seconds=base.max_wall_time_seconds,
+                max_model_calls=max(1, base.max_model_calls),
+                max_model_tokens=base.max_model_tokens,
+                max_tool_calls=max(2, base.max_tool_calls),
+                max_agent_delegations=base.max_agent_delegations,
+                max_replans=min(base.max_replans, 2),
+                max_retries=base.max_retries,
+                max_retrieval_rounds=base.max_retrieval_rounds,
+                max_parallel_workers=base.max_parallel_workers,
+                max_context_tokens=base.max_context_tokens,
+                max_critic_passes=base.max_critic_passes,
+                max_iterations=max(3, base.max_iterations),
+            )
+        elif execution_class == "CURRENT_INFO":
+            base = CognitiveBudgets(
+                max_wall_time_seconds=base.max_wall_time_seconds,
+                max_model_calls=max(2, base.max_model_calls),
+                max_model_tokens=base.max_model_tokens,
+                max_tool_calls=max(2, base.max_tool_calls),
+                max_agent_delegations=base.max_agent_delegations,
+                max_replans=min(base.max_replans, 2),
+                max_retries=base.max_retries,
+                max_retrieval_rounds=base.max_retrieval_rounds,
+                max_parallel_workers=base.max_parallel_workers,
+                max_context_tokens=base.max_context_tokens,
+                max_critic_passes=base.max_critic_passes,
+                max_iterations=max(4, base.max_iterations),
+            )
         return base
 
     def _value_scores(
@@ -548,14 +649,27 @@ class MetaController:
             cost=0.2,
             latency_penalty=0.1,
         )
+        verify_boost = 0.0
+        if str(getattr(task, "verification_mode", "") or "") in {"REQUIRED", "CORROBORATED"}:
+            verify_boost = 0.35
         verify = self.estimate_value_of_action(
-            expected_gain=0.4 if task.success_criteria else 0.15,
+            expected_gain=(0.4 if task.success_criteria else 0.15) + verify_boost,
             expected_risk_reduction=0.35 if task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL} else 0.1,
             expected_completion_progress=0.25 if plan_progress >= 0.5 else 0.05,
             cost=0.15,
             latency_penalty=0.05,
         )
         delegate = 0.0
+        if str(getattr(task, "execution_class", "") or "") in {"MULTI_DOMAIN", "COMPLEX_REASONING", "WORK"}:
+            delegate = max(
+                delegate,
+                self.estimate_value_of_action(
+                    expected_gain=0.55,
+                    expected_completion_progress=0.2,
+                    cost=0.3,
+                    latency_penalty=0.1,
+                ),
+            )
         if "coding" in task.allowed_delegation and task.domain == "coding":
             delegate = self.estimate_value_of_action(
                 expected_gain=0.7 if task.legacy_plan and task.legacy_plan.complexity != "low" else 0.35,

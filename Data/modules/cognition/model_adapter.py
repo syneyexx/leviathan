@@ -17,10 +17,17 @@ from Data.modules.models.async_bridge import run_coro_sync
 # Map orchestration roles → model routing roles when domain not provided.
 _ORCH_TO_MODEL_ROLE = {
     "responder": None,  # fall through to domain / chat
-    "critic": None,
-    "planner": None,
+    "critic": "critic",
+    "planner": "chat",
     "researcher": "research",
     "coder": "coding",
+    "fast": "chat",
+    "general": "chat",
+    "deep": "reasoning",
+    "vision": "vision",
+    "browser": "vision",
+    "synthesis": "chat",
+    "system_inspector": "chat",
 }
 
 
@@ -52,6 +59,8 @@ def build_control_plane_model_caller(
             routing_role = _ORCH_TO_MODEL_ROLE.get(role)
         if routing_role is None and domain in {"research", "coding", "chat", "trading"}:
             routing_role = "chat" if domain == "chat" else domain
+        if routing_role is None and role in {"critic", "deep", "fast", "general"}:
+            routing_role = _ORCH_TO_MODEL_ROLE.get(role)
 
         payload_messages: list[dict[str, str]] = []
         if system_prompt and system_prompt.strip():

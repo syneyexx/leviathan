@@ -658,6 +658,25 @@ MCP invocation still passes through `ExecutionGateway`; MCP is not a private sid
 
 These paths are FEATURE-GATED and backend/provider availability must be reported honestly. Existence of a boundary does not imply universal production browser, speech or media-generation support.
 
+### General Assistant Fabric (GI)
+
+LEVIATHAN integrates existing owners into one assistant path — **not** a second ChatRuntime:
+
+- **CognitiveRuntime** (`Data/modules/cognition/`) remains the sole cognitive orchestration authority. Adaptive `TaskModel.execution_class` selects DIRECT / CONTEXTUAL / TOOL_REQUIRED / CURRENT_INFO / COMPLEX_REASONING / MULTI_DOMAIN / VERIFICATION_REQUIRED / WORK.
+- **BehaviorProfile** owns conversational behavior (`SYSTEM_PROMPT`). **AuthorityProfile** / **ExecutionGateway** own technical side effects. They must never merge.
+- **system.inspect** aggregates real provider telemetry; brain percentage is explicitly UNMEASURED (not a metric).
+- **FactualityGate** / claim assessment live under `Data/modules/verification/claims.py`. Fake critic `evidence_refs` cannot PASS.
+- **web.search** / **web.fetch** route through `Data/modules/research/web.py` providers. Unconfigured search returns `WEB_SEARCH_UNAVAILABLE` — never fabricates results.
+- **General Intelligence Orchestra** seeds live in AgentFleet (`Data/modules/agents/general_orchestra.py`). Parent Cognition owns the final voice.
+- **PlaywrightBrowserBackend** is READY only after Chromium launch + navigate + observation proof.
+- **BrowserJourneyCrawler** / `LocalUserJourneyCrawler` (`Data/modules/browser/qa_crawler.py`) is localhost-scoped QA; APIs under `/api/browser/qa/*` (gateway) and thin `/api/browser/qa/crawls*` router. No CrawlerRuntime2 / stealth.
+- **QaRepairBridge** (`Data/modules/browser/qa_repair.py`) is an optional operator-triggered finding → `CodingCognitiveStrategy` → tests/replay path; never marks fixed without evidence.
+- Chat returns `assistant_telemetry` assembled from cognition public status (tool_calls with receipts/duration, agent_delegations, web_sources, context budget/used, behavior hash/version, latency). No hidden CoT.
+
+### Assistant evaluation (GI16)
+
+`Data/modules/evaluation/assistant_benchmark.py` extends Round-5 families with deterministic GI checks: hallucination resistance (brain %), current-info freshness routing, tool honesty, fake evidence rejection, web failure honesty, orchestra/complex routing.
+
 ---
 
 # 20. Market Simulation / TradingCenter

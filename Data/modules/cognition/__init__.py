@@ -23,6 +23,11 @@ from .specialists import register_specialist_handlers
 from .steering import SteerClassification, SteerKind, classify_steer
 from .failure import FailureCategory, classify_failure, should_blind_retry
 from .store import CognitionStore
+from .system_inspect import (
+    SystemInspectService,
+    bind_system_inspect_service,
+    get_system_inspect_service,
+)
 from .task_model import TaskModel, TaskModelBuilder
 from .types import (
     BeliefCategory,
@@ -93,15 +98,18 @@ __all__ = [
     "SteerClassification",
     "SteerKind",
     "StrategyRegistry",
+    "SystemInspectService",
     "TaskModel",
     "TaskModelBuilder",
     "VerifiedExperience",
     "WorkingMemory",
     "WorkingMemoryItem",
+    "bind_system_inspect_service",
     "build_control_plane_model_caller",
     "classify_failure",
     "classify_steer",
     "confidence_to_band",
+    "get_system_inspect_service",
     "register_specialist_handlers",
     "should_blind_retry",
 ]

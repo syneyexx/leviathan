@@ -93,6 +93,12 @@ class BrowserObservation:
     accessibility_tree: str
     screenshot_artifact_id: str | None = None
     mode: str = "dom"
+    # Bounded extras (Playwright / rich backends); empty for fixture/local_dom.
+    dom_summary: str = ""
+    interactive_elements: tuple[dict[str, Any], ...] = ()
+    viewport: dict[str, Any] | None = None
+    console_errors: tuple[str, ...] = ()
+    network_errors: tuple[str, ...] = ()
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +108,11 @@ class BrowserObservation:
             "accessibility_tree": self.accessibility_tree,
             "screenshot_artifact_id": self.screenshot_artifact_id,
             "mode": self.mode,
+            "dom_summary": self.dom_summary,
+            "interactive_elements": list(self.interactive_elements)[:80],
+            "viewport": self.viewport,
+            "console_errors": list(self.console_errors)[:40],
+            "network_errors": list(self.network_errors)[:40],
             "truth": {
                 "page_text_is_untrusted_context": True,
                 "observation_is_not_authority": True,
@@ -299,6 +310,7 @@ class BrowserWorker:
         allow_network: bool = False,
         allow_uploads: bool = True,
         filesystem_root: str | None = None,
+        qa_crawler: Any | None = None,
     ) -> None:
         if backend is not None:
             self.backend = backend
@@ -315,6 +327,37 @@ class BrowserWorker:
             self.backend = FixtureBrowserBackend()
         self.artifact_store = artifact_store
         self._sessions: dict[str, BrowserSession] = {}
+        self._qa_crawler = qa_crawler
+        self.allow_network = allow_network
+        self.allow_uploads = allow_uploads
+        self.filesystem_root = filesystem_root
+
+    def get_qa_crawler(self) -> Any:
+        if self._qa_crawler is False:
+            raise RuntimeError("QA crawler factory disabled on this browser worker")
+        if self._qa_crawler is None:
+            from .qa_crawler import BrowserJourneyCrawler
+
+            # QA crawls need localhost HTTP; do not widen the primary worker policy.
+            qa_worker = BrowserWorker(
+                backend_kind=(
+                    self.backend.kind.value
+                    if hasattr(getattr(self, "backend", None), "kind")
+                    else "local_dom"
+                ),
+                artifact_store=self.artifact_store,
+                allow_network=True,
+                allow_uploads=self.allow_uploads,
+                filesystem_root=self.filesystem_root,
+                qa_crawler=False,  # type: ignore[arg-type] — sentinel: no nested factory
+            )
+            crawler = BrowserJourneyCrawler(
+                browser_worker=qa_worker,
+                artifact_store=self.artifact_store,
+            )
+            qa_worker._qa_crawler = crawler
+            self._qa_crawler = crawler
+        return self._qa_crawler
 
     def get_session(self, session_id: str) -> BrowserSession | None:
         return self._sessions.get(session_id)
@@ -331,6 +374,17 @@ class BrowserWorker:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         args = dict(arguments or {})
+        # QA crawl control-plane actions (GI9/GI10) — not BrowserAction enum members.
+        action_key = action.value if isinstance(action, BrowserAction) else str(action)
+        if action_key.upper() in {
+            "QA_CRAWL",
+            "QA_STATUS",
+            "QA_CANCEL",
+            "QA_REPLAY",
+            "QA_REPORT",
+        } or action_key.lower().startswith("qa_"):
+            return self._execute_qa(action_key, args, run_id=run_id, request_id=request_id)
+
         if isinstance(action, str):
             action = BrowserAction(action.upper())
         session_id = str(args.pop("session_id", "") or "") or None
@@ -390,19 +444,30 @@ class BrowserWorker:
 
         artifact_id = None
         if action == BrowserAction.SCREENSHOT and self.artifact_store is not None:
-            payload = str(meta.get("screenshot_html") or meta.get("screenshot_svg") or "")
             producer = (
                 "browser.fixture"
                 if kind == BrowserBackendKind.FIXTURE
                 else f"browser.{kind.value if hasattr(kind, 'value') else kind}"
             )
+            png = meta.get("screenshot_png")
+            if isinstance(png, (bytes, bytearray)):
+                data = bytes(png)
+                filename = f"browser-{session.session_id[:8]}.png"
+                artifact_type = "browser_screenshot"
+            else:
+                payload = str(meta.get("screenshot_html") or meta.get("screenshot_svg") or "")
+                data = payload.encode("utf-8")
+                filename = (
+                    f"browser-{session.session_id[:8]}.html"
+                    if meta.get("screenshot_html")
+                    else f"browser-{session.session_id[:8]}.svg"
+                )
+                artifact_type = "browser_screenshot"
             record = self.artifact_store.create_from_bytes(
-                data=payload.encode("utf-8"),
-                artifact_type="browser_screenshot",
+                data=data,
+                artifact_type=artifact_type,
                 producer=producer,
-                filename=f"browser-{session.session_id[:8]}.html"
-                if meta.get("screenshot_html")
-                else f"browser-{session.session_id[:8]}.svg",
+                filename=filename,
                 run_id=run_id,
                 metadata={
                     "session_id": session.session_id,
@@ -422,6 +487,11 @@ class BrowserWorker:
                 accessibility_tree=observation.accessibility_tree,
                 screenshot_artifact_id=str(artifact_id) if artifact_id else None,
                 mode=observation.mode,
+                dom_summary=observation.dom_summary,
+                interactive_elements=observation.interactive_elements,
+                viewport=observation.viewport,
+                console_errors=observation.console_errors,
+                network_errors=observation.network_errors,
             )
 
         self._sessions[session.session_id] = session
@@ -453,7 +523,7 @@ class BrowserWorker:
             "metadata": {
                 k: v
                 for k, v in meta.items()
-                if k not in {"screenshot_svg", "screenshot_html"}
+                if k not in {"screenshot_svg", "screenshot_html", "screenshot_png"}
             },
             "truth": {
                 "no_fabricated_browser_results": True,
@@ -464,7 +534,163 @@ class BrowserWorker:
                 "side_effects_under_authorization": True,
                 "state_verification_required_for_completion": needs_verify
                 or action == BrowserAction.VERIFY_STATE,
+                "playwright_ready": bool(meta.get("ready"))
+                if kind == BrowserBackendKind.PLAYWRIGHT
+                else None,
             },
+        }
+
+    def _execute_qa(
+        self,
+        action_key: str,
+        args: dict[str, Any],
+        *,
+        run_id: str | None,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        from .qa_crawler import CrawlBudget, CrawlStatus, JourneyPersona
+
+        crawler = self.get_qa_crawler()
+        key = action_key.upper().replace("BROWSER.QA.", "").replace("QA.", "")
+        if key in {"QA_CRAWL", "CRAWL"}:
+            persona_raw = str(args.get("persona") or JourneyPersona.DESKTOP_MOUSE.value)
+            try:
+                persona = JourneyPersona(persona_raw.upper())
+            except ValueError:
+                persona = JourneyPersona.DESKTOP_MOUSE
+            budgets_raw = dict(args.get("budgets") or {})
+            if budgets_raw:
+                crawler.budget = CrawlBudget(
+                    max_pages=int(budgets_raw.get("max_pages", crawler.budget.max_pages)),
+                    max_actions=int(budgets_raw.get("max_actions", crawler.budget.max_actions)),
+                    max_depth=int(budgets_raw.get("max_depth", crawler.budget.max_depth)),
+                    max_wall_time_seconds=float(
+                        budgets_raw.get(
+                            "max_wall_time_seconds",
+                            budgets_raw.get(
+                                "max_wall_time_s", crawler.budget.max_wall_time_seconds
+                            ),
+                        )
+                    ),
+                    max_forms=int(budgets_raw.get("max_forms", crawler.budget.max_forms)),
+                )
+            hosts = args.get("allowed_hosts")
+            if hosts:
+                crawler.allowed_hosts = tuple(str(h).lower() for h in hosts)
+            crawler.allow_destructive = bool(
+                args.get("allow_destructive_test_actions", crawler.allow_destructive)
+            )
+            start_url = str(args.get("seed_url") or args.get("url") or args.get("start_url") or "")
+            if not start_url:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": "browser.qa.crawl requires seed_url",
+                    "action": "QA_CRAWL",
+                }
+            report = crawler.run(
+                start_url=start_url,
+                persona=persona,
+                seed=int(args.get("seed", 42)),
+                run_id=run_id or args.get("run_id"),
+            )
+            payload = report.public_dict() if hasattr(report, "public_dict") else dict(report)
+            terminal_ok = payload.get("status") in {
+                CrawlStatus.COMPLETED.value,
+                CrawlStatus.LIMIT_REACHED.value,
+                CrawlStatus.CANCELLED.value,
+            }
+            return {
+                "status": (
+                    BrowserJobStatus.COMPLETED.value
+                    if terminal_ok
+                    else BrowserJobStatus.FAILED.value
+                ),
+                "action": "QA_CRAWL",
+                "report": payload,
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "detail": f"QA crawl {payload.get('status')}",
+                "truth": payload.get("truth") or {},
+            }
+        if key in {"QA_STATUS", "STATUS"}:
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                report = crawler.status(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_STATUS",
+                }
+            payload = report.public_dict()
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_STATUS",
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "report": payload,
+                "truth": payload.get("truth") or {},
+            }
+        if key in {"QA_CANCEL", "CANCEL"}:
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                report = crawler.cancel(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_CANCEL",
+                }
+            payload = report.public_dict()
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_CANCEL",
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "report": payload,
+                "truth": {
+                    "cancelled_is_not_success": True,
+                    **(payload.get("truth") or {}),
+                },
+            }
+        if key in {"QA_REPLAY", "REPLAY"}:
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                report = crawler.replay(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_REPLAY",
+                }
+            payload = report.public_dict()
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_REPLAY",
+                "report": payload,
+                "journey_id": payload.get("journey_id"),
+                "run_id": payload.get("run_id"),
+                "detail": f"QA replay {payload.get('status')}",
+            }
+        if key in {"QA_REPORT", "REPORT"}:
+            ref = str(args.get("journey_id") or args.get("run_id") or "")
+            try:
+                payload = crawler.report_artifact(ref)
+            except KeyError:
+                return {
+                    "status": BrowserJobStatus.REJECTED.value,
+                    "error": f"Unknown QA journey/run: {ref}",
+                    "action": "QA_REPORT",
+                }
+            return {
+                "status": BrowserJobStatus.COMPLETED.value,
+                "action": "QA_REPORT",
+                **payload,
+            }
+        return {
+            "status": BrowserJobStatus.UNSUPPORTED.value,
+            "error": f"Unknown QA action: {action_key}",
+            "action": action_key,
         }
 
     # Backward-compatible stub-shaped API used by older tests.
@@ -481,6 +707,11 @@ class BrowserWorker:
                 accessibility_tree=raw.get("accessibility_tree") or "",
                 screenshot_artifact_id=raw.get("screenshot_artifact_id"),
                 mode=raw.get("mode") or "dom",
+                dom_summary=str(raw.get("dom_summary") or ""),
+                interactive_elements=tuple(raw.get("interactive_elements") or ()),
+                viewport=raw.get("viewport"),
+                console_errors=tuple(raw.get("console_errors") or ()),
+                network_errors=tuple(raw.get("network_errors") or ()),
             )
         return BrowserJob(
             job_id=str(uuid.uuid4()),

@@ -110,6 +110,52 @@ class NumericComputeEngine:
             raise ValueError("division by zero")
         return ComputeResult("div", float(numerator) / float(denominator))
 
+    def evaluate_expression(self, expression: str) -> ComputeResult:
+        """Safe AST numeric evaluator — no eval(), no names, no calls."""
+        import ast
+        import operator as op
+
+        allowed_binops = {
+            ast.Add: op.add,
+            ast.Sub: op.sub,
+            ast.Mult: op.mul,
+            ast.Div: op.truediv,
+            ast.FloorDiv: op.floordiv,
+            ast.Mod: op.mod,
+            ast.Pow: op.pow,
+        }
+        allowed_unary = {ast.UAdd: op.pos, ast.USub: op.neg}
+
+        def _eval(node: ast.AST) -> float:
+            if isinstance(node, ast.Expression):
+                return _eval(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            if isinstance(node, ast.BinOp) and type(node.op) in allowed_binops:
+                left = _eval(node.left)
+                right = _eval(node.right)
+                if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and right == 0.0:
+                    raise ValueError("division by zero")
+                if isinstance(node.op, ast.Pow) and (abs(left) > 1e6 or abs(right) > 32):
+                    raise ValueError("pow bounds exceeded")
+                return float(allowed_binops[type(node.op)](left, right))
+            if isinstance(node, ast.UnaryOp) and type(node.op) in allowed_unary:
+                return float(allowed_unary[type(node.op)](_eval(node.operand)))
+            raise ValueError(f"unsupported expression node: {type(node).__name__}")
+
+        expr = (expression or "").strip()
+        if not expr or len(expr) > 200:
+            raise ValueError("expression required (max 200 chars)")
+        tree = ast.parse(expr, mode="eval")
+        value = _eval(tree)
+        if not math.isfinite(value):
+            raise ValueError("non-finite result")
+        return ComputeResult(
+            "evaluate_expression",
+            value,
+            details={"expression": expr, "safe_ast": True},
+        )
+
     def dispatch(self, operation: str, arguments: dict[str, Any]) -> ComputeResult:
         op = str(operation or "").lower()
         args = dict(arguments or {})
@@ -139,4 +185,7 @@ class NumericComputeEngine:
             return self.date_delta_days(str(args["start"]), str(args["end"]))
         if op in {"div", "divide"}:
             return self.safe_div(float(args["numerator"]), float(args["denominator"]))
+        if op in {"evaluate", "evaluate_expression", "expression", "calc", "calculate"}:
+            expr = str(args.get("expression") or args.get("expr") or args.get("formula") or "")
+            return self.evaluate_expression(expr)
         raise ValueError(f"unknown compute operation: {operation}")

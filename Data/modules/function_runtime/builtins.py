@@ -315,6 +315,95 @@ def register_builtin_functions(registry: FunctionRegistry) -> FunctionRegistry:
             ram_expectation_mb=16,
         )
     )
+    registry.register(
+        FunctionDefinition(
+            id="math_calculate",
+            name="Math Calculate",
+            version="1.0.0",
+            description="Safe AST numeric expression evaluator (GI6).",
+            entrypoint="Data.functions.math_calculate:run",
+            input_schema={
+                "type": "object",
+                "required": ["expression"],
+                "properties": {"expression": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=False,
+            timeout_seconds=5.0,
+            ram_expectation_mb=16,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="system_inspect",
+            name="System Inspect",
+            version="1.0.0",
+            description="Honest self-inspection of process state (GI2).",
+            entrypoint="Data.functions.system_inspect:run",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "properties": {"scope": {"type": "string"}},
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ,),
+            filesystem_requirement=False,
+            timeout_seconds=10.0,
+            ram_expectation_mb=32,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="web_search",
+            name="Web Search",
+            version="1.0.0",
+            description="Web search via WebResearchProvider (GI7; never fabricates).",
+            entrypoint="Data.functions.web_search:run",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ, SideEffect.NETWORK),
+            network_requirement=True,
+            filesystem_requirement=False,
+            timeout_seconds=30.0,
+            ram_expectation_mb=64,
+        )
+    )
+    registry.register(
+        FunctionDefinition(
+            id="web_fetch",
+            name="Web Fetch",
+            version="1.0.0",
+            description="Fetch URL via WebResearchProvider (GI7; SSRF-safe).",
+            entrypoint="Data.functions.web_fetch:run",
+            input_schema={
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": {"type": "string"},
+                    "timeout_seconds": {"type": "number"},
+                    "max_bytes": {"type": "integer"},
+                },
+            },
+            output_schema={"type": "object"},
+            lifecycle_mode=LifecycleMode.ON_DEMAND,
+            side_effects=(SideEffect.READ, SideEffect.NETWORK),
+            network_requirement=True,
+            filesystem_requirement=False,
+            timeout_seconds=45.0,
+            ram_expectation_mb=128,
+        )
+    )
     return registry
 
 

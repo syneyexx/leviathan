@@ -58,6 +58,19 @@ class ActionSelector:
                 arguments={"status": "RESOURCE_EXHAUSTED"},
             )
 
+        # HADES lesson: hard tool / model / replan ceilings — never burn past budget.
+        if (
+            budgets_remaining.get("tool_calls", 1) <= 0
+            and budgets_remaining.get("model_calls", 1) <= 0
+            and budgets_remaining.get("replans", 1) <= 0
+        ):
+            return CognitiveAction(
+                kind=CognitiveActionKind.COMPLETE,
+                action_id=str(uuid.uuid4()),
+                rationale="tool/model/replan budgets exhausted — coherent finalize",
+                arguments={"status": "RESOURCE_EXHAUSTED"},
+            )
+
         # Ambiguity ask-user when high risk and no observations yet.
         if task.ambiguities and task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL} and not observations:
             return CognitiveAction(
@@ -85,6 +98,18 @@ class ActionSelector:
                 arguments={"status": "PARTIAL"},
             )
 
+        # Preferred inspect/web/calc capabilities beat plan-step mapping (GI5/GI6).
+        preferred_pending = [
+            (score, action)
+            for score, action in candidates
+            if action.kind == CognitiveActionKind.INVOKE_CAPABILITY
+            and action.capability_id
+            in {"system.inspect", "web.search", "web.fetch", "math.calculate", "compute.numeric"}
+        ]
+        if preferred_pending:
+            preferred_pending.sort(key=lambda c: c[0], reverse=True)
+            return preferred_pending[0][1]
+
         # Prefer plan-ready steps when plan is not stale.
         if plan is not None and not plan.stale:
             ready = self._next_ready_step(plan)
@@ -110,6 +135,15 @@ class ActionSelector:
         strategy = decision.strategy
         value = decision.value_scores
         out: list[tuple[float, CognitiveAction]] = []
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        meta = dict(getattr(task, "metadata", None) or {})
+        gi_specialists = list(
+            meta.get("gi_specialists")
+            or getattr(task, "candidate_specialists", None)
+            or []
+        )
+        # Prefer concrete GI/capability targets before generic search.
+        preferred_caps = self._preferred_capabilities(task, gi_specialists)
 
         info_needs = [
             b.next_information_needed
@@ -120,15 +154,58 @@ class ActionSelector:
             b for b in beliefs.items.values() if b.category == BeliefCategory.HYPOTHESIS
         ]
 
+        # Priority capability invokes: system.inspect / web.search / math.calculate
+        tool_budget = budgets_remaining.get("tool_calls", 0)
+        invoked_caps = {
+            str((o.payload or {}).get("capability_id") or "")
+            for o in observations
+            if o.kind.value == "TOOL_RESULT"
+        }
+        if tool_budget > 0 and preferred_caps:
+            for capability_id in preferred_caps:
+                if capability_id in invoked_caps:
+                    continue
+                score = self.meta.estimate_value_of_action(
+                    expected_gain=0.95,
+                    expected_completion_progress=0.35,
+                    cost=0.1,
+                    failure_risk=0.05,
+                )
+                args: dict[str, Any] = {"query": task.goal, "limit": 5}
+                if capability_id == "system.inspect":
+                    args = {"scope": "all"}
+                elif capability_id == "web.search":
+                    args = {"query": task.raw_request or task.goal, "limit": 5}
+                elif capability_id in {"math.calculate", "compute.numeric"}:
+                    args = {"expression": task.raw_request or task.goal}
+                out.append(
+                    (
+                        score,
+                        CognitiveAction(
+                            kind=CognitiveActionKind.INVOKE_CAPABILITY,
+                            action_id=str(uuid.uuid4()),
+                            capability_id=capability_id,
+                            rationale=f"task requires {capability_id}",
+                            arguments=args,
+                            expected_observation="tool observation",
+                            risk_class=task.risk_class,
+                        ),
+                    )
+                )
+                break  # one preferred invoke per select()
+
         # RETRIEVE — only when VoI warrants it (not merely because budget remains).
         retrieval_done = any(o.kind.value == "RETRIEVAL_RESULT" for o in observations)
         retrieve_score = float(value.get("retrieve", 0))
         if info_needs:
             retrieve_score = max(retrieve_score, 0.55)
+        if "gi_knowledge" in gi_specialists:
+            retrieve_score = max(retrieve_score, 0.6)
         if (
             budgets_remaining.get("retrieval_rounds", 0) > 0
             and retrieve_score >= 0.35
             and (not retrieval_done or retrieve_score >= 0.65)
+            and execution_class != "DIRECT"
         ):
             query = info_needs[0] if info_needs else task.goal
             score = self.meta.estimate_value_of_action(
@@ -155,7 +232,8 @@ class ActionSelector:
         if (
             strategy in {ReasoningStrategy.TOOL_DRIVEN, ReasoningStrategy.MULTI_AGENT}
             or getattr(task, "requires_tools", False)
-        ) and budgets_remaining.get("tool_calls", 0) > 0 and not working_memory.list_by_kind("capability"):
+            or "gi_tool" in gi_specialists
+        ) and tool_budget > 0 and not working_memory.list_by_kind("capability") and not preferred_caps:
             score = self.meta.estimate_value_of_action(
                 expected_gain=0.55,
                 expected_completion_progress=0.1,
@@ -178,13 +256,14 @@ class ActionSelector:
         tool_done = any(o.kind.value == "TOOL_RESULT" for o in observations)
         if (
             caps
-            and budgets_remaining.get("tool_calls", 0) > 0
+            and tool_budget > 0
             and not tool_done
             and strategy
             in {
                 ReasoningStrategy.TOOL_DRIVEN,
                 ReasoningStrategy.PLAN_EXECUTE_VERIFY,
                 ReasoningStrategy.RETRIEVE_THEN_ANSWER,
+                ReasoningStrategy.MULTI_AGENT,
             }
         ):
             capability_id = caps[0].content.strip().split()[0]
@@ -247,6 +326,7 @@ class ActionSelector:
                             "research_mode": getattr(task, "research_mode", "none"),
                             "allow_web": bool(getattr(task, "requires_current_information", False)),
                             "hard_constraints": list(getattr(task, "hard_constraints", None) or task.constraints),
+                            "gi_specialists": list(gi_specialists),
                         },
                         risk_class=task.risk_class,
                         requires_approval=task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL}
@@ -278,18 +358,25 @@ class ActionSelector:
 
         # VERIFY when justified
         verify_score = float(value.get("verify", 0.3))
+        verification_mode = str(getattr(task, "verification_mode", "") or "NONE")
         if (
-            task.success_criteria
+            (
+                task.success_criteria
+                or verification_mode in {"REQUIRED", "CORROBORATED"}
+                or "gi_fact_verifier" in gi_specialists
+            )
             and observations
             and (
                 beliefs.uncertainty() <= 0.45
                 or task.risk_class in {RiskClass.HIGH, RiskClass.CRITICAL}
+                or verification_mode in {"REQUIRED", "CORROBORATED"}
                 or strategy
                 in {
                     ReasoningStrategy.PLAN_EXECUTE_VERIFY,
                     ReasoningStrategy.CODING_REPAIR,
                     ReasoningStrategy.HIGH_RISK_VERIFY,
                     ReasoningStrategy.RESEARCH_SYNTHESIS,
+                    ReasoningStrategy.MULTI_AGENT,
                 }
             )
             and not any(o.kind.value == "VERIFICATION_RESULT" for o in observations)
@@ -313,7 +400,7 @@ class ActionSelector:
                 )
             )
 
-        # Replan when stale or high VoI
+        # Replan when stale or high VoI — respect max_replans
         if plan is not None and plan.stale and budgets_remaining.get("replans", 0) > 0:
             score = max(float(value.get("replan", 0.4)), 0.5)
             out.append(
@@ -328,16 +415,19 @@ class ActionSelector:
                 )
             )
 
-        # FAST / DIRECT respond
-        if strategy == ReasoningStrategy.DIRECT or decision.mode.value == "FAST":
+        # FAST / DIRECT respond — suppressed when preferred tool capabilities are pending.
+        if (
+            (strategy == ReasoningStrategy.DIRECT or decision.mode.value == "FAST" or execution_class == "DIRECT")
+            and not preferred_caps
+        ):
             if budgets_remaining.get("model_calls", 0) > 0:
                 out.append(
                     (
-                        0.9 if task.task_type == "simple_chat" else 0.45,
+                        0.95 if execution_class == "DIRECT" or task.task_type == "simple_chat" else 0.45,
                         CognitiveAction(
                             kind=CognitiveActionKind.RESPOND,
                             action_id=str(uuid.uuid4()),
-                            rationale="fast path response",
+                            rationale="fast/DIRECT path response",
                             arguments={"role": "responder"},
                         ),
                     )
@@ -356,7 +446,7 @@ class ActionSelector:
                 )
 
         # Default model continue
-        if budgets_remaining.get("model_calls", 0) > 0 and strategy != ReasoningStrategy.DIRECT:
+        if budgets_remaining.get("model_calls", 0) > 0 and strategy != ReasoningStrategy.DIRECT and execution_class != "DIRECT":
             out.append(
                 (
                     0.35,
@@ -386,6 +476,39 @@ class ActionSelector:
 
         return out
 
+    @staticmethod
+    def _preferred_capabilities(task: TaskModel, gi_specialists: list[str]) -> list[str]:
+        """Ordered capability ids to invoke before generic shortlist search."""
+        from Data.modules.agents.general_orchestra import gi_preferred_capabilities
+
+        caps = gi_preferred_capabilities(gi_specialists)
+        # Task traits force inspect / web / calc even without specialist selection.
+        lowered = (task.raw_request or "").lower()
+        self_inspect = any(
+            t in lowered
+            for t in (
+                "welk model",
+                "which model",
+                "hoeveel %",
+                "how much of your brain",
+                "system inspect",
+                "wat gebruik je nu",
+                "how much ram",
+                "active agents",
+            )
+        )
+        if self_inspect and "system.inspect" not in caps:
+            caps.insert(0, "system.inspect")
+        if (
+            getattr(task, "requires_current_information", False)
+            or str(getattr(task, "execution_class", "") or "") == "CURRENT_INFO"
+        ) and "web.search" not in caps:
+            caps.append("web.search")
+        if getattr(task, "needs_calculation", False):
+            if "math.calculate" not in caps and "compute.numeric" not in caps:
+                caps.insert(0, "math.calculate")
+        return caps
+
     def _next_ready_step(self, plan: CognitivePlan) -> Any | None:
         done = {s.step_id for s in plan.steps if s.status in {"DONE", "COMPLETED", "SKIPPED"}}
         for step in plan.steps:
@@ -405,7 +528,19 @@ class ActionSelector:
         working_memory: WorkingMemory,
     ) -> CognitiveAction | None:
         objective = (step.objective or "").lower()
-        if "retriev" in objective or "search" in objective or "knowledge" in objective:
+        # Capability shortlist ≠ knowledge retrieval.
+        if "shortlist" in objective and "capabilit" in objective:
+            return CognitiveAction(
+                kind=CognitiveActionKind.SEARCH_CAPABILITY,
+                action_id=str(uuid.uuid4()),
+                rationale=f"plan step: {step.objective}",
+                arguments={"query": task.goal, "step_id": step.step_id},
+            )
+        if (
+            "retriev" in objective
+            or ("knowledge" in objective and "capabilit" not in objective)
+            or ("search" in objective and "capabilit" not in objective)
+        ):
             if budgets_remaining.get("retrieval_rounds", 0) > 0:
                 return CognitiveAction(
                     kind=CognitiveActionKind.RETRIEVE,
