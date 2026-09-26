@@ -577,7 +577,11 @@ class ResearchService:
             execution_mode=mode,
         )
         project.analysis_mode = analysis
-        project.total_worker_rounds = budget.research_workers * budget.rounds
+        project.total_worker_rounds = (
+            0
+            if budget.rounds is None
+            else int(budget.research_workers) * int(budget.rounds)
+        )
         self.store.save_project(project)
         reason = web_unavailable_reason(
             allow_web=project.allow_web,
@@ -643,18 +647,32 @@ class ResearchService:
                 base=base,
                 overrides=updates.get("budget") if isinstance(updates.get("budget"), dict) else None,
             )
-            project.total_rounds = project.budget.rounds
-            project.total_worker_rounds = project.budget.research_workers * project.budget.rounds
+            project.total_rounds = int(project.budget.rounds or 0)
+            project.total_worker_rounds = (
+                0
+                if project.budget.rounds is None
+                else int(project.budget.research_workers) * int(project.budget.rounds)
+            )
         if "budget" in updates and isinstance(updates["budget"], dict):
             if project.execution_mode == ResearchExecutionMode.NORMAL:
                 project.budget = resolve_execution_budget(
                     execution_mode=ResearchExecutionMode.NORMAL,
                     base=project.budget,
                 )
+            elif project.execution_mode == ResearchExecutionMode.TEAM:
+                project.budget = resolve_execution_budget(
+                    execution_mode=ResearchExecutionMode.TEAM,
+                    base=project.budget,
+                    overrides=updates["budget"],
+                )
             else:
                 project.budget = merge_budget_overrides(project.budget, updates["budget"])
-            project.total_rounds = project.budget.rounds
-            project.total_worker_rounds = project.budget.research_workers * project.budget.rounds
+            project.total_rounds = int(project.budget.rounds or 0)
+            project.total_worker_rounds = (
+                0
+                if project.budget.rounds is None
+                else int(project.budget.research_workers) * int(project.budget.rounds)
+            )
         if "model_profile" in updates and updates["model_profile"] is not None:
             project.model_profile = dict(updates["model_profile"])
             project.analysis_mode = (

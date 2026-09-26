@@ -217,6 +217,7 @@ Do not introduce page-local duplicate fetch wrappers when a canonical client met
 - Optional diagnostic strip: mode / model / brain / web / tools / agents / verification / context / latency / behavior.
 - `pages/CognitionPage.tsx` exposes cognition/run state separately.
 - Chat consumes the backend chat/cognition/model systems; the frontend must not synthesize reasoning success, tool execution or citations.
+- **TEAM collaboration (CURRENT):** `ChatPage` exposes a Direct/TEAM selector separate from Auto/Fast/Deep reasoning depth. TEAM explains: “Continues until the quality criteria are met, or shows exactly what prevents completion.” Context panel shows criterion verdicts, iteration count (open-ended), and blockers from live `/api/chat` / `/api/team` payloads — never fake round fractions.
 
 Current main contains the F0 baseline of the Frontier Reasoning program. The existing frontend has **not** yet earned the future F17 reasoning-control gate merely because the master program describes it.
 
@@ -332,7 +333,8 @@ Research UI should expose actual project/run/source/worker state and distinguish
 - configured web search;
 - source upload/ingestion;
 - active worker state;
-- claims/evidence/conflicts.
+- claims/evidence/conflicts;
+- **execution mode Normal / Custom / TEAM** — TEAM uses `rounds: null` and criterion-level progress (no “7 of 10 rounds” fake total).
 
 Do not render fabricated “web searched” state when the backend provider is unavailable.
 

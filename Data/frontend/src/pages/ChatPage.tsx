@@ -105,6 +105,8 @@ export function ChatPage() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [reasoningMode, setReasoningMode] = useState<"auto" | "fast" | "deep">("auto");
+  const [collaborationStrategy, setCollaborationStrategy] = useState<"direct" | "team">("direct");
+  const [teamPanel, setTeamPanel] = useState<Record<string, unknown> | null>(null);
   const [capabilities, setCapabilities] = useState<CapabilityListItem[]>([]);
   const [agentsEnabled, setAgentsEnabled] = useState<boolean | null>(null);
   const [codingEnabled, setCodingEnabled] = useState<boolean | null>(null);
@@ -487,6 +489,8 @@ export function ChatPage() {
           conversationId: activeId,
           modelId: selectedModelId,
           reasoningMode: reasoningMode === "auto" ? null : reasoningMode,
+          collaborationStrategy:
+            collaborationStrategy === "team" ? "team" : null,
         },
         {
           onToken: (token) => {
@@ -583,6 +587,12 @@ export function ChatPage() {
         verification: verificationLabel,
         telemetry,
       });
+      const teamPayload = (data as Record<string, unknown>).team;
+      if (teamPayload && typeof teamPayload === "object") {
+        setTeamPanel(teamPayload as Record<string, unknown>);
+      } else if (collaborationStrategy !== "team") {
+        setTeamPanel(null);
+      }
       const list = await refreshConversations(data.conversation_id);
       const active = list.find((item) => item.id === data.conversation_id);
       if (active) setTitle(active.title);
@@ -897,11 +907,26 @@ export function ChatPage() {
                   value={reasoningMode}
                   onChange={(e) => setReasoningMode(e.target.value as "auto" | "fast" | "deep")}
                   style={{ minWidth: "5.5rem", padding: "0.25rem 0.4rem", fontSize: "0.78rem" }}
-                  title="Session reasoning override"
+                  title="Session reasoning override (depth within model work)"
                 >
                   <option value="auto">Auto</option>
                   <option value="fast">Fast</option>
                   <option value="deep">Deep</option>
+                </select>
+              </label>
+              <label className="lv-muted" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                <span className="sr-only">Collaboration</span>
+                <select
+                  className="lv-input"
+                  aria-label="Collaboration strategy"
+                  disabled={busy}
+                  value={collaborationStrategy}
+                  onChange={(e) => setCollaborationStrategy(e.target.value as "direct" | "team")}
+                  style={{ minWidth: "5.5rem", padding: "0.25rem 0.4rem", fontSize: "0.78rem" }}
+                  title="Continues until the quality criteria are met, or shows exactly what prevents completion."
+                >
+                  <option value="direct">Direct</option>
+                  <option value="team">TEAM</option>
                 </select>
               </label>
               <button
@@ -1077,7 +1102,45 @@ export function ChatPage() {
                   ? ` · Language ${lastTurn.language}${lastTurn.languageSource ? ` · ${lastTurn.languageSource}` : ""}`
                   : ""}
                 {lastTurn.reasoningMode ? ` · Reasoning ${lastTurn.reasoningMode}` : ""}
+                {collaborationStrategy === "team" || teamPanel ? " · TEAM" : ""}
               </small>
+              {teamPanel ? (
+                <div style={{ marginTop: "0.55rem", fontSize: "0.75rem" }}>
+                  <strong>TEAM quality</strong>
+                  <div className="lv-muted" style={{ marginTop: 2 }}>
+                    Continues until the quality criteria are met, or shows exactly what prevents completion.
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    Status {String(teamPanel.status ?? "—")}
+                    {typeof teamPanel.iteration === "number" ? ` · iteration ${teamPanel.iteration}` : ""}
+                    {(teamPanel.progress as { criteria_ratio_label?: string } | undefined)
+                      ?.criteria_ratio_label
+                      ? ` · ${String((teamPanel.progress as { criteria_ratio_label?: string }).criteria_ratio_label)}`
+                      : ""}
+                  </div>
+                  <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1rem" }}>
+                    {Array.isArray((teamPanel.contract as { criteria?: unknown[] } | undefined)?.criteria)
+                      ? (
+                          (
+                            teamPanel.contract as {
+                              criteria: Array<{ criterion_id: string; severity: string }>;
+                            }
+                          ).criteria || []
+                        ).map((c) => {
+                          const verdicts = Array.isArray(teamPanel.verdicts)
+                            ? (teamPanel.verdicts as Array<{ criterion_id: string; status: string }>)
+                            : [];
+                          const v = [...verdicts].reverse().find((x) => x.criterion_id === c.criterion_id);
+                          return (
+                            <li key={c.criterion_id}>
+                              [{c.severity}] {c.criterion_id}: {v?.status ?? "pending"}
+                            </li>
+                          );
+                        })
+                      : null}
+                  </ul>
+                </div>
+              ) : null}
               <small>
                 {`Brain/Knowledge ${lastTurn.telemetry?.knowledge_hits ?? lastTurn.knowledgeCount}`}
                 {` · Memory ${lastTurn.telemetry?.memory_hits ?? lastTurn.memoryCount}`}

@@ -330,9 +330,13 @@ class ResearchStore:
             local_scopes=list(local_scopes or []),
             seed_sources=list(seed_sources or []),
             connected_datasets=list(connected_datasets or []),
-            total_rounds=bud.rounds,
+            total_rounds=int(bud.rounds or 0),
             execution_mode=execution_mode,
-            total_worker_rounds=bud.research_workers * bud.rounds,
+            total_worker_rounds=(
+                0
+                if bud.rounds is None
+                else int(bud.research_workers) * int(bud.rounds)
+            ),
             trace_id=trace_id or str(uuid.uuid4()),
             created_at=now,
             updated_at=now,

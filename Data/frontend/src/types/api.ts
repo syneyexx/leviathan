@@ -19,6 +19,8 @@ export type ChatOptions = {
   modelId?: string | null;
   preferredRole?: string | null;
   reasoningMode?: string | null;
+  /** Orthogonal to reasoning depth: direct | team */
+  collaborationStrategy?: string | null;
   stream?: boolean;
 };
 
@@ -1147,10 +1149,14 @@ export type ResearchBudget = {
   search_queries: number;
   urls_per_query: number;
   max_sources: number;
-  rounds: number;
+  /** Null under TEAM quality_contract — open-ended cumulative work. */
+  rounds: number | null;
   research_workers: number;
   max_local_hits: number;
   max_evidence_per_source: number;
+  completion_policy?: string;
+  max_iterations?: number | null;
+  max_total_sources?: number | null;
 };
 
 export type ResearchBudgetCatalog = {
@@ -1167,6 +1173,7 @@ export type ResearchBudgetCatalog = {
       rounds: number;
       locked: boolean;
       description: string;
+      completion_policy?: string;
     };
     custom: {
       limits: {
@@ -1175,6 +1182,15 @@ export type ResearchBudgetCatalog = {
       };
       locked: boolean;
       description: string;
+      completion_policy?: string;
+    };
+    team?: {
+      research_workers?: { min: number; max: number; default?: number };
+      rounds: null;
+      locked: boolean;
+      completion_policy: string;
+      description: string;
+      optional_caps?: Record<string, { null_means_unbounded?: boolean }>;
     };
   };
 };

@@ -289,6 +289,9 @@ export const api = {
         ...(options.modelId ? { model_id: options.modelId } : {}),
         ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
         ...(options.reasoningMode ? { reasoning_mode: options.reasoningMode } : {}),
+        ...(options.collaborationStrategy
+          ? { collaboration_strategy: options.collaborationStrategy }
+          : {}),
         ...(options.stream != null ? { stream: options.stream } : {}),
       }),
     });
@@ -324,6 +327,9 @@ export const api = {
         ...(options.modelId ? { model_id: options.modelId } : {}),
         ...(options.preferredRole ? { preferred_role: options.preferredRole } : {}),
         ...(options.reasoningMode ? { reasoning_mode: options.reasoningMode } : {}),
+        ...(options.collaborationStrategy
+          ? { collaboration_strategy: options.collaborationStrategy }
+          : {}),
       }),
       signal: fetchInit?.signal,
     });

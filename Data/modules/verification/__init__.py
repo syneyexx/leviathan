@@ -13,6 +13,23 @@ from .claims import (
     VerificationPool,
 )
 from .engine import VerificationEngine
+from .quality_contract import (
+    AcceptanceOutcome,
+    AcceptanceRecord,
+    CompletionPolicyKind,
+    CriterionApplicability,
+    CriterionSeverity,
+    CriterionVerdict,
+    CriterionVerdictStatus,
+    EvidenceClass,
+    QualityContract,
+    QualityCriterion,
+    aggregate_acceptance,
+    criterion_progress,
+    invalidate_verdicts_for_revision,
+    new_contract_id,
+)
+from .quality_store import QualityContractStore
 from .store import VerificationReportStore
 from .types import (
     CriterionVerificationStatus,
@@ -25,15 +42,26 @@ from .types import (
 )
 
 __all__ = [
+    "AcceptanceOutcome",
+    "AcceptanceRecord",
     "ClaimAssessment",
     "ClaimExtractor",
     "ClaimKind",
     "ClaimSupportStatus",
     "ClaimVerifier",
+    "CompletionPolicyKind",
+    "CriterionApplicability",
+    "CriterionSeverity",
+    "CriterionVerdict",
+    "CriterionVerdictStatus",
     "CriterionVerificationStatus",
+    "EvidenceClass",
     "FactualityGate",
     "FactualityMode",
     "FactualityResult",
+    "QualityContract",
+    "QualityContractStore",
+    "QualityCriterion",
     "RequirementResult",
     "SystemCapabilityState",
     "VerificationEngine",
@@ -44,5 +72,9 @@ __all__ = [
     "VerificationRequirement",
     "VerificationTier",
     "VerifierKind",
+    "aggregate_acceptance",
     "build_system_capability_state",
+    "criterion_progress",
+    "invalidate_verdicts_for_revision",
+    "new_contract_id",
 ]
