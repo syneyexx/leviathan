@@ -10,7 +10,7 @@ import hashlib
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, Sequence
 
 from .accounting import D, WalletLedger, money
 from .types import (
@@ -658,3 +658,125 @@ def make_intent(
         stop_price=None if stop_price is None else money(stop_price),
         time_in_force=tif,
     )
+
+
+# ---------------------------------------------------------------------------
+# W13 — execution laboratory (TWAP/VWAP-style parent→child slices; ASSUMED impact)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TemporaryImpactAssumption:
+    """ASSUMED temporary impact — never MEASURED from OHLCV alone."""
+
+    bps_per_participation_pct: float = 0.5
+    status: str = "ASSUMED"
+    provenance: str = "linear_participation_impact_v1"
+
+    def impact_bps(self, participation_pct: float) -> float:
+        return float(self.bps_per_participation_pct) * max(0.0, float(participation_pct))
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "bpsPerParticipationPct": self.bps_per_participation_pct,
+            "status": self.status,
+            "provenance": self.provenance,
+            "truth": {
+                "impact_from_ohlcv_is_ASSUMED_not_MEASURED": True,
+                "observed_execution": False,
+            },
+        }
+
+
+@dataclass
+class ChildOrderSlice:
+    parent_intent_id: str
+    slice_index: int
+    qty: Decimal
+    target_bar_offset: int
+    participation_pct: float
+    assumed_impact_bps: float
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "parentIntentId": self.parent_intent_id,
+            "sliceIndex": self.slice_index,
+            "qty": str(self.qty),
+            "targetBarOffset": self.target_bar_offset,
+            "participationPct": self.participation_pct,
+            "assumedImpactBps": self.assumed_impact_bps,
+            "truth": {"observed_execution": False, "child_is_schedule_not_fill": True},
+        }
+
+
+def schedule_twap_slices(
+    parent: OrderIntent,
+    *,
+    n_slices: int,
+    bar_volume: float | None = None,
+    impact: TemporaryImpactAssumption | None = None,
+) -> list[ChildOrderSlice]:
+    """Deterministic TWAP-style child schedule from a parent intent.
+
+    Does not fabricate fills or L2 depth. Impact is ASSUMED when configured.
+    """
+    if n_slices < 1:
+        raise ValueError("n_slices must be >= 1")
+    if parent.qty is None or parent.qty <= 0:
+        return []
+    model = impact or TemporaryImpactAssumption()
+    slice_qty = (parent.qty / Decimal(n_slices)).quantize(Decimal("0.00000001"))
+    # Fix residual on last slice
+    allocated = slice_qty * (n_slices - 1)
+    last_qty = parent.qty - allocated
+    out: list[ChildOrderSlice] = []
+    for i in range(n_slices):
+        q = last_qty if i == n_slices - 1 else slice_qty
+        part = 0.0
+        if bar_volume and bar_volume > 0:
+            part = float(q) / float(bar_volume) * 100.0
+        out.append(
+            ChildOrderSlice(
+                parent_intent_id=parent.intent_id,
+                slice_index=i,
+                qty=q,
+                target_bar_offset=i,
+                participation_pct=part,
+                assumed_impact_bps=model.impact_bps(part),
+            )
+        )
+    return out
+
+
+def schedule_vwap_weights(
+    parent: OrderIntent,
+    *,
+    volume_weights: Sequence[float],
+    impact: TemporaryImpactAssumption | None = None,
+) -> list[ChildOrderSlice]:
+    """Slice parent qty by relative volume weights (ASSUMED schedule, not measured VWAP fill)."""
+    weights = [max(0.0, float(w)) for w in volume_weights]
+    total = sum(weights)
+    if total <= 0 or parent.qty is None or parent.qty <= 0:
+        return []
+    model = impact or TemporaryImpactAssumption()
+    out: list[ChildOrderSlice] = []
+    remaining = parent.qty
+    for i, w in enumerate(weights):
+        if i == len(weights) - 1:
+            q = remaining
+        else:
+            q = money(float(parent.qty) * (w / total))
+            remaining = remaining - q
+        part = (w / total) * 100.0
+        out.append(
+            ChildOrderSlice(
+                parent_intent_id=parent.intent_id,
+                slice_index=i,
+                qty=q,
+                target_bar_offset=i,
+                participation_pct=part,
+                assumed_impact_bps=model.impact_bps(part),
+            )
+        )
+    return out

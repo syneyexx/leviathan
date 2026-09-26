@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "62b518fd00f0d959acad72578717dff7f13bc079",
+  "last_verified_commit": "d1d811c13e974d909361dacc03eaef6ad25a9016",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W12",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI skipped per operator. W01\u2013W12 instrument/data waves PASS.",
+  "active_wave": "W16",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI skipped per operator. W01\u2013W16 PASS.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -219,9 +219,10 @@
       ]
     },
     "fundamentals": {
-      "status": "NOT_IMPLEMENTED",
+      "status": "PARTIAL",
       "evidence": [
-        "no end-to-end fundamentals pipeline claimed in capabilities"
+        "event_intel.py PIT fundamentals/earnings",
+        "no auto price adjust"
       ]
     },
     "corporate_actions": {
@@ -255,9 +256,8 @@
     "execution_model": {
       "status": "CURRENT",
       "evidence": [
-        "execution.py",
-        "fill_model.py",
-        "costs.py \u2014 bar/OHLCV modelled fills"
+        "execution.py NextBarFillModel + W13 TWAP/VWAP schedule lab",
+        "impact ASSUMED"
       ]
     },
     "scenario_risk": {
@@ -550,30 +550,74 @@
     {
       "id": "W13",
       "title": "Market microstructure and execution laboratory",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim execution",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w13_w16"
+      ],
+      "evidence": [
+        "TWAP/VWAP child slices",
+        "TemporaryImpactAssumption ASSUMED",
+        "observed_execution=False",
+        "W13\u2013W16 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "d1d811c13e974d909361dacc03eaef6ad25a9016"
     },
     {
       "id": "W14",
       "title": "Multi-timescale market state",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim market_state/features",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w13_w16"
+      ],
+      "evidence": [
+        "build_multi_horizon_state",
+        "alignedFeatures + crossTfAgreement",
+        "incomplete higher TF labelled",
+        "W13\u2013W16 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "d1d811c13e974d909361dacc03eaef6ad25a9016"
     },
     {
       "id": "W15",
       "title": "Fundamental, corporate and event intelligence",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim + knowledge",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w13_w16"
+      ],
+      "evidence": [
+        "event_intel.py PIT fund/earnings/CA",
+        "fail-closed available_at",
+        "no_auto_price_adjustment",
+        "W13\u2013W16 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "d1d811c13e974d909361dacc03eaef6ad25a9016"
     },
     {
       "id": "W16",
       "title": "Institutional portfolio intelligence",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim portefeuille",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w13_w16"
+      ],
+      "evidence": [
+        "institutional_exposure_intelligence",
+        "allocation drifts + constraint utilization",
+        "no factor-risk engine",
+        "W13\u2013W16 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "d1d811c13e974d909361dacc03eaef6ad25a9016"
     },
     {
       "id": "W17",
