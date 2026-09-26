@@ -996,12 +996,23 @@ class ApiSurfaceW66Tests(unittest.TestCase):
                 "/api/market-sim/status",
                 "/api/market-sim/capabilities",
                 "/api/market-sim/data",
+                "/api/market-sim/institutional/gap-matrix",
+                "/api/market-sim/institutional/control-room",
+                "/api/market-sim/institutional/reconciliation",
             ]
         )
         self.assertTrue(check["ok"])
         blocked = [b for b in check["blocked"] if "live" in b["path"]]
         self.assertTrue(blocked)
         self.assertEqual(blocked[0]["status"], MeasurementState.BLOCKED.value)
+        observed = {
+            c.path
+            for c in INSTITUTIONAL_API_CATALOG
+            if c.path.endswith(("/gap-matrix", "/control-room", "/reconciliation"))
+        }
+        for path in observed:
+            contract = next(c for c in INSTITUTIONAL_API_CATALOG if c.path == path)
+            self.assertEqual(contract.status, MeasurementState.OBSERVED.value)
 
 
 class EventsW67Tests(unittest.TestCase):

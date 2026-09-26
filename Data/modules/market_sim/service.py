@@ -3241,3 +3241,96 @@ class MarketSimControlPlane:
             "lessons": lab.get("lessons") or [],
             "truth": {"agent_proposed_is_not_proof": True},
         }
+
+    # --- Institutional core surface (lazy imports; live trading stays BLOCKED) ---
+
+    def institutional_gap_matrix(self) -> dict[str, Any]:
+        from .institutional_core.gap_ledger import build_capability_gap_matrix
+
+        return build_capability_gap_matrix().public_dict()
+
+    def institutional_control_room(self) -> dict[str, Any]:
+        from .institutional_core.control_room import build_control_room_snapshot
+
+        return build_control_room_snapshot(
+            generated_at=utc_now(),
+            feature_enabled=self.enabled,
+        ).public_dict()
+
+    def institutional_api_catalog(self) -> dict[str, Any]:
+        from .institutional_core.api_surface import api_catalog_public
+
+        return api_catalog_public()
+
+    def institutional_assurance(self) -> dict[str, Any]:
+        from .institutional_core.assurance import run_assurance
+
+        return run_assurance().public_dict()
+
+    def institutional_multi_asset(self) -> dict[str, Any]:
+        from .institutional_core.multi_asset import build_multi_asset_truth_pack
+
+        return build_multi_asset_truth_pack(feature_enabled=self.enabled).public_dict()
+
+    def institutional_run_reconciliation(
+        self,
+        left: Any,
+        right: Any,
+        *,
+        domain: str = "generic",
+        left_system: str = "left",
+        right_system: str = "right",
+        run_id: str | None = None,
+        fields: list[str] | tuple[str, ...] | None = None,
+        key_field: str = "id",
+        numeric_tolerance: float = 0.0,
+    ) -> dict[str, Any]:
+        """Compare left/right maps or row lists; no silent auto-resolve."""
+        from .institutional_core.reconciliation import CompareContract, run_reconciliation
+
+        def _as_rows(payload: Any) -> list[dict[str, Any]]:
+            if payload is None:
+                return []
+            if isinstance(payload, list):
+                return [dict(item) if isinstance(item, dict) else {"id": str(i), "value": item} for i, item in enumerate(payload)]
+            if isinstance(payload, dict):
+                rows: list[dict[str, Any]] = []
+                for key, value in payload.items():
+                    if isinstance(value, dict):
+                        row = dict(value)
+                        row.setdefault(key_field, key)
+                        rows.append(row)
+                    else:
+                        rows.append({key_field: key, "value": value})
+                return rows
+            raise MarketSimError(
+                "INVALID_RECONCILIATION_PAYLOAD",
+                "left/right must be a map or list of row maps",
+                http_status=400,
+            )
+
+        left_rows = _as_rows(left)
+        right_rows = _as_rows(right)
+        compare_fields = tuple(fields) if fields else ("value",)
+        # Prefer intersecting numeric/object fields when rows look structured.
+        if fields is None and left_rows and right_rows:
+            sample_keys = set(left_rows[0]) & set(right_rows[0]) - {key_field}
+            if sample_keys:
+                compare_fields = tuple(sorted(sample_keys))
+        contract = CompareContract(
+            contract_id=f"recon-{domain}",
+            domain=str(domain or "generic"),
+            left_system=str(left_system or "left"),
+            right_system=str(right_system or "right"),
+            fields=compare_fields,
+            key_field=key_field,
+            numeric_tolerance=float(numeric_tolerance or 0.0),
+        )
+        rid = run_id or f"recon-{utc_now()}"
+        run = run_reconciliation(
+            run_id=rid,
+            contract=contract,
+            left_rows=left_rows,
+            right_rows=right_rows,
+        )
+        return run.public_dict()
