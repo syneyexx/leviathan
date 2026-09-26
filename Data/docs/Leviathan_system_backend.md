@@ -418,18 +418,23 @@ The Model Control Plane is the only model routing/residency owner. Key files:
 - `residency.py`, `resource_manager.py`, `placement.py` — physical placement/resource truth;
 - `runtime_manager.py`, `runtime_binding.py`, `worker_client.py` — runtime lifecycle/worker bridge;
 - `profiles.py` — persisted model profiles;
-- `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — capability truth;
+- `capability_probe.py`, `vision.py`, `efficiency_capabilities.py` — capability truth (probes measure behavior; config alone never upgrades to SUPPORTED);
 - `downloads.py`, `import_service.py` — model acquisition/import;
 - `benchmarks.py` — model benchmark support;
 - `providers/` — LM Studio, Ollama, OpenAI-compatible, llama.cpp boundary, vLLM-class/base adapters.
 
+`ModelCapabilities` includes frontier transport fields (`toolCalling`, `parallelToolCalls`, `jsonSchemaResponse`, `reasoningEffort`, `logprobs`, `streamingToolDeltas`, `multiCandidate`, …) with honest `supported` / `unsupported` / `unmeasured` / `unknown` / `unverified` states.
+
 Routing and model selection are not permission grants. Model state is reconciled with actual runtime discovery.
+
+Do **not** abbreviate Model Control Plane as MCP — in this repository MCP means Model Context Protocol.
 
 ## 11.2 Model runtime — `Data/modules/model_runtime/`
 
 Provider-facing execution lives here:
 
-- `openai_compatible.py` — OpenAI-compatible chat/completion client;
+- `openai_compatible.py` — OpenAI-compatible chat/completion client (frontier transport options: tools, response_format, logprobs, n/candidates, …);
+- `dialect.py` — provider dialect adaptation; requested capabilities are never silently dropped (`SUPPORTED` / `UNSUPPORTED` / `UNMEASURED`);
 - `serving.py` — serving supervisor/cancellation;
 - `streaming.py` — stream normalization;
 - `managed_adapter.py`, `launch_strategy.py`, `process_control.py`, `port_allocator.py`, `llama_cpp_command.py` — managed serving boundaries;

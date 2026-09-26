@@ -9,6 +9,15 @@ from .durable_requests import (
 )
 from .latency import LatencyBreakdown, LatencyTimer
 from .openai_compatible import LLMUnavailable, OpenAICompatibleLLM
+from .dialect import (
+    DialectAdaptation,
+    InferenceTransportOptions,
+    OpenAICompatibleDialect,
+    OpenAIReasoningDialect,
+    TransportFeature,
+    adapt_transport,
+    get_provider_dialect,
+)
 from .serving import (
     InferenceJobClass,
     ServingSupervisor,
@@ -33,21 +42,28 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "DialectAdaptation",
     "DurableRequestLedger",
     "DurableRequestStatus",
     "DurableServingRequest",
     "InferenceJobClass",
+    "InferenceTransportOptions",
     "LatencyBreakdown",
     "LatencyTimer",
     "LLMUnavailable",
     "ManagedLocalServingAdapter",
+    "OpenAICompatibleDialect",
     "OpenAICompatibleLLM",
+    "OpenAIReasoningDialect",
     "ServingSupervisor",
     "ServingWorker",
     "StreamCancelToken",
+    "TransportFeature",
     "WorkerState",
+    "adapt_transport",
     "chat_truth",
     "get_durable_request_ledger",
+    "get_provider_dialect",
     "get_serving_supervisor",
     "reset_durable_request_ledger_for_tests",
     "reset_serving_supervisor_for_tests",
