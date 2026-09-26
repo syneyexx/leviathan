@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
+  "last_verified_commit": "0b38edd58d2402e7a3bcf8710cfdf7b7c7f3b438",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W00",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed.",
+  "active_wave": "W01",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -196,11 +196,6 @@
   },
   "known_defects_for_later_waves": [
     {
-      "id": "W01_offline_datasets_job_override",
-      "severity": "OfflineDatasetsPixelPage overrides brain learned status with active index job → INDEXING vs LEARNED contradiction",
-      "path": "Data/frontend/src/pages/pixel/OfflineDatasetsPixelPage.tsx"
-    },
-    {
       "id": "W00_frontend_typecheck_team",
       "severity": "ResearchPage.tsx TS2367 team vs normal|custom — pre-existing on baseline",
       "path": "Data/frontend/src/pages/ResearchPage.tsx"
@@ -235,13 +230,25 @@
     {
       "id": "W01",
       "title": "Dataset / Brain state consistency",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "datasets / DatasetService",
       "required": true,
-      "tests": [],
-      "evidence": [],
+      "tests": [
+        "Data.backend.tests.test_dataset_learning_state_w01",
+        "Data.backend.tests.test_dataset_learning_pipeline",
+        "Data.backend.tests.test_dataset_library_brain",
+        "Data/frontend/src/pages/datasets/datasetLearningState.test.ts"
+      ],
+      "evidence": [
+        "modules/datasets/learning_state.py DatasetLearningState",
+        "DatasetService.learning_state_for_dataset + reconcile_stale_learning_jobs",
+        "GET /api/datasets/{id}/learning-state",
+        "OfflineDatasetsPixelPage no longer overrides LEARNED with stale job",
+        "backend 8/8 W01 + 16 regression PASS",
+        "frontend helper 4/4 PASS"
+      ],
       "blockers": [],
-      "last_verified_commit": null
+      "last_verified_commit": "0b38edd58d2402e7a3bcf8710cfdf7b7c7f3b438"
     },
     {
       "id": "W02",

@@ -732,6 +732,43 @@ export type DatasetBrainStatus = {
   learned?: boolean;
   versionId?: string;
   error?: unknown;
+  canonicalState?: string;
+  stale?: boolean;
+  usableIndexId?: string | null;
+  priorReadyPreserved?: boolean;
+  truth?: Record<string, unknown>;
+};
+
+export type DatasetLearningState = {
+  datasetId: string;
+  versionId?: string | null;
+  sourceState?: string;
+  materializationState?: string;
+  validationState?: string;
+  indexState?: string;
+  brainState?: string;
+  jobState?: string | null;
+  progress?: number | null;
+  phase?: string | null;
+  indexId?: string | null;
+  documentCount?: number | null;
+  chunkCount?: number | null;
+  embeddingMode?: string | null;
+  semanticEmbeddings?: boolean | null;
+  relations?: Record<string, unknown>;
+  updatedAt?: string | null;
+  stale?: boolean;
+  error?: string | null;
+  truth?: Record<string, unknown>;
+  canonicalState: string;
+  brainStatus: string;
+  label?: string;
+  learned?: boolean;
+  sourceMissing?: boolean;
+  jobId?: string | null;
+  usableIndexId?: string | null;
+  priorReadyPreserved?: boolean;
+  learning?: Record<string, unknown>;
 };
 
 export type DatasetRecord = {
@@ -759,6 +796,8 @@ export type DatasetRecord = {
   learned?: boolean;
   sourceMissing?: boolean;
   indexes?: DatasetIndex[];
+  learningState?: DatasetLearningState;
+  canonicalState?: string;
 };
 
 export type DatasetVersion = {

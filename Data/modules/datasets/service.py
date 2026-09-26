@@ -753,125 +753,102 @@ class DatasetService:
             },
         }
 
-    def brain_status_for_dataset(self, dataset_id: str) -> dict[str, Any]:
-        """Map existing index/job state into Brain-ingestion truth for the UI."""
-        indexes = self.store.list_indexes(dataset_id)
-        ready = [i for i in indexes if i.status == IndexStatus.READY]
-        indexing = [i for i in indexes if i.status == IndexStatus.INDEXING]
-        failed = [i for i in indexes if i.status == IndexStatus.FAILED]
-        active_jobs = [
-            j
-            for j in self.store.list_jobs(dataset_id=dataset_id, limit=40)
-            if j.job_type == DatasetJobType.INDEX
-            and j.status in {DatasetJobStatus.QUEUED, DatasetJobStatus.RUNNING}
-        ]
+    def learning_state_for_dataset(self, dataset_id: str) -> dict[str, Any]:
+        """Canonical DatasetLearningState — single Brain-readiness truth for all surfaces."""
+        from .learning_state import compute_dataset_learning_state
+
         ds = self.get_dataset(dataset_id)
-        source_missing = bool((ds.metadata or {}).get("sourceMissing"))
-        ladder = self.learning_ladder_for_dataset(dataset_id)
-        # READY Brain index is authoritative — a queued auto-index must not hide it.
-        if ready and not any(
-            bool((j.config or {}).get("rebuild")) and j.status == DatasetJobStatus.RUNNING
-            for j in active_jobs
-        ):
-            idx = sorted(ready, key=lambda i: i.updated_at or "", reverse=True)[0]
-            prov = idx.provenance or {}
-            return {
-                "brainStatus": "learned",
-                "label": "Geleerd",
-                "indexId": idx.index_id,
-                "chunkCount": idx.chunk_count,
-                "documentCount": prov.get("documentCount"),
-                "jobId": None,
-                "progress": 1.0,
-                "phase": "ready",
-                "updatedAt": idx.updated_at,
-                "sourceMissing": source_missing,
-                "learned": True,
-                "versionId": idx.version_id,
-                "embeddingMode": prov.get("embeddingMode"),
-                "embeddingsSemantic": prov.get("embeddingsSemantic"),
-                "relationsAccepted": prov.get("relationsAccepted"),
-                "relationsRejected": prov.get("relationsRejected"),
-                "learning": ladder,
-            }
-        if active_jobs:
-            job = active_jobs[0]
-            status = "queued" if job.status == DatasetJobStatus.QUEUED else "indexing"
-            checkpoint = dict(job.checkpoint or {})
-            return {
-                "brainStatus": status,
-                "label": "In wachtrij" if status == "queued" else "Bezig met leren",
-                "indexId": None,
-                "chunkCount": checkpoint.get("chunkCount"),
-                "documentCount": checkpoint.get("indexed"),
-                "jobId": job.job_id,
-                "progress": job.progress,
-                "phase": job.phase,
-                "updatedAt": job.updated_at,
-                "sourceMissing": source_missing,
-                "learned": False,
-                "embeddingMode": checkpoint.get("embeddingMode"),
-                "embeddingsSemantic": checkpoint.get("embeddingsSemantic"),
-                "relationsAccepted": checkpoint.get("relationsAccepted"),
-                "relationsRejected": checkpoint.get("relationsRejected"),
-                "processed": checkpoint.get("processed"),
-                "learning": ladder,
-            }
-        if indexing:
-            idx = indexing[0]
-            return {
-                "brainStatus": "indexing",
-                "label": "Bezig met leren",
-                "indexId": idx.index_id,
-                "chunkCount": idx.chunk_count,
-                "documentCount": (idx.provenance or {}).get("documentCount"),
-                "jobId": None,
-                "progress": None,
-                "phase": "indexing",
-                "updatedAt": idx.updated_at,
-                "sourceMissing": source_missing,
-                "learned": False,
-                "learning": ladder,
-            }
-        if failed and not ready:
-            idx = sorted(failed, key=lambda i: i.updated_at or "", reverse=True)[0]
-            return {
-                "brainStatus": "failed",
-                "label": "Leren mislukt",
-                "indexId": idx.index_id,
-                "chunkCount": idx.chunk_count,
-                "documentCount": (idx.provenance or {}).get("documentCount"),
-                "jobId": None,
-                "progress": None,
-                "phase": "failed",
-                "updatedAt": idx.updated_at,
-                "sourceMissing": source_missing,
-                "learned": False,
-                "error": (idx.provenance or {}).get("error"),
-                "learning": ladder,
-            }
-        return {
-            "brainStatus": "not_learned",
-            "label": "Nog niet geleerd",
-            "indexId": None,
-            "chunkCount": None,
-            "documentCount": None,
-            "jobId": None,
-            "progress": None,
-            "phase": None,
-            "updatedAt": None,
-            "sourceMissing": source_missing,
-            "learned": False,
-            "learning": ladder,
-        }
+        state = compute_dataset_learning_state(
+            dataset=ds,
+            versions=self.store.list_versions(dataset_id),
+            indexes=self.store.list_indexes(dataset_id),
+            jobs=self.store.list_jobs(dataset_id=dataset_id, limit=80),
+            learning_ladder=self.learning_ladder_for_dataset(dataset_id),
+        )
+        return state.public_dict()
+
+    def brain_status_for_dataset(self, dataset_id: str) -> dict[str, Any]:
+        """Map existing index/job state into Brain-ingestion truth for the UI.
+
+        Delegates to ``learning_state_for_dataset`` so Dataset Manager, Offline
+        Datasets, Agents, and Research share one canonical owner.
+        """
+        from .learning_state import compute_dataset_learning_state
+
+        ds = self.get_dataset(dataset_id)
+        state = compute_dataset_learning_state(
+            dataset=ds,
+            versions=self.store.list_versions(dataset_id),
+            indexes=self.store.list_indexes(dataset_id),
+            jobs=self.store.list_jobs(dataset_id=dataset_id, limit=80),
+            learning_ladder=self.learning_ladder_for_dataset(dataset_id),
+        )
+        return state.brain_projection()
+
+    def reconcile_stale_learning_jobs(self, *, dataset_id: str | None = None) -> list[DatasetJob]:
+        """Cancel/interrupt non-rebuild INDEX jobs that are stale against a READY index.
+
+        READY Brain index dominates: a leftover queued auto-index must not keep
+        surfaces stuck on INDEXING after a successful learn.
+        """
+        from .learning_state import stale_index_jobs_to_reconcile
+        from .store import utc_now
+
+        updated: list[DatasetJob] = []
+        if dataset_id:
+            dataset_ids = [dataset_id]
+        else:
+            dataset_ids = [d.dataset_id for d in self.store.list_datasets(limit=500)]
+        for ds_id in dataset_ids:
+            indexes = self.store.list_indexes(ds_id)
+            jobs = self.store.list_jobs(dataset_id=ds_id, limit=80)
+            for job in stale_index_jobs_to_reconcile(indexes=indexes, jobs=jobs):
+                if job.status == DatasetJobStatus.QUEUED:
+                    cancelled = self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.CANCELLED,
+                        cancel_requested=True,
+                        error="Reconciled: READY Brain index dominates stale non-rebuild job",
+                        finished_at=utc_now(),
+                        phase="stale_reconciled",
+                    )
+                    updated.append(cancelled)
+                    continue
+                # RUNNING without rebuild — interrupt so dead/stale leases cannot fake RUNNING.
+                updated.append(
+                    self.store.update_job(
+                        job.job_id,
+                        status=DatasetJobStatus.INTERRUPTED,
+                        cancel_requested=True,
+                        error="Reconciled: READY Brain index dominates stale non-rebuild job",
+                        finished_at=utc_now(),
+                        worker_pid=None,
+                        phase="stale_reconciled",
+                    )
+                )
+        return updated
 
     def brain_library_entry(self, ds: DatasetRecord) -> dict[str, Any]:
         entry = ds.public_dict()
-        brain = self.brain_status_for_dataset(ds.dataset_id)
+        learning = self.learning_state_for_dataset(ds.dataset_id)
+        # brain projection is embedded in learning state; avoid double recompute.
+        from .learning_state import compute_dataset_learning_state
+
+        state = compute_dataset_learning_state(
+            dataset=ds,
+            versions=self.store.list_versions(ds.dataset_id),
+            indexes=self.store.list_indexes(ds.dataset_id),
+            jobs=self.store.list_jobs(dataset_id=ds.dataset_id, limit=80),
+            learning_ladder=self.learning_ladder_for_dataset(ds.dataset_id),
+        )
+        learning = state.public_dict()
+        brain = state.brain_projection()
         entry["brain"] = brain
         entry["brainStatus"] = brain["brainStatus"]
         entry["learned"] = brain["learned"]
         entry["sourceMissing"] = brain["sourceMissing"]
+        entry["learningState"] = learning
+        entry["canonicalState"] = learning.get("canonicalState")
         return entry
 
     def list_library_datasets(self, *, limit: int = 100) -> list[dict[str, Any]]:
@@ -1303,6 +1280,10 @@ class DatasetService:
 
     def reconcile(self) -> list[DatasetJob]:
         updated = self.runner.reconcile_interrupted()
+        try:
+            updated.extend(self.reconcile_stale_learning_jobs())
+        except Exception:  # noqa: BLE001 — stale learning reconcile must not block
+            pass
         try:
             self.reconcile_sidecars()
         except Exception:  # noqa: BLE001 — catalog recovery must not block job reconcile

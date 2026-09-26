@@ -216,6 +216,20 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         """Live Dataset Learning activity (real dataset_jobs) for Agents/Dataset UIs."""
         return service.learning_activity(limit=limit)
 
+    @router.post("/api/datasets/learning/reconcile")
+    def reconcile_learning_state() -> dict:
+        """Reconcile dead workers + stale INDEX jobs against READY Brain indexes."""
+        interrupted = service.runner.reconcile_interrupted()
+        stale = service.reconcile_stale_learning_jobs()
+        return {
+            "interrupted": [j.public_dict() for j in interrupted],
+            "staleReconciled": [j.public_dict() for j in stale],
+            "truth": {
+                "ready_brain_index_dominates_stale_job": True,
+                "dead_worker_cannot_fake_running": True,
+            },
+        }
+
     @router.post("/api/datasets/sidecars/reconcile")
     def reconcile_sidecars(maxFiles: int = 2000) -> dict:
         try:
@@ -506,11 +520,37 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
             ds = service.get_dataset(dataset_id)
         except DatasetError as exc:
             _raise(exc)
+        learning = service.learning_state_for_dataset(dataset_id)
         return {
             "dataset": ds.public_dict(),
             "versions": [v.public_dict() for v in service.list_versions(dataset_id)],
             "files": [f.public_dict() for f in service.store.list_files(dataset_id)],
             "indexes": [i.public_dict() for i in service.store.list_indexes(dataset_id)],
+            "learningState": learning,
+            "brain": learning,  # canonical learning state is Brain-readiness truth
+            "brainStatus": learning.get("brainStatus"),
+            "learned": learning.get("learned"),
+            "canonicalState": learning.get("canonicalState"),
+        }
+
+    @router.get("/api/datasets/{dataset_id}/learning-state")
+    def get_learning_state(dataset_id: str) -> dict:
+        if dataset_id in DATASETS_STATIC_SEGMENTS:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "route_not_found",
+                    "message": f"/{dataset_id} is a reserved datasets path; no handler matched",
+                },
+            )
+        try:
+            learning = service.learning_state_for_dataset(dataset_id)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {
+            "learningState": learning,
+            "truth": learning.get("truth") or {},
         }
 
     @router.delete("/api/datasets/{dataset_id}")
