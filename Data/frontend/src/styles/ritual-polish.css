@@ -1,0 +1,188 @@
+/* ============================================================
+   LEVIATHAN — FINAL RITUAL POLISH
+   Small high-specificity details that make the shared shell read as one system.
+   ============================================================ */
+
+/* Operator crest replaces consumer-profile styling. */
+.lv-ritual-shell .lv-header-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(190,143,67,.55);
+  border-radius: 2px;
+  background: linear-gradient(180deg, rgba(20,18,12,.94), rgba(5,7,5,.98));
+  filter: none;
+  box-shadow: inset 0 0 12px rgba(201,154,80,.05);
+}
+
+.lv-ritual-shell .lv-header-avatar > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 0 4px rgba(213,166,81,.16));
+}
+
+/* Existing footer avatar asset becomes a system seal without another component branch. */
+.lv-ritual-shell .lv-footer .lv-avatar {
+  content: url("/assets/leviathan-ritual-seal.svg");
+  object-fit: cover;
+  object-position: center;
+  padding: 2px;
+  border-radius: 2px;
+  background: #050706;
+  filter: none;
+}
+
+/* Command home — bring existing live widgets closer to the approved cockpit composition. */
+.lv-ritual-shell[data-lv-route="/"] .lv-main {
+  gap: 8px;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-content-grid,
+.lv-ritual-shell[data-lv-route="/"] [class*="content-grid"] {
+  gap: 8px;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-card-head {
+  min-height: 25px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(150,109,50,.18);
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-project-row,
+.lv-ritual-shell[data-lv-route="/"] .lv-agent-row,
+.lv-ritual-shell[data-lv-route="/"] .lv-tool {
+  border-radius: 2px;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-project-row:hover,
+.lv-ritual-shell[data-lv-route="/"] .lv-agent-row:hover,
+.lv-ritual-shell[data-lv-route="/"] .lv-tool:hover {
+  background: rgba(185,136,58,.048);
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-thumb,
+.lv-ritual-shell[data-lv-route="/"] .lv-agent-icon {
+  border-radius: 2px;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-world {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(188,137,57,.075), transparent 42%),
+    linear-gradient(180deg, rgba(10,13,10,.97), rgba(4,7,5,.99));
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-world::before {
+  content: "";
+  position: absolute;
+  inset: 26px 10px auto;
+  height: min(30vh, 260px);
+  background: url("/assets/leviathan-ritual-seal.svg") center / contain no-repeat;
+  opacity: .075;
+  pointer-events: none;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-world-view {
+  border-radius: 2px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(196,147,67,.07), transparent 52%),
+    linear-gradient(rgba(201,154,80,.026) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201,154,80,.026) 1px, transparent 1px);
+  background-size: auto, 24px 24px, 24px 24px;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-world-view img {
+  opacity: .67;
+  filter: grayscale(.65) sepia(.34) saturate(.6) contrast(1.16) brightness(.72);
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-world-stat {
+  border-top-color: rgba(151,110,50,.18);
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-tools-grid {
+  gap: 5px;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-tool {
+  border-color: rgba(145,105,49,.38);
+  background: linear-gradient(180deg, rgba(10,13,10,.94), rgba(5,7,6,.98));
+  box-shadow: none;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-tool .lv-icon {
+  color: #cda158;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-quote {
+  border-radius: 2px;
+  border-color: rgba(150,109,50,.30);
+  background: rgba(6,8,6,.70);
+  color: rgba(224,205,167,.72);
+  font-family: var(--lv-font-display);
+  letter-spacing: .05em;
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-ring {
+  box-shadow: none;
+  filter: saturate(.72);
+}
+
+.lv-ritual-shell[data-lv-route="/"] .lv-spark {
+  opacity: .78;
+  filter: sepia(.10) saturate(.70);
+}
+
+/* Make all status lights deliberate, not neon arcade lights. */
+.lv-ritual-shell .lv-status-online,
+.lv-ritual-shell .lv-chip-dot--ok,
+.lv-ritual-shell [class*="status-dot"].is-online,
+.lv-ritual-shell [class*="status-dot"].is-active {
+  box-shadow: 0 0 5px rgba(57,217,155,.32);
+}
+
+.lv-ritual-shell .lv-chip-dot--info {
+  background: #78b8b1;
+  box-shadow: 0 0 4px rgba(120,184,177,.24);
+}
+
+.lv-ritual-shell .lv-chip-dot--gold {
+  background: #c99a50;
+  box-shadow: 0 0 4px rgba(201,154,80,.24);
+}
+
+/* The design uses hairlines instead of soft consumer cards. */
+.lv-ritual-shell .lv-panel,
+.lv-ritual-shell .lv-card,
+.lv-ritual-shell .lv-action-card,
+.lv-ritual-shell .lv-stat-card {
+  backdrop-filter: none;
+}
+
+.lv-ritual-shell [class*="panel"]::selection,
+.lv-ritual-shell [class*="card"]::selection {
+  background: rgba(201,154,80,.25);
+}
+
+/* Keep image-heavy media content legible while chrome remains monochrome. */
+.lv-ritual-shell.lv-section-media img:not(.lv-avatar):not(.lv-header-avatar) {
+  image-rendering: auto;
+}
+
+/* Mobile footer remains usable with long submenu sets. */
+@media (max-width: 920px) {
+  .lv-ritual-shell .lv-dock {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .lv-ritual-shell .lv-dock::-webkit-scrollbar {
+    display: none;
+  }
+}
