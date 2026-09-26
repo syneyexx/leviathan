@@ -29,6 +29,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "chatten", label: "Chatten", to: "/chat" },
       { id: "coding", label: "Coding Agent", to: "/coding" },
       { id: "taken", label: "Taken", to: "/tasks" },
+      { id: "status", label: "System Status", to: "/status" },
     ],
   },
   {
