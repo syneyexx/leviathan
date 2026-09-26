@@ -85,6 +85,52 @@ class TestTimeComputeTests(unittest.TestCase):
         )
         self.assertFalse(ok.hard_fail)
 
+    def test_grounding_lexical_is_weak_and_missing_refs_hard_fail(self) -> None:
+        from Data.modules.cognition.ttc import GroundingScorer
+
+        scorer = GroundingScorer()
+        miss = scorer.score(
+            Candidate(candidate_id="m", output="no citations here"),
+            context={"required_evidence_refs": ["ref:ev-1", "ref:ev-2"]},
+        )
+        self.assertTrue(miss.hard_fail)
+        self.assertEqual(miss.score, 0.0)
+        self.assertIn("lexical weak-only", miss.detail or "")
+        hit = scorer.score(
+            Candidate(candidate_id="h", output="see ref:ev-1 and ref:ev-2"),
+            context={"required_evidence_refs": ["ref:ev-1", "ref:ev-2"]},
+        )
+        self.assertFalse(hit.hard_fail)
+        self.assertLessEqual(hit.score, 0.8)
+        self.assertIn("lexical weak-only", hit.detail or "")
+
+    def test_unanimous_invalid_candidates_hard_fail_on_verifier(self) -> None:
+        from Data.modules.cognition.ttc import ConsistencyScorer
+
+        engine = TestTimeComputeEngine()
+        identical = "The answer is forty two without evidence."
+        result = engine.score_all(
+            [
+                Candidate(candidate_id="a", output=identical),
+                Candidate(candidate_id="b", output=identical),
+                Candidate(candidate_id="c", output=identical),
+            ],
+            context={"required_evidence_refs": ["ref:ev-1", "ref:ev-2", "ref:ev-3"]},
+        )
+        self.assertTrue(result.evaluation.get("all_candidates_hard_failed"))
+        self.assertTrue(
+            result.evaluation.get("lexical_agreement_does_not_override_verifier_fail")
+        )
+        for cand in result.candidates:
+            self.assertTrue(cand.rejected)
+            consistency = next(s for s in cand.scores if s.scorer == ConsistencyScorer.name)
+            self.assertIn("lexical weak-only", consistency.detail or "")
+            self.assertTrue(
+                consistency.hard_fail
+                or any(s.hard_fail for s in cand.scores if s.scorer == "GroundingScorer")
+            )
+            self.assertLessEqual(consistency.score, 0.7)
+
     def test_repair_uses_verifier_feedback(self) -> None:
         engine = TestTimeComputeEngine(max_repairs=1)
 

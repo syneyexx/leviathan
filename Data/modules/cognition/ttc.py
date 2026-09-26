@@ -185,17 +185,25 @@ class GroundingScorer:
     name = "GroundingScorer"
 
     def score(self, candidate: Candidate, *, context: dict[str, Any]) -> CandidateScore:
+        """Lexical evidence-ref presence is a weak signal; missing required refs hard-fail."""
         required_refs = list(context.get("required_evidence_refs") or [])
         if not required_refs:
             return CandidateScore(self.name, 0.8, detail="no evidence refs required")
         blob = (candidate.output or "") + json.dumps(candidate.structured or {})
         hits = sum(1 for ref in required_refs if str(ref) in blob)
         ratio = hits / max(1, len(required_refs))
+        # Lexical containment alone is not strong proof — keep score in a weak band.
+        weak_score = round(0.35 + 0.40 * ratio, 3)
+        missing = ratio < 0.34
         return CandidateScore(
             self.name,
-            round(ratio, 3),
-            detail=f"evidence refs hit {hits}/{len(required_refs)}",
-            hard_fail=ratio < 0.34 and bool(required_refs),
+            weak_score if not missing else 0.0,
+            detail=(
+                f"evidence refs hit {hits}/{len(required_refs)} "
+                f"(lexical weak-only)"
+            ),
+            # Verifier failure: required grounding absent → hard-fail even if peers agree.
+            hard_fail=missing,
         )
 
 
@@ -203,13 +211,14 @@ class ConsistencyScorer:
     name = "ConsistencyScorer"
 
     def score(self, candidate: Candidate, *, context: dict[str, Any]) -> CandidateScore:
+        """Peer lexical agreement is weak only; unanimous invalid can still hard-fail."""
         peers = [
             c
             for c in (context.get("peer_outputs") or [])
             if isinstance(c, str) and c.strip()
         ]
         if not peers:
-            return CandidateScore(self.name, 0.7, detail="no peers for consistency")
+            return CandidateScore(self.name, 0.55, detail="no peers for consistency")
         tokens = set(re.findall(r"[a-z0-9]{4,}", (candidate.output or "").lower()))
         if not tokens:
             return CandidateScore(self.name, 0.3, detail="empty token set")
@@ -222,7 +231,74 @@ class ConsistencyScorer:
         if not overlaps:
             return CandidateScore(self.name, 0.5, detail="peers empty")
         mean = sum(overlaps) / len(overlaps)
-        return CandidateScore(self.name, round(mean, 3), detail=f"mean Jaccard={mean:.3f}")
+        # Lexical Jaccard is never strong verification — compress into a weak band.
+        weak_score = round(0.40 + 0.25 * mean, 3)
+        unanimous = mean >= 0.85 and len(overlaps) >= 1
+        hard_fail = False
+        detail = f"mean Jaccard={mean:.3f} (lexical weak-only)"
+        if unanimous and _verifier_rejects_candidate(candidate, context):
+            hard_fail = True
+            detail = (
+                f"{detail}; unanimous_invalid_verifier_fail "
+                "(lexical agreement does not override verifiers)"
+            )
+        return CandidateScore(
+            self.name, weak_score, detail=detail, hard_fail=hard_fail
+        )
+
+
+def _verifier_rejects_candidate(candidate: Candidate, context: dict[str, Any]) -> bool:
+    """True when schema/grounding/constraint/tool verifiers fail for this candidate."""
+    explicit = context.get("verifier_failures") or context.get("verifier_hard_fail")
+    if explicit:
+        return True
+    schema = context.get("response_schema")
+    if schema:
+        payload = candidate.structured
+        if payload is None:
+            try:
+                payload = json.loads(candidate.output)
+            except Exception:  # noqa: BLE001
+                return True
+        ok, _ = _validate_json_schema(payload, schema, path="$")
+        if not ok:
+            return True
+    required_refs = list(context.get("required_evidence_refs") or [])
+    if required_refs:
+        blob = (candidate.output or "") + json.dumps(candidate.structured or {})
+        hits = sum(1 for ref in required_refs if str(ref) in blob)
+        if hits / max(1, len(required_refs)) < 0.34:
+            return True
+    constraints = [str(c) for c in (context.get("constraints") or []) if str(c).strip()]
+    text = (candidate.output or "").lower()
+    failed_constraints = 0
+    for raw in constraints:
+        lower = raw.lower()
+        if lower.startswith("must_include:"):
+            needle = raw.split(":", 1)[1].strip().lower()
+            if needle and needle not in text:
+                failed_constraints += 1
+        elif lower.startswith("must_not_include:"):
+            needle = raw.split(":", 1)[1].strip().lower()
+            if needle and needle in text:
+                failed_constraints += 1
+    if failed_constraints >= 2:
+        return True
+    receipts = {
+        str(r).lower()
+        for r in (context.get("tool_receipts") or [])
+        if r is not None
+    }
+    claim_patterns = (
+        (r"\bi (?:ran|executed) (?:the )?tests?\b", "tests"),
+        (r"\bi (?:edited|wrote|patched) (?:the )?file\b", "file_write"),
+        (r"\bi (?:browsed|navigated|opened) (?:the )?page\b", "browser"),
+        (r"\bi searched the (?:web|internet)\b", "web_search"),
+    )
+    for pattern, kind in claim_patterns:
+        if re.search(pattern, text) and kind not in receipts and f"receipt:{kind}" not in receipts:
+            return True
+    return False
 
 
 class ConstraintScorer:
@@ -373,10 +449,17 @@ class TestTimeComputeEngine:
         context: dict[str, Any] | None = None,
     ) -> CandidateSet:
         ctx = dict(context or {})
-        peer_outputs = [c.output for c in candidates]
+        limited = list(candidates[: self.max_candidates])
         scored: list[Candidate] = []
-        for cand in candidates[: self.max_candidates]:
-            local_ctx = {**ctx, "peer_outputs": [p for p in peer_outputs if p != cand.output]}
+        for cand in limited:
+            # Include identical peer texts — unanimous agreement must be visible.
+            # Filtering by text equality hid unanimous invalid candidates.
+            peer_outputs = [
+                c.output
+                for c in limited
+                if c.candidate_id != cand.candidate_id and isinstance(c.output, str)
+            ]
+            local_ctx = {**ctx, "peer_outputs": peer_outputs}
             cand.scores = [s.score(cand, context=local_ctx) for s in self.scorers]
             if any(s.hard_fail for s in cand.scores):
                 cand.rejected = True
@@ -396,6 +479,8 @@ class TestTimeComputeEngine:
                 "rejected": sum(1 for c in scored if c.rejected),
                 "selected_hash": selected.content_hash,
                 "selected_aggregate": selected.aggregate_score,
+                "all_candidates_hard_failed": len(surviving) == 0 and bool(scored),
+                "lexical_agreement_does_not_override_verifier_fail": True,
             },
         )
 

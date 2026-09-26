@@ -534,8 +534,16 @@ class CognitiveRuntime:
             constraints=constraints,
             metadata=meta_payload,
         )
-        # W5: neural/heuristic task advice — fallback always labeled.
-        advice = self.task_advisor.advise(message, metadata=meta_payload)
+        # W5/W05: neural/heuristic task advice — fallback always labeled.
+        # DIRECT short path budgets a single responder call; skip neural advisor
+        # so greetings / simple_chat do not burn a second model invocation.
+        execution_class = str(getattr(task, "execution_class", None) or "DIRECT")
+        allow_neural_advice = execution_class != "DIRECT"
+        advice = self.task_advisor.advise(
+            message,
+            metadata=meta_payload,
+            allow_neural=allow_neural_advice,
+        )
         task = self.task_advisor.apply_to_task(task, advice)
         # GI12: select bounded specialists for MULTI_DOMAIN / COMPLEX (not every request).
         self._assign_gi_specialists(task)
