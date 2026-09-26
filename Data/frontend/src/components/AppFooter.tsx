@@ -62,17 +62,9 @@ const ICONS: Record<string, ReactNode> = {
       <circle cx="16.2" cy="7.8" r="0.9" fill="currentColor" stroke="none" />
     </>
   ),
-  facebook: (
-    <>
-      <path d="M14 8h2V5h-2c-2.2 0-4 1.8-4 4v2H8v3h2v7h3v-7h2.2l.8-3H13V9c0-.6.4-1 1-1z" />
-    </>
-  ),
+  facebook: <path d="M14 8h2V5h-2c-2.2 0-4 1.8-4 4v2H8v3h2v7h3v-7h2.2l.8-3H13V9c0-.6.4-1 1-1z" />,
   queue: <path d="M5 7h14M5 12h14M5 17h10" />,
-  viral: (
-    <>
-      <path d="M12 4l2.2 4.8L19.5 10l-3.7 3.4L17 19l-5-2.8L7 19l1.2-5.6L4.5 10l5.3-1.2L12 4z" />
-    </>
-  ),
+  viral: <path d="M12 4l2.2 4.8L19.5 10l-3.7 3.4L17 19l-5-2.8L7 19l1.2-5.6L4.5 10l5.3-1.2L12 4z" />,
   calendar: (
     <>
       <rect x="4" y="6" width="16" height="14" rx="2" />
@@ -97,11 +89,7 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   paper: <path d="M7 4h7l4 4v12H7zM14 4v4h4" />,
-  broker: (
-    <>
-      <path d="M4 18V8l8-4 8 4v10l-8 4-8-4z" />
-    </>
-  ),
+  broker: <path d="M4 18V8l8-4 8 4v10l-8 4-8-4z" />,
   research: (
     <>
       <circle cx="11" cy="11" r="6.5" />
@@ -114,13 +102,16 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M12 11v5" />
     </>
   ),
-  geheugen: <path d="M12 4l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V7l7-3z" />,
-  knowledge: <path d="M5 5h6v14H5zM13 5h6v14h-6z" />,
-  evidence: (
+  cognition: (
     <>
-      <path d="M12 3.5l6.5 2.4v4.2c0 2.4-.7 4.5-2.1 6.1L12 20.5l-4.4-4.3C6.2 14.6 5.5 12.5 5.5 10.1V5.9L12 3.5z" />
+      <circle cx="12" cy="12" r="7" />
+      <path d="M12 5v14M5 12h14M7 7l10 10M17 7L7 17" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
     </>
   ),
+  geheugen: <path d="M12 4l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V7l7-3z" />,
+  knowledge: <path d="M5 5h6v14H5zM13 5h6v14h-6z" />,
+  evidence: <path d="M12 3.5l6.5 2.4v4.2c0 2.4-.7 4.5-2.1 6.1L12 20.5l-4.4-4.3C6.2 14.6 5.5 12.5 5.5 10.1V5.9L12 3.5z" />,
   datasets: <path d="M4 8h6l2 2h8v8H4z" />,
   performance: <path d="M5 19V9M12 19V5M19 19v-7" />,
   modules: (
@@ -195,7 +186,7 @@ export function AppFooter() {
         <img className="lv-avatar" src={media.avatar} alt="" width={40} height={40} />
         <div>
           <div className="lv-user-name">LEVIATHAN</div>
-          <div className="lv-user-meta">v1.0.0 | Elite Mode</div>
+          <div className="lv-user-meta">LOCAL OPERATOR · v1.0.0</div>
         </div>
       </div>
 
