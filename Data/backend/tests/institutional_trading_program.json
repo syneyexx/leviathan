@@ -3,7 +3,7 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe",
+  "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026",
   "branch": "cursor/institutional-trading-f8e6",
   "active_wave": "W36",
   "notes": "CI skipped. Editor/HADES out of scope. W00\u2013W36 PASS (local suites).",
@@ -766,7 +766,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W26",
@@ -782,7 +782,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W27",
@@ -798,7 +798,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W28",
@@ -814,7 +814,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W29",
@@ -830,7 +830,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W30",
@@ -847,7 +847,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W31",
@@ -863,7 +863,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W32",
@@ -879,7 +879,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W33",
@@ -895,7 +895,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W34",
@@ -911,7 +911,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W35",
@@ -927,7 +927,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     },
     {
       "id": "W36",
@@ -944,7 +944,7 @@
         "W25\u2013W36 suite PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
+      "last_verified_commit": "95b4d2b3a915b27261cf46aca30d8ab3a3b94026"
     }
   ],
   "final_gate": {
