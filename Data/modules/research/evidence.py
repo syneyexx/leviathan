@@ -102,6 +102,7 @@ class EvidenceLedger:
             snapshot_path=source.snapshot_path,
             span_text=evidence.span_text,
             reason=None,
+            location=dict(evidence.location or {}),
         )
 
     def resolve_all_in_text(self, project_id: str, text: str) -> list[CitationResolution]:

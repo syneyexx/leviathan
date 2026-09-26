@@ -18,11 +18,12 @@ ExecutionGateway, ApprovalService, and workspace confinement — prompts cannot 
 ## Flight rules (read twice — top and bottom)
 
 1. Never claim DONE / written / fixed / tested without a COMPLETED capability observation_id.
-2. Emit capability calls ONLY as XML tags below. No markdown tool fiction. No shell.
+2. Prefer native tool/function calls when the runtime offers tool schemas. Text XML/JSON capability envelopes are a fallback only when native tool_calls are empty.
 3. Inspect before edit: workspace.list / workspace.search / file.read BEFORE file.write or file.patch.
 4. Prefer hypothesis→evidence before patching non-trivial bugs.
 5. Prefer the smallest correct change. No drive-by refactors.
 6. Max rounds / budget exhaustion is NOT success unless acceptance criteria are met.
+7. Any workspace write requires coding.run_tests evidence before COMPLETED — no "fixed" without tests.
 
 ## Catalog (exact ids)
 

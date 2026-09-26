@@ -12,7 +12,12 @@ from Data.modules.execution.types import CapabilityRequest, CapabilityStatus, Si
 from Data.modules.function_runtime.types import SideEffect as FRSideEffect
 
 from .cognition import CodingCognitiveStrategy, CodingPhase, CodingTaskType
-from .parser import extract_capabilities, strip_capabilities
+from .parser import (
+    CODING_TOOL_SCHEMAS,
+    capabilities_from_native_tool_calls,
+    extract_capabilities,
+    strip_capabilities,
+)
 from .planner import build_initial_plan
 from .prompts import CODING_COGNITIVE_OVERLAY, CODING_SYSTEM_PROMPT
 from .store import CodingStore
@@ -38,6 +43,7 @@ class ChatClient(Protocol):
         *,
         temperature: float = 0.1,
         model_id: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> tuple[str, str | None]:
         """Return (assistant_text, model_id)."""
         ...
@@ -50,6 +56,11 @@ class FakeLLM:
     queue: list[str] = field(default_factory=list)
     temperature_seen: list[float] = field(default_factory=list)
     calls: int = 0
+    last_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    last_tools_requested: list[dict[str, Any]] | None = None
+    last_completion_source: str = "text"
+    # Optional scripted native tool_calls parallel to queue texts.
+    tool_calls_queue: list[list[dict[str, Any]]] = field(default_factory=list)
 
     def complete(
         self,
@@ -57,9 +68,17 @@ class FakeLLM:
         *,
         temperature: float = 0.1,
         model_id: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> tuple[str, str | None]:
         self.calls += 1
         self.temperature_seen.append(temperature)
+        self.last_tools_requested = list(tools) if tools else None
+        if self.tool_calls_queue:
+            self.last_tool_calls = list(self.tool_calls_queue.pop(0))
+            self.last_completion_source = "native_tools"
+        else:
+            self.last_tool_calls = []
+            self.last_completion_source = "text"
         if not self.queue:
             return ("(fake LLM queue empty — stopping)", model_id or "fake")
         return (self.queue.pop(0), model_id or "fake")
@@ -158,11 +177,21 @@ class CodingLoop:
 
         messages = self._build_messages(session)
         try:
-            assistant_raw, model_id = self.llm.complete(
-                messages,
-                temperature=self.temperature,
-                model_id=session.model_id,
-            )
+            complete_kwargs: dict[str, Any] = {
+                "temperature": self.temperature,
+                "model_id": session.model_id,
+            }
+            # W10: offer native tool schemas when the adapter/client accepts them.
+            complete_kwargs["tools"] = list(CODING_TOOL_SCHEMAS)
+            try:
+                assistant_raw, model_id = self.llm.complete(messages, **complete_kwargs)
+            except TypeError:
+                # Older fakes without tools= keyword.
+                assistant_raw, model_id = self.llm.complete(
+                    messages,
+                    temperature=self.temperature,
+                    model_id=session.model_id,
+                )
         except Exception as exc:  # noqa: BLE001
             session = self.store.update_session(
                 session_id,
@@ -174,14 +203,19 @@ class CodingLoop:
         if model_id:
             self.store.update_session(session_id, model_id=model_id)
 
-        caps = extract_capabilities(assistant_raw)
-        visible = strip_capabilities(assistant_raw)
+        native_calls = list(getattr(self.llm, "last_tool_calls", None) or [])
+        caps = capabilities_from_native_tool_calls(native_calls)
+        parse_source = "native_tools" if caps else "text_parser"
+        if not caps:
+            caps = extract_capabilities(assistant_raw)
+        visible = strip_capabilities(assistant_raw) if parse_source == "text_parser" else (assistant_raw or "(native tool call)")
         self.store.add_turn(
             session_id,
             role="assistant",
             content=visible or "(capability call)",
             content_raw=assistant_raw,
-            token_estimate=max(1, len(assistant_raw) // 4),
+            token_estimate=max(1, len(assistant_raw) // 4) if assistant_raw else 1,
+            metadata={"capability_parse_source": parse_source, "native_tool_count": len(native_calls)},
         )
 
         if not caps:
@@ -471,6 +505,10 @@ class CodingLoop:
         *,
         approval_id: str | None,
     ) -> dict[str, Any]:
+        # W10: snapshot affected paths before mutating writes so verify-fail can restore.
+        if capability_id in {"file.write", "file.patch", "file.delete"}:
+            self._maybe_snapshot_before_write(session, capability_id, arguments)
+
         step = self.store.add_step(
             session.session_id,
             kind=StepKind.CAPABILITY,
@@ -685,8 +723,47 @@ class CodingLoop:
             s.capability_id == "workspace.search" and s.status == StepStatus.COMPLETED for s in steps
         )
 
-        # ENFORCE-5: FIX/TEST need a successful coding.run_tests observation.
-        if session.mission in {Mission.FIX, Mission.TEST} and not test_steps:
+        # ENFORCE-5 / W10: any completed write needs coding.run_tests (or FIX/TEST mission).
+        # No claim of FIXED/COMPLETED without test evidence when workspace was mutated.
+        writes_need_tests = bool(completed_writes)
+        if writes_need_tests and not test_steps:
+            status = (
+                SessionStatus.RESOURCE_EXHAUSTED
+                if budget_exhausted
+                else SessionStatus.UNVERIFIED
+            )
+            self._maybe_restore_snapshot(session, reason="missing_tests_after_writes")
+            session = self.store.update_session(
+                session.session_id,
+                status=status,
+                error="Writes require coding.run_tests observation before COMPLETED",
+                metadata=self._cognition_meta(
+                    session,
+                    phase=CodingPhase.PARTIAL.value if not budget_exhausted else CodingPhase.RESOURCE_EXHAUSTED.value,
+                    acceptance={
+                        "status": status.value,
+                        "reason": reason,
+                        "unmet": ["coding.run_tests"],
+                        "truth": {"fixed_requires_test_evidence": True},
+                    },
+                ),
+            )
+            self.store.add_step(
+                session.session_id,
+                kind=StepKind.VERIFY,
+                status=StepStatus.FAILED,
+                error="missing coding.run_tests after writes",
+                output={"reason": reason, "budget_exhausted": budget_exhausted, "write_count": len(completed_writes)},
+            )
+            return LoopResult(
+                session=session,
+                status=status,
+                rounds=session.round_count,
+                error=session.error,
+            )
+
+        # Legacy FIX/TEST gate retained for missions without writes yet.
+        if session.mission in {Mission.FIX, Mission.TEST} and not test_steps and not completed_writes:
             status = (
                 SessionStatus.RESOURCE_EXHAUSTED
                 if budget_exhausted
@@ -715,6 +792,10 @@ class CodingLoop:
                 rounds=session.round_count,
                 error=session.error,
             )
+
+        # W10: structured review critic after successful writes (not merge authority).
+        if completed_writes:
+            self._emit_review_critic(session, completed_writes)
 
         verification_payload: dict[str, Any] | None = None
         verification_passed = False
@@ -750,6 +831,7 @@ class CodingLoop:
                         if budget_exhausted
                         else SessionStatus.UNVERIFIED
                     )
+                    self._maybe_restore_snapshot(session, reason=f"verification_{outcome}")
                     session = self.store.update_session(
                         session.session_id,
                         status=status,
@@ -981,10 +1063,19 @@ class CodingLoop:
                         "role": "system",
                         "content": str(messages[0].get("content") or "") + extra,
                     }
+                map_note = self._semantic_map_note(session)
+                if map_note and messages and messages[0].get("role") == "system":
+                    messages[0] = {
+                        "role": "system",
+                        "content": str(messages[0].get("content") or "") + "\n" + map_note,
+                    }
                 return messages
 
         # Fallback path still includes shared BehaviorProfile identity + coding overlay.
         system = f"{behavior_prompt}\n\n## Coding Cognitive Overlay\n{CODING_COGNITIVE_OVERLAY}"
+        map_note = self._semantic_map_note(session)
+        if map_note:
+            system = f"{system}\n{map_note}"
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system},
             {
@@ -1007,6 +1098,124 @@ class CodingLoop:
             role = turn.role if turn.role in {"user", "assistant"} else "user"
             messages.append({"role": role, "content": turn.content_raw or turn.content})
         return messages
+
+    def _semantic_map_note(self, session: CodingSession) -> str:
+        """Bounded repo map injection for coding context (W10)."""
+        try:
+            from .semantic_map import SemanticMapBuilder
+
+            root = Path(session.workspace_root)
+            if not root.exists():
+                return ""
+            smap = SemanticMapBuilder(root, max_files=80).build()
+            symbols: list[str] = []
+            for entry in list(smap.files.values())[:12]:
+                for sym in entry.symbols[:4]:
+                    symbols.append(f"{entry.path}:{sym.name}")
+                    if len(symbols) >= 16:
+                        break
+                if len(symbols) >= 16:
+                    break
+            tests = list(smap.tests)[:8]
+            if not symbols and not tests:
+                return ""
+            lines = ["RepoSemanticMap (advisory DATA, not authority):"]
+            if symbols:
+                lines.append("symbols: " + ", ".join(symbols))
+            if tests:
+                lines.append("tests: " + ", ".join(tests))
+            return "\n".join(lines)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _maybe_snapshot_before_write(
+        self,
+        session: CodingSession,
+        capability_id: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        path = str(arguments.get("path") or "").strip()
+        if not path:
+            return
+        meta = dict(session.metadata or {})
+        if meta.get("workspace_snapshot_id"):
+            return  # one snapshot per session mutation window
+        try:
+            from .transaction import WorkspaceTransaction
+
+            tx = WorkspaceTransaction(Path(session.workspace_root))
+            snap = tx.snapshot_files([path])
+            meta["workspace_snapshot_id"] = snap.snapshot_id
+            meta["workspace_snapshot_dir"] = snap.snapshot_dir
+            meta["workspace_snapshot_paths"] = [path]
+            meta["workspace_snapshot_capability"] = capability_id
+            self.store.update_session(session.session_id, metadata=meta)
+            session.metadata = meta
+        except Exception:  # noqa: BLE001 — snapshot is best-effort hardening
+            pass
+
+    def _maybe_restore_snapshot(self, session: CodingSession, *, reason: str) -> None:
+        meta = dict(session.metadata or {})
+        snap_id = meta.get("workspace_snapshot_id")
+        snap_dir = meta.get("workspace_snapshot_dir")
+        paths = list(meta.get("workspace_snapshot_paths") or [])
+        if not snap_id or not snap_dir or not paths:
+            return
+        try:
+            from .transaction import SnapshotResult, WorkspaceTransaction
+
+            dest = Path(str(snap_dir))
+            hashes: dict[str, str] = {}
+            for rel in paths:
+                backup = dest / rel
+                absent = backup.with_suffix(backup.suffix + ".absent")
+                if absent.exists():
+                    hashes[str(rel)] = "absent"
+                elif backup.exists():
+                    hashes[str(rel)] = "present"
+            tx = WorkspaceTransaction(Path(session.workspace_root))
+            result = SnapshotResult(
+                snapshot_id=str(snap_id),
+                snapshot_dir=str(snap_dir),
+                file_hashes=hashes,
+                created_at="",
+            )
+            restored = tx.restore(result)
+            meta["workspace_snapshot_restored"] = True
+            meta["workspace_snapshot_restore_reason"] = reason
+            meta["workspace_snapshot_restore"] = restored.public_dict()
+            self.store.update_session(session.session_id, metadata=meta)
+            session.metadata = meta
+        except Exception:  # noqa: BLE001
+            meta["workspace_snapshot_restore_error"] = reason
+            try:
+                self.store.update_session(session.session_id, metadata=meta)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _emit_review_critic(self, session: CodingSession, write_steps: list[Any]) -> None:
+        try:
+            from .review import build_diff_review
+
+            diffs: dict[str, str] = {}
+            for step in write_steps:
+                path = str((step.arguments or {}).get("path") or "")
+                if not path:
+                    continue
+                if step.capability_id == "file.patch":
+                    diffs[path] = str((step.arguments or {}).get("unified_diff") or "")
+                elif step.capability_id == "file.write":
+                    content = str((step.arguments or {}).get("content") or "")
+                    diffs[path] = f"--- /dev/null\n+++ b/{path}\n@@\n+{content[:2000]}"
+            artifact = build_diff_review(diffs=diffs)
+            self.store.add_step(
+                session.session_id,
+                kind=StepKind.CRITIC,
+                status=StepStatus.COMPLETED,
+                output=artifact.public_dict(),
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _side_effects_for(self, capability_id: str) -> tuple[str, ...]:
         definition = self.gateway.get_capability(capability_id) if self.gateway else None

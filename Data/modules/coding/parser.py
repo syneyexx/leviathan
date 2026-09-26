@@ -167,6 +167,75 @@ def extract_capabilities(text: str) -> list[ParsedCapability]:
     return found
 
 
+def capabilities_from_native_tool_calls(
+    tool_calls: list[dict[str, Any]] | None,
+) -> list[ParsedCapability]:
+    """Map provider-native tool_calls into ParsedCapability (W10).
+
+    Fallback text parsers must not run when native calls are present.
+    """
+    found: list[ParsedCapability] = []
+    for item in tool_calls or []:
+        if not isinstance(item, dict):
+            continue
+        # OpenAI-ish: {function: {name, arguments}, ...} or flat {name, arguments}
+        fn = item.get("function") if isinstance(item.get("function"), dict) else item
+        name = (
+            fn.get("name")
+            or fn.get("capability_id")
+            or item.get("name")
+            or item.get("capability_id")
+            or ""
+        )
+        name = str(name).strip()
+        if not name:
+            continue
+        raw_args = fn.get("arguments") if isinstance(fn, dict) else item.get("arguments")
+        args: dict[str, Any] = {}
+        if isinstance(raw_args, dict):
+            args = dict(raw_args)
+        elif isinstance(raw_args, str) and raw_args.strip():
+            try:
+                parsed = json.loads(raw_args)
+                if isinstance(parsed, dict):
+                    args = parsed
+            except json.JSONDecodeError:
+                args = {"_raw": raw_args}
+        found.append(
+            ParsedCapability(
+                capability_id=name,
+                arguments=args,
+                raw=json.dumps(item, ensure_ascii=False)[:2000],
+                source="native_tools",
+            )
+        )
+    return found
+
+
+CODING_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": cap_id,
+            "description": f"LEVIATHAN coding capability {cap_id}",
+            "parameters": {"type": "object", "additionalProperties": True},
+        },
+    }
+    for cap_id in (
+        "workspace.list",
+        "workspace.search",
+        "file.read",
+        "file.write",
+        "file.patch",
+        "file.delete",
+        "coding.run_tests",
+        "knowledge.search",
+        "git.status",
+        "git.diff",
+        "artifact.create_text",
+    )
+]
+
 def strip_capabilities(text: str) -> str:
     """Remove capability XML/JSON fences from user-visible assistant text."""
     cleaned = _CAP_RE.sub("", text or "")

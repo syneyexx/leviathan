@@ -659,6 +659,14 @@ Coding is a dedicated specialist control plane, not a second general assistant. 
 
 Writes/executes remain capability/approval gated; tests and receipts are used for verification.
 
+W10 hardening:
+
+- Native provider tool_calls preferred when offered (`CodingLLMAdapter` + `capabilities_from_native_tool_calls`); text XML/JSON is fallback only.
+- Repo semantic map injected into loop context as advisory DATA.
+- Workspace snapshots before mutating writes; restore on verify/test failure.
+- Any completed write requires `coding.run_tests` evidence before COMPLETED (no "fixed" without tests).
+- Post-write `StepKind.CRITIC` with structured `HunkReview` findings.
+
 ## 14.3 Research — `Data/modules/research/`
 
 Research supports local evidence and optional outbound/web sources:
@@ -666,6 +674,14 @@ Research supports local evidence and optional outbound/web sources:
 `service.py`, `runner.py`, `worker.py`, `worker_context.py`, `planner.py`, `coordinator.py`, `question_model.py`, `sources.py`, `source_quality.py`, `web.py`, `ssrf.py`, `uploads.py`, `local_retrieval.py`, `claims.py`, `evidence.py`, `conflicts.py`, `citation_audit.py`, `coverage.py`, `gaps.py`, `graph.py`, `reports.py`, `quality_scorecard.py`, `brain_sync.py`, `assignments.py`, `budgets.py`, `store.py`, `types.py`.
 
 Important truth: outbound network permission and a configured web-search provider are separate conditions. Research must not fabricate browsing.
+
+W10 web policy:
+
+- Real `robots.txt` enforcement when `respect_robots_txt=True` (refuse Disallow).
+- Per-host rate limiting + Retry-After honor.
+- Readability extraction prefers `article`/`main`/paragraph clusters.
+- `published_at` extracted from HTML meta when present; citation resolution includes `location`.
+- Long Research remains external-first via cognition specialists (`background=True`).
 
 ---
 
