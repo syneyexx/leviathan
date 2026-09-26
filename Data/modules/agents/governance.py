@@ -219,9 +219,23 @@ class DelegationGovernor:
             escalation_attempt = False
 
         parent_budget = dict(remaining_parent_budget or {})
-        # Exhaustion: if all numeric parent budgets are already 0, refuse.
-        numeric = [v for v in parent_budget.values() if isinstance(v, (int, float))]
-        if numeric and all(v <= 0 for v in numeric):
+        # Exhaustion only when explicit capacity quotas are present and all depleted.
+        # A lone sentinel like {iterations: 0} (no MetaDecision yet) is NOT exhausted.
+        capacity_keys = (
+            "agent_delegations",
+            "model_calls",
+            "tool_calls",
+            "slots",
+            "max_tool_calls",
+            "max_model_calls",
+            "max_agent_delegations",
+        )
+        caps = [
+            float(parent_budget[k])
+            for k in capacity_keys
+            if k in parent_budget and isinstance(parent_budget[k], (int, float))
+        ]
+        if caps and all(v <= 0 for v in caps):
             return GovernanceDecision(
                 allowed=False,
                 violation=DelegationViolation.BUDGET_EXHAUSTED,

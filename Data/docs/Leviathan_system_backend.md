@@ -734,7 +734,13 @@ W11 learning flywheel (CURRENT):
 
 ## 16.2 Evaluation — `Data/modules/evaluation/`
 
-`harness.py`, `platform.py`, `store.py`, `types.py`, `scorecard.py`, `paired.py`, `ablations.py`, `assistant_benchmark.py` implement evaluation/reporting. `UNMEASURED` is not treated as PASS.
+`harness.py`, `platform.py`, `store.py`, `types.py`, `scorecard.py`, `paired.py`, `compute_paired.py`, `judge_calibration.py`, `ablations.py`, `assistant_benchmark.py` implement evaluation/reporting. `UNMEASURED` is not treated as PASS.
+
+W12 CURRENT:
+
+- Paired compute FAST vs DEEP uses bootstrap of paired quality deltas (`compute_paired.py`); DEEP need not beat FAST on every easy task; hard suites require mean delta ≥ min useful effect with CI lower bound > 0.
+- LLM judge calibration (`judge_calibration.py`): below reliability threshold → `UNMEASURED`.
+- Assistant benchmark families include reasoning, prompt-injection resistance, language following, browser, multimodal honesty, trading live-block, research grounding.
 
 ## 16.3 VerifiedExperience
 

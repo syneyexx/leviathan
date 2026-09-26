@@ -1036,7 +1036,20 @@ class CognitiveRuntime:
         b = state.decision.budgets if state.decision else None
         u = state.usage
         if b is None:
-            return {"iterations": 0}
+            # No MetaDecision yet — offer a minimal positive ceiling so governance
+            # can authorize a first child hop (ablation / early DELEGATE paths).
+            return {
+                "iterations": 1,
+                "model_calls": 2,
+                "tool_calls": 4,
+                "agent_delegations": 1,
+                "replans": 1,
+                "retries": 1,
+                "retrieval_rounds": 1,
+                "critic_passes": 0,
+                "model_tokens": 2000,
+                "wall_ok": 1,
+            }
         elapsed = time.monotonic() - (u.started_monotonic or time.monotonic())
         wall_left = b.max_wall_time_seconds - elapsed
         # Token budget depletes from measured usage when available; otherwise

@@ -39,6 +39,7 @@ class JudgmentKind(str, Enum):
     RETRIEVAL_EVIDENCE = "RETRIEVAL_EVIDENCE"
     HUMAN = "HUMAN"
     LLM_JUDGE = "LLM_JUDGE"
+    STATISTICAL = "STATISTICAL"  # W12 paired bootstrap / compute analysis
 
 
 def outcome_to_measurement(outcome: EvalOutcome) -> MeasurementState:
