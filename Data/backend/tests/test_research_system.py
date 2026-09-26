@@ -192,7 +192,8 @@ class ResearchSystemTests(unittest.TestCase):
         web_events = [
             e
             for e in events
-            if e.payload.get("channel") == "web" and e.payload.get("status") == "unavailable"
+            if e.payload.get("channel") == "web"
+            and e.payload.get("status") in {"unavailable", "search_unavailable"}
         ]
         self.assertTrue(web_events)
         # Local path still produced evidence.

@@ -332,13 +332,18 @@ Research UI should expose actual project/run/source/worker state and distinguish
 
 - local retrieval;
 - outbound permission;
-- configured web search;
+- configured web search **vs** BEST_EFFORT_PUBLIC_SEARCH fallback (`web_search.mode`);
+- **Web Search READY / FETCH ONLY / UNAVAILABLE** from `GET /api/research/web/readiness`
+  (operator must never infer readiness from Evidence=0 alone);
+- **Test web research** probe (`POST /api/research/web/probe`) — search → fetch, no fake artifacts;
 - source upload/ingestion;
 - active worker state;
-- claims/evidence/conflicts;
+- claims/evidence/conflicts with real source URLs;
+- explicit zero-evidence diagnosis (WEB SEARCH UNAVAILABLE / NO SOURCES / FETCH BLOCKED / …);
 - **execution mode Normal / Custom / TEAM** — TEAM uses `rounds: null` and criterion-level progress (no “7 of 10 rounds” fake total).
 
 Do not render fabricated “web searched” state when the backend provider is unavailable.
+Search hit ≠ fetched source ≠ evidence ≠ supported claim ≠ knowledge.
 
 ---
 
