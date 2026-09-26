@@ -37,6 +37,8 @@ class MemoryScope(str, Enum):
     PROJECT = "PROJECT"
     CONVERSATION = "CONVERSATION"
     AGENT_PRIVATE = "AGENT_PRIVATE"
+    # W9: explicit shared scope for orchestrator-coordinated multi-agent memory.
+    ORCHESTRATOR_SHARED = "ORCHESTRATOR_SHARED"
 
 
 class MemoryTrustState(str, Enum):

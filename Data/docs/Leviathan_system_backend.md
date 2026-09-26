@@ -633,13 +633,23 @@ Files include:
 
 - `runtime.py` — AgentRuntime;
 - `fleet.py`, `fleet_types.py`, `store.py` — AgentFleet;
+- `governance.py` — DelegationGovernor (W9): depth, cycle detection, authority inheritance, child budget from parent;
 - `planner.py` — structured agent planning;
 - `multi.py` — DAG multi-agent coordination;
 - `blackboard.py` — shared agent result state;
 - `system_inventory.py` — truthful runtime component inventory;
-- `types.py` — contracts.
+- `types.py` — contracts;
+- `signals/` — Signal Fabric for durable async coordination (not all sync subresults).
 
-CognitiveRuntime may delegate, but parent cognition remains orchestration authority.
+CognitiveRuntime may delegate via `DelegationService`, but parent cognition remains orchestration authority.
+
+W9 governance invariants:
+
+- `parent_run_id`, `delegation_depth`, `max_delegation_depth` on every hop;
+- child authority ≤ parent authority (`clamp_authority`);
+- child compute budget derived from remaining parent budget;
+- lineage cycle detection blocks Cognition→Agent→Cognition→same-Agent recursion;
+- agent memory: `AGENT_PRIVATE` plus optional `ORCHESTRATOR_SHARED` scope.
 
 ## 14.2 Coding — `Data/modules/coding/`
 

@@ -1410,6 +1410,29 @@ class CognitiveRuntime:
                 budget=state.decision.budgets.public_dict() if state.decision else {},
                 parent_trace_id=state.trace_id,
                 required_evidence=list(state.task.required_evidence),
+                parent_run_id=state.run_id,
+                delegation_depth=int(
+                    action.arguments.get("delegation_depth")
+                    or (state.task.metadata or {}).get("delegation_depth")
+                    or 0
+                ),
+                max_delegation_depth=int(
+                    action.arguments.get("max_delegation_depth")
+                    or (state.task.metadata or {}).get("max_delegation_depth")
+                    or 3
+                ),
+                remaining_parent_budget=self._budgets_remaining(state),
+                lineage=list(
+                    action.arguments.get("lineage")
+                    or (state.task.metadata or {}).get("delegation_lineage")
+                    or ["cognition"]
+                ),
+                memory_scope=str(action.arguments.get("memory_scope") or "AGENT_PRIVATE"),
+                shared_orchestrator_scope=(
+                    str(action.arguments["shared_orchestrator_scope"])
+                    if action.arguments.get("shared_orchestrator_scope")
+                    else (state.task.metadata or {}).get("shared_orchestrator_scope")
+                ),
             )
             req.metadata.update(meta)
             self._emit(state, "agent_delegated", req.public_dict())
