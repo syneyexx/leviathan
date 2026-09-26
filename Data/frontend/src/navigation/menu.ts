@@ -78,6 +78,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "broker", label: "BROKER trading", to: "/trading/broker" },
       { id: "onderzoek", label: "Onderzoek", to: "/trading/onderzoek" },
       { id: "lab", label: "Research Lab", to: "/trading/lab" },
+      { id: "control-room", label: "Control Room", to: "/trading/control-room" },
     ],
   },
   {

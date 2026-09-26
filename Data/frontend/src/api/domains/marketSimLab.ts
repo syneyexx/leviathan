@@ -130,4 +130,38 @@ export const marketSimLabApi = {
   }> {
     return request(`/api/market-sim/lab/runs/${encodeURIComponent(labId)}/lessons`);
   },
+
+  marketSimInstitutionalControlRoom(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/institutional/control-room");
+  },
+
+  marketSimInstitutionalGapMatrix(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/institutional/gap-matrix");
+  },
+
+  marketSimInstitutionalApiCatalog(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/institutional/api-catalog");
+  },
+
+  marketSimInstitutionalAssurance(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/institutional/assurance");
+  },
+
+  marketSimInstitutionalMultiAsset(): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/institutional/multi-asset");
+  },
+
+  marketSimInstitutionalReconciliation(payload: {
+    left?: Record<string, unknown> | unknown[];
+    right?: Record<string, unknown> | unknown[];
+    domain?: string;
+    leftSystem?: string;
+    rightSystem?: string;
+    fields?: string[];
+  }): Promise<Record<string, unknown>> {
+    return request("/api/market-sim/institutional/reconciliation", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
 } as const;

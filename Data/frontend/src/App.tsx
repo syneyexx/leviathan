@@ -57,6 +57,11 @@ const PaperTradingPage = lazy(() =>
 const PortefeuillePage = lazy(() =>
   import("./pages/trading/PortefeuillePage").then((m) => ({ default: m.PortefeuillePage })),
 );
+const InstitutionalControlRoomPage = lazy(() =>
+  import("./pages/trading/InstitutionalControlRoomPage").then((m) => ({
+    default: m.InstitutionalControlRoomPage,
+  })),
+);
 const SimulatiePage = lazy(() =>
   import("./pages/trading/SimulatiePage").then((m) => ({ default: m.SimulatiePage })),
 );
@@ -111,6 +116,14 @@ export default function App() {
       <Route path="/trading/broker" element={<TradingSuspense><BrokerTradingPage /></TradingSuspense>} />
       <Route path="/trading/onderzoek" element={<TradingSuspense><OnderzoekPage /></TradingSuspense>} />
       <Route path="/trading/lab" element={<TradingSuspense><ResearchLabPage /></TradingSuspense>} />
+      <Route
+        path="/trading/control-room"
+        element={
+          <TradingSuspense>
+            <InstitutionalControlRoomPage />
+          </TradingSuspense>
+        }
+      />
 
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />

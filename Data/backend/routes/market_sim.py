@@ -1232,4 +1232,60 @@ def build_market_sim_router(
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 
+    # --- Institutional core (W37–W72 surface; live trading stays BLOCKED) ---
+
+    @router.get("/api/market-sim/institutional/gap-matrix")
+    def institutional_gap_matrix() -> dict:
+        try:
+            return service.institutional_gap_matrix()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/control-room")
+    def institutional_control_room() -> dict:
+        try:
+            return service.institutional_control_room()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/api-catalog")
+    def institutional_api_catalog() -> dict:
+        try:
+            return service.institutional_api_catalog()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/assurance")
+    def institutional_assurance() -> dict:
+        try:
+            return service.institutional_assurance()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/institutional/multi-asset")
+    def institutional_multi_asset() -> dict:
+        try:
+            return service.institutional_multi_asset()
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.post("/api/market-sim/institutional/reconciliation")
+    def institutional_reconciliation(payload: dict[str, Any]) -> dict:
+        try:
+            return service.institutional_run_reconciliation(
+                payload.get("left") if "left" in payload else payload.get("leftMap"),
+                payload.get("right") if "right" in payload else payload.get("rightMap"),
+                domain=str(payload.get("domain") or "generic"),
+                left_system=str(payload.get("leftSystem") or payload.get("left_system") or "left"),
+                right_system=str(payload.get("rightSystem") or payload.get("right_system") or "right"),
+                run_id=payload.get("runId") or payload.get("run_id"),
+                fields=payload.get("fields"),
+                key_field=str(payload.get("keyField") or payload.get("key_field") or "id"),
+                numeric_tolerance=float(
+                    payload.get("numericTolerance") or payload.get("numeric_tolerance") or 0.0
+                ),
+            )
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
     return router

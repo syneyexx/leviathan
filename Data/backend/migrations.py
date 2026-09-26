@@ -4013,6 +4013,139 @@ def _m54_market_sim_learning_runs(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m55_institutional_core(conn: sqlite3.Connection) -> None:
+    """Institutional core additive tables (instruments, breaks, audit, exceptions)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_instruments (
+            instrument_id TEXT PRIMARY KEY,
+            family TEXT NOT NULL DEFAULT '',
+            primary_symbol TEXT NOT NULL DEFAULT '',
+            currency TEXT NOT NULL DEFAULT '',
+            exchange TEXT NOT NULL DEFAULT '',
+            multiplier TEXT NOT NULL DEFAULT '1',
+            valid_from TEXT NOT NULL DEFAULT '',
+            valid_to TEXT NOT NULL DEFAULT '',
+            attributes_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_instruments_status "
+        "ON institutional_instruments(status)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_instrument_aliases (
+            alias_id TEXT PRIMARY KEY,
+            alias TEXT NOT NULL,
+            alias_type TEXT NOT NULL DEFAULT '',
+            instrument_id TEXT NOT NULL,
+            valid_from TEXT NOT NULL DEFAULT '',
+            valid_to TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_instrument_aliases_instrument "
+        "ON institutional_instrument_aliases(instrument_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_instrument_aliases_alias "
+        "ON institutional_instrument_aliases(alias)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_breaks (
+            break_id TEXT PRIMARY KEY,
+            domain TEXT NOT NULL DEFAULT '',
+            field TEXT NOT NULL DEFAULT '',
+            left_system TEXT NOT NULL DEFAULT '',
+            right_system TEXT NOT NULL DEFAULT '',
+            left_key TEXT NOT NULL DEFAULT '',
+            right_key TEXT NOT NULL DEFAULT '',
+            left_value TEXT,
+            right_value TEXT,
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            fingerprint TEXT NOT NULL DEFAULT '',
+            correlation_id TEXT,
+            history_json TEXT NOT NULL DEFAULT '[]',
+            explanation TEXT,
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_breaks_fingerprint "
+        "ON institutional_breaks(fingerprint)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_breaks_status "
+        "ON institutional_breaks(status)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_decision_packets (
+            decision_id TEXT PRIMARY KEY,
+            packet_hash TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT '',
+            actor TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'RECORDED'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_decision_packets_status "
+        "ON institutional_decision_packets(status)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_audit_chain (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT '',
+            actor TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '',
+            ts TEXT NOT NULL DEFAULT '',
+            prev_hash TEXT NOT NULL DEFAULT '',
+            event_hash TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_audit_chain_event "
+        "ON institutional_audit_chain(event_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS institutional_exceptions (
+            exception_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            owner TEXT NOT NULL DEFAULT '',
+            first_seen TEXT NOT NULL DEFAULT '',
+            last_seen TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            linked_json TEXT NOT NULL DEFAULT '{}',
+            remediation TEXT,
+            resolution TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_institutional_exceptions_status "
+        "ON institutional_exceptions(status)"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(version=1, name="baseline_schema_versioning", apply=_m1_baseline_marker),
     Migration(version=2, name="artifacts_table", apply=_m2_artifacts_table),
@@ -4115,6 +4248,11 @@ MIGRATIONS: Sequence[Migration] = (
         version=54,
         name="market_sim_learning_runs",
         apply=_m54_market_sim_learning_runs,
+    ),
+    Migration(
+        version=55,
+        name="institutional_core",
+        apply=_m55_institutional_core,
     ),
 )
 
