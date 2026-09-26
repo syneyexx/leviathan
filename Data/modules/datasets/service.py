@@ -3671,7 +3671,12 @@ class DatasetService:
         if not ver.storage_path:
             raise DatasetError("Version has no storage", code="no_storage")
         input_path = Path(ver.storage_path)
-        plan = self._plan_compute_backend("dataset.validate", input_path=input_path)
+        force_backend = (job.config or {}).get("forceBackend")
+        plan = self._plan_compute_backend(
+            "dataset.validate",
+            input_path=input_path,
+            force_backend=force_backend,
+        )
         native_info = None
         fallback_reason = plan.fallback_reason
         if plan.backend == ComputeBackend.RUST_NATIVE:
@@ -3687,6 +3692,7 @@ class DatasetService:
                 operation="dataset.validate",
                 input_path=input_path,
                 dest=dest,
+                force_backend=force_backend,
             )
             fallback_reason = plan.fallback_reason
             if native_info and dest.exists() and dest != input_path:

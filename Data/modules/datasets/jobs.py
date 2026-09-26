@@ -286,7 +286,9 @@ class DatasetJobRunner:
                     finished_at=utc_now(),
                     worker_pid=None,
                 )
-            err = redact_secrets(f"{exc}\n{traceback.format_exc()}")
+            err_code = getattr(exc, "code", None)
+            prefix = f"[{err_code}] " if err_code else ""
+            err = redact_secrets(f"{prefix}{exc}\n{traceback.format_exc()}")
             return self.store.update_job(
                 job.job_id,
                 status=DatasetJobStatus.FAILED,
