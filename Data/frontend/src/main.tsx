@@ -30,6 +30,7 @@ import "./styles/plugin-runtime-pages.css";
 import "./styles/onderzoek-kennis.css";
 import "./styles/research-dashboard.css";
 import "./styles/datasets-dashboard.css";
+import "./styles/ritual-theme.css";
 
 const root = document.getElementById("root");
 if (!root) {
