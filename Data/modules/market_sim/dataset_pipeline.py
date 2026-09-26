@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from Data.modules.common.hashing import sha256_file
 from Data.modules.common.paths import PathEscapeError, safe_relpath
@@ -91,11 +91,23 @@ class DatasetQualityReport:
     warnings: list[str] = field(default_factory=list)
     schema_columns: list[str] = field(default_factory=list)
     expected_bar_seconds: float | None = None
+    # Institutional W06 — explicit operator-facing verdict.
+    quality_verdict: str = "UNMEASURED"  # PASS | WARN | FAIL | UNMEASURED
+    ohlc_violations: list[dict[str, Any]] = field(default_factory=list)
+    negative_prices: list[str] = field(default_factory=list)
+    negative_volumes: list[str] = field(default_factory=list)
+    missing_timestamps: int = 0
+    data_level: str = "ohlcv"
+    adjustment_mode: str | None = None
+    survivorship_bias_risk: str = "UNMEASURED"
+    reasons: list[str] = field(default_factory=list)
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
             "state": self.state,
+            "quality": self.quality_verdict,
+            "qualityVerdict": self.quality_verdict,
             "bar_count": self.bar_count,
             "start_ts": self.start_ts,
             "end_ts": self.end_ts,
@@ -109,11 +121,22 @@ class DatasetQualityReport:
             "repairs": [r.public_dict() for r in self.repairs],
             "errors": self.errors,
             "warnings": self.warnings,
+            "reasons": list(self.reasons),
             "schema_columns": self.schema_columns,
             "expected_bar_seconds": self.expected_bar_seconds,
+            "ohlcViolations": self.ohlc_violations,
+            "negativePrices": self.negative_prices,
+            "negativeVolumes": self.negative_volumes,
+            "missingTimestamps": self.missing_timestamps,
+            "dataLevel": self.data_level,
+            "adjustmentMode": self.adjustment_mode,
+            "survivorshipBiasRisk": self.survivorship_bias_risk,
             "truth": {
                 "no_silent_repair": True,
                 "duplicates_are_errors": True,
+                "parsed_csv_is_not_quality_pass": True,
+                "missing_data_is_not_zero": True,
+                "adjusted_vs_unadjusted_must_be_labeled": True,
             },
         }
 
@@ -213,8 +236,10 @@ def analyze_bars(
     content_hash: str = "",
     byte_size: int = 0,
     repairs: list[RecordedRepair] | None = None,
+    adjustment_mode: str | None = None,
+    survivorship_bias_risk: str = "UNMEASURED",
 ) -> DatasetQualityReport:
-    """Run ordering / duplicate / gap / outlier checks on in-memory bars."""
+    """Run ordering / duplicate / gap / outlier / OHLC invariant checks on bars."""
     report = DatasetQualityReport(
         ok=True,
         state=DatasetQualityState.VALIDATING.value,
@@ -224,11 +249,17 @@ def analyze_bars(
         schema_columns=list(REQUIRED_OHLCV_COLUMNS),
         repairs=list(repairs or []),
         expected_bar_seconds=_TIMEFRAME_SECONDS.get(timeframe),
+        quality_verdict="UNMEASURED",
+        data_level="ohlcv",
+        adjustment_mode=adjustment_mode,
+        survivorship_bias_risk=survivorship_bias_risk,
     )
     if not bars:
         report.ok = False
         report.state = DatasetQualityState.INVALID.value
+        report.quality_verdict = "FAIL"
         report.errors.append("empty bar series")
+        report.reasons.append("empty_series")
         return report
 
     report.start_ts = bars[0].ts
@@ -238,11 +269,29 @@ def analyze_bars(
     expected = report.expected_bar_seconds
 
     for i, bar in enumerate(bars):
+        if not bar.ts:
+            report.missing_timestamps += 1
+            report.errors.append(f"missing timestamp at row {i}")
+            continue
         if bar.ts in seen:
             report.duplicate_timestamps.append(bar.ts)
             report.errors.append(f"duplicate timestamp at row {i}: {bar.ts}")
         else:
             seen[bar.ts] = i
+        # OHLC invariants
+        o, h, l, c = float(bar.open), float(bar.high), float(bar.low), float(bar.close)
+        vol = float(bar.volume)
+        if min(o, h, l, c) < 0:
+            report.negative_prices.append(bar.ts)
+            report.errors.append(f"negative price at {bar.ts}")
+        if vol < 0:
+            report.negative_volumes.append(bar.ts)
+            report.errors.append(f"negative volume at {bar.ts}")
+        if h < max(o, c) or l > min(o, c) or h < l:
+            report.ohlc_violations.append(
+                {"ts": bar.ts, "open": o, "high": h, "low": l, "close": c}
+            )
+            report.errors.append(f"OHLC invariant broken at {bar.ts}")
         if prev is not None:
             try:
                 if _parse_dt(bar.ts) < _parse_dt(prev.ts):
@@ -261,13 +310,13 @@ def analyze_bars(
             except ValueError as exc:
                 report.errors.append(str(exc))
         # Soft outlier: range vs close (does not invent microstructure)
-        span = bar.high - bar.low
-        if bar.close > 0 and span / bar.close > 0.5:
+        span = h - l
+        if c > 0 and span / c > 0.5:
             report.outliers.append(
                 {
                     "ts": bar.ts,
                     "kind": "wide_range",
-                    "range_pct": round(span / bar.close * 100.0, 3),
+                    "range_pct": round(span / c * 100.0, 3),
                 }
             )
             report.warnings.append(f"wide range outlier at {bar.ts}")
@@ -276,9 +325,79 @@ def analyze_bars(
     if report.duplicate_timestamps or report.unordered_pairs or report.errors:
         report.ok = False
         report.state = DatasetQualityState.INVALID.value
+        report.quality_verdict = "FAIL"
+        report.reasons.extend(report.errors[:12])
+    elif report.warnings or report.gaps or report.outliers:
+        report.state = DatasetQualityState.READY.value
+        report.quality_verdict = "WARN"
+        report.reasons.extend(report.warnings[:12])
     else:
         report.state = DatasetQualityState.READY.value
+        report.quality_verdict = "PASS"
+        report.reasons.append("schema_order_ohlc_ok")
+    if report.survivorship_bias_risk == "UNMEASURED":
+        report.reasons.append("survivorship_bias_UNMEASURED")
     return report
+
+
+def analyze_quote_snapshot(
+    quotes: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Deterministic quote/orderbook quality checks (no fabricated depth from OHLCV)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    crossed = 0
+    negative_spread = 0
+    duplicate_seq = 0
+    seen_seq: set[Any] = set()
+    for i, q in enumerate(quotes):
+        bid = q.get("bid")
+        ask = q.get("ask")
+        seq = q.get("sequence_id") or q.get("sequenceId") or q.get("seq")
+        if seq is not None:
+            if seq in seen_seq:
+                duplicate_seq += 1
+                errors.append(f"duplicate sequence id at row {i}: {seq}")
+            seen_seq.add(seq)
+        if bid is None or ask is None:
+            warnings.append(f"missing bid/ask at row {i}")
+            continue
+        try:
+            b = float(bid)
+            a = float(ask)
+        except (TypeError, ValueError):
+            errors.append(f"non-numeric bid/ask at row {i}")
+            continue
+        if a < b:
+            crossed += 1
+            errors.append(f"crossed market at row {i}: bid={b} ask={a}")
+        if a - b < 0:
+            negative_spread += 1
+            errors.append(f"negative spread at row {i}")
+    verdict = "UNMEASURED"
+    if not quotes:
+        verdict = "UNMEASURED"
+        warnings.append("no_quotes_provided")
+    elif errors:
+        verdict = "FAIL"
+    elif warnings:
+        verdict = "WARN"
+    else:
+        verdict = "PASS"
+    return {
+        "quality": verdict,
+        "qualityVerdict": verdict,
+        "quoteCount": len(quotes),
+        "crossedMarkets": crossed,
+        "negativeSpreads": negative_spread,
+        "duplicateSequenceIds": duplicate_seq,
+        "errors": errors,
+        "warnings": warnings,
+        "truth": {
+            "ohlcv_is_not_orderbook": True,
+            "quotes_not_fabricated_from_ohlcv": True,
+        },
+    }
 
 
 def quarantine_path(markets_root: Path, relative_path: str) -> Path:
@@ -370,6 +489,9 @@ class MarketDatasetPipeline:
                 byte_size=validation.byte_size,
                 errors=[validation.error or "validation failed"],
                 repairs=repairs,
+                quality_verdict="FAIL",
+                reasons=[validation.error or "validation failed"],
+                adjustment_mode=adjustment_mode,
             )
             return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath))
 
@@ -383,6 +505,9 @@ class MarketDatasetPipeline:
                 byte_size=validation.byte_size,
                 errors=[exc.message],
                 repairs=repairs,
+                quality_verdict="FAIL",
+                reasons=[exc.message],
+                adjustment_mode=adjustment_mode,
             )
             return ImportResult(quality=report, dataset=None, quarantined_path=str(qpath))
 
@@ -409,6 +534,8 @@ class MarketDatasetPipeline:
             content_hash=validation.content_hash,
             byte_size=validation.byte_size,
             repairs=repairs,
+            adjustment_mode=adjustment_mode,
+            survivorship_bias_risk="UNMEASURED",
         )
         if expected_gap_seconds is not None:
             report.expected_bar_seconds = expected_gap_seconds

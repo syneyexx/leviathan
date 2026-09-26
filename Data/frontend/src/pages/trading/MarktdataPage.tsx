@@ -70,6 +70,19 @@ export function MarktdataPage() {
   );
   const ready = sources.filter((s) => s.status === "READY").length;
   const invalid = sources.filter((s) => s.status === "INVALID").length;
+  const qualityFail = sources.filter((s) => {
+    const q = (s.metadata as { qualityVerdict?: string } | undefined)?.qualityVerdict;
+    return q === "FAIL";
+  }).length;
+  const qualityWarn = sources.filter((s) => {
+    const q = (s.metadata as { qualityVerdict?: string } | undefined)?.qualityVerdict;
+    return q === "WARN";
+  }).length;
+
+  function qualityOf(s: MarketDataSource): string {
+    const meta = s.metadata as { qualityVerdict?: string; quality?: { qualityVerdict?: string } } | undefined;
+    return meta?.qualityVerdict || meta?.quality?.qualityVerdict || "UNMEASURED";
+  }
 
   return (
     <AppShell
@@ -105,6 +118,8 @@ export function MarktdataPage() {
             { name: "Indexed", price: String(status?.health.sources_indexed ?? sources.length), change: "filesystem + hash", up: true },
             { name: "Ready", price: String(status?.health.sources_ready ?? ready), change: "validated OHLCV", up: ready > 0 },
             { name: "Invalid", price: String(invalid), change: "failed validation", up: invalid === 0 },
+            { name: "Quality FAIL", price: String(qualityFail), change: "OHLC / order / neg", up: qualityFail === 0 },
+            { name: "Quality WARN", price: String(qualityWarn), change: "gaps / outliers", up: true },
             { name: "Feature", price: status?.enabled ? "ON" : "OFF", change: "LEVIATHAN_FEATURE_MARKET_SIM", up: !!status?.enabled },
             { name: "Parquet", price: "optional", change: "pyarrow if installed", up: true },
           ].map((item) => (
@@ -164,6 +179,7 @@ export function MarktdataPage() {
                     <th>Symbol</th>
                     <th>TF</th>
                     <th>Status</th>
+                    <th>Quality</th>
                     <th>Bars</th>
                     <th>Range</th>
                     <th>Hash</th>
@@ -171,12 +187,22 @@ export function MarktdataPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((s) => (
+                  {filtered.map((s) => {
+                    const q = qualityOf(s);
+                    return (
                     <tr key={s.source_id}>
                       <td className="sym">{s.symbol}</td>
                       <td>{s.timeframe}</td>
                       <td>
                         <span className={`lv-tp-pill${s.status === "READY" ? " is-live" : ""}`}>{s.status}</span>
+                      </td>
+                      <td>
+                        <span
+                          className={`lv-tp-pill${q === "PASS" ? " is-live" : ""}`}
+                          title="PASS | WARN | FAIL | UNMEASURED — parse ≠ quality pass"
+                        >
+                          {q}
+                        </span>
                       </td>
                       <td>{s.bar_count}</td>
                       <td>
@@ -185,10 +211,11 @@ export function MarktdataPage() {
                       <td title={s.content_hash}>{hashShort(s.content_hash)}</td>
                       <td>{s.path}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {!filtered.length ? (
                     <tr>
-                      <td colSpan={7}>No sources indexed — drop CSV files and scan</td>
+                      <td colSpan={8}>No sources indexed — drop CSV files and scan</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -214,7 +241,7 @@ export function MarktdataPage() {
                   <span className="ico info" />
                   <div>
                     <strong>No validation errors</strong>
-                    Ready sources passed OHLCV checks
+                    Ready sources passed OHLCV schema checks; Quality column reports PASS/WARN/FAIL/UNMEASURED
                   </div>
                 </li>
               ) : null}

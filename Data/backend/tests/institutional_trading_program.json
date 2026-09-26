@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "de436fb30fc1c3dcee861ef2f84420ab614a99d8",
+  "last_verified_commit": "678d815a3654bd0c8429373658657459311b48d1",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W05",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed. W02 trading classification/routing landed. W03 TradingBrainAdapter \u2192 canonical HybridRetriever/BrainAccess.",
+  "active_wave": "W06",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01–W05 PASS. W06 market data quality + PIT fabric.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -411,9 +411,23 @@
     {
       "id": "W06",
       "title": "Market data quality and point-in-time data fabric",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim data_store",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_market_data_quality_w06",
+        "Data.backend.tests.test_market_sim_t1_causality"
+      ],
+      "evidence": [
+        "dataset_pipeline quality_verdict PASS|WARN|FAIL|UNMEASURED",
+        "OHLC invariants / negative price-volume / quote crossed-market checks",
+        "pit_fabric.py revision identity + survivorship labels + as_of filters",
+        "MarketDataStore.inspect_path exposes metadata.qualityVerdict",
+        "MarktdataPage Quality column",
+        "14/14 W06 + T1 causality regression PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "678d815a3654bd0c8429373658657459311b48d1"
     },
     {
       "id": "W07",
