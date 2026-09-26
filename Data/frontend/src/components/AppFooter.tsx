@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { media } from "../assets/media";
 import {
   findMainMenuByPath,
   findSubMenuItem,
@@ -189,7 +188,14 @@ export function AppFooter() {
   return (
     <footer className="lv-footer">
       <div className="lv-user">
-        <img className="lv-avatar" src={media.avatar} alt="" width={40} height={40} />
+        <img
+          className="lv-avatar"
+          src="/assets/leviathan-ritual-seal.svg"
+          alt=""
+          width={40}
+          height={40}
+          draggable={false}
+        />
         <div>
           <div className="lv-user-name">LEVIATHAN</div>
           <div className="lv-user-meta">LOCAL OPERATOR · v1.0.0</div>
