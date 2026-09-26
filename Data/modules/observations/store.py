@@ -56,7 +56,8 @@ class ObservationStore:
                 error TEXT,
                 duration_ms REAL,
                 effect_id TEXT,
-                metadata_json TEXT NOT NULL DEFAULT '{}'
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                idempotency_key TEXT
             )
             """
         )
@@ -79,13 +80,34 @@ class ObservationStore:
                 run_id TEXT,
                 job_id TEXT,
                 observation_id TEXT,
-                error TEXT
+                error TEXT,
+                idempotency_key TEXT,
+                trace_id TEXT
             )
             """
         )
+        # Durable kernel columns may be missing on older local schemas.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(effect_ledger)").fetchall()}
+        if "idempotency_key" not in cols:
+            conn.execute("ALTER TABLE effect_ledger ADD COLUMN idempotency_key TEXT")
+        if "trace_id" not in cols:
+            conn.execute("ALTER TABLE effect_ledger ADD COLUMN trace_id TEXT")
+        obs_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(tool_observations)").fetchall()
+        }
+        if "idempotency_key" not in obs_cols:
+            conn.execute("ALTER TABLE tool_observations ADD COLUMN idempotency_key TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_effect_ledger_request "
             "ON effect_ledger(request_id, recorded_at)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_effect_ledger_idempotency "
+            "ON effect_ledger(idempotency_key) WHERE idempotency_key IS NOT NULL"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tool_observations_idempotency "
+            "ON tool_observations(idempotency_key) WHERE idempotency_key IS NOT NULL"
         )
 
     def record_execution(
@@ -104,7 +126,16 @@ class ObservationStore:
         error: str | None = None,
         duration_ms: float | None = None,
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        trace_id: str | None = None,
     ) -> tuple[ToolObservation, EffectRecord]:
+        # Idempotent COMPLETED: return prior observation/effect without a second write.
+        if idempotency_key and status == "COMPLETED":
+            prior = self.get_completed_by_idempotency_key(idempotency_key)
+            if prior is not None:
+                observation, effect = prior
+                return observation, effect
+
         observation_id = str(uuid.uuid4())
         effect_id = str(uuid.uuid4())
         now = utc_now()
@@ -115,6 +146,10 @@ class ObservationStore:
         safe_output = redact_payload(output) if isinstance(output, dict) else output
         safe_error = redact_secrets(error) if isinstance(error, str) else error
         safe_meta = redact_payload(dict(metadata or {}))
+        if idempotency_key:
+            safe_meta = {**safe_meta, "idempotency_key": idempotency_key}
+        if trace_id:
+            safe_meta = {**safe_meta, "trace_id": trace_id}
         observation = ToolObservation(
             observation_id=observation_id,
             request_id=request_id,
@@ -155,8 +190,8 @@ class ObservationStore:
                 INSERT INTO tool_observations(
                     observation_id, request_id, capability_id, status, side_effects_json,
                     created_at, provider_kind, provider_ref, approval_id, run_id, job_id,
-                    output_json, error, duration_ms, effect_id, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    output_json, error, duration_ms, effect_id, metadata_json, idempotency_key
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     observation.observation_id,
@@ -175,6 +210,7 @@ class ObservationStore:
                     observation.duration_ms,
                     observation.effect_id,
                     json.dumps(observation.metadata),
+                    idempotency_key,
                 ),
             )
             conn.execute(
@@ -182,8 +218,8 @@ class ObservationStore:
                 INSERT INTO effect_ledger(
                     effect_id, request_id, capability_id, side_effects_json, status,
                     recorded_at, provider_kind, provider_ref, approval_id, run_id, job_id,
-                    observation_id, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    observation_id, error, idempotency_key, trace_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     effect.effect_id,
@@ -199,8 +235,63 @@ class ObservationStore:
                     effect.job_id,
                     effect.observation_id,
                     effect.error,
+                    idempotency_key,
+                    trace_id,
                 ),
             )
+        return observation, effect
+
+    def get_completed_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> tuple[ToolObservation, EffectRecord] | None:
+        """Return prior COMPLETED observation+effect for an idempotency key, if any."""
+        with self.connect() as conn:
+            self._ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT * FROM tool_observations
+                WHERE idempotency_key = ? AND status = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (idempotency_key, "COMPLETED"),
+            ).fetchone()
+            if row is None:
+                return None
+            observation = self._obs_from_row(row)
+            effect_row = None
+            if observation.effect_id:
+                effect_row = conn.execute(
+                    "SELECT * FROM effect_ledger WHERE effect_id = ?",
+                    (observation.effect_id,),
+                ).fetchone()
+            if effect_row is None:
+                effect_row = conn.execute(
+                    """
+                    SELECT * FROM effect_ledger
+                    WHERE idempotency_key = ? AND status = ?
+                    ORDER BY recorded_at DESC LIMIT 1
+                    """,
+                    (idempotency_key, "COMPLETED"),
+                ).fetchone()
+        if effect_row is None:
+            effect = EffectRecord(
+                effect_id=observation.effect_id or observation.observation_id,
+                request_id=observation.request_id,
+                capability_id=observation.capability_id,
+                side_effects=observation.side_effects,
+                status=observation.status,
+                recorded_at=observation.created_at,
+                provider_kind=observation.provider_kind,
+                provider_ref=observation.provider_ref,
+                approval_id=observation.approval_id,
+                run_id=observation.run_id,
+                job_id=observation.job_id,
+                observation_id=observation.observation_id,
+                error=observation.error,
+            )
+        else:
+            effect = self._effect_from_row(effect_row)
         return observation, effect
 
     def get_observation(self, observation_id: str) -> ToolObservation | None:

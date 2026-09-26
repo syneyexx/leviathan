@@ -380,6 +380,7 @@ class JobRuntime:
                     job.job_id,
                     JobState.COMPLETED,
                     result=cap_result.public_dict(),
+                    expected_lease_owner=self.worker_id,
                 )
                 self.telemetry["completed"] += 1
                 return record
@@ -406,6 +407,7 @@ class JobRuntime:
                     error=error_text,
                     error_code=error_code,
                     retryable=True,
+                    expected_lease_owner=self.worker_id,
                 )
                 self.telemetry["retries_scheduled"] = (
                     int(self.telemetry.get("retries_scheduled", 0)) + 1
@@ -419,33 +421,64 @@ class JobRuntime:
                 error=error_text,
                 error_code=error_code,
                 retryable=retryable,
+                expected_lease_owner=self.worker_id,
             )
             self.telemetry["failed"] += 1
             return record
         except Exception as exc:  # noqa: BLE001
+            from .states import StaleLeaseError
+
+            if isinstance(exc, StaleLeaseError):
+                self.telemetry["stale_lease_fenced"] = (
+                    int(self.telemetry.get("stale_lease_fenced", 0)) + 1
+                )
+                current = self.store.get(job.job_id)
+                if current is not None:
+                    return current
+                raise
             refreshed = self.store.get(job.job_id) or job
             retryable = self.retry_policy.classify_retryable(exc)
             max_attempts = refreshed.max_attempts or self.retry_policy.max_attempts
             if retryable and refreshed.attempt_number < max_attempts:
                 delay = self.retry_policy.delay_for_attempt(refreshed.attempt_number)
-                record = self.store.schedule_retry(
-                    job.job_id,
-                    delay_seconds=delay,
-                    error=str(exc),
-                    error_code=type(exc).__name__,
-                    retryable=True,
-                )
+                try:
+                    record = self.store.schedule_retry(
+                        job.job_id,
+                        delay_seconds=delay,
+                        error=str(exc),
+                        error_code=type(exc).__name__,
+                        retryable=True,
+                        expected_lease_owner=self.worker_id,
+                    )
+                except StaleLeaseError:
+                    self.telemetry["stale_lease_fenced"] = (
+                        int(self.telemetry.get("stale_lease_fenced", 0)) + 1
+                    )
+                    current = self.store.get(job.job_id)
+                    if current is not None:
+                        return current
+                    raise
                 self.telemetry["retries_scheduled"] = (
                     int(self.telemetry.get("retries_scheduled", 0)) + 1
                 )
                 return record
-            record = self.store.transition(
-                job.job_id,
-                JobState.FAILED,
-                error=str(exc),
-                error_code=type(exc).__name__,
-                retryable=retryable,
-            )
+            try:
+                record = self.store.transition(
+                    job.job_id,
+                    JobState.FAILED,
+                    error=str(exc),
+                    error_code=type(exc).__name__,
+                    retryable=retryable,
+                    expected_lease_owner=self.worker_id,
+                )
+            except StaleLeaseError:
+                self.telemetry["stale_lease_fenced"] = (
+                    int(self.telemetry.get("stale_lease_fenced", 0)) + 1
+                )
+                current = self.store.get(job.job_id)
+                if current is not None:
+                    return current
+                raise
             self.telemetry["failed"] += 1
             return record
         finally:
