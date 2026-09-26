@@ -1670,6 +1670,47 @@ class MarketSimControlPlane:
         self._require_enabled()
         return self.store.list_paper_sessions()
 
+    def resume_paper_sessions_for_strategy(
+        self,
+        strategy_id: str,
+        *,
+        strategy_version: int | None = None,
+    ) -> dict[str, Any]:
+        """Reload durable paper sessions for a saved strategy after process restart (W18).
+
+        Uses ``market_paper_sessions`` (not in-memory PaperDeployment). Returns
+        hydrated session states; does not invent fills or live routing.
+        """
+        self._require_enabled()
+        sid = str(strategy_id or "").strip()
+        if not sid:
+            raise MarketSimError("STRATEGY_ID_REQUIRED", "strategy_id required", http_status=400)
+        matched: list[dict[str, Any]] = []
+        for row in self.store.list_paper_sessions(limit=200):
+            if str(row.get("strategy_id") or "") != sid:
+                continue
+            if strategy_version is not None and row.get("strategy_version") != strategy_version:
+                continue
+            if str(row.get("status") or "") not in {"active", "paused", "RUNNING", "PAUSED"}:
+                # Still hydrate stopped sessions for inspection, but mark not resumed.
+                hydrated = self.paper_session_state(row["session_id"])
+                matched.append({**hydrated, "resumed": False, "reason": "status_not_active"})
+                continue
+            hydrated = self.paper_session_state(row["session_id"])
+            matched.append({**hydrated, "resumed": True})
+        return {
+            "strategy_id": sid,
+            "strategy_version": strategy_version,
+            "sessions": matched,
+            "count": len(matched),
+            "truth": {
+                "durable_path": "market_paper_sessions",
+                "paper_deployment_table": "NOT_PERSISTED",
+                "paper_only": True,
+                "live_money": "BLOCKED",
+            },
+        }
+
     # --- Paper Portefeuille (multi-asset capital book) ---
 
     def create_portfolio(self, **kwargs: Any) -> dict[str, Any]:
