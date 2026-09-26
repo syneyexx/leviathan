@@ -1158,7 +1158,9 @@ Production-quality program ledger (machine state): `Data/backend/tests/productio
 - **W03:** See production-quality W03 bullet above (typed `AcceptanceCriterion`, trusted test receipts, A04).
 - **W16:** Durable `market_sim_agent_labs` (migration 53). Control-plane methods create/start/pause/resume/cancel labs bound to research campaigns; worker path runs real simulations. HTTP: `/api/market-sim/lab/runs` (+ start/pause/resume/cancel). Valid outcomes remain `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED`.
 
-Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_trading_lab_w16_lifecycle.py`.
+Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05, T14–T15); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_adversarial_w09_w19.py` (T16 + NL citation/hedging); `test_trading_lab_w16_lifecycle.py`.
+
+Citation audit includes Dutch factual/hedging cues; hedging does not clear evidence duty when factual markers remain. `instruments.support_matrix()` / `family_capability()` keep options/futures/forex as explicit `NOT_IMPLEMENTED` (no silent equity fallback).
 
 Run targeted suites first during phased implementation, then the impacted broader suites.
 

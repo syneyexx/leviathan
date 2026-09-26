@@ -33,6 +33,61 @@ class CapabilityState(str, Enum):
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 
 
+# Families the sim/paper path actually implements. Everything else must stay
+# explicit NOT_IMPLEMENTED — never silently reuse equity lot/tick/fill rules (T16).
+SUPPORTED_SIM_FAMILIES: frozenset[InstrumentFamily] = frozenset(
+    {InstrumentFamily.EQUITY, InstrumentFamily.CRYPTO_SPOT}
+)
+UNSUPPORTED_SIM_FAMILIES: frozenset[InstrumentFamily] = frozenset(
+    {
+        InstrumentFamily.OPTIONS,
+        InstrumentFamily.FUTURES,
+        InstrumentFamily.FOREX,
+        InstrumentFamily.OTHER,
+    }
+)
+
+
+def family_capability_status(family: InstrumentFamily | str) -> CapabilityState:
+    """Return sim capability for a family — unsupported never reports AVAILABLE."""
+    if isinstance(family, str):
+        try:
+            family = InstrumentFamily(family)
+        except ValueError:
+            return CapabilityState.NOT_IMPLEMENTED
+    if family in SUPPORTED_SIM_FAMILIES:
+        return CapabilityState.AVAILABLE
+    return CapabilityState.NOT_IMPLEMENTED
+
+
+def assert_family_implemented(family: InstrumentFamily | str) -> InstrumentFamily:
+    """Raise MarketSimError when family would silently fall back to equity mechanics."""
+    from .types import MarketSimError
+
+    if isinstance(family, str):
+        try:
+            fam = InstrumentFamily(family)
+        except ValueError as exc:
+            raise MarketSimError(
+                "INSTRUMENT_FAMILY_NOT_IMPLEMENTED",
+                f"Unknown instrument family {family!r} — refusing equity fallback",
+                http_status=501,
+            ) from exc
+    else:
+        fam = family
+    status = family_capability_status(fam)
+    if status == CapabilityState.NOT_IMPLEMENTED:
+        raise MarketSimError(
+            "INSTRUMENT_FAMILY_NOT_IMPLEMENTED",
+            (
+                f"Instrument family '{fam.value}' is NOT_IMPLEMENTED — "
+                "refusing to simulate as equity/crypto_spot"
+            ),
+            http_status=501,
+        )
+    return fam
+
+
 @dataclass(frozen=True)
 class InstrumentSpec:
     instrument_id: str
@@ -52,6 +107,15 @@ class InstrumentSpec:
     def resolved_settlement_currency(self) -> str:
         return self.settlement_currency or self.quote_currency
 
+    def capability_status(self) -> CapabilityState:
+        meta_cap = self.metadata.get("capability") if self.metadata else None
+        if meta_cap:
+            try:
+                return CapabilityState(str(meta_cap))
+            except ValueError:
+                pass
+        return family_capability_status(self.family)
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "instrument_id": self.instrument_id,
@@ -66,7 +130,14 @@ class InstrumentSpec:
             "min_notional": self.min_notional,
             "supports_short": self.supports_short,
             "data_level": self.data_level.value,
+            "capability": self.capability_status().value,
             "metadata": self.metadata,
+            "truth": {
+                "unsupported_family_never_silently_equity": (
+                    self.family in SUPPORTED_SIM_FAMILIES
+                    or self.capability_status() == CapabilityState.NOT_IMPLEMENTED
+                ),
+            },
         }
 
 
@@ -97,12 +168,7 @@ CRYPTO_BTCUSDT = InstrumentSpec(
 
 def family_capability(family: InstrumentFamily | str) -> CapabilityState:
     """Honest capability matrix — enum existence is not market support."""
-    fam = InstrumentFamily(family) if not isinstance(family, InstrumentFamily) else family
-    if fam in {InstrumentFamily.EQUITY, InstrumentFamily.CRYPTO_SPOT}:
-        return CapabilityState.AVAILABLE
-    if fam in {InstrumentFamily.OPTIONS, InstrumentFamily.FUTURES, InstrumentFamily.FOREX}:
-        return CapabilityState.NOT_IMPLEMENTED
-    return CapabilityState.UNAVAILABLE
+    return family_capability_status(family)
 
 
 def support_matrix() -> dict[str, Any]:
@@ -266,6 +332,20 @@ def validate_intent_rules(
 ) -> tuple[bool, str, Decimal]:
     """Enforce lot/tick/min_notional and short policy. Returns (ok, reason, rounded_qty)."""
     from .short_margin import ShortMarginPolicy, short_open_allowed
+
+    # T16: unsupported families must fail closed — never apply equity lot/tick rules.
+    if (
+        spec.family in UNSUPPORTED_SIM_FAMILIES
+        or spec.capability_status() == CapabilityState.NOT_IMPLEMENTED
+    ):
+        return (
+            False,
+            (
+                f"INSTRUMENT_FAMILY_NOT_IMPLEMENTED: family={spec.family.value} "
+                "cannot trade under equity/crypto_spot rules"
+            ),
+            Decimal("0"),
+        )
 
     rounded_qty = round_to_lot(qty, spec.lot_size)
     if rounded_qty <= 0:
