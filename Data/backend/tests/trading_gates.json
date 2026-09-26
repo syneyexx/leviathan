@@ -23,10 +23,18 @@
     "production-grade live execution or any live venue integration",
     "L5 autonomy",
     "microstructure realism without L2/L3 data",
-    "options/futures/forex support unless separately built and proven",
+    "options/fixed-income trading support unless separately proven end-to-end",
+    "order-book realism invented from OHLCV",
     "tax/legal compliance",
     "investment advice"
   ],
+  "institutional_trading_program": {
+    "ledger": "Data/backend/tests/institutional_trading_program.json",
+    "status": "W00-W36 local PASS",
+    "ci": "SKIPPED_PER_OPERATOR",
+    "excluded": ["Data/HADES/", "editor/"],
+    "live_trading": "BLOCKED"
+  },
   "gates": {
     "G01": {
       "title": "Streaming ingest 5y×1m within memory budget",

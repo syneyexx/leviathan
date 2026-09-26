@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09",
+  "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W24",
-  "notes": "CI skipped. Editor/HADES out of scope. W01\u2013W24 PASS.",
+  "active_wave": "W36",
+  "notes": "CI skipped. Editor/HADES out of scope. W00\u2013W36 PASS (local suites).",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -755,86 +755,209 @@
     {
       "id": "W25",
       "title": "Market data provider fabric expansion",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim providers",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "institutional_ops.provider_fabric_inventory",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W26",
       "title": "Data scale, indexing scale and resource governance",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "datasets + workers",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "ResourceBudget + check_resource_budget",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W27",
       "title": "Dataset poisoning, trust and research quality",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "datasets + knowledge",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "dataset_trust_report poisoningRisk",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W28",
       "title": "Governance, audit and operational safety",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim + evidence",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "AuditLog append-only intent",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W29",
       "title": "Observability and institutional operations",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "observability",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "observability_snapshot",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W30",
       "title": "Institutional Trading Center UI",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "frontend trading",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "InstitutionalStrip on MarktdataPage",
+        "Quality column",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W31",
       "title": "API contract consolidation",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "backend routes",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "api_contract_check required market-sim routes",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W32",
       "title": "Statistical and research honesty hardening",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim stats",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "statistical_honesty_labels",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W33",
       "title": "Adversarial test program",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "backend tests",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "live_trading_blocked truth assertions",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W34",
       "title": "Performance / scale tests",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "backend tests",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "scale_smoke",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W35",
       "title": "Frontend build / end-to-end user journeys",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "frontend",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "Marktdata quality + InstitutionalStrip presence checks",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     },
     {
       "id": "W36",
       "title": "Docs, verifiers and final institutional gates",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "docs + trading_gates",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w25_w36"
+      ],
+      "evidence": [
+        "institutional_program_gate_summary",
+        "program ledger W00\u2013W36",
+        "W25\u2013W36 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "7913dcaa65f36da0c932cad129e8a6d7768e88fe"
     }
-  ]
+  ],
+  "final_gate": {
+    "byStatus": {
+      "PASS": 37
+    },
+    "requiredOpen": [],
+    "programComplete": true,
+    "liveTrading": "BLOCKED",
+    "truth": {
+      "ci_skipped_per_operator": true,
+      "editor_hades_out_of_scope": true,
+      "no_fake_pass": true
+    }
+  }
 }

@@ -10,6 +10,7 @@ from Data.modules.market_sim.instruments import (
     EQUITY_SPY,
     BorrowConstraints,
     InstrumentFamily,
+    InstrumentSpec,
     equity_session_is_open,
     infer_family,
     registry_lookup,
@@ -43,8 +44,6 @@ class EquitiesEtfW08Tests(unittest.TestCase):
         self.assertTrue(spec.is_etf)
 
     def test_short_blocked_when_not_locatable(self) -> None:
-        spec = InstrumentFamily  # placate linters unused import paths
-        _ = spec
         hard = spec_for_symbol(
             "HARD",
             metadata={
@@ -58,7 +57,7 @@ class EquitiesEtfW08Tests(unittest.TestCase):
         )
         self.assertFalse(ok)
         self.assertIn("BORROW_CONSTRAINT", reason)
-        self.assertEqual(qty, Decimal("10"))  # lot-rounded; reject is via ok/reason
+        self.assertEqual(qty, Decimal("10"))
 
     def test_htb_requires_measured_borrow_fee(self) -> None:
         htb = spec_for_symbol(
@@ -86,10 +85,6 @@ class EquitiesEtfW08Tests(unittest.TestCase):
 
     def test_short_allowed_locatable_with_margin(self) -> None:
         policy = ShortMarginPolicy(initial_margin_pct=50, maintenance_margin_pct=30)
-        shortable = InstrumentFamily.EQUITY  # noqa: F841 — clarity
-        _ = shortable
-        from Data.modules.market_sim.instruments import InstrumentSpec
-
         spy_short = InstrumentSpec(
             instrument_id="equity:SPY:ARCA",
             symbol="SPY",

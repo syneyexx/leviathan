@@ -5,6 +5,7 @@ import { AppShell } from "../../layouts/AppShell";
 import { useAppToast } from "../../state/useAppToast";
 import type { MarketDataSource, MarketSimStatusResponse } from "../../types/api";
 import { Panel, TradingHero, hashShort } from "./shared";
+import { InstitutionalStrip } from "./InstitutionalStrip";
 
 export function MarktdataPage() {
   const toast = useAppToast();
@@ -106,6 +107,7 @@ export function MarktdataPage() {
           rails={["MORE SIGNALS", "DEEPER CONTEXT", "GLOBAL MARKETS", "REAL-TIME EDGE"]}
           objectPosition="center 32%"
         />
+        <InstitutionalStrip />
         {error ? (
           <Panel title="Market data">
             <p>{error}</p>
