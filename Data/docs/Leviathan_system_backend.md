@@ -882,6 +882,8 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 
 **P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
 
+**W19 Web / Browser / Computer-use (CURRENT):** Computer-use loop (`execution/computer_use.py`) enforces proposal→authority→execute→observe→verify; free-form OS text refused; click success ≠ task completion. Existing Playwright readiness, localhost QA crawler (no stealth), and QaRepairBridge retained. Web search unconfigured → WEB_SEARCH_UNAVAILABLE, never fabricated.
+
 **W18 Frontend Platform (CURRENT):** ErrorBoundary + lazy trading routes; `api/http.ts` + `api/domains/marketSimLab.ts`; chat Stop abort; DEMO banners for decorative mocks; Playwright/MSW FEATURE_GATED until CI dependency.
 
 **W17 Trading Center UI (CURRENT):** `/trading/lab` + `/api/market-sim/lab/overview|cost-pack|feed-health|trials` expose real lab truth (curriculum, roles, Trial Ledger, cost provenance, feed probe). Broker/live remains BLOCKED. No mock KPIs.

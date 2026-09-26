@@ -60,3 +60,5 @@ __all__ = [
     "running_in_worker_process",
     "schema_hash",
 ]
+
+from .computer_use import ComputerUseLoop, propose_actions_from_model_text, run_computer_use_loop  # noqa: E402,F401
