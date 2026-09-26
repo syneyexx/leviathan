@@ -392,12 +392,62 @@ def kernel_idempotency_key(domain_job_id: str) -> str:
     return f"{KERNEL_IDEMPOTENCY_PREFIX}{domain_job_id}"
 
 
+# Heavy data-plane ops — admit as MEMORY_HEAVY with reservedRamBytes from policy.
+MEMORY_HEAVY_JOB_TYPES: frozenset[str] = frozenset(
+    {
+        "validate",
+        "dedupe",
+        "transform",
+        "split",
+        "export",
+        "tokenize_stats",
+        "materialize",
+        "index",
+        "enrich_metadata",
+        "contamination_scan",
+    }
+)
+
+
+def _resource_admission_for_domain_job(domain_job: DatasetJob) -> tuple[str, dict[str, Any]]:
+    """Choose resource_class + resource_request for ResourceAdmission.
+
+    Heavy ops always use MEMORY_HEAVY with DatasetMemoryPolicy.memory_budget_bytes
+    as reservedRamBytes (picked up by ResourceAdmission.try_reserve via
+    job.resource_request). Tiny metadata / import jobs stay IO_HEAVY.
+    """
+    job_type = (
+        domain_job.job_type.value
+        if hasattr(domain_job.job_type, "value")
+        else str(domain_job.job_type)
+    )
+    if job_type not in MEMORY_HEAVY_JOB_TYPES:
+        return "IO_HEAVY", {}
+
+    from Data.modules.datasets.memory_policy import resolve_dataset_memory_policy
+
+    policy = resolve_dataset_memory_policy()
+    reserved = int(policy.memory_budget_bytes)
+    # Optional: if config already signals a tiny probe, keep MEMORY_HEAVY but
+    # still reserve policy default (admission is soft / headroom-based).
+    return "MEMORY_HEAVY", {"reservedRamBytes": reserved}
+
+
 def enqueue_kernel_for_domain_job(
     job_runtime: JobRuntime,
     domain_job: DatasetJob,
 ) -> JobRecord | None:
     """Enqueue (or reuse) a Job Kernel lease linked to a domain dataset job."""
     try:
+        resource_class, resource_request = _resource_admission_for_domain_job(domain_job)
+        metadata: dict[str, Any] = {
+            "dataset_job_id": domain_job.job_id,
+            "job_type": domain_job.job_type.value
+            if hasattr(domain_job.job_type, "value")
+            else str(domain_job.job_type),
+        }
+        if resource_request:
+            metadata["requested"] = dict(resource_request)
         return job_runtime.enqueue(
             capability_id=CAPABILITY_PROCESS,
             arguments={
@@ -408,16 +458,14 @@ def enqueue_kernel_for_domain_job(
             },
             requested_by="datasets",
             idempotency_key=kernel_idempotency_key(domain_job.job_id),
-            metadata={
-                "dataset_job_id": domain_job.job_id,
-                "job_type": domain_job.job_type.value,
-            },
+            metadata=metadata,
             latency_class="background",
             domain="datasets",
             domain_entity_type=DOMAIN_ENTITY_TYPE,
             domain_entity_id=domain_job.job_id,
             worker_pool=WORKER_POOL,
-            resource_class="IO_HEAVY",
+            resource_class=resource_class,
+            resource_request=resource_request or None,
         )
     except Exception:  # noqa: BLE001 — domain queue must remain usable without kernel
         return None

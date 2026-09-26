@@ -65,7 +65,7 @@ from .memory_policy import resolve_dataset_memory_policy
 from .mixtures import MixtureComponent, build_mixture_manifest
 from .packing_sim import simulate_packing
 from .pii import scan_records_pii
-from .publish import prepare_output_path, publish_atomic
+from .publish import prepare_output_path, publish_atomic, reconcile_orphans
 from .recovery import DatasetRecoveryAssessment, RecoveryState, default_recovery_truth
 from .scratch import ScratchManager
 from .semantic_enrichment import (
@@ -1649,7 +1649,47 @@ class DatasetService:
                     continue
         except Exception:  # noqa: BLE001
             pass
+        # W170: sweep orphan prepared temps under corpus data-plane roots.
+        try:
+            self.reconcile_data_plane_orphans()
+        except Exception:  # noqa: BLE001 — orphan sweep must not block job reconcile
+            pass
         return updated
+
+    def reconcile_data_plane_orphans(
+        self,
+        *,
+        grace_seconds: int | None = None,
+        max_scan: int = 10_000,
+    ) -> dict[str, Any]:
+        """Delete unreferenced ``.*.prepared.tmp`` (and similar) under corpus roots."""
+        import os
+
+        if grace_seconds is None:
+            raw = (os.getenv("LEVIATHAN_DATASET_ORPHAN_GRACE_SECONDS") or "").strip()
+            try:
+                grace_seconds = int(raw) if raw else 3600
+            except ValueError:
+                grace_seconds = 3600
+        referenced: set[str] = set()
+        try:
+            for ds in self.store.list_datasets(limit=5_000):
+                for ver in self.store.list_versions(ds.dataset_id):
+                    if ver.storage_path:
+                        referenced.add(str(ver.storage_path))
+        except Exception:  # noqa: BLE001
+            pass
+        roots = [
+            Path(self.corpus.datasets_processed),
+            Path(self.corpus.datasets_exports),
+            Path(self.corpus.datasets_materialized),
+        ]
+        return reconcile_orphans(
+            roots,
+            referenced_paths=referenced,
+            grace_seconds=max(0, int(grace_seconds)),
+            max_scan=max_scan,
+        )
 
     # --- Synchronous helpers for tests / API ---
 
@@ -3598,6 +3638,27 @@ class DatasetService:
             ensure_dir(work_dir)
         except Exception:  # noqa: BLE001
             work_dir = None
+
+        # W169: poll domain cancel into cancel_event so NativeComputeRunner kills the Rust child.
+        import threading
+
+        cancel_event = threading.Event()
+
+        def _watch_cancel() -> None:
+            while not cancel_event.wait(0.05):
+                try:
+                    if self.runner.is_cancel_requested(job.job_id):
+                        cancel_event.set()
+                        return
+                except Exception:  # noqa: BLE001
+                    return
+
+        watcher = threading.Thread(
+            target=_watch_cancel,
+            name=f"native-cancel-{job.job_id[:8]}",
+            daemon=True,
+        )
+        watcher.start()
         try:
             result = runner.run(
                 task_id=f"{job.job_id}:{operation}",
@@ -3609,8 +3670,10 @@ class DatasetService:
                 content_hash=None,
                 allowed_roots=allowed,
                 work_dir=work_dir,
+                cancel_event=cancel_event,
             )
         except Exception as exc:  # noqa: BLE001
+            cancel_event.set()
             tmp.unlink(missing_ok=True)
             return None, BackendPlan(
                 backend=ComputeBackend.PYTHON_STREAMING,
@@ -3622,6 +3685,12 @@ class DatasetService:
                 fallback_reason=f"native_exception:{type(exc).__name__}",
                 detail=redact_secrets(str(exc))[:500],
             )
+        finally:
+            cancel_event.set()
+
+        if result.error_code == "NATIVE_CANCELLED" or self.runner.is_cancel_requested(job.job_id):
+            tmp.unlink(missing_ok=True)
+            raise DatasetError("cancelled", code="cancelled", http_status=409)
 
         verified = runner.verify_output(result, temporary_path=tmp)
         if not verified.get("ok"):
@@ -3633,7 +3702,7 @@ class DatasetService:
                 input_bytes=plan.input_bytes,
                 rust_threshold_bytes=plan.rust_threshold_bytes,
                 native_status=plan.native_status,
-                fallback_reason=str(verified.get("errorCode") or "native_verify_failed"),
+                fallback_reason=str(verified.get("errorCode") or result.error_code or "native_verify_failed"),
                 detail=str(verified.get("errorMessage") or result.error_message or "")[:500],
             )
 
@@ -3662,6 +3731,9 @@ class DatasetService:
             "receipt": verified.get("receipt"),
             "backend": ComputeBackend.RUST_NATIVE.value,
             "backendPlan": plan.public_dict(),
+            "memoryEnforcement": getattr(result, "memory_enforcement", None)
+            or (verified.get("receipt") or {}).get("memoryEnforcement")
+            or self.memory_policy.enforcement,
         }
         return info, plan
 
