@@ -56,7 +56,8 @@ from .types import (
     SourceType,
     WorkerStatus,
 )
-from .web import HttpWebProvider, UnconfiguredWebProvider, build_web_provider
+from .web import HttpWebProvider, UnconfiguredWebProvider, build_web_provider, ChainedWebProvider
+from .web_readiness import WebResearchReadiness, build_web_readiness, probe_web_research
 
 __all__ = [
     "AnalysisMode",
@@ -102,6 +103,8 @@ __all__ = [
     "SourceType",
     "SsrfDecision",
     "UnconfiguredWebProvider",
+    "ChainedWebProvider",
+    "WebResearchReadiness",
     "WORKER_ROLES",
     "WorkerStatus",
     "apply_plan_edits",
@@ -115,11 +118,13 @@ __all__ = [
     "build_quality_scorecard",
     "build_question_model",
     "build_web_provider",
+    "build_web_readiness",
     "citation_entailment_check",
     "cluster_dependent_sources",
     "independent_support_count",
     "list_presets",
     "plan_assignments",
+    "probe_web_research",
     "select_next_queries",
     "should_stop",
     "validate_url_for_fetch",

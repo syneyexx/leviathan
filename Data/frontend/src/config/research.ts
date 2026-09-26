@@ -115,6 +115,7 @@ export type RdWebResult = {
   domain: string;
   snippet: string;
   thumb?: string;
+  url?: string;
 };
 
 export type RdInsight = {

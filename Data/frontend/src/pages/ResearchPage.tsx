@@ -26,6 +26,7 @@ import type {
   ResearchEvidence,
   ResearchProject,
   ResearchSource,
+  ResearchWebReadiness,
   ResearchWorker,
   SourceIngestionMember,
   SourceIngestionProgress,
@@ -221,10 +222,17 @@ function mapSourcesToWeb(sources: ResearchSource[], evidence: ResearchEvidence[]
   const webby = sources.filter(
     (s) => (s.source_type || "").toLowerCase().includes("web") || !!s.canonical_uri,
   );
-  const pool = (webby.length ? webby : sources).slice(0, 3);
+  const pool = (webby.length ? webby : sources).slice(0, 8);
   return pool.map((s, i) => {
     const domain = domainFromUri(s.canonical_uri ?? s.original_uri);
     const span = evidence.find((e) => e.source_id === s.source_id)?.span_text;
+    const evCount = evidence.filter((e) => e.source_id === s.source_id).length;
+    const retrieval =
+      (s.metadata?.retrieval_status as string | undefined) ||
+      (s.provenance?.retrieval_status as string | undefined) ||
+      s.parse_status;
+    const published = s.published_at ? ` · pub ${s.published_at}` : "";
+    const fetched = s.fetched_at ? ` · fetched ${relativeAgo(s.fetched_at)}` : "";
     return {
       id: s.source_id,
       rank: i + 1,
@@ -232,9 +240,34 @@ function mapSourcesToWeb(sources: ResearchSource[], evidence: ResearchEvidence[]
       domain,
       snippet: span
         ? span.slice(0, 160) + (span.length > 160 ? "…" : "")
-        : `${s.source_type || "source"} · parse ${s.parse_status}`,
+        : `${s.source_type || "source"} · ${retrieval} · evidence ${evCount}${fetched}${published}`,
+      url: s.canonical_uri ?? s.original_uri ?? undefined,
     };
   });
+}
+
+function zeroEvidenceDiagnosis(
+  project: ResearchProject | null,
+  webReadiness: ResearchWebReadiness | null,
+  sources: ResearchSource[],
+): string | null {
+  if (!project || project.evidence_count > 0) return null;
+  if (!project.allow_web) return null;
+  if (project.web_unavailable_reason) {
+    return `WEB SEARCH UNAVAILABLE — reason: ${project.web_unavailable_reason}`;
+  }
+  if (webReadiness && !webReadiness.search_available) {
+    return webReadiness.operator_summary || "WEB SEARCH UNAVAILABLE";
+  }
+  const webPages = sources.filter((s) => (s.source_type || "").toLowerCase() === "web_page");
+  const blocked = sources.filter((s) => {
+    const st = String(s.metadata?.retrieval_status || s.provenance?.retrieval_status || "");
+    return /robots|blocked|fetch_failed/i.test(st);
+  });
+  if (sources.length === 0) return "NO SOURCES DISCOVERED";
+  if (blocked.length && webPages.length === 0) return "FETCH BLOCKED";
+  if (webPages.length === 0) return "NO SOURCES FETCHED";
+  return "NO EVIDENCE EXTRACTED";
 }
 
 function mapClaimsToInsights(claims: ResearchClaim[]): RdInsight[] {
@@ -432,6 +465,8 @@ export function ResearchPage() {
   const [claims, setClaims] = useState<ResearchClaim[]>([]);
   const [gaps, setGaps] = useState<Array<Record<string, unknown>>>([]);
   const [hasLiveProject, setHasLiveProject] = useState(false);
+  const [webReadiness, setWebReadiness] = useState<ResearchWebReadiness | null>(null);
+  const [webProbeBusy, setWebProbeBusy] = useState(false);
 
   const selectedModel = useMemo(
     () => (modelId ? models.find((m) => m.id === modelId) ?? null : null),
@@ -609,9 +644,10 @@ export function ResearchPage() {
     (async () => {
       // Load independently — a budget failure must not leave Start Research stuck
       // behind an empty model gate.
-      const [modelOutcome, budgetOutcome] = await Promise.allSettled([
+      const [modelOutcome, budgetOutcome, webOutcome] = await Promise.allSettled([
         api.listModels(),
         api.researchBudgets(),
+        api.getResearchWebReadiness(),
       ]);
       if (cancelled) return;
 
@@ -640,6 +676,10 @@ export function ResearchPage() {
         setCustomRounds(normal.rounds);
       } else if (!cancelled) {
         toast(errMsg(budgetOutcome.reason, "Failed to load research budgets"));
+      }
+
+      if (webOutcome.status === "fulfilled") {
+        setWebReadiness(webOutcome.value.readiness);
       }
     })();
     return () => {
@@ -1496,6 +1536,46 @@ export function ResearchPage() {
                 {effectiveWorkers} workers · {effectiveRounds} rounds/worker
               </p>
             )}
+            {webReadiness ? (
+              <p className="lv-rd-empty-note" style={{ margin: "0 0 10px", textAlign: "left" }}>
+                {webReadiness.operator_summary}
+                {webReadiness.provider_type ? ` · provider: ${webReadiness.provider_type}` : ""}
+                {webReadiness.search_mode ? ` · mode: ${webReadiness.search_mode}` : ""}
+                {" · "}
+                <button
+                  type="button"
+                  className="lv-rd-link"
+                  disabled={webProbeBusy}
+                  onClick={async () => {
+                    setWebProbeBusy(true);
+                    try {
+                      const res = await api.probeResearchWeb({
+                        query: "SQLite WAL mode Python sqlite3",
+                        limit: 3,
+                      });
+                      const probe = res.probe;
+                      const ready = await api.getResearchWebReadiness();
+                      setWebReadiness(ready.readiness);
+                      if (probe.status === "OK") {
+                        toast(
+                          `Web probe OK — ${probe.search?.count ?? 0} hits, fetched page`,
+                        );
+                      } else {
+                        toast(
+                          `Web probe ${probe.status}: ${probe.error_code || ""} ${probe.error || ""}`.trim(),
+                        );
+                      }
+                    } catch (err) {
+                      toast(errMsg(err, "Web research probe failed"));
+                    } finally {
+                      setWebProbeBusy(false);
+                    }
+                  }}
+                >
+                  {webProbeBusy ? "Testing…" : "Test web research"}
+                </button>
+              </p>
+            ) : null}
             <div className="lv-rd-scope-grid">
               <button
                 type="button"
@@ -1505,7 +1585,21 @@ export function ResearchPage() {
               >
                 <Icon name="globe" />
                 <strong>Web Search</strong>
-                <span className={context.web ? "is-on" : undefined}>{context.web ? "Enabled" : "Disabled"}</span>
+                <span
+                  className={
+                    context.web && webReadiness?.search_available
+                      ? "is-on"
+                      : undefined
+                  }
+                >
+                  {!context.web
+                    ? "Disabled"
+                    : webReadiness?.search_available
+                      ? "READY"
+                      : webReadiness?.direct_fetch_available
+                        ? "FETCH ONLY"
+                        : "UNAVAILABLE"}
+                </span>
               </button>
               <button
                 type="button"
@@ -1622,7 +1716,10 @@ export function ResearchPage() {
             </div>
             {webRows.length === 0 ? (
               <p className="lv-rd-empty-note">
-                {context.web ? "Web results appear after retrieval." : "Enable Web in context to search the open web."}
+                {zeroEvidenceDiagnosis(project, webReadiness, sources) ||
+                  (context.web
+                    ? "Web results appear after retrieval."
+                    : "Enable Web in context to search the open web.")}
               </p>
             ) : (
               <ul className="lv-rd-web-list">
@@ -1630,7 +1727,15 @@ export function ResearchPage() {
                   <li key={item.id} className="lv-rd-web-item">
                     <span className="lv-rd-web-rank">{item.rank}</span>
                     <div className="lv-rd-web-copy">
-                      <strong>{item.title}</strong>
+                      <strong>
+                        {item.url ? (
+                          <a href={item.url} target="_blank" rel="noreferrer noopener">
+                            {item.title}
+                          </a>
+                        ) : (
+                          item.title
+                        )}
+                      </strong>
                       <em>{item.domain}</em>
                       <p>{item.snippet}</p>
                     </div>
@@ -1639,6 +1744,14 @@ export function ResearchPage() {
                 ))}
               </ul>
             )}
+            {project && project.evidence_count === 0 && project.allow_web ? (
+              <p className="lv-rd-empty-note" style={{ marginTop: 8 }}>
+                Evidence: 0
+                {zeroEvidenceDiagnosis(project, webReadiness, sources)
+                  ? ` — ${zeroEvidenceDiagnosis(project, webReadiness, sources)}`
+                  : ""}
+              </p>
+            ) : null}
           </article>
 
           <article className="lv-rd-panel">

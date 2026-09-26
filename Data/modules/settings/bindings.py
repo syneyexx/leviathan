@@ -276,6 +276,7 @@ def bind_default_consumers(
                 "web_search.endpoint",
                 "web_search.api_key",
                 "web_search.provider",
+                "web_search.mode",
                 "network.allow_outbound",
             }:
                 if hasattr(research_service, "reconfigure_web"):
@@ -285,6 +286,9 @@ def bind_default_consumers(
                         api_key=effective.research_integration.web_search_api_key,
                         search_provider=getattr(
                             effective.research_integration, "web_search_provider", None
+                        ),
+                        search_mode=getattr(
+                            effective.research_integration, "web_search_mode", "auto"
                         ),
                     )
             if key == "research.auto_promote_verified_knowledge" and hasattr(

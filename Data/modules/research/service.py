@@ -90,6 +90,9 @@ class ResearchService:
             if allow_outbound
             else UnconfiguredWebProvider()
         )
+        self._web_search_endpoint = getattr(self.web, "search_endpoint", None)
+        self._web_search_api_key_configured = False
+        self._web_search_mode = getattr(self.web, "search_mode", "auto") or "auto"
         self.brain = ResearchBrainSync(store, knowledge)
         self.uploads = UploadIngestor(
             store,
@@ -187,6 +190,7 @@ class ResearchService:
         api_key = search_api_key
         auto_promote = True
         search_provider = None
+        search_mode = "auto"
         if hasattr(settings, "research_integration"):
             endpoint = endpoint or settings.research_integration.web_search_endpoint
             api_key = api_key if api_key is not None else settings.research_integration.web_search_api_key
@@ -200,13 +204,21 @@ class ResearchService:
             search_provider = getattr(
                 settings.research_integration, "web_search_provider", None
             )
+            search_mode = getattr(
+                settings.research_integration, "web_search_mode", "auto"
+            ) or "auto"
+            # Historical: PROVIDER=auto means chain mode auto (not an HTTP adapter name).
+            if str(search_provider or "").strip().lower() == "auto" and not endpoint:
+                search_provider = None
+                search_mode = search_mode or "auto"
         provider = web or build_web_provider(
             allow_outbound=allow_outbound,
             search_endpoint=endpoint,
             api_key=api_key,
             search_provider=search_provider,
+            search_mode=search_mode,
         )
-        return cls(
+        svc = cls(
             store,
             knowledge=knowledge,
             web=provider,
@@ -220,6 +232,10 @@ class ResearchService:
             job_runtime=job_runtime,
             dataset_service=dataset_service,
         )
+        svc._web_search_endpoint = endpoint
+        svc._web_search_api_key_configured = bool((api_key or "").strip())
+        svc._web_search_mode = search_mode
+        return svc
 
     def reconfigure_web(
         self,
@@ -228,17 +244,28 @@ class ResearchService:
         search_endpoint: str | None = None,
         api_key: str | None = None,
         search_provider: str | None = None,
+        search_mode: str | None = None,
     ) -> None:
         """Hot-apply outbound / search provider settings from the Settings Control Plane."""
         from Data.modules.research.web import build_web_provider
         from Data.modules.research.web_capabilities import bind_web_provider
 
+        mode = search_mode
+        if mode is None:
+            mode = getattr(self, "_web_search_mode", "auto")
+        provider_name = search_provider
+        if str(provider_name or "").strip().lower() == "auto" and not search_endpoint:
+            provider_name = None
         self.allow_outbound = bool(allow_outbound)
+        self._web_search_endpoint = search_endpoint
+        self._web_search_api_key_configured = bool((api_key or "").strip())
+        self._web_search_mode = mode or "auto"
         self.web = build_web_provider(
             allow_outbound=self.allow_outbound,
             search_endpoint=search_endpoint,
             api_key=api_key,
-            search_provider=search_provider,
+            search_provider=provider_name,
+            search_mode=self._web_search_mode,
         )
         bind_web_provider(
             self.web,
@@ -251,6 +278,31 @@ class ResearchService:
             if hasattr(self.runner, "coordinator"):
                 self.runner.coordinator.allow_outbound = self.allow_outbound
                 self.runner.coordinator.web = self.web
+
+    def web_readiness(self) -> dict[str, Any]:
+        from .web_readiness import build_web_readiness
+
+        return build_web_readiness(
+            allow_outbound=self.allow_outbound,
+            provider=self.web,
+            search_endpoint=getattr(self, "_web_search_endpoint", None),
+            api_key_configured=bool(
+                getattr(self, "_web_search_api_key_configured", False)
+            ),
+            search_mode=str(getattr(self, "_web_search_mode", "auto") or "auto"),
+        ).public_dict()
+
+    def probe_web_research(
+        self, *, query: str = "SQLite WAL mode", limit: int = 3
+    ) -> dict[str, Any]:
+        from .web_readiness import probe_web_research
+
+        return probe_web_research(
+            self.web,
+            allow_outbound=self.allow_outbound,
+            query=query,
+            limit=limit,
+        )
 
     def set_model_caller(self, caller: Callable[..., dict[str, Any]] | None) -> None:
         self.model_caller = caller
