@@ -3,9 +3,9 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "2bd407f6a1dfe46c82b0f8036ce5b85422e1fd7c",
+  "last_verified_commit": "de436fb30fc1c3dcee861ef2f84420ab614a99d8",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W04",
+  "active_wave": "W05",
   "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed. W02 trading classification/routing landed. W03 TradingBrainAdapter \u2192 canonical HybridRetriever/BrainAccess.",
   "status_vocabulary": [
     "NOT_STARTED",
@@ -394,9 +394,19 @@
     {
       "id": "W05",
       "title": "Trading knowledge intelligence layer",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "knowledge + market_sim roles",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_role_knowledge_w05"
+      ],
+      "evidence": [
+        "role_knowledge.py RoleAwareTradingKnowledge",
+        "Strategy Researcher/Critic/Risk/Postmortem retrieve+cite",
+        "knowledge is hypothesis source only",
+        "4/4 W05 PASS"
+      ],
+      "last_verified_commit": "de436fb30fc1c3dcee861ef2f84420ab614a99d8"
     },
     {
       "id": "W06",

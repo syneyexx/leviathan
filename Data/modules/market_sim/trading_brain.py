@@ -388,12 +388,22 @@ def _hit_from_row(
     source_kind: str = "knowledge",
 ) -> TradingRetrievalHit:
     if isinstance(row, dict):
+        content = str(
+            row.get("content")
+            or row.get("text")
+            or row.get("chunk_content")
+            or row.get("document_content")
+            or row.get("contentExcerpt")
+            or ""
+        )[:800]
         return TradingRetrievalHit(
             source_kind=source_kind,
             document_id=row.get("document_id") or row.get("id") or row.get("memory_id"),
             title=str(row.get("title") or ""),
-            content_excerpt=str(row.get("content") or row.get("text") or "")[:800],
-            score=float(row["score"]) if row.get("score") is not None else None,
+            content_excerpt=content,
+            score=float(row["score"]) if row.get("score") is not None else (
+                float(row["rank"]) if row.get("rank") is not None else None
+            ),
             published_at=row.get("published_at"),
             available_at=row.get("available_at"),
             trust=str(row.get("trust") or source_kind),
@@ -406,7 +416,11 @@ def _hit_from_row(
         source_kind=source_kind,
         document_id=getattr(row, "document_id", None) or getattr(row, "id", None),
         title=str(getattr(row, "title", "") or ""),
-        content_excerpt=str(getattr(row, "content", "") or "")[:800],
+        content_excerpt=str(
+            getattr(row, "content", None)
+            or getattr(row, "chunk_content", None)
+            or ""
+        )[:800],
         score=getattr(row, "score", None),
         retrieval_mode=mode,
         embeddings_semantic=semantic,
