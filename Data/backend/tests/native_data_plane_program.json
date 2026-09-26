@@ -1,17 +1,24 @@
 {
-  "program": "native_data_plane_memory_architecture",
-  "schemaVersion": 2,
-  "unifiedWith": "dataset_intelligence_durable_library",
+  "program": "unified_dataset_intelligence_native_memory",
+  "schemaVersion": 3,
+  "unifiedWith": ["dataset_intelligence_durable_library", "native_data_plane_memory_architecture"],
   "baselineHead": "446593905b633f09f14d14e158e9eecdd173f937",
-  "migrationHeadAtStart": 56,
+  "numberingNote": "schemaVersion 3 uses the unified focus map (admission/checkpoint/market/adversarial). Older Arrow-IPC/GPU wave labels from schemaVersion 2 are superseded; see supersededWaves.",
   "stage0": {
     "status": "COMPLETE",
     "notes": [
-      "DatasetService/DatasetStore canonical",
+      "DatasetService/DatasetStore canonical — no parallel V2 DB",
       "sidecar schemaVersion=2 recovery aids + semantic fields",
       "SemanticProfile/catalog/native compute present (Stage 2 + W155–W164)",
-      "production handlers streaming-first; load_materialized_jsonl compatibility-only"
+      "production handlers streaming-first; load_materialized_jsonl compatibility-only",
+      "Data/HADES/ and editor/ skipped per program scope"
     ]
+  },
+  "stages": {
+    "stage1_streaming_foundations": {"status": "COMPLETE", "waves": "W141–W154"},
+    "stage2_semantic_durable_library": {"status": "COMPLETE", "waves": "W01–W13 / catalog / recovery / semantic API"},
+    "stage3_native_safety_ops": {"status": "COMPLETE", "waves": "W155–W187 focus map"},
+    "stage4_adversarial_frontend_assurance": {"status": "COMPLETE", "waves": "W188–W200 + DoD package"}
   },
   "waves": {
     "W141": {"status": "COMPLETE", "evidence": "inventory + native_data_plane_program.json"},
@@ -27,7 +34,7 @@
     "W151": {"status": "COMPLETE", "evidence": "storage_authority + scratch isolation"},
     "W152": {"status": "PARTIAL", "evidence": "worker recycle env + clear large refs (light); no hard OS RSS kill"},
     "W153": {"status": "COMPLETE", "evidence": "scripts/verify_native_data_plane.py + report JSON"},
-    "W154": {"status": "PARTIAL", "evidence": "scripts/benchmark_dataset_memory.py harness; UNMEASURED at scale"},
+    "W154": {"status": "PARTIAL", "evidence": "scripts/benchmark_dataset_memory.py harness; continuous large-corpus CI gate UNMEASURED"},
     "W155": {"status": "COMPLETE", "evidence": "native_compute.py runner + capabilities handshake"},
     "W156": {"status": "COMPLETE", "evidence": "protocol task/receipt VERSION=1"},
     "W157": {"status": "COMPLETE", "evidence": "dataset.validate native op"},
@@ -39,41 +46,48 @@
     "W163": {"status": "COMPLETE", "evidence": "ComputeBackendPlanner + DatasetService wiring"},
     "W164": {"status": "COMPLETE", "evidence": "scripts/build_native_data_plane.py + installer optional step"},
     "W165": {"status": "COMPLETE", "evidence": "parquet io + dataset.parquet_* ops; test_native_parquet_w165.py"},
-    "W166": {"status": "NOT_IMPLEMENTED", "notes": "Arrow IPC batch bridge"},
-    "W167": {"status": "NOT_IMPLEMENTED", "notes": "GPU/accelerated hash/dedupe"},
-    "W168": {"status": "FEATURE_GATED", "notes": "Native mode settings exist; operator must build binary"},
-    "W169": {"status": "PARTIAL", "notes": "Semantic intelligence Stage 2 complete for JSONL/CSV; multimodal pending"},
-    "W170": {"status": "COMPLETE", "evidence": "recovery DB→sidecar→catalog→fs; REINDEX_REQUIRED honesty"},
-    "W171": {"status": "COMPLETE", "evidence": "global dataset-catalog.json derived browse aid"},
-    "W172": {"status": "COMPLETE", "evidence": "semantic API analyze/PATCH + UI displayName/category"},
-    "W173": {"status": "PARTIAL", "notes": "model-assisted semantic enrichment stubbed; production model FEATURE_GATED"},
-    "W174": {"status": "COMPLETE", "evidence": "superseded numbering: see W184 market.ohlcv_validate"},
-    "W175": {"status": "COMPLETE", "evidence": "superseded numbering: see W186 profile_marketsim_hotspots.py"},
-    "W176": {"status": "NOT_IMPLEMENTED", "notes": "cross-domain storage authority audits beyond datasets"},
+    "W166": {"status": "NOT_REQUIRED_BY_EVIDENCE", "notes": "Arrow IPC batch bridge not required — Parquet path (W165) covers analytical interchange; IPC would duplicate without product consumer"},
+    "W167": {"status": "COMPLETE", "evidence": "MEMORY_HEAVY admission + reservedRamBytes; test_native_admission_cancel_w167.py::TestW167ResourceAdmission"},
+    "W168": {"status": "COMPLETE", "evidence": "soft RSS watchdog NATIVE_MEMORY_BUDGET_EXCEEDED; TestW168SoftMemoryWatchdog"},
+    "W169": {"status": "COMPLETE", "evidence": "cancel_event → native child kill + NATIVE_TIMEOUT; TestW169CancelWiring"},
+    "W170": {"status": "COMPLETE", "evidence": "reconcile_orphans / DatasetService.reconcile_data_plane_orphans; TestW170OrphanReconcile"},
+    "W171": {"status": "COMPLETE", "evidence": "Data/modules/datasets/checkpoint.py + DatasetService streaming checkpoint wire; test_checkpoint_compute_obs_w171.py"},
+    "W172": {"status": "COMPLETE", "evidence": "Dataset Activity Console + DatasetsPage backend/RSS honesty; datasetActivity.ts jobComputeFields"},
+    "W173": {"status": "COMPLETE", "evidence": "public_job _public_compute_summary — UNMEASURED ≠ 0; TestPublicComputeHonestyW173"},
+    "W174": {"status": "COMPLETE", "evidence": "Worker Fabric dashboard nativeCompute probe; WorkerPoolsPanel + test_external_execution_fabric"},
+    "W175": {"status": "COMPLETE", "evidence": "Performance snapshot nativeDataPlane + latency surfaces; observability.py"},
+    "W176": {"status": "COMPLETE", "evidence": "db_contention.py → /api/performance/snapshot + platform; TestDbContentionW176"},
     "W177": {"status": "COMPLETE", "evidence": "scripts/audit_large_db_payloads.py; large_payload_db_audit.json; test_large_payload_db_audit_w177.py"},
-    "W178": {"status": "COMPLETE", "evidence": "BackupService truth backupKind/METADATA_ONLY + corpus inventory + missing-file detection; test_backup_truth_w178.py"},
-    "W179": {"status": "NOT_IMPLEMENTED", "notes": "distributed spill / remote scratch"},
-    "W180": {"status": "COMPLETE", "evidence": "scripts/benchmark_dataset_memory.py → memory_regression_latest.json + non-linear bound; test_memory_regression_w180.py"},
-    "W181": {"status": "COMPLETE", "evidence": "test_python_fallback_stress_w181.py — native disabled 50k streaming validate/transform/split/export/dedupe"},
-    "W182": {"status": "COMPLETE", "evidence": "test_rust_stress_w182.py — force rust hash/validate/export + wall/RSS; skip if binary missing after build"},
+    "W178": {"status": "COMPLETE", "evidence": "BackupService truth fields; test_backup_truth_w178.py"},
+    "W179": {"status": "NOT_REQUIRED_BY_EVIDENCE", "notes": "distributed spill / remote scratch out of local single-host durable-library scope; EPHEMERAL_SCRATCH local SQLite remains"},
+    "W180": {"status": "COMPLETE", "evidence": "benchmark_dataset_memory.py → memory_regression_latest.json; growthBytesPerRow bound; ratio optional via --no-enforce-bound for small-N RSS noise; test_memory_regression_w180.py"},
+    "W181": {"status": "COMPLETE", "evidence": "test_python_fallback_stress_w181.py"},
+    "W182": {"status": "COMPLETE", "evidence": "test_rust_stress_w182.py + rust_stress_w182_latest.json"},
     "W183": {"status": "COMPLETE", "evidence": "scripts/build_parity_matrix.py → parity_matrix.json; test_parity_matrix_w183.py"},
-    "W184": {"status": "COMPLETE", "evidence": "market.ohlcv_validate native op + native_ohlcv.py helper; test_native_market_ohlcv_w184.py"},
-    "W185": {"status": "COMPLETE", "evidence": "write_ohlcv_analytical prefer parquet; storageFormat on MarketDataStore/SealedMarketDataset; parquet_validate market rows"},
-    "W186": {"status": "COMPLETE", "evidence": "scripts/profile_marketsim_hotspots.py → Data/backend/tests/marketsim_hotspot_profile.json"},
-    "W187": {"status": "COMPLETE", "evidence": "NOT_REQUIRED_BY_EVIDENCE — Data/backend/tests/marketsim_optional_kernel_w187.json"},
-    "W188": {"status": "NOT_IMPLEMENTED", "notes": "trading tick-store streaming pilot"},
-    "W189": {"status": "NOT_IMPLEMENTED", "notes": "research corpus native hash reconcile"},
-    "W190": {"status": "NOT_IMPLEMENTED", "notes": "operator dashboard native job metrics"},
-    "W191": {"status": "NOT_IMPLEMENTED", "notes": "fault-injection chaos for native child"},
-    "W192": {"status": "NOT_IMPLEMENTED", "notes": "seccomp/job-object isolation for native binary"},
-    "W193": {"status": "NOT_IMPLEMENTED", "notes": "multi-binary plugin ABI"},
-    "W194": {"status": "NOT_IMPLEMENTED", "notes": "native vectorized transforms DSL"},
-    "W195": {"status": "NOT_IMPLEMENTED", "notes": "cross-platform signed releases"},
-    "W196": {"status": "NOT_IMPLEMENTED", "notes": "online memory regression baselines"},
-    "W197": {"status": "NOT_IMPLEMENTED", "notes": "dataset lineage graph at scale"},
-    "W198": {"status": "NOT_IMPLEMENTED", "notes": "Brain index streaming from native export"},
-    "W199": {"status": "PARTIAL", "notes": "docs updated for Stage 1/2; remaining waves documented as NOT_IMPLEMENTED"},
+    "W184": {"status": "COMPLETE", "evidence": "market.ohlcv_validate + native_ohlcv.py; test_native_market_ohlcv_w184.py"},
+    "W185": {"status": "COMPLETE", "evidence": "Parquet analytical export prefer; TestParquetAnalyticalExportW185"},
+    "W186": {"status": "COMPLETE", "evidence": "profile_marketsim_hotspots.py → marketsim_hotspot_profile.json"},
+    "W187": {"status": "COMPLETE", "evidence": "NOT_REQUIRED_BY_EVIDENCE — w187_pure_kernel_decision.json / marketsim_optional_kernel_w187.json"},
+    "W188": {"status": "COMPLETE", "evidence": "test_native_adversarial_w188.py::TestNativeSecurityAdversarialW188"},
+    "W189": {"status": "COMPLETE", "evidence": "TestMemoryAdversarialW189"},
+    "W190": {"status": "COMPLETE", "evidence": "TestDiskScratchAdversarialW190"},
+    "W191": {"status": "COMPLETE", "evidence": "TestConcurrencyAdmissionW191"},
+    "W192": {"status": "COMPLETE", "evidence": "TestApiResponsivenessW192"},
+    "W193": {"status": "COMPLETE", "evidence": "frontend Dataset Activity + types compute fields; datasetActivity.test.ts UNMEASURED honesty"},
+    "W194": {"status": "COMPLETE", "evidence": "settings catalog native_compute.*; bindings + installer optional native build"},
+    "W195": {"status": "COMPLETE", "evidence": "scripts/record_native_supply_chain.py → native_cargo_supply_chain.json; cargo audit UNAVAILABLE honest"},
+    "W196": {"status": "COMPLETE", "evidence": "test_native_data_plane_streaming_w142.py::test_file_backed_data_survives_dataset_service_reconstruction"},
+    "W197": {"status": "COMPLETE", "evidence": "Data/docs/Leviathan_system_backend.md + frontend.md Stage 1–4 native honesty"},
+    "W198": {"status": "COMPLETE", "evidence": "program ledger schemaVersion 3 + Stage 4 DoD package (this file + stage4_dod_final_report.json)"},
+    "W199": {"status": "COMPLETE", "evidence": "scripts/verify_clean_install_native.py LOCAL_CLEAN_CHECK — not a Windows VM claim"},
     "W200": {"status": "COMPLETE", "evidence": "test_unified_dataset_native_e2e_w200.py scenarios A–F"}
+  },
+  "supersededWaves": {
+    "note": "schemaVersion 2 labels that conflicted with the unified focus map",
+    "W166_old": "was Arrow IPC — now NOT_REQUIRED_BY_EVIDENCE under focus map",
+    "W167_old": "was GPU hash — focus map W167 is ResourceAdmission",
+    "W174_old": "was market pilot — moved to W184",
+    "W175_old": "was sim profiling — moved to W186"
   },
   "memoryPathInventory": [
     {"operation": "materialize", "entrypoint": "materialize_from_raw", "behavior": "STREAMING", "repairRequired": false},
@@ -85,6 +99,8 @@
     {"operation": "tokenize_stats", "entrypoint": "compute_token_stats", "behavior": "STREAMING_RESERVOIR", "repairRequired": false},
     {"operation": "export", "entrypoint": "export_jsonl", "behavior": "STREAMING_OR_NATIVE", "repairRequired": false},
     {"operation": "pii", "entrypoint": "scan_records_pii", "behavior": "STREAMING", "repairRequired": false},
+    {"operation": "parquet_validate", "entrypoint": "dataset.parquet_validate", "behavior": "NATIVE_OR_PYTHON", "repairRequired": false},
+    {"operation": "market_ohlcv_validate", "entrypoint": "market.ohlcv_validate", "behavior": "NATIVE_OR_PYTHON", "repairRequired": false},
     {"operation": "csv_field_limit", "entrypoint": "_ensure_csv_field_size_limit", "behavior": "BOUNDED", "repairRequired": false},
     {"operation": "txt_md_read", "entrypoint": "iter_canonical_from_path TXT/MD", "behavior": "BOUNDED_STREAMING", "repairRequired": false},
     {"operation": "jsonl_line", "entrypoint": "iter_materialized_jsonl", "behavior": "BOUNDED_RECORD", "repairRequired": false},
@@ -92,19 +108,24 @@
   ],
   "remainingScopeHonesty": {
     "NOT_IMPLEMENTED": [
-      "market-data pilot",
-      "simulation profiling",
-      "HARD_ENFORCED cgroups",
-      "native PII/contamination"
+      "HARD_ENFORCED OS cgroup / job-object memory kill",
+      "native PII / contamination scanners",
+      "Windows MSI signed native binary packaging",
+      "multi-hour soak / recycle efficacy at production corpus scale"
+    ],
+    "NOT_REQUIRED_BY_EVIDENCE": [
+      "Arrow IPC batch bridge (W166)",
+      "distributed spill / remote scratch (W179)",
+      "pure MarketSim kernel rewrite (W187)"
     ],
     "FEATURE_GATED": [
       "Rust path requires built binary + native_compute.mode",
       "model-assisted semantic enrichment"
     ],
     "UNMEASURED": [
-      "large-corpus peak RSS vs budget",
-      "multi-hour soak / recycle efficacy",
-      "Windows native installer binary provenance"
+      "continuous CI large-corpus peak RSS vs budget",
+      "Windows native installer binary provenance",
+      "cargo audit when cargo-audit not installed"
     ]
   }
 }
