@@ -31,6 +31,7 @@ import { ResearchPage } from "./pages/ResearchPage";
 import { PerformancePage } from "./pages/PerformancePage";
 import { SectionPage } from "./pages/SectionPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { StatusPage } from "./pages/StatusPage";
 import { TasksPage } from "./pages/TasksPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { ModulesPage } from "./pages/ModulesPage";
@@ -83,7 +84,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<CommandPage />} />
-      <Route path="/status" element={<Navigate to="/tasks" replace />} />
+      <Route path="/status" element={<StatusPage />} />
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/coding" element={<CodingPage />} />
