@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Memory regression harness for dataset data-plane operations.
+"""Memory regression harness for dataset data-plane operations (W180).
 
 Generates incremental synthetic JSONL under a tempfile, runs validate / export /
 dedupe via DatasetService job APIs, and records peak RSS (resource /proc).
+
+Asserts working-set does not grow linearly with N for validate/export
+(pragmatic host bound). Writes ``memory_regression_latest.json``.
 
 Does not commit giant fixtures — all corpora are ephemeral.
 """
@@ -22,7 +25,12 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = ROOT / "Data" / "backend" / "tests" / "dataset_memory_benchmark_report.json"
+DEFAULT_OUT = ROOT / "Data" / "backend" / "tests" / "memory_regression_latest.json"
+LEGACY_OUT = ROOT / "Data" / "backend" / "tests" / "dataset_memory_benchmark_report.json"
+
+# Pragmatic host bound: average RSS growth per additional row must stay well
+# below linear materialization of ~100-byte JSONL rows (streaming expected).
+MAX_RSS_GROWTH_BYTES_PER_ROW = 8_192
 
 
 def _utcnow() -> str:
@@ -153,7 +161,51 @@ def _write_jsonl(path: Path, rows: int, payload_chars: int = 64) -> int:
     return path.stat().st_size
 
 
-def run_sizes(sizes: list[int], *, out_path: Path) -> dict[str, Any]:
+def assert_non_linear_working_set(
+    results: list[dict[str, Any]],
+    *,
+    max_bytes_per_row: float = MAX_RSS_GROWTH_BYTES_PER_ROW,
+) -> dict[str, Any]:
+    """Fail closed when peak RSS grows roughly linearly with row count."""
+    if len(results) < 2:
+        return {
+            "asserted": False,
+            "reason": "need_at_least_two_sizes",
+            "passed": True,
+        }
+    ordered = sorted(results, key=lambda r: int(r["rows"]))
+    first, last = ordered[0], ordered[-1]
+    row_delta = int(last["rows"]) - int(first["rows"])
+    rss_delta = int(last["peakRssBytes"]) - int(first["peakRssBytes"])
+    if row_delta <= 0:
+        return {"asserted": False, "reason": "non_increasing_sizes", "passed": True}
+    # Ignore negative deltas (GC / allocator noise) — that still passes non-linear.
+    growth_per_row = max(0.0, float(rss_delta) / float(row_delta))
+    # Also compare to input byte growth — linear full-load would track input size closely.
+    input_delta = int(last.get("inputBytes") or 0) - int(first.get("inputBytes") or 0)
+    ratio_to_input = (float(rss_delta) / float(input_delta)) if input_delta > 0 and rss_delta > 0 else 0.0
+    passed = growth_per_row <= max_bytes_per_row and ratio_to_input < 0.85
+    return {
+        "asserted": True,
+        "passed": passed,
+        "rowDelta": row_delta,
+        "rssDeltaBytes": rss_delta,
+        "growthBytesPerRow": round(growth_per_row, 3),
+        "maxBytesPerRowBound": max_bytes_per_row,
+        "rssToInputGrowthRatio": round(ratio_to_input, 4),
+        "first": {"rows": first["rows"], "peakRssBytes": first["peakRssBytes"]},
+        "last": {"rows": last["rows"], "peakRssBytes": last["peakRssBytes"]},
+        "opsCovered": ["validate", "export"],
+    }
+
+
+def run_sizes(
+    sizes: list[int],
+    *,
+    out_path: Path,
+    enforce_bound: bool = True,
+    max_bytes_per_row: float = MAX_RSS_GROWTH_BYTES_PER_ROW,
+) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="lev-mem-bench-") as tmp_name:
         tmp = Path(tmp_name)
@@ -208,8 +260,10 @@ def run_sizes(sizes: list[int], *, out_path: Path) -> dict[str, Any]:
                     },
                 }
             )
+    bound = assert_non_linear_working_set(results, max_bytes_per_row=max_bytes_per_row)
     report = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "wave": "W180",
         "generatedAt": _utcnow(),
         "host": {
             "pid": os.getpid(),
@@ -217,14 +271,32 @@ def run_sizes(sizes: list[int], *, out_path: Path) -> dict[str, Any]:
         },
         "sizes": sizes,
         "results": results,
+        "nonLinearWorkingSet": bound,
         "truth": {
             "fixturesCommitted": False,
             "hardOsEnforcement": False,
             "peakIsProcessRssNotCgroup": True,
+            "workingSetMustNotGrowLinearlyWithN": True,
+            "boundEnforced": bool(enforce_bound),
         },
     }
+    if enforce_bound and bound.get("asserted") and not bound.get("passed"):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        raise SystemExit(
+            f"memory regression: working-set grew too linearly "
+            f"({bound.get('growthBytesPerRow')} B/row > {max_bytes_per_row})"
+        )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    out_path.write_text(payload, encoding="utf-8")
+    # Keep legacy path updated for older readers.
+    if out_path.resolve() != LEGACY_OUT.resolve():
+        try:
+            LEGACY_OUT.parent.mkdir(parents=True, exist_ok=True)
+            LEGACY_OUT.write_text(payload, encoding="utf-8")
+        except OSError:
+            pass
     return report
 
 
@@ -236,6 +308,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated row counts (keep small; default 200,1000,5000)",
     )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument(
+        "--max-bytes-per-row",
+        type=float,
+        default=MAX_RSS_GROWTH_BYTES_PER_ROW,
+        help="Pragmatic RSS growth bound per added row (default 8192)",
+    )
+    parser.add_argument(
+        "--no-enforce-bound",
+        action="store_true",
+        help="Record bound result without failing the process",
+    )
     args = parser.parse_args(argv)
     sizes = [int(x.strip()) for x in str(args.sizes).split(",") if x.strip()]
     if not sizes or any(s <= 0 for s in sizes):
@@ -245,8 +328,23 @@ def main(argv: list[str] | None = None) -> int:
     if max(sizes) > 50_000:
         print("refusing sizes > 50000 (use a dedicated profiling env)", file=sys.stderr)
         return 2
-    report = run_sizes(sizes, out_path=args.out)
-    print(json.dumps({"ok": True, "out": str(args.out), "points": len(report["results"])}, indent=2))
+    report = run_sizes(
+        sizes,
+        out_path=args.out,
+        enforce_bound=not args.no_enforce_bound,
+        max_bytes_per_row=float(args.max_bytes_per_row),
+    )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "out": str(args.out),
+                "points": len(report["results"]),
+                "nonLinearWorkingSet": report.get("nonLinearWorkingSet"),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

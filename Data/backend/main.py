@@ -865,10 +865,21 @@ security_auditor = SecurityAuditor(
 )
 native_runtime = NativeRuntimeStub()
 trading_stub = TradingStub()
+def _backup_corpus_root() -> Path | None:
+    try:
+        from Data.modules.common.corpus import resolve_corpus_root
+
+        return resolve_corpus_root(settings)
+    except Exception:  # noqa: BLE001
+        raw = (settings.research_integration.corpus_root or "").strip()
+        return Path(raw) if raw else None
+
+
 backup_service = BackupService(
     database_path=settings.database_path,
     artifacts_root=settings.artifacts.root,
     backup_root=settings.backup.root,
+    corpus_root=_backup_corpus_root(),
 )
 chaos = ChaosInjector(
     ChaosPlan(

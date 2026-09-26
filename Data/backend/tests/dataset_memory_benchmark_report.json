@@ -1,0 +1,113 @@
+{
+  "generatedAt": "2026-09-26T21:58:05Z",
+  "host": {
+    "pid": 31523,
+    "rssProbe": "proc_self_status_VmRSS_or_resource"
+  },
+  "nonLinearWorkingSet": {
+    "asserted": true,
+    "first": {
+      "peakRssBytes": 38375424,
+      "rows": 500
+    },
+    "growthBytesPerRow": 124.518,
+    "last": {
+      "peakRssBytes": 39309312,
+      "rows": 8000
+    },
+    "maxBytesPerRowBound": 8192.0,
+    "opsCovered": [
+      "validate",
+      "export"
+    ],
+    "passed": false,
+    "rowDelta": 7500,
+    "rssDeltaBytes": 933888,
+    "rssToInputGrowthRatio": 1.1032
+  },
+  "results": [
+    {
+      "datasetId": "f0281136-064e-4c8f-b63a-ee4422796d9a",
+      "dedupe": {
+        "backend": "PYTHON_STREAMING",
+        "jobId": "2d1902c7-1437-4bfd-8ef6-23742e2f7a11",
+        "status": "completed"
+      },
+      "elapsedSeconds": 0.5863,
+      "export": {
+        "backend": "python_streaming",
+        "jobId": "cef05266-d84a-4467-81aa-b77895a0c669",
+        "status": "completed"
+      },
+      "inputBytes": 55280,
+      "peakRssBytes": 38375424,
+      "peakRssMiB": 36.598,
+      "rows": 500,
+      "validate": {
+        "backend": "python_streaming",
+        "jobId": "8abdc265-f962-47b5-8c69-f53160100d34",
+        "status": "completed"
+      }
+    },
+    {
+      "datasetId": "6873500b-8d74-4eb5-95a2-ecb4dcc9191e",
+      "dedupe": {
+        "backend": "PYTHON_STREAMING",
+        "jobId": "d6e5d966-d5a3-461a-a7c5-56dbcb76a2e7",
+        "status": "completed"
+      },
+      "elapsedSeconds": 0.7873,
+      "export": {
+        "backend": "python_streaming",
+        "jobId": "a5f32b85-78d5-47a4-8812-f578b5c68658",
+        "status": "completed"
+      },
+      "inputBytes": 223780,
+      "peakRssBytes": 38617088,
+      "peakRssMiB": 36.828,
+      "rows": 2000,
+      "validate": {
+        "backend": "python_streaming",
+        "jobId": "0954f16f-8391-4ce1-b03a-8bae478c38b2",
+        "status": "completed"
+      }
+    },
+    {
+      "datasetId": "e01a69df-6d75-4f8b-877c-1b6b1467c895",
+      "dedupe": {
+        "backend": "PYTHON_STREAMING",
+        "jobId": "6d97edda-14c1-401b-a464-df90ce56be05",
+        "status": "completed"
+      },
+      "elapsedSeconds": 1.7371,
+      "export": {
+        "backend": "python_streaming",
+        "jobId": "564fa784-724f-446c-ae16-b0f57550f5f3",
+        "status": "completed"
+      },
+      "inputBytes": 901780,
+      "peakRssBytes": 39309312,
+      "peakRssMiB": 37.488,
+      "rows": 8000,
+      "validate": {
+        "backend": "python_streaming",
+        "jobId": "7e01da68-e416-4906-9537-6831aebd31bc",
+        "status": "completed"
+      }
+    }
+  ],
+  "schemaVersion": 2,
+  "sizes": [
+    500,
+    2000,
+    8000
+  ],
+  "truth": {
+    "boundEnforced": false,
+    "fixturesCommitted": false,
+    "hardOsEnforcement": false,
+    "peakIsProcessRssNotCgroup": true,
+    "workingSetMustNotGrowLinearlyWithN": true
+  },
+  "wave": "W180"
+}
