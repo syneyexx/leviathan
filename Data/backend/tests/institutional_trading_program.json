@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "0b38edd58d2402e7a3bcf8710cfdf7b7c7f3b438",
+  "last_verified_commit": "a5e3eabc3208183b9c9df83caa5e21fb95494b64",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W01",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed.",
+  "active_wave": "W02",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed. W02 trading classification/routing landed.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -19,7 +19,10 @@
     "UNMEASURED",
     "NOT_APPLICABLE"
   ],
-  "excluded_trees": ["Data/HADES/", "editor/"],
+  "excluded_trees": [
+    "Data/HADES/",
+    "editor/"
+  ],
   "canonical_docs": [
     "Data/docs/Leviathan_system_backend.md",
     "Data/docs/Leviathan_system_frontend.md"
@@ -44,7 +47,7 @@
     "frontend_typecheck": {
       "command": "cd Data/frontend && npm run typecheck",
       "result": "FAIL",
-      "notes": "Pre-existing ResearchPage.tsx TS2367: 'normal'|'custom' vs 'team' — not introduced by this program; recorded honestly. CI skipped."
+      "notes": "Pre-existing ResearchPage.tsx TS2367: 'normal'|'custom' vs 'team' \u2014 not introduced by this program; recorded honestly. CI skipped."
     },
     "trading_verifier_ci": {
       "status": "SKIPPED",
@@ -75,129 +78,211 @@
   "capability_inventory": {
     "strategy_learning": {
       "status": "CURRENT",
-      "evidence": ["migration 54", "learning.py", "test_strategy_learning.py 18/18", "L01-L15 PASS in trading_gates.json"]
+      "evidence": [
+        "migration 54",
+        "learning.py",
+        "test_strategy_learning.py 18/18",
+        "L01-L15 PASS in trading_gates.json"
+      ]
     },
     "StrategyPolicy": {
       "status": "CURRENT",
-      "evidence": ["policy.py TradingPolicy + DslStrategyPolicy", "PolicyExecutionTests"]
+      "evidence": [
+        "policy.py TradingPolicy + DslStrategyPolicy",
+        "PolicyExecutionTests"
+      ]
     },
     "Agent_Lab": {
       "status": "CURRENT",
-      "evidence": ["agent_lab.py", "migration 53 market_sim_agent_labs"]
+      "evidence": [
+        "agent_lab.py",
+        "migration 53 market_sim_agent_labs"
+      ]
     },
     "Trial_Ledger": {
       "status": "CURRENT",
-      "evidence": ["store.append_trial", "learning_runtime._append_trial", "stats_inferential trial_ledger_count_used"]
+      "evidence": [
+        "store.append_trial",
+        "learning_runtime._append_trial",
+        "stats_inferential trial_ledger_count_used"
+      ]
     },
     "curriculum": {
       "status": "CURRENT",
-      "evidence": ["curriculum.py", "agent_labs curriculum_json"]
+      "evidence": [
+        "curriculum.py",
+        "agent_labs curriculum_json"
+      ]
     },
     "statistical_validation": {
       "status": "CURRENT",
-      "evidence": ["wfa.py", "stats_inferential.py CPCV/DSR/PBO primitives"]
+      "evidence": [
+        "wfa.py",
+        "stats_inferential.py CPCV/DSR/PBO primitives"
+      ]
     },
     "sealed": {
       "status": "CURRENT",
-      "evidence": ["sealed_attempts.py", "LearnerAdaptationTests.test_sealed_update_forbidden"]
+      "evidence": [
+        "sealed_attempts.py",
+        "LearnerAdaptationTests.test_sealed_update_forbidden"
+      ]
     },
     "paper_trading": {
       "status": "CURRENT",
-      "evidence": ["paper_broker.py", "paper_deployment.py", "market_paper_sessions"]
+      "evidence": [
+        "paper_broker.py",
+        "paper_deployment.py",
+        "market_paper_sessions"
+      ]
     },
     "portfolio": {
       "status": "CURRENT",
-      "evidence": ["portefeuille/", "migration 52 paper_portefeuille"]
+      "evidence": [
+        "portefeuille/",
+        "migration 52 paper_portefeuille"
+      ]
     },
     "RiskGuard": {
       "status": "CURRENT",
-      "evidence": ["risk_guard.py"]
+      "evidence": [
+        "risk_guard.py"
+      ]
     },
     "market_providers": {
       "status": "CURRENT",
-      "evidence": ["providers/binance.py", "stooq via capabilities", "csv_local"]
+      "evidence": [
+        "providers/binance.py",
+        "stooq via capabilities",
+        "csv_local"
+      ]
     },
     "market_streams": {
       "status": "CURRENT",
-      "evidence": ["feed/", "migration 51 market_feed_fabric"]
+      "evidence": [
+        "feed/",
+        "migration 51 market_feed_fabric"
+      ]
     },
     "equities": {
       "status": "CURRENT",
-      "evidence": ["capabilities.py EQUITY historical_sim AVAILABLE when feature enabled"]
+      "evidence": [
+        "capabilities.py EQUITY historical_sim AVAILABLE when feature enabled"
+      ]
     },
     "crypto_spot": {
       "status": "CURRENT",
-      "evidence": ["capabilities.py CRYPTO_SPOT AVAILABLE when feature enabled"]
+      "evidence": [
+        "capabilities.py CRYPTO_SPOT AVAILABLE when feature enabled"
+      ]
     },
     "forex": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["capabilities.py FOREX historical_sim/live_paper NOT_IMPLEMENTED"]
+      "evidence": [
+        "capabilities.py FOREX historical_sim/live_paper NOT_IMPLEMENTED"
+      ]
     },
     "futures": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["capabilities.py FUTURES NOT_IMPLEMENTED"]
+      "evidence": [
+        "capabilities.py FUTURES NOT_IMPLEMENTED"
+      ]
     },
     "options": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["capabilities.py OPTIONS NOT_IMPLEMENTED"]
+      "evidence": [
+        "capabilities.py OPTIONS NOT_IMPLEMENTED"
+      ]
     },
     "fixed_income": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["no FIXED_INCOME family in capabilities matrix"]
+      "evidence": [
+        "no FIXED_INCOME family in capabilities matrix"
+      ]
     },
     "quotes": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["DataLevel.QUOTES enum exists; OHLCV truth flags ohlcv_is_not_orderbook; no quote realism claimed"]
+      "evidence": [
+        "DataLevel.QUOTES enum exists; OHLCV truth flags ohlcv_is_not_orderbook; no quote realism claimed"
+      ]
     },
     "orderbook": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["DataLevel.ORDERBOOK enum; features refuse invention; ohlcv_is_not_orderbook"]
+      "evidence": [
+        "DataLevel.ORDERBOOK enum; features refuse invention; ohlcv_is_not_orderbook"
+      ]
     },
     "fundamentals": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["no end-to-end fundamentals pipeline claimed in capabilities"]
+      "evidence": [
+        "no end-to-end fundamentals pipeline claimed in capabilities"
+      ]
     },
     "corporate_actions": {
       "status": "PARTIAL",
-      "evidence": ["universe.py PIT corporate actions; trading_gates G04 IN_PROGRESS — full auto-adjust later"]
+      "evidence": [
+        "universe.py PIT corporate actions; trading_gates G04 IN_PROGRESS \u2014 full auto-adjust later"
+      ]
     },
     "Brain_retrieval": {
       "status": "CURRENT",
-      "evidence": ["modules/brain", "test_one_brain", "test_brain_facade", "HybridRetriever/StagedRetriever"]
+      "evidence": [
+        "modules/brain",
+        "test_one_brain",
+        "test_brain_facade",
+        "HybridRetriever/StagedRetriever"
+      ]
     },
     "dataset_indexing": {
       "status": "CURRENT",
-      "evidence": ["DatasetService", "test_dataset_learning_pipeline"]
+      "evidence": [
+        "DatasetService",
+        "test_dataset_learning_pipeline"
+      ]
     },
     "semantic_embeddings": {
       "status": "FEATURE_GATED",
-      "evidence": ["embedding provider optional; null provider honest lexical mode in dataset learning tests"]
+      "evidence": [
+        "embedding provider optional; null provider honest lexical mode in dataset learning tests"
+      ]
     },
     "execution_model": {
       "status": "CURRENT",
-      "evidence": ["execution.py", "fill_model.py", "costs.py — bar/OHLCV modelled fills"]
+      "evidence": [
+        "execution.py",
+        "fill_model.py",
+        "costs.py \u2014 bar/OHLCV modelled fills"
+      ]
     },
     "scenario_risk": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["no ScenarioSpec engine located under market_sim"]
+      "evidence": [
+        "no ScenarioSpec engine located under market_sim"
+      ]
     },
     "factor_risk": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["no governed factor-exposure layer located"]
+      "evidence": [
+        "no governed factor-exposure layer located"
+      ]
     },
     "drift_detection": {
       "status": "NOT_IMPLEMENTED",
-      "evidence": ["no paper-forward drift detector module located"]
+      "evidence": [
+        "no paper-forward drift detector module located"
+      ]
     },
     "live_trading": {
       "status": "BLOCKED",
-      "evidence": ["LiveTradingGuard LIVE_TRADING_AVAILABLE=BLOCKED"]
+      "evidence": [
+        "LiveTradingGuard LIVE_TRADING_AVAILABLE=BLOCKED"
+      ]
     }
   },
   "known_defects_for_later_waves": [
     {
       "id": "W00_frontend_typecheck_team",
-      "severity": "ResearchPage.tsx TS2367 team vs normal|custom — pre-existing on baseline",
+      "severity": "ResearchPage.tsx TS2367 team vs normal|custom \u2014 pre-existing on baseline",
       "path": "Data/frontend/src/pages/ResearchPage.tsx"
     }
   ],
@@ -248,20 +333,33 @@
         "frontend helper 4/4 PASS"
       ],
       "blockers": [],
-      "last_verified_commit": "0b38edd58d2402e7a3bcf8710cfdf7b7c7f3b438"
+      "last_verified_commit": "e65c6aa9aa9296ea9ac25ee63c11e83fa9252248"
     },
     {
       "id": "W02",
       "title": "Trading dataset semantic classification and routing",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "datasets / DatasetService",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_trading_dataset_classification_w02"
+      ],
+      "evidence": [
+        "modules/datasets/trading_classification.py",
+        "DatasetService.ensure/override/classification_routing_plan",
+        "MARKET_* blocks Knowledge auto-index and learn_to_brain",
+        "TRADING_KNOWLEDGE still indexes",
+        "operator override API",
+        "8/8 W02 PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "a5e3eabc3208183b9c9df83caa5e21fb95494b64"
     },
     {
       "id": "W03",
       "title": "Canonical Trading Brain integration",
       "status": "NOT_STARTED",
-      "owner": "market_sim brain_hooks → brain facade",
+      "owner": "market_sim brain_hooks \u2192 brain facade",
       "required": true
     },
     {

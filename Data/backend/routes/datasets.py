@@ -127,6 +127,19 @@ class LearnBody(BaseModel):
     offlineOnly: bool = True
 
 
+class ClassificationOverrideBody(BaseModel):
+    domain: str
+    tradingKind: str | None = None
+    reason: str = ""
+    versionId: str | None = None
+
+
+class ClassifyBody(BaseModel):
+    versionId: str | None = None
+    force: bool = False
+    modelAdvisory: dict[str, Any] | None = None
+
+
 class MixtureCreateBody(BaseModel):
     name: str
     components: list[dict[str, Any]] = Field(default_factory=list)
@@ -551,6 +564,56 @@ def build_datasets_router(service: DatasetService) -> APIRouter:
         return {
             "learningState": learning,
             "truth": learning.get("truth") or {},
+        }
+
+    @router.get("/api/datasets/{dataset_id}/classification")
+    def get_classification(dataset_id: str, versionId: str | None = None) -> dict:
+        try:
+            plan = service.classification_routing_plan(dataset_id, version_id=versionId)
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return plan
+
+    @router.post("/api/datasets/{dataset_id}/classification/classify")
+    def classify_dataset(dataset_id: str, body: ClassifyBody | None = None) -> dict:
+        body = body or ClassifyBody()
+        try:
+            classification = service.ensure_dataset_classification(
+                dataset_id,
+                version_id=body.versionId,
+                force=body.force,
+                model_advisory=body.modelAdvisory,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {
+            "classification": classification.public_dict(),
+            "routing": service.classification_routing_plan(
+                dataset_id, version_id=body.versionId
+            ),
+        }
+
+    @router.post("/api/datasets/{dataset_id}/classification/override")
+    def override_classification(dataset_id: str, body: ClassificationOverrideBody) -> dict:
+        try:
+            classification = service.override_dataset_classification(
+                dataset_id,
+                domain=body.domain,
+                trading_kind=body.tradingKind,
+                reason=body.reason,
+                version_id=body.versionId,
+            )
+        except DatasetError as exc:
+            _raise(exc)
+            raise
+        return {
+            "classification": classification.public_dict(),
+            "routing": service.classification_routing_plan(
+                dataset_id, version_id=body.versionId
+            ),
+            "truth": {"operator_override": True},
         }
 
     @router.delete("/api/datasets/{dataset_id}")

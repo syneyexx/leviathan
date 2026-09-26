@@ -849,7 +849,174 @@ class DatasetService:
         entry["sourceMissing"] = brain["sourceMissing"]
         entry["learningState"] = learning
         entry["canonicalState"] = learning.get("canonicalState")
+        try:
+            classification = self.get_dataset_classification(ds.dataset_id)
+            if classification is not None:
+                entry["classification"] = classification.public_dict()
+        except Exception:  # noqa: BLE001
+            pass
         return entry
+
+    def get_dataset_classification(
+        self, dataset_id: str, *, version_id: str | None = None
+    ):
+        """Return persisted trading/semantic classification if present."""
+        from .trading_classification import DatasetClassification
+
+        ds = self.get_dataset(dataset_id)
+        ver = None
+        if version_id:
+            ver = self.get_version(version_id)
+        else:
+            ver = self.pick_usable_version(dataset_id)
+        for blob in (
+            (ver.metadata or {}).get("classification") if ver is not None else None,
+            (ds.metadata or {}).get("classification"),
+            (ds.provenance or {}).get("classification"),
+        ):
+            parsed = DatasetClassification.from_dict(blob if isinstance(blob, dict) else None)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def ensure_dataset_classification(
+        self,
+        dataset_id: str,
+        *,
+        version_id: str | None = None,
+        force: bool = False,
+        model_advisory: dict[str, Any] | None = None,
+    ):
+        """Classify and persist if missing (or force recompute unless operator override)."""
+        from .store import utc_now
+        from .trading_classification import classify_trading_dataset
+
+        existing = self.get_dataset_classification(dataset_id, version_id=version_id)
+        if existing is not None and existing.operator_override and not force:
+            return existing
+        if existing is not None and not force and model_advisory is None:
+            return existing
+
+        ds = self.get_dataset(dataset_id)
+        ver = self.get_version(version_id) if version_id else self.pick_usable_version(dataset_id)
+        columns: list[str] = []
+        source_path = None
+        if ver is not None and ver.storage_path:
+            source_path = ver.storage_path
+            schema = ver.schema or {}
+            if isinstance(schema.get("columns"), list):
+                columns = [str(c) for c in schema["columns"]]
+        if not source_path:
+            source_path = ds.raw_path or ds.original_uri
+
+        classification = classify_trading_dataset(
+            name=ds.name,
+            filename=ds.original_filename,
+            format_name=ds.detected_format.value if ds.detected_format else None,
+            columns=columns,
+            metadata=dict(ds.metadata or {}),
+            provenance=dict(ds.provenance or {}),
+            source_path=source_path,
+            source_hash=ds.content_hash or (ver.content_hash if ver else None),
+            license=ds.license,
+            model_advisory=model_advisory,
+            classified_at=utc_now(),
+        )
+        self._persist_classification(dataset_id, classification, version_id=ver.version_id if ver else None)
+        return classification
+
+    def override_dataset_classification(
+        self,
+        dataset_id: str,
+        *,
+        domain: str,
+        trading_kind: str | None = None,
+        reason: str = "",
+        version_id: str | None = None,
+    ):
+        """Operator override — authoritative for routing until cleared."""
+        from .store import utc_now
+        from .trading_classification import (
+            DatasetDomain,
+            TradingDatasetKind,
+            apply_operator_override,
+        )
+
+        try:
+            domain_e = DatasetDomain(str(domain).upper())
+        except ValueError as exc:
+            raise DatasetError(
+                f"Invalid domain: {domain}",
+                code="invalid_classification_domain",
+                http_status=400,
+            ) from exc
+        kind_e = None
+        if trading_kind:
+            try:
+                kind_e = TradingDatasetKind(str(trading_kind).upper())
+            except ValueError as exc:
+                raise DatasetError(
+                    f"Invalid trading kind: {trading_kind}",
+                    code="invalid_trading_kind",
+                    http_status=400,
+                ) from exc
+        current = self.get_dataset_classification(dataset_id, version_id=version_id)
+        classification = apply_operator_override(
+            current,
+            domain=domain_e,
+            trading_kind=kind_e,
+            reason=reason,
+            classified_at=utc_now(),
+        )
+        ver = self.get_version(version_id) if version_id else self.pick_usable_version(dataset_id)
+        self._persist_classification(
+            dataset_id, classification, version_id=ver.version_id if ver else None
+        )
+        return classification
+
+    def _persist_classification(
+        self,
+        dataset_id: str,
+        classification,
+        *,
+        version_id: str | None = None,
+    ) -> None:
+        payload = classification.public_dict()
+        ds = self.get_dataset(dataset_id)
+        meta = dict(ds.metadata or {})
+        meta["classification"] = payload
+        prov = dict(ds.provenance or {})
+        prov["classification"] = {
+            "domain": payload["domain"],
+            "tradingKind": payload["tradingKind"],
+            "route": payload["route"],
+            "method": payload["method"],
+            "confidence": payload["confidence"],
+            "classifiedAt": payload["classifiedAt"],
+        }
+        self.store.update_dataset(dataset_id, metadata=meta, provenance=prov)
+        if version_id:
+            ver = self.get_version(version_id)
+            vmeta = dict(ver.metadata or {})
+            vmeta["classification"] = payload
+            self.store.update_version(version_id, metadata=vmeta)
+
+    def classification_routing_plan(self, dataset_id: str, *, version_id: str | None = None) -> dict[str, Any]:
+        """Explicit routing receipt — what pipeline owns this dataset version."""
+        from .trading_classification import allows_knowledge_auto_index
+
+        classification = self.ensure_dataset_classification(dataset_id, version_id=version_id)
+        pub = classification.public_dict()
+        return {
+            "datasetId": dataset_id,
+            "versionId": version_id,
+            "classification": pub,
+            "knowledgeAutoIndexAllowed": allows_knowledge_auto_index(classification),
+            "marketSimIngestRecommended": pub["route"] == "MARKET_SIM_INGEST",
+            "structuredPitRecommended": pub["route"] == "STRUCTURED_PIT",
+            "holdForOperator": pub["route"] == "HOLD_OPERATOR",
+            "truth": pub.get("truth") or {},
+        }
 
     def list_library_datasets(self, *, limit: int = 100) -> list[dict[str, Any]]:
         return [self.brain_library_entry(d) for d in self.store.list_datasets(limit=limit)]
@@ -941,6 +1108,26 @@ class DatasetService:
                 "Dataset has no version to learn from",
                 code="no_version",
                 http_status=409,
+            )
+        # Fail closed: market/structured trading data must not silently enter text RAG.
+        classification = self.ensure_dataset_classification(dataset_id, version_id=ver.version_id)
+        from .trading_classification import allows_knowledge_auto_index
+
+        if not allows_knowledge_auto_index(classification) and not bool(
+            (ds.metadata or {}).get("forceKnowledgeIndex")
+        ):
+            raise DatasetError(
+                "Dataset classification routes away from Knowledge indexing; "
+                "override with metadata.forceKnowledgeIndex or reclassify",
+                code="classification_route_blocks_knowledge",
+                http_status=409,
+                details={
+                    "route": classification.route.value,
+                    "domain": classification.domain.value,
+                    "tradingKind": classification.trading_kind.value
+                    if classification.trading_kind
+                    else None,
+                },
             )
         # Block duplicate concurrent learn jobs (not auto-index companions).
         for job in self.store.list_jobs(dataset_id=dataset_id, limit=40):
@@ -2200,6 +2387,14 @@ class DatasetService:
             "validation": validation,
             "storagePath": str(dest),
         }
+        # Classify after materialize so schema/path signals are available.
+        try:
+            classification = self.ensure_dataset_classification(
+                dataset_id, version_id=version.version_id, force=False
+            )
+            result["classification"] = classification.public_dict()
+        except Exception as exc:  # noqa: BLE001 — classification must not fail materialize
+            result["classificationError"] = str(exc)[:300]
         if validation.get("valid"):
             auto = self._maybe_auto_index_ready_version(dataset_id, version.version_id)
             if auto is not None:
@@ -2247,6 +2442,25 @@ class DatasetService:
         quality = meta.get("quality") or report.get("quality")
         if isinstance(quality, dict) and quality.get("blocked"):
             return {"enqueued": False, "reason": "quality_blocked"}
+        # Trading classification routing — do not silently RAG market/structured data.
+        try:
+            classification = self.ensure_dataset_classification(dataset_id, version_id=version_id)
+        except Exception:  # noqa: BLE001
+            classification = self.get_dataset_classification(dataset_id, version_id=version_id)
+        from .trading_classification import allows_knowledge_auto_index
+
+        if classification is not None and not allows_knowledge_auto_index(classification):
+            return {
+                "enqueued": False,
+                "reason": "routed_away_from_knowledge",
+                "route": classification.route.value,
+                "domain": classification.domain.value,
+                "tradingKind": classification.trading_kind.value if classification.trading_kind else None,
+                "truth": {
+                    "contamination_quality_gates_best_effort": True,
+                    "classification_blocks_wrong_pipeline": True,
+                },
+            }
         # Skip if an index for this version is already READY / INDEXING / PENDING.
         for idx in self.store.list_indexes(dataset_id):
             if idx.version_id == version_id and idx.status in {
