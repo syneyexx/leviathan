@@ -843,6 +843,7 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 - data realism (W13): `universe.py` (PIT membership), `costs.py` (CostModelPack provenance), `stats_inferential.py` (DSR/PBO/FDR/bootstrap/CPCV geometry);
 - strategy governance (W14): `strategy_asset.py`, `strategy_dsl.py` (v3), `regimes.py`, `hpo.py`, `curriculum.py`;
 - agent lab (W15): `agent_lab.py` (scientific search / tournaments / lesson trust);
+- paper ops (W16): `paper_deployment.py`;
 - strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py` (`resolve_periods_per_year`), `position_episodes.py` (`ClosedTrade` / `PositionEpisodeTracker`);
 - multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py` (as_of / firewall filtering);
 - paper path: `paper_broker.py`;
@@ -880,6 +881,8 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 **P4B (sim-to-paper gap + Gateway + leases):** `sim_to_paper_gap.measure_sim_to_paper_gap` reports honest MEASURED/UNMEASURED gaps (G33). `LiveBrokerAdapter` is UNSUPPORTED (G35). Market-sim mutation routes bind `ExecutionGateway` + `capability_catalog` (G37, D16). `claim_next_runnable` uses `BEGIN IMMEDIATE`; JobStore leases are canonical (G38, D25/D26). Contiguous migrations through 48 (G39).
 
 **P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
+
+**W16 Trading Lab IV (CURRENT):** `paper_deployment.py` PaperDeployment with compatibility validation, environment fingerprint, feed health (staleness/gaps), kill switch, and modelled/shadow/paper gap comparison. Paper does not prove live profitability; LIVE BLOCKED; A5 impossible.
 
 **W15 Trading Lab III (CURRENT):** `agent_lab.py` scientific search loop with pre-registered `AcceptanceCriteria` (threshold relaxation forbidden). Terminal outcomes `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED` (valid PASS). Lessons default `AGENT_PROPOSED`; sealed lineage contamination refused; tournaments VAL-first with Elo that does not prove profitability; public trajectory→dataset bridge (no hidden CoT). Live BLOCKED; A5 impossible.
 
