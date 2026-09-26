@@ -3,7 +3,7 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "c40dd9faea90a83c582c39813eef9008965d60eb",
-  "active_wave": "W03",
+  "active_wave": "W04",
   "notes": "Maps W00-W23 masterprompt waves to existing R/G/F gates. Status is NOT PASS without executed evidence.",
   "status_vocabulary": [
     "NOT_STARTED",
@@ -129,7 +129,7 @@
     {
       "id": "W03",
       "title": "Typed completion, evidence and independent verification",
-      "status": "IN_PROGRESS",
+      "status": "PASS",
       "owner": "verification",
       "dependencies": ["W01"],
       "acceptance": [
@@ -137,7 +137,23 @@
         "unrelated receipts do not pass tests",
         "required verification failures visible"
       ],
-      "evidence": [],
+      "implementation_paths": [
+        "Data/modules/cognition/completion.py",
+        "Data/modules/cognition/task_model.py",
+        "Data/modules/verification/types.py"
+      ],
+      "tests": [
+        "Data/backend/tests/test_adversarial_w03_completion.py",
+        "Data/backend/tests/test_round1_trust_foundation.py::CompletionFalsePositiveTests"
+      ],
+      "evidence": [
+        {
+          "kind": "unit",
+          "command": "pytest test_adversarial_w03_completion.py CompletionFalsePositiveTests",
+          "exit": 0,
+          "notes": "A04 unrelated shell; stale/fake/model-authored rejected; legacy unverified"
+        }
+      ],
       "blocker": null
     }
   ],

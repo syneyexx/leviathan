@@ -76,6 +76,8 @@ class CompletionFalsePositiveTests(unittest.TestCase):
                 "executed": True,
                 "tests_passed": True,
                 "exit_code": 0,
+                "attempt_id": "attempt-1",
+                "workspace_revision": "rev-workspace-1",
             },
             evidence_refs=["obs:obs-1"],
         )
