@@ -1,0 +1,818 @@
+/* ============================================================
+   LEVIATHAN — RITUAL PAGE HARMONIZATION
+   Final-route overrides. Layout/behavior stay owned by the original pages;
+   this file normalizes every page family into one restrained operator UI.
+   ============================================================ */
+
+/* --------------------------------------------------------------------------
+   Shared hardening: all routed surfaces
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell .lv-main,
+.lv-ritual-shell .lv-chat-main,
+.lv-ritual-shell .lv-chat-rail,
+.lv-ritual-shell .lv-chat-right,
+.lv-ritual-shell .lv-ag-shell {
+  color: var(--lv-text);
+}
+
+.lv-ritual-shell .lv-main > section,
+.lv-ritual-shell .lv-main > article,
+.lv-ritual-shell .lv-main > div {
+  scroll-margin-top: 12px;
+}
+
+.lv-ritual-shell .lv-link,
+.lv-ritual-shell a:not(.lv-nav-item):not(.lv-dock-item) {
+  color: #cfaa68;
+}
+
+.lv-ritual-shell .lv-link:hover,
+.lv-ritual-shell a:not(.lv-nav-item):not(.lv-dock-item):hover {
+  color: #ead49e;
+}
+
+.lv-ritual-shell hr {
+  border: 0;
+  border-top: 1px solid rgba(188, 142, 66, 0.17);
+}
+
+/* --------------------------------------------------------------------------
+   COMMAND — the visual anchor of the entire product
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero {
+  min-height: clamp(138px, 18vh, 196px);
+  background:
+    linear-gradient(90deg, rgba(3, 5, 4, 0.86), rgba(3, 5, 4, 0.32) 54%, rgba(3, 5, 4, 0.68)),
+    url("/assets/leviathan-ritual-skyline.svg") center 52% / cover no-repeat,
+    #050706;
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-media {
+  opacity: .50;
+  mix-blend-mode: luminosity;
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-shade {
+  background:
+    linear-gradient(90deg, rgba(2,4,3,.93) 0%, rgba(2,4,3,.55) 39%, rgba(2,4,3,.34) 66%, rgba(2,4,3,.78) 100%),
+    linear-gradient(180deg, rgba(2,4,3,.05), rgba(2,4,3,.72));
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-content {
+  align-items: flex-start;
+  text-align: left;
+  padding-left: clamp(22px, 2.3vw, 42px);
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-title {
+  font-size: clamp(28px, 3vw, 46px);
+  letter-spacing: .38em;
+  text-indent: 0;
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-kicker,
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-sub {
+  text-align: left;
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-rail {
+  right: clamp(18px, 2vw, 34px);
+  color: rgba(223, 190, 124, .62);
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-command {
+  border: 1px solid rgba(152, 111, 51, .48);
+  border-radius: 3px;
+  background:
+    radial-gradient(circle at 86% 35%, rgba(178, 127, 50, .055), transparent 26%),
+    linear-gradient(180deg, rgba(11,14,11,.97), rgba(5,7,6,.98));
+  box-shadow: 0 12px 30px rgba(0,0,0,.34);
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-prompt {
+  min-height: 54px;
+  border-color: rgba(187, 139, 62, .58);
+  box-shadow: inset 0 0 0 1px rgba(238,208,147,.016);
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-feature {
+  border-left: 2px solid rgba(186,137,60,.35);
+  box-shadow: none;
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-feature:hover {
+  border-left-color: #d0a154;
+  transform: none;
+}
+
+.lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-card {
+  border-color: rgba(145, 106, 51, .46);
+}
+
+/* --------------------------------------------------------------------------
+   CHAT
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-chat-app .lv-body {
+  background:
+    linear-gradient(rgba(3,5,4,.94), rgba(3,5,4,.97)),
+    url("/assets/leviathan-ritual-seal.svg") 72% 48% / min(66vw, 860px) no-repeat;
+}
+
+.lv-ritual-shell.lv-chat-app .lv-chat-rail {
+  border-right-color: rgba(154,111,51,.46);
+  background:
+    linear-gradient(180deg, rgba(7,10,8,.985), rgba(3,5,4,.995));
+}
+
+.lv-ritual-shell.lv-chat-app .lv-chat-rail-head h2 {
+  font-family: var(--lv-font-display);
+  font-size: 17px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--lv-gold-pale);
+}
+
+.lv-ritual-shell.lv-chat-app .lv-new-chat,
+.lv-ritual-shell.lv-chat-app .lv-chat-search,
+.lv-ritual-shell.lv-chat-app .lv-thread,
+.lv-ritual-shell.lv-chat-app .lv-right-tab {
+  border-radius: 2px;
+}
+
+.lv-ritual-shell.lv-chat-app .lv-new-chat {
+  border-color: rgba(190,143,67,.52);
+  background: rgba(184,135,59,.05);
+  box-shadow: none;
+}
+
+.lv-ritual-shell.lv-chat-app .lv-chip {
+  border-radius: 2px;
+  height: 24px;
+}
+
+.lv-ritual-shell.lv-chat-app .lv-thread {
+  padding: 9px 9px;
+}
+
+.lv-ritual-shell.lv-chat-app .lv-thread.is-active {
+  border-color: rgba(140, 62, 37, .45);
+  background: linear-gradient(90deg, rgba(103,27,19,.45), rgba(135,86,36,.06));
+  box-shadow: inset 2px 0 0 #d1a457;
+}
+
+.lv-ritual-shell.lv-chat-app .lv-chat-main {
+  background:
+    radial-gradient(circle at 50% 34%, rgba(201,154,80,.035), transparent 35%),
+    rgba(2,4,3,.46);
+}
+
+.lv-ritual-shell.lv-chat-app .lv-chat-top {
+  border-bottom-color: rgba(145,105,50,.40);
+  background: linear-gradient(180deg, rgba(8,11,8,.80), rgba(5,7,6,.70));
+}
+
+.lv-ritual-shell.lv-chat-app .lv-chat-title {
+  font-family: var(--lv-font-display);
+  letter-spacing: .08em;
+  color: #e9ddc4;
+}
+
+.lv-ritual-shell.lv-chat-app .lv-chat-right {
+  border-left-color: rgba(145,105,50,.42);
+  background: linear-gradient(180deg, rgba(7,9,7,.96), rgba(3,5,4,.99));
+}
+
+.lv-ritual-shell.lv-chat-app .lv-right-tab.is-active {
+  color: #e4c986;
+  border-color: rgba(190,143,67,.58);
+  background: rgba(181,132,56,.065);
+}
+
+.lv-ritual-shell.lv-chat-app .lv-composer,
+.lv-ritual-shell.lv-chat-app [class*="composer"] {
+  border-radius: 3px;
+  border-color: rgba(169,123,55,.50);
+}
+
+/* --------------------------------------------------------------------------
+   TASKS
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell .lv-main.lv-tasks-page {
+  --tasks-bg: #030504;
+  --tasks-bg-2: #060806;
+  --tasks-bg-3: #090b08;
+  --tasks-bg-4: #0c0f0b;
+  --tasks-border: rgba(159, 116, 52, .44);
+  --tasks-border-soft: rgba(159, 116, 52, .18);
+  --tasks-border-cyan: rgba(192, 145, 68, .36);
+  --tasks-gold: #c99a50;
+  --tasks-gold-soft: #a87937;
+  --tasks-gold-pale: #e2cb94;
+  --tasks-cream: #eee7da;
+  --tasks-cyan: #78b9b2;
+  --tasks-cyan-bright: #94ccc4;
+  --tasks-green: #3bd29b;
+  --tasks-red: #c95a4e;
+  --tasks-orange: #c98741;
+  --tasks-purple: #9883ae;
+  --tasks-blue: #7993aa;
+  --tasks-text: #ddd9cf;
+  --tasks-text-muted: #817f78;
+  --tasks-text-dim: #5d5d58;
+  --tasks-radius: 3px;
+  --tasks-radius-sm: 2px;
+
+  background:
+    radial-gradient(ellipse at 82% 4%, rgba(181,130,53,.055), transparent 34%),
+    linear-gradient(180deg, #030504 0%, #020302 100%);
+}
+
+.lv-ritual-shell .lv-tasks-hero {
+  height: 98px;
+  min-height: 98px;
+  border-radius: 3px;
+  border-color: rgba(176, 128, 53, .55);
+  background:
+    linear-gradient(90deg, rgba(3,5,4,.94), rgba(4,6,5,.58), rgba(3,5,4,.80)),
+    url("/assets/leviathan-ritual-skyline.svg") 70% 50% / cover no-repeat;
+  box-shadow: inset 0 1px rgba(237,207,145,.026), 0 10px 24px rgba(0,0,0,.25);
+}
+
+.lv-ritual-shell .lv-tasks-hero::before {
+  right: 4%;
+  top: 50%;
+  width: 128px;
+  height: 128px;
+  transform: translateY(-50%);
+  border-radius: 0;
+  background: url("/assets/leviathan-ritual-seal.svg") center / contain no-repeat;
+  box-shadow: none;
+  opacity: .32;
+}
+
+.lv-ritual-shell .lv-tasks-hero::after {
+  background: linear-gradient(90deg, transparent 62%, rgba(180,132,55,.025));
+}
+
+.lv-ritual-shell .lv-tasks-hero-title {
+  font-size: 34px;
+  font-weight: 400;
+  color: #eee4cf;
+  text-shadow: none;
+}
+
+.lv-ritual-shell .lv-tasks-kpi,
+.lv-ritual-shell [class^="lv-tasks-"][class*="panel"],
+.lv-ritual-shell [class^="lv-tasks-"][class*="card"] {
+  border-radius: 3px;
+  border-color: rgba(149,108,50,.42);
+  background: linear-gradient(150deg, rgba(11,14,11,.95), rgba(5,7,6,.98));
+  box-shadow: inset 0 1px rgba(236,205,143,.018), 0 8px 18px rgba(0,0,0,.25);
+}
+
+.lv-ritual-shell .lv-tasks-kpi-icon {
+  border-radius: 2px;
+  background: rgba(0,0,0,.24);
+  box-shadow: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   CODING
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-app--coding .lv-ca-main {
+  background:
+    radial-gradient(circle at 83% 12%, rgba(179,128,50,.04), transparent 27%),
+    transparent;
+}
+
+.lv-ritual-shell.lv-app--coding .lv-ca-hero {
+  border-radius: 3px;
+  border-color: rgba(175,127,54,.57);
+  background: #050706;
+}
+
+.lv-ritual-shell.lv-app--coding .lv-ca-hero img {
+  filter: grayscale(.22) sepia(.30) saturate(.45) contrast(1.14) brightness(.68);
+}
+
+.lv-ritual-shell.lv-app--coding .lv-ca-panel,
+.lv-ritual-shell.lv-app--coding .lv-ca-banner {
+  border-radius: 3px;
+  border-color: rgba(148,107,49,.44);
+  background:
+    linear-gradient(180deg, rgba(194,145,66,.035), transparent 30%),
+    linear-gradient(180deg, rgba(11,14,11,.96), rgba(5,7,6,.985));
+  box-shadow: 0 9px 22px rgba(0,0,0,.28);
+}
+
+.lv-ritual-shell.lv-app--coding .lv-ca-panel-title {
+  color: #dfca9c;
+  font-weight: 500;
+}
+
+.lv-ritual-shell.lv-app--coding .lv-ca-status-pill {
+  border-radius: 2px;
+  border-color: rgba(111,169,158,.32);
+  background: rgba(75,142,132,.05);
+  color: #8ec0b9;
+}
+
+.lv-ritual-shell.lv-app--coding .lv-ca-status-pill .lv-ca-dot {
+  box-shadow: 0 0 6px rgba(57,217,155,.36);
+}
+
+/* --------------------------------------------------------------------------
+   LLM / MODELS / TRAINING / DATASET MANAGEMENT PIXEL PAGES
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-section-llm {
+  --lv-cyan: #79b8b1;
+  --lv-blue: #778da8;
+}
+
+.lv-ritual-shell.lv-section-llm .lv-px-hero {
+  border-radius: 3px;
+  border-color: rgba(174,127,55,.55);
+  background:
+    radial-gradient(ellipse at 76% 46%, rgba(182,130,51,.06), transparent 48%),
+    linear-gradient(180deg, rgba(10,13,10,.98), rgba(5,7,6,.98));
+  box-shadow: 0 12px 26px rgba(0,0,0,.34);
+}
+
+.lv-ritual-shell.lv-section-llm .lv-px-hero::after {
+  content: "";
+  position: absolute;
+  right: 3%;
+  top: 50%;
+  width: 180px;
+  aspect-ratio: 1;
+  transform: translateY(-50%);
+  background: url("/assets/leviathan-ritual-seal.svg") center / contain no-repeat;
+  opacity: .14;
+  pointer-events: none;
+}
+
+.lv-ritual-shell.lv-section-llm .lv-px-hero-quote {
+  border-right-color: rgba(190,142,63,.42);
+}
+
+.lv-ritual-shell.lv-section-llm .lv-px-kpi,
+.lv-ritual-shell.lv-section-llm .lv-px-action,
+.lv-ritual-shell.lv-section-llm .lv-px-panel {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.42);
+  background: linear-gradient(180deg, rgba(12,15,12,.965), rgba(5,7,6,.985));
+  box-shadow: none;
+}
+
+.lv-ritual-shell.lv-section-llm .lv-px-kpi-ico {
+  border-radius: 2px;
+  border-color: rgba(190,143,67,.27);
+  color: #d0a45c;
+  background: rgba(190,143,67,.045);
+}
+
+.lv-ritual-shell.lv-section-llm .lv-px-kpi-hint.is-cyan,
+.lv-ritual-shell.lv-section-llm .lv-px-panel [class*="cyan"] {
+  color: #83bcb6;
+}
+
+/* --------------------------------------------------------------------------
+   AGENTS
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-app--agents {
+  --ag-panel-bg: linear-gradient(180deg, rgba(10,13,10,.97), rgba(4,6,5,.99));
+  --ag-border: rgba(151,109,49,.44);
+  --ag-border-soft: rgba(151,109,49,.18);
+  --ag-border-cyan: rgba(117,177,168,.24);
+  --ag-row: rgba(255,255,255,.025);
+  --ag-ok: #3bd39b;
+  --ag-warn: #c98b44;
+  --ag-bad: #c75b50;
+  --ag-busy: #79b8b1;
+  --ag-muted: #72736d;
+}
+
+.lv-ritual-shell.lv-app--agents .lv-ag-hero {
+  border-radius: 3px;
+  border-color: rgba(176,129,55,.56);
+}
+
+.lv-ritual-shell.lv-app--agents .lv-ag-hero-media img {
+  filter: grayscale(.18) sepia(.28) saturate(.44) contrast(1.14) brightness(.68);
+}
+
+.lv-ritual-shell.lv-app--agents .lv-ag-panel {
+  border-radius: 3px;
+  border-color: rgba(146,106,50,.42);
+  background: linear-gradient(180deg, rgba(11,14,11,.97), rgba(5,7,6,.99));
+  box-shadow: 0 8px 20px rgba(0,0,0,.28), inset 0 1px rgba(235,204,140,.018);
+}
+
+.lv-ritual-shell.lv-app--agents .lv-ag-glyph {
+  border-radius: 2px;
+  color: #caa05a;
+}
+
+.lv-ritual-shell.lv-app--agents .lv-ag-link {
+  color: #caa05a;
+}
+
+/* --------------------------------------------------------------------------
+   ANALYTICS
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-app--analytics .lv-an-hero {
+  border-radius: 3px;
+  border-color: rgba(175,128,55,.56);
+  overflow: hidden;
+}
+
+.lv-ritual-shell.lv-app--analytics .lv-an-hero img {
+  filter: grayscale(.28) sepia(.30) saturate(.48) contrast(1.12) brightness(.69);
+}
+
+.lv-ritual-shell.lv-app--analytics .lv-an-card,
+.lv-ritual-shell.lv-app--analytics [class^="lv-an-"][class*="panel"] {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.43);
+  background: linear-gradient(180deg, rgba(11,14,11,.97), rgba(5,7,6,.985));
+  box-shadow: 0 8px 20px rgba(0,0,0,.27);
+}
+
+.lv-ritual-shell.lv-app--analytics .lv-an-spark {
+  filter: saturate(.68);
+}
+
+/* --------------------------------------------------------------------------
+   MEDIA CONTROL + PLATFORM PAGES
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-section-media {
+  --lv-cyan: #78b7b1;
+  --lv-blue: #7d8fac;
+}
+
+.lv-ritual-shell.lv-section-media .lv-mc-hero,
+.lv-ritual-shell.lv-section-media [class^="lv-mp-"][class*="hero"],
+.lv-ritual-shell.lv-section-media [class^="lv-mi-"][class*="hero"],
+.lv-ritual-shell.lv-section-media [class^="lv-mf-"][class*="hero"] {
+  border-radius: 3px;
+  border-color: rgba(175,128,55,.57);
+}
+
+.lv-ritual-shell.lv-section-media .lv-mc-panel,
+.lv-ritual-shell.lv-section-media [class^="lv-mc-"][class*="card"],
+.lv-ritual-shell.lv-section-media [class^="lv-mp-"][class*="card"],
+.lv-ritual-shell.lv-section-media [class^="lv-mp-"][class*="panel"],
+.lv-ritual-shell.lv-section-media [class^="lv-mi-"][class*="card"],
+.lv-ritual-shell.lv-section-media [class^="lv-mf-"][class*="card"] {
+  border-radius: 3px;
+  border-color: rgba(143,104,49,.42);
+  background-color: rgba(6,8,6,.96);
+  box-shadow: 0 8px 20px rgba(0,0,0,.25);
+}
+
+.lv-ritual-shell.lv-section-media .lv-mc-channel-card {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.34);
+  background: rgba(3,5,4,.56);
+}
+
+.lv-ritual-shell.lv-section-media .lv-mc-channel-card:hover {
+  border-color: rgba(198,150,72,.54);
+  box-shadow: none;
+  transform: none;
+}
+
+.lv-ritual-shell.lv-section-media [class*="thumb"] img,
+.lv-ritual-shell.lv-section-media [class*="poster"] img,
+.lv-ritual-shell.lv-section-media [class*="asset"] img {
+  border-radius: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   TRADINGCENTER
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-section-trading {
+  --lv-cyan: #77b8b1;
+  --lv-blue: #778da8;
+}
+
+.lv-ritual-shell.lv-section-trading .lv-tp-hero,
+.lv-ritual-shell.lv-section-trading [class^="lv-sim-"][class*="hero"],
+.lv-ritual-shell.lv-section-trading [class^="lv-st-"][class*="hero"] {
+  border-radius: 3px;
+  border-color: rgba(176,129,55,.58);
+}
+
+.lv-ritual-shell.lv-section-trading .lv-tp-hero-media img,
+.lv-ritual-shell.lv-section-trading [class*="hero"] img {
+  filter: grayscale(.22) sepia(.26) saturate(.48) contrast(1.12) brightness(.70);
+}
+
+.lv-ritual-shell.lv-section-trading .lv-tp-hero-rail {
+  border-radius: 3px;
+  border-color: rgba(168,122,53,.44);
+  background: rgba(4,7,5,.82);
+  backdrop-filter: none;
+}
+
+.lv-ritual-shell.lv-section-trading .lv-tp-panel,
+.lv-ritual-shell.lv-section-trading [class^="lv-sim-"][class*="panel"],
+.lv-ritual-shell.lv-section-trading [class^="lv-st-"][class*="panel"],
+.lv-ritual-shell.lv-section-trading [class^="lv-br-"][class*="panel"],
+.lv-ritual-shell.lv-section-trading [class^="lv-wf-"][class*="panel"] {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.43);
+  background:
+    linear-gradient(180deg, rgba(186,137,59,.025), transparent 35%),
+    rgba(6,8,6,.965);
+  box-shadow: 0 8px 20px rgba(0,0,0,.26);
+}
+
+.lv-ritual-shell.lv-section-trading .lv-tp-panel-title {
+  color: rgba(218,196,151,.68);
+}
+
+.lv-ritual-shell.lv-section-trading .is-cyan {
+  color: #7dbab4;
+}
+
+.lv-ritual-shell.lv-section-trading .is-good {
+  color: #45cc99;
+}
+
+.lv-ritual-shell.lv-section-trading .is-bad {
+  color: #c85b50;
+}
+
+.lv-ritual-shell.lv-section-trading [class*="ticker"] > *,
+.lv-ritual-shell.lv-section-trading [class*="kpi"] {
+  border-radius: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   RESEARCH / BRAIN / COGNITION / MEMORY / KNOWLEDGE / EVIDENCE / DATASETS
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-section-research {
+  --lv-cyan: #7cb9b1;
+  --lv-blue: #768da8;
+}
+
+.lv-ritual-shell.lv-section-research .lv-rd-hero,
+.lv-ritual-shell.lv-section-research .lv-dh-hero,
+.lv-ritual-shell.lv-section-research [class^="lv-br-"][class*="hero"],
+.lv-ritual-shell.lv-section-research [class^="lv-mem-"][class*="hero"],
+.lv-ritual-shell.lv-section-research [class^="lv-ok-"][class*="hero"] {
+  border-radius: 3px;
+  border-color: rgba(176,129,55,.57);
+  box-shadow: 0 12px 28px rgba(0,0,0,.34);
+}
+
+.lv-ritual-shell.lv-section-research .lv-rd-hero-media img,
+.lv-ritual-shell.lv-section-research .lv-dh-hero-media img,
+.lv-ritual-shell.lv-section-research [class*="hero"] img {
+  filter: grayscale(.24) sepia(.30) saturate(.43) contrast(1.14) brightness(.70);
+}
+
+.lv-ritual-shell.lv-section-research .lv-rd-hero-title,
+.lv-ritual-shell.lv-section-research .lv-dh-hero-title {
+  color: #e5cf98;
+  background: none;
+  -webkit-text-fill-color: initial;
+  text-shadow: none;
+  font-weight: 400;
+}
+
+.lv-ritual-shell.lv-section-research .lv-rd-hero-quote,
+.lv-ritual-shell.lv-section-research .lv-dh-hero-quote {
+  border-color: rgba(180,132,57,.44);
+  border-radius: 2px;
+  background: rgba(4,7,5,.68);
+  box-shadow: none;
+}
+
+.lv-ritual-shell.lv-section-research .lv-rd-query,
+.lv-ritual-shell.lv-section-research .lv-rd-panel,
+.lv-ritual-shell.lv-section-research .lv-dh-panel,
+.lv-ritual-shell.lv-section-research [class^="lv-br-"][class*="panel"],
+.lv-ritual-shell.lv-section-research [class^="lv-mem-"][class*="panel"],
+.lv-ritual-shell.lv-section-research [class^="lv-ok-"][class*="panel"] {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.43);
+  background: linear-gradient(180deg, rgba(11,14,11,.965), rgba(5,7,6,.985));
+  box-shadow: 0 8px 20px rgba(0,0,0,.26);
+}
+
+.lv-ritual-shell.lv-section-research .lv-rd-tab.is-active {
+  color: #e2c783;
+  border-bottom-color: #c99a50;
+}
+
+.lv-ritual-shell.lv-section-research .lv-dh-pill {
+  border-radius: 2px;
+  border-color: rgba(150,109,51,.34);
+  background: rgba(5,8,6,.84);
+}
+
+.lv-ritual-shell.lv-section-research .lv-dh-pill.is-active {
+  background: linear-gradient(180deg, rgba(118,38,24,.40), rgba(89,32,21,.30));
+  border-color: rgba(169,79,43,.47);
+  color: #f0e3cf;
+  box-shadow: none;
+}
+
+.lv-ritual-shell.lv-section-research .lv-graph-canvas {
+  border-radius: 3px;
+  border-color: rgba(155,113,51,.45);
+  background-image:
+    radial-gradient(circle at center, rgba(203,155,77,.10), transparent 38%),
+    linear-gradient(rgba(201,154,80,.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201,154,80,.032) 1px, transparent 1px),
+    url("/assets/leviathan-ritual-seal.svg");
+  background-size: auto, 28px 28px, 28px 28px, min(62%, 560px);
+  background-position: center, center, center, center;
+  background-repeat: no-repeat, repeat, repeat, no-repeat;
+}
+
+/* Cognition was historically outside the Research menu prefix; route data still gets a ritual surface. */
+.lv-ritual-shell[data-lv-route="/cognition"] .lv-main {
+  background:
+    radial-gradient(circle at 82% 18%, rgba(185,134,54,.045), transparent 30%),
+    transparent;
+}
+
+.lv-ritual-shell[data-lv-route="/cognition"] .lv-panel,
+.lv-ritual-shell[data-lv-route="/cognition"] [class*="card"] {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.43);
+}
+
+/* --------------------------------------------------------------------------
+   PLUGIN & RUNTIME — performance / tools / modules / MCP / workflows / console
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-section-runtime {
+  --lv-pr-cyan: #78b8b0;
+  --lv-pr-cyan-soft: rgba(90,160,150,.07);
+  --lv-pr-cyan-border: rgba(104,169,158,.24);
+  --lv-pr-gold: #c99a50;
+  --lv-pr-gold-soft: rgba(201,154,80,.08);
+  --lv-pr-gold-border: rgba(201,154,80,.34);
+}
+
+.lv-ritual-shell.lv-section-runtime .lv-pr-hero {
+  border-radius: 3px;
+  border-color: rgba(175,128,55,.57);
+}
+
+.lv-ritual-shell.lv-section-runtime .lv-pr-hero-media img {
+  filter: grayscale(.25) sepia(.28) saturate(.45) contrast(1.13) brightness(.70);
+}
+
+.lv-ritual-shell.lv-section-runtime .lv-pr-hero-rail {
+  border-radius: 3px;
+  border-color: rgba(163,118,51,.42);
+  background: rgba(4,7,5,.80);
+  backdrop-filter: none;
+}
+
+.lv-ritual-shell.lv-section-runtime .lv-pr-kpi,
+.lv-ritual-shell.lv-section-runtime [class^="lv-pr-"][class*="panel"],
+.lv-ritual-shell.lv-section-runtime [class^="lv-pr-"][class*="card"] {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.42);
+  border-top-color: rgba(176,129,55,.42);
+  border-bottom-color: rgba(145,105,49,.42);
+  background: linear-gradient(180deg, rgba(11,14,11,.97), rgba(5,7,6,.99));
+  box-shadow: 0 8px 20px rgba(0,0,0,.26);
+}
+
+.lv-ritual-shell.lv-section-runtime .lv-pr-kpi-value.is-cyan {
+  color: #83bbb5;
+}
+
+.lv-ritual-shell.lv-section-runtime [class*="console"],
+.lv-ritual-shell.lv-section-runtime [class*="terminal"] {
+  border-color: rgba(126, 94, 48, .43);
+  background:
+    linear-gradient(rgba(3,6,4,.94), rgba(3,6,4,.98)),
+    linear-gradient(rgba(201,154,80,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201,154,80,.025) 1px, transparent 1px);
+  background-size: auto, 26px 26px, 26px 26px;
+}
+
+/* --------------------------------------------------------------------------
+   SETTINGS
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell.lv-section-settings .lv-page-hero {
+  border-radius: 3px;
+  border-color: rgba(175,128,55,.57);
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-layout {
+  gap: 8px;
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-nav,
+.lv-ritual-shell.lv-section-settings .lv-settings-content,
+.lv-ritual-shell.lv-section-settings .lv-settings-section,
+.lv-ritual-shell.lv-section-settings .lv-settings-field {
+  border-radius: 3px;
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-nav {
+  border-color: rgba(145,105,49,.44);
+  background: linear-gradient(180deg, rgba(10,13,10,.97), rgba(5,7,6,.99));
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-nav-item {
+  border-radius: 2px;
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-nav-item:hover {
+  background: rgba(185,136,58,.055);
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-nav-item.is-active {
+  color: #f0e4ce;
+  background: linear-gradient(90deg, rgba(107,29,20,.44), rgba(142,91,37,.06));
+  box-shadow: inset 2px 0 0 #d0a254;
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-content,
+.lv-ritual-shell.lv-section-settings .lv-settings-section {
+  border-color: rgba(145,105,49,.42);
+  background: linear-gradient(180deg, rgba(11,14,11,.965), rgba(5,7,6,.985));
+}
+
+.lv-ritual-shell.lv-section-settings .lv-settings-badge {
+  border-radius: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Generic SectionPage / orphan-compatible routes
+   -------------------------------------------------------------------------- */
+
+.lv-ritual-shell .lv-section-page,
+.lv-ritual-shell [class*="section-page"] {
+  background: transparent;
+}
+
+.lv-ritual-shell .lv-section-page .lv-panel,
+.lv-ritual-shell [class*="section-page"] .lv-panel {
+  border-radius: 3px;
+  border-color: rgba(145,105,49,.43);
+}
+
+/* --------------------------------------------------------------------------
+   Responsive density
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 1280px) {
+  .lv-ritual-shell .lv-tasks-kpis,
+  .lv-ritual-shell .lv-pr-kpi-row,
+  .lv-ritual-shell .lv-tp-ticker,
+  .lv-ritual-shell .lv-tp-kpi-row {
+    gap: 6px;
+  }
+
+  .lv-ritual-shell.lv-section-hades:not(.lv-chat-app) .lv-hero-rail {
+    display: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .lv-ritual-shell .lv-tasks-hero::before,
+  .lv-ritual-shell.lv-section-llm .lv-px-hero::after {
+    opacity: .16;
+  }
+
+  .lv-ritual-shell .lv-tasks-hero-right,
+  .lv-ritual-shell .lv-pr-hero-rail,
+  .lv-ritual-shell .lv-tp-hero-rail {
+    display: none;
+  }
+}
+
+/* Ultra-wide keeps information dense and centered instead of stretching cards absurdly. */
+@media (min-width: 2600px) {
+  .lv-ritual-shell .lv-main:not(.lv-chat-main) {
+    padding-left: max(var(--lv-page-pad-x), calc((100vw - var(--lv-sidebar-width) - 2460px) / 2));
+    padding-right: max(var(--lv-page-pad-x), calc((100vw - var(--lv-sidebar-width) - 2460px) / 2));
+  }
+
+  .lv-ritual-shell.lv-chat-app .lv-chat-main {
+    max-width: none;
+  }
+}
