@@ -59,6 +59,9 @@ class BackupManifest:
     is_complete_data_snapshot: bool = False
     corpus_inventory: list[dict[str, Any]] = field(default_factory=list)
     missing_corpus_files: list[dict[str, Any]] = field(default_factory=list)
+    # Three-DB set (optional; legacy single-DB backups omit this)
+    databases: dict[str, dict[str, Any]] = field(default_factory=dict)
+    backup_set_complete: bool = False
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +79,8 @@ class BackupManifest:
             "isCompleteDataSnapshot": self.is_complete_data_snapshot,
             "corpusInventory": list(self.corpus_inventory),
             "missingCorpusFiles": list(self.missing_corpus_files),
+            "databases": dict(self.databases),
+            "backupSetComplete": self.backup_set_complete,
             "truth": {
                 "backup_is_not_cloud_sync": True,
                 "restore_requires_explicit_confirm": True,
@@ -86,6 +91,8 @@ class BackupManifest:
                 "metadataOnlyIsNotCompleteSnapshot": self.backup_kind == BACKUP_KIND_METADATA_ONLY,
                 "corpusInventoryCount": len(self.corpus_inventory),
                 "missingCorpusFileCount": len(self.missing_corpus_files),
+                "canonicalDatabaseCount": len(self.databases) or 1,
+                "backupSetComplete": self.backup_set_complete,
             },
         }
 
@@ -99,6 +106,9 @@ class BackupService:
     Default backups are ``METADATA_ONLY`` (DB + optional artifacts) and must
     never be presented as a complete data snapshot. Optional
     ``include_corpus=True`` copies corpus files when ``corpus_root`` is set.
+
+    Three-DB: when ``database_paths`` is provided, backups include Control,
+    Knowledge, and Market as one coherent backup set.
     """
 
     def __init__(
@@ -108,11 +118,13 @@ class BackupService:
         artifacts_root: Path,
         backup_root: Path,
         corpus_root: Path | None = None,
+        database_paths: Any | None = None,
     ) -> None:
         self.database_path = database_path
         self.artifacts_root = artifacts_root
         self.backup_root = backup_root
         self.corpus_root = Path(corpus_root) if corpus_root else None
+        self.database_paths = database_paths
         self.backup_root.mkdir(parents=True, exist_ok=True)
 
     def list(self, *, limit: int = 50) -> list[BackupManifest]:
@@ -135,8 +147,11 @@ class BackupService:
         note: str | None = None,
         include_corpus: bool = False,
     ) -> BackupManifest:
-        if not self.database_path.is_file():
-            raise BackupError(f"Database not found: {self.database_path}")
+        paths = self._canonical_paths()
+        for domain, path in paths.items():
+            if not path.is_file():
+                raise BackupError(f"{domain} database not found: {path}")
+
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup_id = f"backup-{stamp}"
         dest = self.backup_root / backup_id
@@ -144,10 +159,41 @@ class BackupService:
             raise BackupError(f"Backup already exists: {backup_id}")
         dest.mkdir(parents=True, exist_ok=False)
 
-        db_copy = dest / "leviathan.db"
-        self._safe_sqlite_copy(self.database_path, db_copy)
-        digest = hashlib.sha256(db_copy.read_bytes()).hexdigest()
-        schema_version = self._schema_version(db_copy)
+        databases: dict[str, dict[str, Any]] = {}
+        total_size = 0
+        primary_digest = ""
+        primary_schema = 0
+        for domain, path in paths.items():
+            domain_name = domain.lower()
+            db_copy = dest / f"leviathan_{domain_name}.db"
+            self._safe_sqlite_copy(path, db_copy)
+            digest = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+            schema_version = self._schema_version(db_copy)
+            size = db_copy.stat().st_size
+            total_size += size
+            databases[domain] = {
+                "domain": domain,
+                "sourcePath": str(path),
+                "backupFile": db_copy.name,
+                "sha256": digest,
+                "sizeBytes": size,
+                "schemaVersion": schema_version,
+            }
+            if domain == "CONTROL":
+                primary_digest = digest
+                primary_schema = schema_version
+                # Legacy-compatible primary copy name for older restore tools.
+                shutil.copy2(db_copy, dest / "leviathan.db")
+
+        # If only one path (legacy mode), also name it leviathan.db
+        if len(paths) == 1:
+            only = next(iter(paths.values()))
+            db_copy = dest / "leviathan.db"
+            if not db_copy.is_file():
+                self._safe_sqlite_copy(only, db_copy)
+                primary_digest = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+                primary_schema = self._schema_version(db_copy)
+                total_size = db_copy.stat().st_size
 
         artifacts_copied = 0
         artifacts_included = False
@@ -158,7 +204,10 @@ class BackupService:
             artifacts_copied = sum(1 for p in art_dest.rglob("*") if p.is_file())
             artifacts_included = True
 
-        inventory = self._build_corpus_inventory(db_copy)
+        control_copy = dest / "leviathan_control.db"
+        if not control_copy.is_file():
+            control_copy = dest / "leviathan.db"
+        inventory = self._build_corpus_inventory(control_copy if control_copy.is_file() else dest / "leviathan.db")
         corpus_files_included = False
         backup_kind = BACKUP_KIND_METADATA_ONLY
         is_complete = False
@@ -177,7 +226,6 @@ class BackupService:
                 entry["includedInBackup"] = True
                 entry["backupRelativePath"] = str(Path("corpus") / rel)
                 copied += 1
-            # Also inventory remaining corpus tree files not referenced in DB
             for path in self.corpus_root.rglob("*"):
                 if not path.is_file():
                     continue
@@ -221,14 +269,15 @@ class BackupService:
             meta["note"] = note
         meta["includeCorpusRequested"] = bool(include_corpus)
         meta["corpusRoot"] = str(self.corpus_root) if self.corpus_root else None
+        meta["canonicalDatabaseCount"] = len(databases) or 1
 
         manifest = BackupManifest(
             backup_id=backup_id,
             created_at=utc_now(),
-            database_path=str(db_copy),
-            database_sha256=digest,
-            size_bytes=db_copy.stat().st_size,
-            schema_version=schema_version,
+            database_path=str(dest / "leviathan.db"),
+            database_sha256=primary_digest,
+            size_bytes=total_size,
+            schema_version=primary_schema,
             artifacts_copied=artifacts_copied,
             metadata=meta,
             backup_kind=backup_kind,
@@ -237,6 +286,8 @@ class BackupService:
             is_complete_data_snapshot=is_complete,
             corpus_inventory=inventory,
             missing_corpus_files=[],
+            databases=databases,
+            backup_set_complete=len(databases) == 3 or len(paths) == 1,
         )
         (dest / "manifest.json").write_text(
             json.dumps(manifest.public_dict(), indent=2),
@@ -244,26 +295,73 @@ class BackupService:
         )
         return manifest
 
+    def _canonical_paths(self) -> dict[str, Path]:
+        if self.database_paths is not None:
+            return {
+                "CONTROL": Path(self.database_paths.control),
+                "KNOWLEDGE": Path(self.database_paths.knowledge),
+                "MARKET": Path(self.database_paths.market),
+            }
+        return {"CONTROL": Path(self.database_path)}
+
     def restore(self, backup_id: str, *, confirm: bool = False) -> BackupManifest:
         if not confirm:
             raise BackupError("Restore refused: confirm=true is required")
         dest = self.backup_root / backup_id
         manifest_path = dest / "manifest.json"
-        db_copy = dest / "leviathan.db"
-        if not manifest_path.is_file() or not db_copy.is_file():
+        if not manifest_path.is_file():
             raise BackupError(f"Backup not found: {backup_id}")
 
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        expected = str(data.get("database_sha256") or "")
-        actual = hashlib.sha256(db_copy.read_bytes()).hexdigest()
-        if expected and actual != expected:
-            raise BackupError("Backup database hash mismatch — refusing restore")
+        databases = dict(data.get("databases") or {})
+        live_paths = self._canonical_paths()
 
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        # Replace live DB with verified snapshot.
-        tmp = self.database_path.with_suffix(".restore-tmp")
-        shutil.copy2(db_copy, tmp)
-        tmp.replace(self.database_path)
+        if databases:
+            # Three-DB (or multi-DB) backup set — refuse partial/missing members.
+            for domain in live_paths:
+                entry = databases.get(domain)
+                if not entry:
+                    raise BackupError(
+                        f"Backup set incomplete: missing {domain} member — refusing restore"
+                    )
+                db_copy = dest / str(entry.get("backupFile") or "")
+                if not db_copy.is_file():
+                    raise BackupError(
+                        f"Backup set incomplete: {domain} file missing — refusing restore"
+                    )
+                expected = str(entry.get("sha256") or "")
+                actual = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+                if expected and actual != expected:
+                    raise BackupError(f"{domain} backup hash mismatch — refusing restore")
+            for domain, live in live_paths.items():
+                entry = databases[domain]
+                db_copy = dest / str(entry["backupFile"])
+                live.parent.mkdir(parents=True, exist_ok=True)
+                tmp = live.with_suffix(".restore-tmp")
+                shutil.copy2(db_copy, tmp)
+                tmp.replace(live)
+            primary_digest = str(databases.get("CONTROL", {}).get("sha256") or data.get("database_sha256") or "")
+            primary_schema = int(databases.get("CONTROL", {}).get("schemaVersion") or data.get("schema_version") or 0)
+            total_size = sum(int(v.get("sizeBytes") or 0) for v in databases.values())
+            backup_set_complete = True
+        else:
+            # Legacy single-DB backup compatibility.
+            db_copy = dest / "leviathan.db"
+            if not db_copy.is_file():
+                raise BackupError(f"Backup not found: {backup_id}")
+            expected = str(data.get("database_sha256") or "")
+            actual = hashlib.sha256(db_copy.read_bytes()).hexdigest()
+            if expected and actual != expected:
+                raise BackupError("Backup database hash mismatch — refusing restore")
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.database_path.with_suffix(".restore-tmp")
+            shutil.copy2(db_copy, tmp)
+            tmp.replace(self.database_path)
+            primary_digest = actual
+            primary_schema = int(data.get("schema_version") or 0)
+            total_size = int(data.get("size_bytes") or db_copy.stat().st_size)
+            backup_set_complete = False
+            databases = {}
 
         art_src = dest / "artifacts"
         if art_src.is_dir():
@@ -283,7 +381,6 @@ class BackupService:
         )
         inventory = list(data.get("corpusInventory") or [])
 
-        # Restore corpus files from backup when present
         corpus_backup = dest / "corpus"
         if corpus_included and corpus_backup.is_dir() and self.corpus_root is not None:
             self.corpus_root.mkdir(parents=True, exist_ok=True)
@@ -303,7 +400,6 @@ class BackupService:
 
         is_complete = bool(data.get("isCompleteDataSnapshot")) and not missing
         if backup_kind == BACKUP_KIND_METADATA_ONLY:
-            # Never pretend a metadata-only restore is a complete data snapshot.
             is_complete = False
 
         meta = {**(data.get("metadata") or {}), "restored_at": utc_now()}
@@ -314,9 +410,9 @@ class BackupService:
             backup_id=str(data["backup_id"]),
             created_at=str(data["created_at"]),
             database_path=str(self.database_path),
-            database_sha256=actual,
-            size_bytes=int(data.get("size_bytes") or db_copy.stat().st_size),
-            schema_version=int(data.get("schema_version") or 0),
+            database_sha256=primary_digest,
+            size_bytes=total_size,
+            schema_version=primary_schema,
             artifacts_copied=int(data.get("artifacts_copied") or 0),
             metadata=meta,
             backup_kind=backup_kind,
@@ -329,6 +425,8 @@ class BackupService:
             is_complete_data_snapshot=is_complete,
             corpus_inventory=inventory,
             missing_corpus_files=missing,
+            databases=databases,
+            backup_set_complete=backup_set_complete,
         )
 
     def _manifest_from_dict(self, data: dict[str, Any]) -> BackupManifest:
@@ -362,6 +460,12 @@ class BackupService:
             ),
             corpus_inventory=list(data.get("corpusInventory") or []),
             missing_corpus_files=list(data.get("missingCorpusFiles") or []),
+            databases=dict(data.get("databases") or {}),
+            backup_set_complete=bool(
+                data.get("backupSetComplete")
+                if "backupSetComplete" in data
+                else truth.get("backupSetComplete", False)
+            ),
         )
 
     def _build_corpus_inventory(self, db_path: Path) -> list[dict[str, Any]]:

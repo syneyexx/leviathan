@@ -26,9 +26,10 @@ class DbCommitStatus:
     average_commit_latency_ms: float
     p95_commit_latency_ms: float | None
     apply_rate_per_minute: float
+    lanes: dict[str, Any] | None = None
 
     def public_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "health": self.health,
             "workerId": self.worker_id,
             "workerPid": self.worker_pid,
@@ -48,6 +49,9 @@ class DbCommitStatus:
             "p95CommitLatencyMs": self.p95_commit_latency_ms,
             "applyRatePerMinute": self.apply_rate_per_minute,
         }
+        if self.lanes is not None:
+            payload["lanes"] = self.lanes
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

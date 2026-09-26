@@ -28,6 +28,9 @@ import type {
   AnalyticsTrainingResponse,
   ApiErrorBody,
   BackupManifest,
+  SqliteDatabaseStatus,
+  SqliteQueryResult,
+  SqliteTableInfo,
   ChatResponse,
   CognitionHealth,
   CognitionRunStatus,
@@ -501,6 +504,30 @@ export const api = {
     return request<{ backup: BackupManifest }>("/api/backup", {
       method: "POST",
       body: JSON.stringify({ note: note ?? null }),
+    });
+  },
+
+  listSqliteDatabases(): Promise<{ databases: SqliteDatabaseStatus[] }> {
+    return request<{ databases: SqliteDatabaseStatus[] }>("/api/sqlite/databases");
+  },
+
+  sqliteDatabaseTables(domain: string): Promise<{ domain: string; tables: SqliteTableInfo[] }> {
+    return request<{ domain: string; tables: SqliteTableInfo[] }>(
+      `/api/sqlite/databases/${encodeURIComponent(domain)}/tables`,
+    );
+  },
+
+  sqliteQuery(domain: string, sql: string, limit = 200): Promise<SqliteQueryResult> {
+    return request<SqliteQueryResult>("/api/sqlite/query", {
+      method: "POST",
+      body: JSON.stringify({ domain, sql, limit }),
+    });
+  },
+
+  sqliteMutate(domain: string, confirmDomain: string, sql: string): Promise<{ domain: string; rowcount: number; ok: boolean }> {
+    return request<{ domain: string; rowcount: number; ok: boolean }>("/api/sqlite/mutate", {
+      method: "POST",
+      body: JSON.stringify({ domain, confirmDomain, sql }),
     });
   },
 

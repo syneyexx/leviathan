@@ -43,9 +43,10 @@ class InstitutionalRepository:
             conn.close()
 
     def ensure_schema(self) -> None:
-        from Data.backend.migrations import MigrationRunner
+        from Data.backend.db_upgrade import ensure_domain_schema
+        from Data.modules.common.database_domains import DatabaseDomain
 
-        MigrationRunner(self.db_path).apply_all()
+        ensure_domain_schema(self.db_path, DatabaseDomain.MARKET)
 
     # --- Instruments ---
 

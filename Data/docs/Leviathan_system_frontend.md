@@ -116,7 +116,7 @@ Current top-level groups:
 4. **TradingCenter** — simulation, strategies, market data, portfolio, paper, broker, research;
 5. **Onderzoek & Kennis** — Research, Brain, Geheugen, Knowledge Library, Evidence Vault, Datasets;
 6. **Plugin & Runtime** — Performance, Tools, Modules, MCP, Workflows, Console;
-7. **Instellingen** — general, LLM behavior/studio, rights/security, benchmarks, media, storage, Python/runtime, console/logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation, Data & Research.
+7. **Instellingen** — general, LLM behavior/studio, rights/security, benchmarks, media, storage (three canonical SQLite DBs + SQLite Manager API `/api/sqlite/*`), Python/runtime, console/logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation, Data & Research.
 
 The historical display label `Hades AI` is a UI navigation label; backend ownership and runtime documented here are LEVIATHAN.
 
@@ -195,6 +195,13 @@ Settings aliases route to `/settings?section=...` for the appropriate operator c
 - `chatStream.boundary.test.ts` — chat streaming boundary tests.
 
 Do not introduce page-local duplicate fetch wrappers when a canonical client method exists. API types and backend truth should stay aligned.
+
+Typed SQLite Manager client methods (three canonical DBs):
+
+- `listSqliteDatabases()` → `GET /api/sqlite/databases`
+- `sqliteDatabaseTables(domain)` → `GET /api/sqlite/databases/{domain}/tables`
+- `sqliteQuery(domain, sql)` → `POST /api/sqlite/query`
+- `sqliteMutate(domain, confirmDomain, sql)` → `POST /api/sqlite/mutate` (explicit domain confirm required)
 
 ## Hooks
 

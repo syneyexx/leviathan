@@ -63,13 +63,15 @@ class CommitProducer:
         settings: DbCommitSettings | None = None,
         spool: CommitSpool | None = None,
         receipts: CommitReceiptStore | None = None,
+        domain: str | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.settings = settings or load_db_commit_settings()
-        self.payloads_root = self.settings.payloads_root_for(self.db_path)
+        self.domain = (domain or "control").strip().lower()
+        self.payloads_root = self.settings.payloads_root_for(self.db_path, domain=self.domain)
         ensure_dir(self.payloads_root)
         self.spool = spool or CommitSpool(
-            self.settings.spool_root_for(self.db_path),
+            self.settings.spool_root_for(self.db_path, domain=self.domain),
             settings=self.settings,
             allowed_payload_roots=[
                 self.payloads_root,

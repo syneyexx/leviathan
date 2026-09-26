@@ -7,6 +7,7 @@ import { useAppToast } from "../state/useAppToast";
 import type { SettingState, SettingsCategory } from "../types/api";
 import { SettingField } from "./settings/SettingField";
 import { SettingsNavigation } from "./settings/SettingsNavigation";
+import { SqliteManagerPanel } from "./settings/SqliteManagerPanel";
 
 const EMPTY_CATEGORY_NOTES: Record<string, string> = {
   algemeen:
@@ -714,6 +715,12 @@ export function SettingsPage() {
                 <p className="lv-muted" style={{ marginTop: "0.5rem" }}>
                   Effective hash: {systemPromptHash ?? "—"} · applies live (no restart)
                 </p>
+              </article>
+            ) : null}
+
+            {activeId === "opslag" ? (
+              <article className="lv-panel lv-settings-card span-2">
+                <SqliteManagerPanel />
               </article>
             ) : null}
 

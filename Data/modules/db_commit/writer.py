@@ -11,6 +11,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from Data.modules.common.database_domains import (
+    DatabaseDomain,
+    DatabasePaths,
+    domain_from_commit_operation,
+)
 from Data.modules.common.sqlite_policy import (
     is_transient_sqlite_error,
     open_sqlite_connection,
@@ -72,32 +77,68 @@ class CoordinatorMetrics:
         return ordered[idx]
 
 
+@dataclass
+class _CommitLane:
+    domain: DatabaseDomain
+    db_path: Path
+    spool: CommitSpool
+    receipts: CommitReceiptStore
+    metrics: CoordinatorMetrics
+    ipc: CommitIpcServer | None = None
+
+
 class DbCommitCoordinator:
-    """Serialized COMMIT_WRITE authority. Managed by WorkerSupervisor as db_commit."""
+    """Database-aware COMMIT_WRITE authority with independent Control/Knowledge/Market lanes.
+
+    Managed by WorkerSupervisor as pool ``db_commit``. Independent databases may
+    commit concurrently; each SQLite file still has one serialized lane.
+    """
 
     def __init__(
         self,
-        db_path: Path | str,
+        db_path: Path | str | DatabasePaths,
         *,
         settings: DbCommitSettings | None = None,
         registry: CommitHandlerRegistry | None = None,
         worker_id: str | None = None,
     ) -> None:
-        self.db_path = Path(db_path)
         self.settings = settings or load_db_commit_settings()
         self.registry = registry or build_default_registry()
         self.worker_id = worker_id or f"db_commit-{os.getpid()}"
-        self.receipts = CommitReceiptStore(self.db_path)
-        payloads_root = self.settings.payloads_root_for(self.db_path)
-        self.spool = CommitSpool(
-            self.settings.spool_root_for(self.db_path),
-            settings=self.settings,
-            allowed_payload_roots=[
-                payloads_root,
-                self.db_path.parent.resolve(),
-            ],
-        )
-        self.metrics = CoordinatorMetrics()
+        if isinstance(db_path, DatabasePaths):
+            self.paths = db_path
+        else:
+            single = Path(db_path)
+            # Test / single-file compat: all domains share one physical DB file,
+            # but spool directories remain domain-keyed to avoid collisions.
+            self.paths = DatabasePaths(
+                control=single, knowledge=single, market=single, legacy=None
+            )
+        self.db_path = self.paths.control
+        self._lanes: dict[DatabaseDomain, _CommitLane] = {}
+        for domain, path in self.paths:
+            key = domain.value.lower()
+            payloads_root = self.settings.payloads_root_for(path, domain=key)
+            spool = CommitSpool(
+                self.settings.spool_root_for(path, domain=key),
+                settings=self.settings,
+                allowed_payload_roots=[
+                    payloads_root,
+                    path.parent.resolve(),
+                ],
+            )
+            self._lanes[domain] = _CommitLane(
+                domain=domain,
+                db_path=path,
+                spool=spool,
+                receipts=CommitReceiptStore(path),
+                metrics=CoordinatorMetrics(),
+            )
+        # Compat aliases — default to CONTROL lane for legacy callers.
+        control = self._lanes[DatabaseDomain.CONTROL]
+        self.receipts = control.receipts
+        self.spool = control.spool
+        self.metrics = control.metrics
         self._stop = threading.Event()
         self._draining = False
         self._ready = False
@@ -106,63 +147,112 @@ class DbCommitCoordinator:
         self._retries: dict[str, int] = {}
         self._started_at = time.time()
         self._lock = threading.Lock()
+        self._rr_order = list(DatabaseDomain)
+        self._rr_index = 0
+
+    def lane_for_intent(self, intent: CommitIntent) -> _CommitLane:
+        domain = domain_from_commit_operation(intent.operation, intent.domain)
+        return self._lanes[domain]
+
+    def lane_public_status(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for domain, lane in self._lanes.items():
+            stats = lane.spool.stats()
+            out[domain.value] = {
+                "domain": domain.value,
+                "dbPath": str(lane.db_path),
+                "pendingCount": stats.pending_count,
+                "inflightCount": stats.inflight_count,
+                "commitCount": lane.metrics.commit_count,
+                "retryCount": lane.metrics.retry_count,
+                "busyCount": lane.metrics.busy_count,
+                "failedCount": lane.metrics.failed_count,
+                "p95LatencyMs": lane.metrics.p95_latency_ms(),
+                "inflightCommitId": lane.metrics.inflight_commit_id,
+                "lastAppliedCommitId": lane.metrics.last_applied_commit_id,
+            }
+        return out
 
     @classmethod
     def from_env(cls, ctx: dict[str, Any]) -> DbCommitCoordinator:
         settings = ctx["settings"]
         worker_id = str(ctx.get("worker_id") or f"db_commit-{os.getpid()}")
+        paths = getattr(settings, "database_paths", None)
+        if paths is not None:
+            return cls(paths, worker_id=worker_id)
         return cls(settings.database_path, worker_id=worker_id)
 
     def startup(self) -> None:
-        self.spool.ensure_dirs()
-        self.receipts.initialize()
-        self._verify_schema()
-        self.spool.recover_inflight(receipt_applied=self._receipt_exists)
+        for lane in self._lanes.values():
+            lane.spool.ensure_dirs()
+            lane.receipts.initialize()
+            conn = open_sqlite_connection(lane.db_path)
+            try:
+                lane.receipts.ensure_schema(conn)
+                conn.commit()
+            finally:
+                conn.close()
+            lane.spool.recover_inflight(
+                receipt_applied=lambda intent, _lane=lane: (
+                    _lane.receipts.get_by_commit_id(intent.commit_id) is not None
+                    or (
+                        bool(intent.idempotency_key)
+                        and _lane.receipts.get_by_idempotency_key(intent.idempotency_key)
+                        is not None
+                    )
+                )
+            )
         self._start_ipc()
         self._ready = True
+        pending = sum(lane.spool.stats().pending_count for lane in self._lanes.values())
         self._emit_db_writer(
             "writer gereed",
-            message=f"pending={self.spool.stats().pending_count}",
+            message=f"lanes={len(self._lanes)} pending={pending}",
         )
-
-    def _verify_schema(self) -> None:
-        conn = open_sqlite_connection(self.db_path)
-        try:
-            self.receipts.ensure_schema(conn)
-            conn.commit()
-        finally:
-            conn.close()
 
     def _start_ipc(self) -> None:
-        self._ipc = CommitIpcServer(
-            self.db_path,
-            on_intent=self.accept_intent,
-            token=self._token,
-        )
-        self._ipc.start()
+        # One IPC endpoint per distinct DB file / lane so producers target the owner.
+        started: dict[Path, CommitIpcServer] = {}
+        for lane in self._lanes.values():
+            resolved = lane.db_path.resolve()
+            if resolved in started:
+                lane.ipc = started[resolved]
+                continue
+            server = CommitIpcServer(
+                lane.db_path,
+                on_intent=self.accept_intent,
+                token=self._token,
+            )
+            server.start()
+            started[resolved] = server
+            lane.ipc = server
+        self._ipc = self._lanes[DatabaseDomain.CONTROL].ipc
 
     def shutdown(self, *, drain_current: bool = True) -> None:
         self._draining = True
-        if drain_current and self.metrics.inflight_commit_id:
-            # Finish current only — do not drain multi-hour backlog.
+        if drain_current:
             pass
-        if self._ipc is not None:
-            self._ipc.stop()
-            self._ipc = None
-        stats = self.spool.stats()
+        seen: set[int] = set()
+        for lane in self._lanes.values():
+            if lane.ipc is not None and id(lane.ipc) not in seen:
+                lane.ipc.stop()
+                seen.add(id(lane.ipc))
+            lane.ipc = None
+        self._ipc = None
+        pending = sum(lane.spool.stats().pending_count for lane in self._lanes.values())
         self._emit_db_writer(
             "writer stopt",
-            message=f"pending={stats.pending_count}",
+            message=f"pending={pending}",
         )
         self._stop.set()
         self._ready = False
 
     def accept_intent(self, intent: CommitIntent) -> WriterAck:
         """IPC accept path — durable spool immediately; process asynchronously."""
+        lane = self.lane_for_intent(intent)
         if self._draining or self._stop.is_set():
-            # Still spool so producers do not fall back to direct writes.
             try:
-                self.spool.enqueue(intent, allow_critical=True, check_backpressure=False)
+                lane.spool.enqueue(intent, allow_critical=True, check_backpressure=False)
             except Exception as exc:  # noqa: BLE001
                 return WriterAck(
                     status=AckStatus.SPOOL_UNAVAILABLE.value,
@@ -175,7 +265,7 @@ class DbCommitCoordinator:
                 message="draining",
             )
 
-        existing = self.receipts.get_by_idempotency_key(intent.idempotency_key)
+        existing = lane.receipts.get_by_idempotency_key(intent.idempotency_key)
         if existing is not None:
             return WriterAck(
                 status=AckStatus.ALREADY_APPLIED.value,
@@ -185,7 +275,7 @@ class DbCommitCoordinator:
             )
 
         try:
-            self.spool.enqueue(intent)
+            lane.spool.enqueue(intent)
         except Exception as exc:  # noqa: BLE001
             code = getattr(exc, "code", "DB_COMMIT_ERROR")
             status = (
@@ -199,7 +289,9 @@ class DbCommitCoordinator:
         domain = intent.domain or intent.operation.split(".", 1)[0]
         self._emit_db_writer(
             f"{domain.title()} '{title}' commit ingepland",
-            message=f"{intent.record_count_hint} records" if intent.record_count_hint else None,
+            message=f"{intent.record_count_hint} records [{lane.domain.value}]"
+            if intent.record_count_hint
+            else f"lane={lane.domain.value}",
             commit_id=intent.commit_id,
             human_title=title,
             domain=domain,
@@ -207,7 +299,7 @@ class DbCommitCoordinator:
         return WriterAck(
             status=AckStatus.ACCEPTED_TO_WRITER.value,
             commit_id=intent.commit_id,
-            message="queued",
+            message=f"queued:{lane.domain.value}",
         )
 
     def run_forever(self) -> None:
@@ -216,7 +308,8 @@ class DbCommitCoordinator:
             try:
                 processed = self.process_one()
                 if not processed:
-                    self.spool.retain()
+                    for lane in self._lanes.values():
+                        lane.spool.retain()
                     time.sleep(float(self.settings.poll_seconds))
             except Exception as exc:  # noqa: BLE001
                 self._emit_db_writer(
@@ -229,11 +322,18 @@ class DbCommitCoordinator:
     def process_one(self) -> bool:
         if not self._ready:
             return False
-        item = self.spool.claim_next()
-        if item is None:
-            return False
-        self._apply_item(item)
-        return True
+        # Round-robin across lanes so independent DBs make progress concurrently
+        # from the coordinator's perspective (each lane remains serialized).
+        for _ in range(len(self._rr_order)):
+            domain = self._rr_order[self._rr_index % len(self._rr_order)]
+            self._rr_index += 1
+            lane = self._lanes[domain]
+            item = lane.spool.claim_next()
+            if item is None:
+                continue
+            self._apply_item(item, lane=lane)
+            return True
+        return False
 
     def process_until_idle(self, *, max_items: int = 10_000) -> int:
         count = 0
@@ -243,29 +343,35 @@ class DbCommitCoordinator:
             count += 1
         return count
 
-    def _apply_item(self, item: SpoolItem) -> None:
+    def _apply_item(self, item: SpoolItem, *, lane: _CommitLane | None = None) -> None:
         intent = item.intent
+        lane = lane or self.lane_for_intent(intent)
+        # Bind compat aliases to active lane for helpers that still use self.spool/receipts.
+        self.spool = lane.spool
+        self.receipts = lane.receipts
+        self.metrics = lane.metrics
+        self.db_path = lane.db_path
         title = intent.safe_human_title or intent.entity_id or intent.commit_id[:8]
         domain = intent.domain or intent.operation.split(".", 1)[0]
-        self.metrics.inflight_commit_id = intent.commit_id
+        lane.metrics.inflight_commit_id = intent.commit_id
         started = time.perf_counter()
 
         # Crash-after-commit recovery: receipt already present.
-        existing = self.receipts.get_by_idempotency_key(intent.idempotency_key)
+        existing = lane.receipts.get_by_idempotency_key(intent.idempotency_key)
         if existing is None:
-            existing = self.receipts.get_by_commit_id(intent.commit_id)
+            existing = lane.receipts.get_by_commit_id(intent.commit_id)
         if existing is not None:
-            self.spool.finalize_applied(item)
-            self.metrics.inflight_commit_id = ""
-            self.metrics.last_applied_commit_id = existing.commit_id
+            lane.spool.finalize_applied(item)
+            lane.metrics.inflight_commit_id = ""
+            lane.metrics.last_applied_commit_id = existing.commit_id
             return
 
         self._emit_db_writer(
             f"{domain.title()} '{title}' commit gestart",
             message=(
-                f"{intent.record_count_hint} records"
+                f"{intent.record_count_hint} records [{lane.domain.value}]"
                 if intent.record_count_hint
-                else None
+                else f"lane={lane.domain.value}"
             ),
             commit_id=intent.commit_id,
             human_title=title,
@@ -273,7 +379,7 @@ class DbCommitCoordinator:
         )
 
         try:
-            payload_path = self.spool.validate_payload(intent)
+            payload_path = lane.spool.validate_payload(intent)
             # Heavy read/parse OUTSIDE SQLite transaction.
             payload = load_payload_json(payload_path)
             handler = self.registry.get(intent.operation)
@@ -282,7 +388,7 @@ class DbCommitCoordinator:
                 return handler.apply(
                     intent,
                     payload,
-                    db_path=self.db_path,
+                    db_path=lane.db_path,
                     settings=self.settings,
                 )
 
@@ -296,13 +402,13 @@ class DbCommitCoordinator:
                 receipt.idempotency_key = intent.idempotency_key
 
             def _persist() -> None:
-                self.receipts.persist(receipt)
+                lane.receipts.persist(receipt)
 
             run_with_busy_retry(_persist)
             if intent.batch_count > 1:
-                conn = open_sqlite_connection(self.db_path)
+                conn = open_sqlite_connection(lane.db_path)
                 try:
-                    self.receipts.mark_batch_applied(
+                    lane.receipts.mark_batch_applied(
                         conn,
                         commit_id=intent.commit_id,
                         batch_index=intent.batch_index,
@@ -314,15 +420,15 @@ class DbCommitCoordinator:
                 finally:
                     conn.close()
 
-            self.spool.finalize_applied(item)
+            lane.spool.finalize_applied(item)
             duration_ms = (time.perf_counter() - started) * 1000.0
-            self.metrics.commit_count += 1
-            self.metrics.record_latency(duration_ms)
-            self.metrics.last_applied_commit_id = intent.commit_id
+            lane.metrics.commit_count += 1
+            lane.metrics.record_latency(duration_ms)
+            lane.metrics.last_applied_commit_id = intent.commit_id
             self._retries.pop(intent.commit_id, None)
             self._emit_db_writer(
                 f"{domain.title()} '{title}' commit voltooid",
-                message=f"{receipt.record_count} records — {duration_ms:.0f}ms",
+                message=f"{receipt.record_count} records — {duration_ms:.0f}ms [{lane.domain.value}]",
                 commit_id=intent.commit_id,
                 human_title=title,
                 domain=domain,
@@ -332,7 +438,7 @@ class DbCommitCoordinator:
         except Exception as exc:  # noqa: BLE001
             self._handle_failure(item, exc, title=title, domain=domain)
         finally:
-            self.metrics.inflight_commit_id = ""
+            lane.metrics.inflight_commit_id = ""
 
     def _handle_failure(
         self,
@@ -427,52 +533,73 @@ class DbCommitCoordinator:
         return False
 
     def status(self) -> DbCommitStatus:
-        stats = self.spool.stats()
+        pending_count = 0
+        pending_bytes = 0
+        oldest = 0.0
+        quarantine = 0
+        commit_count = 0
+        retry_count = 0
+        busy_count = 0
+        failed_count = 0
+        quarantine_m = 0
+        total_latency = 0.0
+        inflight = ""
+        last_applied = ""
+        for lane in self._lanes.values():
+            stats = lane.spool.stats()
+            pending_count += stats.pending_count
+            pending_bytes += stats.pending_bytes
+            oldest = max(oldest, float(stats.oldest_pending_age_seconds or 0.0))
+            quarantine += stats.quarantine_count
+            commit_count += lane.metrics.commit_count
+            retry_count += lane.metrics.retry_count
+            busy_count += lane.metrics.busy_count
+            failed_count += lane.metrics.failed_count
+            quarantine_m += lane.metrics.quarantine_count
+            total_latency += lane.metrics.total_latency_ms
+            if lane.metrics.inflight_commit_id:
+                inflight = lane.metrics.inflight_commit_id
+            if lane.metrics.last_applied_commit_id:
+                last_applied = lane.metrics.last_applied_commit_id
         soft = self.settings.soft_backpressure_threshold
         hard = self.settings.hard_backpressure_threshold
-        count_ratio = stats.pending_count / max(1, self.settings.max_pending_count)
-        bytes_ratio = stats.pending_bytes / max(1, self.settings.max_pending_bytes)
+        count_ratio = pending_count / max(1, self.settings.max_pending_count)
+        bytes_ratio = pending_bytes / max(1, self.settings.max_pending_bytes)
         health = CommitHealth.HEALTHY
         if not self._ready or self._stop.is_set():
             health = CommitHealth.FAILED
         elif count_ratio >= hard or bytes_ratio >= hard:
             health = CommitHealth.BACKPRESSURED
-        elif (
-            count_ratio >= soft
-            or bytes_ratio >= soft
-            or stats.oldest_pending_age_seconds > 300
-            or self.metrics.retry_count > 0
-        ):
+        elif count_ratio >= soft or bytes_ratio >= soft or oldest > 300 or retry_count > 0:
             health = CommitHealth.DEGRADED
         sqlite_m = sqlite_metrics_snapshot()
-        return DbCommitStatus(
+        status = DbCommitStatus(
             health=health.value,
             worker_id=self.worker_id,
             worker_pid=os.getpid(),
             ready=self._ready,
             draining=self._draining,
-            queue_depth=stats.pending_count,
-            pending_bytes=stats.pending_bytes,
-            oldest_pending_age_seconds=stats.oldest_pending_age_seconds,
-            inflight_commit_id=self.metrics.inflight_commit_id,
-            last_applied_commit_id=self.metrics.last_applied_commit_id,
-            commit_count=self.metrics.commit_count,
-            retry_count=self.metrics.retry_count,
-            busy_count=self.metrics.busy_count + int(sqlite_m.get("sqlite_busy_count") or 0),
-            failed_count=self.metrics.failed_count,
-            quarantine_count=self.metrics.quarantine_count + stats.quarantine_count,
-            average_commit_latency_ms=(
-                self.metrics.total_latency_ms / self.metrics.commit_count
-                if self.metrics.commit_count
-                else 0.0
-            ),
+            queue_depth=pending_count,
+            pending_bytes=pending_bytes,
+            oldest_pending_age_seconds=oldest,
+            inflight_commit_id=inflight,
+            last_applied_commit_id=last_applied,
+            commit_count=commit_count,
+            retry_count=retry_count,
+            busy_count=busy_count + int(sqlite_m.get("sqlite_busy_count") or 0),
+            failed_count=failed_count,
+            quarantine_count=quarantine_m + quarantine,
+            average_commit_latency_ms=(total_latency / commit_count if commit_count else 0.0),
             p95_commit_latency_ms=self.metrics.p95_latency_ms(),
             apply_rate_per_minute=self._apply_rate_per_minute(),
+            lanes=self.lane_public_status(),
         )
+        return status
 
     def _apply_rate_per_minute(self) -> float:
         elapsed_min = max(1e-6, (time.time() - self._started_at) / 60.0)
-        return float(self.metrics.commit_count) / elapsed_min
+        total = sum(lane.metrics.commit_count for lane in self._lanes.values())
+        return float(total) / elapsed_min
 
     def _emit_db_writer(
         self,

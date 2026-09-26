@@ -101,7 +101,7 @@ The encoded ownership contract lives in `Data/modules/common/ownership.py`.
 | Tasks | TaskService | `Data/modules/tasks/` |
 | Observability | ObservabilityHub | `Data/modules/observability/` |
 | Metrics/time series | Metrics | `Data/modules/metrics/` |
-| Persistent metadata | central SQLite | `Data/backend/database.py`, `migrations.py` |
+| Persistent metadata | three canonical SQLite DBs (Control / Knowledge / Market) | `Data/backend/config.py`, `database.py`, `db_upgrade.py`, `migrations.py`, `table_ownership.py` |
 
 ---
 
@@ -139,15 +139,28 @@ Current wiring includes:
 | `Data/backend/main.py` | Composition root + chat + SPA + health (**CURRENT**) |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **56** (`institutional_runtime` / institutional repositories) |
+| `Data/backend/migrations.py` | legacy single-DB migration history 1..**56** (preserved); domain baselines materialize from this head |
+| `Data/backend/db_upgrade.py` | canonical upgrade orchestrator — fresh 3-DB install + legacy single-DB → 3-DB cutover |
+| `Data/backend/table_ownership.py` | machine-verifiable CONTROL/KNOWLEDGE/MARKET table ownership map |
+| `upgrade_leviathan_databases.bat` | root Windows entrypoint for database upgrades (calls `Data.backend.db_upgrade`) |
 | `Data/backend/llm.py` | compatibility/boundary helpers |
 | `Data/backend/reasoning.py` | compatibility import/boundary |
 
-SQLite is the canonical metadata database. Subsystems must not silently create a second metadata authority.
+SQLite is the canonical metadata plane as **exactly three** product databases:
+
+```text
+Control Plane DB  — LEVIATHAN_CONTROL_DATABASE_PATH   (default Data/backend/data/leviathan_control.db)
+Knowledge DB      — LEVIATHAN_KNOWLEDGE_DATABASE_PATH (default Data/backend/data/leviathan_knowledge.db)
+Market DB         — LEVIATHAN_MARKET_DATABASE_PATH    (default Data/backend/data/leviathan_market.db)
+```
+
+`LEVIATHAN_DATABASE_PATH` is **legacy upgrade input only** (not post-cutover product authority).
+`settings.database_path` remains the Control Plane path compatibility alias.
+Subsystems must not create a fourth product metadata authority.
 
 ### SQLite write architecture (CONTROL_WRITE vs COMMIT_WRITE)
 
-LEVIATHAN uses one canonical SQLite database with two explicit write classes:
+LEVIATHAN uses three canonical SQLite databases with two explicit write classes:
 
 | Class | Rule | Examples |
 | --- | --- | --- |
@@ -158,12 +171,15 @@ LEVIATHAN uses one canonical SQLite database with two explicit write classes:
 
 - External worker managed by `WorkerSupervisor` (not an AI agent).
 - Producers submit typed `CommitIntent` messages (payload **refs** + hashes — never giant inline blobs, never arbitrary SQL).
-- Fast path: Windows-compatible localhost IPC; correctness path: durable filesystem spool under `<db-parent>/commit_spool/{pending,inflight,applied,failed,quarantine}`.
+- Fast path: Windows-compatible localhost IPC; correctness path: durable filesystem spool under `<db-parent>/commit_spool_{control|knowledge|market}/`.
+- Independent lanes: Control / Knowledge / Market may commit concurrently; each SQLite file remains serialized.
 - Allowlisted `CommitHandlerRegistry` adapters call domain stores (`KnowledgeStore`, `ResearchStore`, …) — domain ownership stays with those stores.
-- Idempotent `commit_receipts` / `commit_batches` tables live in the **same** main DB; crash recovery checks receipts before re-applying.
+- Idempotent `commit_receipts` / `commit_batches` tables live **per owning DB**; crash recovery checks receipts before re-applying.
 - Bulk handlers use bounded batches and release the SQLite writer lock between batches so control-plane heartbeats are not starved.
 - Writer unavailable ⇒ durable spool / `DB_COMMIT_BACKPRESSURE` / `DB_COMMIT_SPOOL_UNAVAILABLE` — **never** fall back to direct heavy SQLite writes from producers.
 - Legacy `knowledge_commit` pool defaults to `0`; `knowledge.commit` jobs are owned by `db_commit`.
+
+**SQLite Manager** (`Data/modules/sqlite_manager/`, routes `/api/sqlite/*`): operator selector for Control / Knowledge / Market — status, tables, read query, allowlisted mutate with explicit `confirmDomain`.
 
 Canonical connection policy: `Data/modules/common/sqlite_policy.py` (busy_timeout on hot paths; `PRAGMA journal_mode=WAL` only during initialize/migration).
 
@@ -749,7 +765,7 @@ Large native/Python streaming jobs (`validate` / `transform` / `export`) write *
 
 **Market-data native pilot:** Present when `market.ohlcv_validate` is registered in the native binary; otherwise NOT_IMPLEMENTED. Do not claim unbuilt pilot ingest.
 
-**Backup truth:** Local backup/restore (`Data/modules/backup/`) snapshots the canonical SQLite + manifest under `backup_root`. Truth flags include `backup_is_not_cloud_sync` — backup is not a competing domain DB and is not cloud sync. Schema head is migration **56** (`institutional_runtime`); learning runs remain migration **54**.
+**Backup truth:** Local backup/restore (`Data/modules/backup/`) snapshots the **three canonical SQLite databases** as one coherent backup set (plus manifest) under `backup_root`. Partial/missing DB members fail restore honestly. Truth flags include `backup_is_not_cloud_sync` and `backupSetComplete`. Legacy single-DB backup manifests remain restorable into Control when `databases` is absent. Domain schema baseline is version **1** materialized from legacy migration head **56** (`institutional_runtime`).
 
 **Adversarial / clean-install evidence:** `test_native_adversarial_w188.py`, admission/cancel/orphan tests (`test_native_admission_cancel_w167.py`), supply-chain JSON, `scripts/verify_native_data_plane.py`, and `scripts/verify_clean_install_native.py` (`LOCAL_CLEAN_CHECK` — not a Windows VM claim).
 
@@ -1092,8 +1108,10 @@ Release/evaluation philosophy: missing measurements remain missing; they are not
 
 - `main.py` — composition + app
 - `config.py` — environment/runtime settings
-- `database.py` — central SQLite
-- `migrations.py` — schema migrations
+- `database.py` — Control Plane conversation/message helpers (composition still uses three DB paths)
+- `migrations.py` — preserved legacy schema migrations 1..56
+- `db_upgrade.py` — three-DB upgrade / legacy cutover orchestrator
+- `table_ownership.py` — CONTROL/KNOWLEDGE/MARKET ownership map
 - `routes/` — domain APIs
 - `tests/` — backend/unit/integration/gate manifests
 

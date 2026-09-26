@@ -75,11 +75,17 @@ class DbCommitSettings:
             "slowTransactionMs": self.slow_transaction_ms,
         }
 
-    def spool_root_for(self, database_path: Path) -> Path:
-        return Path(database_path).resolve().parent / "commit_spool"
+    def spool_root_for(self, database_path: Path, *, domain: str | None = None) -> Path:
+        parent = Path(database_path).resolve().parent
+        if domain:
+            return parent / f"commit_spool_{str(domain).strip().lower()}"
+        return parent / "commit_spool"
 
-    def payloads_root_for(self, database_path: Path) -> Path:
-        return Path(database_path).resolve().parent / "commit_payloads"
+    def payloads_root_for(self, database_path: Path, *, domain: str | None = None) -> Path:
+        parent = Path(database_path).resolve().parent
+        if domain:
+            return parent / f"commit_payloads_{str(domain).strip().lower()}"
+        return parent / "commit_payloads"
 
 
 def load_db_commit_settings() -> DbCommitSettings:

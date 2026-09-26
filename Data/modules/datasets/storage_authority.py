@@ -33,7 +33,7 @@ FORBIDDEN_COMPETING_DB_NAMES = frozenset(
 
 
 STORAGE_AUTHORITY_TRUTH = {
-    "canonicalTransactionalAuthority": "central_sqlite",
+    "canonicalTransactionalAuthority": "three_sqlite_databases_control_knowledge_market",
     "immutableDataPlaneAllowed": True,
     "indexesAreRebuildable": True,
     "cachesAreDisposable": True,

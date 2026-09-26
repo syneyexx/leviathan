@@ -6,6 +6,21 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from Data.modules.common.database_domains import (
+    DEFAULT_CONTROL_DB_REL,
+    DEFAULT_KNOWLEDGE_DB_REL,
+    DEFAULT_LEGACY_DB_REL,
+    DEFAULT_MARKET_DB_REL,
+    ENV_CONTROL,
+    ENV_KNOWLEDGE,
+    ENV_LEGACY,
+    ENV_MARKET,
+    DatabaseDomain,
+    DatabasePaths,
+    assert_canonical_paths_distinct,
+    resolve_database_paths,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "Data"
 BACKEND_ROOT = DATA_ROOT / "backend"
@@ -616,11 +631,15 @@ class Settings:
         > persisted operator overrides (when allowed)
         > environment / .env defaults
 
-    Bootstrap-critical values (especially database_path) remain environment-owned
+    Bootstrap-critical values (especially database paths) remain environment-owned
     and are never sourced from the SQLite override store.
 
     Nested domains are the source of truth. Flat compatibility properties
     preserve existing callers until they migrate.
+
+    Persistence uses exactly three canonical SQLite databases (Control / Knowledge /
+    Market). ``database_path`` is the Control Plane path (compatibility alias).
+    ``LEVIATHAN_DATABASE_PATH`` is legacy upgrade input only.
     """
 
     runtime: RuntimeSettings
@@ -646,9 +665,29 @@ class Settings:
     assistant: AssistantSettings
     browser_qa: BrowserQaSettings
     managed_serving: ManagedServingSettings
-    database_path: Path
+    database_paths: DatabasePaths
+    database_path: Path  # Control Plane path (compat alias)
 
     # --- Compatibility accessors (Step 1 call sites) ---
+
+    @property
+    def control_database_path(self) -> Path:
+        return self.database_paths.control
+
+    @property
+    def knowledge_database_path(self) -> Path:
+        return self.database_paths.knowledge
+
+    @property
+    def market_database_path(self) -> Path:
+        return self.database_paths.market
+
+    @property
+    def legacy_database_path(self) -> Path | None:
+        return self.database_paths.legacy
+
+    def path_for_database(self, domain: DatabaseDomain | str) -> Path:
+        return self.database_paths.path_for(domain)
 
     @property
     def llm_base_url(self) -> str:
@@ -923,6 +962,7 @@ class Settings:
                 "rust_threshold_mb": self.native_compute.rust_threshold_mb,
             },
             "database_path": str(self.database_path),
+            "database_paths": self.database_paths.public_dict(),
         }
 
     @classmethod
@@ -945,8 +985,9 @@ class Settings:
         api_key = _env_raw("LEVIATHAN_LLM_API_KEY", "not-needed") or "not-needed"
         timeout = _env_float("LEVIATHAN_LLM_TIMEOUT_SECONDS", 90.0, minimum=1.0)
 
-        db_raw = _env_raw("LEVIATHAN_DATABASE_PATH", "Data/backend/data/leviathan.db") or "Data/backend/data/leviathan.db"
-        database_path = _resolve_path(db_raw)
+        database_paths = _load_database_paths()
+        assert_canonical_paths_distinct(database_paths)
+        database_path = database_paths.control
 
         # Bulk corpora root. Configurable; default matches master program.
         data_root_raw = _env_raw("LEVIATHAN_DATA_ROOT", "ModelData") or "ModelData"
@@ -1563,6 +1604,7 @@ class Settings:
                     "LEVIATHAN_BROWSER_QA_ALLOW_DESTRUCTIVE", False
                 ),
             ),
+            database_paths=database_paths,
             database_path=database_path,
         )
         settings.validate()
@@ -1758,10 +1800,77 @@ class Settings:
             )
 
 
+def _load_database_paths() -> DatabasePaths:
+    """Resolve Control / Knowledge / Market paths (+ optional legacy).
+
+    Rules:
+    - ``LEVIATHAN_{CONTROL,KNOWLEDGE,MARKET}_DATABASE_PATH`` win when set.
+    - Otherwise defaults are the three canonical files under ``Data/backend/data/``.
+    - When only ``LEVIATHAN_DATABASE_PATH`` is customized (tests / old installs),
+      derive co-located ``*_control/_knowledge/_market`` siblings and treat the
+      legacy path as upgrade input when the file exists (or was explicitly set).
+    - ``LEVIATHAN_DATABASE_PATH`` is never the post-cutover product authority.
+    """
+    control_raw = _env_raw(ENV_CONTROL)
+    knowledge_raw = _env_raw(ENV_KNOWLEDGE)
+    market_raw = _env_raw(ENV_MARKET)
+    legacy_raw = _env_raw(ENV_LEGACY)
+
+    # Explicit three-path configuration (or defaults).
+    if control_raw or knowledge_raw or market_raw:
+        paths = resolve_database_paths(
+            control_raw=control_raw,
+            knowledge_raw=knowledge_raw,
+            market_raw=market_raw,
+            legacy_raw=legacy_raw or DEFAULT_LEGACY_DB_REL,
+            resolve_path=_resolve_path,
+        )
+        # Only keep legacy if the file exists (or operator set a custom legacy path).
+        if paths.legacy is not None and not paths.legacy.is_file():
+            if legacy_raw is None or legacy_raw.strip() in {"", DEFAULT_LEGACY_DB_REL}:
+                paths = DatabasePaths(
+                    control=paths.control,
+                    knowledge=paths.knowledge,
+                    market=paths.market,
+                    legacy=None,
+                )
+        return paths
+
+    # No domain env overrides — defaults, with optional legacy from LEVIATHAN_DATABASE_PATH.
+    if legacy_raw is not None and legacy_raw.strip() and legacy_raw.strip() != DEFAULT_LEGACY_DB_REL:
+        legacy = _resolve_path(legacy_raw.strip())
+        stem = legacy.stem
+        parent = legacy.parent
+        paths = DatabasePaths(
+            control=parent / f"{stem}_control.db",
+            knowledge=parent / f"{stem}_knowledge.db",
+            market=parent / f"{stem}_market.db",
+            legacy=legacy if legacy.is_file() else legacy,  # keep for upgrade even if missing yet
+        )
+        # Fresh test dirs: no legacy file yet → fresh three-DB install beside stem.
+        if not legacy.is_file():
+            paths = DatabasePaths(
+                control=paths.control,
+                knowledge=paths.knowledge,
+                market=paths.market,
+                legacy=None,
+            )
+        return paths
+
+    # Stock defaults: three canonical DBs; legacy only if old leviathan.db exists.
+    legacy_default = _resolve_path(DEFAULT_LEGACY_DB_REL)
+    return DatabasePaths(
+        control=_resolve_path(DEFAULT_CONTROL_DB_REL),
+        knowledge=_resolve_path(DEFAULT_KNOWLEDGE_DB_REL),
+        market=_resolve_path(DEFAULT_MARKET_DB_REL),
+        legacy=legacy_default if legacy_default.is_file() else None,
+    )
+
+
 def load_settings() -> Settings:
     """Load env defaults, then merge SQLite operator overrides when available.
 
-    ``database_path`` itself is never taken from the override store (bootstrap-only).
+    Database paths themselves are never taken from the override store (bootstrap-only).
     """
     base = Settings.from_env()
     try:
