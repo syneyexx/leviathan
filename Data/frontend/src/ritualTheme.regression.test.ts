@@ -11,10 +11,12 @@ describe("LEVIATHAN ritual operator theme", () => {
     const main = read("main.tsx");
     const themeIndex = main.indexOf('import "./styles/ritual-theme.css"');
     const pagesIndex = main.indexOf('import "./styles/ritual-pages.css"');
+    const specialIndex = main.indexOf('import "./styles/ritual-special.css"');
     const legacyIndex = main.indexOf('import "./styles/datasets-dashboard.css"');
 
     expect(themeIndex).toBeGreaterThan(legacyIndex);
     expect(pagesIndex).toBeGreaterThan(themeIndex);
+    expect(specialIndex).toBeGreaterThan(pagesIndex);
   });
 
   it("applies the ritual shell and route section class through the shared AppShell", () => {
@@ -27,6 +29,8 @@ describe("LEVIATHAN ritual operator theme", () => {
   it("keeps every primary operator route represented", () => {
     const app = read("App.tsx");
     const routes = [
+      "/",
+      "/status",
       "/tasks",
       "/chat",
       "/coding",
@@ -47,6 +51,7 @@ describe("LEVIATHAN ritual operator theme", () => {
       "/media/analytics",
       "/media/library",
       "/media/personas",
+      "/trading",
       "/trading/simulatie",
       "/trading/strategieen",
       "/trading/marktdata",
@@ -70,6 +75,7 @@ describe("LEVIATHAN ritual operator theme", () => {
       "/workflows",
       "/console",
       "/settings",
+      "/chat.html",
     ];
 
     for (const route of routes) expect(app).toContain(`path="${route}"`);
