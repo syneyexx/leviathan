@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" aria-hidden="true">
+  <defs>
+    <radialGradient id="fade" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#d7ad63" stop-opacity="0.16"/>
+      <stop offset="0.62" stop-color="#b78742" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#b78742" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="800" fill="none"/>
+  <circle cx="400" cy="400" r="360" fill="url(#fade)"/>
+  <g fill="none" stroke="#d6a957" stroke-width="1.1" stroke-opacity="0.34">
+    <circle cx="400" cy="400" r="310"/>
+    <circle cx="400" cy="400" r="270"/>
+    <circle cx="400" cy="400" r="218"/>
+    <circle cx="400" cy="400" r="144"/>
+    <circle cx="400" cy="400" r="70"/>
+    <path d="M400 90L668 555H132z"/>
+    <path d="M400 710L132 245h536z"/>
+    <path d="M90 400h620M400 90v620"/>
+    <path d="M181 181l438 438M619 181L181 619"/>
+    <path d="M400 130l238 137v274L400 678 162 541V267z"/>
+    <path d="M400 190l182 105v210L400 610 218 505V295z"/>
+    <path d="M130 400c71-94 161-141 270-141s199 47 270 141c-71 94-161 141-270 141S201 494 130 400z"/>
+  </g>
+  <g fill="#e4c47f" fill-opacity="0.48">
+    <circle cx="400" cy="90" r="4"/><circle cx="668" cy="245" r="4"/><circle cx="668" cy="555" r="4"/>
+    <circle cx="400" cy="710" r="4"/><circle cx="132" cy="555" r="4"/><circle cx="132" cy="245" r="4"/>
+    <circle cx="400" cy="400" r="5"/>
+  </g>
+  <g font-family="Georgia, serif" fill="#d6a957" fill-opacity="0.44" font-size="18" letter-spacing="5" text-anchor="middle">
+    <text x="400" y="56">VERITAS</text>
+    <text x="400" y="764">POTENTIA</text>
+    <text x="105" y="407" transform="rotate(-90 105 407)">RATIO</text>
+    <text x="695" y="407" transform="rotate(90 695 407)">LUX</text>
+  </g>
+  <g font-family="Consolas, monospace" fill="#c49a54" fill-opacity="0.36" font-size="15">
+    <text x="315" y="330">φ = 1.618033</text>
+    <text x="315" y="353">π = 3.141592</text>
+    <text x="315" y="476">Σ n² → ∞</text>
+    <text x="315" y="499">e^(iπ)+1=0</text>
+  </g>
+</svg>
