@@ -54,4 +54,7 @@ assert editor.measurement == GateMeasurement.NOT_APPLICABLE
 print("ci-plan summary:", payload["summary"])
 PY
 
+echo "== Offline verifiers (honest incomplete; never coerce PASS) =="
+python scripts/verify_leviathan.py --allow-incomplete --write-report
+
 echo "== LEVIATHAN CI local OK =="

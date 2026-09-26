@@ -2,7 +2,7 @@
 
 > **Canonical backend documentation.** This is the single human-readable backend architecture reference for LEVIATHAN.
 >
-> Documentation snapshot: **2026-09-25**, based on `main` after the Frontier Reasoning F0 baseline merge. Runtime code and tests remain the final authority when this document and executable behavior disagree.
+> Documentation snapshot: **2026-09-26**, based on `main` after External Execution Fabric (#163), General Assistant Fabric (#165), and Frontier Master Program W0A/W0B baseline. Runtime code and tests remain the final authority when this document and executable behavior disagree.
 >
 > Companion frontend reference: [`Leviathan_system_frontend.md`](./Leviathan_system_frontend.md).
 
@@ -139,7 +139,7 @@ Current wiring includes:
 | `Data/backend/main.py` | FastAPI app + system composition |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration 49 (`db_commit_receipts`) |
+| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **52** (`paper_portefeuille`) |
 | `Data/backend/llm.py` | compatibility/boundary helpers |
 | `Data/backend/reasoning.py` | compatibility import/boundary |
 
@@ -479,8 +479,11 @@ Architecture rule: the FastAPI/chat process is the **control plane**; long I/O/C
 - Agents / Coding / Signal Fabric / Reasoning = ON
 - `network.allow_outbound` = ON (SSRF, private-network, and ExecutionGateway restrictions still apply)
 - Canonical launcher: `run_leviathan_workers.bat` → one consolidated supervisor terminal for **all** pools
-- Operator read-model: `GET /api/workers/dashboard` (pools + workers + job join + progress + resources)
+- Operator read-model: `GET /api/workers/dashboard` (+ `/api/workers/{id}`) — pools + workers + job join + progress + resources
 - Agents page → **Worker Fabric** monitor consumes that dashboard (never agentCount as “Active Workers”)
+- Process topology: API = control plane; WorkerSupervisor = spawn/lease/restart/drain; specialist workers = one OS process per slot; model serving remains a separate residency plane
+
+Pool catalog (CURRENT shape): ~25 pools; optional/FEATURE_GATED include `rerank`, `document_ai`, `telemetry`; legacy `knowledge_commit` desired=0 (db_commit owns bulk writes).
 
 When externalization is enabled, worker unavailable → durable queued/failed/`WORKER_UNAVAILABLE` — **never** silent synchronous heavy fallback inside FastAPI.
 
@@ -684,9 +687,21 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 - **QaRepairBridge** (`Data/modules/browser/qa_repair.py`) is an optional operator-triggered finding → `CodingCognitiveStrategy` → tests/replay path; never marks fixed without evidence.
 - Chat returns `assistant_telemetry` assembled from cognition public status (tool_calls with receipts/duration, agent_delegations, web_sources, context budget/used, behavior hash/version, latency). No hidden CoT.
 
-### Assistant evaluation (GI16)
+### Capability contract (CURRENT)
 
-`Data/modules/evaluation/assistant_benchmark.py` extends Round-5 families with deterministic GI checks: hallucination resistance (brain %), current-info freshness routing, tool honesty, fake evidence rejection, web failure honesty, orchestra/complex routing.
+`CapabilityCatalog` (`Data/modules/execution/`) is the sole executable capability registry. Declared/planned capability ids in coding prompts, coding tool gates, cognition planner `likely_capabilities`, AgentFleet seeds, and `EXTERNAL_WORKER_CAPABILITIES` must be ⊆ catalog (`Data/backend/tests/test_capability_contract_drift.py`).
+
+- Fictional prompt ids (`git.commit`, `coding.run_command`) are rejected — not registered.
+- Real worker aliases registered: `knowledge.ingest_document`, `knowledge.ingest_path`, `rerank.batch` (FEATURE_GATED pool), `market_sim.mandate.loosen` (approval identity).
+- Trading role labels (`market_sim.observe`, …) and agent inventory abstracts remain descriptors, not gateway capabilities.
+
+### Behavior / Chat integrity (CURRENT)
+
+- Behavior identity is BehaviorProfile → immutable BehaviorSnapshot per turn (`Data/modules/settings/`); ContextBuilder must not invent a second identity.
+- Language follows the latest user turn when configured (`auto_follow_user`).
+- Retrieved Knowledge/Memory/Evidence/Web/tool output remain **DATA**, never system instruction authority.
+- Stream frames are snapshot-safe (no cumulative `message.content` appended as deltas).
+- Heavy domain work stays on JobRuntime/workers; Chat/model stream stays on the Model Control Plane by design.
 
 ---
 
@@ -958,14 +973,19 @@ Key verification manifests/harnesses live outside `Data/docs` so canonical docum
 
 - Frontier reasoning: `Data/backend/tests/frontier_reasoning_gates.json`, `scripts/verify_frontier_reasoning.py`.
 - Trading program: `Data/backend/tests/trading_gates.json`, `scripts/verify_trading_100.py`.
+- Aggregate runner: `scripts/verify_leviathan.py` (frontier + trading).
+- Capability contract: `Data/backend/tests/test_capability_contract_drift.py`.
 - Backend tests: `Data/backend/tests/`.
 - Frontend tests/build: see companion frontend document.
 
-Typical backend test entry:
-
 ```bash
 python -m pytest Data/backend/tests -q
+python scripts/verify_leviathan.py --allow-incomplete --write-report
+python scripts/verify_frontier_reasoning.py --allow-f0-skeleton-only
+python scripts/verify_trading_100.py --allow-incomplete
 ```
+
+Incomplete / NOT_STARTED / UNMEASURED / FEATURE_GATED are **not** PASS. Baseline-green CI must not coerce frontier or trading program gates to PASS. `--allow-incomplete` only permits an honest incomplete report without FAIL/crash.
 
 Run targeted suites first during phased implementation, then the impacted broader suites.
 

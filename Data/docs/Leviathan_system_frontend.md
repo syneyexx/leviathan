@@ -2,7 +2,7 @@
 
 > **Canonical frontend documentation.** This is the single human-readable reference for LEVIATHAN's React/TypeScript UI, route structure, client contracts and frontend file organization.
 >
-> Snapshot: **2026-09-25**, based on `main` after the Frontier Reasoning F0 baseline merge. Code and tests are authoritative when this file becomes stale.
+> Snapshot: **2026-09-26**, based on `main` after External Execution Fabric / General Assistant Fabric and Frontier Master Program W0 baseline. Code and tests are authoritative when this file becomes stale.
 >
 > Backend reference: [`Leviathan_system_backend.md`](./Leviathan_system_backend.md).
 

@@ -1,8 +1,9 @@
 {
-  "generated_at": "2026-09-26T00:25:10+00:00",
+  "generated_at": "2026-09-26T00:34:56+00:00",
   "phase": "Slice16/A0-A4",
   "program": "Master Program v4.1",
   "all_required_pass": false,
+  "allow_incomplete": true,
   "counts": {
     "PASS": 43,
     "NOT_STARTED": 18,
@@ -684,5 +685,11 @@
     "tax/legal compliance",
     "investment advice"
   ],
-  "canonical_system_doc": "Data/docs/Leviathan_system_backend.md"
+  "canonical_system_doc": "Data/docs/Leviathan_system_backend.md",
+  "truth": {
+    "incomplete_is_not_pass": true,
+    "feature_gated_is_not_pass_claim": true,
+    "baseline_green_does_not_mark_trading_pass": true
+  },
+  "exit_reason": "incomplete gates reported honestly (22 open); no FAIL"
 }
