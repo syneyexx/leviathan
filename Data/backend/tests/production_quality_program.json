@@ -23,7 +23,7 @@
     {"id": "W16", "status": "PASS", "title": "Durable agent lab lifecycle wired to campaigns", "notes": "create/start/pause/resume/cancel + real sims; full role orchestra still TARGET"},
     {"id": "W18", "status": "IN_PROGRESS", "title": "Paper deployment compatibility", "notes": "T09/T14/T15 + paper session hydrate after restart; long-horizon paper soak still open"},
     {"id": "W04", "status": "NOT_STARTED", "title": "Model capability and inference contract"},
-    {"id": "W06", "status": "IN_PROGRESS", "title": "Planning and steering", "notes": "cancel propagates to child_run_ids; observation-linked replan still open"},
+    {"id": "W06", "status": "IN_PROGRESS", "title": "Planning and steering", "notes": "cancel→children + observation-linked replan honesty; authority recheck still open"},
     {"id": "W08", "status": "IN_PROGRESS", "title": "Context memory Brain", "notes": "A08 correct_preference supersession landed; compaction/Brain breadth still open"},
     {"id": "W09", "status": "IN_PROGRESS", "title": "Research evidence workflow", "notes": "citation UNMEASURED without audit; web.search/fetch mock regressions fixed"},
     {"id": "W10", "status": "NOT_STARTED", "title": "Tools plugins agents"},
