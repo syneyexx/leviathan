@@ -50,7 +50,6 @@ _GENERIC_DATA_NAMES = frozenset(
 )
 
 _OHLCV_COLS = {"open", "high", "low", "close", "volume", "o", "h", "l", "c", "v", "adj_close", "adjclose"}
-_TS_COLS = {"timestamp", "ts", "time", "datetime", "date", "open_time", "close_time"}
 
 _SPECIES_COL_HINTS = {
     "species",

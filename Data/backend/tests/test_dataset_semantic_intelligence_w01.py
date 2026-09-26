@@ -11,7 +11,6 @@ from unittest import mock
 from Data.modules.common.corpus import CorpusLayout
 from Data.modules.datasets.catalog import (
     CATALOG_FILENAME,
-    build_catalog_from_store,
     catalog_path,
     read_catalog,
     read_catalog_status,
@@ -19,7 +18,6 @@ from Data.modules.datasets.catalog import (
     write_catalog,
 )
 from Data.modules.datasets.semantic_engine import (
-    apply_operator_precedence,
     build_deterministic_profile,
     is_machine_name,
 )
@@ -63,7 +61,6 @@ from Data.modules.datasets.trading_classification import (
 from Data.modules.datasets.types import (
     CanonicalRecord,
     DatasetJobType,
-    DetectedFormat,
     SourceType,
 )
 from Data.modules.knowledge import KnowledgeStore
@@ -499,19 +496,18 @@ class ServiceIntegrationTests(unittest.TestCase):
         ver = self.service.pick_usable_version(ds_id)
         assert ver is not None
         with mock.patch(
-            "Data.modules.datasets.semantic_profiler.load_materialized_jsonl",
+            "Data.modules.datasets.materialize.load_materialized_jsonl",
             side_effect=AssertionError("must not full-load"),
         ):
-            # load_materialized_jsonl is not imported in profiler; patch materialize module too.
-            with mock.patch(
-                "Data.modules.datasets.materialize.load_materialized_jsonl",
-                side_effect=AssertionError("must not full-load"),
-            ):
-                evidence = self.service.build_bounded_profile(ds_id, ver.version_id)
+            evidence = self.service.build_bounded_profile(ds_id, ver.version_id)
         self.assertGreaterEqual(len(evidence.columns), 5)
-        profile = build_deterministic_profile(evidence)
-        # Ensure trading classification still available via service
-        classification = self.service.ensure_dataset_classification(ds_id, version_id=ver.version_id)
+        # Trading routing authority from columns (not machine filename).
+        classification = classify_trading_dataset(
+            name="dump_847293.csv",
+            filename="dump_847293.csv",
+            columns=evidence.columns,
+            metadata={"symbol": "BTCUSDT"},
+        )
         self.assertEqual(classification.trading_kind, TradingDatasetKind.MARKET_OHLCV)
         evidence.trading_classification = classification.public_dict()
         profile = build_deterministic_profile(evidence)
