@@ -65,6 +65,31 @@ from .working_memory import WorkingMemory
 ModelCaller = Callable[..., Any]
 
 
+def _parse_event_timestamp(value: Any) -> float | None:
+    """Parse in-process epoch seconds or durable ISO-8601 event timestamps."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        pass
+    try:
+        from datetime import datetime, timezone
+
+        normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class CognitiveRunState:
     run_id: str
@@ -307,14 +332,19 @@ class CognitiveRunState:
     def _latency_ms(self) -> float | None:
         if not self.events:
             return None
-        times = [
-            float(e.get("created_at"))
-            for e in self.events
-            if isinstance(e, dict) and e.get("created_at") is not None
-        ]
+        times: list[float] = []
+        for e in self.events:
+            if not isinstance(e, dict) or e.get("created_at") is None:
+                continue
+            parsed = _parse_event_timestamp(e.get("created_at"))
+            if parsed is not None:
+                times.append(parsed)
         if len(times) < 2:
             return None
-        return round((max(times) - min(times)) * 1000.0, 3)
+        span = max(times) - min(times)
+        # In-process events use unix epoch seconds; hydrated store events use ISO-8601.
+        # Both yield a comparable delta in seconds.
+        return round(span * 1000.0, 3)
 
 
 class CognitiveRuntime:

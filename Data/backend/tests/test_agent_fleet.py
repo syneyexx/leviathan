@@ -63,9 +63,17 @@ class AgentFleetTests(unittest.TestCase):
         agents = self.fleet.list_agents()
         self.assertGreaterEqual(len(agents), 4)
         orch = [a for a in agents if a.kind == AgentDefinitionKind.ORCHESTRATOR]
-        self.assertEqual(len(orch), 1)
-        self.assertTrue(orch[0].orchestrator)
-        self.assertGreaterEqual(len(orch[0].orchestrator.member_agent_ids), 1)
+        # Planner + General Intelligence Orchestra are both seeded orchestrators.
+        self.assertGreaterEqual(len(orch), 1)
+        keys = {
+            (a.metadata or {}).get("systemKey")
+            for a in orch
+            if isinstance(a.metadata, dict)
+        }
+        self.assertIn("planner", keys)
+        self.assertTrue(all(a.orchestrator for a in orch))
+        planner = next(a for a in orch if (a.metadata or {}).get("systemKey") == "planner")
+        self.assertGreaterEqual(len(planner.orchestrator.member_agent_ids), 1)
 
     def test_disabled_agent_cannot_execute(self) -> None:
         agent = self.fleet.create_agent({"name": "Temp", "kind": "research"})

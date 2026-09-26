@@ -122,10 +122,20 @@ class CognitiveGatewayInvokeTests(unittest.TestCase):
         run_id = state["run_id"]
         live = self.runtime._runs[run_id]
         decision = MetaController().decide(live.task)
+        # Explicit tool invoke requires tool budget — DIRECT simple_chat caps tools at 0.
+        from Data.modules.cognition.types import CognitiveBudgets
+
+        tool_budgets = CognitiveBudgets(
+            **{
+                **decision.budgets.public_dict(),
+                "max_tool_calls": 4,
+                "max_model_calls": max(1, decision.budgets.max_model_calls),
+            }
+        )
         live.decision = MetaDecision(
             mode=decision.mode,
             strategy=ReasoningStrategy.TOOL_DRIVEN,
-            budgets=decision.budgets,
+            budgets=tool_budgets,
             value_scores=decision.value_scores,
             notes=decision.notes,
         )

@@ -43,14 +43,25 @@ class MetaControllerPolicyTests(unittest.TestCase):
         self.assertEqual(policy.budget_for("FAST")["max_model_calls"], 7)
 
         meta = MetaController(policy=policy)
-        task = TaskModelBuilder().build("hi")
+        # DIRECT simple_chat hard-caps model calls; use TOOL_REQUIRED to observe policy budgets.
+        task = TaskModelBuilder().build("Calculate 17 * 23 precisely")
+        self.assertEqual(task.execution_class, "TOOL_REQUIRED")
         decision = meta.decide(task, user_requested_depth="FAST")
         self.assertEqual(decision.mode, ReasoningMode.FAST)
         self.assertEqual(decision.budgets.max_model_calls, 7)
 
-    def test_set_policy_hot_swap(self) -> None:
+    def test_direct_simple_chat_caps_model_calls(self) -> None:
         meta = MetaController()
         task = TaskModelBuilder().build("hi")
+        self.assertEqual(task.execution_class, "DIRECT")
+        decision = meta.decide(task, user_requested_depth="FAST")
+        self.assertEqual(decision.mode, ReasoningMode.FAST)
+        self.assertEqual(decision.budgets.max_model_calls, 1)
+        self.assertEqual(decision.budgets.max_tool_calls, 0)
+
+    def test_set_policy_hot_swap(self) -> None:
+        meta = MetaController()
+        task = TaskModelBuilder().build("Calculate 17 * 23 precisely")
         baseline = meta.decide(task, user_requested_depth="FAST")
         self.assertEqual(baseline.budgets.max_model_calls, 1)
 
