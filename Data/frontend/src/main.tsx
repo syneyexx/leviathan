@@ -33,6 +33,7 @@ import "./styles/datasets-dashboard.css";
 import "./styles/ritual-theme.css";
 import "./styles/ritual-pages.css";
 import "./styles/ritual-special.css";
+import "./styles/ritual-polish.css";
 
 const root = document.getElementById("root");
 if (!root) {
