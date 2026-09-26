@@ -36,7 +36,9 @@ class InstrumentModelW07Tests(unittest.TestCase):
         by_fam = {row["family"]: row for row in matrix["families"]}
         self.assertEqual(by_fam["equity"]["capability"], "AVAILABLE")
         self.assertEqual(by_fam["crypto_spot"]["capability"], "AVAILABLE")
-        for unsupported in ("options", "futures", "forex", "fixed_income", "other"):
+        self.assertEqual(by_fam["forex"]["capability"], "AVAILABLE")
+        self.assertEqual(by_fam["futures"]["capability"], "AVAILABLE")
+        for unsupported in ("options", "fixed_income", "other"):
             self.assertEqual(by_fam[unsupported]["capability"], "NOT_IMPLEMENTED")
             self.assertFalse(by_fam[unsupported]["end_to_end"])
         self.assertTrue(matrix["truth"]["enum_exists_is_not_market_support"])
@@ -49,6 +51,8 @@ class InstrumentModelW07Tests(unittest.TestCase):
         fi = next(m for m in caps["markets"] if m["family"] == "fixed_income")
         self.assertEqual(fi["HISTORICAL_SIM_AVAILABLE"], "NOT_IMPLEMENTED")
         self.assertEqual(fi["LIVE_TRADING_AVAILABLE"], "BLOCKED")
+        fx = next(m for m in caps["markets"] if m["family"] == "forex")
+        self.assertEqual(fx["HISTORICAL_SIM_AVAILABLE"], "AVAILABLE")
 
     def test_instrument_id_round_trip(self) -> None:
         iid = make_instrument_id(InstrumentFamily.EQUITY, "aapl", "nasdaq")
@@ -80,8 +84,6 @@ class InstrumentModelW07Tests(unittest.TestCase):
     def test_unsupported_never_available_or_equity_rules(self) -> None:
         for fam in (
             InstrumentFamily.OPTIONS,
-            InstrumentFamily.FUTURES,
-            InstrumentFamily.FOREX,
             InstrumentFamily.FIXED_INCOME,
             InstrumentFamily.OTHER,
         ):
@@ -89,13 +91,6 @@ class InstrumentModelW07Tests(unittest.TestCase):
             with self.assertRaises(MarketSimError) as ctx:
                 assert_family_implemented(fam)
             self.assertEqual(ctx.exception.code, "INSTRUMENT_FAMILY_NOT_IMPLEMENTED")
-
-        ok, reason, qty = validate_intent_rules(
-            spec=FUTURES_ES_STUB, side="buy", qty=1, price=5000
-        )
-        self.assertFalse(ok)
-        self.assertIn("INSTRUMENT_FAMILY_NOT_IMPLEMENTED", reason)
-        self.assertEqual(qty, Decimal("0"))
 
         ok2, reason2, _ = validate_intent_rules(
             spec=FIXED_INCOME_US10Y_STUB, side="buy", qty=1, price=100
@@ -112,8 +107,7 @@ class InstrumentModelW07Tests(unittest.TestCase):
         self.assertEqual(infer_family("EURUSD"), InstrumentFamily.FOREX)
         spec = spec_for_symbol("EURUSD")
         self.assertEqual(spec.family, InstrumentFamily.FOREX)
-        self.assertEqual(spec.capability_status(), CapabilityState.NOT_IMPLEMENTED)
-        self.assertTrue(spec.metadata.get("no_equity_fallback"))
+        self.assertEqual(spec.capability_status(), CapabilityState.AVAILABLE)
 
     def test_equity_intent_still_ok(self) -> None:
         ok, reason, qty = validate_intent_rules(

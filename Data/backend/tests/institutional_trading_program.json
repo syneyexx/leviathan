@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "f39c2e376135ca65613905d8c7d1c342d54dac4f",
+  "last_verified_commit": "62b518fd00f0d959acad72578717dff7f13bc079",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W08",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01\u2013W07 PASS. W08 equities/ETF hardening.",
+  "active_wave": "W12",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI skipped per operator. W01\u2013W12 instrument/data waves PASS.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -177,28 +177,33 @@
       ]
     },
     "forex": {
-      "status": "NOT_IMPLEMENTED",
+      "status": "CURRENT",
       "evidence": [
-        "capabilities.py FOREX historical_sim/live_paper NOT_IMPLEMENTED"
+        "fx.py CurrencyPair",
+        "FOREX in SUPPORTED_SIM_FAMILIES",
+        "capabilities HISTORICAL_SIM AVAILABLE"
       ]
     },
     "futures": {
-      "status": "NOT_IMPLEMENTED",
+      "status": "CURRENT",
       "evidence": [
-        "capabilities.py FUTURES NOT_IMPLEMENTED"
+        "futures_contracts.py",
+        "FUTURES in SUPPORTED_SIM_FAMILIES",
+        "multiplier notional; funding UNMEASURED"
       ]
     },
     "options": {
       "status": "NOT_IMPLEMENTED",
       "evidence": [
-        "capabilities.py OPTIONS NOT_IMPLEMENTED"
+        "options_contracts.py identity/greeks UNMEASURED",
+        "trading NOT_IMPLEMENTED"
       ]
     },
     "fixed_income": {
       "status": "NOT_IMPLEMENTED",
       "evidence": [
-        "InstrumentFamily.FIXED_INCOME in instruments.py + capabilities matrix",
-        "stub FIXED_INCOME_US10Y_STUB; HISTORICAL_SIM/LIVE_PAPER NOT_IMPLEMENTED"
+        "fixed_income.py yield/duration stubs",
+        "trading NOT_IMPLEMENTED"
       ]
     },
     "quotes": {
@@ -474,30 +479,73 @@
     {
       "id": "W09",
       "title": "FX spot",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim instruments",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_instrument_families_w09_w12"
+      ],
+      "evidence": [
+        "fx.py CurrencyPair + pip conventions",
+        "FOREX_EURUSD registry; FOREX AVAILABLE for OHLCV paper",
+        "live trading BLOCKED",
+        "W09\u2013W12 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "62b518fd00f0d959acad72578717dff7f13bc079"
     },
     {
       "id": "W10",
       "title": "Futures and crypto perpetuals",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim instruments",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_instrument_families_w09_w12"
+      ],
+      "evidence": [
+        "futures_contracts.py ES + BTCUSDT perp",
+        "FUTURES AVAILABLE with multiplier notional",
+        "funding_rate UNMEASURED unless provided",
+        "W09\u2013W12 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "62b518fd00f0d959acad72578717dff7f13bc079"
     },
     {
       "id": "W11",
       "title": "Options",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim instruments",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_instrument_families_w09_w12"
+      ],
+      "evidence": [
+        "options_contracts.py OptionContractSpec",
+        "greeks UNMEASURED; trading remains NOT_IMPLEMENTED",
+        "W09\u2013W12 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "62b518fd00f0d959acad72578717dff7f13bc079"
     },
     {
       "id": "W12",
       "title": "Fixed income and family extensibility",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim instruments",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_instrument_families_w09_w12"
+      ],
+      "evidence": [
+        "fixed_income.py FixedIncomeSpec dirty/clean honesty",
+        "FIXED_INCOME stays NOT_IMPLEMENTED for trading",
+        "family extensibility via InstrumentFamily enum + support_matrix",
+        "W09\u2013W12 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "62b518fd00f0d959acad72578717dff7f13bc079"
     },
     {
       "id": "W13",

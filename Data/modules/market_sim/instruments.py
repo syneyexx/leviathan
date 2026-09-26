@@ -42,13 +42,16 @@ class CapabilityState(str, Enum):
 # Families the sim/paper path actually implements. Everything else must stay
 # explicit NOT_IMPLEMENTED — never silently reuse equity lot/tick/fill rules (T16).
 SUPPORTED_SIM_FAMILIES: frozenset[InstrumentFamily] = frozenset(
-    {InstrumentFamily.EQUITY, InstrumentFamily.CRYPTO_SPOT}
+    {
+        InstrumentFamily.EQUITY,
+        InstrumentFamily.CRYPTO_SPOT,
+        InstrumentFamily.FOREX,
+        InstrumentFamily.FUTURES,
+    }
 )
 UNSUPPORTED_SIM_FAMILIES: frozenset[InstrumentFamily] = frozenset(
     {
         InstrumentFamily.OPTIONS,
-        InstrumentFamily.FUTURES,
-        InstrumentFamily.FOREX,
         InstrumentFamily.FIXED_INCOME,
         InstrumentFamily.OTHER,
     }
@@ -307,7 +310,6 @@ CRYPTO_BTCUSDT = InstrumentSpec(
     exchange_symbol="BTCUSDT",
 )
 
-# Stub specs for unsupported families — capability NOT_IMPLEMENTED; never tradeable.
 FUTURES_ES_STUB = InstrumentSpec(
     instrument_id="futures:ES:CME",
     symbol="ES",
@@ -318,7 +320,20 @@ FUTURES_ES_STUB = InstrumentSpec(
     lot_size="1",
     min_notional="1",
     multiplier="50",
-    metadata={"capability": "NOT_IMPLEMENTED", "stub": True},
+    metadata={"contract": "ES", "w10": True},
+)
+
+FOREX_EURUSD = InstrumentSpec(
+    instrument_id="forex:EURUSD:SIM",
+    symbol="EURUSD",
+    family=InstrumentFamily.FOREX,
+    venue="SIM",
+    quote_currency="USD",
+    tick_size="0.0001",
+    lot_size="1000",
+    min_notional="1000",
+    multiplier="1",
+    metadata={"currency_pair": "EURUSD", "w09": True},
 )
 
 FIXED_INCOME_US10Y_STUB = InstrumentSpec(
@@ -331,7 +346,7 @@ FIXED_INCOME_US10Y_STUB = InstrumentSpec(
     lot_size="1000",
     min_notional="1000",
     multiplier="1",
-    metadata={"capability": "NOT_IMPLEMENTED", "stub": True},
+    metadata={"capability": "NOT_IMPLEMENTED", "stub": True, "w12": True},
 )
 
 _REGISTRY: dict[str, InstrumentSpec] = {
@@ -339,11 +354,13 @@ _REGISTRY: dict[str, InstrumentSpec] = {
     EQUITY_SPY.instrument_id: EQUITY_SPY,
     CRYPTO_BTCUSDT.instrument_id: CRYPTO_BTCUSDT,
     FUTURES_ES_STUB.instrument_id: FUTURES_ES_STUB,
+    FOREX_EURUSD.instrument_id: FOREX_EURUSD,
     FIXED_INCOME_US10Y_STUB.instrument_id: FIXED_INCOME_US10Y_STUB,
     EQUITY_AAPL.symbol: EQUITY_AAPL,
     EQUITY_SPY.symbol: EQUITY_SPY,
     CRYPTO_BTCUSDT.symbol: CRYPTO_BTCUSDT,
     FUTURES_ES_STUB.symbol: FUTURES_ES_STUB,
+    FOREX_EURUSD.symbol: FOREX_EURUSD,
     FIXED_INCOME_US10Y_STUB.symbol: FIXED_INCOME_US10Y_STUB,
 }
 
@@ -467,6 +484,67 @@ def spec_for_symbol(
             figi=meta.get("figi"),
             exchange_symbol=str(meta.get("exchange_symbol") or symbol.upper()),
             metadata={"timeframe": timeframe, **meta},
+        )
+    if family == InstrumentFamily.FOREX:
+        from .fx import CurrencyPair
+
+        venue = str(meta.get("venue") or "SIM")
+        try:
+            pair = CurrencyPair.parse(symbol)
+        except ValueError:
+            pair = CurrencyPair(base=symbol[:3].upper(), quote=str(meta.get("quote_currency") or "USD")[:3])
+        return InstrumentSpec(
+            instrument_id=make_instrument_id(family, pair.symbol, venue),
+            symbol=pair.symbol,
+            family=family,
+            venue=venue,
+            quote_currency=pair.quote,
+            timezone="UTC",
+            tick_size=str(meta.get("tick_size") or pair.default_tick_size()),
+            lot_size=str(meta.get("lot_size") or "1000"),
+            min_notional=str(meta.get("min_notional") or "1000"),
+            supports_short=True if meta.get("supports_short") is None else supports_short,
+            multiplier=str(meta.get("multiplier") or "1"),
+            exchange_symbol=pair.symbol,
+            metadata={
+                "timeframe": timeframe,
+                "currency_pair": pair.symbol,
+                "pip_size": str(pair.pip_size()),
+                **meta,
+            },
+        )
+    if family == InstrumentFamily.FUTURES:
+        from .futures_contracts import BTCUSDT_PERP, ES_CME
+
+        venue = str(meta.get("venue") or "CME")
+        is_perp = bool(meta.get("is_perpetual") or meta.get("isPerpetual")) or "PERP" in symbol.upper()
+        catalog = BTCUSDT_PERP if is_perp else ES_CME
+        if symbol.upper() == "ES":
+            catalog = ES_CME
+            venue = str(meta.get("venue") or catalog.venue)
+        elif is_perp:
+            catalog = BTCUSDT_PERP
+            venue = str(meta.get("venue") or catalog.venue)
+        return InstrumentSpec(
+            instrument_id=make_instrument_id(family, symbol, venue),
+            symbol=symbol.upper(),
+            family=family,
+            venue=venue,
+            quote_currency=str(meta.get("quote_currency") or catalog.quote_currency),
+            timezone="UTC",
+            tick_size=str(meta.get("tick_size") or catalog.tick_size),
+            lot_size=str(meta.get("lot_size") or "1"),
+            min_notional=str(meta.get("min_notional") or "1"),
+            supports_short=True if meta.get("supports_short") is None else supports_short,
+            multiplier=str(meta.get("multiplier") or catalog.multiplier),
+            exchange_symbol=str(meta.get("exchange_symbol") or symbol.upper()),
+            metadata={
+                "timeframe": timeframe,
+                "is_perpetual": is_perp or catalog.is_perpetual,
+                "funding_status": catalog.funding_status(),
+                "contract": catalog.public_dict(),
+                **meta,
+            },
         )
     if family in UNSUPPORTED_SIM_FAMILIES:
         venue = str(meta.get("venue") or "UNKNOWN")
