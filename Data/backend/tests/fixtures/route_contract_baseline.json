@@ -1,0 +1,2172 @@
+{
+  "operations": [
+    {
+      "method": "DELETE",
+      "path": "/api/conversations/{conversation_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/datasets/{dataset_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/knowledge/{document_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/market-sim/news/feeds/{feed_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/mcp/servers/{server_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/model-providers/{provider_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/models/{model_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tasks/{task_id}/dependencies/{dependency_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tasks/{task_id}/notes/{note_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/tasks/{task_id}/subtasks/{subtask_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/dataset-learning"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/missions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/missions/{mission_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/missions/{mission_id}/signals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/roster"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/signals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/signals/dead-letters"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/signals/graph"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/signals/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/signals/{signal_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/signals/{signal_id}/chain"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/signals/{signal_id}/deliveries"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/summary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/system"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/{agent_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agents/{agent_id}/signals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics/agents"
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics/datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics/overview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics/tools"
+    },
+    {
+      "method": "GET",
+      "path": "/api/analytics/training"
+    },
+    {
+      "method": "GET",
+      "path": "/api/approvals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/approvals/{approval_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/architecture/capability-manifest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/architecture/ownership"
+    },
+    {
+      "method": "GET",
+      "path": "/api/artifacts/{artifact_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/backup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/brain/graph"
+    },
+    {
+      "method": "GET",
+      "path": "/api/brain/stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/browser/qa/crawls/{journey_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/browser/qa/crawls/{journey_id}/report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/browser/qa/{journey_id}/report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/browser/qa/{journey_id}/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/capabilities/effects/recent"
+    },
+    {
+      "method": "GET",
+      "path": "/api/capabilities/receipts/by-run/{run_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/capabilities/receipts/recent"
+    },
+    {
+      "method": "GET",
+      "path": "/api/capabilities/search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/capabilities/{capability_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/chaos"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coding/semantic-map"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coding/sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coding/sessions/{session_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coding/sessions/{session_id}/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coding/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coding/workspace/tree"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cognition/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cognition/runs/{run_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cognition/runs/{run_id}/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cognition/runs/{run_id}/trace"
+    },
+    {
+      "method": "GET",
+      "path": "/api/console/commands"
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations/{conversation_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/jobs/{job_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/learned"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/learning/activity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/mixtures"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/mixtures/{mixture_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/offline/discover"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/offline/indexes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/versions/{version_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/versions/{version_id}/pii"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/versions/{version_id}/preview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{dataset_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{dataset_id}/versions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/download"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/platform"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/promotion"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/regressions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/reports"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/reports/{report_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/scorecard"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events/stream"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evidence"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evidence/{evidence_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/flywheel/challengers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/flywheel/lineage/{model_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/flywheel/promotions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/functions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/functions/{function_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/efficiency"
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/efficiency/affinity/{model_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/efficiency/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/tokenization/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/intelligence/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/isolation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/jobs/{job_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/jobs/{job_id}/children"
+    },
+    {
+      "method": "GET",
+      "path": "/api/jobs/{job_id}/provider-stream"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/atlas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/deep-recall/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/why"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/{document_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/data"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/data/{source_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/datasets"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/decisions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/experiments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/feeds"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/feeds/{feed_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/feeds/{feed_id}/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/feeds/{feed_id}/snapshot"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/live-trading"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/news/feeds"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/news/items"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/news/signals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/orchestras"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/orchestras/summary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/orchestras/{orchestra_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/orchestras/{orchestra_id}/decisions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/orchestras/{orchestra_id}/missions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/paper/sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/paper/sessions/{session_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/allocations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/export"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/orders"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/performance"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/positions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/recommendations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/risk"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/strategies"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/transactions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/providers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/runs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/runs/{run_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/runs/{run_id}/knowledge-snapshot"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/runs/{run_id}/live"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/runs/{run_id}/results"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/strategies"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-sim/strategies/{strategy_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/master/gates"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/calls"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/servers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/servers/{server_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/servers/{server_id}/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/servers/{server_id}/tools"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/tools"
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory"
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/{memory_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model-downloads"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model-downloads/{download_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model-providers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/model-providers/{provider_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/audit"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/gateway"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/hardware"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/reservations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/residency"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/router/decisions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/serving/workers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/{model_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/{model_id}/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/{model_id}/profile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/{model_id}/residency"
+    },
+    {
+      "method": "GET",
+      "path": "/api/modules"
+    },
+    {
+      "method": "GET",
+      "path": "/api/multimodal/sessions/{session_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/native/probe"
+    },
+    {
+      "method": "GET",
+      "path": "/api/neuro/memory/snapshots"
+    },
+    {
+      "method": "GET",
+      "path": "/api/neuro/residual"
+    },
+    {
+      "method": "GET",
+      "path": "/api/neuro/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/observations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/observations/{observation_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/performance/series"
+    },
+    {
+      "method": "GET",
+      "path": "/api/performance/snapshot"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/{plugin_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/product/truth"
+    },
+    {
+      "method": "GET",
+      "path": "/api/release/ci"
+    },
+    {
+      "method": "GET",
+      "path": "/api/release/gates"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/budgets"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/citation-audit"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/citations/{citation_key}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/claim-graph"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/claims"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/conflicts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/coverage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/evidence"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/export"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/gaps"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/plan-history"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/quality"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/source-assessments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/sources"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/sources/{source_id}/children"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/sources/{source_id}/ingestion"
+    },
+    {
+      "method": "GET",
+      "path": "/api/research/{project_id}/workers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/runs/{run_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/schedules"
+    },
+    {
+      "method": "GET",
+      "path": "/api/schedules/{schedule_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/security/audit"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/behavior-profile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/catalog"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/categories/{category}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/keys/{key:path}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/system/telemetry"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/activity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/agent-activity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/summary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/timeline"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/weekday-completions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/workload"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/dependencies"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/notes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks/{task_id}/subtasks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/telemetry"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/hardware"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/jobs/{job_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/jobs/{job_id}/checkpoints"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/jobs/{job_id}/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/jobs/{job_id}/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/preferences"
+    },
+    {
+      "method": "GET",
+      "path": "/api/training/recipes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/verification/reports"
+    },
+    {
+      "method": "GET",
+      "path": "/api/verification/reports/{report_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/pools"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers/{worker_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workflows"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workflows/{workflow_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/chat"
+    },
+    {
+      "method": "GET",
+      "path": "/chat.html"
+    },
+    {
+      "method": "GET",
+      "path": "/docs"
+    },
+    {
+      "method": "GET",
+      "path": "/docs/oauth2-redirect"
+    },
+    {
+      "method": "GET",
+      "path": "/openapi.json"
+    },
+    {
+      "method": "GET",
+      "path": "/redoc"
+    },
+    {
+      "method": "GET",
+      "path": "/{spa_path:path}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/agents/{agent_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/conversations/{conversation_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/market-sim/portfolios/{portfolio_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/settings"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/settings/behavior-profile"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/settings/keys/{key:path}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tasks/{task_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tasks/{task_id}/notes/{note_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/tasks/{task_id}/subtasks/{subtask_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/execute"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/fleet/pause-all"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/fleet/start-all"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/missions/{mission_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/multi"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/reconcile"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/signals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/signals/dead-letters/{dead_letter_id}/retry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/signals/{signal_id}/ack"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/clone"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/disable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/enable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/agents/{agent_id}/missions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/approvals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/approvals/{approval_id}/approve"
+    },
+    {
+      "method": "POST",
+      "path": "/api/approvals/{approval_id}/deny"
+    },
+    {
+      "method": "POST",
+      "path": "/api/artifacts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/artifacts/{artifact_id}/verify"
+    },
+    {
+      "method": "POST",
+      "path": "/api/backup"
+    },
+    {
+      "method": "POST",
+      "path": "/api/backup/restore"
+    },
+    {
+      "method": "POST",
+      "path": "/api/browser/qa/crawl"
+    },
+    {
+      "method": "POST",
+      "path": "/api/browser/qa/crawls"
+    },
+    {
+      "method": "POST",
+      "path": "/api/browser/qa/crawls/{journey_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/browser/qa/crawls/{journey_id}/replay"
+    },
+    {
+      "method": "POST",
+      "path": "/api/browser/qa/{journey_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/browser/qa/{journey_id}/replay"
+    },
+    {
+      "method": "POST",
+      "path": "/api/browser/request"
+    },
+    {
+      "method": "POST",
+      "path": "/api/capabilities/{capability_id}/execute"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chaos/configure"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/approvals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/change-plan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/change-plan/apply"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/review"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/sessions/{session_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/sessions/{session_id}/turn"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coding/verification/plan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cognition/runs/{run_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cognition/runs/{run_id}/resume"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cognition/runs/{run_id}/steer"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cognition/submit"
+    },
+    {
+      "method": "POST",
+      "path": "/api/console/command"
+    },
+    {
+      "method": "POST",
+      "path": "/api/context/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/huggingface/list"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/import/huggingface"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/import/local"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/inspect"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/jobs/process"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/jobs/reconcile"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/jobs/{job_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/jobs/{job_id}/retry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/library/refresh"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/mixtures"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/offline/index"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/offline/preflight"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/sidecars/reconcile"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/upload"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/versions/{version_id}/packing-sim"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/annotations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/duplicate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/learn"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/materialize"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/shard-ingest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/contamination-scan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/dedupe"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/index"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/split"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/tokenize-stats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/transform"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{dataset_id}/versions/{version_id}/validate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/ablations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/assistant"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/foundation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/neuro"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/paired"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/regression"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/serving"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evidence/artifact"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evidence/file"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evidence/observation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evidence/{evidence_id}/verify"
+    },
+    {
+      "method": "POST",
+      "path": "/api/flywheel/challengers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/flywheel/challengers/{proposal_id}/promote"
+    },
+    {
+      "method": "POST",
+      "path": "/api/flywheel/promotions/{promotion_id}/rollback"
+    },
+    {
+      "method": "POST",
+      "path": "/api/functions/calls/{call_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/functions/{function_id}/execute"
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/efficiency/cache/clear"
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/efficiency/probe"
+    },
+    {
+      "method": "POST",
+      "path": "/api/isolation/evaluate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/jobs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/jobs/{job_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/jobs/{job_id}/retry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/atlas"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/atlas/{atlas_id}/revise"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/deep-recall"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/ingest/path"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/ingest/scan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/why"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/data/import"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/data/register"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/data/scan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/datasets/{dataset_id}/{version}/seal"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/demos/run"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/experiments"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/experiments/{trial_id}/complete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/feeds"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/feeds/{feed_id}/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/gym/episodes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/gym/episodes/{run_id}/export-trajectory"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/gym/episodes/{run_id}/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/gym/episodes/{run_id}/step"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/news/feeds"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/news/poll"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/orchestras"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/orchestras/{orchestra_id}/autonomy"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/orchestras/{orchestra_id}/missions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/paper/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/paper/sessions/{session_id}/kill-switch"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/paper/sessions/{session_id}/orders"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/allocations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/kill-switch"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/orders"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/pause"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/positions/close-selected"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/positions/{position_id}/close"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/rebalance/execute"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/rebalance/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/resume"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/portfolios/{portfolio_id}/tick"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/providers/import"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/runs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/runs/{run_id}/pause"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/runs/{run_id}/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/runs/{run_id}/step"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/runs/{run_id}/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/scan-batch"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/strategies"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/strategies/{strategy_id}/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/strategies/{strategy_id}/fork"
+    },
+    {
+      "method": "POST",
+      "path": "/api/market-sim/strategies/{strategy_id}/versions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/call"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers/{server_id}/connect"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers/{server_id}/disable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers/{server_id}/disconnect"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers/{server_id}/enable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mcp/servers/{server_id}/refresh-tools"
+    },
+    {
+      "method": "POST",
+      "path": "/api/media/request"
+    },
+    {
+      "method": "POST",
+      "path": "/api/memory"
+    },
+    {
+      "method": "POST",
+      "path": "/api/memory/{memory_id}/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/memory/{memory_id}/revoke"
+    },
+    {
+      "method": "POST",
+      "path": "/api/model-downloads/{download_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/model-providers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/model-providers/{provider_id}/test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/compatible"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/download"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/import"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/refresh"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/router/resolve"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/serving/reconcile"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/activate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/benchmark"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/load"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/placement-preflight"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/probe"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/unload"
+    },
+    {
+      "method": "POST",
+      "path": "/api/modules/discover"
+    },
+    {
+      "method": "POST",
+      "path": "/api/modules/{module_id}/execute"
+    },
+    {
+      "method": "POST",
+      "path": "/api/multimodal/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/multimodal/sessions/{session_id}/context"
+    },
+    {
+      "method": "POST",
+      "path": "/api/multimodal/sessions/{session_id}/messages"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/absorb"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/absorb/schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/assess"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/contrastive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/cortex/run"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/memory/snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/memory/snapshots/{snapshot_id}/restore"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/residual/orchestrate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/neuro/soak"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/disable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/enable"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/{plugin_id}/invoke"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/datasets/connect"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/deepen"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/plan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/report"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/reproducibility-bundle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/resume"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/run"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/sources/upload"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/sources/url"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/sources/{source_id}/brain-retry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/sources/{source_id}/ingestion/brain-retry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/sources/{source_id}/ingestion/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/research/{project_id}/sources/{source_id}/ingestion/retry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/schedules"
+    },
+    {
+      "method": "POST",
+      "path": "/api/schedules/tick"
+    },
+    {
+      "method": "POST",
+      "path": "/api/schedules/{schedule_id}/pause"
+    },
+    {
+      "method": "POST",
+      "path": "/api/schedules/{schedule_id}/resume"
+    },
+    {
+      "method": "POST",
+      "path": "/api/secrets/lease"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/behavior-profile/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/behavior-profile/reset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/reset-category/{category}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/reset/{key:path}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/auto-plan/commit"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/auto-plan/preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/quick-capture"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/dependencies"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/duplicate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/notes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/retry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tasks/{task_id}/subtasks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/trading/order"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/active-learning/mine"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/active-learning/{candidate_id}/govern"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/jobs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/jobs/{job_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/jobs/{job_id}/evaluate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/jobs/{job_id}/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/jobs/{job_id}/resume"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/jobs/{job_id}/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/plan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/preferences"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/preferences/from-verification"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/preflight"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/reconcile"
+    },
+    {
+      "method": "POST",
+      "path": "/api/training/synthetic/generate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/verification/evaluate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/voice/request"
+    },
+    {
+      "method": "POST",
+      "path": "/api/workers/pools/{pool_id}/scale"
+    },
+    {
+      "method": "POST",
+      "path": "/api/workflows"
+    },
+    {
+      "method": "POST",
+      "path": "/api/workflows/{workflow_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/workflows/{workflow_id}/run"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/market-sim/news/feeds/{feed_id}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/market-sim/orchestras/{orchestra_id}/mandate"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/mcp/servers/{server_id}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/model-providers/{provider_id}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/models/hardware/policy"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/models/router"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/models/{model_id}/profile"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/models/{model_id}/residency-policy"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/research/{project_id}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/behavior-profile/system-prompt"
+    }
+  ]
+}
