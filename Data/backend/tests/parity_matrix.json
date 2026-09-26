@@ -1,6 +1,6 @@
 {
   "fixtureRows": 24,
-  "generatedAt": "2026-09-26T22:01:21Z",
+  "generatedAt": "2026-09-26T22:07:45Z",
   "intentionalDifferences": [],
   "nativeBinary": "/workspace/Data/native/bin/leviathan-data-plane",
   "operations": [
@@ -29,7 +29,7 @@
       "notes": "",
       "operation": "dataset.transform",
       "pythonHash": "bf842c001d5987ebaf08ad6959d2be0072c0003246e455c799a7ae69b1a16004",
-      "pythonMs": 4.14,
+      "pythonMs": 4.92,
       "rustHash": "bf842c001d5987ebaf08ad6959d2be0072c0003246e455c799a7ae69b1a16004",
       "status": "PASS"
     },
@@ -37,7 +37,7 @@
       "notes": "",
       "operation": "dataset.split",
       "pythonHash": "6027812fc5513ece368d43cc0f7a7fe827101ec0233391803a4181450ec78373",
-      "pythonMs": 3.87,
+      "pythonMs": 4.94,
       "rustHash": "6027812fc5513ece368d43cc0f7a7fe827101ec0233391803a4181450ec78373",
       "status": "PASS"
     },
@@ -45,7 +45,7 @@
       "notes": "",
       "operation": "dataset.export",
       "pythonHash": "385f7f8923ee0729541edbecd8b18e159f78793a8fa55727aa673fb339456f7f",
-      "pythonMs": 5.05,
+      "pythonMs": 4.31,
       "rustHash": "385f7f8923ee0729541edbecd8b18e159f78793a8fa55727aa673fb339456f7f",
       "status": "PASS"
     },
@@ -53,7 +53,7 @@
       "notes": "",
       "operation": "dataset.dedupe",
       "pythonHash": "4bc2457c7ce9127f4e5a8c7b24f1bd3adf749c20b48da9925c76b028d0119b54",
-      "pythonMs": 12.73,
+      "pythonMs": 11.91,
       "rustHash": "4bc2457c7ce9127f4e5a8c7b24f1bd3adf749c20b48da9925c76b028d0119b54",
       "status": "PASS"
     }

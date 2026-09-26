@@ -23,8 +23,9 @@ CHECKPOINT_FILENAME = "streaming-checkpoint.json"
 DEFAULT_CHECKPOINT_EVERY = 256
 UNMEASURED = "UNMEASURED"
 
-BACKEND_PYTHON_STREAMING = "python_streaming"
-BACKEND_RUST_NATIVE = "rust_native"
+# Public/API labels match ComputeBackend enum values (uppercase).
+BACKEND_PYTHON_STREAMING = "PYTHON_STREAMING"
+BACKEND_RUST_NATIVE = "RUST_NATIVE"
 
 
 def normalize_backend_label(raw: str | None) -> str | None:
@@ -39,9 +40,11 @@ def normalize_backend_label(raw: str | None) -> str | None:
     if upper in {"RUST_NATIVE", "RUST", "NATIVE", "RUSTNATIVE"}:
         return BACKEND_RUST_NATIVE
     lower = text.lower().replace("-", "_")
-    if lower in {BACKEND_PYTHON_STREAMING, BACKEND_RUST_NATIVE}:
-        return lower
-    return lower
+    if lower in {"python_streaming", "python"}:
+        return BACKEND_PYTHON_STREAMING
+    if lower in {"rust_native", "rust", "native"}:
+        return BACKEND_RUST_NATIVE
+    return upper
 
 
 def compute_input_hash(path: Path | str | None, *, fallback: str | None = None) -> str:

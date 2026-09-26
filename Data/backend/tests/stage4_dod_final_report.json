@@ -2,13 +2,14 @@
   "program": "unified_dataset_intelligence_native_memory",
   "schemaVersion": 1,
   "stage": 4,
-  "generatedAt": "2026-09-26T22:10:00Z",
+  "generatedAt": "2026-09-26T22:08:00Z",
   "branch": "cursor/leviathan-dataset-intelligence-native-1a6a",
+  "head": "pending_commit",
   "verdict": "COMPLETE_WITH_HONEST_GAPS",
   "summary": "Unified Dataset Intelligence + Native Data Plane / memory architecture delivered against focus map W141–W200. Canonical DatasetService/DatasetStore ownership preserved (no V2/parallel DBs). Data/HADES and editor/ skipped per scope.",
   "definitionOfDone": {
     "streamingHandlersNoFullMaterialize": {"status": "PASS", "evidence": "W142–W151; production handlers streaming-first"},
-    "nativeOpsParityCore": {"status": "PASS", "evidence": "parity_matrix.json; W183"},
+    "nativeOpsParityCore": {"status": "PASS", "evidence": "parity_matrix.json 6/6; W183"},
     "parquetNative": {"status": "PASS", "evidence": "W165 test_native_parquet_w165.py"},
     "admissionCancelWatchdogOrphans": {"status": "PASS", "evidence": "W167–W170"},
     "checkpointUiObservabilityDb": {"status": "PASS", "evidence": "W171–W176"},
@@ -18,6 +19,15 @@
     "frontendSettingsSupplyDocsInstall": {"status": "PASS", "evidence": "W193–W199"},
     "combinedE2E": {"status": "PASS", "evidence": "W200 scenarios A–F"},
     "noFalsePassClaims": {"status": "PASS", "evidence": "remainingScopeHonesty + cargo audit UNAVAILABLE + LOCAL_CLEAN_CHECK scope"}
+  },
+  "regression": {
+    "pytestNativeWaveSuite": {"passed": 81, "skipped": 1, "failed": 0},
+    "cargoLeviathanDataPlane": {"passed": 21, "failed": 0},
+    "verifyNativeDataPlane": "PASS",
+    "verifyCleanInstallNative": "PASS",
+    "parityMatrix": {"total": 6, "pass": 6, "fail": 0},
+    "frontendDatasetActivityVitest": {"passed": 12, "failed": 0},
+    "fixApplied": "normalize_backend_label emits PYTHON_STREAMING/RUST_NATIVE to match ComputeBackend public API"
   },
   "honestGaps": {
     "NOT_IMPLEMENTED": [
@@ -55,6 +65,5 @@
     "buildMissingAcceptedAsHonest": true,
     "windowsVmNotClaimed": true,
     "falsePassForbidden": true
-  },
-  "regressionNote": "Filled/updated after broad pytest+cargo+verifier run in the same turn."
+  }
 }
