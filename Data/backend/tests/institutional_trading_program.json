@@ -1,0 +1,492 @@
+{
+  "program": "leviathan_institutional_trading",
+  "version": 1,
+  "updated": "2026-09-26",
+  "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
+  "last_verified_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
+  "branch": "cursor/institutional-trading-f8e6",
+  "active_wave": "W00",
+  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed.",
+  "status_vocabulary": [
+    "NOT_STARTED",
+    "IN_PROGRESS",
+    "PASS",
+    "FAIL",
+    "BLOCKED_EXTERNAL",
+    "FEATURE_GATED",
+    "NOT_IMPLEMENTED",
+    "UNAVAILABLE",
+    "UNMEASURED",
+    "NOT_APPLICABLE"
+  ],
+  "excluded_trees": ["Data/HADES/", "editor/"],
+  "canonical_docs": [
+    "Data/docs/Leviathan_system_backend.md",
+    "Data/docs/Leviathan_system_frontend.md"
+  ],
+  "baseline": {
+    "highest_migration": 54,
+    "highest_migration_name": "market_sim_learning_runs",
+    "strategy_learning_tests": {
+      "command": "PYTHONPATH=Data python3 -m unittest Data.backend.tests.test_strategy_learning -v",
+      "result": "PASS",
+      "ran": 18,
+      "failed": 0,
+      "elapsed_sec": 112.887
+    },
+    "dataset_brain_tests": {
+      "command": "PYTHONPATH=Data python3 -m unittest Data.backend.tests.test_dataset_learning_pipeline Data.backend.tests.test_dataset_library_brain Data.backend.tests.test_one_brain Data.backend.tests.test_brain_facade -v",
+      "result": "PASS",
+      "ran": 33,
+      "failed": 0,
+      "elapsed_sec": 12.975
+    },
+    "frontend_typecheck": {
+      "command": "cd Data/frontend && npm run typecheck",
+      "result": "FAIL",
+      "notes": "Pre-existing ResearchPage.tsx TS2367: 'normal'|'custom' vs 'team' — not introduced by this program; recorded honestly. CI skipped."
+    },
+    "trading_verifier_ci": {
+      "status": "SKIPPED",
+      "notes": "Operator instructed SKIP CI CHECKS; verify_trading_100 --run-tests not executed this wave."
+    },
+    "live_trading": {
+      "status": "BLOCKED",
+      "evidence": "modules.market_sim.trading_live_guard.LiveTradingGuard.public_status LIVE_TRADING_AVAILABLE=BLOCKED"
+    },
+    "parallel_owners_scan": {
+      "result": "PASS",
+      "notes": "No StrategyLearningV2/MarketSimV2/InstitutionalTradingV2/TradingBrain/second DB owners found. BrainV2 only appears as forbidden_duplicate in ownership.py and anti-pattern gates."
+    },
+    "canonical_owners": {
+      "datasets": "datasets / DatasetService",
+      "brain": "brain / BrainAccessFacade",
+      "knowledge": "knowledge",
+      "memory": "memory",
+      "evidence": "evidence",
+      "jobs": "jobs / JobRuntime",
+      "agents": "agents",
+      "training": "training",
+      "db_commit": "db_commit",
+      "market_sim": "market_sim / MarketSimControlPlane (module; not separate ownership row)",
+      "strategy_learning": "market_sim.learning* + migration 54 market_sim_learning_runs"
+    }
+  },
+  "capability_inventory": {
+    "strategy_learning": {
+      "status": "CURRENT",
+      "evidence": ["migration 54", "learning.py", "test_strategy_learning.py 18/18", "L01-L15 PASS in trading_gates.json"]
+    },
+    "StrategyPolicy": {
+      "status": "CURRENT",
+      "evidence": ["policy.py TradingPolicy + DslStrategyPolicy", "PolicyExecutionTests"]
+    },
+    "Agent_Lab": {
+      "status": "CURRENT",
+      "evidence": ["agent_lab.py", "migration 53 market_sim_agent_labs"]
+    },
+    "Trial_Ledger": {
+      "status": "CURRENT",
+      "evidence": ["store.append_trial", "learning_runtime._append_trial", "stats_inferential trial_ledger_count_used"]
+    },
+    "curriculum": {
+      "status": "CURRENT",
+      "evidence": ["curriculum.py", "agent_labs curriculum_json"]
+    },
+    "statistical_validation": {
+      "status": "CURRENT",
+      "evidence": ["wfa.py", "stats_inferential.py CPCV/DSR/PBO primitives"]
+    },
+    "sealed": {
+      "status": "CURRENT",
+      "evidence": ["sealed_attempts.py", "LearnerAdaptationTests.test_sealed_update_forbidden"]
+    },
+    "paper_trading": {
+      "status": "CURRENT",
+      "evidence": ["paper_broker.py", "paper_deployment.py", "market_paper_sessions"]
+    },
+    "portfolio": {
+      "status": "CURRENT",
+      "evidence": ["portefeuille/", "migration 52 paper_portefeuille"]
+    },
+    "RiskGuard": {
+      "status": "CURRENT",
+      "evidence": ["risk_guard.py"]
+    },
+    "market_providers": {
+      "status": "CURRENT",
+      "evidence": ["providers/binance.py", "stooq via capabilities", "csv_local"]
+    },
+    "market_streams": {
+      "status": "CURRENT",
+      "evidence": ["feed/", "migration 51 market_feed_fabric"]
+    },
+    "equities": {
+      "status": "CURRENT",
+      "evidence": ["capabilities.py EQUITY historical_sim AVAILABLE when feature enabled"]
+    },
+    "crypto_spot": {
+      "status": "CURRENT",
+      "evidence": ["capabilities.py CRYPTO_SPOT AVAILABLE when feature enabled"]
+    },
+    "forex": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["capabilities.py FOREX historical_sim/live_paper NOT_IMPLEMENTED"]
+    },
+    "futures": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["capabilities.py FUTURES NOT_IMPLEMENTED"]
+    },
+    "options": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["capabilities.py OPTIONS NOT_IMPLEMENTED"]
+    },
+    "fixed_income": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["no FIXED_INCOME family in capabilities matrix"]
+    },
+    "quotes": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["DataLevel.QUOTES enum exists; OHLCV truth flags ohlcv_is_not_orderbook; no quote realism claimed"]
+    },
+    "orderbook": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["DataLevel.ORDERBOOK enum; features refuse invention; ohlcv_is_not_orderbook"]
+    },
+    "fundamentals": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["no end-to-end fundamentals pipeline claimed in capabilities"]
+    },
+    "corporate_actions": {
+      "status": "PARTIAL",
+      "evidence": ["universe.py PIT corporate actions; trading_gates G04 IN_PROGRESS — full auto-adjust later"]
+    },
+    "Brain_retrieval": {
+      "status": "CURRENT",
+      "evidence": ["modules/brain", "test_one_brain", "test_brain_facade", "HybridRetriever/StagedRetriever"]
+    },
+    "dataset_indexing": {
+      "status": "CURRENT",
+      "evidence": ["DatasetService", "test_dataset_learning_pipeline"]
+    },
+    "semantic_embeddings": {
+      "status": "FEATURE_GATED",
+      "evidence": ["embedding provider optional; null provider honest lexical mode in dataset learning tests"]
+    },
+    "execution_model": {
+      "status": "CURRENT",
+      "evidence": ["execution.py", "fill_model.py", "costs.py — bar/OHLCV modelled fills"]
+    },
+    "scenario_risk": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["no ScenarioSpec engine located under market_sim"]
+    },
+    "factor_risk": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["no governed factor-exposure layer located"]
+    },
+    "drift_detection": {
+      "status": "NOT_IMPLEMENTED",
+      "evidence": ["no paper-forward drift detector module located"]
+    },
+    "live_trading": {
+      "status": "BLOCKED",
+      "evidence": ["LiveTradingGuard LIVE_TRADING_AVAILABLE=BLOCKED"]
+    }
+  },
+  "known_defects_for_later_waves": [
+    {
+      "id": "W01_offline_datasets_job_override",
+      "severity": "OfflineDatasetsPixelPage overrides brain learned status with active index job → INDEXING vs LEARNED contradiction",
+      "path": "Data/frontend/src/pages/pixel/OfflineDatasetsPixelPage.tsx"
+    },
+    {
+      "id": "W00_frontend_typecheck_team",
+      "severity": "ResearchPage.tsx TS2367 team vs normal|custom — pre-existing on baseline",
+      "path": "Data/frontend/src/pages/ResearchPage.tsx"
+    }
+  ],
+  "waves": [
+    {
+      "id": "W00",
+      "title": "Baseline, program state and architecture lock",
+      "status": "PASS",
+      "owner": "institutional_trading_program",
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_strategy_learning",
+        "Data.backend.tests.test_dataset_learning_pipeline",
+        "Data.backend.tests.test_dataset_library_brain",
+        "Data.backend.tests.test_one_brain",
+        "Data.backend.tests.test_brain_facade"
+      ],
+      "evidence": [
+        "baseline_commit 98eb37d",
+        "migration 54 market_sim_learning_runs",
+        "strategy learning 18/18 PASS",
+        "dataset/brain 33/33 PASS",
+        "capability_inventory recorded",
+        "no parallel V2 owners",
+        "live trading BLOCKED"
+      ],
+      "blockers": [],
+      "last_verified_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103"
+    },
+    {
+      "id": "W01",
+      "title": "Dataset / Brain state consistency",
+      "status": "NOT_STARTED",
+      "owner": "datasets / DatasetService",
+      "required": true,
+      "tests": [],
+      "evidence": [],
+      "blockers": [],
+      "last_verified_commit": null
+    },
+    {
+      "id": "W02",
+      "title": "Trading dataset semantic classification and routing",
+      "status": "NOT_STARTED",
+      "owner": "datasets / DatasetService",
+      "required": true
+    },
+    {
+      "id": "W03",
+      "title": "Canonical Trading Brain integration",
+      "status": "NOT_STARTED",
+      "owner": "market_sim brain_hooks → brain facade",
+      "required": true
+    },
+    {
+      "id": "W04",
+      "title": "Temporal knowledge / epistemic firewall",
+      "status": "NOT_STARTED",
+      "owner": "knowledge + market_sim epistemic",
+      "required": true
+    },
+    {
+      "id": "W05",
+      "title": "Trading knowledge intelligence layer",
+      "status": "NOT_STARTED",
+      "owner": "knowledge + market_sim roles",
+      "required": true
+    },
+    {
+      "id": "W06",
+      "title": "Market data quality and point-in-time data fabric",
+      "status": "NOT_STARTED",
+      "owner": "market_sim data_store",
+      "required": true
+    },
+    {
+      "id": "W07",
+      "title": "Institutional instrument model foundation",
+      "status": "NOT_STARTED",
+      "owner": "market_sim instruments",
+      "required": true
+    },
+    {
+      "id": "W08",
+      "title": "Equities and ETF institutional hardening",
+      "status": "NOT_STARTED",
+      "owner": "market_sim instruments",
+      "required": true
+    },
+    {
+      "id": "W09",
+      "title": "FX spot",
+      "status": "NOT_STARTED",
+      "owner": "market_sim instruments",
+      "required": true
+    },
+    {
+      "id": "W10",
+      "title": "Futures and crypto perpetuals",
+      "status": "NOT_STARTED",
+      "owner": "market_sim instruments",
+      "required": true
+    },
+    {
+      "id": "W11",
+      "title": "Options",
+      "status": "NOT_STARTED",
+      "owner": "market_sim instruments",
+      "required": true
+    },
+    {
+      "id": "W12",
+      "title": "Fixed income and family extensibility",
+      "status": "NOT_STARTED",
+      "owner": "market_sim instruments",
+      "required": true
+    },
+    {
+      "id": "W13",
+      "title": "Market microstructure and execution laboratory",
+      "status": "NOT_STARTED",
+      "owner": "market_sim execution",
+      "required": true
+    },
+    {
+      "id": "W14",
+      "title": "Multi-timescale market state",
+      "status": "NOT_STARTED",
+      "owner": "market_sim market_state/features",
+      "required": true
+    },
+    {
+      "id": "W15",
+      "title": "Fundamental, corporate and event intelligence",
+      "status": "NOT_STARTED",
+      "owner": "market_sim + knowledge",
+      "required": true
+    },
+    {
+      "id": "W16",
+      "title": "Institutional portfolio intelligence",
+      "status": "NOT_STARTED",
+      "owner": "market_sim portefeuille",
+      "required": true
+    },
+    {
+      "id": "W17",
+      "title": "Institutional risk analytics",
+      "status": "NOT_STARTED",
+      "owner": "market_sim risk_guard + analytics",
+      "required": true
+    },
+    {
+      "id": "W18",
+      "title": "Scenario and stress engine",
+      "status": "NOT_STARTED",
+      "owner": "market_sim",
+      "required": true
+    },
+    {
+      "id": "W19",
+      "title": "Performance and return attribution",
+      "status": "NOT_STARTED",
+      "owner": "market_sim portefeuille",
+      "required": true
+    },
+    {
+      "id": "W20",
+      "title": "Strategy Learning multi-asset extension",
+      "status": "NOT_STARTED",
+      "owner": "market_sim learning",
+      "required": true
+    },
+    {
+      "id": "W21",
+      "title": "Champion / challenger strategy portfolio",
+      "status": "NOT_STARTED",
+      "owner": "market_sim strategy_asset + agent_lab",
+      "required": true
+    },
+    {
+      "id": "W22",
+      "title": "Autonomous Research Director",
+      "status": "NOT_STARTED",
+      "owner": "market_sim orchestra + research",
+      "required": true
+    },
+    {
+      "id": "W23",
+      "title": "Agent team institutionalization",
+      "status": "NOT_STARTED",
+      "owner": "market_sim roles + agents",
+      "required": true
+    },
+    {
+      "id": "W24",
+      "title": "Paper forward evidence, drift and continual research",
+      "status": "NOT_STARTED",
+      "owner": "market_sim paper_forward",
+      "required": true
+    },
+    {
+      "id": "W25",
+      "title": "Market data provider fabric expansion",
+      "status": "NOT_STARTED",
+      "owner": "market_sim providers",
+      "required": true
+    },
+    {
+      "id": "W26",
+      "title": "Data scale, indexing scale and resource governance",
+      "status": "NOT_STARTED",
+      "owner": "datasets + workers",
+      "required": true
+    },
+    {
+      "id": "W27",
+      "title": "Dataset poisoning, trust and research quality",
+      "status": "NOT_STARTED",
+      "owner": "datasets + knowledge",
+      "required": true
+    },
+    {
+      "id": "W28",
+      "title": "Governance, audit and operational safety",
+      "status": "NOT_STARTED",
+      "owner": "market_sim + evidence",
+      "required": true
+    },
+    {
+      "id": "W29",
+      "title": "Observability and institutional operations",
+      "status": "NOT_STARTED",
+      "owner": "observability",
+      "required": true
+    },
+    {
+      "id": "W30",
+      "title": "Institutional Trading Center UI",
+      "status": "NOT_STARTED",
+      "owner": "frontend trading",
+      "required": true
+    },
+    {
+      "id": "W31",
+      "title": "API contract consolidation",
+      "status": "NOT_STARTED",
+      "owner": "backend routes",
+      "required": true
+    },
+    {
+      "id": "W32",
+      "title": "Statistical and research honesty hardening",
+      "status": "NOT_STARTED",
+      "owner": "market_sim stats",
+      "required": true
+    },
+    {
+      "id": "W33",
+      "title": "Adversarial test program",
+      "status": "NOT_STARTED",
+      "owner": "backend tests",
+      "required": true
+    },
+    {
+      "id": "W34",
+      "title": "Performance / scale tests",
+      "status": "NOT_STARTED",
+      "owner": "backend tests",
+      "required": true
+    },
+    {
+      "id": "W35",
+      "title": "Frontend build / end-to-end user journeys",
+      "status": "NOT_STARTED",
+      "owner": "frontend",
+      "required": true
+    },
+    {
+      "id": "W36",
+      "title": "Docs, verifiers and final institutional gates",
+      "status": "NOT_STARTED",
+      "owner": "docs + trading_gates",
+      "required": true
+    }
+  ]
+}
