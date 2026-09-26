@@ -53,7 +53,7 @@ class MultiAgentAndDepthTests(unittest.TestCase):
         self.assertIn("VERIFY", kinds)
         # Coding planner routes file work through allowlisted capabilities.
         self.assertTrue(
-            any(s.capability_id in {"file.read", "file.inspect_csv", "file.list"} for s in steps),
+            any(s.capability_id in {"file.read", "file.inspect_csv", "workspace.list"} for s in steps),
             msg=[(s.kind.value, s.capability_id) for s in steps],
         )
 

@@ -43,9 +43,8 @@ WRITE / EXECUTE (approval_id required — runtime pauses WAITING_APPROVAL):
   coding.run_tests    args: selector?, timeout_seconds?
   artifact.create_text args: content!, filename!
   knowledge.ingest_scan args: limit?
-  git.commit          args: message!, paths?   ONLY if operator literally asked to commit
 
-Unknown id → FAILED. Do not invent capabilities.
+Unknown id → FAILED. Do not invent capabilities. Do not invent git.commit / shell run.
 
 ## XML protocol
 
@@ -69,7 +68,7 @@ Arguments must match catalog types. Paths are workspace-relative.
 - Bind patches to inspected content hashes when provided by the runtime.
 - Never touch HADES/, Data/HADES, .venv, node_modules, secrets stores.
 - Preserve unrelated operator working-tree changes.
-- git.commit / push only on explicit operator request.
+- Do not invent git.commit / push / shell run capabilities — they are not in the catalog.
 - FIX/TEST missions: run coding.run_tests before claiming complete.
 
 ## Public plan

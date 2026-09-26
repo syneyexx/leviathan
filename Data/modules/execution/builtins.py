@@ -1467,6 +1467,46 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         domains=["knowledge"],
     )
     _ext(
+        cap_id="knowledge.ingest_document",
+        name="Ingest Knowledge Document",
+        description=(
+            "Stage/ingest a document into Knowledge via the knowledge_prepare worker "
+            "(alias path of knowledge.prepare for document_id payloads)."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="knowledge_prepare",
+        properties={
+            "document_id": {"type": "string"},
+            "content": {"type": "string"},
+            "title": {"type": "string"},
+            "source": {"type": "string"},
+            "action": {"type": "string"},
+        },
+        permissions=("knowledge.write",),
+        tags=["knowledge", "ingest", "document"],
+        domains=["knowledge"],
+        extra_meta={"aliases": ["knowledge.prepare"]},
+    )
+    _ext(
+        cap_id="knowledge.ingest_path",
+        name="Ingest Knowledge Path",
+        description=(
+            "Stage/ingest a filesystem path into Knowledge via the knowledge_prepare worker."
+        ),
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="knowledge_prepare",
+        properties={
+            "path": {"type": "string"},
+            "title": {"type": "string"},
+            "source": {"type": "string"},
+            "action": {"type": "string"},
+        },
+        permissions=("knowledge.write",),
+        tags=["knowledge", "ingest", "path"],
+        domains=["knowledge"],
+        extra_meta={"aliases": ["knowledge.prepare"]},
+    )
+    _ext(
         cap_id="embedding.batch",
         name="Embedding Batch",
         description="Specialist embedding batch (Tier-1 compute; not main LLM).",
@@ -1480,6 +1520,26 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["embedding", "batch", "specialist"],
         domains=["embedding"],
         extra_meta={"compute_tier_hint": 1},
+    )
+    _ext(
+        cap_id="rerank.batch",
+        name="Rerank Batch",
+        description=(
+            "Specialist reranking batch (rerank worker pool). "
+            "FEATURE_GATED when the rerank pool is not configured/desired."
+        ),
+        side_effects=(SideEffect.EXECUTE,),
+        worker_kind="rerank",
+        properties={
+            "query": {"type": "string"},
+            "documents": {"type": "array"},
+            "model_id": {"type": "string"},
+            "top_k": {"type": "integer"},
+        },
+        permissions=("process.execute",),
+        tags=["rerank", "batch", "specialist"],
+        domains=["rerank"],
+        extra_meta={"compute_tier_hint": 1, "feature_gated": True},
     )
     _ext(
         cap_id="maintenance.reconcile",
@@ -1624,6 +1684,37 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         permissions=("process.execute", "filesystem.read"),
         tags=["market_sim", "scan", "batch"],
         domains=["market_sim"],
+    )
+    # Approval-identity capability for mandate loosening (control-plane; not a worker job).
+    catalog.register(
+        CapabilityDefinition(
+            id="market_sim.mandate.loosen",
+            name="Loosen Trading Orchestra Mandate",
+            description=(
+                "Approval-gated identity for loosening a Trading Orchestra mandate. "
+                "Not a JobRuntime worker capability — ExecutionGateway / ApprovalService only."
+            ),
+            side_effects=(SideEffect.WRITE,),
+            provider_kind=CapabilityProviderKind.INTERNAL,
+            provider_ref="market_sim.mandate.loosen",
+            input_schema={
+                "type": "object",
+                "required": ["orchestra_id"],
+                "properties": {
+                    "orchestra_id": {"type": "string"},
+                    "approval_id": {"type": "string"},
+                    "mandate": {"type": "object"},
+                },
+            },
+            output_schema={"type": "object"},
+            required_permissions=("process.execute",),
+            metadata={
+                "tags": ["market_sim", "mandate", "approval"],
+                "domains": ["market_sim"],
+                "execution_class": "INLINE_SAFE",
+                "approval_identity": True,
+            },
+        )
     )
     _ext(
         cap_id="backup.create",

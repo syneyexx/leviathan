@@ -95,7 +95,7 @@ class CognitivePlanner:
                     objective="Inspect relevant workspace / reproduce failure",
                     expected_observation="file or test observation",
                     acceptance_condition="failure context recorded",
-                    likely_capabilities=("coding.session",),
+                    likely_capabilities=("coding.advance", "file.read", "coding.run_tests"),
                     risk_class=RiskClass.MEDIUM,
                 ),
                 PlanStep(
@@ -112,7 +112,7 @@ class CognitivePlanner:
                     dependencies=("s2",),
                     expected_observation="test/observation receipt",
                     acceptance_condition="tests observed; approval respected",
-                    likely_capabilities=("coding.session",),
+                    likely_capabilities=("coding.advance", "file.read", "coding.run_tests"),
                     risk_class=RiskClass.HIGH,
                 ),
                 PlanStep(
@@ -157,7 +157,7 @@ class CognitivePlanner:
                     objective="Acquire sources and extract claims",
                     expected_observation="research evidence/claims",
                     acceptance_condition="sources recorded",
-                    likely_capabilities=("research.run",),
+                    likely_capabilities=("research.advance", "research.retrieve"),
                     risk_class=RiskClass.MEDIUM,
                 ),
                 PlanStep(

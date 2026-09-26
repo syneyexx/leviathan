@@ -18,8 +18,6 @@ GATED_CAPS = frozenset(
         "file.patch",
         "file.delete",
         "coding.run_tests",
-        "coding.run_command",
-        "git.commit",
         "artifact.create_text",
         "knowledge.ingest_scan",
     }
@@ -123,20 +121,14 @@ def enforce_capability(
                     details={"path": rel, "lines": line_count, "reason": "must_patch"},
                 )
 
-    if capability_id == "coding.run_command":
-        argv = args.get("argv")
-        if isinstance(argv, str):
-            raise CodingError(
-                "SHELL_STRING",
-                "coding.run_command requires argv as a string array, not a shell string",
-                http_status=422,
-            )
-        if not isinstance(argv, list) or not argv:
-            raise CodingError(
-                "VALIDATION_ERROR",
-                "coding.run_command requires non-empty argv array",
-                http_status=422,
-            )
+    # Reject shell-string / invented command capabilities honestly (not catalogued).
+    if capability_id in {"coding.run_command", "git.commit"}:
+        raise CodingError(
+            "UNKNOWN_CAPABILITY",
+            f"Capability {capability_id!r} is not in the CapabilityCatalog",
+            http_status=422,
+            details={"capability_id": capability_id},
+        )
 
     return args
 

@@ -75,8 +75,6 @@ def _test_receipt_passed(observations: list[CognitiveObservation]) -> bool | Non
                 return bool(payload.get("passed"))
         if o.kind == CognitiveObservationKind.TOOL_RESULT and payload.get("capability_id") in {
             "coding.run_tests",
-            "tests.run",
-            "workspace.run_tests",
         }:
             if o.success is not None:
                 return bool(o.success)

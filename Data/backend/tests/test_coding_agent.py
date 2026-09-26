@@ -465,7 +465,7 @@ class CodingAgentTests(unittest.TestCase):
         self.assertNotEqual(out["exit_code"], 0)
         self.assertEqual(out["status"], "FAILED")
 
-    def test_13_run_command_shell_string_rejected(self) -> None:
+    def test_13_invented_run_command_rejected(self) -> None:
         with self.assertRaises(CodingError) as ctx:
             enforce_capability(
                 "coding.run_command",
@@ -475,7 +475,10 @@ class CodingAgentTests(unittest.TestCase):
                 mission=Mission.GENERIC,
                 writes_this_round=0,
             )
-        self.assertEqual(ctx.exception.code, "SHELL_STRING")
+        self.assertEqual(ctx.exception.code, "UNKNOWN_CAPABILITY")
+        catalog_ids = {item.id for item in self.catalog.list()}
+        self.assertNotIn("coding.run_command", catalog_ids)
+        self.assertNotIn("git.commit", catalog_ids)
 
     def test_14_cancel_between_rounds(self) -> None:
         session = self.plane.create_session(goal="cancel me", workspace_root=str(self.workspace))

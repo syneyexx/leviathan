@@ -135,7 +135,7 @@ _ARCHITECTURE_SPECS: tuple[SystemInventorySpec, ...] = (
         runtime_kind="research",
         description="Owns research projects/runs via ResearchRunner and ResearchCoordinator.",
         source_module="Data.modules.research.service",
-        capabilities=("research.plan", "research.run"),
+        capabilities=("research.plan", "research.advance", "research.retrieve", "research.verify"),
     ),
     SystemInventorySpec(
         system_key="coding_control_plane",
