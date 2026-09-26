@@ -73,7 +73,7 @@ const PHASE_STEP_INDEX: Record<string, number> = {
   cancelled: -2,
 };
 
-type ExecutionMode = "normal" | "custom";
+type ExecutionMode = "normal" | "custom" | "team";
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
@@ -442,9 +442,17 @@ export function ResearchPage() {
   const customLimits = budgetCatalog?.execution_modes.custom.limits;
 
   const effectiveWorkers =
-    executionMode === "normal" ? (normalMode?.research_workers ?? 2) : customWorkers;
+    executionMode === "normal"
+      ? (normalMode?.research_workers ?? 2)
+      : executionMode === "team"
+        ? (budgetCatalog?.execution_modes.team?.research_workers?.default ?? customWorkers)
+        : customWorkers;
   const effectiveRounds =
-    executionMode === "normal" ? (normalMode?.rounds ?? 10) : customRounds;
+    executionMode === "normal"
+      ? (normalMode?.rounds ?? 10)
+      : executionMode === "team"
+        ? null
+        : customRounds;
 
   const fileSourceCount = useMemo(
     () =>
@@ -485,7 +493,11 @@ export function ResearchPage() {
     if (p.depth) setDepth(p.depth);
     if (typeof p.allow_web === "boolean") setContext((c) => ({ ...c, web: p.allow_web }));
     if (p.execution_mode === "normal" || p.execution_mode === "custom") {
-      setExecutionMode(p.execution_mode);
+      setExecutionMode(
+        p.execution_mode === "team" || p.execution_mode === "custom" || p.execution_mode === "normal"
+          ? p.execution_mode
+          : "normal",
+      );
     }
     if (p.budget?.research_workers) setCustomWorkers(p.budget.research_workers);
     if (p.budget?.rounds) setCustomRounds(p.budget.rounds);
@@ -683,7 +695,9 @@ export function ResearchPage() {
         : undefined,
       budget: {
         research_workers: effectiveWorkers,
-        rounds: effectiveRounds,
+        ...(executionMode === "team"
+          ? { rounds: null, completion_policy: "quality_contract" }
+          : { rounds: effectiveRounds }),
       },
       localScopes: [],
       seedSources: [],
@@ -874,7 +888,9 @@ export function ResearchPage() {
           : { modelId: "auto", displayName: "Auto (default LLM)" },
         budget: {
           research_workers: effectiveWorkers,
-          rounds: effectiveRounds,
+          ...(executionMode === "team"
+            ? { rounds: null, completion_policy: "quality_contract" }
+            : { rounds: effectiveRounds }),
         },
         localScopes: [] as string[],
         seedSources: seeds,
@@ -1432,13 +1448,25 @@ export function ResearchPage() {
               >
                 Custom
               </button>
+              <button
+                type="button"
+                className={`lv-rd-pill${executionMode === "team" ? " is-active" : ""}`}
+                disabled={!scopeEditing && executionMode !== "team"}
+                onClick={() => scopeEditing && setExecutionMode("team")}
+                title="Continues until the quality criteria are met, or shows exactly what prevents completion."
+              >
+                TEAM
+              </button>
             </div>
             <p className="lv-rd-empty-note" style={{ margin: "0 0 10px", textAlign: "left" }}>
               {executionMode === "normal"
                 ? (normalMode?.description ??
                   `Locked: ${effectiveWorkers} workers, ${effectiveRounds} rounds/worker`)
-                : (budgetCatalog?.execution_modes.custom.description ??
-                  "Set workers and rounds within backend limits.")}
+                : executionMode === "team"
+                  ? (budgetCatalog?.execution_modes.team?.description ??
+                    "Continues until the quality criteria are met, or shows exactly what prevents completion.")
+                  : (budgetCatalog?.execution_modes.custom.description ??
+                    "Set workers and rounds within backend limits.")}
             </p>
             {executionMode === "custom" && scopeEditing ? (
               <div className="lv-rd-scope-grid" style={{ marginBottom: 10 }}>
@@ -1463,6 +1491,10 @@ export function ResearchPage() {
                   />
                 </label>
               </div>
+            ) : executionMode === "team" ? (
+              <p className="lv-rd-empty-note" style={{ margin: "0 0 10px", textAlign: "left" }}>
+                {effectiveWorkers} workers · open-ended iterations (no fixed round total)
+              </p>
             ) : (
               <p className="lv-rd-empty-note" style={{ margin: "0 0 10px", textAlign: "left" }}>
                 {effectiveWorkers} workers · {effectiveRounds} rounds/worker

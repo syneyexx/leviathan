@@ -510,7 +510,12 @@ class CompletionEngine:
             )
 
         if kind == VerifierKind.HONESTY:
-            return CriterionVerificationStatus.SUPPORTED, "honesty constraint tracked", True
+            # Honesty tracking is advisory metadata — never a silent mandatory auto-pass.
+            return (
+                CriterionVerificationStatus.SUPPORTED,
+                "honesty constraint tracked (advisory; not independent acceptance evidence)",
+                False,
+            )
 
         if kind == VerifierKind.OBSERVATION:
             if criterion.predicate == "conflict_surfaced":

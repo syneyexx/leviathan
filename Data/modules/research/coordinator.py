@@ -205,15 +205,22 @@ class ResearchCoordinator:
         if project.plan is None:
             project.plan = build_plan(project)
             project.status = ResearchStatus.PLANNED
-            project.total_rounds = project.plan.rounds
+            project.total_rounds = int(project.plan.rounds or 0)
             project.phase = ResearchPhase.PLANNING
             self.store.save_project(project)
             self.store.add_event(project_id, "plan_generated", "Plan created before run")
 
-        workers_n = max(1, project.budget.research_workers)
-        rounds_n = max(1, project.budget.rounds)
+        from .team_policy import is_team_mode
 
-        if deepen:
+        team_mode = is_team_mode(project.execution_mode)
+        workers_n = max(1, project.budget.research_workers)
+        if team_mode or project.budget.rounds is None:
+            # TEAM: open-ended iterations; rounds_n is a soft planning hint only.
+            rounds_n = max(1, int(project.current_round or 1))
+        else:
+            rounds_n = max(1, int(project.budget.rounds))
+
+        if deepen and not team_mode:
             rounds_n = rounds_n + max(1, extra_rounds or 1)
             project.budget = apply_plan_edits(
                 project.plan,
@@ -230,6 +237,9 @@ class ResearchCoordinator:
                 research_workers=workers_n,
                 max_local_hits=project.budget.max_local_hits,
                 max_evidence_per_source=project.budget.max_evidence_per_source,
+                completion_policy=getattr(project.budget, "completion_policy", "fixed_budget") or "fixed_budget",
+                max_iterations=getattr(project.budget, "max_iterations", None),
+                max_total_sources=getattr(project.budget, "max_total_sources", None),
             )
             if project.plan:
                 project.plan = apply_plan_edits(project.plan, {"rounds": rounds_n, "budget": project.budget.public_dict()})
@@ -238,7 +248,7 @@ class ResearchCoordinator:
                 "deepen_requested",
                 f"Additional round(s); rounds_per_worker={rounds_n}",
             )
-        elif extra_rounds > 0:
+        elif extra_rounds > 0 and not team_mode:
             rounds_n = max(rounds_n, project.current_round + extra_rounds)
             from .types import ResearchBudget
 
@@ -250,19 +260,21 @@ class ResearchCoordinator:
                 research_workers=workers_n,
                 max_local_hits=project.budget.max_local_hits,
                 max_evidence_per_source=project.budget.max_evidence_per_source,
+                completion_policy=getattr(project.budget, "completion_policy", "fixed_budget") or "fixed_budget",
+                max_iterations=getattr(project.budget, "max_iterations", None),
+                max_total_sources=getattr(project.budget, "max_total_sources", None),
             )
 
         start_round = 1
         if resume and project.completed_worker_rounds > 0 and workers_n > 0:
             # Resume from next incomplete worker-round barrier.
-            start_round = min(
-                rounds_n,
-                (project.completed_worker_rounds // workers_n) + 1,
-            )
+            start_round = (project.completed_worker_rounds // workers_n) + 1
+            if not team_mode:
+                start_round = min(rounds_n, start_round)
             if start_round < 1:
                 start_round = 1
 
-        total_worker_rounds = workers_n * rounds_n
+        total_worker_rounds = 0 if team_mode else workers_n * rounds_n
         now = utc_now()
         run = ResearchRun(
             run_id=str(uuid.uuid4()),
@@ -270,7 +282,7 @@ class ResearchCoordinator:
             status=ResearchStatus.RESEARCHING,
             execution_mode=project.execution_mode,
             workers=workers_n,
-            rounds_per_worker=rounds_n,
+            rounds_per_worker=0 if team_mode else rounds_n,
             phase=ResearchPhase.PLANNING,
             completed_worker_rounds=max(0, (start_round - 1) * workers_n),
             total_worker_rounds=total_worker_rounds,
@@ -306,14 +318,17 @@ class ResearchCoordinator:
         project.finished_at = None
         project.worker_pid = os.getpid()
         project.active_run_id = run.run_id
-        project.total_rounds = rounds_n
+        project.total_rounds = 0 if team_mode else rounds_n
         project.total_worker_rounds = total_worker_rounds
         project.completed_worker_rounds = run.completed_worker_rounds
-        project.progress_pct = compute_progress(
-            completed_worker_rounds=run.completed_worker_rounds,
-            total_worker_rounds=total_worker_rounds,
-            phase=ResearchPhase.PLANNING,
-        )
+        if team_mode:
+            project.progress_pct = 5.0
+        else:
+            project.progress_pct = compute_progress(
+                completed_worker_rounds=run.completed_worker_rounds,
+                total_worker_rounds=total_worker_rounds,
+                phase=ResearchPhase.PLANNING,
+            )
         web_reason = web_unavailable_reason(
             allow_web=project.allow_web,
             allow_outbound=self.allow_outbound,
@@ -324,12 +339,17 @@ class ResearchCoordinator:
         self.store.add_event(
             project_id,
             "run_started",
-            f"Run {run.run_id} with {workers_n} workers × {rounds_n} rounds",
+            (
+                f"TEAM run {run.run_id} with {workers_n} workers (quality_contract)"
+                if team_mode
+                else f"Run {run.run_id} with {workers_n} workers × {rounds_n} rounds"
+            ),
             {
                 "run_id": run.run_id,
                 "workers": workers_n,
-                "rounds_per_worker": rounds_n,
+                "rounds_per_worker": None if team_mode else rounds_n,
                 "execution_mode": project.execution_mode.value,
+                "completion_policy": getattr(project.budget, "completion_policy", "fixed_budget"),
             },
         )
         self.store.add_event(
@@ -344,17 +364,40 @@ class ResearchCoordinator:
             waves_without_gain = 0
             prev_evidence_count = len(self.store.list_evidence(project_id))
             prev_critical_gaps = None
-            # Hard ceiling: planned rounds, extendable when critical high-EIG gaps remain.
-            hard_ceiling = rounds_n + (2 if deepen else 0)
+            # Hard ceiling: planned rounds for fixed-budget modes only.
+            # TEAM has no fixed cumulative round success gate.
+            hard_ceiling = None if team_mode else (rounds_n + (2 if deepen else 0))
             round_number = start_round - 1
             stop_reason = "budget_exhausted"
+            team_acceptance = None
+            team_contract = None
+            team_verdicts: list = []
+            artifact_revision = f"rev:{run.run_id[:8]}"
+            if team_mode:
+                from .team_policy import build_research_quality_contract
+
+                team_contract = build_research_quality_contract(
+                    run_id=run.run_id,
+                    project_id=project_id,
+                    question=project.topic or project.objective or "",
+                    plan=project.plan,
+                    created_at=now,
+                )
+                self.store.add_event(
+                    project_id,
+                    "quality_contract_created",
+                    "TEAM quality contract established",
+                    team_contract.public_dict(),
+                )
 
             while True:
                 round_number += 1
                 if self._cancelled(project_id):
                     return self._finalize_cancelled(project_id, run, workers)
 
-                budget_exhausted = round_number > hard_ceiling
+                budget_exhausted = (
+                    False if hard_ceiling is None else (round_number > hard_ceiling)
+                )
                 project = self.store.get_project(project_id) or project
 
                 # Pre-wave gap analysis (after wave 1 we already have state).
@@ -367,14 +410,25 @@ class ResearchCoordinator:
                     )
                     project.coverage = interim_coverage
                     gaps = gap_analyzer.analyze(self.store, project)
-                    stop, stop_reason = should_stop(
-                        gaps,
-                        interim_coverage,
-                        project.plan,
-                        waves_without_gain=waves_without_gain,
-                        max_waves=hard_ceiling,
-                        budget_exhausted=budget_exhausted,
-                    )
+                    if team_mode:
+                        from .team_policy import team_should_stop
+
+                        stop, stop_reason = team_should_stop(
+                            gaps,
+                            budget=project.budget,
+                            waves_without_gain=waves_without_gain,
+                            iteration=round_number - 1,
+                            acceptance=team_acceptance,
+                        )
+                    else:
+                        stop, stop_reason = should_stop(
+                            gaps,
+                            interim_coverage,
+                            project.plan,
+                            waves_without_gain=waves_without_gain,
+                            max_waves=int(hard_ceiling or rounds_n),
+                            budget_exhausted=budget_exhausted,
+                        )
                     if stop and round_number > start_round:
                         self.store.add_event(
                             project_id,
@@ -385,10 +439,11 @@ class ResearchCoordinator:
                                 "round": round_number - 1,
                                 "gaps": [g.public_dict() for g in gaps[:12]],
                                 "waves_without_gain": waves_without_gain,
+                                "team_mode": team_mode,
                             },
                         )
                         break
-                    if budget_exhausted:
+                    if budget_exhausted and not team_mode:
                         # Only continue past hard ceiling when critical high-gain gaps remain.
                         critical_high = [
                             g
@@ -396,7 +451,7 @@ class ResearchCoordinator:
                             if g.severity in {"critical", "high"}
                             and g.expected_information_gain >= 0.45
                         ]
-                        if not critical_high or round_number > hard_ceiling + 2:
+                        if not critical_high or round_number > int(hard_ceiling or 0) + 2:
                             self.store.add_event(
                                 project_id,
                                 "research_stopping",
@@ -417,22 +472,31 @@ class ResearchCoordinator:
                 project.current_round = round_number
                 project.phase = ResearchPhase.LOCAL_RETRIEVAL
                 # Progress is phase-bounded — never claim 100% mid-loop.
-                phase_progress = compute_progress(
-                    completed_worker_rounds=sum(w.completed_rounds for w in workers),
-                    total_worker_rounds=max(total_worker_rounds, workers_n * hard_ceiling),
-                    phase=ResearchPhase.LOCAL_RETRIEVAL,
-                )
-                project.progress_pct = min(90.0, phase_progress)
+                if team_mode:
+                    # Open-ended: show iteration count, not fake round fraction.
+                    project.progress_pct = min(90.0, 5.0 + min(80.0, float(round_number)))
+                else:
+                    phase_progress = compute_progress(
+                        completed_worker_rounds=sum(w.completed_rounds for w in workers),
+                        total_worker_rounds=max(total_worker_rounds, workers_n * int(hard_ceiling or rounds_n)),
+                        phase=ResearchPhase.LOCAL_RETRIEVAL,
+                    )
+                    project.progress_pct = min(90.0, phase_progress)
                 self.store.save_project(project)
                 self.store.add_event(
                     project_id,
                     "round_started",
-                    f"Research wave {round_number} (ceiling={hard_ceiling})",
+                    (
+                        f"TEAM research wave {round_number} (quality-driven)"
+                        if team_mode
+                        else f"Research wave {round_number} (ceiling={hard_ceiling})"
+                    ),
                     {
                         "round": round_number,
                         "run_id": run.run_id,
                         "hard_ceiling": hard_ceiling,
                         "gap_driven": True,
+                        "team_mode": team_mode,
                     },
                 )
 
@@ -847,17 +911,8 @@ class ResearchCoordinator:
                     )
 
             project = self.store.get_project(project_id) or project
-            # Honest completion: still COMPLETED when research finished under stop criteria,
-            # but record unresolved critical gaps rather than claiming perfect coverage.
             final_gaps = GapAnalyzer().analyze(self.store, project)
             critical_left = [g for g in final_gaps if g.severity in {"critical", "high"}]
-            project.status = ResearchStatus.COMPLETED
-            project.phase = ResearchPhase.COMPLETED
-            project.progress_pct = 100.0
-            project.worker_pid = None
-            project.finished_at = utc_now()
-            project.cancel_requested = False
-            project.completed_worker_rounds = sum(w.completed_rounds for w in workers)
             if critical_left:
                 self.store.add_event(
                     project_id,
@@ -865,6 +920,127 @@ class ResearchCoordinator:
                     f"{len(critical_left)} critical/high gap(s) remain unresolved",
                     {"gaps": [g.public_dict() for g in critical_left[:12]]},
                 )
+
+            project.worker_pid = None
+            project.finished_at = utc_now()
+            project.cancel_requested = False
+            project.completed_worker_rounds = sum(w.completed_rounds for w in workers)
+
+            if team_mode and team_contract is not None:
+                from Data.modules.verification.quality_contract import AcceptanceOutcome
+                from .team_policy import (
+                    accept_or_block_research,
+                    compute_team_progress,
+                    verdicts_from_research_state,
+                )
+
+                claims = self.store.list_claims(project_id)
+                evidence = self.store.list_evidence(project_id)
+                conflicts = self.store.list_conflicts(project_id)
+                supported = sum(
+                    1
+                    for c in claims
+                    if getattr(getattr(c, "status", None), "value", "") == "supported"
+                    or str(getattr(c, "status", "")) == "supported"
+                )
+                # Pull latest citation audit from events if present.
+                citation_report = None
+                try:
+                    from .citation_audit import audit_report
+
+                    report_obj = None
+                    if hasattr(self.reports, "latest"):
+                        report_obj = self.reports.latest(project_id)
+                    elif hasattr(self.store, "get_latest_report"):
+                        report_obj = self.store.get_latest_report(project_id)
+                    body = getattr(report_obj, "body_markdown", None) or ""
+                    if body:
+                        citation_report = audit_report(self.store, project, body)
+                except Exception:  # noqa: BLE001
+                    citation_report = None
+
+                artifact_revision = f"rev:{run.run_id[:8]}:r{round_number}"
+                team_verdicts = verdicts_from_research_state(
+                    team_contract,
+                    artifact_revision=artifact_revision,
+                    claims_supported=supported,
+                    claims_total=len(claims),
+                    citation_report=citation_report,
+                    critical_gaps=critical_left,
+                    synthesis_has_unsupported_claim=bool(
+                        citation_report and citation_report.critical_unsupported
+                    ),
+                    evidence_ids=[getattr(e, "evidence_id", str(e)) for e in evidence[:40]],
+                    conflicts_recorded=bool(conflicts) or not critical_left,
+                    created_at=utc_now(),
+                )
+                final_status, team_acceptance = accept_or_block_research(
+                    team_contract,
+                    team_verdicts,
+                    artifact_revision=artifact_revision,
+                    stop_reason=stop_reason,
+                )
+                progress = compute_team_progress(
+                    contract=team_contract,
+                    verdicts=team_verdicts,
+                    artifact_revision=artifact_revision,
+                    iteration=round_number,
+                    phase=(
+                        ResearchPhase.COMPLETED
+                        if final_status == ResearchStatus.COMPLETED
+                        else ResearchPhase.FAILED
+                        if final_status == ResearchStatus.FAILED
+                        else ResearchPhase.REPORT_GENERATION
+                    ),
+                )
+                self.store.add_event(
+                    project_id,
+                    "quality_acceptance",
+                    f"TEAM acceptance={team_acceptance.outcome.value}",
+                    {
+                        "acceptance": team_acceptance.public_dict(),
+                        "progress": progress,
+                        "verdicts": [v.public_dict() for v in team_verdicts],
+                    },
+                )
+                project.status = final_status
+                if final_status == ResearchStatus.COMPLETED:
+                    project.phase = ResearchPhase.COMPLETED
+                    project.progress_pct = 100.0
+                    event_kind = "completed"
+                    event_summary = f"Research TEAM accepted ({stop_reason})"
+                else:
+                    # BLOCKED / WAITING — never green-complete on unmet criteria.
+                    project.phase = ResearchPhase.REPORT_GENERATION
+                    project.progress_pct = float(progress.get("display_pct") or 90.0)
+                    event_kind = "blocked" if final_status == ResearchStatus.BLOCKED else "waiting_for_input"
+                    event_summary = (
+                        f"Research TEAM {final_status.value}: {list(team_acceptance.blockers)[:6]}"
+                    )
+                self.store.save_project(project)
+                run.status = final_status
+                run.phase = project.phase
+                run.progress_pct = project.progress_pct
+                run.completed_worker_rounds = project.completed_worker_rounds
+                run.finished_at = utc_now()
+                self.store.save_run(run)
+                self.store.add_event(
+                    project_id,
+                    event_kind,
+                    event_summary,
+                    {
+                        "stop_reason": stop_reason,
+                        "critical_gaps_remaining": len(critical_left),
+                        "acceptance_outcome": team_acceptance.outcome.value,
+                        "team_mode": True,
+                    },
+                )
+                return self.store.get_project(project_id) or project
+
+            # Legacy NORMAL/CUSTOM: process-complete (gaps recorded honestly).
+            project.status = ResearchStatus.COMPLETED
+            project.phase = ResearchPhase.COMPLETED
+            project.progress_pct = 100.0
             self.store.save_project(project)
             run.status = ResearchStatus.COMPLETED
             run.phase = ResearchPhase.COMPLETED

@@ -286,6 +286,21 @@ Current `ReasoningPolicy`/`MetaController` modes control **real orchestration bu
 
 `ADAPTIVE` can escalate/de-escalate from uncertainty, evidence coverage, contradiction density, failures, information gain and **measured** resource pressure (CPU/RAM/VRAM telemetry, queue depth, inflight model workloads — never a fake constant `0.0`).
 
+### Collaboration strategy (TEAM) — CURRENT
+
+`CollaborationStrategy` is **orthogonal** to `ReasoningMode`. Depth describes effort within model work; TEAM describes how specialist tasks cooperate under a typed quality contract.
+
+| Concern | Owner |
+|---|---|
+| Quality contracts / verdicts / acceptance | `Data/modules/verification/quality_contract.py`, `quality_store.py` |
+| TEAM policy / roles / caps | `Data/modules/cognition/team_strategy.py` |
+| Orchestrator (follow-up DAGs, no-progress, pause/resume) | `Data/modules/cognition/team_orchestrator.py` |
+| HTTP surface | `Data/backend/routes/team.py` (`/api/team/*`) |
+| Chat entry | `POST /api/chat` with `collaboration_strategy=team` |
+| Research entry | `ResearchExecutionMode.TEAM` + `completion_policy=quality_contract` |
+
+TEAM defaults: no fixed cumulative round/token/deadline success gate; optional user caps yield **incomplete/blocked**, never green success with unmet mandatory criteria. `rounds=null` serializes as JSON null (not 999999). Resource bounds (timeouts, fan-out, retries) remain. Machine ledger: `Data/backend/tests/team_quality_program.json`.
+
 ### Two-axis compute (W3 CURRENT)
 
 ```text

@@ -160,6 +160,7 @@ from Data.modules.release import GateCheck, GateSeverity, ReleaseGateRunner, eva
 from Data.modules.mcp import McpBridge, McpProvider, McpStore, register_module_mcp, unregister_module_mcp
 from Data.backend.routes.mcp import build_mcp_router
 from Data.backend.routes.cognition import build_cognition_router
+from Data.backend.routes.team import build_team_router
 from Data.backend.routes.tasks import build_tasks_router
 from Data.backend.routes.browser_qa import build_browser_qa_router
 from Data.backend.routes.knowledge import build_knowledge_router, make_enqueue_ingest_scan
@@ -1118,6 +1119,13 @@ register_specialist_handlers(
     coding_service=coding_service,
     research_service=research_service,
 )
+
+from Data.modules.cognition.team_orchestrator import TeamOrchestrator
+from Data.modules.verification.quality_store import QualityContractStore
+
+quality_contract_store = QualityContractStore(settings.database_path)
+quality_contract_store.initialize()
+team_orchestrator = TeamOrchestrator(quality_store=quality_contract_store)
 
 task_store = TaskStore(settings.database_path)
 task_service = TaskService(
@@ -2092,6 +2100,7 @@ app.include_router(
 )
 app.include_router(build_trading_orchestra_router(trading_orchestra_service))
 app.include_router(build_cognition_router(cognition_runtime))
+app.include_router(build_team_router(team_orchestrator))
 app.include_router(build_tasks_router(task_service))
 app.include_router(build_browser_qa_router(browser_worker))
 app.include_router(build_settings_router(settings_plane))
@@ -2337,6 +2346,8 @@ class ChatRequest(BaseModel):
     model_id: str | None = None
     preferred_role: str | None = None
     reasoning_mode: str | None = None  # session override: auto|fast|standard|deep
+    # Collaboration strategy — orthogonal to reasoning depth. team ≠ maximum.
+    collaboration_strategy: str | None = None  # direct|team
     stream: bool = False
 
 
@@ -2666,6 +2677,140 @@ async def chat(payload: ChatRequest, request: Request):
     behavior_profile = behavior_snapshot.profile
     turn_id = f"{run.run_id}:turn"
     request_id = getattr(request.state, "request_id", None) or run.run_id
+
+    # --- TEAM collaboration path (orthogonal to reasoning_mode depth) ---
+    from Data.modules.cognition.team_strategy import (
+        CollaborationStrategy,
+        USER_FACING_TEAM_DESCRIPTION,
+        normalize_collaboration_strategy,
+    )
+
+    try:
+        collab = normalize_collaboration_strategy(payload.collaboration_strategy)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if collab == CollaborationStrategy.TEAM:
+        lower = message.lower()
+        requires_coding = any(k in lower for k in ("fix", "bug", "test", "code", "implement", "pytest"))
+        requires_research = any(k in lower for k in ("research", "sources", "cite", "evidence", "investigate"))
+        task_category = (
+            "coding"
+            if requires_coding
+            else "research"
+            if requires_research
+            else "uncertainty"
+            if "uncertain" in lower
+            else "general"
+        )
+
+        def _chat_team_executor(assignment, state):
+            """Bounded specialist call via shared model caller — fail closed without evidence."""
+            prompt = (
+                f"ROLE={assignment.role.value}\nOBJECTIVE={assignment.objective}\n"
+                f"CRITERIA={assignment.criterion_ids}\nUSER={message}\n"
+                "Return a short public summary. Do not claim tools ran unless receipts exist."
+            )
+            summary = ""
+            try:
+                if cognition_model_caller is not None:
+                    raw = cognition_model_caller(prompt)
+                    if isinstance(raw, dict):
+                        summary = str(raw.get("text") or raw.get("content") or "")[:4000]
+                    else:
+                        summary = str(raw or "")[:4000]
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "role": assignment.role.value,
+                    "evidence_ids": [],
+                    "error": str(exc),
+                    "notes": "model call failed — no fabricated evidence",
+                }
+            # Without tool/test receipts we never auto-satisfy mandatory gates.
+            result: dict[str, Any] = {
+                "role": assignment.role.value,
+                "evidence_ids": [],
+                "notes": summary[:500] or "no model output",
+                "provisional_artifact": {"text": summary, "provisional": True} if summary else None,
+            }
+            if task_category == "uncertainty" and summary:
+                result["supported_uncertainty"] = True
+                result["evidence_ids"] = ["uncertainty:statement"]
+            return result
+
+        team_orchestrator._executor = _chat_team_executor
+        team_state = team_orchestrator.start(
+            request_text=message,
+            run_id=f"team:{run.run_id}",
+            request_ref=conversation_id,
+            task_category=task_category,
+            requires_coding=requires_coding,
+            requires_research=requires_research,
+        )
+        # Drive a bounded number of quality iterations for the HTTP turn.
+        team_state = team_orchestrator.run_until_terminal(team_state.run_id, max_iterations=8)
+        export = team_orchestrator.export_artifact(team_state.run_id)
+        if team_state.status.value == "completed" and export.get("artifact"):
+            answer = str(
+                (export["artifact"] or {}).get("text")
+                or "TEAM accepted the deliverable for the current revision."
+            )
+            provisional = False
+        else:
+            progress = team_state.public_dict().get("progress") or {}
+            blockers = [b.public_dict() for b in team_state.blockers]
+            answer = (
+                f"{USER_FACING_TEAM_DESCRIPTION}\n\n"
+                f"Status: {team_state.status.value}\n"
+                f"Criteria: {progress.get('criteria_ratio_label') or progress}\n"
+            )
+            if export.get("artifact"):
+                answer += f"\nProvisional draft:\n{(export['artifact'] or {}).get('text') or ''}\n"
+            if blockers:
+                answer += "\nBlockers:\n" + "\n".join(
+                    f"- {b.get('summary')}" for b in blockers[:6]
+                )
+            provisional = True
+        assistant_message = db.add_message(conversation_id, "assistant", answer)
+        if team_state.status.value == "completed":
+            final_run_state = RunState.COMPLETED
+        elif team_state.status.value == "cancelled":
+            final_run_state = RunState.CANCELLED
+        elif team_state.status.value == "failed":
+            final_run_state = RunState.FAILED
+        elif team_state.status.value in {"blocked", "waiting_for_input", "paused"}:
+            final_run_state = RunState.BLOCKED
+        else:
+            final_run_state = RunState.PARTIAL
+        runs.transition(run.run_id, final_run_state)
+        # Prefer PARTIAL semantics via event when not quality-accepted.
+        runs.append_event(
+            run.run_id,
+            EventType.REASONING_COMPLETED,
+            {
+                "collaboration_strategy": "team",
+                "team": team_state.public_dict(),
+                "provisional": provisional,
+            },
+        )
+        return {
+            "conversation_id": conversation_id,
+            "message": assistant_message,
+            "run_id": run.run_id,
+            "team_run_id": team_state.run_id,
+            "collaboration_strategy": "team",
+            "collaboration_description": USER_FACING_TEAM_DESCRIPTION,
+            "team": team_state.public_dict(),
+            "provisional": provisional,
+            "reasoning": {
+                "mode": {
+                    "requested": payload.reasoning_mode or "auto",
+                    "effective": payload.reasoning_mode or "auto",
+                    "source": "team_collaboration",
+                    "notes": ["collaboration_strategy=team is orthogonal to reasoning depth"],
+                }
+            },
+        }
 
     has_knowledge = bool(knowledge.list_documents(limit=1))
     wm_load = neuro_memory.working.load if neuro_memory.enabled else 0.0

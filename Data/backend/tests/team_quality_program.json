@@ -1,0 +1,161 @@
+{
+  "program": "leviathan_team_quality",
+  "version": 1,
+  "updated": "2026-09-26",
+  "implementation_baseline_commit": "ebfaaef1c75f6bc68ff21186e9147c5d98b3fedd",
+  "mandate_reference_snapshot": "c40dd9faea90a83c582c39813eef9008965d60eb",
+  "branch": "cursor/team-quality-orchestration-a2c9",
+  "active_wave": "W14",
+  "notes": "TEAM mandate waves W00–W14. Complements production_quality_program.json. Fixture adversarial suite PASS; real-model acceptance pending environment.",
+  "status_vocabulary": [
+    "NOT_STARTED",
+    "IN_PROGRESS",
+    "BLOCKED_EXTERNAL",
+    "FAIL",
+    "PASS",
+    "NOT_APPLICABLE"
+  ],
+  "excluded_trees": ["Data/HADES/", "editor/"],
+  "canonical_docs": [
+    "Data/docs/Leviathan_system_backend.md",
+    "Data/docs/Leviathan_system_frontend.md"
+  ],
+  "waves": [
+    {
+      "id": "W00",
+      "status": "PASS",
+      "title": "Baseline and traceability",
+      "evidence": "team_quality_program.json owners + hidden_exits_inventory; baseline ebfaaef1"
+    },
+    {
+      "id": "W01",
+      "status": "PASS",
+      "title": "Trustworthy verification foundation",
+      "evidence": "VerifierKind.HONESTY no longer auto-passes CompletionEngine; citation UNMEASURED retained; test_team_quality_adversarial + test_adversarial_w03"
+    },
+    {
+      "id": "W02",
+      "status": "PASS",
+      "title": "Quality contracts and revision-bound acceptance",
+      "changed_paths": [
+        "Data/modules/verification/quality_contract.py",
+        "Data/modules/verification/quality_store.py"
+      ],
+      "evidence": "aggregate_acceptance / invalidate / persistence tests"
+    },
+    {
+      "id": "W03",
+      "status": "PASS",
+      "title": "Execution policy and backward compatibility",
+      "changed_paths": [
+        "Data/modules/cognition/team_strategy.py",
+        "Data/modules/research/budgets.py",
+        "Data/modules/research/types.py"
+      ],
+      "evidence": "TEAM rounds=null; NORMAL 2×10 and CUSTOM intact; >100 iteration fixture"
+    },
+    {
+      "id": "W04",
+      "status": "PASS",
+      "title": "Durable orchestration and lifecycle",
+      "changed_paths": ["Data/modules/cognition/team_orchestrator.py"],
+      "evidence": "cancel/stale rejection, no-progress blocker, pause/resume transitions"
+    },
+    {
+      "id": "W05",
+      "status": "PASS",
+      "title": "Specialist protocol and task-scoped context",
+      "evidence": "role templates + sequential single-model assignments; malformed JSON fail-closed"
+    },
+    {
+      "id": "W06",
+      "status": "PASS",
+      "title": "Chat TEAM vertical slice",
+      "changed_paths": ["Data/backend/main.py", "Data/backend/routes/team.py"],
+      "evidence": "collaboration_strategy=team chat path + /api/team/*"
+    },
+    {
+      "id": "W07",
+      "status": "PASS",
+      "title": "Research TEAM vertical slice",
+      "changed_paths": [
+        "Data/modules/research/team_policy.py",
+        "Data/modules/research/coordinator.py",
+        "Data/modules/research/service.py"
+      ],
+      "evidence": "TEAM finalize gated on quality acceptance; legacy COMPLETED retained for NORMAL/CUSTOM"
+    },
+    {
+      "id": "W08",
+      "status": "IN_PROGRESS",
+      "title": "Context, memory and long-run integrity",
+      "notes": "Uses existing context compiler + research brain_sync provenance; dedicated TEAM memory promotion gates still thin"
+    },
+    {
+      "id": "W09",
+      "status": "PASS",
+      "title": "Public APIs and event recovery",
+      "evidence": "/api/team/runs events with seq; reconnect from status endpoint"
+    },
+    {
+      "id": "W10",
+      "status": "PASS",
+      "title": "Complete chat UI",
+      "changed_paths": ["Data/frontend/src/pages/ChatPage.tsx", "Data/frontend/src/api/client.ts"]
+    },
+    {
+      "id": "W11",
+      "status": "PASS",
+      "title": "Complete research UI and exports",
+      "changed_paths": ["Data/frontend/src/pages/ResearchPage.tsx", "Data/frontend/src/types/api.ts"]
+    },
+    {
+      "id": "W12",
+      "status": "PASS",
+      "title": "Operational and adversarial hardening",
+      "evidence": "Data/backend/tests/test_team_quality_adversarial.py (27) covering A/B/D/E/G/H/I/M/N/P/Q/R/S/X/Z fixtures"
+    },
+    {
+      "id": "W13",
+      "status": "BLOCKED_EXTERNAL",
+      "title": "Real-model validation and regression repair",
+      "notes": "No suitable configured local model measured in this cloud environment for coding/research/blocked/resume real runs. Fixture suite PASS. Commands below for operator."
+    },
+    {
+      "id": "W14",
+      "status": "IN_PROGRESS",
+      "title": "Release readiness and handoff",
+      "notes": "Docs updated; remaining: full suite green + real-model receipts"
+    }
+  ],
+  "requirement_matrix": {
+    "QC_typed_contract": {"wave": "W02", "owner": "verification", "status": "PASS"},
+    "QC_revision_bound_verdicts": {"wave": "W02", "owner": "verification", "status": "PASS"},
+    "EP_quality_contract_policy": {"wave": "W03", "owner": "cognition+research", "status": "PASS"},
+    "EP_null_unbounded_totals": {"wave": "W03", "owner": "research.budgets", "status": "PASS"},
+    "EP_legacy_normal_custom": {"wave": "W03", "owner": "research", "status": "PASS"},
+    "OR_followup_dags": {"wave": "W04", "owner": "cognition+agents", "status": "PASS"},
+    "OR_no_progress": {"wave": "W04", "owner": "cognition", "status": "PASS"},
+    "SP_role_templates": {"wave": "W05", "owner": "cognition+agents", "status": "PASS"},
+    "CH_team_chat": {"wave": "W06", "owner": "cognition+backend+frontend", "status": "PASS"},
+    "RS_team_research": {"wave": "W07", "owner": "research+frontend", "status": "PASS"},
+    "API_contract_events": {"wave": "W09", "owner": "backend.routes", "status": "PASS"},
+    "UI_chat_team": {"wave": "W10", "owner": "ChatPage", "status": "PASS"},
+    "UI_research_team": {"wave": "W11", "owner": "ResearchPage", "status": "PASS"},
+    "ADV_scenarios_A_Z": {"wave": "W12", "owner": "backend.tests", "status": "PASS"},
+    "REAL_model_runs": {"wave": "W13", "owner": "evaluation", "status": "BLOCKED_EXTERNAL"}
+  },
+  "reproduction_commands": {
+    "unit_adversarial": "python3 -m pytest Data/backend/tests/test_team_quality_adversarial.py -q",
+    "related_regressions": "python3 -m pytest Data/backend/tests/test_adversarial_w03_completion.py Data/backend/tests/test_research_hardening.py -q",
+    "team_api_smoke": "curl -s localhost:8000/api/team/capabilities",
+    "real_model_pending": "Configure local model via Models UI / settings, then POST /api/chat with collaboration_strategy=team and create Research project with executionMode=team"
+  },
+  "blockers": [
+    {
+      "id": "real_model_environment",
+      "status": "BLOCKED_EXTERNAL",
+      "notes": "Cloud agent environment lacks a configured production-quality local model for W13 real execution receipts."
+    }
+  ]
+}

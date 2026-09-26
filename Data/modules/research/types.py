@@ -7,12 +7,32 @@ from enum import Enum
 from typing import Any
 
 
+def _parse_optional_rounds(rounds_raw: Any, budget_raw: Any) -> int | None:
+    """Parse plan rounds; preserve explicit null for quality-driven TEAM budgets."""
+    if rounds_raw is None:
+        if isinstance(budget_raw, dict) and (
+            budget_raw.get("rounds") is None
+            or str(budget_raw.get("completion_policy") or "") == "quality_contract"
+        ):
+            # Distinguish omitted vs explicit null: if budget says null/quality, keep None.
+            if "rounds" in budget_raw and budget_raw.get("rounds") is None:
+                return None
+            if str(budget_raw.get("completion_policy") or "") == "quality_contract":
+                return None
+        return 1
+    return int(rounds_raw)
+
+
 class ResearchStatus(str, Enum):
     DRAFT = "draft"
     PLANNED = "planned"
     QUEUED = "queued"
     RESEARCHING = "researching"
     SYNTHESIZING = "synthesizing"
+    VERIFYING = "verifying"
+    WAITING_FOR_INPUT = "waiting_for_input"
+    BLOCKED = "blocked"
+    PAUSED = "paused"
     COMPLETED = "completed"
     CANCELLING = "cancelling"
     CANCELLED = "cancelled"
@@ -30,6 +50,7 @@ class ResearchDepth(str, Enum):
 class ResearchExecutionMode(str, Enum):
     NORMAL = "normal"
     CUSTOM = "custom"
+    TEAM = "team"
 
 
 class ClaimStatus(str, Enum):
@@ -111,11 +132,22 @@ TERMINAL_STATUSES = frozenset(
     }
 )
 
+# Non-success settled states that retain work for resume (TEAM quality policy).
+RESUMABLE_STATUSES = frozenset(
+    {
+        ResearchStatus.WAITING_FOR_INPUT,
+        ResearchStatus.BLOCKED,
+        ResearchStatus.PAUSED,
+        ResearchStatus.INTERRUPTED,
+    }
+)
+
 ACTIVE_STATUSES = frozenset(
     {
         ResearchStatus.QUEUED,
         ResearchStatus.RESEARCHING,
         ResearchStatus.SYNTHESIZING,
+        ResearchStatus.VERIFYING,
         ResearchStatus.CANCELLING,
     }
 )
@@ -126,10 +158,14 @@ class ResearchBudget:
     search_queries: int
     urls_per_query: int
     max_sources: int
-    rounds: int
+    rounds: int | None
     research_workers: int
     max_local_hits: int = 12
     max_evidence_per_source: int = 4
+    completion_policy: str = "fixed_budget"
+    # Optional explicit user caps for TEAM (null = unbounded cumulative work).
+    max_iterations: int | None = None
+    max_total_sources: int | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -140,19 +176,38 @@ class ResearchBudget:
             "research_workers": self.research_workers,
             "max_local_hits": self.max_local_hits,
             "max_evidence_per_source": self.max_evidence_per_source,
+            "completion_policy": self.completion_policy,
+            "max_iterations": self.max_iterations,
+            "max_total_sources": self.max_total_sources,
+            "truth": {
+                "null_rounds_means_quality_driven": True,
+                "rounds_null_is_not_infinity_sentinel": True,
+            },
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "ResearchBudget":
         raw = dict(data or {})
+        rounds_raw = raw.get("rounds", 1)
+        # Explicit null → unbounded quality-driven policy (TEAM).
+        rounds: int | None
+        if rounds_raw is None:
+            rounds = None
+        else:
+            rounds = int(rounds_raw)
+        max_iter = raw.get("max_iterations")
+        max_src = raw.get("max_total_sources")
         return cls(
             search_queries=int(raw.get("search_queries", 2)),
             urls_per_query=int(raw.get("urls_per_query", 4)),
             max_sources=int(raw.get("max_sources", 10)),
-            rounds=int(raw.get("rounds", 1)),
+            rounds=rounds,
             research_workers=int(raw.get("research_workers", 1)),
             max_local_hits=int(raw.get("max_local_hits", 12)),
             max_evidence_per_source=int(raw.get("max_evidence_per_source", 4)),
+            completion_policy=str(raw.get("completion_policy") or "fixed_budget"),
+            max_iterations=None if max_iter is None else int(max_iter),
+            max_total_sources=None if max_src is None else int(max_src),
         )
 
 
@@ -166,7 +221,7 @@ class ResearchPlan:
     preferred_source_types: list[str]
     local_scopes: list[str]
     exclusion_criteria: list[str]
-    rounds: int
+    rounds: int | None
     budget: ResearchBudget
     notes: str = ""
     stopping_criteria: list[str] = field(default_factory=list)
@@ -202,7 +257,7 @@ class ResearchPlan:
             preferred_source_types=list(data.get("preferred_source_types") or []),
             local_scopes=list(data.get("local_scopes") or []),
             exclusion_criteria=list(data.get("exclusion_criteria") or []),
-            rounds=int(data.get("rounds") or 1),
+            rounds=_parse_optional_rounds(data.get("rounds"), data.get("budget")),
             budget=ResearchBudget.from_dict(data.get("budget")),
             notes=str(data.get("notes") or ""),
             stopping_criteria=list(data.get("stopping_criteria") or []),
