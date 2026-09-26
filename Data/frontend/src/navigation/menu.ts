@@ -42,7 +42,7 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
       { id: "training", label: "Training", to: "/training" },
       { id: "dataset-management", label: "Dataset Management", to: "/dataset-management" },
       { id: "offline-datasets", label: "Offline Datasets", to: "/offline-datasets" },
-      { id: "stats", label: "Statestieken", to: "/analytics" },
+      { id: "stats", label: "Statistieken", to: "/analytics" },
     ],
   },
   {
@@ -85,10 +85,11 @@ export const MAIN_MENU: readonly MainMenuItem[] = [
     id: "research",
     label: "Onderzoek & Kennis",
     to: "/research",
-    match: ["/research", "/brain", "/memory", "/knowledge", "/evidence", "/datasets"],
+    match: ["/research", "/brain", "/cognition", "/memory", "/knowledge", "/evidence", "/datasets"],
     submenu: [
       { id: "research", label: "Research", to: "/research" },
       { id: "brain", label: "Brain", to: "/brain" },
+      { id: "cognition", label: "Cognition", to: "/cognition" },
       { id: "geheugen", label: "Geheugen", to: "/memory" },
       { id: "knowledge", label: "Knowledge Library", to: "/knowledge" },
       { id: "evidence", label: "Evidence Vault", to: "/evidence" },
