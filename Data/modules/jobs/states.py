@@ -39,6 +39,15 @@ class InvalidJobTransition(ValueError):
     pass
 
 
+class StaleLeaseError(ValueError):
+    """Raised when a worker tries to mutate a job after losing its lease (fencing)."""
+
+    def __init__(self, message: str, *, job_id: str | None = None, worker_id: str | None = None) -> None:
+        super().__init__(message)
+        self.job_id = job_id
+        self.worker_id = worker_id
+
+
 def validate_job_transition(current: JobState, new: JobState) -> None:
     if new not in _ALLOWED.get(current, set()):
         raise InvalidJobTransition(f"Illegal job transition {current.value} → {new.value}")

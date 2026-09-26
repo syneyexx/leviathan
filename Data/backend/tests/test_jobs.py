@@ -142,6 +142,32 @@ class JobRuntimeTests(unittest.TestCase):
         assert processed is not None
         self.assertIn(processed.state, {JobState.COMPLETED, JobState.FAILED})
 
+    def test_stale_lease_cannot_complete_job(self) -> None:
+        """W11: worker that lost lease fencing cannot mark COMPLETED."""
+        from Data.modules.jobs import StaleLeaseError
+
+        job = self.store.create(capability_id="file.read", arguments={"path": "x"})
+        self.store.transition(job.job_id, JobState.QUEUED)
+        claimed = self.store.claim_next_queued(worker_id="worker-a")
+        assert claimed is not None
+        self.assertEqual(claimed.lease_owner, "worker-a")
+        # Simulate lease transfer / reclaim by another worker.
+        with self.store.connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET lease_owner = ?, updated_at = ? WHERE job_id = ?",
+                ("worker-b", "2099-01-01T00:00:00+00:00", claimed.job_id),
+            )
+        with self.assertRaises(StaleLeaseError):
+            self.store.transition(
+                claimed.job_id,
+                JobState.COMPLETED,
+                expected_lease_owner="worker-a",
+            )
+        still = self.store.get(claimed.job_id)
+        assert still is not None
+        self.assertEqual(still.state, JobState.RUNNING)
+        self.assertEqual(still.lease_owner, "worker-b")
+
 
 if __name__ == "__main__":
     unittest.main()
