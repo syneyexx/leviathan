@@ -18,6 +18,12 @@ const ICONS: Record<string, ReactNode> = {
   chatten: <path d="M5 6h14v9H8l-3 3V6z" />,
   coding: <path d="M8 8l-4 4 4 4M16 8l4 4-4 4" />,
   taken: <path d="M5 19V9M12 19V5M19 19v-7" />,
+  status: (
+    <>
+      <path d="M4 13h3l2-5 3.2 9 2.4-6 1.5 2H20" />
+      <path d="M4 19h16" opacity="0.35" />
+    </>
+  ),
   modellen: (
     <>
       <path d="M12 4v6M12 10l-6 8M12 10l6 8M7.5 14.5h9" />
