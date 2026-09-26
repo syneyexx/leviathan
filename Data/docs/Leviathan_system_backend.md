@@ -882,6 +882,16 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 
 **P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
 
+**W24 Final integration (CURRENT):** Backend lab/computer-use/multimodal/voice/security helpers covered by wave tests; frontend typecheck green on W18 surfaces; live trading BLOCKED; A5 IMPOSSIBLE; parallel runtimes created: NONE. Playwright E2E/MSW and full OS sandbox remain honest FEATURE_GATED / UNMEASURED where not measured.
+
+**W23 Security / multi-user / ops (CURRENT):** `common/security_ops.py` auth posture + RBAC role vocabulary; unmeasured OS enforcement is not called secure; secrets-broker honesty; rate-limit/OTel FEATURE_GATED.
+
+**W22 Automations / plugins / MCP / data analysis (CURRENT):** `execution/data_analysis.py` safe AST calculator + CSV summarize; MCP content untrusted; no AutomationRuntime2 (JobRuntime/schedules).
+
+**W21 Voice (CURRENT):** `voice/transport.py` — voice is transport into Chat/CognitiveRuntime; ASR/TTS MEASURED/UNAVAILABLE/NOT_CONFIGURED honesty; no duplicate conversation memory.
+
+**W20 Multimodal / documents (CURRENT):** `documents/intelligence.py` vision capability declaration + document structure refs; eval families FEATURE_GATED until measured; not an independent multimodal runtime.
+
 **W19 Web / Browser / Computer-use (CURRENT):** Computer-use loop (`execution/computer_use.py`) enforces proposal→authority→execute→observe→verify; free-form OS text refused; click success ≠ task completion. Existing Playwright readiness, localhost QA crawler (no stealth), and QaRepairBridge retained. Web search unconfigured → WEB_SEARCH_UNAVAILABLE, never fabricated.
 
 **W18 Frontend Platform (CURRENT):** ErrorBoundary + lazy trading routes; `api/http.ts` + `api/domains/marketSimLab.ts`; chat Stop abort; DEMO banners for decorative mocks; Playwright/MSW FEATURE_GATED until CI dependency.
