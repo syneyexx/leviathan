@@ -566,6 +566,23 @@ class ResearchIntegrationSettings:
 
 
 @dataclass(frozen=True)
+class NativeComputeSettings:
+    """Rust native data-plane compute mode and memory budgets.
+
+    Catalog paths: ``native_compute.*``. Env overrides also honored by
+    ``resolve_dataset_memory_policy``. Mode ``python`` forces streaming Python;
+    ``rust`` prefers the native binary when available; ``auto`` uses size thresholds.
+    """
+
+    mode: str = "auto"  # auto | python | rust
+    memory_budget_mb: int = 512
+    max_record_mb: int = 16
+    batch_rows: int = 16_384
+    threads: int = 4
+    rust_threshold_mb: int = 32
+
+
+@dataclass(frozen=True)
 class AssistantSettings:
     """Technical assistant orchestration knobs (not BehaviorProfile content policy)."""
 
@@ -625,6 +642,7 @@ class Settings:
     backup: BackupSettings
     chaos: ChaosSettings
     research_integration: ResearchIntegrationSettings
+    native_compute: NativeComputeSettings
     assistant: AssistantSettings
     browser_qa: BrowserQaSettings
     managed_serving: ManagedServingSettings
@@ -895,6 +913,14 @@ class Settings:
                 "dataset_index_batch_size": self.research_integration.dataset_index_batch_size,
                 "dataset_extract_relations": self.research_integration.dataset_extract_relations,
                 "source_ingestion_runner": self.research_integration.source_ingestion_runner,
+            },
+            "native_compute": {
+                "mode": self.native_compute.mode,
+                "memory_budget_mb": self.native_compute.memory_budget_mb,
+                "max_record_mb": self.native_compute.max_record_mb,
+                "batch_rows": self.native_compute.batch_rows,
+                "threads": self.native_compute.threads,
+                "rust_threshold_mb": self.native_compute.rust_threshold_mb,
             },
             "database_path": str(self.database_path),
         }
@@ -1483,6 +1509,26 @@ class Settings:
                     .lower()
                 ),
             ),
+            native_compute=NativeComputeSettings(
+                mode=(
+                    (_env_raw("LEVIATHAN_NATIVE_COMPUTE_MODE", "auto") or "auto")
+                    .strip()
+                    .lower()
+                ),
+                memory_budget_mb=_env_int(
+                    "LEVIATHAN_NATIVE_MEMORY_BUDGET_MB", 512, minimum=64, maximum=1_048_576
+                ),
+                max_record_mb=_env_int(
+                    "LEVIATHAN_NATIVE_MAX_RECORD_MB", 16, minimum=1, maximum=1024
+                ),
+                batch_rows=_env_int(
+                    "LEVIATHAN_DATASET_BATCH_ROWS", 16_384, minimum=64, maximum=1_000_000
+                ),
+                threads=_env_int("LEVIATHAN_NATIVE_THREADS", 4, minimum=1, maximum=64),
+                rust_threshold_mb=_env_int(
+                    "LEVIATHAN_NATIVE_RUST_THRESHOLD_MB", 32, minimum=1, maximum=1_048_576
+                ),
+            ),
             assistant=AssistantSettings(
                 auto_web=_env_bool("LEVIATHAN_ASSISTANT_AUTO_WEB", True),
                 auto_tools=_env_bool("LEVIATHAN_ASSISTANT_AUTO_TOOLS", True),
@@ -1705,6 +1751,11 @@ class Settings:
         if self.features.neuro_enabled and self.features.agents_enabled:
             # Allowed combination — neuro remains advisory; agents still need gateway later.
             pass
+        nc_mode = (self.native_compute.mode or "").strip().lower()
+        if nc_mode not in {"auto", "python", "rust"}:
+            raise ConfigurationError(
+                f"LEVIATHAN_NATIVE_COMPUTE_MODE invalid: {self.native_compute.mode!r}"
+            )
 
 
 def load_settings() -> Settings:

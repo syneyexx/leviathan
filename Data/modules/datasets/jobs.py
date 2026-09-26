@@ -253,7 +253,7 @@ class DatasetJobRunner:
                     result=result or {},
                     worker_pid=None,
                 )
-            return self.store.update_job(
+            done = self.store.update_job(
                 job.job_id,
                 status=DatasetJobStatus.COMPLETED,
                 progress=1.0,
@@ -262,6 +262,12 @@ class DatasetJobRunner:
                 finished_at=utc_now(),
                 worker_pid=None,
             )
+            # W152 light: drop large local refs so long-lived workers can reclaim RSS.
+            try:
+                del result
+            except Exception:  # noqa: BLE001
+                pass
+            return done
         except Exception as exc:  # noqa: BLE001
             if self.is_cancel_requested(job.job_id) or getattr(exc, "code", None) == "cancelled":
                 return self.store.update_job(

@@ -309,6 +309,18 @@ def bind_default_consumers(
                 dataset_service, "datasets_recovery_max_auto_jobs"
             ):
                 dataset_service.datasets_recovery_max_auto_jobs = max(0, int(value))
+            if key.startswith("native_compute.") and hasattr(dataset_service, "memory_policy"):
+                from Data.modules.datasets.memory_policy import resolve_dataset_memory_policy
+
+                dataset_service.settings = effective
+                dataset_service.memory_policy = resolve_dataset_memory_policy(settings=effective)
+                dataset_service._compute_planner = None
+                if hasattr(dataset_service, "scratch_manager") and hasattr(
+                    dataset_service.scratch_manager, "max_scratch_bytes"
+                ):
+                    dataset_service.scratch_manager.max_scratch_bytes = (
+                        dataset_service.memory_policy.spill_budget_bytes
+                    )
 
         if isolation_guard is not None and key == "network.allow_outbound":
             if hasattr(isolation_guard, "settings"):
