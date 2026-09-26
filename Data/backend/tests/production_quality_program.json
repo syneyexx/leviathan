@@ -53,7 +53,9 @@
     "A08_preference_correction": "FIXED",
     "T08_sealed_rename_contamination": "FIXED",
     "web_search_fetch_mock_regressions": "FIXED",
-    "W06_cancel_to_children": "FIXED"
+    "W06_cancel_to_children": "FIXED",
+    "T09_feed_duplicate_no_double_fill": "FIXED",
+    "W18_paper_session_restart_hydrate": "FIXED"
   },
   "excluded_trees": ["Data/HADES/", "editor/"],
   "canonical_docs": [

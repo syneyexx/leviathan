@@ -1172,6 +1172,7 @@ Citation audit includes Dutch factual/hedging cues; hedging does not clear evide
 - **W08 / A08:** `MemoryStore.correct_preference` writes a new `PREFERENCE`, supersedes every ACTIVE matching `preference_key` (`PREFERENCE` or legacy `FACT`), stays in-scope (no silent GLOBAL wipe from a conversation edit), and ACTIVE search/list return only the current preference.
 - **W17 / T08:** Sealed holdout contamination keys use a rename-stable root via `lineage_aliases` / `register_lineage_rename` / optional `root_lineage_id`. Renamed descendants cannot claim a fresh sealed holdout after revelation.
 - **Web (GI7):** `HttpWebProvider` search/fetch tolerate thin response doubles (`status_code` / `.text` via getattr + `content` fallback) so rate-limit and robots paths do not turn real provider results into `UNAVAILABLE`/`FAILED` under mocks. Fabrication remains forbidden.
+- **W18 / T09:** `LocalPaperBroker.restore_session` + `WalletLedger.from_public_dict` hydrate durable paper wallet/orders after process restart; `paper_session_state` calls hydrate before trading. Feed `EventOrderer` drops duplicate `event_id`s on reconnect; `client_order_id` remains fill-idempotent so replay cannot double-apply.
 
 Run targeted suites first during phased implementation, then the impacted broader suites.
 
