@@ -103,5 +103,6 @@ describe("LEVIATHAN ritual operator theme", () => {
     expect(existsSync(join(publicDir, "leviathan-ritual-skyline.svg"))).toBe(true);
     expect(existsSync(join(publicDir, "leviathan-ritual-seal.svg"))).toBe(true);
     expect(existsSync(join(publicDir, "leviathan-ritual-manuscript.svg"))).toBe(true);
+    expect(existsSync(join(publicDir, "leviathan-guardian.svg"))).toBe(true);
   });
 });
