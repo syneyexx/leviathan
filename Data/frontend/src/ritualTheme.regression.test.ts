@@ -12,11 +12,13 @@ describe("LEVIATHAN ritual operator theme", () => {
     const themeIndex = main.indexOf('import "./styles/ritual-theme.css"');
     const pagesIndex = main.indexOf('import "./styles/ritual-pages.css"');
     const specialIndex = main.indexOf('import "./styles/ritual-special.css"');
+    const polishIndex = main.indexOf('import "./styles/ritual-polish.css"');
     const legacyIndex = main.indexOf('import "./styles/datasets-dashboard.css"');
 
     expect(themeIndex).toBeGreaterThan(legacyIndex);
     expect(pagesIndex).toBeGreaterThan(themeIndex);
     expect(specialIndex).toBeGreaterThan(pagesIndex);
+    expect(polishIndex).toBeGreaterThan(specialIndex);
   });
 
   it("applies the ritual shell and route section class through the shared AppShell", () => {
@@ -79,6 +81,15 @@ describe("LEVIATHAN ritual operator theme", () => {
     ];
 
     for (const route of routes) expect(app).toContain(`path="${route}"`);
+  });
+
+  it("keeps System Status as a real page rather than redirecting it to Tasks", () => {
+    const app = read("App.tsx");
+    const menu = read("navigation/menu.ts");
+    expect(app).toContain('import { StatusPage } from "./pages/StatusPage"');
+    expect(app).toContain('<Route path="/status" element={<StatusPage />} />');
+    expect(app).not.toContain('<Route path="/status" element={<Navigate to="/tasks" replace />} />');
+    expect(menu).toContain('{ id: "status", label: "System Status", to: "/status" }');
   });
 
   it("exposes Cognition in the knowledge navigation instead of leaving it orphaned", () => {
