@@ -1059,14 +1059,21 @@ export type DatasetLearningJobActivity = {
   elapsedSeconds?: number | null;
 };
 
+/** DatasetJob enriched by DatasetService.learning_activity /agents dataset-learning. */
+export type DatasetLearningEnrichedJob = DatasetJob & {
+  datasetName?: string | null;
+  learning?: DatasetLearningLadder | null;
+  activity?: DatasetLearningJobActivity;
+};
+
 export type DatasetLearningStatus = {
   agent: AgentDefinition | null;
   activity: {
     agentSystemKey?: string;
     agentName?: string;
     activeCount: number;
-    active: DatasetJob[];
-    recent: DatasetJob[];
+    active: DatasetLearningEnrichedJob[];
+    recent: DatasetLearningEnrichedJob[];
     truth?: Record<string, boolean>;
     error?: string;
   };
