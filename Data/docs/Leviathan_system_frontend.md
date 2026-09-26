@@ -2,7 +2,7 @@
 
 > **Canonical frontend documentation.** This is the single human-readable reference for LEVIATHAN's React/TypeScript UI, route structure, client contracts and frontend file organization.
 >
-> Snapshot: **2026-09-26**, based on `main` after External Execution Fabric / General Assistant Fabric and Frontier Master Program W0 baseline. Code and tests are authoritative when this file becomes stale.
+> Snapshot: **2026-09-27**, including the full-app Ritual Operator UI overhaul. Code and tests are authoritative when this file becomes stale.
 >
 > Backend reference: [`Leviathan_system_backend.md`](./Leviathan_system_backend.md).
 
@@ -54,6 +54,7 @@ Data/frontend/
 ├── tsconfig.node.json
 ├── .oxlintrc.json
 ├── public/
+│   └── assets/          # runtime-safe local visual assets, including ritual UI SVGs
 └── src/
     ├── App.tsx
     ├── main.tsx
@@ -75,6 +76,8 @@ Data/frontend/
 
 `main.tsx` bootstraps React. `App.tsx` owns application routing. `layouts/AppShell.tsx` owns the shared shell. `navigation/menu.ts` owns the visible primary/submenu model.
 
+The Ritual Operator design system is additive over the existing route/page ownership. It does **not** replace backend-backed page logic with a parallel mock frontend. The shared shell applies `lv-ritual-shell`, a route-section class (`lv-section-*`) and route data attributes so all routed surfaces can be themed consistently while retaining their existing React behavior.
+
 ---
 
 # 3. Application shell
@@ -83,14 +86,35 @@ Data/frontend/
 
 `Data/frontend/src/components/`:
 
-- `AppHeader.tsx` — top-level header/status controls;
+- `AppHeader.tsx` — top-level header/status controls and LEVIATHAN operator crest;
 - `AppSidebar.tsx` — primary navigation;
-- `AppFooter.tsx` — footer/subnavigation shell;
+- `AppFooter.tsx` — footer/subnavigation shell and route dock;
 - `BrandMark.tsx` — LEVIATHAN branding component;
 - `Toast.tsx` — toast rendering;
 - `media/` — shared Media Control UI components.
 
 `Data/frontend/src/layouts/AppShell.tsx` composes the application chrome around routed content.
+
+### Ritual Operator shell (CURRENT)
+
+The shared shell is intentionally one design system across all production routes. Its visual language combines restrained occult/sacred geometry, infernal/divine heraldry, manuscript/ancient-text motifs, mathematics and monumental/Tartarian architecture without turning the operator UI into decorative fantasy art.
+
+Core constraints:
+
+- obsidian/charcoal surfaces;
+- thin warm-gold/bronze hairlines and typography accents;
+- restrained deep-red active navigation states;
+- green/cyan reserved mainly for measured status/telemetry;
+- sharp 2–6 px radii instead of consumer-style rounded cards;
+- dense but readable operator layout;
+- no fake capability state introduced by styling;
+- responsive normal-desktop layout plus explicit ultrawide handling.
+
+`AppShell` adds:
+
+- `lv-ritual-shell` on the app root;
+- `lv-section-${section.id}` based on active navigation ownership;
+- `data-lv-section` and `data-lv-route` for route-specific visual treatment.
 
 ## Shared state
 
@@ -110,11 +134,11 @@ The current frontend deliberately keeps global client state relatively small; mu
 
 Current top-level groups:
 
-1. **Hades AI** — Chatten, Coding Agent, Taken;
-2. **LLM** — Modellen, Agents, Training, Dataset Management, Offline Datasets, Statestieken;
+1. **Hades AI** — Chatten, Coding Agent, Taken, System Status;
+2. **LLM** — Modellen, Agents, Training, Dataset Management, Offline Datasets, Statistieken;
 3. **Media Control** — overview/platform/queue/radar/calendar/analytics/library/personas;
 4. **TradingCenter** — simulation, strategies, market data, portfolio, paper, broker, research;
-5. **Onderzoek & Kennis** — Research, Brain, Geheugen, Knowledge Library, Evidence Vault, Datasets;
+5. **Onderzoek & Kennis** — Research, Brain, Cognition, Geheugen, Knowledge Library, Evidence Vault, Datasets;
 6. **Plugin & Runtime** — Performance, Tools, Modules, MCP, Workflows, Console;
 7. **Instellingen** — general, LLM behavior/studio, rights/security, benchmarks, media, storage, Python/runtime, console/logs, Knowledge & RAG, Cognition & Neuro, Agents & Coding, Tools & MCP, Market Simulation, Data & Research.
 
@@ -129,7 +153,7 @@ The historical display label `Hades AI` is a UI navigation label; backend owners
 | Route | UI owner |
 |---|---|
 | `/` | `CommandPage` |
-| `/status` | redirects to `/tasks` |
+| `/status` | `StatusPage` |
 | `/tasks` | `TasksPage` |
 | `/chat` | `ChatPage` |
 | `/chat.html` | compatibility redirect to `/chat` |
@@ -183,6 +207,8 @@ Trading routes:
 - `/trading/control-room`
 
 Settings aliases route to `/settings?section=...` for the appropriate operator category.
+
+`/status` is a real routed surface again rather than an alias to Tasks. The Command dashboard's System Performance action therefore lands on the dedicated status cockpit.
 
 ---
 
@@ -367,7 +393,6 @@ The LLM navigation also exposes dedicated Dataset Management and Offline Dataset
 
 ### Dataset Management (pixel)
 
-
 Dataset Activity / Datasets pages show compute backend + progress honestly (`python_streaming` / `rust_native`, records, peak memory / spill / throughput). Missing metrics render as **UNMEASURED**, never 0. Performance page surfaces native data-plane probe status and DB contention (file/WAL size, busy retries, commit queue depth) from `/api/performance/snapshot`.
 
 `pages/pixel/DatasetManagementPixelPage.tsx` shows `displayName ?? name` as the primary label, a **category** column + filter, and search across displayName/tags/category. Details expose semantic summary fields and recovery honesty: `REINDEX_REQUIRED` is never shown as learned Brain state. Operators can PATCH displayName/category/tags and trigger semantic re-analyze via `/api/datasets/{id}/semantic`. The shared Dataset Activity console surfaces native/Python backend labels and memory honesty.
@@ -486,10 +511,12 @@ Settings are backend-owned. The frontend should honor validation, enum/range con
 
 - `pages/CommandPage.tsx` — primary command/dashboard landing;
 - `pages/AnalyticsPage.tsx` — LLM/system analytics;
-- `pages/StatusPage.tsx` — status implementation file retained even though the current `/status` route redirects to Tasks;
+- `pages/StatusPage.tsx` — dedicated `/status` system/runtime status surface;
 - `pages/SectionPage.tsx` and `PlaceholderPage.tsx` — reusable/placeholder route surfaces.
 
 Operator status should use real health/telemetry/job/model/system inventory APIs.
+
+The Command route is the visual anchor for the Ritual Operator design: monumental skyline/header framing, restrained infernal/divine guardian imagery, sacred geometry and dense live operator cards. Decorative assets are visual only and do not claim backend state.
 
 ---
 
@@ -508,11 +535,27 @@ Operator status should use real health/telemetry/job/model/system inventory APIs
 - `earth-mini.jpg`;
 - `media-control/` and its prepared crops/tiles.
 
+Ritual Operator assets live under `public/assets/` so the shared shell can reference them without page-local imports:
+
+- `leviathan-ritual-skyline.svg` — monumental/Tartarian skyline, sacred geometry and mathematical grid;
+- `leviathan-ritual-seal.svg` — geometric/mathematical system seal;
+- `leviathan-ritual-manuscript.svg` — ancient-text/manuscript ornament;
+- `leviathan-guardian.svg` — restrained infernal/divine guardian silhouette used as heraldic artwork.
+
 Binary assets are intentionally described by directory/purpose here rather than duplicated as an image-by-image catalog.
 
 ## Styling
 
 Global and page-specific styles live under `src/styles/`. Preserve the LEVIATHAN shell/layout classes and shared style conventions rather than introducing a second design system per page.
+
+The Ritual Operator skin is loaded **after** legacy/page styles in `main.tsx` and is split by responsibility:
+
+- `ritual-theme.css` — tokens, global shell, typography, surfaces, controls, navigation and responsive/ultrawide behavior;
+- `ritual-pages.css` — page-family harmonization across Command, Chat, Tasks, Coding, LLM, Agents, Analytics, Media, Trading, Research/Knowledge, Runtime and Settings;
+- `ritual-special.css` — high-specificity treatment for specialist/lazy route CSS such as Brain tree views, simulation and portfolio surfaces;
+- `ritual-polish.css` — final operator chrome, guardian integration, Command/status cockpit details and status-light restraint.
+
+This layering intentionally keeps domain page logic and CSS ownership intact while enforcing one coherent visual language across all routed pages.
 
 ---
 
@@ -532,6 +575,8 @@ mock fixture != production integration
 
 Where a backend returns `UNAVAILABLE`, `UNMEASURED`, `NOT_CONFIGURED`, `WAITING_APPROVAL`, `PARTIAL` or similar states, the UI should render that state honestly instead of converting it to success.
 
+Decorative Ritual Operator assets are explicitly presentation-only. They must never be interpreted as data, evidence, capability or system-health signals.
+
 ---
 
 # 20. Frontend tests
@@ -547,6 +592,8 @@ npm run build
 ```
 
 Tests exist beside system surfaces, including API client/streaming, shell status, Agents, Chat/Coding, datasets and Settings contracts. New pages/actions should add tests close to the relevant module.
+
+`src/ritualTheme.regression.test.ts` protects the design-system cascade, route inventory, dedicated `/status` route, Cognition navigation exposure and required local Ritual Operator assets.
 
 ---
 
@@ -586,8 +633,9 @@ Use this map when changing UI behavior:
 | Shared execution presentation | `src/lib/executionFabric.ts` |
 | Job presentation | `src/lib/jobStatus.ts` |
 | Toast state | `src/state/`, `src/hooks/useToast.ts` |
-| Images | `src/assets/` |
-| Styles | `src/styles/` |
+| Images | `src/assets/`, `public/assets/` |
+| Shared/base styles | `src/styles/` |
+| Ritual Operator skin | `src/styles/ritual-theme.css`, `ritual-pages.css`, `ritual-special.css`, `ritual-polish.css` |
 | Shared TS types | `src/types/` |
 
 ---
@@ -619,7 +667,8 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 6. Do not expose private chain-of-thought; only public reasoning/activity metadata is eligible for UI.
 7. Update this document when routes, pages, API ownership or major file organization changes.
 8. Update the backend companion document when a UI change adds or changes an API contract.
-
+9. One shared Ritual Operator design system owns production visual language; route-local CSS may specialize layout but must not reintroduce a conflicting standalone theme.
+10. Decorative occult/infernal/divine/symbolic artwork remains presentation-only and must never imply capability, truth, authority, evidence or successful execution.
 
 ### Trading Center Lab (W17 / W25)
 
@@ -631,7 +680,6 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 
 **W16 lifecycle (CURRENT):** client helpers in `api/domains/marketSimLab.ts` cover `/api/market-sim/lab/runs` create/list/get/start/pause/resume/cancel plus learning inspection endpoints.
 
-
 ### Frontend Platform (W18 CURRENT)
 
 - **W18A:** `ErrorBoundary` wraps the app; trading routes are `React.lazy` + `Suspense`; `SkipLink` + `main#main-content` in `AppShell`.
@@ -639,4 +687,4 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 - **W18C:** Chat exposes reasoning mode, sources/verification telemetry, and **Stop** abort for in-flight streams. No hidden CoT.
 - **W18D:** Dataset demo rows are labelled DEMO-only and regression-blocked from live inventory; decorative mocks must use `DemoBanner`.
 - **W18E:** Vitest unit coverage for ErrorBoundary. Playwright E2E / MSW: **FEATURE_GATED** until packages are adopted in CI.
-- **W18F:** Skip-to-content a11y; NL default / EN secondary preserved. Design language unchanged.
+- **W18F:** Skip-to-content a11y; NL default / EN secondary preserved. The shared production visual language is now the responsive Ritual Operator system described in section 18; route-specific layouts remain intact.
