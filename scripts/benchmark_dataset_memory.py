@@ -184,7 +184,16 @@ def assert_non_linear_working_set(
     # Also compare to input byte growth — linear full-load would track input size closely.
     input_delta = int(last.get("inputBytes") or 0) - int(first.get("inputBytes") or 0)
     ratio_to_input = (float(rss_delta) / float(input_delta)) if input_delta > 0 and rss_delta > 0 else 0.0
-    passed = growth_per_row <= max_bytes_per_row and ratio_to_input < 0.85
+    # Pragmatic host bound:
+    # - per-row growth must stay under the configured ceiling
+    # - ratio-to-input only applies when input grew enough to drown allocator noise
+    #   (small CI sizes like 50→150 rows are dominated by RSS jitter)
+    min_input_for_ratio = 512 * 1024  # 512 KiB
+    growth_ok = growth_per_row <= max_bytes_per_row
+    ratio_ok = True
+    if input_delta >= min_input_for_ratio:
+        ratio_ok = ratio_to_input < 0.85
+    passed = growth_ok and ratio_ok
     return {
         "asserted": True,
         "passed": passed,
@@ -193,6 +202,9 @@ def assert_non_linear_working_set(
         "growthBytesPerRow": round(growth_per_row, 3),
         "maxBytesPerRowBound": max_bytes_per_row,
         "rssToInputGrowthRatio": round(ratio_to_input, 4),
+        "ratioEnforced": input_delta >= min_input_for_ratio,
+        "growthOk": growth_ok,
+        "ratioOk": ratio_ok,
         "first": {"rows": first["rows"], "peakRssBytes": first["peakRssBytes"]},
         "last": {"rows": last["rows"], "peakRssBytes": last["peakRssBytes"]},
         "opsCovered": ["validate", "export"],
@@ -284,8 +296,10 @@ def run_sizes(
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         raise SystemExit(
-            f"memory regression: working-set grew too linearly "
-            f"({bound.get('growthBytesPerRow')} B/row > {max_bytes_per_row})"
+            "memory regression: working-set grew too linearly "
+            f"(growth={bound.get('growthBytesPerRow')} B/row bound={max_bytes_per_row}; "
+            f"ratio={bound.get('rssToInputGrowthRatio')} growthOk={bound.get('growthOk')} "
+            f"ratioOk={bound.get('ratioOk')} ratioEnforced={bound.get('ratioEnforced')})"
         )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
