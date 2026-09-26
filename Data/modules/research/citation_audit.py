@@ -66,12 +66,18 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
 _FACTUAL_HINTS = re.compile(
     r"\b(?:is|are|was|were|has|have|had|launched|released|founded|announced|"
-    r"increased|decreased|reported|according to|percent|%|\d+)\b",
+    r"increased|decreased|reported|according to|percent|%|\d+|"
+    # Dutch factual / reporting cues (W09 — not English-only)
+    r"is|zijn|was|waren|heeft|hebben|had|lancering|opgericht|aangekondigd|"
+    r"gestegen|gedaald|gemeld|volgens|procent)\b",
     re.I,
 )
 _INTERPRETATION_HINTS = re.compile(
     r"\b(?:suggests?|implies?|appears?|seems?|may|might|could|likely|"
-    r"in summary|overall|we conclude|interpretation)\b",
+    r"in summary|overall|we conclude|interpretation|"
+    # Dutch hedging / interpretation — hedging does NOT remove evidence duty for facts
+    r"suggeert|impliceert|lijkt|schijnt|mogelijk|wellicht|zou kunnen|"
+    r"samenvattend|tot slot|we concluderen|interpretatie)\b",
     re.I,
 )
 
@@ -99,17 +105,28 @@ def _strip_citations(sentence: str) -> str:
 
 
 def _looks_factual(sentence: str) -> bool:
+    """True when the sentence asserts a checkable fact.
+
+    Hedging/interpretation words do **not** remove the evidence requirement when
+    factual markers (verbs, years, numbers) are also present.
+    """
     text = _strip_citations(sentence)
     if len(text) < 25:
         return False
-    if _INTERPRETATION_HINTS.search(text) and not _YEAR.search(text):
+    has_fact = bool(_FACTUAL_HINTS.search(text) or _YEAR.search(text) or re.search(r"\d", text))
+    if not has_fact:
         return False
-    return bool(_FACTUAL_HINTS.search(text) or _YEAR.search(text) or re.search(r"\d", text))
+    # Pure interpretation without factual markers is handled by _looks_interpretation.
+    return True
 
 
 def _looks_interpretation(sentence: str) -> bool:
     text = _strip_citations(sentence)
-    return bool(_INTERPRETATION_HINTS.search(text)) and not _YEAR.search(text)
+    if not _INTERPRETATION_HINTS.search(text):
+        return False
+    # Interpretation-only when no factual markers accompany the hedge.
+    has_fact = bool(_FACTUAL_HINTS.search(text) or _YEAR.search(text) or re.search(r"\d", text))
+    return not has_fact
 
 
 def _match_claim_id(store: ResearchStore, project_id: str, sentence: str) -> str | None:
