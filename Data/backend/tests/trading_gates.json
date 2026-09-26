@@ -121,12 +121,26 @@
     "G04": {
       "title": "Corporate actions point-in-time",
       "phase": "T2B",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "T0: gate not yet implemented; characterization only"
+      "evidence": [
+        "Data/modules/market_sim/universe.py::CorporateAction / PointInTimeUniverse.corporate_actions_as_of",
+        "Data/backend/tests/test_trading_lab_w13.py::PointInTimeUniverseTests",
+        "Causal effective timestamps for split/dividend/symbol_change; engine auto-adjust not yet universal"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_lab_w13.py::PointInTimeUniverseTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_lab_w13.py::PointInTimeUniverseTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "W13A: PIT corporate-action model + tests. Full backtest auto-adjustment remains later."
     },
     "G05": {
       "title": "Immutable content-addressed datasets",

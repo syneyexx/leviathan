@@ -151,6 +151,7 @@ class WinRateDefinition(str, Enum):
 
 class MetricStatus(str, Enum):
     MEASURED = "MEASURED"
+    ASSUMED = "ASSUMED"  # W13: modelled cost assumptions with provenance
     UNMEASURED = "UNMEASURED"
 
 
