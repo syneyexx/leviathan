@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { media } from "../assets/media";
 import { useShellStatus } from "../hooks/useShellStatus";
+import { TridentMark } from "./BrandMark";
 
 type AppHeaderProps = {
   searchPlaceholder?: string;
@@ -116,10 +116,12 @@ export function AppHeader({
 
       <div className="lv-header-end">
         <div className="lv-header-user" aria-label="Operator">
-          <img className="lv-header-avatar" src={media.avatar} alt="" width={36} height={36} />
+          <div className="lv-header-avatar" aria-hidden="true">
+            <TridentMark id="header-operator" />
+          </div>
           <div className="lv-header-user-copy">
             <div className="lv-header-user-name">LEVIATHAN</div>
-            <div className="lv-header-user-role">Elite Mode</div>
+            <div className="lv-header-user-role">Operator Mode</div>
           </div>
         </div>
 
