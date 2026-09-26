@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 900" role="img" aria-label="Leviathan infernal divine guardian">
+  <defs>
+    <radialGradient id="halo" cx="50%" cy="30%" r="42%">
+      <stop offset="0" stop-color="#efd18d" stop-opacity="0.18"/>
+      <stop offset="0.42" stop-color="#c69343" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#c69343" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d2ab62" stop-opacity="0.34"/>
+      <stop offset="0.48" stop-color="#8f6935" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#4c371e" stop-opacity="0.08"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+  </defs>
+
+  <rect width="720" height="900" fill="none"/>
+  <circle cx="360" cy="260" r="230" fill="url(#halo)"/>
+
+  <g fill="none" stroke="#d1a455" stroke-opacity="0.24" stroke-width="1">
+    <circle cx="360" cy="258" r="184"/>
+    <circle cx="360" cy="258" r="158"/>
+    <circle cx="360" cy="258" r="126"/>
+    <path d="M360 76v364M178 258h364M231 129l258 258M489 129L231 387"/>
+    <path d="M360 92l143 248H217z"/>
+  </g>
+
+  <!-- Symmetric horns: demonic silhouette, kept abstract and heraldic. -->
+  <g fill="url(#metal)" stroke="#c8984c" stroke-opacity="0.34" stroke-width="1.2">
+    <path d="M336 231c-44-54-94-72-151-53 38 4 68 24 87 59-31-16-64-18-99-5 48 9 89 36 123 81z"/>
+    <path d="M384 231c44-54 94-72 151-53-38 4-68 24-87 59 31-16 64-18 99-5-48 9-89 36-123 81z"/>
+  </g>
+
+  <!-- Head / mask. -->
+  <g fill="#090b09" stroke="#c99a50" stroke-opacity="0.42" stroke-width="1.3">
+    <path d="M360 180c44 0 79 35 79 79 0 47-29 88-79 124-50-36-79-77-79-124 0-44 35-79 79-79z"/>
+    <path d="M309 254c17-13 34-17 51-11M411 254c-17-13-34-17-51-11"/>
+    <path d="M329 287c11 9 21 13 31 13s20-4 31-13"/>
+    <path d="M360 258v58"/>
+  </g>
+
+  <g fill="#d8b264" fill-opacity="0.48">
+    <circle cx="328" cy="256" r="3"/>
+    <circle cx="392" cy="256" r="3"/>
+  </g>
+
+  <!-- Monumental armour / robe. -->
+  <g fill="#070907" stroke="#ad7e39" stroke-opacity="0.38" stroke-width="1.35">
+    <path d="M360 375c-105 16-166 86-186 210l53 169h266l53-169c-20-124-81-194-186-210z"/>
+    <path d="M360 386v368M268 424l92 100 92-100M227 585l133-61 133 61"/>
+    <path d="M278 754l-21-132 103-98 103 98-21 132"/>
+    <path d="M174 585c-55 17-101 54-139 112 67-25 126-28 177-10z"/>
+    <path d="M546 585c55 17 101 54 139 112-67-25-126-28-177-10z"/>
+  </g>
+
+  <!-- Divine/angelic wing geometry rather than literal feathers. -->
+  <g fill="none" stroke="#d0a255" stroke-opacity="0.19" stroke-width="1.1">
+    <path d="M217 430C126 442 68 496 42 592c76-56 145-80 207-73"/>
+    <path d="M503 430c91 12 149 66 175 162-76-56-145-80-207-73"/>
+    <path d="M211 470C128 491 82 538 59 613c63-39 123-56 181-50"/>
+    <path d="M509 470c83 21 129 68 152 143-63-39-123-56-181-50"/>
+  </g>
+
+  <!-- Mathematical sigil / breastplate. -->
+  <g fill="none" stroke="#d5aa5c" stroke-opacity="0.40" stroke-width="1">
+    <circle cx="360" cy="527" r="62"/>
+    <circle cx="360" cy="527" r="43"/>
+    <path d="M360 465l54 94H306zM360 589l-54-94h108z"/>
+    <circle cx="360" cy="527" r="5"/>
+  </g>
+
+  <g font-family="Georgia, serif" fill="#d5aa5c" fill-opacity="0.42" text-anchor="middle">
+    <text x="360" y="816" font-size="16" letter-spacing="7">MENS · NUMEN · ABYSSUS</text>
+    <text x="360" y="845" font-size="10" letter-spacing="4">ORDO EX TENEBRIS · VERITAS EX RATIONE</text>
+  </g>
+
+  <ellipse cx="360" cy="258" rx="112" ry="78" fill="#d1a455" fill-opacity="0.06" filter="url(#soft)"/>
+</svg>
