@@ -542,22 +542,26 @@
         "walk_forward_splits rolling overload (window/step)",
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
         "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization",
-        "CPCV / full robustness suite not yet complete"
+        "Data/modules/market_sim/stats_inferential.py::combinatorial_purged_cv_paths / purge_embargo_indices",
+        "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests",
+        "Full CPCV scoring harness / robustness suite not yet complete"
       ],
       "test_node_ids": [
         "Data/backend/tests/test_market_sim_p2_strategies.py::P2BTrialLedgerAndWfaTests::test_rolling_wfa_windows",
-        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization"
+        "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization",
+        "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests"
       ],
       "checks": [
         {
           "kind": "pytest",
           "node_ids": [
-            "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization"
+            "Data/backend/tests/test_market_sim_characterization.py::D13WalkForwardCharacterization",
+            "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests"
           ],
           "timeout_sec": 60
         }
       ],
-      "notes": "P2B: rolling WFA + purge gap. CPCV/combinatorial remains later.",
+      "notes": "P2B+W13D: rolling WFA + purge/embargo + CPCV path geometry. Full combinatorial scoring remains later.",
       "related_defects": [
         "D13"
       ]
@@ -1229,12 +1233,26 @@
     "G46": {
       "title": "False-discovery calibration FDR/power",
       "phase": "T5D",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "required": true,
-      "evidence": [],
-      "test_node_ids": [],
-      "checks": [],
-      "notes": "Honest NOT_STARTED — statistical FDR suite not in A0–A4 scope completion",
+      "evidence": [
+        "Data/modules/market_sim/stats_inferential.py::benjamini_hochberg / deflated_sharpe_ratio / probability_of_backtest_overfitting / minimum_useful_sample",
+        "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests",
+        "Trial-ledger N feeds DSR; acceptance wiring to experiment harness remains later"
+      ],
+      "test_node_ids": [
+        "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests"
+      ],
+      "checks": [
+        {
+          "kind": "pytest",
+          "node_ids": [
+            "Data/backend/tests/test_trading_lab_w13.py::InferentialStatsTests"
+          ],
+          "timeout_sec": 60
+        }
+      ],
+      "notes": "W13D: FDR/PBO/DSR/power primitives MEASURED in unit tests; full calibration suite not yet PASS",
       "related_defects": []
     },
     "G47": {
