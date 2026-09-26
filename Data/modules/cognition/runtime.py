@@ -868,9 +868,38 @@ class CognitiveRuntime:
             context_public=result.get("context"),
             completion=result.get("completion"),
             experience=result.get("experience"),
+            ttc=checkpoint.get("ttc"),
+            critic_report=checkpoint.get("critic_report"),
             steering=list(checkpoint.get("steering") or []),
             trace_id=row.get("trace_id"),
         )
+        # Restore HypothesisBoard from durable checkpoint (W7).
+        hyp_blob = checkpoint.get("hypotheses") if isinstance(checkpoint.get("hypotheses"), dict) else None
+        if hyp_blob and isinstance(hyp_blob.get("items"), list):
+            for item in hyp_blob["items"]:
+                if not isinstance(item, dict):
+                    continue
+                statement = str(item.get("statement") or "").strip()
+                if not statement:
+                    continue
+                hyp = state.hypotheses.add(
+                    statement,
+                    prior_plausibility=float(item.get("prior_plausibility") or 0.5),
+                    belief_id=item.get("belief_id"),
+                    metadata=dict(item.get("metadata") or {}),
+                )
+                for eid in item.get("supporting_evidence_ids") or []:
+                    hyp.apply_evidence(str(eid), supports=True)
+                for eid in item.get("contradicting_evidence_ids") or []:
+                    hyp.apply_evidence(str(eid), supports=False)
+        # Re-pin durable constraints into working memory so compaction cannot drop them.
+        for constraint in checkpoint.get("pinned_constraints") or list(
+            getattr(task, "hard_constraints", None) or task.constraints or []
+        ):
+            if constraint:
+                state.working_memory.upsert(
+                    "constraint", str(constraint), priority=0.99, verified=True
+                )
         events = self.store.list_events(run_id)
         state.events = list(events)
         return state
@@ -2274,6 +2303,26 @@ class CognitiveRuntime:
                 "steering": list(state.steering),
                 "usage": state.usage.public_dict(),
                 "cursor_iteration": state.usage.iterations,
+                # W7 durable ReasoningState fields (public — no private CoT).
+                "hypotheses": state.hypotheses.public_dict(),
+                "neural": state.decision.neural.public_dict()
+                if state.decision and state.decision.neural
+                else None,
+                "evidence_refs": [
+                    ref for o in state.observations for ref in (o.evidence_refs or [])
+                ],
+                "public_events": [
+                    e
+                    for e in state.events
+                    if isinstance(e, dict) and e.get("type") not in {"private_cot", "hidden_reasoning"}
+                ][-50:],
+                "ttc": state.ttc,
+                "critic_report": state.critic_report,
+                "pinned_constraints": list(
+                    getattr(state.task, "hard_constraints", None)
+                    or state.task.constraints
+                    or []
+                ),
             }
             result_json = {
                 "response_text": state.response_text,

@@ -316,9 +316,17 @@ ReasoningDepth = OrchestrationCompute + NeuralInferenceCompute
 - `critics.py` — Critic mesh (Process, Factual, Plan, Integrity, Code, Consistency); critic output is **not** verification proof and cannot authorize side effects
 - Integrity critics remain technical-only (no ideological content layer)
 
+### Async cognition resume / steering (W7 CURRENT)
+
+- Durable checkpoints include plan, beliefs, working memory, budgets, neural axis, hypotheses, evidence refs, public events, pinned constraints
+- `steer` supports goal_change / constraint_add / correction / status_request (program aliases)
+- Pinned constraints re-applied on hydrate so compaction cannot drop them
+- API: `/api/cognition/runs/{id}/steer`, `/resume`, `/cancel`, `/events` — no raw CoT exposure
+- FAST may stay inline; DEEP/MAXIMUM remain budgeted for external-worker paths via JobRuntime when bound
+
 ### Frontier Reasoning target — not yet a current-main claim
 
-The active master program continues beyond W5 into CapabilityState / verification tiers, async cognition resume/steering, Brain memory unification, agent recursion governance, and later waves. Remaining items are **TARGET** until merged and verified.
+The active master program continues beyond W7 into Brain/memory unification, agent recursion governance, coding/research expert systems, training/evaluation, trading lab, frontend, browser, multimodal, voice, and operations waves. Remaining items are **TARGET** until merged and verified.
 
 ---
 
