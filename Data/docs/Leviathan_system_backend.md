@@ -109,7 +109,7 @@ The encoded ownership contract lives in `Data/modules/common/ownership.py`.
 
 ## 4.1 `Data/backend/main.py`
 
-`main.py` is the composition root. It creates and wires the shared instances used by routes and services. Domain logic should stay in modules rather than accumulate in the composition root.
+`main.py` is the composition root (**CURRENT**). It creates and wires the shared instances used by route modules and services. Domain HTTP handlers live in `Data/backend/routes/*` via `build_*_router(deps)`; `main.py` keeps composition, lifespan, middleware, **`POST /api/chat`**, SPA shell routes (`/`, `/chat`, `/{spa_path}`), and `/api/health`.
 
 Current wiring includes:
 
@@ -136,7 +136,7 @@ Current wiring includes:
 
 | File | Purpose |
 |---|---|
-| `Data/backend/main.py` | FastAPI app + system composition |
+| `Data/backend/main.py` | Composition root + chat + SPA + health (**CURRENT**) |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
 | `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **52** (`paper_portefeuille`) |
@@ -172,29 +172,55 @@ Canonical connection policy: `Data/modules/common/sqlite_policy.py` (busy_timeou
 
 # 5. API route map
 
-Dedicated route modules live in `Data/backend/routes/`:
+Dedicated route modules live in `Data/backend/routes/` (Wave 0D — domain routers extracted from `main.py`):
 
 | Route module | System |
 |---|---|
-| `agents.py` | Agent Fleet / agent operations |
+| `agents.py` | Agent Fleet / execute / multi-agent |
+| `agent_signals.py` | agent signal fabric |
 | `analytics.py` | analytics |
+| `approvals.py` | approval requests/decisions |
+| `artifacts.py` | artifacts + run lookup |
 | `brain.py` | Brain graph/search/status |
+| `browser.py` | legacy browser request + QA journey surfaces |
+| `browser_qa.py` | Browser QA crawls control plane |
+| `capabilities.py` | capability catalog / invoke / receipts |
 | `coding.py` | Coding Agent sessions/turns/actions |
 | `cognition.py` | cognition submit/status/events/cancel/resume |
+| `conversations.py` | conversation CRUD |
 | `datasets.py` | dataset management, ingest/index/offline workflows |
 | `efficiency.py` | efficiency/resource surfaces |
+| `evaluation.py` | evaluation harness / platform / residual |
+| `evidence.py` | evidence store |
+| `flywheel.py` | post-training challengers / promotions / lineage |
+| `functions.py` | function registry / invoke |
+| `jobs.py` | job runtime |
+| `knowledge.py` | knowledge / atlas / deep-recall / why / ingest |
 | `market_sim.py` | market simulation, strategies, data, paper trading |
 | `mcp.py` | MCP servers/sessions/tools |
+| `media.py` | media capability request |
+| `memory.py` | memory store |
 | `models.py` | model registry/providers/downloads/routing/runtime |
+| `modules.py` | module manager discover/execute |
+| `multimodal.py` | multimodal sessions |
+| `neuro.py` | Neuro / Cortex / residual operator surfaces |
 | `observability.py` | runtime events/observability |
+| `observations.py` | observation store |
+| `platform.py` | thin misc: architecture, metrics, telemetry, isolation, release, security, native, trading stub, backup, chaos, secrets, context preview, master gates |
+| `plugins.py` | plugin registry / invoke |
 | `research.py` | research projects/runs/sources |
+| `schedules.py` | schedule store / runner |
 | `settings.py` | Settings + BehaviorProfile operations |
 | `system.py` | telemetry/system status |
 | `tasks.py` | durable task orchestration |
 | `trading_orchestra.py` | trading-only orchestras/agents |
-| `training.py` | training jobs/recipes/state |
+| `training.py` | durable training jobs + preference/synthetic/active-learning surface |
+| `verification.py` | verification evaluate / reports |
+| `voice.py` | voice capability request |
+| `workers.py` | worker supervisor / admission |
+| `workflows.py` | workflow store / runtime |
 
-Some legacy or compact endpoints remain composed directly in `main.py`; route modules are the preferred domain boundary.
+`main.py` (**CURRENT**) retains composition + `POST /api/chat` + SPA shell + `/api/health`. Route modules are the preferred domain boundary.
 
 ---
 
