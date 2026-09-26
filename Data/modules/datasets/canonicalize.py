@@ -42,23 +42,28 @@ MESSAGES_KEYS = ("messages", "conversations", "dialogue")
 _LARGE_JSON_BYTES = 8 * 1024 * 1024
 
 # Python's default csv field limit is 128 KiB. HF prompt CSVs routinely exceed it.
+# Never raise to sys.maxsize — that is an adversarial OOM vector.
 
 
-def _ensure_csv_field_size_limit() -> None:
-    """Raise the process-wide csv field size limit for large dataset fields.
+def _ensure_csv_field_size_limit(max_field_bytes: int | None = None) -> int:
+    """Set a deliberate configured CSV field size maximum (not unlimited).
 
-    On some Windows builds ``sys.maxsize`` overflows the C long used by
+    On some Windows builds oversized limits overflow the C long used by
     ``csv.field_size_limit``; fall back until a value is accepted.
     """
-    limit = sys.maxsize
+    from .memory_policy import resolve_dataset_memory_policy
+
+    configured = int(max_field_bytes) if max_field_bytes is not None else resolve_dataset_memory_policy().csv_field_max_bytes
+    limit = max(128 * 1024, configured)
     while True:
         try:
             csv.field_size_limit(limit)
-            return
+            return limit
         except OverflowError:
             limit = int(limit / 10)
             if limit < 128 * 1024:
-                return
+                csv.field_size_limit(128 * 1024)
+                return 128 * 1024
 
 
 def _pick(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -308,29 +313,33 @@ def iter_canonical_from_path(
         return
 
     if resolved == DetectedFormat.JSONL:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for idx, line in enumerate(handle):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise DatasetError(
-                        f"Invalid JSONL at {source} line {idx + 1}: {exc}",
-                        code="invalid_jsonl",
-                    ) from exc
-                if isinstance(obj, dict):
-                    yield dict_to_canonical(
-                        obj, index=idx, source=source, split=split, provenance=provenance
-                    )
-                else:
-                    yield CanonicalRecord(
-                        id=_stable_id(f"{source}:{idx}"),
-                        text=str(obj),
-                        split=split,
-                        metadata={"source": provenance} if provenance else {},
-                    )
+        from .memory_policy import resolve_dataset_memory_policy
+        from .streaming_io import iter_bounded_text_lines
+
+        max_rec = resolve_dataset_memory_policy().max_record_bytes
+        for idx, line in iter_bounded_text_lines(path, max_record_bytes=max_rec):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise DatasetError(
+                    f"Invalid JSONL at {source} line {idx}: {exc}",
+                    code="invalid_jsonl",
+                ) from exc
+            zero_based = max(0, idx - 1)
+            if isinstance(obj, dict):
+                yield dict_to_canonical(
+                    obj, index=zero_based, source=source, split=split, provenance=provenance
+                )
+            else:
+                yield CanonicalRecord(
+                    id=_stable_id(f"{source}:{zero_based}"),
+                    text=str(obj),
+                    split=split,
+                    metadata={"source": provenance} if provenance else {},
+                )
         return
 
     if resolved == DetectedFormat.JSON:
@@ -390,11 +399,13 @@ def iter_canonical_from_path(
         return
 
     if resolved in {DetectedFormat.TXT, DetectedFormat.MD, DetectedFormat.UNKNOWN}:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-        if not paragraphs:
-            paragraphs = [text] if text.strip() else []
-        for idx, para in enumerate(paragraphs):
+        from .memory_policy import resolve_dataset_memory_policy
+        from .streaming_io import iter_bounded_paragraphs
+
+        max_rec = resolve_dataset_memory_policy().max_record_bytes
+        emitted = False
+        for idx, para in iter_bounded_paragraphs(path, max_record_bytes=max_rec):
+            emitted = True
             yield CanonicalRecord(
                 id=_stable_id(f"{source}:{idx}:{para[:120]}"),
                 text=para,
@@ -404,6 +415,9 @@ def iter_canonical_from_path(
                     **({"source": provenance} if provenance else {}),
                 },
             )
+        if not emitted:
+            # Empty file — yield nothing (matches prior empty-paragraphs behavior).
+            return
         return
 
     raise DatasetError(f"Unsupported format: {resolved}", code="unsupported_format")

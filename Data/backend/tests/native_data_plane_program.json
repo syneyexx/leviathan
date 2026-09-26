@@ -1,0 +1,47 @@
+{
+  "program": "native_data_plane_memory_architecture",
+  "schemaVersion": 1,
+  "unifiedWith": "dataset_intelligence_durable_library",
+  "baselineHead": "446593905b633f09f14d14e158e9eecdd173f937",
+  "migrationHeadAtStart": 56,
+  "stage0": {
+    "status": "COMPLETE",
+    "notes": [
+      "DatasetService/DatasetStore canonical",
+      "sidecar schemaVersion=1 recovery aids present",
+      "no SemanticProfile/catalog/native compute yet",
+      "full-materialization hot paths: validate/dedupe/transform/split/tokenize_stats/export/pii/contamination/packing",
+      "streaming already: materialize write, index_version_file, iter_materialized_jsonl, parquet batches, ijson"
+    ]
+  },
+  "waves": {
+    "W141": {"status": "COMPLETE", "evidence": "native_data_plane_program.json inventory"},
+    "W142": {"status": "IN_PROGRESS"},
+    "W143": {"status": "PENDING"},
+    "W144": {"status": "PENDING"},
+    "W145": {"status": "PENDING"},
+    "W146": {"status": "PENDING"},
+    "W147": {"status": "PENDING"},
+    "W148": {"status": "PENDING"},
+    "W149": {"status": "PENDING"},
+    "W150": {"status": "PENDING"},
+    "W151": {"status": "PENDING"},
+    "W152": {"status": "PENDING"},
+    "W153": {"status": "PENDING"},
+    "W154": {"status": "PENDING"}
+  },
+  "memoryPathInventory": [
+    {"operation": "materialize", "entrypoint": "materialize_from_raw", "behavior": "STREAMING", "repairRequired": false},
+    {"operation": "index", "entrypoint": "index_version_file", "behavior": "STREAMING", "repairRequired": false},
+    {"operation": "validate", "entrypoint": "_handle_validate", "behavior": "UNBOUNDED_LIST", "repairRequired": true},
+    {"operation": "dedupe", "entrypoint": "_handle_dedupe/_exact_dedupe", "behavior": "UNBOUNDED_SET", "repairRequired": true},
+    {"operation": "transform", "entrypoint": "_handle_transform/apply_transforms", "behavior": "UNBOUNDED_LIST", "repairRequired": true},
+    {"operation": "split", "entrypoint": "_handle_split/deterministic_split", "behavior": "UNBOUNDED_LIST", "repairRequired": true},
+    {"operation": "tokenize_stats", "entrypoint": "compute_token_stats", "behavior": "UNBOUNDED_LIST", "repairRequired": true},
+    {"operation": "export", "entrypoint": "export_jsonl", "behavior": "UNBOUNDED_LIST", "repairRequired": true},
+    {"operation": "pii", "entrypoint": "scan_records_pii", "behavior": "UNBOUNDED_LIST", "repairRequired": true},
+    {"operation": "csv_field_limit", "entrypoint": "_ensure_csv_field_size_limit", "behavior": "UNBOUNDED", "repairRequired": true},
+    {"operation": "txt_md_read", "entrypoint": "iter_canonical_from_path TXT/MD", "behavior": "WHOLE_FILE_READ", "repairRequired": true},
+    {"operation": "jsonl_line", "entrypoint": "iter_materialized_jsonl", "behavior": "UNBOUNDED_RECORD", "repairRequired": true}
+  ]
+}

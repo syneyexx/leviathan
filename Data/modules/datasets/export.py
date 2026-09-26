@@ -1,32 +1,36 @@
-"""Export materialized datasets to JSONL."""
+"""Export materialized datasets to JSONL (streaming)."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
-from Data.modules.common.atomic import ensure_dir
 from Data.modules.common.hashing import sha256_file
 
-from .materialize import load_materialized_jsonl, write_canonical_jsonl
+from .materialize import iter_materialized_jsonl, write_canonical_jsonl_stream
 from .types import CanonicalRecord
 
 
 def export_jsonl(
-    records: list[CanonicalRecord],
+    records: Iterable[CanonicalRecord],
     dest: Path,
     *,
     split: str | None = None,
 ) -> dict[str, Any]:
-    ensure_dir(dest.parent)
-    selected = [r for r in records if split is None or r.split == split]
-    content_hash, byte_size, row_count = write_canonical_jsonl(selected, dest)
+    """Stream export — never materializes a filtered corpus list."""
+
+    def _filtered() -> Iterable[CanonicalRecord]:
+        for rec in records:
+            if split is None or rec.split == split:
+                yield rec
+
+    outcome = write_canonical_jsonl_stream(_filtered(), dest, validate=False)
     return {
         "path": str(dest),
-        "contentHash": content_hash,
-        "byteSize": byte_size,
-        "rowCount": row_count,
+        "contentHash": outcome["contentHash"],
+        "byteSize": outcome["byteSize"],
+        "rowCount": outcome["rowCount"],
         "split": split,
         "format": "jsonl",
     }
@@ -37,9 +41,13 @@ def export_version_jsonl(
     dest: Path,
     *,
     split: str | None = None,
+    max_record_bytes: int | None = None,
 ) -> dict[str, Any]:
-    records = load_materialized_jsonl(version_storage_path)
-    return export_jsonl(records, dest, split=split)
+    return export_jsonl(
+        iter_materialized_jsonl(version_storage_path, max_record_bytes=max_record_bytes),
+        dest,
+        split=split,
+    )
 
 
 def preview_jsonl(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:

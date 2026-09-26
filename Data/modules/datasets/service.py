@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 from .annotation import AnnotationQueue
 from .canonicalize import canonical_schema_dict
 from .contamination import scan_contamination
-from .dedupe import exact_dedupe
+from .dedupe import exact_dedupe, iter_exact_dedupe_external
 from .export import export_jsonl, preview_jsonl
 from .formats import detect_format
 from .huggingface import (
@@ -43,15 +43,19 @@ from .importers import copy_immutable_raw, inspect_local_file, reject_traversal_
 from .indexing import index_version_file
 from .jobs import DatasetJobRunner, enqueue_kernel_for_domain_job, kernel_idempotency_key
 from .materialize import (
+    iter_version_records,
     load_materialized_jsonl,
     materialize_from_raw,
     materialize_from_sources,
     write_canonical_jsonl,
+    write_canonical_jsonl_stream,
     write_manifest,
 )
+from .memory_policy import resolve_dataset_memory_policy
 from .mixtures import MixtureComponent, build_mixture_manifest
 from .packing_sim import simulate_packing
 from .pii import scan_records_pii
+from .scratch import ScratchManager
 from .shards import ShardIngestCheckpoint, build_shard_plan, ingest_shards
 from .sidecar import (
     SIDECAR_FILENAME,
@@ -61,10 +65,10 @@ from .sidecar import (
     write_sidecar,
     write_tombstone,
 )
-from .splits import deterministic_split
+from .splits import deterministic_split, iter_deterministic_split
 from .store import DatasetStore, utc_now
 from .tokenize_stats import compute_token_stats
-from .transforms import apply_transforms
+from .transforms import apply_transforms, apply_transforms_streaming
 from .types import (
     CAPABILITY_PROCESS,
     DatasetError,
@@ -162,6 +166,28 @@ class DatasetService:
         )
         self.extract_relations_on_index = bool(
             getattr(ri, "dataset_extract_relations", True)
+        )
+        self.memory_policy = resolve_dataset_memory_policy(settings=self.settings)
+        scratch_root = Path(self.corpus.root) / "scratch"
+        self.scratch_manager = ScratchManager(
+            scratch_root,
+            max_scratch_bytes=self.memory_policy.spill_budget_bytes,
+        )
+
+    def iter_version_records(self, version_id: str):
+        """Canonical streaming access to a version's records (no full list)."""
+        ver = self.get_version(version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        fmt_hint = None
+        if isinstance(ver.schema, dict):
+            fmt_hint = ver.schema.get("storageFormat") or ver.schema.get("format")
+        meta = ver.metadata if isinstance(ver.metadata, dict) else {}
+        fmt_hint = fmt_hint or meta.get("storageFormat") or meta.get("detectedFormat")
+        return iter_version_records(
+            Path(ver.storage_path),
+            max_record_bytes=self.memory_policy.max_record_bytes,
+            format_hint=str(fmt_hint) if fmt_hint else None,
         )
 
     @classmethod
@@ -1513,8 +1539,10 @@ class DatasetService:
         ver = self.get_version(version_id)
         if not ver.storage_path:
             raise DatasetError("Version has no storage path", code="no_storage", http_status=400)
-        records = load_materialized_jsonl(Path(ver.storage_path))
-        return scan_records_pii(records)
+        return scan_records_pii(
+            self.iter_version_records(version_id),
+            max_findings=self.memory_policy.max_findings,
+        )
 
     # --- Job handlers ---
 
@@ -2522,28 +2550,36 @@ class DatasetService:
         return self._materialize_dataset(job.dataset_id, raw_path=Path(ds.raw_path), fmt=fmt)
 
     def _load_version_records(self, version_id: str) -> tuple[DatasetVersion, list]:
+        """Compatibility helper — refused for large files; prefer ``iter_version_records``."""
         ver = self.get_version(version_id)
         if not ver.storage_path:
             raise DatasetError("Version has no storage", code="no_storage")
-        return ver, load_materialized_jsonl(Path(ver.storage_path))
+        return ver, load_materialized_jsonl(
+            Path(ver.storage_path),
+            max_bytes=self.memory_policy.full_load_refuse_bytes,
+        )
 
-    def _write_derived_version(
+    def _write_derived_version_stream(
         self,
         *,
         dataset_id: str,
         parent: DatasetVersion,
         label: str,
         kind: VersionKind,
-        records: list,
+        records,
         lineage_extra: list[dict[str, Any]] | None = None,
         split: dict[str, Any] | None = None,
         token_stats: dict[str, Any] | None = None,
         validation: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> DatasetVersion:
+        """Stream-write a derived version from an iterable (no full corpus list required)."""
         dirs = self._dataset_dirs(dataset_id)
         dest = dirs["processed"] / f"{label}.jsonl"
-        content_hash, byte_size, row_count = write_canonical_jsonl(records, dest)
+        outcome = write_canonical_jsonl_stream(records, dest, validate=False)
+        content_hash = outcome["contentHash"]
+        byte_size = outcome["byteSize"]
+        row_count = outcome["rowCount"]
         lineage = list(parent.transform_lineage) + list(lineage_extra or [])
         version = self.store.create_version(
             dataset_id=dataset_id,
@@ -2552,10 +2588,18 @@ class DatasetService:
             parent_version_id=parent.version_id,
             status=VersionStatus.READY,
             storage_path=str(dest),
-            schema=canonical_schema_dict(),
+            schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
             transform_lineage=lineage,
             metadata=metadata,
         )
+        val_report = validation
+        if val_report is None:
+            val_report = validate_records(
+                iter_version_records(
+                    dest,
+                    max_record_bytes=self.memory_policy.max_record_bytes,
+                )
+            )
         self.store.update_version(
             version.version_id,
             content_hash=content_hash,
@@ -2563,7 +2607,7 @@ class DatasetService:
             row_count=row_count,
             split=split or {},
             token_stats=token_stats or {},
-            validation=validation or validate_records(records),
+            validation=val_report,
             transform_lineage=lineage,
         )
         self.store.add_file(
@@ -2582,12 +2626,40 @@ class DatasetService:
         )
         return ready
 
+    def _write_derived_version(
+        self,
+        *,
+        dataset_id: str,
+        parent: DatasetVersion,
+        label: str,
+        kind: VersionKind,
+        records: list,
+        lineage_extra: list[dict[str, Any]] | None = None,
+        split: dict[str, Any] | None = None,
+        token_stats: dict[str, Any] | None = None,
+        validation: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> DatasetVersion:
+        return self._write_derived_version_stream(
+            dataset_id=dataset_id,
+            parent=parent,
+            label=label,
+            kind=kind,
+            records=records,
+            lineage_extra=lineage_extra,
+            split=split,
+            token_stats=token_stats,
+            validation=validation,
+            metadata=metadata,
+        )
+
     def _handle_validate(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        ver, records = self._load_version_records(job.version_id)
-        report = validate_records(records)
+        ver = self.get_version(job.version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        report = validate_records(self.iter_version_records(job.version_id))
         updates: dict[str, Any] = {"validation": report}
-        # Promote to READY when validation passes for indexable versions still building/pending.
         if report.get("valid") and ver.status in {
             VersionStatus.PENDING,
             VersionStatus.BUILDING,
@@ -2608,14 +2680,20 @@ class DatasetService:
 
     def _handle_dedupe(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        parent, records = self._load_version_records(job.version_id)
-        kept, stats = exact_dedupe(records)
-        version = self._write_derived_version(
+        parent = self.get_version(job.version_id)
+        if not parent.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        it, stats = iter_exact_dedupe_external(
+            self.iter_version_records(job.version_id),
+            scratch_manager=self.scratch_manager,
+            job_id=job.job_id,
+        )
+        version = self._write_derived_version_stream(
             dataset_id=job.dataset_id,
             parent=parent,
             label=f"deduped-from-{parent.version_label}",
             kind=VersionKind.TRANSFORMED,
-            records=kept,
+            records=it,
             lineage_extra=[{"name": "exact_dedupe", "params": {}, "stats": stats, "appliedAt": utc_now()}],
             metadata={"dedupe": stats},
         )
@@ -2623,35 +2701,46 @@ class DatasetService:
 
     def _handle_transform(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        parent, records = self._load_version_records(job.version_id)
+        parent = self.get_version(job.version_id)
+        if not parent.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
         transforms = list(job.config.get("transforms") or [])
-        out, lineage = apply_transforms(records, transforms)
-        version = self._write_derived_version(
+        stream, lineage_fn = apply_transforms_streaming(
+            self.iter_version_records(job.version_id),
+            transforms,
+        )
+        version = self._write_derived_version_stream(
             dataset_id=job.dataset_id,
             parent=parent,
             label=f"xform-{parent.version_label}",
             kind=VersionKind.TRANSFORMED,
-            records=out,
-            lineage_extra=lineage,
+            records=stream,
+            lineage_extra=[],
         )
+        lineage = lineage_fn()
+        full_lineage = list(parent.transform_lineage) + lineage
+        self.store.update_version(version.version_id, transform_lineage=full_lineage)
+        version = self.get_version(version.version_id)
         return {"versionId": version.version_id, "lineage": lineage, "rowCount": version.row_count}
 
     def _handle_split(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        parent, records = self._load_version_records(job.version_id)
-        out, summary = deterministic_split(
-            records,
+        parent = self.get_version(job.version_id)
+        if not parent.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        stream, summary = iter_deterministic_split(
+            self.iter_version_records(job.version_id),
             seed=int(job.config.get("seed", 42)),
             train_ratio=float(job.config.get("trainRatio", 0.8)),
             val_ratio=float(job.config.get("valRatio", 0.1)),
             test_ratio=float(job.config.get("testRatio", 0.1)),
         )
-        version = self._write_derived_version(
+        version = self._write_derived_version_stream(
             dataset_id=job.dataset_id,
             parent=parent,
             label=f"split-{parent.version_label}",
             kind=VersionKind.SPLIT,
-            records=out,
+            records=stream,
             split=summary,
             lineage_extra=[{"name": "deterministic_split", "params": summary, "appliedAt": utc_now()}],
         )
@@ -2659,19 +2748,23 @@ class DatasetService:
 
     def _handle_tokenize_stats(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id
-        ver, records = self._load_version_records(job.version_id)
-        stats = compute_token_stats(records)
+        ver = self.get_version(job.version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
+        stats = compute_token_stats(self.iter_version_records(job.version_id))
         self.store.update_version(ver.version_id, token_stats=stats)
         return stats
 
     def _handle_export(self, job: DatasetJob) -> dict[str, Any]:
         assert job.version_id and job.dataset_id
-        ver, records = self._load_version_records(job.version_id)
+        ver = self.get_version(job.version_id)
+        if not ver.storage_path:
+            raise DatasetError("Version has no storage", code="no_storage")
         split = job.config.get("split")
         dirs = self._dataset_dirs(job.dataset_id)
         name = f"export-{ver.version_id}" + (f"-{split}" if split else "") + ".jsonl"
         dest = dirs["exports"] / name
-        result = export_jsonl(records, dest, split=split)
+        result = export_jsonl(self.iter_version_records(job.version_id), dest, split=split)
         export_version = self.store.create_version(
             dataset_id=job.dataset_id,
             version_label=f"export-{ver.version_label}",
@@ -2679,7 +2772,7 @@ class DatasetService:
             parent_version_id=ver.version_id,
             status=VersionStatus.READY,
             storage_path=str(dest),
-            schema=canonical_schema_dict(),
+            schema={**canonical_schema_dict(), "storageFormat": "jsonl"},
         )
         self.store.update_version(
             export_version.version_id,
@@ -2688,6 +2781,7 @@ class DatasetService:
             row_count=result["rowCount"],
         )
         result["versionId"] = export_version.version_id
+        result["backend"] = "python_streaming"
         return result
 
     def _cleanup_duplicate_target(self, target_dataset_id: str) -> None:
@@ -3323,8 +3417,11 @@ class DatasetService:
         )
 
     def packing_simulation(self, version_id: str, *, max_seq_length: int = 512) -> dict[str, Any]:
-        _, records = self._load_version_records(version_id)
-        return simulate_packing(records, max_seq_length=max_seq_length).public_dict()
+        self.get_version(version_id)
+        return simulate_packing(
+            self.iter_version_records(version_id),
+            max_seq_length=max_seq_length,
+        ).public_dict()
 
     def enqueue_annotation(
         self,
@@ -3386,7 +3483,7 @@ class DatasetService:
 
     def _handle_contamination_scan(self, job: DatasetJob) -> dict[str, Any]:
         version_id = job.version_id or ""
-        _, records = self._load_version_records(version_id)
+        records = self.iter_version_records(version_id)
         sealed = list(job.config.get("sealed_cases") or [])
         if not sealed:
             # Fall back to empty sealed set — report passes with honesty note.
