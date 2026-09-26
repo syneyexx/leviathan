@@ -3,8 +3,8 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "c40dd9faea90a83c582c39813eef9008965d60eb",
-  "active_wave": "W04",
-  "notes": "Maps W00-W23 masterprompt waves to existing R/G/F gates. Status is NOT PASS without executed evidence.",
+    "active_wave": "W04",
+    "notes": "Maps W00-W23 masterprompt waves to existing R/G/F gates. Status is NOT PASS without executed evidence. W06/W08/W17 partial landings recorded below.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -23,17 +23,17 @@
     {"id": "W16", "status": "PASS", "title": "Durable agent lab lifecycle wired to campaigns", "notes": "create/start/pause/resume/cancel + real sims; full role orchestra still TARGET"},
     {"id": "W18", "status": "IN_PROGRESS", "title": "Paper deployment compatibility", "notes": "T14/T15 done; full restart paper reuse still open"},
     {"id": "W04", "status": "NOT_STARTED", "title": "Model capability and inference contract"},
-    {"id": "W06", "status": "NOT_STARTED", "title": "Planning and steering"},
-    {"id": "W08", "status": "NOT_STARTED", "title": "Context memory Brain"},
-    {"id": "W09", "status": "IN_PROGRESS", "title": "Research evidence workflow", "notes": "citation UNMEASURED without audit done"},
+    {"id": "W06", "status": "IN_PROGRESS", "title": "Planning and steering", "notes": "cancel propagates to child_run_ids; observation-linked replan still open"},
+    {"id": "W08", "status": "IN_PROGRESS", "title": "Context memory Brain", "notes": "A08 correct_preference supersession landed; compaction/Brain breadth still open"},
+    {"id": "W09", "status": "IN_PROGRESS", "title": "Research evidence workflow", "notes": "citation UNMEASURED without audit; web.search/fetch mock regressions fixed"},
     {"id": "W10", "status": "NOT_STARTED", "title": "Tools plugins agents"},
     {"id": "W11", "status": "NOT_STARTED", "title": "Durable execution recovery"},
     {"id": "W12", "status": "NOT_STARTED", "title": "Coding documents multimodal"},
     {"id": "W13", "status": "NOT_STARTED", "title": "Trading data temporal integrity"},
     {"id": "W14", "status": "NOT_STARTED", "title": "Simulation accounting"},
     {"id": "W15", "status": "NOT_STARTED", "title": "Strategy DSL portability"},
-    {"id": "W17", "status": "NOT_STARTED", "title": "Sealed evaluation stats"},
-    {"id": "W19", "status": "NOT_STARTED", "title": "Broader market families"},
+    {"id": "W17", "status": "IN_PROGRESS", "title": "Sealed evaluation stats", "notes": "T08 rename inherits holdout contamination via lineage_aliases; WFA/CPCV still open"},
+    {"id": "W19", "status": "IN_PROGRESS", "title": "Broader market families", "notes": "T16 options/futures/forex NOT_IMPLEMENTED matrix"},
     {"id": "W20", "status": "NOT_STARTED", "title": "Training loop"},
     {"id": "W21", "status": "NOT_STARTED", "title": "Operator experience"},
     {"id": "W22", "status": "NOT_STARTED", "title": "Performance packaging"},
@@ -49,7 +49,11 @@
     "P1_editor_vite_import": "FIXED",
     "P1_citation_fallback": "FIXED",
     "P1_schema_scorer_keys_only": "FIXED",
-    "A07_greeting_double_call": "FIXED"
+    "A07_greeting_double_call": "FIXED",
+    "A08_preference_correction": "FIXED",
+    "T08_sealed_rename_contamination": "FIXED",
+    "web_search_fetch_mock_regressions": "FIXED",
+    "W06_cancel_to_children": "FIXED"
   },
   "excluded_trees": ["Data/HADES/", "editor/"],
   "canonical_docs": [
@@ -59,8 +63,8 @@
   "blockers": [
     {
       "id": "web_search_tests",
-      "status": "UNRESOLVED",
-      "notes": "Audit baseline had 4 web UNAVAILABLE/FAILED tests — diagnose product vs env; do not delete"
+      "status": "RESOLVED",
+      "notes": "Product regression: search/fetch assumed httpx Response attrs (status_code/text). Hardened getattr + content fallback; 9/9 test_assistant_web pass"
     },
     {
       "id": "live_trading",

@@ -264,8 +264,50 @@ class AgentLabRun:
         }
 
 
-def lineage_key(strategy_id: str, *, parent_version: int | None = None) -> str:
-    return f"{strategy_id}@parent={parent_version}"
+def lineage_aliases(lab: AgentLabRun) -> dict[str, str]:
+    """Map strategy_id → stable root lineage id (survives rename)."""
+    raw = lab.metadata.get("lineage_aliases")
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items() if k and v}
+    return {}
+
+
+def resolve_root_lineage_id(
+    lab: AgentLabRun,
+    strategy_id: str,
+    *,
+    root_lineage_id: str | None = None,
+) -> str:
+    """Resolve the contamination root for a strategy id (rename-safe)."""
+    if root_lineage_id:
+        return str(root_lineage_id)
+    aliases = lineage_aliases(lab)
+    return aliases.get(strategy_id, strategy_id)
+
+
+def register_lineage_rename(
+    lab: AgentLabRun,
+    *,
+    from_strategy_id: str,
+    to_strategy_id: str,
+) -> str:
+    """Record a rename so sealed holdout exposure stays inherited."""
+    aliases = lineage_aliases(lab)
+    root = aliases.get(from_strategy_id, from_strategy_id)
+    aliases[from_strategy_id] = root
+    aliases[to_strategy_id] = root
+    lab.metadata["lineage_aliases"] = aliases
+    return root
+
+
+def lineage_key(
+    strategy_id: str,
+    *,
+    parent_version: int | None = None,
+    root_lineage_id: str | None = None,
+) -> str:
+    root = (root_lineage_id or strategy_id).strip() or strategy_id
+    return f"{root}@parent={parent_version}"
 
 
 def assert_lineage_holdout_clean(
@@ -274,15 +316,35 @@ def assert_lineage_holdout_clean(
     strategy_id: str,
     parent_version: int | None,
     sealed_dataset_id: str,
+    root_lineage_id: str | None = None,
+    ancestor_strategy_ids: Sequence[str] | None = None,
 ) -> None:
-    """If a parent lineage already saw this sealed holdout, refuse 'unseen' claim."""
-    key = f"{lineage_key(strategy_id, parent_version=parent_version)}::{sealed_dataset_id}"
-    if key in lab.sealed_lineages_consumed:
-        raise MarketSimError(
-            "HOLDOUT_LINEAGE_CONTAMINATED",
-            "descendants that learned from a revealed sealed result need a new sealed holdout/version/epoch",
-            http_status=409,
-        )
+    """If a parent lineage already saw this sealed holdout, refuse 'unseen' claim.
+
+    Renames and explicit ancestors share the same contamination root so a
+    renamed descendant cannot claim a fresh sealed holdout after revelation.
+    """
+    roots: set[str] = {
+        resolve_root_lineage_id(lab, strategy_id, root_lineage_id=root_lineage_id)
+    }
+    for ancestor in ancestor_strategy_ids or ():
+        roots.add(resolve_root_lineage_id(lab, str(ancestor)))
+    # Also treat any prior name that maps to the same root as contaminated.
+    aliases = lineage_aliases(lab)
+    target_roots = set(roots)
+    for sid, root in aliases.items():
+        if root in target_roots or sid in target_roots:
+            roots.add(root)
+            roots.add(sid)
+
+    for root in roots:
+        key = f"{lineage_key(root, parent_version=parent_version, root_lineage_id=root)}::{sealed_dataset_id}"
+        if key in lab.sealed_lineages_consumed:
+            raise MarketSimError(
+                "HOLDOUT_LINEAGE_CONTAMINATED",
+                "descendants that learned from a revealed sealed result need a new sealed holdout/version/epoch",
+                http_status=409,
+            )
 
 
 def mark_sealed_revealed(
@@ -292,8 +354,14 @@ def mark_sealed_revealed(
     parent_version: int | None,
     sealed_dataset_id: str,
     sealed_attempt_id: str,
+    root_lineage_id: str | None = None,
 ) -> None:
-    key = f"{lineage_key(strategy_id, parent_version=parent_version)}::{sealed_dataset_id}"
+    root = resolve_root_lineage_id(lab, strategy_id, root_lineage_id=root_lineage_id)
+    # Keep alias identity even when first mark uses the original id.
+    aliases = lineage_aliases(lab)
+    aliases.setdefault(strategy_id, root)
+    lab.metadata["lineage_aliases"] = aliases
+    key = f"{lineage_key(strategy_id, parent_version=parent_version, root_lineage_id=root)}::{sealed_dataset_id}"
     lab.sealed_lineages_consumed[key] = sealed_attempt_id
 
 
@@ -363,6 +431,8 @@ def evaluate_candidate_pipeline(
     sealed_attempt_id: str | None = None,
     parent_version: int | None = None,
     sealed_dataset_id: str | None = None,
+    root_lineage_id: str | None = None,
+    ancestor_strategy_ids: Sequence[str] | None = None,
     relax_thresholds: bool = False,
 ) -> CandidateRecord:
     """Run the scientific pipeline for one candidate. Refuses threshold relaxation."""
@@ -464,6 +534,8 @@ def evaluate_candidate_pipeline(
             strategy_id=strategy_id,
             parent_version=parent_version,
             sealed_dataset_id=sealed_dataset_id,
+            root_lineage_id=root_lineage_id,
+            ancestor_strategy_ids=ancestor_strategy_ids,
         )
 
     sealed_ok = val_only.evaluate(sealed_metrics, val_pass=True, robustness_pass=True)
@@ -501,6 +573,7 @@ def evaluate_candidate_pipeline(
             parent_version=parent_version,
             sealed_dataset_id=sealed_dataset_id,
             sealed_attempt_id=sealed_attempt_id,
+            root_lineage_id=root_lineage_id,
         )
     if existing is None:
         lab.candidates.append(candidate)

@@ -452,6 +452,77 @@ class MemoryStore:
             return "scope = 'GLOBAL'", []
         return "(" + " OR ".join(parts) + ")", params
 
+    def correct_preference(
+        self,
+        content: str,
+        *,
+        preference_key: str,
+        previous_memory_id: str | None = None,
+        conversation_id: str | None = None,
+        project_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
+        scope: MemoryScope | str | None = None,
+        source: str = "user",
+        trust: str = "explicit",
+        tags: list[str] | tuple[str, ...] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryRecord:
+        """Persist a corrected user preference; prior matching FACT becomes SUPERSEDED.
+
+        A08: the current preference must win on retrieval — stale ACTIVE duplicates
+        with the same preference_key are closed, not left competing.
+        """
+        key = (preference_key or "").strip()
+        if not key:
+            raise ValueError("preference_key is required for preference correction")
+        supersedes_id = previous_memory_id
+        if supersedes_id is None:
+            active = self.list(
+                status=MemoryStatus.ACTIVE,
+                kind=MemoryKind.FACT,
+                conversation_id=conversation_id,
+                project_id=project_id,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                scope=scope if isinstance(scope, MemoryScope) else None,
+                limit=200,
+            )
+            for record in active:
+                meta = dict(record.metadata or {})
+                if str(meta.get("preference_key") or "") == key:
+                    supersedes_id = record.memory_id
+                    break
+                if key in record.tags:
+                    supersedes_id = record.memory_id
+                    break
+        merged_tags = list(tags or ())
+        if key not in merged_tags:
+            merged_tags.append(key)
+        if "preference" not in merged_tags:
+            merged_tags.append("preference")
+        meta = dict(metadata or {})
+        meta["preference_key"] = key
+        meta["correction"] = True
+        if supersedes_id:
+            meta["supersedes_preference"] = supersedes_id
+        return self.create(
+            content=content,
+            kind=MemoryKind.FACT,
+            source=source,
+            trust=trust,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            scope=scope,
+            tags=merged_tags,
+            metadata=meta,
+            supersedes_id=supersedes_id,
+            confidence=1.0,
+            priority=0.95,
+        )
+
     def set_status(self, memory_id: str, status: MemoryStatus) -> MemoryRecord | None:
         now = utc_now()
         with self._lock:
