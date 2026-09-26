@@ -724,6 +724,14 @@ Files include `service.py`, `store.py`, `registry.py`, `recipes.py`, `planner.py
 
 Do not infer that every recipe is production GPU-ready on every machine. Availability is provider/hardware/config dependent. Candidate promotion is explicit; silent active-model replacement is not the architecture.
 
+W11 learning flywheel (CURRENT):
+
+- `ExperienceStore.aggregate_stats` / `search` — admitted-only training truth rollups.
+- Active-learning kinds cover verification failure, low TTC agreement, user correction, critic high severity, tool failure patterns, retrieval miss (`training/active_learning.py`).
+- Lifecycle: `CANDIDATE → EVALUATED → ELIGIBLE → PROMOTED` via govern (never auto-promote).
+- `trajectory_export.export_training_trajectory` — public states/messages/answer/verified only; no private CoT.
+- GRPO / RL / reward-model / HF-DPO reported as `FEATURE_GATED` until operational trainers exist.
+
 ## 16.2 Evaluation — `Data/modules/evaluation/`
 
 `harness.py`, `platform.py`, `store.py`, `types.py`, `scorecard.py`, `paired.py`, `ablations.py`, `assistant_benchmark.py` implement evaluation/reporting. `UNMEASURED` is not treated as PASS.

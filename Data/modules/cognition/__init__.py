@@ -30,6 +30,7 @@ from .system_inspect import (
     get_system_inspect_service,
 )
 from .task_model import TaskModel, TaskModelBuilder
+from .trajectory_export import export_training_trajectory, trajectories_to_dataset_rows
 from .ttc import (
     Candidate,
     CandidateSet,
@@ -128,7 +129,9 @@ __all__ = [
     "classify_failure",
     "classify_steer",
     "confidence_to_band",
+    "export_training_trajectory",
     "get_system_inspect_service",
     "register_specialist_handlers",
     "should_blind_retry",
+    "trajectories_to_dataset_rows",
 ]

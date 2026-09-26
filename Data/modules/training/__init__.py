@@ -1,6 +1,6 @@
 """Training subsystem — durable jobs, optional LoRA, honest stubs where needed."""
 
-from .active_learning import ActiveLearningMiner, MinedCandidate
+from .active_learning import ActiveLearningMiner, MinedCandidate, TrainingCandidateLifecycle
 from .artifacts import export_artifact, list_job_artifacts
 from .capabilities import probe_training_capabilities, safe_import
 from .config import TrainingConfig
@@ -60,6 +60,7 @@ from .types import (
 __all__ = [
     "ACTIVE_DURABLE_STATUSES",
     "ActiveLearningMiner",
+    "TrainingCandidateLifecycle",
     "ArtifactRecord",
     "ChallengerProposal",
     "CheckpointRecord",

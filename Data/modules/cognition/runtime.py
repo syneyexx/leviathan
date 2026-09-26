@@ -2234,7 +2234,7 @@ class CognitiveRuntime:
             state.experience = admitted.public_dict()
             self._emit(state, "experience_admitted" if admitted.admitted else "experience_rejected", state.experience)
 
-        # Active-learning candidates on high uncertainty or verification failure — never auto-train.
+        # Active-learning candidates — never auto-train (W11 expanded triggers).
         uncertainty = (
             state.beliefs.uncertainty()
             if self.belief_enabled
@@ -2242,6 +2242,8 @@ class CognitiveRuntime:
         )
         verification_failed = state.verification_passed is False
         high_uncertainty = uncertainty >= 0.75
+        al_events: list[dict[str, Any]] = []
+
         if verification_failed or high_uncertainty or decision.status == CognitiveRunStatus.FAILED:
             reason = (
                 "verification_failed"
@@ -2250,24 +2252,115 @@ class CognitiveRuntime:
                 if decision.status == CognitiveRunStatus.FAILED
                 else "high_uncertainty"
             )
-            candidate = {
-                "run_id": state.run_id,
-                "task_id": state.task.task_id,
-                "domain": state.task.domain,
-                "goal": state.task.goal[:300],
-                "status": decision.status.value,
-                "uncertainty": uncertainty,
-                "verification_status": (
-                    "FAILED"
+            al_events.append(
+                {
+                    "kind": "verification_failure"
                     if verification_failed
-                    else "PASSED"
-                    if state.verification_passed is True
-                    else "UNMEASURED"
-                ),
-                "reason": reason,
-                "kind": "failure" if verification_failed or decision.status == CognitiveRunStatus.FAILED else "uncertainty",
+                    else "failure"
+                    if decision.status == CognitiveRunStatus.FAILED
+                    else "uncertainty",
+                    "reason": reason,
+                    "run_id": state.run_id,
+                    "task_id": state.task.task_id,
+                    "domain": state.task.domain,
+                    "goal": state.task.goal[:300],
+                    "status": decision.status.value,
+                    "uncertainty": uncertainty,
+                    "verification_status": (
+                        "FAILED"
+                        if verification_failed
+                        else "PASSED"
+                        if state.verification_passed is True
+                        else "UNMEASURED"
+                    ),
+                }
+            )
+
+        # Critic high severity
+        for obs in state.observations:
+            payload = obs.payload if isinstance(getattr(obs, "payload", None), dict) else {}
+            critics = payload.get("critics") or payload.get("critic_reports") or []
+            if isinstance(critics, list):
+                for c in critics:
+                    if not isinstance(c, dict):
+                        continue
+                    sev = str(c.get("severity") or "").lower()
+                    if sev in {"high", "critical"}:
+                        al_events.append(
+                            {
+                                "kind": "critic_high_severity",
+                                "run_id": state.run_id,
+                                "source_ref": str(c.get("critic_id") or c.get("name") or "critic"),
+                                "content": str(c.get("summary") or c.get("finding") or "")[:500],
+                                "prompt": state.task.goal[:300],
+                            }
+                        )
+
+        # Tool failure patterns
+        tool_fails = [
+            o
+            for o in state.observations
+            if (o.error or (getattr(o, "success", True) is False))
+            and str(getattr(o.kind, "value", o.kind) or "").upper() in {"TOOL_RESULT", "ERROR"}
+        ]
+        if len(tool_fails) >= 2:
+            al_events.append(
+                {
+                    "kind": "tool_failure_pattern",
+                    "run_id": state.run_id,
+                    "source_ref": state.run_id,
+                    "content": "; ".join(str(o.error or o.summary)[:120] for o in tool_fails[:5]),
+                    "prompt": state.task.goal[:300],
+                    "count": len(tool_fails),
+                }
+            )
+
+        # Low TTC candidate agreement
+        ttc_meta = state.ttc if isinstance(state.ttc, dict) else None
+        if isinstance(ttc_meta, dict):
+            scores = ttc_meta.get("candidate_scores") or ttc_meta.get("scores") or []
+            if isinstance(scores, list) and len(scores) >= 2:
+                nums = sorted(
+                    (float(s) for s in scores if isinstance(s, (int, float))),
+                    reverse=True,
+                )
+                if len(nums) >= 2 and (nums[0] - nums[1]) < 0.05:
+                    al_events.append(
+                        {
+                            "kind": "low_candidate_agreement",
+                            "run_id": state.run_id,
+                            "content": f"top_delta={nums[0] - nums[1]:.4f}",
+                            "prompt": state.task.goal[:300],
+                        }
+                    )
+
+        # User correction / retrieval miss from task metadata
+        meta = dict(state.task.metadata or {})
+        if meta.get("user_correction") or meta.get("correction"):
+            al_events.append(
+                {
+                    "kind": "user_correction",
+                    "run_id": state.run_id,
+                    "content": str(meta.get("user_correction") or meta.get("correction"))[:500],
+                    "prompt": state.task.goal[:300],
+                }
+            )
+        if meta.get("retrieval_miss") or meta.get("retrieval_miss_count"):
+            al_events.append(
+                {
+                    "kind": "retrieval_miss",
+                    "run_id": state.run_id,
+                    "content": str(meta.get("retrieval_miss") or meta.get("retrieval_miss_count")),
+                    "prompt": state.task.goal[:300],
+                }
+            )
+
+        for event in al_events:
+            candidate = {
+                **event,
                 "auto_promote_forbidden": True,
                 "requires_human_or_policy_approval": True,
+                "lifecycle": "CANDIDATE",
             }
             if hasattr(self.experience_store, "record_active_learning_candidate"):
                 candidate = self.experience_store.record_active_learning_candidate(candidate)
