@@ -1610,6 +1610,16 @@ def _register_fabric_worker_capabilities(catalog: CapabilityCatalog) -> None:
         tags=["market_sim", "research", "campaign"],
     )
     _ext(
+        cap_id="market_sim.learning_run",
+        name="Run Strategy Learning Loop",
+        description="Execute/resume adaptive Strategy DSL learning on the market_sim worker (EXTERNAL_REQUIRED).",
+        side_effects=(SideEffect.EXECUTE, SideEffect.WRITE),
+        worker_kind="market_sim",
+        properties={"learning_run_id": {"type": "string"}},
+        permissions=("process.execute",),
+        tags=["market_sim", "learning", "strategy"],
+    )
+    _ext(
         cap_id="market_sim.paper_order",
         name="Place Paper Order",
         description="Place a paper (non-live) order via MarketSimControlPlane + RiskGuard.",

@@ -1034,16 +1034,22 @@ def build_market_sim_router(
         from Data.modules.market_sim.curriculum import STAGE_ORDER
         from Data.modules.market_sim.features import FEATURE_PIPELINE_VERSION
         from Data.modules.market_sim.hpo import HPO_METHODS, bayesian_tpe_capability
+        from Data.modules.market_sim.learning_types import LEARNING_ALGORITHM, LEARNING_ALGORITHM_VERSION
         from Data.modules.market_sim.regimes import REGIME_DETECTOR_VERSION, hmm_regime_capability
         from Data.modules.market_sim.strategy_dsl import DSL_CURRENT_VERSION
         from Data.modules.market_sim.code_strategy import python_strategy_capability
 
         live = service.live_guard.public_status()
         trials = 0
+        learning_runs = 0
         try:
             trials = int(service.store.count_trials())
         except Exception:
             trials = 0
+        try:
+            learning_runs = len(service.store.list_learning_runs(limit=500))
+        except Exception:
+            learning_runs = 0
         return {
             "feature_pipeline_version": FEATURE_PIPELINE_VERSION,
             "dsl_version": DSL_CURRENT_VERSION,
@@ -1056,6 +1062,9 @@ def build_market_sim_router(
             "python_strategies": python_strategy_capability(),
             "default_cost_pack": CostModelPack.from_fee_slippage_bps().public_dict(),
             "trial_ledger_count": trials,
+            "learning_run_count": learning_runs,
+            "learning_algorithm": LEARNING_ALGORITHM,
+            "learning_algorithm_version": LEARNING_ALGORITHM_VERSION,
             "valid_lab_outcomes": [LabOutcome.QUALIFIED_STRATEGY_FOUND.value, LabOutcome.NO_STRATEGY_QUALIFIED.value],
             "live_trading": live,
             "truth": {
@@ -1064,6 +1073,9 @@ def build_market_sim_router(
                 "live_trading": "BLOCKED",
                 "a5": "IMPOSSIBLE",
                 "no_strategy_qualified_is_valid_pass": True,
+                "adaptive_dsl_learning": True,
+                "sealed_never_trains_learner": True,
+                "neural_rl_not_required_for_dsl_learning": True,
             },
         }
 
@@ -1120,6 +1132,8 @@ def build_market_sim_router(
                 acceptance_criteria=payload.get("acceptanceCriteria") or payload.get("acceptance_criteria"),
                 autonomy_ceiling=str(payload.get("autonomyCeiling") or payload.get("autonomy_ceiling") or "A1"),
                 metadata=payload.get("metadata"),
+                learning=payload.get("learning"),
+                enable_learning=bool(payload.get("enableLearning", payload.get("enable_learning", True))),
             )
             return {"lab": lab}
         except MarketSimError as exc:
@@ -1164,6 +1178,57 @@ def build_market_sim_router(
     def lab_cancel(lab_id: str) -> dict:
         try:
             return {"lab": service.cancel_agent_lab(lab_id)}
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/learning")
+    def lab_learning(lab_id: str) -> dict:
+        try:
+            return service.get_lab_learning(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/generations")
+    def lab_generations(lab_id: str) -> dict:
+        try:
+            return service.get_lab_generations(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/candidates")
+    def lab_candidates(lab_id: str) -> dict:
+        try:
+            return service.get_lab_candidates(lab_id)
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/trials")
+    def lab_run_trials(lab_id: str, limit: int = Query(100, ge=1, le=500)) -> dict:
+        try:
+            lab = service.get_agent_lab(lab_id)
+            learning_run_id = lab.get("learning_run_id")
+            trials = service.store.list_experiments(strategy_id=str(lab.get("strategy_id") or ""), limit=limit)
+            if learning_run_id:
+                trials = [
+                    t
+                    for t in trials
+                    if str((t.get("metadata") or {}).get("learning_run_id") or "") == learning_run_id
+                    or str((t.get("config") or {}).get("learning_run_id") or "") == learning_run_id
+                ]
+            return {
+                "lab_id": lab_id,
+                "learning_run_id": learning_run_id,
+                "trials": trials,
+                "count": len(trials),
+                "truth": {"losing_trials_retained": True, "append_only": True},
+            }
+        except MarketSimError as exc:
+            raise_market_sim_error(exc)
+
+    @router.get("/api/market-sim/lab/runs/{lab_id}/lessons")
+    def lab_lessons(lab_id: str) -> dict:
+        try:
+            return service.get_lab_lessons(lab_id)
         except MarketSimError as exc:
             raise_market_sim_error(exc)
 

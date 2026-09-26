@@ -139,7 +139,7 @@ Current wiring includes:
 | `Data/backend/main.py` | Composition root + chat + SPA + health (**CURRENT**) |
 | `Data/backend/config.py` | typed environment/runtime settings |
 | `Data/backend/database.py` | SQLite access and initialization |
-| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **52** (`paper_portefeuille`) |
+| `Data/backend/migrations.py` | ordered schema migrations; current main reaches migration **54** (`market_sim_learning_runs`) |
 | `Data/backend/llm.py` | compatibility/boundary helpers |
 | `Data/backend/reasoning.py` | compatibility import/boundary |
 
@@ -867,6 +867,7 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 - data realism (W13): `universe.py` (PIT membership), `costs.py` (CostModelPack provenance), `stats_inferential.py` (DSR/PBO/FDR/bootstrap/CPCV geometry);
 - strategy governance (W14): `strategy_asset.py`, `strategy_dsl.py` (v3), `regimes.py`, `hpo.py`, `curriculum.py`;
 - agent lab (W15): `agent_lab.py` (scientific search / tournaments / lesson trust);
+- strategy learning (W25): `policy.py`, `learning_types.py`, `learning_fitness.py`, `learning_candidates.py`, `learning.py`, `learning_runtime.py`;
 - paper ops (W16): `paper_deployment.py`;
 - strategies/experiments: `strategy_eval.py`, `experiments.py`, `metrics.py` (`resolve_periods_per_year`), `position_episodes.py` (`ClosedTrade` / `PositionEpisodeTracker`);
 - multi-agent hooks: `roles.py`, `deliberation.py`, `commit_reveal.py`, `brain_hooks.py` (as_of / firewall filtering);
@@ -921,6 +922,8 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 **W18 Frontend Platform (CURRENT):** ErrorBoundary + lazy trading routes; `api/http.ts` + `api/domains/marketSimLab.ts`; chat Stop abort; DEMO banners for decorative mocks; Playwright/MSW FEATURE_GATED until CI dependency.
 
 **W17 Trading Center UI (CURRENT):** `/trading/lab` + `/api/market-sim/lab/overview|cost-pack|feed-health|trials` expose real lab truth (curriculum, roles, Trial Ledger, cost provenance, feed probe). Broker/live remains BLOCKED. No mock KPIs.
+
+**W25 Strategy Learning Loop (CURRENT):** Canonical `TradingPolicy` / `DslStrategyPolicy` (`policy.py`) drives complete TradingGym episodes — bound strategies no longer silently HOLD. Versioned ObservationSpec/ActionSpec v1 on gym observations. Adaptive Evolutionary Strategy Search (`learning.py`, `learning_candidates.py`, `learning_fitness.py`, `learning_runtime.py`, `learning_types.py`) is durable in `market_sim_learning_runs` (migration **54**), worker capability `market_sim.learning_run`, crash-resumable, TRAIN-only learner updates, VAL/ROBUSTNESS/SEALED stages with sealed never mutating proposal distributions. Agent Lab create/start binds a LearningRun by default; pause/resume/cancel propagate. Fitness is server-side from kernel metrics (UNMEASURED/NaN/inf fail-closed). Neural RL remains FEATURE_GATED via TrainingService — not required for DSL learning. Live trading BLOCKED; A5 impossible. Gates L01–L15.
 
 **W16 Trading Lab IV (CURRENT):** `paper_deployment.py` PaperDeployment with compatibility validation, environment fingerprint, feed health (staleness/gaps), kill switch, and modelled/shadow/paper gap comparison. Paper does not prove live profitability; LIVE BLOCKED; A5 impossible.
 
@@ -1180,6 +1183,7 @@ Production-quality program ledger (machine state): `Data/backend/tests/productio
 
 - **W03:** See production-quality W03 bullet above (typed `AcceptanceCriterion`, trusted test receipts, A04).
 - **W16:** Durable `market_sim_agent_labs` (migration 53). Control-plane methods create/start/pause/resume/cancel labs bound to research campaigns; worker path runs real simulations. HTTP: `/api/market-sim/lab/runs` (+ start/pause/resume/cancel). Valid outcomes remain `QUALIFIED_STRATEGY_FOUND` | `NO_STRATEGY_QUALIFIED`.
+- **W25:** Strategy Learning Loop — `policy.py`, `learning*.py`, migration 54 `market_sim_learning_runs`, worker `market_sim.learning_run`. Lab APIs extended: `/learning`, `/generations`, `/candidates`, `/trials`, `/lessons`. Tests: `test_strategy_learning.py` (L01–L15 evidence).
 
 Adversarial coverage: `Data/backend/tests/test_adversarial_w01_w02.py` (A01–A03, A06, T01–T05, T14–T15); `test_adversarial_w03_completion.py` (A04 + stale/fake/model-authored); `test_adversarial_w04_inference_contract.py` (tool drop, structured UNAVAILABLE, reasoning channels, context bounds); `test_adversarial_w08_w17.py` (A08 preference supersession + T08 sealed rename inheritance); `test_adversarial_w09_w19.py` (T16 + NL citation/hedging); `test_adversarial_w10_w11.py` (gateway unauthorized/idempotency + lease fence/crash recovery); `test_trading_lab_w16_lifecycle.py`.
 

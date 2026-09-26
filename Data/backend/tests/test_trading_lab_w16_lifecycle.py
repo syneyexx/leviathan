@@ -38,6 +38,7 @@ class AgentLabLifecycleTests(unittest.TestCase):
                     "require_robustness_pass": False,
                 },
                 autonomy_ceiling="A1",
+                enable_learning=False,  # campaign-path characterization
             )
             self.assertEqual(created["status"], "CREATED")
             self.assertTrue(created["campaign_id"])
@@ -71,6 +72,7 @@ class AgentLabLifecycleTests(unittest.TestCase):
                 strategy_id=strat["strategy"]["strategy_id"],
                 source_id=sources[0]["source_id"],
                 max_iterations=1,
+                enable_learning=False,
             )
             cancelled = plane.cancel_agent_lab(created["lab_id"])
             self.assertEqual(cancelled["status"], "CANCELLED")
