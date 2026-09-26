@@ -4,20 +4,20 @@
     "export": {
       "backend": "RUST_NATIVE",
       "ok": true,
-      "rssDeltaBytes": 8192,
-      "wallSeconds": 0.1832
+      "rssDeltaBytes": 53248,
+      "wallSeconds": 0.2244
     },
     "hash": {
       "backend": "RUST_NATIVE",
       "ok": true,
-      "rssDeltaBytes": 270336,
-      "wallSeconds": 0.1067
+      "rssDeltaBytes": 0,
+      "wallSeconds": 0.1018
     },
     "validate": {
       "backend": "RUST_NATIVE",
       "ok": true,
       "rssDeltaBytes": 729088,
-      "wallSeconds": 0.1765
+      "wallSeconds": 0.1649
     }
   },
   "rows": 5000,

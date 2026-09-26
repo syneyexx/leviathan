@@ -2,31 +2,78 @@
   "program": "unified_dataset_intelligence_native_memory",
   "schemaVersion": 1,
   "stage": 4,
-  "generatedAt": "2026-09-26T22:08:00Z",
+  "generatedAt": "2026-09-26T22:08:18Z",
   "branch": "cursor/leviathan-dataset-intelligence-native-1a6a",
-  "head": "pending_commit",
+  "head": "0cc234c8c2831ddb030104f18aa27f45836145e8",
   "verdict": "COMPLETE_WITH_HONEST_GAPS",
-  "summary": "Unified Dataset Intelligence + Native Data Plane / memory architecture delivered against focus map W141–W200. Canonical DatasetService/DatasetStore ownership preserved (no V2/parallel DBs). Data/HADES and editor/ skipped per scope.",
+  "summary": "Unified Dataset Intelligence + Native Data Plane / memory architecture delivered against focus map W141\u2013W200. Canonical DatasetService/DatasetStore ownership preserved (no V2/parallel DBs). Data/HADES and editor/ skipped per scope.",
   "definitionOfDone": {
-    "streamingHandlersNoFullMaterialize": {"status": "PASS", "evidence": "W142–W151; production handlers streaming-first"},
-    "nativeOpsParityCore": {"status": "PASS", "evidence": "parity_matrix.json 6/6; W183"},
-    "parquetNative": {"status": "PASS", "evidence": "W165 test_native_parquet_w165.py"},
-    "admissionCancelWatchdogOrphans": {"status": "PASS", "evidence": "W167–W170"},
-    "checkpointUiObservabilityDb": {"status": "PASS", "evidence": "W171–W176"},
-    "backupAuditStressParity": {"status": "PASS", "evidence": "W177–W183"},
-    "marketPilotSimProfile": {"status": "PASS", "evidence": "W184–W187 (W187 NOT_REQUIRED_BY_EVIDENCE)"},
-    "adversarialSuite": {"status": "PASS", "evidence": "W188–W192"},
-    "frontendSettingsSupplyDocsInstall": {"status": "PASS", "evidence": "W193–W199"},
-    "combinedE2E": {"status": "PASS", "evidence": "W200 scenarios A–F"},
-    "noFalsePassClaims": {"status": "PASS", "evidence": "remainingScopeHonesty + cargo audit UNAVAILABLE + LOCAL_CLEAN_CHECK scope"}
+    "streamingHandlersNoFullMaterialize": {
+      "status": "PASS",
+      "evidence": "W142\u2013W151; production handlers streaming-first"
+    },
+    "nativeOpsParityCore": {
+      "status": "PASS",
+      "evidence": "parity_matrix.json 6/6; W183"
+    },
+    "parquetNative": {
+      "status": "PASS",
+      "evidence": "W165 test_native_parquet_w165.py"
+    },
+    "admissionCancelWatchdogOrphans": {
+      "status": "PASS",
+      "evidence": "W167\u2013W170"
+    },
+    "checkpointUiObservabilityDb": {
+      "status": "PASS",
+      "evidence": "W171\u2013W176"
+    },
+    "backupAuditStressParity": {
+      "status": "PASS",
+      "evidence": "W177\u2013W183"
+    },
+    "marketPilotSimProfile": {
+      "status": "PASS",
+      "evidence": "W184\u2013W187 (W187 NOT_REQUIRED_BY_EVIDENCE)"
+    },
+    "adversarialSuite": {
+      "status": "PASS",
+      "evidence": "W188\u2013W192"
+    },
+    "frontendSettingsSupplyDocsInstall": {
+      "status": "PASS",
+      "evidence": "W193\u2013W199"
+    },
+    "combinedE2E": {
+      "status": "PASS",
+      "evidence": "W200 scenarios A\u2013F"
+    },
+    "noFalsePassClaims": {
+      "status": "PASS",
+      "evidence": "remainingScopeHonesty + cargo audit UNAVAILABLE + LOCAL_CLEAN_CHECK scope"
+    }
   },
   "regression": {
-    "pytestNativeWaveSuite": {"passed": 81, "skipped": 1, "failed": 0},
-    "cargoLeviathanDataPlane": {"passed": 21, "failed": 0},
+    "pytestNativeWaveSuite": {
+      "passed": 81,
+      "skipped": 1,
+      "failed": 0
+    },
+    "cargoLeviathanDataPlane": {
+      "passed": 21,
+      "failed": 0
+    },
     "verifyNativeDataPlane": "PASS",
     "verifyCleanInstallNative": "PASS",
-    "parityMatrix": {"total": 6, "pass": 6, "fail": 0},
-    "frontendDatasetActivityVitest": {"passed": 12, "failed": 0},
+    "parityMatrix": {
+      "total": 6,
+      "pass": 6,
+      "fail": 0
+    },
+    "frontendDatasetActivityVitest": {
+      "passed": 12,
+      "failed": 0
+    },
     "fixApplied": "normalize_backend_label emits PYTHON_STREAMING/RUST_NATIVE to match ComputeBackend public API"
   },
   "honestGaps": {
