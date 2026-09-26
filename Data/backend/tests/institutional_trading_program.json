@@ -3,10 +3,10 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "d1d811c13e974d909361dacc03eaef6ad25a9016",
+  "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W16",
-  "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI skipped per operator. W01\u2013W16 PASS.",
+  "active_wave": "W24",
+  "notes": "CI skipped. Editor/HADES out of scope. W01\u2013W24 PASS.",
   "status_vocabulary": [
     "NOT_STARTED",
     "IN_PROGRESS",
@@ -261,21 +261,21 @@
       ]
     },
     "scenario_risk": {
-      "status": "NOT_IMPLEMENTED",
+      "status": "CURRENT",
       "evidence": [
-        "no ScenarioSpec engine located under market_sim"
+        "scenario_risk.py ScenarioSpec + apply_scenario"
       ]
     },
     "factor_risk": {
-      "status": "NOT_IMPLEMENTED",
+      "status": "PARTIAL",
       "evidence": [
-        "no governed factor-exposure layer located"
+        "risk_analytics.py optional factor_loadings; no full factor engine"
       ]
     },
     "drift_detection": {
-      "status": "NOT_IMPLEMENTED",
+      "status": "CURRENT",
       "evidence": [
-        "no paper-forward drift detector module located"
+        "paper_forward_drift.py detect_metric_drift + continual research ticket"
       ]
     },
     "live_trading": {
@@ -622,58 +622,135 @@
     {
       "id": "W17",
       "title": "Institutional risk analytics",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim risk_guard + analytics",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "risk_analytics.py historical VaR",
+        "optional factor loadings labelled",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W18",
       "title": "Scenario and stress engine",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "scenario_risk.py ScenarioSpec",
+        "deterministic shock application",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W19",
       "title": "Performance and return attribution",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim portefeuille",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "portefeuille/attribution.py contributions",
+        "not Brinson/factor claimed",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W20",
       "title": "Strategy Learning multi-asset extension",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim learning",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "learning_multi_asset.py mandate",
+        "options/FI excluded",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W21",
       "title": "Champion / challenger strategy portfolio",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim strategy_asset + agent_lab",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "champion_challenger.py shadow until promote",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W22",
       "title": "Autonomous Research Director",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim orchestra + research",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "research_director.py mandate runner",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W23",
       "title": "Agent team institutionalization",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim roles + agents",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "institutional_team.py risk veto required",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W24",
       "title": "Paper forward evidence, drift and continual research",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "market_sim paper_forward",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_institutional_w17_w24"
+      ],
+      "evidence": [
+        "paper_forward_drift.py",
+        "continual research ticket; no auto live",
+        "W17\u2013W24 suite PASS"
+      ],
+      "blockers": [],
+      "last_verified_commit": "200b50746994aa83ed6415ff1d3226a6e117ea09"
     },
     {
       "id": "W25",
