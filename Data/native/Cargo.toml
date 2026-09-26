@@ -20,4 +20,4 @@ hex = "0.4"
 # bridge only (writer/reader for record-batch conversion).
 arrow-array = { version = "60", default-features = false }
 arrow-schema = { version = "60", default-features = false }
-parquet = { version = "60", default-features = false, features = ["arrow"] }
+parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
