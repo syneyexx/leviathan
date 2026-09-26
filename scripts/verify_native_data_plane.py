@@ -47,7 +47,10 @@ REQUIRED_MODULES = {
     "catalog": MODULES / "catalog.py",
     "recovery": MODULES / "recovery.py",
     "compute_planner": MODULES / "compute_planner.py",
+    "publish": MODULES / "publish.py",
+    "jobs_admission": MODULES / "jobs.py",
     "native_compute": ROOT / "Data" / "modules" / "workers" / "native_compute.py",
+    "workers_dashboard": ROOT / "Data" / "modules" / "workers" / "dashboard.py",
 }
 HANDLER_NAMES = (
     "_handle_validate",
@@ -136,6 +139,9 @@ def check_native_handshake() -> dict[str, Any]:
         "dataset.split",
         "dataset.export",
         "dataset.dedupe",
+        "dataset.parquet_validate",
+        "dataset.parquet_hash",
+        "dataset.parquet_to_jsonl",
     }
     missing = sorted(required_ops - ops)
     ok = int(doc.get("protocolVersion") or 0) == 1 and not missing
@@ -333,7 +339,16 @@ def check_settings_native_compute() -> dict[str, Any]:
     has_cls = "class NativeComputeSettings" in cfg_text
     has_field = "native_compute: NativeComputeSettings" in cfg_text
     has_summary = '"native_compute"' in cfg_text and "memory_budget_mb" in cfg_text
-    has_catalog = "native_compute.mode" in cat_text and "native_compute.memory_budget_mb" in cat_text
+    required_keys = (
+        "native_compute.mode",
+        "native_compute.memory_budget_mb",
+        "native_compute.max_record_mb",
+        "native_compute.threads",
+        "native_compute.batch_rows",
+        "native_compute.rust_threshold_mb",
+    )
+    missing_keys = [k for k in required_keys if k not in cat_text]
+    has_catalog = not missing_keys
     status = "PASS" if has_cls and has_field and has_summary and has_catalog else "FAIL"
     return _check(
         "native_compute_settings",
@@ -343,8 +358,33 @@ def check_settings_native_compute() -> dict[str, Any]:
             "settingsField": has_field,
             "publicSummary": has_summary,
             "catalogKeys": has_catalog,
+            "missingCatalogKeys": missing_keys,
         },
     )
+
+
+def check_admission_cancel_orphan() -> dict[str, Any]:
+    jobs = MODULES / "jobs.py"
+    publish = MODULES / "publish.py"
+    native = ROOT / "Data" / "modules" / "workers" / "native_compute.py"
+    dash = ROOT / "Data" / "modules" / "workers" / "dashboard.py"
+    service = HANDLERS_FILE
+    jobs_text = jobs.read_text(encoding="utf-8") if jobs.is_file() else ""
+    pub_text = publish.read_text(encoding="utf-8") if publish.is_file() else ""
+    nat_text = native.read_text(encoding="utf-8") if native.is_file() else ""
+    svc_text = service.read_text(encoding="utf-8") if service.is_file() else ""
+    dash_text = dash.read_text(encoding="utf-8") if dash.is_file() else ""
+    markers = {
+        "MEMORY_HEAVY": "MEMORY_HEAVY" in jobs_text and "reservedRamBytes" in jobs_text,
+        "softRssWatchdog": "MEMORY_RSS_GRACE_FACTOR" in nat_text or "peak_rss" in nat_text,
+        "cancel": "cancel_event" in nat_text or "cancelRequested" in svc_text,
+        "orphanReconcile": "reconcile_orphans" in pub_text and "reconcile_data_plane_orphans" in svc_text,
+        "nativeProbe": "def probe(" in nat_text,
+        "dashboardNative": "nativeCompute" in dash_text,
+        "publicComputeSummary": "_public_compute_summary" in svc_text,
+    }
+    status = "PASS" if all(markers.values()) else "FAIL"
+    return _check("admission_cancel_orphan_native_probe", status, markers)
 
 
 def check_worker_recycle() -> dict[str, Any]:
@@ -371,6 +411,7 @@ def main() -> int:
         check_streaming_handlers(),
         check_required_modules(),
         check_settings_native_compute(),
+        check_admission_cancel_orphan(),
         check_worker_recycle(),
     ]
     required_failed = [

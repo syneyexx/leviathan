@@ -193,6 +193,26 @@ export function WorkerPoolsPanel({
             </div>
           ) : null}
 
+          {fabric?.nativeCompute ? (
+            <div className="lv-ag-fabric-kpis" aria-label="Native compute probe">
+              <span>
+                Native <em>{fabric.nativeCompute.status}</em>
+              </span>
+              <span>
+                Binary{" "}
+                <em>
+                  {fabric.nativeCompute.binaryVersion != null &&
+                  String(fabric.nativeCompute.binaryVersion).trim() !== ""
+                    ? fabric.nativeCompute.binaryVersion
+                    : "UNMEASURED"}
+                </em>
+              </span>
+              <span>
+                Ops <em>{(fabric.nativeCompute.operations ?? []).length}</em>
+              </span>
+            </div>
+          ) : null}
+
           <div className="lv-ag-tabs" role="tablist" aria-label="Worker fabric views">
             {(["Pools", "Workers", "Jobs", "Failures"] as Tab[]).map((t) => (
               <button

@@ -13,9 +13,13 @@
           "dataset.dedupe",
           "dataset.export",
           "dataset.hash",
+          "dataset.parquet_hash",
+          "dataset.parquet_to_jsonl",
+          "dataset.parquet_validate",
           "dataset.split",
           "dataset.transform",
-          "dataset.validate"
+          "dataset.validate",
+          "market.ohlcv_validate"
         ],
         "protocolVersion": 1
       },
@@ -64,8 +68,10 @@
         "present": {
           "catalog": "Data/modules/datasets/catalog.py",
           "compute_planner": "Data/modules/datasets/compute_planner.py",
+          "jobs_admission": "Data/modules/datasets/jobs.py",
           "memory_policy": "Data/modules/datasets/memory_policy.py",
           "native_compute": "Data/modules/workers/native_compute.py",
+          "publish": "Data/modules/datasets/publish.py",
           "recovery": "Data/modules/datasets/recovery.py",
           "scratch": "Data/modules/datasets/scratch.py",
           "semantic_engine": "Data/modules/datasets/semantic_engine.py",
@@ -73,7 +79,8 @@
           "semantic_profiler": "Data/modules/datasets/semantic_profiler.py",
           "semantic_types": "Data/modules/datasets/semantic_types.py",
           "storage_authority": "Data/modules/datasets/storage_authority.py",
-          "streaming_io": "Data/modules/datasets/streaming_io.py"
+          "streaming_io": "Data/modules/datasets/streaming_io.py",
+          "workers_dashboard": "Data/modules/workers/dashboard.py"
         },
         "scratchIsolationMarkers": true
       },
@@ -85,10 +92,25 @@
       "evidence": {
         "NativeComputeSettings": true,
         "catalogKeys": true,
+        "missingCatalogKeys": [],
         "publicSummary": true,
         "settingsField": true
       },
       "id": "native_compute_settings",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "evidence": {
+        "MEMORY_HEAVY": true,
+        "cancel": true,
+        "dashboardNative": true,
+        "nativeProbe": true,
+        "orphanReconcile": true,
+        "publicComputeSummary": true,
+        "softRssWatchdog": true
+      },
+      "id": "admission_cancel_orphan_native_probe",
       "required": true,
       "status": "PASS"
     },
@@ -103,7 +125,7 @@
       "status": "PASS"
     }
   ],
-  "generatedAt": "2026-09-26T21:35:41Z",
+  "generatedAt": "2026-09-26T22:04:30Z",
   "optionalSkippedCount": 0,
   "overall": "PASS",
   "program": "native_data_plane_memory_architecture",

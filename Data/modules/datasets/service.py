@@ -31,6 +31,24 @@ from .catalog import (
     refresh_catalog_entry,
     write_catalog,
 )
+from .checkpoint import (
+    BACKEND_PYTHON_STREAMING,
+    BACKEND_RUST_NATIVE,
+    DEFAULT_CHECKPOINT_EVERY,
+    UNMEASURED as CKPT_UNMEASURED,
+    build_checkpoint,
+    can_resume,
+    compute_input_hash,
+    compute_operation_fingerprint,
+    invalidate_checkpoint,
+    iter_skip_then_count,
+    load_checkpoint,
+    normalize_backend_label,
+    observability_fields,
+    resolve_resume_skip,
+    save_checkpoint,
+    throughput_records_per_sec,
+)
 from .compute_planner import BackendPlan, ComputeBackend, ComputeBackendPlanner
 from .contamination import scan_contamination
 from .dedupe import exact_dedupe, iter_exact_dedupe_external
@@ -3532,6 +3550,176 @@ class DatasetService:
             self._native_runner = NativeComputeRunner()
         return self._native_runner
 
+    def _scratch_root_for_job(self, job: DatasetJob) -> Path | None:
+        try:
+            return self.scratch_manager.open_session(job.job_id).root
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _begin_streaming_checkpoint(
+        self,
+        job: DatasetJob,
+        *,
+        operation: str,
+        input_path: Path,
+        options: dict[str, Any] | None = None,
+        input_hash: str | None = None,
+        backend: str = BACKEND_PYTHON_STREAMING,
+    ) -> tuple[Any, Path | None, int, bool]:
+        digest = input_hash or compute_input_hash(input_path)
+        fingerprint = compute_operation_fingerprint(
+            input_hash=digest, operation=operation, options=options
+        )
+        root = self._scratch_root_for_job(job)
+        existing = load_checkpoint(root) if root is not None else None
+        if existing is not None and existing.input_hash and existing.input_hash != digest:
+            if root is not None:
+                invalidate_checkpoint(root)
+            existing = None
+        skip, resumed = resolve_resume_skip(
+            existing, fingerprint=fingerprint, input_hash=digest
+        )
+        if existing is not None and not can_resume(
+            existing, fingerprint=fingerprint, input_hash=digest
+        ):
+            if root is not None:
+                invalidate_checkpoint(root)
+            skip, resumed = 0, False
+        ckpt = build_checkpoint(
+            input_hash=digest,
+            operation=operation,
+            options=options,
+            phase="streaming",
+            records_processed=skip if resumed else 0,
+            backend=backend,
+            memory_budget=self.memory_policy.memory_budget_bytes,
+            spill_bytes=CKPT_UNMEASURED,
+            peak_memory=CKPT_UNMEASURED,
+            throughput=CKPT_UNMEASURED,
+            resumed=resumed,
+        )
+        if root is not None:
+            save_checkpoint(root, ckpt)
+        self.store.update_job(
+            job.job_id,
+            phase=ckpt.phase,
+            checkpoint={**(job.checkpoint or {}), "streaming": ckpt.to_dict()},
+            progress=0.05 if not resumed else min(0.95, 0.05 + skip * 1e-6),
+        )
+        return ckpt, root, skip, resumed
+
+    def _persist_streaming_progress(
+        self,
+        job: DatasetJob,
+        ckpt: Any,
+        root: Path | None,
+        *,
+        records_processed: int,
+        phase: str | None = None,
+        started_at: float | None = None,
+    ) -> None:
+        import time as _time
+
+        ckpt.records_processed = int(records_processed)
+        if phase:
+            ckpt.phase = phase
+        if started_at is not None:
+            elapsed_ms = max(0.0, (_time.monotonic() - started_at) * 1000.0)
+            ckpt.duration_ms = elapsed_ms
+            ckpt.throughput = throughput_records_per_sec(records_processed, elapsed_ms)
+        if root is not None:
+            save_checkpoint(root, ckpt)
+        progress = min(0.95, 0.05 + (records_processed / max(records_processed + 1, 1)) * 0.9)
+        self.store.update_job(
+            job.job_id,
+            phase=ckpt.phase,
+            progress=progress,
+            checkpoint={**(job.checkpoint or {}), "streaming": ckpt.to_dict()},
+        )
+
+    def _finish_streaming_checkpoint(
+        self,
+        job: DatasetJob,
+        ckpt: Any,
+        root: Path | None,
+        *,
+        records_processed: int,
+        phase: str = "done",
+        started_at: float | None = None,
+        peak_memory: int | str | None = None,
+        spill_bytes: int | str | None = None,
+    ) -> dict[str, Any]:
+        import time as _time
+
+        ckpt.records_processed = int(records_processed)
+        ckpt.phase = phase
+        if started_at is not None:
+            elapsed_ms = max(0.0, (_time.monotonic() - started_at) * 1000.0)
+            ckpt.duration_ms = elapsed_ms
+            ckpt.throughput = throughput_records_per_sec(records_processed, elapsed_ms)
+        if peak_memory is not None:
+            ckpt.peak_memory = peak_memory
+        if spill_bytes is not None:
+            ckpt.spill_bytes = spill_bytes
+        if root is not None:
+            save_checkpoint(root, ckpt)
+        obs = observability_fields(
+            backend=ckpt.backend,
+            phase=ckpt.phase,
+            records_processed=ckpt.records_processed,
+            peak_memory=ckpt.peak_memory,
+            memory_budget=ckpt.memory_budget,
+            spill_bytes=ckpt.spill_bytes,
+            throughput=ckpt.throughput,
+            duration_ms=ckpt.duration_ms,
+            resumed=ckpt.resumed,
+        )
+        self.store.update_job(
+            job.job_id,
+            phase=phase,
+            checkpoint={**(job.checkpoint or {}), "streaming": ckpt.to_dict()},
+        )
+        return obs
+
+    @staticmethod
+    def _observability_from_native(
+        *,
+        plan: BackendPlan,
+        native_info: dict[str, Any] | None,
+        fallback_reason: str | None,
+        phase: str,
+    ) -> dict[str, Any]:
+        receipt = {}
+        if native_info and isinstance(native_info.get("receipt"), dict):
+            receipt = native_info["receipt"]
+        backend = (
+            BACKEND_RUST_NATIVE
+            if native_info
+            else normalize_backend_label(plan.backend.value) or BACKEND_PYTHON_STREAMING
+        )
+        records = receipt.get("recordsOut")
+        if records is None:
+            records = receipt.get("recordsIn")
+        peak = receipt.get("peakRssBytes")
+        spill = receipt.get("spillBytes")
+        duration = receipt.get("durationMs")
+        return observability_fields(
+            backend=backend,
+            phase=phase,
+            records_processed=int(records) if records is not None else None,
+            peak_memory=peak if peak is not None else CKPT_UNMEASURED,
+            memory_budget=CKPT_UNMEASURED,
+            spill_bytes=spill if spill is not None else CKPT_UNMEASURED,
+            throughput=throughput_records_per_sec(
+                int(records or 0),
+                float(duration) if duration is not None else None,
+            )
+            if records is not None and duration is not None
+            else CKPT_UNMEASURED,
+            duration_ms=duration if duration is not None else CKPT_UNMEASURED,
+            fallback_reason=fallback_reason,
+        )
+
     def _plan_compute_backend(
         self,
         operation: str,
@@ -3852,6 +4040,9 @@ class DatasetService:
 
         if native_info and isinstance(native_info.get("receipt"), dict):
             receipt = native_info["receipt"]
+            obs = self._observability_from_native(
+                plan=plan, native_info=native_info, fallback_reason=None, phase="done"
+            )
             report = {
                 "valid": str(receipt.get("status")) == "ok",
                 "rowCount": receipt.get("recordsIn") or receipt.get("recordsOut"),
@@ -3862,14 +4053,50 @@ class DatasetService:
                 "backend": ComputeBackend.RUST_NATIVE.value,
                 "backendPlan": plan.public_dict(),
                 "fallbackReason": None,
+                **obs,
             }
         else:
-            report = validate_records(self.iter_version_records(job.version_id))
+            import time as _time
+
+            started = _time.monotonic()
+            ckpt, root, skip, resumed = self._begin_streaming_checkpoint(
+                job,
+                operation="dataset.validate",
+                input_path=input_path,
+                options={},
+                input_hash=ver.content_hash or compute_input_hash(input_path),
+                backend=BACKEND_PYTHON_STREAMING,
+            )
+
+            def _on_progress(n: int) -> None:
+                self._persist_streaming_progress(
+                    job, ckpt, root, records_processed=n, phase="validating", started_at=started
+                )
+
+            records = iter_skip_then_count(
+                self.iter_version_records(job.version_id),
+                skip=skip,
+                on_progress=_on_progress,
+                every=DEFAULT_CHECKPOINT_EVERY,
+            )
+            report = validate_records(records)
+            if resumed and skip:
+                report["rowCount"] = int(report.get("rowCount") or 0) + int(skip)
+                report["resumedFrom"] = skip
+            obs = self._finish_streaming_checkpoint(
+                job,
+                ckpt,
+                root,
+                records_processed=int(report.get("rowCount") or ckpt.records_processed or 0),
+                phase="done",
+                started_at=started,
+            )
             report = {
                 **report,
                 "backend": ComputeBackend.PYTHON_STREAMING.value,
                 "backendPlan": plan.public_dict(),
                 "fallbackReason": fallback_reason,
+                **obs,
             }
 
         updates: dict[str, Any] = {"validation": report}
@@ -4006,6 +4233,9 @@ class DatasetService:
             full_lineage = list(parent.transform_lineage) + lineage
             self.store.update_version(version.version_id, transform_lineage=full_lineage)
             version = self.get_version(version.version_id)
+            obs = self._observability_from_native(
+                plan=plan, native_info=native_info, fallback_reason=None, phase="done"
+            )
             return {
                 "versionId": version.version_id,
                 "lineage": lineage,
@@ -4013,12 +4243,37 @@ class DatasetService:
                 "backend": ComputeBackend.RUST_NATIVE.value,
                 "backendPlan": plan.public_dict(),
                 "fallbackReason": None,
+                **obs,
             }
 
-        stream, lineage_fn = apply_transforms_streaming(
-            self.iter_version_records(job.version_id),
-            transforms,
+        import time as _time
+
+        started = _time.monotonic()
+        options = {"transforms": transforms}
+        ckpt, root, _skip, _resumed = self._begin_streaming_checkpoint(
+            job,
+            operation="dataset.transform",
+            input_path=input_path,
+            options=options,
+            input_hash=parent.content_hash or compute_input_hash(input_path),
+            backend=BACKEND_PYTHON_STREAMING,
         )
+        # Full rewrite is the safe path (no partial-output append yet).
+        ckpt.resumed = False
+        ckpt.records_processed = 0
+
+        def _on_progress(n: int) -> None:
+            self._persist_streaming_progress(
+                job, ckpt, root, records_processed=n, phase="transforming", started_at=started
+            )
+
+        source = iter_skip_then_count(
+            self.iter_version_records(job.version_id),
+            skip=0,
+            on_progress=_on_progress,
+            every=DEFAULT_CHECKPOINT_EVERY,
+        )
+        stream, lineage_fn = apply_transforms_streaming(source, transforms)
         version = self._write_derived_version_stream(
             dataset_id=job.dataset_id,
             parent=parent,
@@ -4032,6 +4287,14 @@ class DatasetService:
         full_lineage = list(parent.transform_lineage) + lineage
         self.store.update_version(version.version_id, transform_lineage=full_lineage)
         version = self.get_version(version.version_id)
+        obs = self._finish_streaming_checkpoint(
+            job,
+            ckpt,
+            root,
+            records_processed=int(version.row_count or ckpt.records_processed or 0),
+            phase="done",
+            started_at=started,
+        )
         return {
             "versionId": version.version_id,
             "lineage": lineage,
@@ -4039,6 +4302,7 @@ class DatasetService:
             "backend": ComputeBackend.PYTHON_STREAMING.value,
             "backendPlan": plan.public_dict(),
             "fallbackReason": plan.fallback_reason,
+            **obs,
         }
 
     def _handle_split(self, job: DatasetJob) -> dict[str, Any]:
@@ -4185,6 +4449,9 @@ class DatasetService:
                 metadata={**semantic_meta, "computeBackend": ComputeBackend.RUST_NATIVE.value},
             )
             self.store.update_version(export_version.version_id, status=VersionStatus.READY)
+            obs = self._observability_from_native(
+                plan=plan, native_info=native_info, fallback_reason=None, phase="done"
+            )
             return {
                 "versionId": export_version.version_id,
                 "contentHash": native_info["contentHash"],
@@ -4194,9 +4461,36 @@ class DatasetService:
                 "backend": ComputeBackend.RUST_NATIVE.value,
                 "backendPlan": plan.public_dict(),
                 "fallbackReason": None,
+                **obs,
             }
 
-        result = export_jsonl(self.iter_version_records(job.version_id), dest, split=split)
+        import time as _time
+
+        started = _time.monotonic()
+        options = {"split": split} if split else {}
+        ckpt, root, _skip, _resumed = self._begin_streaming_checkpoint(
+            job,
+            operation="dataset.export",
+            input_path=input_path,
+            options=options,
+            input_hash=ver.content_hash or compute_input_hash(input_path),
+            backend=BACKEND_PYTHON_STREAMING,
+        )
+        ckpt.resumed = False
+        ckpt.records_processed = 0
+
+        def _on_progress(n: int) -> None:
+            self._persist_streaming_progress(
+                job, ckpt, root, records_processed=n, phase="exporting", started_at=started
+            )
+
+        source = iter_skip_then_count(
+            self.iter_version_records(job.version_id),
+            skip=0,
+            on_progress=_on_progress,
+            every=DEFAULT_CHECKPOINT_EVERY,
+        )
+        result = export_jsonl(source, dest, split=split)
         export_version = self.store.create_version(
             dataset_id=job.dataset_id,
             version_label=f"export-{ver.version_label}",
@@ -4214,10 +4508,19 @@ class DatasetService:
             row_count=result["rowCount"],
         )
         self.store.update_version(export_version.version_id, status=VersionStatus.READY)
+        obs = self._finish_streaming_checkpoint(
+            job,
+            ckpt,
+            root,
+            records_processed=int(result.get("rowCount") or 0),
+            phase="done",
+            started_at=started,
+        )
         result["versionId"] = export_version.version_id
         result["backend"] = ComputeBackend.PYTHON_STREAMING.value
         result["backendPlan"] = plan.public_dict()
         result["fallbackReason"] = plan.fallback_reason
+        result.update(obs)
         return result
 
     def _cleanup_duplicate_target(self, target_dataset_id: str) -> None:
@@ -4972,7 +5275,106 @@ class DatasetService:
         data["checkpoint"] = checkpoint
         # Derived download summary for the activity console (view aid, not a second store).
         data["download"] = self._public_download_summary(job.job_type.value, cfg, checkpoint)
+        data.update(self._public_compute_summary(data.get("result") or {}, checkpoint, phase=job.phase))
+        data["compute"] = {
+            k: data.get(k)
+            for k in (
+                "backend",
+                "phase",
+                "recordsProcessed",
+                "peakMemory",
+                "memoryBudget",
+                "spillBytes",
+                "throughput",
+                "durationMs",
+                "fallbackReason",
+                "resumed",
+            )
+            if k in data
+        }
         return data
+
+    @staticmethod
+    def _public_compute_summary(
+        result: dict[str, Any],
+        checkpoint: dict[str, Any],
+        *,
+        phase: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(result, dict):
+            result = {}
+        if not isinstance(checkpoint, dict):
+            checkpoint = {}
+        streaming = checkpoint.get("streaming") if isinstance(checkpoint.get("streaming"), dict) else {}
+        receipt = result.get("receipt") if isinstance(result.get("receipt"), dict) else {}
+        plan = result.get("backendPlan") if isinstance(result.get("backendPlan"), dict) else {}
+
+        def _metric(*candidates: Any) -> Any:
+            for value in candidates:
+                if value is None or value == "":
+                    continue
+                if isinstance(value, str) and value.upper() == CKPT_UNMEASURED:
+                    return CKPT_UNMEASURED
+                if isinstance(value, bool):
+                    continue
+                try:
+                    return float(value) if isinstance(value, float) else int(value)
+                except (TypeError, ValueError):
+                    if isinstance(value, str):
+                        return value
+            return CKPT_UNMEASURED
+
+        backend = normalize_backend_label(
+            result.get("backend")
+            or plan.get("backend")
+            or streaming.get("backend")
+            or checkpoint.get("backend")
+        )
+        fallback = result.get("fallbackReason")
+        if fallback is None and "fallbackReason" in plan:
+            fallback = plan.get("fallbackReason")
+        records = (
+            result.get("recordsProcessed")
+            if result.get("recordsProcessed") is not None
+            else streaming.get("recordsProcessed")
+            if streaming.get("recordsProcessed") is not None
+            else result.get("rowCount")
+            if result.get("rowCount") is not None
+            else result.get("recordsOut")
+            if result.get("recordsOut") is not None
+            else receipt.get("recordsOut")
+        )
+        peak = _metric(
+            result.get("peakMemory"),
+            result.get("peakRssBytes"),
+            streaming.get("peakMemory"),
+            receipt.get("peakRssBytes"),
+        )
+        spill = _metric(result.get("spillBytes"), streaming.get("spillBytes"), receipt.get("spillBytes"))
+        return {
+            "backend": backend,
+            "phase": result.get("phase") or streaming.get("phase") or phase,
+            "recordsProcessed": int(records) if records is not None else None,
+            "peakMemory": peak,
+            "memoryBudget": _metric(
+                result.get("memoryBudget"), result.get("memoryBudgetBytes"), streaming.get("memoryBudget")
+            ),
+            "spillBytes": spill,
+            "throughput": _metric(result.get("throughput"), streaming.get("throughput")),
+            "durationMs": _metric(
+                result.get("durationMs"), streaming.get("durationMs"), receipt.get("durationMs")
+            ),
+            "fallbackReason": fallback,
+            "resumed": bool(result.get("resumed") or streaming.get("resumed")),
+            "peakRssBytes": None if peak == CKPT_UNMEASURED else peak,
+            "recordsIn": None
+            if _metric(result.get("recordsIn"), receipt.get("recordsIn")) == CKPT_UNMEASURED
+            else _metric(result.get("recordsIn"), receipt.get("recordsIn")),
+            "recordsOut": None
+            if _metric(result.get("recordsOut"), receipt.get("recordsOut")) == CKPT_UNMEASURED
+            else _metric(result.get("recordsOut"), receipt.get("recordsOut")),
+            "memoryEnforcement": result.get("memoryEnforcement") or receipt.get("memoryEnforcement"),
+        }
 
     @staticmethod
     def _public_download_summary(

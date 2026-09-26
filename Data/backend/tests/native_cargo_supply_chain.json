@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "package": "leviathan_data_plane",
+  "workspace": "Data/native",
+  "generatedAt": "2026-09-26T22:05:00Z",
+  "method": "cargo tree -p leviathan_data_plane",
+  "cargoAudit": {
+    "status": "UNAVAILABLE",
+    "detail": "cargo-audit subcommand not installed in this environment (cargo audit → 'no such command: audit'). No false PASS recorded."
+  },
+  "policy": {
+    "noUnnecessaryCrates": true,
+    "notes": "Direct deps are protocol (serde/clap), hashing (sha2/hex), atomic temp publish (tempfile), errors (thiserror), and minimal Arrow/Parquet readers (default-features=false; snap enabled for common Snappy Parquet)."
+  },
+  "directDependencies": [
+    {"crate": "serde", "justification": "Task/receipt/capabilities JSON protocol — derive Serialize/Deserialize only."},
+    {"crate": "serde_json", "justification": "Machine handshake and task documents are JSON file I/O."},
+    {"crate": "thiserror", "justification": "Typed fail-closed error codes for protocol/path/limit violations."},
+    {"crate": "sha2", "justification": "Deterministic content hashing for native receipts (dataset.hash / parquet_hash)."},
+    {"crate": "hex", "justification": "Encode digests for receipt contentHash fields."},
+    {"crate": "tempfile", "justification": "Scratch/temp paths for atomic publish; not a business authority store."},
+    {"crate": "clap", "justification": "CLI for --capabilities/--task only; no shell interpolation."},
+    {"crate": "arrow-array", "justification": "Minimal Arrow arrays for Parquet row decode (default-features=false)."},
+    {"crate": "arrow-schema", "justification": "Parquet schema probe for parquet_validate."},
+    {"crate": "parquet", "justification": "Streaming Parquet reader for parquet_validate|hash|to_jsonl; features limited to arrow+snap."}
+  ],
+  "devDependencies": [
+    {"crate": "tempfile", "justification": "Unit tests for ops I/O."},
+    {"crate": "serde_json", "justification": "Test fixtures for protocol documents."},
+    {"crate": "arrow-array", "justification": "Build Parquet fixtures in tests."},
+    {"crate": "arrow-schema", "justification": "Test schema construction."},
+    {"crate": "parquet", "justification": "Write test Parquet files."}
+  ],
+  "transitiveHighlights": [
+    {"crate": "snap", "via": "parquet", "justification": "Snappy decompression for common Parquet corpora; no extra codec stack enabled."},
+    {"crate": "arrow-buffer / arrow-data / arrow-ipc / arrow-select", "via": "parquet/arrow-array", "justification": "Arrow crate graph pulled by parquet arrow feature — kept minimal via default-features=false."},
+    {"crate": "digest / crypto-common / block-buffer", "via": "sha2", "justification": "RustCrypto digest stack for SHA-256."}
+  ],
+  "explicitlyAvoided": [
+    "tokio / async runtime — sync CLI only",
+    "reqwest / networking — no outbound I/O from native binary",
+    "full arrow / parquet default features — compression/IPC stack trimmed",
+    "sqlite / sled — no competing domain DB inside native binary"
+  ],
+  "truth": {
+    "auditNotRunAsPass": true,
+    "treeCapturedHonestly": true
+  }
+}

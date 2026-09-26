@@ -174,10 +174,120 @@ class TestStreamingFoundations(unittest.TestCase):
     def test_storage_authority_forbids_competing_dbs(self) -> None:
         with self.assertRaises(ValueError):
             assert_no_competing_domain_db(Path("knowledge.db"))
+        for name in (
+            "trading.db",
+            "simulation.db",
+            "portfolio.db",
+            "datasets.db",
+            "control.db",
+            "agents.db",
+            "semantic.db",
+            "native.db",
+            "learning.db",
+            "research.db",
+        ):
+            with self.assertRaises(ValueError, msg=name):
+                assert_no_competing_domain_db(Path(name))
         self.assertIn("knowledge.db", FORBIDDEN_COMPETING_DB_NAMES)
         truth = storage_authority_public_dict()
         self.assertTrue(truth["truth"]["competingDomainDatabasesForbidden"])
         self.assertEqual(StorageClass.EPHEMERAL_SCRATCH.value, "EPHEMERAL_SCRATCH")
+
+    def test_file_backed_data_survives_dataset_service_reconstruction(self) -> None:
+        """W196 — central store + corpus paths remain after DatasetService rebuild."""
+        from Data.modules.common.corpus import CorpusLayout
+        from Data.modules.datasets.service import DatasetService
+        from Data.modules.datasets.store import DatasetStore
+        from Data.modules.datasets.types import DatasetJobStatus, VersionStatus
+
+        def _layout(root: Path) -> CorpusLayout:
+            return CorpusLayout(
+                root=root,
+                datasets=root / "datasets",
+                datasets_raw=root / "datasets" / "raw",
+                datasets_materialized=root / "datasets" / "materialized",
+                datasets_processed=root / "datasets" / "processed",
+                datasets_exports=root / "datasets" / "exports",
+                datasets_manifests=root / "datasets" / "manifests",
+                training=root / "training",
+                training_jobs=root / "training" / "jobs",
+                training_runs=root / "training" / "runs",
+                training_checkpoints=root / "training" / "checkpoints",
+                training_adapters=root / "training" / "adapters",
+                training_exports=root / "training" / "exports",
+                training_logs=root / "training" / "logs",
+                research=root / "research",
+                research_projects=root / "research" / "projects",
+                research_sources=root / "research" / "sources",
+                research_snapshots=root / "research" / "snapshots",
+                research_reports=root / "research" / "reports",
+                research_exports=root / "research" / "exports",
+                models_artifacts=root / "models" / "artifacts",
+                models_cache=root / "models" / "cache",
+                hf_cache=root / "hf_cache",
+            ).ensure()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "leviathan.db"
+            corpus = _layout(root / "corpus")
+            store = DatasetStore(db)
+            store.initialize()
+            service = DatasetService(
+                store,
+                corpus=corpus,
+                settings=None,
+                allowed_import_roots=[root, corpus.root],
+            )
+            path = root / "rows.jsonl"
+            write_canonical_jsonl_stream([_rec(i) for i in range(3)], path, validate=False)
+            imported = service.import_local_sync(str(path), name="w196-survive", materialize=True)
+            ds_id = imported["dataset"]["datasetId"]
+            ver = service.pick_usable_version(ds_id)
+            self.assertIsNotNone(ver)
+            assert ver is not None
+            self.assertTrue(ver.storage_path)
+            storage = Path(ver.storage_path)
+            self.assertTrue(storage.is_file())
+            content_before = storage.read_bytes()
+            version_id = ver.version_id
+
+            store2 = DatasetStore(db)
+            store2.initialize()
+            fresh = DatasetService(
+                store2,
+                corpus=corpus,
+                settings=None,
+                allowed_import_roots=[root, corpus.root],
+            )
+            self.assertIsNotNone(fresh.store.get_dataset(ds_id))
+            ver2 = fresh.store.get_version(version_id)
+            self.assertIsNotNone(ver2)
+            assert ver2 is not None
+            self.assertEqual(ver2.status, VersionStatus.READY)
+            self.assertEqual(Path(ver2.storage_path or "").resolve(), storage.resolve())
+            self.assertEqual(storage.read_bytes(), content_before)
+            self.assertEqual(len(list(fresh.iter_version_records(version_id))), 3)
+            job = fresh.enqueue_validate(ds_id, version_id)
+            done = fresh.process_jobs(max_jobs=1)[0]
+            self.assertEqual(done.job_id, job.job_id)
+            self.assertEqual(done.status, DatasetJobStatus.COMPLETED)
+            pub = fresh.public_job(done)
+            self.assertIn(
+                pub.get("backend"),
+                {
+                    "PYTHON_STREAMING",
+                    "RUST_NATIVE",
+                    "python_streaming",
+                    "rust_native",
+                    None,
+                },
+            )
+            if pub.get("peakRssBytes") is None:
+                self.assertIsNone(pub.get("peakRssBytes"))
+            assert_no_competing_domain_db(db)
+            with self.assertRaises(ValueError):
+                assert_no_competing_domain_db(root / "datasets.db")
 
     def test_scratch_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

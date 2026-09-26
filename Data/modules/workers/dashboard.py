@@ -167,6 +167,42 @@ def _current_work_label(job_summary: dict[str, Any] | None, state: str) -> str:
     return "—"
 
 
+
+def _native_data_plane_status() -> dict[str, Any]:
+    """Bounded native compute probe for Worker Fabric / Performance (W174)."""
+    try:
+        from .native_compute import probe_capabilities
+
+        caps = probe_capabilities()
+        return {
+            "status": caps.status.value if hasattr(caps.status, "value") else str(caps.status),
+            "protocol_version": caps.protocol_version,
+            "protocolVersion": caps.protocol_version,
+            "binaryVersion": caps.protocol_version,
+            "operations": list(caps.operations or [])[:32],
+            "binary_path": caps.binary_path,
+            "binaryPath": caps.binary_path,
+            "detail": (caps.detail or "")[:300],
+            "truth": {"worker_fabric_accelerator": True, "unmeasured_not_zero": True},
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "UNMEASURED",
+            "protocol_version": None,
+            "protocolVersion": None,
+            "binaryVersion": None,
+            "operations": [],
+            "binary_path": None,
+            "binaryPath": None,
+            "detail": f"probe_failed:{type(exc).__name__}",
+            "truth": {"unmeasured": True},
+        }
+
+
+def _native_compute_summary() -> dict[str, Any]:
+    return _native_data_plane_status()
+
+
 def build_worker_fabric_dashboard(
     *,
     db_path: Any,
@@ -363,6 +399,8 @@ def build_worker_fabric_dashboard(
             "restart_count": lease.get("restart_count") or 0,
             "degraded_reason": lease.get("degraded_reason"),
         },
+        "nativeCompute": _native_compute_summary(),
+        "native_data_plane": _native_data_plane_status(),
         "pools": pools_out,
         "workers": workers_out,
         "queues": [{"pool_id": pid, "queued": queues.get(pid, 0)} for pid in POOL_CATALOG],
@@ -375,6 +413,7 @@ def build_worker_fabric_dashboard(
             "gpu_null_when_unattributed": True,
             "optional_disabled_pools_visible": True,
             "active_workers_not_agent_count": True,
+            "native_compute_probed": True,
         },
     }
 

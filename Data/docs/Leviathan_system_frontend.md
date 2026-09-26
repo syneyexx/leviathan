@@ -354,18 +354,31 @@ Search hit ≠ fetched source ≠ evidence ≠ supported claim ≠ knowledge.
 `pages/DatasetsPage.tsx` is the research/knowledge-side dataset surface. Supporting `pages/datasets/` files:
 
 - `DatasetActivityConsole.tsx`;
-- `datasetActivity.ts`;
+- `datasetActivity.ts` (progress / backend / memory helpers — UNMEASURED when RSS missing);
 - `useDatasetActivity.ts`;
 - `datasetsInventory.ts`;
 - `datasetActivity.test.ts`;
 - `datasetManagementActions.test.ts`;
 - `datasetLearningState.ts`.
 
+Jobs expose compute truth from `public_job`: `backend` (`Python Streaming` / `Rust Native`), `fallbackReason`, and real progress fields when present. Missing peak RSS / spill metrics render as **UNMEASURED** — never invent `0`.
+
 The LLM navigation also exposes dedicated Dataset Management and Offline Datasets pixel pages wired through `App.tsx`.
 
 ### Dataset Management (pixel)
 
-`pages/pixel/DatasetManagementPixelPage.tsx` shows `displayName ?? name` as the primary label, a **category** column + filter, and search across displayName/tags/category. Details expose semantic summary fields and recovery honesty: `REINDEX_REQUIRED` is never shown as learned Brain state. Operators can PATCH displayName/category/tags and trigger semantic re-analyze via `/api/datasets/{id}/semantic`.
+
+Dataset Activity / Datasets pages show compute backend + progress honestly (`python_streaming` / `rust_native`, records, peak memory / spill / throughput). Missing metrics render as **UNMEASURED**, never 0. Performance page surfaces native data-plane probe status and DB contention (file/WAL size, busy retries, commit queue depth) from `/api/performance/snapshot`.
+
+`pages/pixel/DatasetManagementPixelPage.tsx` shows `displayName ?? name` as the primary label, a **category** column + filter, and search across displayName/tags/category. Details expose semantic summary fields and recovery honesty: `REINDEX_REQUIRED` is never shown as learned Brain state. Operators can PATCH displayName/category/tags and trigger semantic re-analyze via `/api/datasets/{id}/semantic`. The shared Dataset Activity console surfaces native/Python backend labels and memory honesty.
+
+### Worker Fabric (Agents)
+
+`WorkerPoolsPanel` reads `GET /api/workers/dashboard`. When the backend includes `nativeCompute`, the panel shows probe `status`, `binaryVersion` (or UNMEASURED), and operation count — derived from `NativeComputeRunner.probe`, not mocked.
+
+### Settings (native compute)
+
+Settings remain catalog-driven. Native compute keys (`native_compute.mode`, `memory_budget_mb`, `max_record_mb`, `threads`, …) appear under the data/research category when present in the Settings Control Plane catalog — no page-local hardcoding of those knobs.
 
 ## Training
 
