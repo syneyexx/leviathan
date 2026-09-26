@@ -199,6 +199,10 @@ from Data.modules.cognition import (
 )
 from Data.modules.cognition.domain_strategy import StrategyRegistry
 from Data.modules.cognition.model_adapter import build_control_plane_model_caller
+from Data.modules.cognition.resource_pressure import (
+    build_resource_pressure_fn,
+    telemetry_dict_from_observability,
+)
 from Data.modules.cognition.specialists import register_specialist_handlers
 from Data.modules.coding.cognition import CodingCognitiveStrategy
 from Data.modules.intelligence import (
@@ -1036,6 +1040,43 @@ cognition_model_caller = build_control_plane_model_caller(model_plane, llm)
 reasoning_policy = ReasoningPolicy.from_settings(settings)
 cognition_experience_store = ExperienceStore(store=cognition_store)
 research_service.set_model_caller(cognition_model_caller)
+
+
+def _cognition_queue_pressure(runtime: Any) -> tuple[int | None, int | None]:
+    """Best-effort job queue depth for ADAPTIVE resource pressure (W3)."""
+    if runtime is None:
+        return None, None
+    try:
+        if hasattr(runtime, "snapshot"):
+            snap = runtime.snapshot()
+            data = snap.public_dict() if hasattr(snap, "public_dict") else (snap if isinstance(snap, dict) else {})
+            depth = data.get("queued") or data.get("pending") or data.get("queue_depth")
+            if depth is not None:
+                return int(depth), 32
+        store = getattr(runtime, "store", None)
+        if store is not None and hasattr(store, "count_by_status"):
+            return int(store.count_by_status("QUEUED") or 0), 32
+    except Exception:  # noqa: BLE001
+        return None, None
+    return None, None
+
+
+def _cognition_workload_pressure(plane: Any, cfg: Any) -> tuple[int | None, int | None]:
+    """Best-effort inflight model calls vs concurrency ceiling."""
+    if plane is None:
+        return None, None
+    try:
+        gateway = getattr(plane, "gateway", None)
+        if gateway is None:
+            return None, None
+        snap = gateway.snapshot()
+        active = int(getattr(snap, "active_calls", 0) or 0)
+        cap = int(getattr(getattr(cfg, "resources", None), "max_model_concurrency", 4) or 4)
+        return active, max(1, cap)
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
 cognition_runtime = CognitiveRuntime(
     enabled=settings.features.cognition_enabled,
     shadow=settings.features.cognition_shadow,
@@ -1065,7 +1106,11 @@ cognition_runtime = CognitiveRuntime(
     verification_engine=verification_engine,
     execution_gateway=execution_gateway,
     observability=observability,
-    resource_pressure_fn=lambda: 0.0,
+    resource_pressure_fn=build_resource_pressure_fn(
+        telemetry_provider=lambda: telemetry_dict_from_observability(observability),
+        queue_provider=lambda: _cognition_queue_pressure(job_runtime),
+        workload_provider=lambda: _cognition_workload_pressure(model_plane, settings),
+    ),
     behavior_resolver=behavior_resolver,
 )
 register_specialist_handlers(

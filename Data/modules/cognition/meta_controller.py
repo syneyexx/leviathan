@@ -10,6 +10,11 @@ from typing import Any
 
 from Data.modules.intelligence.policy import ReasoningPolicy
 
+from .compute_axes import (
+    NeuralComputeBudget,
+    OrchestrationCompute,
+    neural_for_mode,
+)
 from .task_model import TaskModel
 from .types import CognitiveBudgets, ReasoningMode, ReasoningStrategy, RiskClass
 
@@ -22,12 +27,23 @@ class MetaDecision:
     value_scores: dict[str, float]
     notes: tuple[str, ...]
     escalation: str | None = None  # escalated | deescalated | None
+    requested_mode: ReasoningMode | None = None
+    effective_mode: ReasoningMode | None = None
+    neural: NeuralComputeBudget | None = None
+    resource_pressure: float = 0.0
 
     def public_dict(self) -> dict[str, Any]:
+        effective = self.effective_mode or self.mode
+        neural = self.neural or neural_for_mode(effective)
         return {
             "mode": self.mode.value,
+            "requested_mode": (self.requested_mode.value if self.requested_mode else None),
+            "effective_mode": effective.value,
             "strategy": self.strategy.value,
             "budgets": self.budgets.public_dict(),
+            "orchestration": OrchestrationCompute(self.budgets).public_dict(),
+            "neural": neural.public_dict(),
+            "resource_pressure": self.resource_pressure,
             "value_scores": dict(self.value_scores),
             "notes": list(self.notes),
             "escalation": self.escalation,
@@ -35,6 +51,8 @@ class MetaDecision:
                 "modes_control_real_budgets": True,
                 "more_agents_is_not_automatically_better": True,
                 "adaptive_can_escalate_and_deescalate": True,
+                "two_axis_compute": True,
+                "requested_and_effective_mode_observable": True,
             },
         }
 
@@ -116,6 +134,11 @@ class MetaController:
         notes: list[str] = []
         escalation: str | None = None
 
+        requested_mode: ReasoningMode | None = None
+        if user_requested_depth:
+            mapping = {m.value.lower(): m for m in ReasoningMode}
+            requested_mode = mapping.get(str(user_requested_depth).strip().lower())
+
         mode = self._mode(task, unc, user_requested_depth, resource_pressure)
         # Adaptive escalation / de-escalation during a run.
         if previous_mode is not None and (
@@ -139,6 +162,20 @@ class MetaController:
 
         strategy = self._strategy(task, unc, evidence_coverage, contradiction_density)
         budgets = self._budgets(mode, task, resource_pressure)
+        neural = neural_for_mode(mode)
+        # Under high pressure, shrink neural candidate/output allowance measurably.
+        if resource_pressure >= 0.7:
+            neural = NeuralComputeBudget(
+                reasoning_effort="low" if neural.reasoning_effort in {"high", "maximum"} else neural.reasoning_effort,
+                reasoning_max_tokens=(
+                    min(neural.reasoning_max_tokens or 0, 256) if neural.reasoning_max_tokens else 0
+                ),
+                candidate_count=max(1, min(2, neural.candidate_count)),
+                temperature=neural.temperature,
+                max_output_tokens=max(512, neural.max_output_tokens // 2),
+                top_p=neural.top_p,
+            )
+            notes.append("resource pressure — reduced neural compute axis")
         values = self._value_scores(
             task,
             unc,
@@ -208,6 +245,10 @@ class MetaController:
             value_scores=values,
             notes=tuple(notes),
             escalation=escalation,
+            requested_mode=requested_mode,
+            effective_mode=mode,
+            neural=neural,
+            resource_pressure=float(resource_pressure),
         )
 
     def estimate_value_of_action(

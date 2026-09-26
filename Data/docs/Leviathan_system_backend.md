@@ -284,17 +284,22 @@ Current `ReasoningPolicy`/`MetaController` modes control **real orchestration bu
 | DEEP | 180s | 6 | 12,000 | 8 | 2 | 3 | 3 | 3 | 3 | 8,000 | 2 | 8 |
 | MAXIMUM | 300s | 10 | 20,000 | 12 | 3 | 4 | 4 | 4 | 4 | 12,000 | 3 | 12 |
 
-`ADAPTIVE` can escalate/de-escalate from uncertainty, evidence coverage, contradiction density, failures, information gain and resource pressure.
+`ADAPTIVE` can escalate/de-escalate from uncertainty, evidence coverage, contradiction density, failures, information gain and **measured** resource pressure (CPU/RAM/VRAM telemetry, queue depth, inflight model workloads — never a fake constant `0.0`).
 
-### Frontier Reasoning target — not yet a current-main claim
-
-The active master program extends this into **two-axis compute**:
+### Two-axis compute (W3 CURRENT)
 
 ```text
 ReasoningDepth = OrchestrationCompute + NeuralInferenceCompute
 ```
 
-Target additions include `NeuralComputeBudget`, provider reasoning capability profiles, native provider reasoning effort, test-time candidate search, hypothesis branching, neural task/planning advisors, critic mesh, stronger verification, CapabilityState, async cognition, verified-learning aggregation and training bridges. These are **TARGET** until their phase is merged and verified.
+- **Orchestration** — `CognitiveBudgets` (retrieval rounds, critics, tools, agents, model calls, iterations).
+- **Neural** — `NeuralComputeBudget` in `Data/modules/cognition/compute_axes.py` (reasoning effort, reasoning token allowance, candidate count, sampling, output allowance).
+
+`MetaController` is the single policy owner for both axes. `MetaDecision` exposes `requested_mode`, `effective_mode`, `orchestration`, `neural`, and `resource_pressure`. FAST / STANDARD / DEEP / MAXIMUM differ measurably on both axes.
+
+### Frontier Reasoning target — not yet a current-main claim
+
+The active master program continues beyond W3 into test-time candidate search, hypothesis branching, neural task/planning advisors, critic mesh, stronger verification, CapabilityState, async cognition, verified-learning aggregation and training bridges. These remaining items are **TARGET** until their phase is merged and verified.
 
 ---
 
