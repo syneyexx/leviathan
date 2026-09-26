@@ -697,6 +697,8 @@ Do not infer that every recipe is production GPU-ready on every machine. Availab
 - `Data/modules/evidence/` — evidence store/service/types;
 - `Data/modules/observations/` — durable observations;
 - `Data/modules/verification/` — verification engine/report store/types;
+  - tiers (W6): `DETERMINISTIC_VERIFICATION`, `CROSS_MODEL_VERIFICATION`, `SELF_CRITIQUE` — same-model critique is never labelled independent verification;
+  - `capability_state.py` — `SystemCapabilityState` self-knowledge (available capabilities, workers, web/browser/network, GPU when measured; brain percentage stays UNMEASURED);
 - `Data/modules/artifacts/` — artifact store/types/validation.
 
 System invariant:
@@ -706,6 +708,8 @@ model output != observation
 request != authority
 execution request != successful effect
 model says done != verified completion
+SELF_CRITIQUE != CROSS_MODEL_VERIFICATION
+UNMEASURED != PASS
 ```
 
 ---
