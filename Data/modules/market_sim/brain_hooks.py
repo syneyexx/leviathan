@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .epistemic import EpistemicFirewall, is_available, resolve_available_at
+from .epistemic import EpistemicFirewall, filter_hits_for_as_of, is_available, resolve_available_at
 
 
 class BrainMiss:
@@ -90,27 +90,21 @@ class BrainFacade:
             boundary = fw.as_of
         if not boundary:
             return retrieval
-        kept: list[dict[str, Any]] = []
-        dropped = 0
-        for hit in retrieval.hits:
-            # Neuro assessments are advisory hypotheses generated at decision time.
-            if hit.get("source") == "neuro":
-                kept.append(hit)
-                continue
-            stamp = resolve_available_at(hit)
-            if stamp is None:
-                # Untimestamped material is treated as general / timeless knowledge.
-                kept.append(hit)
-                continue
-            if not is_available(available_at=stamp, as_of=boundary):
-                dropped += 1
-                if fw is not None:
-                    fw.violations += 1
-                continue
-            kept.append(hit)
+        kept, receipts = filter_hits_for_as_of(
+            [h for h in retrieval.hits if isinstance(h, dict)],
+            as_of=str(boundary),
+            time_sensitive_default=bool(time_sensitive),
+            allow_timeless_reference=True,
+            firewall=fw,
+        )
         notes = list(retrieval.notes)
-        if dropped:
-            notes.append(f"as_of filter dropped {dropped} hit(s) newer than {boundary}")
+        if receipts:
+            notes.append(f"as_of filter dropped {len(receipts)} hit(s) vs {boundary}")
+            # Bound leakage receipts — never attach huge content blobs.
+            notes.append(
+                "leakage_receipts="
+                + str([r.public_dict() for r in receipts[:12]])
+            )
         return BrainRetrieval(hits=kept, miss=len(kept) == 0, notes=notes)
 
     def _retrieve(

@@ -3,9 +3,9 @@
   "version": 1,
   "updated": "2026-09-26",
   "baseline_commit": "98eb37d669561c5edbc4a99cb8bea362f5881103",
-  "last_verified_commit": "760ab3d15ffcc232d8f547d41e0bb36155a24836",
+  "last_verified_commit": "2bd407f6a1dfe46c82b0f8036ce5b85422e1fd7c",
   "branch": "cursor/institutional-trading-f8e6",
-  "active_wave": "W03",
+  "active_wave": "W04",
   "notes": "Post Strategy-Learning merge baseline (#170). Editor/HADES out of scope. CI gate harness skipped per operator instruction; local required suites executed. W01 canonical DatasetLearningState landed. W02 trading classification/routing landed. W03 TradingBrainAdapter \u2192 canonical HybridRetriever/BrainAccess.",
   "status_vocabulary": [
     "NOT_STARTED",
@@ -376,9 +376,20 @@
     {
       "id": "W04",
       "title": "Temporal knowledge / epistemic firewall",
-      "status": "NOT_STARTED",
+      "status": "PASS",
       "owner": "knowledge + market_sim epistemic",
-      "required": true
+      "required": true,
+      "tests": [
+        "Data.backend.tests.test_epistemic_firewall_w04"
+      ],
+      "evidence": [
+        "TemporalClass TIME_SENSITIVE/TIMELESS_REFERENCE/UNKNOWN",
+        "filter_hits_for_as_of fail-closed missing timestamps",
+        "LeakageReceipt bounded metadata",
+        "BrainFacade + TradingBrainAdapter hardened",
+        "8/8 W04 PASS"
+      ],
+      "last_verified_commit": "2bd407f6a1dfe46c82b0f8036ce5b85422e1fd7c"
     },
     {
       "id": "W05",

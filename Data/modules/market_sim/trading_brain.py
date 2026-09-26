@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .brain_hooks import BrainRetrieval, KnowledgeSearcher
-from .epistemic import EpistemicFirewall, is_available, resolve_available_at
+from .epistemic import EpistemicFirewall, filter_hits_for_as_of
 
 
 @dataclass
@@ -298,30 +298,40 @@ class TradingBrainAdapter:
             except Exception as exc:  # noqa: BLE001
                 notes.append(f"memory_error:{exc}")
 
-        # Temporal firewall
+        # Temporal firewall — fail-closed for missing timestamps on time-sensitive content.
         boundary = request.decision_as_of
         if firewall is not None:
             boundary = firewall.as_of
         if boundary:
-            kept: list[TradingRetrievalHit] = []
-            dropped = 0
-            for hit in hits:
-                stamp = hit.available_at or hit.published_at
-                if stamp is None:
-                    # W03: do not invent timeless; W04 hardens further.
-                    # For now keep untimestamped educational hits but note it.
-                    notes.append("untimestamped_hit_kept_pending_w04_hardening")
-                    kept.append(hit)
+            raw_hits = [h.public_dict() for h in hits]
+            kept_dicts, receipts = filter_hits_for_as_of(
+                raw_hits,
+                as_of=str(boundary),
+                time_sensitive_default=True,
+                allow_timeless_reference=True,
+                firewall=firewall,
+            )
+            # Rehydrate TradingRetrievalHit from filtered dicts (bounded fields only).
+            by_id = {
+                (h.document_id, h.content_excerpt[:80]): h for h in hits
+            }
+            filtered: list[TradingRetrievalHit] = []
+            for d in kept_dicts:
+                if str(d.get("source") or "") == "neuro":
                     continue
-                if not is_available(available_at=stamp, as_of=boundary):
-                    dropped += 1
-                    if firewall is not None:
-                        firewall.violations += 1
-                    continue
-                kept.append(hit)
-            hits = kept
-            if dropped:
-                notes.append(f"as_of_filter_dropped_{dropped}")
+                key = (d.get("documentId") or d.get("document_id"), str(d.get("contentExcerpt") or d.get("content") or "")[:80])
+                existing = by_id.get(key)
+                if existing is not None:
+                    filtered.append(existing)
+                else:
+                    filtered.append(_hit_from_row(d, mode=mode, semantic=semantic))
+            hits = filtered
+            if receipts:
+                notes.append(f"as_of_filter_dropped_{len(receipts)}")
+                notes.append(
+                    "leakage_receipts="
+                    + str([r.public_dict() for r in receipts[:12]])
+                )
 
         return TradingRetrievalResult(
             hits=hits[:limit],
