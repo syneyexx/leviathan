@@ -83,9 +83,9 @@ export function AppSidebar({ open }: AppSidebarProps) {
         <div className="lv-sidebar-brand-copy">
           <div className="lv-sidebar-brand-title">LEVIATHAN</div>
           <div className="lv-sidebar-brand-tag">
-            <span>Intelligence</span>
-            <span>Capital</span>
-            <span>Autonomy</span>
+            <span>Cognitive Runtime</span>
+            <span>Control Plane</span>
+            <span>Local First</span>
           </div>
         </div>
       </div>
@@ -127,10 +127,10 @@ export function AppSidebar({ open }: AppSidebarProps) {
       </nav>
 
       <div className="lv-sidebar-footer">
-        <div className="lv-sidebar-footer-art">
+        <div className="lv-sidebar-footer-art" aria-hidden="true">
           <img
             className="lv-sidebar-footer-mark"
-            src="/assets/sidebar-leviathan-art.png"
+            src="/assets/leviathan-ritual-manuscript.svg"
             alt=""
             width={210}
             height={280}
@@ -140,13 +140,9 @@ export function AppSidebar({ open }: AppSidebarProps) {
           />
         </div>
         <p className="lv-sidebar-motto">
-          A Higher
+          Veritas · Ratio
           <br />
-          Intelligence
-          <br />
-          For A Richer
-          <br />
-          Humanity.
+          Memoria · Potentia
         </p>
         <div className="lv-sidebar-footer-sig" aria-hidden="true">
           <TridentMark id="sidebar-sig" />
