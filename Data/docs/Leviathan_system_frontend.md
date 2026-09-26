@@ -588,3 +588,8 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 6. Do not expose private chain-of-thought; only public reasoning/activity metadata is eligible for UI.
 7. Update this document when routes, pages, API ownership or major file organization changes.
 8. Update the backend companion document when a UI change adds or changes an API contract.
+
+
+### Trading Center Lab (W17)
+
+`/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials). Live broker remains explicitly blocked. No mock KPIs.
