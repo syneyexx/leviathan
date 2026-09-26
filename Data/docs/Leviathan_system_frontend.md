@@ -593,3 +593,13 @@ Machine reasoning gates remain at `Data/backend/tests/frontier_reasoning_gates.j
 ### Trading Center Lab (W17)
 
 `/trading/lab` (`ResearchLabPage`) binds to typed `/api/market-sim/lab/*` endpoints (overview, cost-pack, feed-health, trials). Live broker remains explicitly blocked. No mock KPIs.
+
+
+### Frontend Platform (W18 CURRENT)
+
+- **W18A:** `ErrorBoundary` wraps the app; trading routes are `React.lazy` + `Suspense`; `SkipLink` + `main#main-content` in `AppShell`.
+- **W18B:** Shared `api/http.ts`; domain module `api/domains/marketSimLab.ts` (no page-local fetch for lab). Further domain splits continue incrementally — giant client remains the facade.
+- **W18C:** Chat exposes reasoning mode, sources/verification telemetry, and **Stop** abort for in-flight streams. No hidden CoT.
+- **W18D:** Dataset demo rows are labelled DEMO-only and regression-blocked from live inventory; decorative mocks must use `DemoBanner`.
+- **W18E:** Vitest unit coverage for ErrorBoundary. Playwright E2E / MSW: **FEATURE_GATED** until packages are adopted in CI.
+- **W18F:** Skip-to-content a11y; NL default / EN secondary preserved. Design language unchanged.

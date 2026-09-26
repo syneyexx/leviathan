@@ -882,6 +882,8 @@ LEVIATHAN integrates existing owners into one assistant path — **not** a secon
 
 **P4C (TradingCenter frontend real backend):** `SimulatiePage` exposes `initialCash` / `engine` / `decisionCadence`; default single-strategy with empty agents (D27). Paper/strategy pages call real APIs. G41/G42 PASS.
 
+**W18 Frontend Platform (CURRENT):** ErrorBoundary + lazy trading routes; `api/http.ts` + `api/domains/marketSimLab.ts`; chat Stop abort; DEMO banners for decorative mocks; Playwright/MSW FEATURE_GATED until CI dependency.
+
 **W17 Trading Center UI (CURRENT):** `/trading/lab` + `/api/market-sim/lab/overview|cost-pack|feed-health|trials` expose real lab truth (curriculum, roles, Trial Ledger, cost provenance, feed probe). Broker/live remains BLOCKED. No mock KPIs.
 
 **W16 Trading Lab IV (CURRENT):** `paper_deployment.py` PaperDeployment with compatibility validation, environment fingerprint, feed health (staleness/gaps), kill switch, and modelled/shadow/paper gap comparison. Paper does not prove live profitability; LIVE BLOCKED; A5 impossible.

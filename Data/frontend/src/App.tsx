@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AgentsPage } from "./pages/AgentsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
@@ -35,15 +36,43 @@ import { ToolsPage } from "./pages/ToolsPage";
 import { ModulesPage } from "./pages/ModulesPage";
 import { McpPage } from "./pages/McpPage";
 import { ConsolePage } from "./pages/ConsolePage";
-import { BrokerTradingPage } from "./pages/trading/BrokerTradingPage";
-import { MarktdataPage } from "./pages/trading/MarktdataPage";
-import { OnderzoekPage } from "./pages/trading/OnderzoekPage";
-import { ResearchLabPage } from "./pages/trading/ResearchLabPage";
-import { PaperTradingPage } from "./pages/trading/PaperTradingPage";
-import { PortefeuillePage } from "./pages/trading/PortefeuillePage";
-import { SimulatiePage } from "./pages/trading/SimulatiePage";
-import { StrategieenPage } from "./pages/trading/StrategieenPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+
+const BrokerTradingPage = lazy(() =>
+  import("./pages/trading/BrokerTradingPage").then((m) => ({ default: m.BrokerTradingPage })),
+);
+const MarktdataPage = lazy(() =>
+  import("./pages/trading/MarktdataPage").then((m) => ({ default: m.MarktdataPage })),
+);
+const OnderzoekPage = lazy(() =>
+  import("./pages/trading/OnderzoekPage").then((m) => ({ default: m.OnderzoekPage })),
+);
+const ResearchLabPage = lazy(() =>
+  import("./pages/trading/ResearchLabPage").then((m) => ({ default: m.ResearchLabPage })),
+);
+const PaperTradingPage = lazy(() =>
+  import("./pages/trading/PaperTradingPage").then((m) => ({ default: m.PaperTradingPage })),
+);
+const PortefeuillePage = lazy(() =>
+  import("./pages/trading/PortefeuillePage").then((m) => ({ default: m.PortefeuillePage })),
+);
+const SimulatiePage = lazy(() =>
+  import("./pages/trading/SimulatiePage").then((m) => ({ default: m.SimulatiePage })),
+);
+const StrategieenPage = lazy(() =>
+  import("./pages/trading/StrategieenPage").then((m) => ({ default: m.StrategieenPage })),
+);
+
+function TradingSuspense({ children }: { children: ReactNode }) {
+  return (
+    <ErrorBoundary fallbackTitle="Trading page failed">
+      <Suspense fallback={<div className="lv-tp-wrap"><p className="lv-tp-muted">Loading trading surface…</p></div>}>
+        {children}
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
 
 export default function App() {
   return (
@@ -74,14 +103,14 @@ export default function App() {
       <Route path="/media/personas" element={<MediaPersonasPage />} />
 
       <Route path="/trading" element={<Navigate to="/trading/simulatie" replace />} />
-      <Route path="/trading/simulatie" element={<SimulatiePage />} />
-      <Route path="/trading/strategieen" element={<StrategieenPage />} />
-      <Route path="/trading/marktdata" element={<MarktdataPage />} />
-      <Route path="/trading/portefeuille" element={<PortefeuillePage />} />
-      <Route path="/trading/paper" element={<PaperTradingPage />} />
-      <Route path="/trading/broker" element={<BrokerTradingPage />} />
-      <Route path="/trading/onderzoek" element={<OnderzoekPage />} />
-      <Route path="/trading/lab" element={<ResearchLabPage />} />
+      <Route path="/trading/simulatie" element={<TradingSuspense><SimulatiePage /></TradingSuspense>} />
+      <Route path="/trading/strategieen" element={<TradingSuspense><StrategieenPage /></TradingSuspense>} />
+      <Route path="/trading/marktdata" element={<TradingSuspense><MarktdataPage /></TradingSuspense>} />
+      <Route path="/trading/portefeuille" element={<TradingSuspense><PortefeuillePage /></TradingSuspense>} />
+      <Route path="/trading/paper" element={<TradingSuspense><PaperTradingPage /></TradingSuspense>} />
+      <Route path="/trading/broker" element={<TradingSuspense><BrokerTradingPage /></TradingSuspense>} />
+      <Route path="/trading/onderzoek" element={<TradingSuspense><OnderzoekPage /></TradingSuspense>} />
+      <Route path="/trading/lab" element={<TradingSuspense><ResearchLabPage /></TradingSuspense>} />
 
       <Route path="/research" element={<ResearchPage />} />
       <Route path="/brain" element={<BrainPage />} />
