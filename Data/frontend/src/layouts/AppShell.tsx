@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import { AppFooter } from "../components/AppFooter";
 import { AppHeader } from "../components/AppHeader";
 import { AppSidebar } from "../components/AppSidebar";
 import { SkipLink } from "../components/SkipLink";
+import { findMainMenuByPath } from "../navigation/menu";
 
 type ShellProps = {
   activeMode?: "explore" | "chat";
@@ -25,6 +27,8 @@ export function AppShell({
   children,
 }: ShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
+  const section = findMainMenuByPath(location.pathname);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -40,8 +44,14 @@ export function AppShell({
     return () => document.removeEventListener("click", onDocClick);
   }, [sidebarOpen]);
 
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname, location.search]);
+
   const appClass = [
     "lv-app",
+    "lv-ritual-shell",
+    `lv-section-${section.id}`,
     chatApp ? "lv-chat-app" : "",
     layout === "wide" ? "lv-app--wide" : "",
     pageClass ?? "",
@@ -50,7 +60,11 @@ export function AppShell({
     .join(" ");
 
   return (
-    <div className={appClass}>
+    <div
+      className={appClass}
+      data-lv-section={section.id}
+      data-lv-route={location.pathname}
+    >
       <SkipLink />
       <AppHeader
         searchPlaceholder={searchPlaceholder}
